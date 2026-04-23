@@ -73,7 +73,9 @@ class TestRoutingAgentIntegration:
             agent.routing_module, "forward", return_value=mock_prediction
         ):
             result = await agent.route_query(
-                "find videos", context="user prefers video content", tenant_id="test_tenant"
+                "find videos",
+                context="user prefers video content",
+                tenant_id="test_tenant",
             )
 
         assert result.query == "find videos"
@@ -131,14 +133,17 @@ class TestRoutingAgentIntegration:
             forward_calls.append(kwargs)
             return mock_prediction
 
-        with patch.object(
-            agent.routing_module, "forward", side_effect=capture_forward
-        ):
+        with patch.object(agent.routing_module, "forward", side_effect=capture_forward):
             result = await agent.route_query(
                 query="summarize AI research",
                 enhanced_query="summarize recent AI research papers from 2024",
-                entities=[{"text": "AI", "label": "TECH"}, {"text": "research", "label": "TOPIC"}],
-                relationships=[{"subject": "AI", "relation": "part_of", "object": "research"}],
+                entities=[
+                    {"text": "AI", "label": "TECH"},
+                    {"text": "research", "label": "TOPIC"},
+                ],
+                relationships=[
+                    {"subject": "AI", "relation": "part_of", "object": "research"}
+                ],
                 tenant_id="test_tenant",
             )
 

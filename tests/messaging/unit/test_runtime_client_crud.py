@@ -43,9 +43,7 @@ def client_with_mock_http():
 @pytest.mark.ci_fast
 class TestWikiCRUD:
     @pytest.mark.asyncio
-    async def test_save_wiki_session_posts_correct_payload(
-        self, client_with_mock_http
-    ):
+    async def test_save_wiki_session_posts_correct_payload(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.post = AsyncMock(
             return_value=_make_response(json_body={"status": "saved", "doc_id": "x"})
@@ -71,9 +69,7 @@ class TestWikiCRUD:
         assert result["status"] == "saved"
 
     @pytest.mark.asyncio
-    async def test_search_wiki_posts_correct_payload(
-        self, client_with_mock_http
-    ):
+    async def test_search_wiki_posts_correct_payload(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.post = AsyncMock(
             return_value=_make_response(json_body={"results": [], "count": 0})
@@ -124,9 +120,7 @@ class TestWikiCRUD:
         assert call[1]["params"]["tenant_id"] == "acme"
 
     @pytest.mark.asyncio
-    async def test_delete_wiki_topic_uses_query_param(
-        self, client_with_mock_http
-    ):
+    async def test_delete_wiki_topic_uses_query_param(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.delete = AsyncMock(
             return_value=_make_response(json_body={"status": "deleted"})
@@ -143,9 +137,7 @@ class TestWikiCRUD:
 @pytest.mark.ci_fast
 class TestInstructionsCRUD:
     @pytest.mark.asyncio
-    async def test_set_instructions_puts_to_tenant_path(
-        self, client_with_mock_http
-    ):
+    async def test_set_instructions_puts_to_tenant_path(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.put = AsyncMock(
             return_value=_make_response(json_body={"text": "x", "updated_at": "now"})
@@ -158,9 +150,7 @@ class TestInstructionsCRUD:
         assert call[1]["json"] == {"text": "be terse"}
 
     @pytest.mark.asyncio
-    async def test_get_instructions_gets_from_tenant_path(
-        self, client_with_mock_http
-    ):
+    async def test_get_instructions_gets_from_tenant_path(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.get = AsyncMock(
             return_value=_make_response(json_body={"text": "be terse"})
@@ -221,9 +211,7 @@ class TestJobsCRUD:
     @pytest.mark.asyncio
     async def test_list_jobs_gets_from_tenant_path(self, client_with_mock_http):
         rc, http = client_with_mock_http
-        http.get = AsyncMock(
-            return_value=_make_response(json_body={"jobs": []})
-        )
+        http.get = AsyncMock(return_value=_make_response(json_body={"jobs": []}))
 
         await rc.list_jobs(tenant_id="acme")
 
@@ -257,9 +245,7 @@ class TestJobsCRUD:
         assert result["job_id"] == "abc12345"
 
     @pytest.mark.asyncio
-    async def test_delete_job_deletes_from_tenant_path(
-        self, client_with_mock_http
-    ):
+    async def test_delete_job_deletes_from_tenant_path(self, client_with_mock_http):
         rc, http = client_with_mock_http
         http.delete = AsyncMock(
             return_value=_make_response(json_body={"status": "deleted"})

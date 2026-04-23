@@ -45,7 +45,9 @@ class ProfileBinding:
 
 
 def probe_service_model(
-    url: str, *, timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    url: str,
+    *,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     session: Optional[requests.Session] = None,
 ) -> Optional[str]:
     """Return the model id the service at ``url`` reports it is serving.
@@ -113,7 +115,9 @@ def collect_profile_bindings(profiles: dict[str, dict]) -> list[ProfileBinding]:
         # ``semantic_model`` wins over ``embedding_model`` for hybrid profiles
         # where the main embedding is an acoustic/visual model but a separate
         # text model handles semantic retrieval (e.g. CLAP + ColBERT audio).
-        expected_model = profile_body.get("semantic_model") or profile_body.get("embedding_model")
+        expected_model = profile_body.get("semantic_model") or profile_body.get(
+            "embedding_model"
+        )
         if not expected_model:
             continue
         bindings.append(
@@ -169,7 +173,9 @@ def validate_inference_services(
         logger.warning(
             "Profiles reference inference services not deployed here: %s. "
             "Available: %s. Profiles bound to missing services will fail on "
-            "first use.", missing, available,
+            "first use.",
+            missing,
+            available,
         )
         unique = {k: v for k, v in unique.items() if k in service_urls}
 
@@ -188,7 +194,9 @@ def validate_inference_services(
             )
         logger.info(
             "Inference service %r at %s verified as %s",
-            service_name, url, served_model,
+            service_name,
+            url,
+            served_model,
         )
 
 
@@ -216,8 +224,10 @@ def _probe_until_reachable(
                 f"reachable."
             )
         logger.info(
-            "Inference service %r at %s not ready yet (attempt %d); retrying "
-            "in %.1fs",
-            service_name, url, attempt, retry_interval_seconds,
+            "Inference service %r at %s not ready yet (attempt %d); retrying in %.1fs",
+            service_name,
+            url,
+            attempt,
+            retry_interval_seconds,
         )
         sleep(min(retry_interval_seconds, remaining))

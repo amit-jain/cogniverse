@@ -74,10 +74,17 @@ class TestGatewaySimpleRouting:
         assert isinstance(gw["confidence"], (int, float))
         assert gw["confidence"] >= 0.0
         assert gw["modality"] in (
-            "video", "text", "audio", "image", "document", "both",
+            "video",
+            "text",
+            "audio",
+            "image",
+            "document",
+            "both",
         )
         assert gw["generation_type"] in (
-            "raw_results", "summary", "detailed_report",
+            "raw_results",
+            "summary",
+            "detailed_report",
         )
 
         # Content assertions: query scores 0.693 → unambiguously simple video
@@ -130,7 +137,9 @@ class TestGatewaySimpleRouting:
         assert downstream.get("status") == "success"
 
         # Search results must exist and contain real Vespa data
-        assert "results" in downstream, f"Missing 'results' in downstream, keys: {list(downstream.keys())}"
+        assert "results" in downstream, (
+            f"Missing 'results' in downstream, keys: {list(downstream.keys())}"
+        )
         results = downstream["results"]
         assert downstream["results_count"] >= 1, (
             "Query 'find videos about machine learning' must return results from ingested data"
@@ -142,10 +151,14 @@ class TestGatewaySimpleRouting:
         # Each result must have score + metadata with real video data
         first = results[0]
         assert "score" in first, f"Result missing 'score' field: {list(first.keys())}"
-        assert first["score"] > 0, f"First result score should be positive, got {first['score']}"
+        assert first["score"] > 0, (
+            f"First result score should be positive, got {first['score']}"
+        )
         assert "metadata" in first, f"Result missing 'metadata': {list(first.keys())}"
         meta = first["metadata"]
-        assert "video_id" in meta, f"Result metadata missing video_id: {list(meta.keys())}"
+        assert "video_id" in meta, (
+            f"Result metadata missing video_id: {list(meta.keys())}"
+        )
         assert meta["video_id"] != "", "video_id should not be empty"
 
         # Results must be ranked — first result score >= last result score
@@ -267,7 +280,9 @@ class TestGatewayComplexRouting:
         assert data["status"] == "success"
 
         # Must have orchestration result — not just gateway classification
-        assert "orchestration_result" in data or data.get("agent") == "orchestrator_agent", (
+        assert (
+            "orchestration_result" in data or data.get("agent") == "orchestrator_agent"
+        ), (
             f"Complex query must produce orchestration_result, got keys: {list(data.keys())}"
         )
 
@@ -425,7 +440,9 @@ class TestGatewaySearchPipeline:
         downstream = data.get("downstream_result", data)
 
         # Must have results — ingested data exists for this tenant
-        assert "results" in downstream, f"Missing results, keys: {list(downstream.keys())}"
+        assert "results" in downstream, (
+            f"Missing results, keys: {list(downstream.keys())}"
+        )
         assert downstream["results_count"] >= 1, (
             "'find videos about machine learning' must return results from ingested data"
         )
@@ -433,7 +450,9 @@ class TestGatewaySearchPipeline:
         result = downstream["results"][0]
 
         # Each result must have: document_id, score, metadata with video_id
-        assert "document_id" in result, f"Result missing document_id: {list(result.keys())}"
+        assert "document_id" in result, (
+            f"Result missing document_id: {list(result.keys())}"
+        )
         assert result["document_id"] != "", "document_id should not be empty"
         assert "score" in result, f"Result missing score: {list(result.keys())}"
         assert result["score"] > 0, f"Score should be positive, got {result['score']}"
@@ -442,7 +461,9 @@ class TestGatewaySearchPipeline:
         meta = result["metadata"]
         assert "video_id" in meta, f"metadata missing video_id: {list(meta.keys())}"
         assert "segment_id" in meta, f"metadata missing segment_id: {list(meta.keys())}"
-        assert isinstance(meta["segment_id"], int), f"segment_id should be int, got {type(meta['segment_id'])}"
+        assert isinstance(meta["segment_id"], int), (
+            f"segment_id should be int, got {type(meta['segment_id'])}"
+        )
 
         # Temporal info should be present (start_time, end_time)
         if "temporal_info" in result:
@@ -647,7 +668,9 @@ class TestEntityExtractionAgent:
                 },
             )
 
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        )
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == "entity_extraction_agent"
@@ -660,7 +683,9 @@ class TestEntityExtractionAgent:
         )
 
         entity_texts = {e["text"].lower() for e in entities}
-        assert "obama" in entity_texts, f"Expected 'Obama' in entities, got: {entity_texts}"
+        assert "obama" in entity_texts, (
+            f"Expected 'Obama' in entities, got: {entity_texts}"
+        )
         assert "mit" in entity_texts or any("mit" in t for t in entity_texts), (
             f"Expected 'MIT' in entities, got: {entity_texts}"
         )
@@ -670,9 +695,14 @@ class TestEntityExtractionAgent:
             assert e["confidence"] > 0.5, (
                 f"Entity '{e['text']}' confidence {e['confidence']} too low"
             )
-            assert e["type"] in ("PERSON", "ORGANIZATION", "CONCEPT", "PLACE", "EVENT", "TECHNOLOGY"), (
-                f"Entity '{e['text']}' has unexpected type '{e['type']}'"
-            )
+            assert e["type"] in (
+                "PERSON",
+                "ORGANIZATION",
+                "CONCEPT",
+                "PLACE",
+                "EVENT",
+                "TECHNOLOGY",
+            ), f"Entity '{e['text']}' has unexpected type '{e['type']}'"
 
         # Fast path should be used (GLiNER available in k3d pod)
         assert data.get("path_used") == "fast", (
@@ -708,9 +738,9 @@ class TestEntityExtractionAgent:
         assert "python" in entity_texts, (
             f"Must detect 'Python' as entity, got: {entity_texts}"
         )
-        assert "tensorflow" in entity_texts or any("tensorflow" in t for t in entity_texts), (
-            f"Must detect 'TensorFlow' as entity, got: {entity_texts}"
-        )
+        assert "tensorflow" in entity_texts or any(
+            "tensorflow" in t for t in entity_texts
+        ), f"Must detect 'TensorFlow' as entity, got: {entity_texts}"
 
         # Verify types for each detected entity
         for e in entities:
@@ -722,9 +752,12 @@ class TestEntityExtractionAgent:
                     f"'Python' confidence {e['confidence']} too low"
                 )
             if "tensorflow" in e["text"].lower():
-                assert e["type"] in ("TECHNOLOGY", "CONCEPT", "SOFTWARE", "FRAMEWORK"), (
-                    f"'TensorFlow' should be TECHNOLOGY, got '{e['type']}'"
-                )
+                assert e["type"] in (
+                    "TECHNOLOGY",
+                    "CONCEPT",
+                    "SOFTWARE",
+                    "FRAMEWORK",
+                ), f"'TensorFlow' should be TECHNOLOGY, got '{e['type']}'"
                 assert e["confidence"] > 0.5, (
                     f"'TensorFlow' confidence {e['confidence']} too low"
                 )
@@ -766,7 +799,9 @@ class TestQueryEnhancementAgent:
                 },
             )
 
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        )
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == "query_enhancement_agent"
@@ -777,7 +812,14 @@ class TestQueryEnhancementAgent:
         all_expansion_text = " ".join(t.lower() for t in expansion)
         ml_related = any(
             term in all_expansion_text
-            for term in ("machine learning", "deep learning", "neural", "attention", "nlp", "language model")
+            for term in (
+                "machine learning",
+                "deep learning",
+                "neural",
+                "attention",
+                "nlp",
+                "language model",
+            )
         )
         assert ml_related or len(expansion) > 0, (
             f"Expected ML-related expansion terms for 'ML transformer videos', got: {expansion}"
@@ -785,9 +827,7 @@ class TestQueryEnhancementAgent:
 
         # Query variants should be non-empty (RRF fusion)
         variants = data.get("query_variants", [])
-        assert len(variants) >= 1, (
-            f"Expected at least 1 query variant, got: {variants}"
-        )
+        assert len(variants) >= 1, f"Expected at least 1 query variant, got: {variants}"
 
         # Confidence should be positive
         assert data.get("confidence", 0) > 0, (
@@ -809,11 +849,23 @@ class TestQueryEnhancementAgent:
                     "context": {
                         "tenant_id": TENANT_ID,
                         "entities": [
-                            {"text": "TensorFlow", "type": "TECHNOLOGY", "confidence": 0.9},
-                            {"text": "neural networks", "type": "CONCEPT", "confidence": 0.85},
+                            {
+                                "text": "TensorFlow",
+                                "type": "TECHNOLOGY",
+                                "confidence": 0.9,
+                            },
+                            {
+                                "text": "neural networks",
+                                "type": "CONCEPT",
+                                "confidence": 0.85,
+                            },
                         ],
                         "relationships": [
-                            {"subject": "TensorFlow", "relation": "used_for", "object": "neural networks"},
+                            {
+                                "subject": "TensorFlow",
+                                "relation": "used_for",
+                                "object": "neural networks",
+                            },
                         ],
                     },
                 },
@@ -887,7 +939,9 @@ class TestProfileSelectionAgent:
                 },
             )
 
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+        )
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == "profile_selection_agent"

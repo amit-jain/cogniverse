@@ -59,6 +59,7 @@ def _seed_strategy(
 class _MemoryProxy(MemoryAwareMixin):
     """Minimal MemoryAwareMixin carrier used to test inject_context_into_prompt
     without constructing a full agent (which requires telemetry, LLM, etc.)."""
+
     pass
 
 
@@ -128,10 +129,20 @@ class TestPerAgentStrategyFilter:
         search_text = "filter video frames by temporal proximity to query keywords"
         routing_text = "escalate to orchestration when query spans multiple modalities"
 
-        _seed_strategy(memory_manager, "search_agent", tenant_id, search_text,
-                       applies_when="video search")
-        _seed_strategy(memory_manager, "routing_agent", tenant_id, routing_text,
-                       applies_when="query routing")
+        _seed_strategy(
+            memory_manager,
+            "search_agent",
+            tenant_id,
+            search_text,
+            applies_when="video search",
+        )
+        _seed_strategy(
+            memory_manager,
+            "routing_agent",
+            tenant_id,
+            routing_text,
+            applies_when="query routing",
+        )
 
         learner = StrategyLearner(
             memory_manager=memory_manager,
@@ -174,8 +185,11 @@ class TestRoutingAgentStrategyInjection:
         routing_text = "escalate to orchestration when query spans multiple modalities"
 
         _seed_strategy(
-            memory_manager, "routing_agent", tenant_id, routing_text,
-            applies_when="multi-modal routing"
+            memory_manager,
+            "routing_agent",
+            tenant_id,
+            routing_text,
+            applies_when="multi-modal routing",
         )
 
         # Allow Vespa to index the new strategy before querying.
@@ -202,10 +216,9 @@ class TestRoutingAgentStrategyInjection:
             f"Enriched prompt: {enriched[:300]}"
         )
 
-    def test_routing_agent_memory_init_sets_agent_name(self, memory_manager,
-                                                        vespa_instance,
-                                                        config_manager,
-                                                        schema_loader):
+    def test_routing_agent_memory_init_sets_agent_name(
+        self, memory_manager, vespa_instance, config_manager, schema_loader
+    ):
         """initialize_memory() must set _memory_agent_name = 'routing_agent'
         so that get_strategies() retrieves routing_agent-tagged strategies only.
 
@@ -250,11 +263,16 @@ class TestCodingAgentStrategyInjection:
 
         Before fix #9, CodingAgent lacked MemoryAwareMixin entirely."""
         tenant_id = f"coding_strat_test_{int(time.time() * 1000)}"
-        coding_text = "prefer test-driven approach: write failing test before implementation"
+        coding_text = (
+            "prefer test-driven approach: write failing test before implementation"
+        )
 
         _seed_strategy(
-            memory_manager, "coding_agent", tenant_id, coding_text,
-            applies_when="code generation tasks"
+            memory_manager,
+            "coding_agent",
+            tenant_id,
+            coding_text,
+            applies_when="code generation tasks",
         )
 
         # Allow Vespa to index the new strategy before querying.

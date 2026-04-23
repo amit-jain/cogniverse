@@ -106,9 +106,7 @@ class QueryEnhancementModule(dspy.Module):
             logger.warning(f"Query enhancement failed: {e}, using fallback")
             return self._fallback_enhancement(query)
         if not result.enhanced_query or not result.expansion_terms:
-            logger.warning(
-                "Query enhancement produced empty fields, using fallback"
-            )
+            logger.warning("Query enhancement produced empty fields, using fallback")
             return self._fallback_enhancement(query)
         if result.enhanced_query.strip() == query.strip():
             logger.warning(
@@ -269,7 +267,9 @@ class QueryEnhancementAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info("QueryEnhancementAgent loaded optimized DSPy module from artifact")
+                logger.info(
+                    "QueryEnhancementAgent loaded optimized DSPy module from artifact"
+                )
         except Exception as e:
             logger.debug("No enhancement artifact to load (using defaults): %s", e)
 
@@ -307,10 +307,10 @@ class QueryEnhancementAgent(
             prompt_query = self.inject_context_into_prompt(query, query)
 
         # Build entity context from upstream EntityExtractionAgent
-        entity_context = self._build_entity_context(
-            input.entities, input.relationships
+        entity_context = self._build_entity_context(input.entities, input.relationships)
+        dspy_query = (
+            f"{prompt_query}\n{entity_context}" if entity_context else prompt_query
         )
-        dspy_query = f"{prompt_query}\n{entity_context}" if entity_context else prompt_query
 
         # Enhance query using DSPy (with fallback on failure)
         self.emit_progress("enhancement", "Enhancing query with DSPy...")
@@ -328,7 +328,9 @@ class QueryEnhancementAgent(
             t.strip() for t in (result.expansion_terms or "").split(",") if t.strip()
         ]
         synonyms = [s.strip() for s in (result.synonyms or "").split(",") if s.strip()]
-        context_additions = [c.strip() for c in (result.context or "").split(",") if c.strip()]
+        context_additions = [
+            c.strip() for c in (result.context or "").split(",") if c.strip()
+        ]
 
         # Parse confidence
         try:

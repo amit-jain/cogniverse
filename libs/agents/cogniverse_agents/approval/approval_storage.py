@@ -365,8 +365,9 @@ class ApprovalStorageImpl(ApprovalStorage):
                     # Filter annotations for this specific item using metadata.item_id
                     item_annotations = annotations_df[
                         annotations_df["metadata"].apply(
-                            lambda x: isinstance(x, dict)
-                            and x.get("item_id") == item_id
+                            lambda x: (
+                                isinstance(x, dict) and x.get("item_id") == item_id
+                            )
                         )
                     ]
 

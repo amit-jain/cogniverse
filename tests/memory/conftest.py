@@ -224,8 +224,15 @@ def _cleanup_leftover_memory_test_containers() -> None:
     over time and consume Docker resources.
     """
     result = subprocess.run(
-        ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter",
-         "name=^backend-memory-tests-"],
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--format",
+            "{{.Names}}",
+            "--filter",
+            "name=^backend-memory-tests-",
+        ],
         capture_output=True,
         text=True,
     )

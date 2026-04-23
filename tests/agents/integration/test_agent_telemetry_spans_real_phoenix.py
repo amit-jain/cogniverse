@@ -118,9 +118,7 @@ def _query_phoenix_for_span(
 @pytest.mark.integration
 class TestAgentTelemetrySpansRealPhoenix:
     @pytest.mark.asyncio
-    async def test_agent_emits_span_observable_in_real_phoenix(
-        self, real_telemetry
-    ):
+    async def test_agent_emits_span_observable_in_real_phoenix(self, real_telemetry):
         """Calling agent.process() must emit a span that's queryable via
         the real Phoenix HTTP API. Before fix #10, this would fail because
         AgentBase didn't wrap _process_impl in a span at all."""
@@ -137,9 +135,7 @@ class TestAgentTelemetrySpansRealPhoenix:
         # but allow Phoenix a moment to ingest.
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name(
-            "telemetry_real_test"
-        )
+        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span("SearchAgent.process", project_name, phoenix_url)
 
@@ -166,9 +162,7 @@ class TestAgentTelemetrySpansRealPhoenix:
             AgentType.ROUTING: RoutingAgent,
         }
 
-        project_name = real_telemetry.config.get_project_name(
-            "telemetry_real_test"
-        )
+        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
 
         for agent_type, expected_span_name in SPAN_NAME_BY_AGENT.items():
             agent_cls = agent_classes[agent_type]
@@ -255,9 +249,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         project_name = real_telemetry.config.get_project_name("telemetry_real_test")
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
-        span = _query_phoenix_for_span(
-            "cogniverse.gateway", project_name, phoenix_url
-        )
+        span = _query_phoenix_for_span("cogniverse.gateway", project_name, phoenix_url)
 
         assert span is not None, (
             "cogniverse.gateway span not found in Phoenix. "
@@ -274,9 +266,7 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         )
 
         deps = EntityExtractionDeps()
-        with patch.object(
-            EntityExtractionAgent, "_initialize_extractors"
-        ):
+        with patch.object(EntityExtractionAgent, "_initialize_extractors"):
             agent = EntityExtractionAgent(deps=deps, port=19010)
         agent._gliner_extractor = None
         agent._spacy_analyzer = None
@@ -466,8 +456,10 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
             "search_agent": {"status": "success", "results": []},
         }
 
-        with patch.object(agent, "_create_plan", return_value=mock_plan), \
-             patch.object(agent, "_execute_plan", return_value=mock_results):
+        with (
+            patch.object(agent, "_create_plan", return_value=mock_plan),
+            patch.object(agent, "_execute_plan", return_value=mock_results),
+        ):
             await agent.process(
                 OrchestratorInput(
                     query="find machine learning videos",

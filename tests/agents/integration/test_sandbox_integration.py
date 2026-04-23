@@ -22,7 +22,9 @@ def _openshell_cli_available():
     try:
         result = subprocess.run(
             ["openshell", "--version"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -33,7 +35,9 @@ def _docker_available():
     try:
         result = subprocess.run(
             ["docker", "info"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -44,9 +48,7 @@ pytestmark = [
     pytest.mark.skipif(
         not _openshell_cli_available(), reason="openshell CLI not installed"
     ),
-    pytest.mark.skipif(
-        not _docker_available(), reason="Docker not running"
-    ),
+    pytest.mark.skipif(not _docker_available(), reason="Docker not running"),
 ]
 
 
@@ -63,12 +65,16 @@ def openshell_gateway():
     # Check if gateway is already running (reuse from previous run or manual start)
     info_result = subprocess.run(
         ["openshell", "gateway", "info", "--gateway", GATEWAY_NAME],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     if info_result.returncode == 0 and "ready" in info_result.stdout.lower():
         subprocess.run(
             ["openshell", "gateway", "select", GATEWAY_NAME],
-            capture_output=True, timeout=10, check=False,
+            capture_output=True,
+            timeout=10,
+            check=False,
         )
         yield GATEWAY_NAME
         return  # Don't destroy — we didn't create it
@@ -76,7 +82,9 @@ def openshell_gateway():
     # Kill any container holding the port (from crashed previous runs)
     port_check = subprocess.run(
         ["docker", "ps", "-q", "--filter", f"publish={GATEWAY_PORT}"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     for cid in port_check.stdout.strip().splitlines():
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
@@ -84,28 +92,43 @@ def openshell_gateway():
     # Destroy stale gateway metadata
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True, timeout=60, check=False,
+        capture_output=True,
+        timeout=60,
+        check=False,
     )
     _time.sleep(5)  # Let Docker release ports
 
     result = subprocess.run(
-        ["openshell", "gateway", "start", "--name", GATEWAY_NAME,
-         "--port", str(GATEWAY_PORT)],
-        capture_output=True, text=True, timeout=300,
+        [
+            "openshell",
+            "gateway",
+            "start",
+            "--name",
+            GATEWAY_NAME,
+            "--port",
+            str(GATEWAY_PORT),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
     )
     if result.returncode != 0:
         pytest.fail(f"Failed to start OpenShell gateway: {result.stderr[:500]}")
 
     subprocess.run(
         ["openshell", "gateway", "select", GATEWAY_NAME],
-        capture_output=True, timeout=10, check=False,
+        capture_output=True,
+        timeout=10,
+        check=False,
     )
 
     yield GATEWAY_NAME
 
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
-        capture_output=True, timeout=120, check=False,
+        capture_output=True,
+        timeout=120,
+        check=False,
     )
 
 
@@ -136,8 +159,11 @@ class TestSandboxExecutionSDK:
         client.wait_ready(session.sandbox.name, timeout_seconds=120)
 
         result = session.exec(
-            ["python3", "-c",
-             "import urllib.request; urllib.request.urlopen('http://example.com', timeout=5)"],
+            [
+                "python3",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://example.com', timeout=5)",
+            ],
             timeout_seconds=30,
         )
         assert result.exit_code != 0 or "Error" in result.stderr
@@ -187,5 +213,7 @@ class TestSandboxManagerIntegration:
         assert search_policy["network_policies"]["deny_all_other"] is True
 
         summarizer_policy = manager.get_policy("summarizer_agent")
-        summarizer_ports = {r["port"] for r in summarizer_policy["network_policies"]["egress"]}
+        summarizer_ports = {
+            r["port"] for r in summarizer_policy["network_policies"]["egress"]
+        }
         assert 8080 not in summarizer_ports, "Summarizer should NOT reach Vespa"

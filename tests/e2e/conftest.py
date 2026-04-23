@@ -24,8 +24,8 @@ import httpx
 import pytest
 
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
-RUNTIME = "http://localhost:28000"      # runtime.service.nodePort
-DASHBOARD = "http://localhost:28501"    # dashboard.service.nodePort
+RUNTIME = "http://localhost:28000"  # runtime.service.nodePort
+DASHBOARD = "http://localhost:28501"  # dashboard.service.nodePort
 PHOENIX_URL = "http://localhost:26006"  # phoenix.service.nodePort
 TENANT_ID = "flywheel_org:production"
 
@@ -68,12 +68,18 @@ def _ensure_stack_running() -> bool:
 def _skip_if_no_runtime():
     """Skip marker that checks runtime availability at test time, not import time."""
     if not runtime_available():
-        pytest.skip("Runtime not available at localhost:28000 — run 'cogniverse up' first")
+        pytest.skip(
+            "Runtime not available at localhost:28000 — run 'cogniverse up' first"
+        )
+
 
 def _skip_if_no_dashboard():
     """Skip marker that checks dashboard availability at test time, not import time."""
     if not dashboard_available():
-        pytest.skip("Dashboard not available at localhost:28501 — run 'cogniverse up' first")
+        pytest.skip(
+            "Dashboard not available at localhost:28501 — run 'cogniverse up' first"
+        )
+
 
 # Keep the old names for backward compat but make them no-ops
 # The actual check happens in e2e_stack fixture (autouse, session-scoped)
@@ -94,9 +100,16 @@ def restart_runtime(timeout_s: int = 60) -> bool:
     """
     try:
         subprocess.run(
-            ["kubectl", "rollout", "restart", "deployment/cogniverse-runtime",
-             "-n", "cogniverse"],
-            capture_output=True, timeout=10,
+            [
+                "kubectl",
+                "rollout",
+                "restart",
+                "deployment/cogniverse-runtime",
+                "-n",
+                "cogniverse",
+            ],
+            capture_output=True,
+            timeout=10,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
@@ -125,7 +138,9 @@ def _bootstrap_tenant_and_schemas() -> None:
         return
 
     config = json.loads(config_path.read_text())
-    active_profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+    active_profile = config.get(
+        "active_video_profile", "video_colpali_smol500_mv_frame"
+    )
     all_profiles = config.get("backend", {}).get("profiles", {})
     profile_def = all_profiles.get(active_profile, {})
 
@@ -164,7 +179,9 @@ def _bootstrap_tenant_and_schemas() -> None:
                 timeout=60,
             )
             if resp.status_code not in (200, 201, 409):
-                print(f"Profile registration returned {resp.status_code}: {resp.text[:200]}")
+                print(
+                    f"Profile registration returned {resp.status_code}: {resp.text[:200]}"
+                )
         except (httpx.HTTPError, OSError) as exc:
             print(f"Profile registration failed: {exc}")
 
@@ -199,14 +216,18 @@ def _ingest_sample_video() -> None:
     Uses the runtime's POST /ingestion/upload endpoint with the sample
     ActivityNet video. Idempotent — re-ingesting the same video is harmless.
     """
-    video_path = DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+    video_path = (
+        DATA_ROOT / "testset" / "evaluation" / "sample_videos" / "v_-nl4G-00PtA.mp4"
+    )
     if not video_path.exists():
         print(f"Sample video not found at {video_path}, skipping ingestion")
         return
 
     config_path = DATA_ROOT.parent / "configs" / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    active_profile = config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+    active_profile = config.get(
+        "active_video_profile", "video_colpali_smol500_mv_frame"
+    )
 
     try:
         with open(video_path, "rb") as f:
@@ -224,9 +245,7 @@ def _ingest_sample_video() -> None:
             data = resp.json()
             fed = data.get("documents_fed", 0)
             chunks = data.get("chunks_created", 0)
-            print(
-                f"Sample video ingested: {chunks} chunks, {fed} documents fed"
-            )
+            print(f"Sample video ingested: {chunks} chunks, {fed} documents fed")
             if fed == 0 and chunks > 0:
                 print(
                     "WARNING: chunks created but 0 documents fed to Vespa — "
@@ -269,7 +288,9 @@ def _ensure_sandbox_gateway() -> None:
     try:
         from cogniverse_cli.sandbox import ensure_sandbox_ready
     except ImportError:
-        print("OpenShell sandbox setup unavailable (cogniverse_cli.sandbox not importable)")
+        print(
+            "OpenShell sandbox setup unavailable (cogniverse_cli.sandbox not importable)"
+        )
         return
     try:
         ensure_sandbox_ready()
@@ -297,7 +318,9 @@ def _strip_emoji(text: str) -> str:
     """Strip leading emoji + whitespace from tab text for clean comparison."""
     import re
 
-    return re.sub(r"^[\U0001f300-\U0001faff\u2600-\u27bf\ufe0f\u200d]+\s*", "", text).strip()
+    return re.sub(
+        r"^[\U0001f300-\U0001faff\u2600-\u27bf\ufe0f\u200d]+\s*", "", text
+    ).strip()
 
 
 def _click_tab_by_label(page, label: str, retries: int = 6, settle_ms: int = 3_000):
@@ -1182,7 +1205,11 @@ def _ensure_playwright_browsers() -> None:
             timeout=600,
             check=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ):
         # Let the individual dashboard tests surface the error; don't
         # abort the whole suite just because one optional install failed.
         pass

@@ -26,9 +26,7 @@ CHART_PATH = REPO_ROOT / "charts" / "cogniverse"
 EXPECTED_MOUNT_PATH = "/app/data/quality-monitor/golden_dataset.json"
 EXPECTED_CONFIGMAP_NAME = "cogniverse-quality-monitor-data"
 EXPECTED_VOLUME_NAME = "quality-monitor-data"
-GOLDEN_FILE_IN_CHART = (
-    CHART_PATH / "files" / "quality-monitor" / "golden_dataset.json"
-)
+GOLDEN_FILE_IN_CHART = CHART_PATH / "files" / "quality-monitor" / "golden_dataset.json"
 
 
 pytestmark = pytest.mark.skipif(

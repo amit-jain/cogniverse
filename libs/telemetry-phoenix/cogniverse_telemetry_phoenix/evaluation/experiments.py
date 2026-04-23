@@ -55,7 +55,9 @@ class PhoenixExperimentPlugin:
             )
 
             config_manager = create_default_config_manager()
-            main_config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+            main_config = get_config(
+                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+            )
             all_results = {}
 
             # Run searches for each profile/strategy (similar to Inspect solver)

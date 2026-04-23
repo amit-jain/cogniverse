@@ -236,9 +236,7 @@ def get_agent(tenant_id: str) -> TextAnalysisAgent:
 
     def _build() -> TextAnalysisAgent:
         logger.info(f"Creating new TextAnalysisAgent for tenant: {tenant_id}")
-        return TextAnalysisAgent(
-            tenant_id=tenant_id, config_manager=_config_manager
-        )
+        return TextAnalysisAgent(tenant_id=tenant_id, config_manager=_config_manager)
 
     return _agent_instances.get_or_set(tenant_id, _build)
 

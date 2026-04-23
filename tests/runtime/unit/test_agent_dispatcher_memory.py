@@ -74,9 +74,7 @@ class _NonMemoryAgent:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestInitAgentMemory:
-    def test_calls_initialize_memory_for_mixin_subclass(
-        self, mock_dispatcher
-    ):
+    def test_calls_initialize_memory_for_mixin_subclass(self, mock_dispatcher):
         """The helper must call ``initialize_memory`` with the right
         agent_name, tenant_id, config_manager, and schema_loader."""
         agent = _MemoryAgentStub()
@@ -160,9 +158,7 @@ class TestExecuteCodingTaskWiresMemory:
 
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        source = inspect.getsource(
-            AgentDispatcher._execute_summarization_task
-        )
+        source = inspect.getsource(AgentDispatcher._execute_summarization_task)
         assert "_init_agent_memory" in source, (
             "_execute_summarization_task must call _init_agent_memory()"
         )
@@ -172,9 +168,7 @@ class TestExecuteCodingTaskWiresMemory:
 
         from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
-        source = inspect.getsource(
-            AgentDispatcher._execute_detailed_report_task
-        )
+        source = inspect.getsource(AgentDispatcher._execute_detailed_report_task)
         assert "_init_agent_memory" in source, (
             "_execute_detailed_report_task must call _init_agent_memory()"
         )

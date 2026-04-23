@@ -88,7 +88,8 @@ class SearchService:
             logger.debug(
                 "Live profile lookup via ConfigManager failed for '%s' "
                 "(falling back to startup snapshot): %s",
-                profile, exc,
+                profile,
+                exc,
             )
 
         backend_config = self.config.get("backend", {})
@@ -140,8 +141,7 @@ class SearchService:
         backend_config = {
             "url": system_config.backend_url
             or backend_section.get("url", "http://localhost"),
-            "port": system_config.backend_port
-            or backend_section.get("port", 8080),
+            "port": system_config.backend_port or backend_section.get("port", 8080),
             "schema_name": schema_name,
             "profile": profile,
             "query_encoder": query_encoder,

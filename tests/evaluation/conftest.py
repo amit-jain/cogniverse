@@ -675,8 +675,8 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     app = FastAPI()
     app.include_router(search.router, prefix="/search")
     app.dependency_overrides[search.get_config_manager_dependency] = lambda: cm
-    app.dependency_overrides[search.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
 
     import os

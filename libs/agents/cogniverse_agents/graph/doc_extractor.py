@@ -57,9 +57,7 @@ class DocExtractor:
             return None
         from cogniverse_core.common.models import get_or_load_gliner
 
-        self._gliner = get_or_load_gliner(
-            "urchade/gliner_large-v2.1", logger=logger
-        )
+        self._gliner = get_or_load_gliner("urchade/gliner_large-v2.1", logger=logger)
         if self._gliner is None:
             self._gliner_failed = True
         return self._gliner
@@ -156,7 +154,7 @@ class DocExtractor:
 
             chunk_names = [name for name, _ in entities_in_chunk]
             for i, src in enumerate(chunk_names):
-                for tgt in chunk_names[i + 1:]:
+                for tgt in chunk_names[i + 1 :]:
                     edges.append(
                         Edge(
                             tenant_id=tenant_id,
@@ -186,7 +184,7 @@ class DocExtractor:
                     chunks.append(current)
                 if len(para) > _MAX_CHARS_PER_CHUNK:
                     for i in range(0, len(para), _MAX_CHARS_PER_CHUNK):
-                        chunks.append(para[i:i + _MAX_CHARS_PER_CHUNK])
+                        chunks.append(para[i : i + _MAX_CHARS_PER_CHUNK])
                     current = ""
                 else:
                     current = para
@@ -204,9 +202,28 @@ class DocExtractor:
         capitalized token.
         """
         stopwords = {
-            "the", "this", "that", "these", "those", "there", "here",
-            "when", "where", "how", "why", "what", "which", "who",
-            "it", "its", "a", "an", "and", "but", "or", "so",
+            "the",
+            "this",
+            "that",
+            "these",
+            "those",
+            "there",
+            "here",
+            "when",
+            "where",
+            "how",
+            "why",
+            "what",
+            "which",
+            "who",
+            "it",
+            "its",
+            "a",
+            "an",
+            "and",
+            "but",
+            "or",
+            "so",
         }
         candidates = re.findall(
             r"\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3})\b", chunk

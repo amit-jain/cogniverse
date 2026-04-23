@@ -21,7 +21,9 @@ def _get_kubeconfig() -> str:
     try:
         result = subprocess.run(
             ["k3d", "kubeconfig", "write", "cogniverse"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -39,7 +41,10 @@ def _kubectl(*args, timeout=10) -> str:
         env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
     result = subprocess.run(
         ["kubectl", "-n", "cogniverse", *args],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
     )
     return result.stdout.strip()
 
@@ -53,7 +58,9 @@ def _kubectl_available() -> bool:
             env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
         result = subprocess.run(
             ["kubectl", "version", "--client"],
-            capture_output=True, timeout=5, env=env,
+            capture_output=True,
+            timeout=5,
+            env=env,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -227,8 +234,10 @@ class TestMessagingDeployment:
     def test_messaging_deployment_exists_when_enabled(self):
         """If messaging is enabled, the Deployment should exist."""
         output = _kubectl(
-            "get", "deployments",
-            "-o", "jsonpath={.items[*].metadata.name}",
+            "get",
+            "deployments",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
         )
         deployments = output.split()
         messaging = [d for d in deployments if "messaging" in d]
@@ -236,9 +245,19 @@ class TestMessagingDeployment:
         # If messaging not deployed, verify it's intentionally disabled
         if not messaging:
             helm_output = subprocess.run(
-                ["helm", "get", "values", "cogniverse", "-n", "cogniverse",
-                 "-o", "json"],
-                capture_output=True, text=True, timeout=10,
+                [
+                    "helm",
+                    "get",
+                    "values",
+                    "cogniverse",
+                    "-n",
+                    "cogniverse",
+                    "-o",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if helm_output.stdout:
                 import json

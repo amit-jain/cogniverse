@@ -117,9 +117,7 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
             )
         # Preserve input order (providers return "index" but often in-order already).
         rows = sorted(rows, key=lambda r: r.get("index", 0))
-        arr = np.asarray(
-            [r["embedding"] for r in rows], dtype=np.float32
-        )
+        arr = np.asarray([r["embedding"] for r in rows], dtype=np.float32)
 
         # Call sites pass ``normalize_embeddings=True`` to match
         # SentenceTransformer behavior. Some backends don't L2-normalize

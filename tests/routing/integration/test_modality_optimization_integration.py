@@ -100,7 +100,9 @@ class TestModalityOptimizationIntegration:
         service = SyntheticDataService(
             backend=None, backend_config=None, generator_config=test_generator_config
         )
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=10
+        )
         response = await service.generate(request)
 
         # Convert to ModalityExample objects

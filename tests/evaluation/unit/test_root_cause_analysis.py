@@ -49,7 +49,9 @@ class TestErrorClassification:
         assert analyzer._classify_error("out of memory: failed to allocate") == "memory"
 
     def test_connection_error(self, analyzer):
-        assert analyzer._classify_error("connection refused on port 8080") == "connection"
+        assert (
+            analyzer._classify_error("connection refused on port 8080") == "connection"
+        )
 
     def test_rate_limit_error(self, analyzer):
         assert analyzer._classify_error("rate limit exceeded (429)") == "rate_limit"
@@ -58,7 +60,9 @@ class TestErrorClassification:
         assert analyzer._classify_error("model not found: colpali-v1") == "model_error"
 
     def test_data_format_error(self, analyzer):
-        assert analyzer._classify_error("invalid format: schema mismatch") == "data_format"
+        assert (
+            analyzer._classify_error("invalid format: schema mismatch") == "data_format"
+        )
 
     def test_permission_error(self, analyzer):
         assert analyzer._classify_error("permission denied") == "permission"
@@ -67,7 +71,9 @@ class TestErrorClassification:
         assert analyzer._classify_error("resource not found (404)") == "not_found"
 
     def test_unknown_error(self, analyzer):
-        assert analyzer._classify_error("something went wrong unexpectedly") == "unknown"
+        assert (
+            analyzer._classify_error("something went wrong unexpectedly") == "unknown"
+        )
 
     def test_empty_error(self, analyzer):
         assert analyzer._classify_error("") == "unknown"
@@ -118,7 +124,10 @@ class TestTemporalPatternAnalysis:
     def test_high_failure_rate_hour_detected(self, analyzer):
         base_time = datetime(2024, 1, 1, 10, 0)
         # All 5 traces at hour 10, all failed → 100% failure rate
-        all_traces = [make_trace(f"t{i}", status="error", error="timeout", timestamp=base_time) for i in range(5)]
+        all_traces = [
+            make_trace(f"t{i}", status="error", error="timeout", timestamp=base_time)
+            for i in range(5)
+        ]
         failed_traces = all_traces[:]
 
         patterns = analyzer._analyze_temporal_patterns(failed_traces, all_traces)
@@ -141,7 +150,12 @@ class TestTemporalPatternAnalysis:
         base = datetime(2024, 1, 1, 15, 0)
         # 5 failures within 2 minutes — should trigger burst
         failures = [
-            make_trace(f"t{i}", status="error", error="timeout", timestamp=base + timedelta(seconds=i * 20))
+            make_trace(
+                f"t{i}",
+                status="error",
+                error="timeout",
+                timestamp=base + timedelta(seconds=i * 20),
+            )
             for i in range(5)
         ]
         patterns = analyzer._analyze_temporal_patterns(failures, failures)
@@ -152,10 +166,17 @@ class TestTemporalPatternAnalysis:
     def test_fewer_than_3_failures_no_burst(self, analyzer):
         base = datetime(2024, 1, 1, 11, 0)
         failures = [
-            make_trace(f"t{i}", status="error", error="err", timestamp=base + timedelta(seconds=i))
+            make_trace(
+                f"t{i}",
+                status="error",
+                error="err",
+                timestamp=base + timedelta(seconds=i),
+            )
             for i in range(2)
         ]
-        bursts = analyzer._detect_failure_bursts(sorted(failures, key=lambda x: x.timestamp))
+        bursts = analyzer._detect_failure_bursts(
+            sorted(failures, key=lambda x: x.timestamp)
+        )
         assert bursts == []
 
 
@@ -164,7 +185,9 @@ class TestAttributeCorrelation:
     def test_high_failure_rate_profile_detected(self, analyzer):
         # 8 total with profile "bad_profile", 6 fail → 75% failure rate
         bad_traces = [
-            make_trace(f"bad{i}", status="error", error="timeout", profile="bad_profile")
+            make_trace(
+                f"bad{i}", status="error", error="timeout", profile="bad_profile"
+            )
             for i in range(6)
         ]
         good_bad = [
@@ -178,14 +201,20 @@ class TestAttributeCorrelation:
         all_traces = bad_traces + good_bad + good_traces
         failed_traces = bad_traces
 
-        patterns = analyzer._calculate_attribute_correlation(failed_traces, all_traces, "profile")
+        patterns = analyzer._calculate_attribute_correlation(
+            failed_traces, all_traces, "profile"
+        )
         assert any(p.pattern_value == "bad_profile" for p in patterns)
 
     def test_uncorrelated_attribute_excluded(self, analyzer):
         # Equal failure rate across profiles → no significant correlation
         traces = [
-            make_trace(f"t{i}", status=("error" if i % 2 == 0 else "success"),
-                       error=("err" if i % 2 == 0 else None), profile="profileA")
+            make_trace(
+                f"t{i}",
+                status=("error" if i % 2 == 0 else "success"),
+                error=("err" if i % 2 == 0 else None),
+                profile="profileA",
+            )
             for i in range(10)
         ]
         failed = [t for t in traces if t.status == "error"]
@@ -223,8 +252,12 @@ class TestFailurePatternAnalysis:
 
     def test_profiles_and_strategies_counted(self, analyzer):
         failed = [
-            make_trace("t1", status="error", error="err", profile="colpali", strategy="rerank"),
-            make_trace("t2", status="error", error="err", profile="colpali", strategy="default"),
+            make_trace(
+                "t1", status="error", error="err", profile="colpali", strategy="rerank"
+            ),
+            make_trace(
+                "t2", status="error", error="err", profile="colpali", strategy="default"
+            ),
         ]
         all_traces = failed
         patterns = analyzer._analyze_failure_patterns(failed, all_traces)
@@ -241,7 +274,9 @@ class TestPerformancePatternAnalysis:
             make_trace("s2", duration_ms=2000.0, operation="embed"),
             make_trace("s3", duration_ms=800.0, operation="search"),
         ]
-        normal = [make_trace(f"n{i}", duration_ms=100.0, operation="embed") for i in range(5)]
+        normal = [
+            make_trace(f"n{i}", duration_ms=100.0, operation="embed") for i in range(5)
+        ]
 
         patterns = analyzer._analyze_performance_patterns(slow, normal)
 
@@ -292,10 +327,15 @@ class TestCompareByAttribute:
 @pytest.mark.unit
 class TestStatisticalAnalysis:
     def test_basic_stats_computed(self, analyzer):
-        successful = [make_trace(f"s{i}", status="success", duration_ms=float(100 + i * 10)) for i in range(10)]
+        successful = [
+            make_trace(f"s{i}", status="success", duration_ms=float(100 + i * 10))
+            for i in range(10)
+        ]
         failed = [make_trace("f1", status="error", error="timeout")]
 
-        stats = analyzer._perform_statistical_analysis(failed, successful, successful + failed)
+        stats = analyzer._perform_statistical_analysis(
+            failed, successful, successful + failed
+        )
         assert abs(stats["failure_rate"] - 1 / 11) < 1e-9
         assert abs(stats["success_rate"] - 10 / 11) < 1e-9
         assert "mean" in stats["success_duration_stats"]
@@ -323,13 +363,23 @@ class TestGenerateFailureHypotheses:
         }
         hypotheses = analyzer._generate_failure_hypotheses(failed, failure_analysis)
         assert len(hypotheses) >= 1
-        assert hypotheses[0].category in ("network", "timeout", "resource", "model", "data", "throttling")
+        assert hypotheses[0].category in (
+            "network",
+            "timeout",
+            "resource",
+            "model",
+            "data",
+            "throttling",
+        )
         assert hypotheses[0].confidence > 0.0
         assert len(hypotheses[0].evidence) >= 1
 
     def test_temporal_burst_produces_hypothesis(self, analyzer):
         base = datetime(2024, 1, 1, 14, 0)
-        failed = [make_trace(f"t{i}", status="error", error="err", timestamp=base) for i in range(3)]
+        failed = [
+            make_trace(f"t{i}", status="error", error="err", timestamp=base)
+            for i in range(3)
+        ]
         failure_analysis = {
             "error_types": Counter(),
             "failed_operations": Counter(),
@@ -379,7 +429,9 @@ class TestGenerateFailureHypotheses:
 @pytest.mark.unit
 class TestGeneratePerformanceHypotheses:
     def test_slow_operation_hypothesis(self, analyzer):
-        slow = [make_trace(f"s{i}", operation="embed", duration_ms=2000.0) for i in range(4)]
+        slow = [
+            make_trace(f"s{i}", operation="embed", duration_ms=2000.0) for i in range(4)
+        ]
         perf_analysis = {
             "slow_operations": {
                 "embed": {
@@ -406,7 +458,10 @@ class TestGeneratePerformanceHypotheses:
         assert "20.0x" in op_hypotheses[0].evidence[3]  # slowdown factor in evidence
 
     def test_slow_profile_hypothesis(self, analyzer):
-        slow = [make_trace(f"s{i}", profile="heavy_profile", duration_ms=3000.0) for i in range(5)]
+        slow = [
+            make_trace(f"s{i}", profile="heavy_profile", duration_ms=3000.0)
+            for i in range(5)
+        ]
         perf_analysis = {
             "slow_operations": {},
             "slow_profiles": Counter({"heavy_profile": 5}),
@@ -452,7 +507,9 @@ class TestGenerateRecommendations:
             )
         ]
         recs = analyzer._generate_recommendations(hypotheses)
-        assert any(r["priority"] == "high" and r["category"] == "resource" for r in recs)
+        assert any(
+            r["priority"] == "high" and r["category"] == "resource" for r in recs
+        )
 
     def test_configuration_category_medium_priority(self, analyzer):
         hypotheses = [
@@ -466,16 +523,36 @@ class TestGenerateRecommendations:
             )
         ]
         recs = analyzer._generate_recommendations(hypotheses)
-        assert any(r["priority"] == "medium" and r["category"] == "configuration" for r in recs)
+        assert any(
+            r["priority"] == "medium" and r["category"] == "configuration" for r in recs
+        )
 
     def test_recommendations_sorted_by_priority(self, analyzer):
         hypotheses = [
-            RootCauseHypothesis(hypothesis="Slow", confidence=0.5, evidence=[], affected_traces=[],
-                                suggested_action="Optimize", category="performance"),
-            RootCauseHypothesis(hypothesis="OOM", confidence=0.9, evidence=[], affected_traces=[],
-                                suggested_action="Scale", category="resource"),
-            RootCauseHypothesis(hypothesis="Config bad", confidence=0.7, evidence=[], affected_traces=[],
-                                suggested_action="Fix", category="configuration"),
+            RootCauseHypothesis(
+                hypothesis="Slow",
+                confidence=0.5,
+                evidence=[],
+                affected_traces=[],
+                suggested_action="Optimize",
+                category="performance",
+            ),
+            RootCauseHypothesis(
+                hypothesis="OOM",
+                confidence=0.9,
+                evidence=[],
+                affected_traces=[],
+                suggested_action="Scale",
+                category="resource",
+            ),
+            RootCauseHypothesis(
+                hypothesis="Config bad",
+                confidence=0.7,
+                evidence=[],
+                affected_traces=[],
+                suggested_action="Fix",
+                category="configuration",
+            ),
         ]
         recs = analyzer._generate_recommendations(hypotheses)
         priorities = [r["priority"] for r in recs]
@@ -488,14 +565,23 @@ class TestAnalyzeFailures:
     def test_full_analysis_with_mixed_traces(self, analyzer):
         base = datetime(2024, 1, 1, 10, 0)
         failed = [
-            make_trace(f"f{i}", status="error", error="connection refused",
-                       operation="search", profile="colpali",
-                       timestamp=base + timedelta(minutes=i))
+            make_trace(
+                f"f{i}",
+                status="error",
+                error="connection refused",
+                operation="search",
+                profile="colpali",
+                timestamp=base + timedelta(minutes=i),
+            )
             for i in range(5)
         ]
         successful = [
-            make_trace(f"s{i}", status="success", duration_ms=float(100 + i * 20),
-                       timestamp=base + timedelta(minutes=i + 5))
+            make_trace(
+                f"s{i}",
+                status="success",
+                duration_ms=float(100 + i * 20),
+                timestamp=base + timedelta(minutes=i + 5),
+            )
             for i in range(10)
         ]
         all_traces = failed + successful
@@ -522,11 +608,17 @@ class TestAnalyzeFailures:
 
     def test_performance_degraded_traces_identified(self, analyzer):
         # 8 fast traces + 2 very slow (should be above P95 threshold)
-        fast = [make_trace(f"f{i}", status="success", duration_ms=100.0) for i in range(8)]
-        slow = [make_trace(f"s{i}", status="success", duration_ms=5000.0) for i in range(2)]
+        fast = [
+            make_trace(f"f{i}", status="success", duration_ms=100.0) for i in range(8)
+        ]
+        slow = [
+            make_trace(f"s{i}", status="success", duration_ms=5000.0) for i in range(2)
+        ]
         all_traces = fast + slow
 
-        result = analyzer.analyze_failures(all_traces, include_performance=True, performance_threshold_percentile=80)
+        result = analyzer.analyze_failures(
+            all_traces, include_performance=True, performance_threshold_percentile=80
+        )
         # Some slow traces must be identified
         assert result["summary"]["performance_degraded"] >= 1
 
@@ -540,10 +632,24 @@ class TestAnalyzeFailures:
 class TestReportGeneration:
     def test_markdown_report_contains_sections(self, analyzer):
         base = datetime(2024, 1, 1, 10, 0)
-        failed = [make_trace(f"f{i}", status="error", error="timeout error",
-                             timestamp=base + timedelta(minutes=i)) for i in range(3)]
-        successful = [make_trace(f"s{i}", status="success", duration_ms=100.0,
-                                 timestamp=base + timedelta(minutes=i + 3)) for i in range(10)]
+        failed = [
+            make_trace(
+                f"f{i}",
+                status="error",
+                error="timeout error",
+                timestamp=base + timedelta(minutes=i),
+            )
+            for i in range(3)
+        ]
+        successful = [
+            make_trace(
+                f"s{i}",
+                status="success",
+                duration_ms=100.0,
+                timestamp=base + timedelta(minutes=i + 3),
+            )
+            for i in range(10)
+        ]
         analysis = analyzer.analyze_failures(failed + successful)
 
         report = analyzer.generate_rca_report(analysis, format="markdown")
@@ -553,7 +659,9 @@ class TestReportGeneration:
 
     def test_html_report_contains_structure(self, analyzer):
         failed = [make_trace("f1", status="error", error="timeout error")]
-        successful = [make_trace(f"s{i}", status="success", duration_ms=100.0) for i in range(5)]
+        successful = [
+            make_trace(f"s{i}", status="success", duration_ms=100.0) for i in range(5)
+        ]
         analysis = analyzer.analyze_failures(failed + successful)
 
         report = analyzer.generate_rca_report(analysis, format="html")
@@ -562,13 +670,17 @@ class TestReportGeneration:
         assert "Total Traces:" in report
 
     def test_plain_text_format(self, analyzer):
-        analysis = analyzer.analyze_failures([make_trace("t1", status="success", duration_ms=100.0)])
+        analysis = analyzer.analyze_failures(
+            [make_trace("t1", status="success", duration_ms=100.0)]
+        )
         report = analyzer.generate_rca_report(analysis, format="text")
         assert "total_traces" in report
 
     def test_markdown_includes_statistical_table_when_profiles_exist(self, analyzer):
         traces = [
-            make_trace(f"t{i}", status="success", duration_ms=float(100 + i), profile="prof_a")
+            make_trace(
+                f"t{i}", status="success", duration_ms=float(100 + i), profile="prof_a"
+            )
             for i in range(5)
         ] + [
             make_trace(f"f{i}", status="error", error="err", profile="prof_b")

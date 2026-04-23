@@ -81,7 +81,9 @@ class AnnotationRequest:
             "status": self.status.value,
             "assigned_to": self.assigned_to,
             "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
-            "sla_deadline": self.sla_deadline.isoformat() if self.sla_deadline else None,
+            "sla_deadline": self.sla_deadline.isoformat()
+            if self.sla_deadline
+            else None,
             "completed_at": (
                 self.completed_at.isoformat() if self.completed_at else None
             ),

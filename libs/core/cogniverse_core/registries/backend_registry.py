@@ -428,12 +428,15 @@ class BackendRegistry:
             except Exception as exc:
                 logger.warning(
                     "add_profile(%s) failed on backend %s: %s",
-                    profile_name, key, exc,
+                    profile_name,
+                    key,
+                    exc,
                 )
         if updated:
             logger.info(
                 "Propagated profile '%s' to %d cached backend(s)",
-                profile_name, updated,
+                profile_name,
+                updated,
             )
         return updated
 
@@ -453,7 +456,9 @@ class BackendRegistry:
             except Exception as exc:
                 logger.warning(
                     "remove_profile(%s) failed on backend %s: %s",
-                    profile_name, key, exc,
+                    profile_name,
+                    key,
+                    exc,
                 )
         return updated
 

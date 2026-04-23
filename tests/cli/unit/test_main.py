@@ -76,7 +76,10 @@ class TestUpCommand:
         runner = CliRunner()
         result = runner.invoke(cli, ["up"])
         assert result.exit_code != 0
-        assert "Failed to install" in result.output or "Missing prerequisites" in result.output
+        assert (
+            "Failed to install" in result.output
+            or "Missing prerequisites" in result.output
+        )
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
@@ -164,7 +167,11 @@ class TestUpCommand:
         result = runner.invoke(cli, ["up"])
         assert result.exit_code == 0
         call_kwargs = mock_helm.call_args
-        set_vals = call_kwargs[1].get("set_values") or call_kwargs[0][2] if len(call_kwargs[0]) > 2 else call_kwargs[1].get("set_values")
+        set_vals = (
+            call_kwargs[1].get("set_values") or call_kwargs[0][2]
+            if len(call_kwargs[0]) > 2
+            else call_kwargs[1].get("set_values")
+        )
         assert set_vals is not None
         assert set_vals["llm.builtin.enabled"] == "false"
         assert set_vals["llm.external.enabled"] == "true"
@@ -252,9 +259,7 @@ class TestDownCommand:
         mock_delete.assert_called_once()
         # kubectl delete namespace called twice (cogniverse + argo)
         assert mock_run.call_count == 2
-        namespaces_deleted = [
-            call[0][0][3] for call in mock_run.call_args_list
-        ]
+        namespaces_deleted = [call[0][0][3] for call in mock_run.call_args_list]
         assert "cogniverse" in namespaces_deleted
         assert "argo" in namespaces_deleted
 
@@ -273,9 +278,7 @@ class TestStatusCommand:
     @patch("cogniverse_cli.main.check_service_health")
     def test_status_prints_table(self, mock_health: MagicMock) -> None:
         """Status command prints a table with all services."""
-        mock_health.return_value = {
-            name: False for name in SERVICE_HEALTH_URLS
-        }
+        mock_health.return_value = {name: False for name in SERVICE_HEALTH_URLS}
         runner = CliRunner()
         result = runner.invoke(cli, ["status"])
         assert result.exit_code == 0

@@ -23,14 +23,10 @@ class InviteTokenManager:
     def __init__(self, config_manager):
         self.config_manager = config_manager
 
-    def generate_token(
-        self, tenant_id: str, expires_in_hours: int = 24
-    ) -> str:
+    def generate_token(self, tenant_id: str, expires_in_hours: int = 24) -> str:
         """Generate a new invite token for a tenant."""
         token = uuid.uuid4().hex
-        expiry = (
-            datetime.utcnow() + timedelta(hours=expires_in_hours)
-        ).isoformat()
+        expiry = (datetime.utcnow() + timedelta(hours=expires_in_hours)).isoformat()
 
         self.config_manager.set_config_value(
             tenant_id="_system",
@@ -138,17 +134,13 @@ class UserTenantMapper:
                 agent_name=GATEWAY_AGENT_NAME,
                 metadata=metadata,
             )
-            logger.info(
-                f"Registered {platform} user {external_user_id} → {tenant_id}"
-            )
+            logger.info(f"Registered {platform} user {external_user_id} → {tenant_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to register user mapping: {e}")
             return False
 
-    def get_tenant_id(
-        self, platform: str, external_user_id: str
-    ) -> Optional[str]:
+    def get_tenant_id(self, platform: str, external_user_id: str) -> Optional[str]:
         """Look up tenant_id for an external user."""
         try:
             results = self.memory_manager.search_memory(

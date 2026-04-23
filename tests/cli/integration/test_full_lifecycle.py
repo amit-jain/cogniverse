@@ -22,7 +22,10 @@ class TestDeployedServices:
     def test_vespa_config_healthy(self, deployed_stack):
         """Vespa config server responds to health check."""
         from tests.cli.integration.conftest import PORTS
-        resp = httpx.get(f"http://localhost:{PORTS['vespa_config']}/state/v1/health", timeout=10)
+
+        resp = httpx.get(
+            f"http://localhost:{PORTS['vespa_config']}/state/v1/health", timeout=10
+        )
         assert resp.status_code == 200
 
     def test_vespa_query_reachable(self, deployed_stack):
@@ -45,7 +48,9 @@ class TestDeployedServices:
 
     def test_dashboard_healthy(self, deployed_stack):
         """Dashboard Streamlit app responds to health check."""
-        resp = httpx.get(f"{deployed_stack['dashboard_url']}/_stcore/health", timeout=10)
+        resp = httpx.get(
+            f"{deployed_stack['dashboard_url']}/_stcore/health", timeout=10
+        )
         assert resp.status_code == 200
 
     def test_phoenix_healthy(self, deployed_stack):
@@ -56,10 +61,20 @@ class TestDeployedServices:
     def test_all_pods_running(self, deployed_stack):
         """All pods in test namespace are Running."""
         from tests.cli.integration.conftest import NAMESPACE
+
         result = subprocess.run(
-            ["kubectl", "get", "pods", "-n", NAMESPACE,
-             "-o", "jsonpath={.items[*].status.phase}"],
-            capture_output=True, text=True, timeout=10,
+            [
+                "kubectl",
+                "get",
+                "pods",
+                "-n",
+                NAMESPACE,
+                "-o",
+                "jsonpath={.items[*].status.phase}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         phases = result.stdout.strip().split()
         running = [p for p in phases if p == "Running"]
@@ -68,9 +83,12 @@ class TestDeployedServices:
     def test_helm_release_deployed(self, deployed_stack):
         """Helm release exists and is deployed."""
         from tests.cli.integration.conftest import NAMESPACE
+
         result = subprocess.run(
             ["helm", "status", "cogniverse", "-n", NAMESPACE],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         assert result.returncode == 0
         assert "deployed" in result.stdout.lower()
@@ -86,7 +104,9 @@ class TestClusterLifecycle:
         """CLI entrypoint works."""
         result = subprocess.run(
             ["uv", "run", "cogniverse", "--help"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert result.returncode == 0
         assert "up" in result.stdout
@@ -97,7 +117,9 @@ class TestClusterLifecycle:
         """Status command works even with no cluster (shows all down)."""
         result = subprocess.run(
             ["uv", "run", "cogniverse", "status"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         # Should not crash, just show services as down
         assert result.returncode == 0

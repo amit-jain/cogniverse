@@ -22,9 +22,7 @@ if TYPE_CHECKING:
 class VideoPlayerTool(BaseTool):
     """Tool for playing videos with frame tagging based on search results"""
 
-    def __init__(
-        self, tenant_id: str = None, config_manager: "ConfigManager" = None
-    ):
+    def __init__(self, tenant_id: str = None, config_manager: "ConfigManager" = None):
         """Initialize video player tool
 
         Args:

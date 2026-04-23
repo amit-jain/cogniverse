@@ -171,9 +171,7 @@ class TestReservedPrefix:
     @pytest.mark.ci_fast
     def test_validate_rejects_system_tenant_id(self):
         """SYSTEM_TENANT_ID must not be registrable as a user tenant."""
-        with pytest.raises(
-            ValueError, match="reserved for runtime-internal use"
-        ):
+        with pytest.raises(ValueError, match="reserved for runtime-internal use"):
             validate_tenant_id(SYSTEM_TENANT_ID)
 
     @pytest.mark.ci_fast

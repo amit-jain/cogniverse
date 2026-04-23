@@ -250,9 +250,7 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         self.telemetry_manager = telemetry_manager
 
-    def _process_span(
-        self, typed_input: Any
-    ) -> ContextManager[Any]:
+    def _process_span(self, typed_input: Any) -> ContextManager[Any]:
         """Return a context manager that wraps ``_process_impl`` in a span.
 
         Span name is ``f"{ClassName}.process"`` so QualityMonitor and other

@@ -19,19 +19,18 @@ def main():
     parser.add_argument("--test-results", help="Path to specific test results JSON")
     parser.add_argument("--experiments-dir", help="Path to experiments directory")
     args = parser.parse_args()
-    
+
     print("🔍 Looking for latest results...")
-    
+
     # Generate the integrated report
     output_file = generate_integrated_report(
-        test_results_file=args.test_results,
-        experiment_results_dir=args.experiments_dir
+        test_results_file=args.test_results, experiment_results_dir=args.experiments_dir
     )
-    
+
     if args.open and output_file:
         print("\n🌐 Opening report in browser...")
         webbrowser.open(f"file://{output_file.absolute()}")
-    
+
     print("\n✅ Done!")
 
 

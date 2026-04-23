@@ -32,7 +32,9 @@ HF_CACHE_TOKEN_PATH = Path.home() / ".cache" / "huggingface" / "token"
 console = Console()
 
 
-def _kubectl(args: list[str], input_data: Optional[str] = None) -> subprocess.CompletedProcess:
+def _kubectl(
+    args: list[str], input_data: Optional[str] = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["kubectl", *args],
         input=input_data,
@@ -89,12 +91,20 @@ def sync_hf_token_to_cluster(required: bool = False) -> bool:
     if ns_check.returncode != 0:
         _kubectl(["create", "namespace", NAMESPACE])
 
-    rendered = _kubectl([
-        "create", "secret", "generic", HF_TOKEN_SECRET,
-        "-n", NAMESPACE,
-        f"--from-literal=HF_TOKEN={token}",
-        "--dry-run=client", "-o", "yaml",
-    ])
+    rendered = _kubectl(
+        [
+            "create",
+            "secret",
+            "generic",
+            HF_TOKEN_SECRET,
+            "-n",
+            NAMESPACE,
+            f"--from-literal=HF_TOKEN={token}",
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
+    )
     if rendered.returncode != 0:
         console.print(f"[red]Failed to render hf-token Secret: {rendered.stderr}[/red]")
         return False
@@ -104,5 +114,7 @@ def sync_hf_token_to_cluster(required: bool = False) -> bool:
         console.print(f"[red]Failed to apply hf-token Secret: {applied.stderr}[/red]")
         return False
 
-    console.print(f"[green]HuggingFace token synced to {NAMESPACE}/{HF_TOKEN_SECRET}[/green]")
+    console.print(
+        f"[green]HuggingFace token synced to {NAMESPACE}/{HF_TOKEN_SECRET}[/green]"
+    )
     return True

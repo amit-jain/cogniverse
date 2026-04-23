@@ -35,7 +35,9 @@ class TestDeepResearchE2E:
                 },
             )
 
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:500]}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text[:500]}"
+        )
         data = resp.json()
         assert data["status"] == "success"
         assert data["agent"] == "deep_research_agent"
@@ -185,4 +187,3 @@ class TestAnnotationQueueE2E:
                 json={"label": "correct_routing"},
             )
             assert resp.status_code == 404
-

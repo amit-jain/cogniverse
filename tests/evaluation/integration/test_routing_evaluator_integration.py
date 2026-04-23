@@ -65,6 +65,7 @@ async def generate_routing_spans(env_config: dict):
 
     # Poll for spans to arrive in Phoenix (gRPC export is async)
     from phoenix.client import Client
+
     client = Client(base_url="http://localhost:16006")
     for _ in range(15):
         time.sleep(2)
@@ -310,14 +311,20 @@ class TestRoutingEvaluatorIntegration:
                 # Check Phoenix nested format
                 routing_attrs = span.get("attributes.routing")
                 if routing_attrs and isinstance(routing_attrs, dict):
-                    has_agent = "chosen_agent" in routing_attrs or "recommended_agent" in routing_attrs
+                    has_agent = (
+                        "chosen_agent" in routing_attrs
+                        or "recommended_agent" in routing_attrs
+                    )
                     has_confidence = "confidence" in routing_attrs
 
                 # Check flat dotted keys
                 if not has_agent:
                     has_agent = any(
                         k in span
-                        for k in ("attributes.routing.recommended_agent", "attributes.routing.chosen_agent")
+                        for k in (
+                            "attributes.routing.recommended_agent",
+                            "attributes.routing.chosen_agent",
+                        )
                     )
                 if not has_confidence:
                     has_confidence = "attributes.routing.confidence" in span

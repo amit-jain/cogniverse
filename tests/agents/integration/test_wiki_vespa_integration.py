@@ -41,8 +41,7 @@ _HTTP_PORT, _CONFIG_PORT = generate_unique_ports(__name__)
 
 def _doc_url(port: int, doc_id: str) -> str:
     return (
-        f"http://localhost:{port}/document/v1"
-        f"/wiki_content/{WIKI_SCHEMA}/docid/{doc_id}"
+        f"http://localhost:{port}/document/v1/wiki_content/{WIKI_SCHEMA}/docid/{doc_id}"
     )
 
 
@@ -87,7 +86,9 @@ def _wait_for_data_port(http_port: int, timeout: int = 120) -> bool:
     return False
 
 
-def _wait_for_schema_ready(http_port: int, schema_name: str, timeout: int = 120) -> bool:
+def _wait_for_schema_ready(
+    http_port: int, schema_name: str, timeout: int = 120
+) -> bool:
     """Feed a minimal probe document to confirm the schema is accepting writes."""
     try:
         resp = requests.post(
@@ -95,7 +96,9 @@ def _wait_for_schema_ready(http_port: int, schema_name: str, timeout: int = 120)
             json={"model": "nomic-embed-text", "input": "readiness"},
             timeout=10,
         )
-        embedding = resp.json()["embeddings"][0] if resp.status_code == 200 else [0.01] * 768
+        embedding = (
+            resp.json()["embeddings"][0] if resp.status_code == 200 else [0.01] * 768
+        )
     except Exception:
         embedding = [0.01] * 768
 
@@ -125,7 +128,9 @@ def _wait_for_schema_ready(http_port: int, schema_name: str, timeout: int = 120)
                 requests.delete(url, timeout=5)
                 return True
             if i % 10 == 0:
-                print(f"   readiness attempt {i + 1}: {resp.status_code} {resp.text[:80]}")
+                print(
+                    f"   readiness attempt {i + 1}: {resp.status_code} {resp.text[:80]}"
+                )
         except Exception as exc:
             if i % 10 == 0:
                 print(f"   readiness attempt {i + 1}: {exc}")
@@ -161,7 +166,9 @@ def _deploy_wiki_schema(config_port: int, http_port: int) -> None:
     schema_json["document"]["name"] = WIKI_SCHEMA
     wiki_schema = parser.parse_schema(schema_json)
 
-    app_package = ApplicationPackage(name="cogniverse", schema=metadata_schemas + [wiki_schema])
+    app_package = ApplicationPackage(
+        name="cogniverse", schema=metadata_schemas + [wiki_schema]
+    )
     mgr = VespaSchemaManager(
         backend_endpoint="http://localhost",
         backend_port=config_port,
@@ -181,18 +188,26 @@ def wiki_vespa():
     config_port = _CONFIG_PORT
 
     machine = platform.machine().lower()
-    docker_platform = "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    docker_platform = (
+        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    )
 
     subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
     subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
 
     result = subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", CONTAINER_NAME,
-            "-p", f"{http_port}:8080",
-            "-p", f"{config_port}:19071",
-            "--platform", docker_platform,
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER_NAME,
+            "-p",
+            f"{http_port}:8080",
+            "-p",
+            f"{config_port}:19071",
+            "--platform",
+            docker_platform,
             "vespaengine/vespa",
         ],
         capture_output=True,
@@ -352,7 +367,9 @@ class TestWikiVespaIntegration:
         )
 
         updated_doc = _get_vespa_doc(port, doc_id)
-        assert updated_doc is not None, f"Topic page {doc_id} not found after second save."
+        assert updated_doc is not None, (
+            f"Topic page {doc_id} not found after second save."
+        )
         updated_content = updated_doc.get("fields", {}).get("content", "")
         updated_update_count = updated_doc.get("fields", {}).get("update_count", 0)
 
@@ -419,9 +436,11 @@ class TestWikiVespaIntegration:
         assert doc is not None, "Stale page not found in Vespa"
 
         updated_at = doc.get("fields", {}).get("updated_at", "")
-        assert "2026-02" in updated_at or "2026-01" in updated_at or old_date[:10] in updated_at, (
-            f"Page should have old timestamp but has {updated_at}"
-        )
+        assert (
+            "2026-02" in updated_at
+            or "2026-01" in updated_at
+            or old_date[:10] in updated_at
+        ), f"Page should have old timestamp but has {updated_at}"
 
     def test_lint_detects_orphan_topic(self, wiki_manager):
         """A topic page not referenced by any session is an orphan."""

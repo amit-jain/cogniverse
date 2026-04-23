@@ -56,7 +56,8 @@ class DeepResearchOutput(AgentOutput):
     )
     confidence: float = Field(0.0, description="Overall research confidence")
     rlm_synthesis: Optional[str] = Field(
-        None, description="RLM-synthesized answer from accumulated evidence (only when RLM enabled)"
+        None,
+        description="RLM-synthesized answer from accumulated evidence (only when RLM enabled)",
     )
     rlm_telemetry: Optional[Dict[str, Any]] = Field(
         None, description="RLM telemetry metrics for A/B testing"
@@ -136,9 +137,7 @@ class DeepResearchAgent(
         self._evaluator = dspy.ChainOfThought(EvidenceEvaluationSignature)
         self._synthesizer = dspy.ChainOfThought(SynthesisSignature)
 
-    async def _process_impl(
-        self, input: DeepResearchInput
-    ) -> DeepResearchOutput:
+    async def _process_impl(self, input: DeepResearchInput) -> DeepResearchOutput:
         # Set tenant for memory/instructions injection and enrich the query
         # with the full context stack (instructions + learned strategies +
         # tenant memories) before decomposition. Mirrors the pattern used
@@ -167,7 +166,9 @@ class DeepResearchAgent(
             all_evidence.extend(new_evidence)
             all_citations.extend(self._extract_citations(new_evidence))
 
-            self.emit_progress("evaluate", f"Evaluating evidence (iteration {iteration})...")
+            self.emit_progress(
+                "evaluate", f"Evaluating evidence (iteration {iteration})..."
+            )
             sufficient, gaps, confidence = await self._evaluate_evidence(
                 input.query, sub_questions, all_evidence
             )
@@ -204,7 +205,9 @@ class DeepResearchAgent(
                     rlm_options=input.rlm,
                 )
                 rlm_synthesis = rlm_result.answer
-                rlm_telemetry = self.get_rlm_telemetry(rlm_result, len(evidence_context))
+                rlm_telemetry = self.get_rlm_telemetry(
+                    rlm_result, len(evidence_context)
+                )
                 logger.info(
                     f"RLM synthesis complete: depth={rlm_result.depth_reached}, "
                     f"calls={rlm_result.total_calls}, latency={rlm_result.latency_ms:.0f}ms"
@@ -288,13 +291,10 @@ class DeepResearchAgent(
 
         return sufficient, gaps, confidence
 
-    async def _synthesize(
-        self, query: str, evidence: List[Dict[str, Any]]
-    ) -> str:
+    async def _synthesize(self, query: str, evidence: List[Dict[str, Any]]) -> str:
         """Synthesize evidence into a research report."""
         evidence_text = "\n\n".join(
-            f"## {e['question']}\n{e.get('results', 'No results')}"
-            for e in evidence
+            f"## {e['question']}\n{e.get('results', 'No results')}" for e in evidence
         )
         result = await self.call_dspy(
             self._synthesizer,
@@ -313,9 +313,13 @@ class DeepResearchAgent(
             if isinstance(results, list):
                 for r in results[:3]:
                     if isinstance(r, dict):
-                        citations.append({
-                            "source": r.get("document_id", r.get("video_id", "unknown")),
-                            "text": r.get("description", r.get("transcript", "")),
-                            "question": e.get("question", ""),
-                        })
+                        citations.append(
+                            {
+                                "source": r.get(
+                                    "document_id", r.get("video_id", "unknown")
+                                ),
+                                "text": r.get("description", r.get("transcript", "")),
+                                "question": e.get("question", ""),
+                            }
+                        )
         return citations

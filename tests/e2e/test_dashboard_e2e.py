@@ -121,9 +121,9 @@ class TestInteractiveSearch:
         click_top_tab(page, "Interactive Search")
 
         # Verify search widgets present
-        assert page.get_by_role("textbox", name="Enter your search query").count() > 0, (
-            "Search input must be present"
-        )
+        assert (
+            page.get_by_role("textbox", name="Enter your search query").count() > 0
+        ), "Search input must be present"
         assert page.locator('button[kind="primary"]:has-text("Search")').count() > 0, (
             "Search button must be present"
         )
@@ -190,12 +190,8 @@ class TestInteractiveSearch:
 
         # Verify search executed — "Search Results" heading or "No results" must appear
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_info = page.locator(
-            '[data-testid="stAlert"]:has-text("No results")'
-        )
-        search_error = page.locator(
-            '[data-testid="stAlert"]:has-text("Search error")'
-        )
+        no_results_info = page.locator('[data-testid="stAlert"]:has-text("No results")')
+        search_error = page.locator('[data-testid="stAlert"]:has-text("Search error")')
 
         # Any of these proves the search executed
         search_executed = (
@@ -254,9 +250,7 @@ class TestInteractiveSearch:
         page.wait_for_load_state("networkidle")
 
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
-        no_results_info = page.locator(
-            '[data-testid="stAlert"]:has-text("No results")'
-        )
+        no_results_info = page.locator('[data-testid="stAlert"]:has-text("No results")')
 
         if no_results_info.count() > 0:
             return
@@ -1618,8 +1612,12 @@ class TestStreamingEndpointFromDashboard:
 
         # Find the final event (contains results or data)
         final_events = [
-            e for e in events
-            if e.get("type") == "final" or "results" in e or "status" in e and e.get("status") == "success"
+            e
+            for e in events
+            if e.get("type") == "final"
+            or "results" in e
+            or "status" in e
+            and e.get("status") == "success"
         ]
         assert len(final_events) > 0, (
             f"Search must return a final result event, got: {events}"

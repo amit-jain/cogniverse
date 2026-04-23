@@ -113,7 +113,9 @@ class TestGatewayWithRealGLiNER:
         from cogniverse_agents.gateway_agent import GatewayInput
 
         result = await gateway_agent.process(
-            GatewayInput(query="search for video content about AI", tenant_id="test:unit")
+            GatewayInput(
+                query="search for video content about AI", tenant_id="test:unit"
+            )
         )
 
         assert result.query == "search for video content about AI"
@@ -166,7 +168,9 @@ class TestGatewayWithRealGLiNER:
         from cogniverse_agents.gateway_agent import GatewayInput
 
         result = await gateway_agent.process(
-            GatewayInput(query="find audio recordings of jazz music", tenant_id="test:unit")
+            GatewayInput(
+                query="find audio recordings of jazz music", tenant_id="test:unit"
+            )
         )
 
         # GLiNER detects audio_content with 7-label set -> audio modality
@@ -230,11 +234,14 @@ class TestEntityExtractionRealGLiNERSpaCy:
         entity_types = {e.type.upper() for e in result.entities}
         reasonable_org_types = {"ORG", "ORGANIZATION", "COMPANY", "CORPORATION"}
         reasonable_loc_types = {"PLACE", "GPE", "LOCATION", "CITY", "LOC"}
-        all_reasonable = reasonable_org_types | reasonable_loc_types | {"PERSON", "CONCEPT", "TECHNOLOGY"}
+        all_reasonable = (
+            reasonable_org_types
+            | reasonable_loc_types
+            | {"PERSON", "CONCEPT", "TECHNOLOGY"}
+        )
 
         assert entity_types & all_reasonable, (
-            f"Entity types should include recognizable categories, "
-            f"got: {entity_types}"
+            f"Entity types should include recognizable categories, got: {entity_types}"
         )
 
         # Fast path should be used (GLiNER available)
@@ -312,7 +319,9 @@ class TestEntityExtractionRealGLiNERSpaCy:
         """Empty query should return empty entities gracefully."""
         from cogniverse_agents.entity_extraction_agent import EntityExtractionInput
 
-        result = await entity_agent.process(EntityExtractionInput(query="", tenant_id="test:unit"))
+        result = await entity_agent.process(
+            EntityExtractionInput(query="", tenant_id="test:unit")
+        )
 
         assert result.entity_count == 0
         assert not result.has_entities
@@ -371,9 +380,7 @@ class TestQueryEnhancementRealDSPy:
         assert result.confidence > 0.0, (
             f"Confidence should be positive, got: {result.confidence}"
         )
-        assert len(result.reasoning) > 0, (
-            "Reasoning should explain the enhancement"
-        )
+        assert len(result.reasoning) > 0, "Reasoning should explain the enhancement"
 
     @pytest.mark.asyncio
     async def test_enhancement_without_entities(self, enhancement_agent):
@@ -395,7 +402,9 @@ class TestQueryEnhancementRealDSPy:
         """Empty query should return gracefully with zero confidence."""
         from cogniverse_agents.query_enhancement_agent import QueryEnhancementInput
 
-        result = await enhancement_agent.process(QueryEnhancementInput(query="", tenant_id="test:unit"))
+        result = await enhancement_agent.process(
+            QueryEnhancementInput(query="", tenant_id="test:unit")
+        )
 
         assert result.enhanced_query == ""
         assert result.confidence == 0.0
@@ -456,7 +465,11 @@ class TestRoutingRealDSPy:
             tenant_id="a2a_test",
         )
 
-        acceptable_agents = {"summarizer_agent", "detailed_report_agent", "search_agent"}
+        acceptable_agents = {
+            "summarizer_agent",
+            "detailed_report_agent",
+            "search_agent",
+        }
         assert result.recommended_agent in acceptable_agents, (
             f"Summary query should route to {acceptable_agents}, "
             f"got {result.recommended_agent!r}. Reasoning: {result.reasoning}"
@@ -551,7 +564,9 @@ class TestFullPipelineWithVespa:
         query = "find videos about robots"
 
         # Step 1: Gateway classification
-        gateway_result = await gateway_agent.process(GatewayInput(query=query, tenant_id="test:unit"))
+        gateway_result = await gateway_agent.process(
+            GatewayInput(query=query, tenant_id="test:unit")
+        )
         assert gateway_result.modality in ("video", "both"), (
             f"Gateway should detect video modality, got {gateway_result.modality!r}"
         )
@@ -610,7 +625,9 @@ class TestFullPipelineWithVespa:
         )
 
         children = search_result.get("root", {}).get("children", [])
-        total_count = search_result.get("root", {}).get("fields", {}).get("totalCount", 0)
+        total_count = (
+            search_result.get("root", {}).get("fields", {}).get("totalCount", 0)
+        )
 
         assert total_count > 0 or len(children) > 0, (
             f"Should find results for 'robot' in ingested test data. "
@@ -636,7 +653,9 @@ class TestFullPipelineWithVespa:
 
         query = "summarize robot videos"
 
-        gateway_result = await gateway_agent.process(GatewayInput(query=query, tenant_id="test:unit"))
+        gateway_result = await gateway_agent.process(
+            GatewayInput(query=query, tenant_id="test:unit")
+        )
 
         # For summarization query, gateway should detect summary generation type
         # or classify as complex and forward to orchestrator
@@ -763,9 +782,7 @@ class TestTelemetrySpansInPhoenix:
         project_name = real_telemetry.config.get_project_name("telemetry_a2a_test")
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
 
-        span = _query_phoenix_for_span(
-            "cogniverse.gateway", project_name, phoenix_url
-        )
+        span = _query_phoenix_for_span("cogniverse.gateway", project_name, phoenix_url)
         assert span is not None, (
             "cogniverse.gateway custom span not found in Phoenix. "
             "GatewayAgent._emit_gateway_span may not be firing."
@@ -792,7 +809,10 @@ class TestTelemetrySpansInPhoenix:
         else:
             gateway_query = str(gateway_attrs)
 
-        assert "robotics" in gateway_query.lower() or "engineering" in gateway_query.lower(), (
+        assert (
+            "robotics" in gateway_query.lower()
+            or "engineering" in gateway_query.lower()
+        ), (
             f"Span gateway.query should contain 'robotics' or 'engineering', "
             f"got: {gateway_query!r}"
         )

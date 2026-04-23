@@ -214,7 +214,7 @@ def test_generator_config():
                     )
                 },
             ),
-        }
+        },
     )
 
 

@@ -50,9 +50,7 @@ class DetailedVisualAnalysisSignature(dspy.Signature):
 class VLMInterface:
     """Interface for Vision Language Model operations using DSPy"""
 
-    def __init__(
-        self, config_manager: "ConfigManager" = None, tenant_id: str = None
-    ):
+    def __init__(self, config_manager: "ConfigManager" = None, tenant_id: str = None):
         from cogniverse_core.common.tenant_utils import require_tenant_id
 
         if config_manager is None:

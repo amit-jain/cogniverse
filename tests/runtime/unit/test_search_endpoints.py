@@ -76,22 +76,25 @@ def search_client():
     config_manager = _make_config_manager()
     schema_loader = _make_mock_schema_loader()
 
-    test_app.dependency_overrides[search.get_config_manager_dependency] = (
-        lambda: config_manager
+    test_app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
     )
-    test_app.dependency_overrides[search.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    test_app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
 
     async def _noop_tenant_check(tenant_id: str) -> None:
         return None
 
-    with patch(
-        "cogniverse_runtime.routers.search.get_telemetry_manager",
-        return_value=_make_noop_telemetry_manager(),
-    ), patch(
-        "cogniverse_runtime.routers.search.assert_tenant_exists",
-        new=_noop_tenant_check,
+    with (
+        patch(
+            "cogniverse_runtime.routers.search.get_telemetry_manager",
+            return_value=_make_noop_telemetry_manager(),
+        ),
+        patch(
+            "cogniverse_runtime.routers.search.assert_tenant_exists",
+            new=_noop_tenant_check,
+        ),
     ):
         with TestClient(test_app) as client:
             yield client
@@ -202,7 +205,9 @@ class TestSearchEndpoint:
         mock_instance.search.return_value = []
         mock_service_cls.return_value = mock_instance
 
-        resp = search_client.post("/search", json={"query": "nonexistent content", "tenant_id": "test:unit"})
+        resp = search_client.post(
+            "/search", json={"query": "nonexistent content", "tenant_id": "test:unit"}
+        )
 
         assert resp.status_code == 200
         assert resp.json()["results_count"] == 0
@@ -228,7 +233,11 @@ class TestSearchEndpoint:
 
         resp = search_client.post(
             "/search",
-            json={"query": "test", "session_id": "sess-abc123", "tenant_id": "test:unit"},
+            json={
+                "query": "test",
+                "session_id": "sess-abc123",
+                "tenant_id": "test:unit",
+            },
         )
 
         assert resp.status_code == 200

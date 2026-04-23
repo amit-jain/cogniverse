@@ -104,7 +104,9 @@ class RoutingEvaluator:
             span_data["attributes.routing"], dict
         ):
             routing_attrs = span_data["attributes.routing"]
-            chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get("recommended_agent")
+            chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get(
+                "recommended_agent"
+            )
             confidence = routing_attrs.get("confidence")
             latency_ms = routing_attrs.get("processing_time", 0.0)
 

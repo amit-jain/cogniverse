@@ -304,9 +304,7 @@ class QueryEncoderFactory:
             model_name, profile, profile_config, config
         )
         cls._encoder_cache[cache_key] = encoder
-        logger.info(
-            f"Cached encoder for key {cache_key} ({type(encoder).__name__})"
-        )
+        logger.info(f"Cached encoder for key {cache_key} ({type(encoder).__name__})")
         return encoder
 
     @staticmethod
@@ -326,7 +324,9 @@ class QueryEncoderFactory:
         model_loader = profile_config.get("model_loader")
 
         if model_loader == "colbert":
-            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+            return _build_colbert_encoder(
+                model_name, profile, profile_config, system_config
+            )
         if model_loader == "colpali":
             return ColPaliQueryEncoder(model_name)
         if model_loader == "colqwen":
@@ -342,7 +342,9 @@ class QueryEncoderFactory:
         if "videoprism" in name:
             return VideoPrismQueryEncoder(model_name)
         if "colbert" in name or "lateon" in name:
-            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+            return _build_colbert_encoder(
+                model_name, profile, profile_config, system_config
+            )
 
         profile_lower = profile.lower()
         if "colpali" in profile_lower:
@@ -352,7 +354,9 @@ class QueryEncoderFactory:
         if "videoprism" in profile_lower:
             return VideoPrismQueryEncoder(model_name)
         if "colbert" in profile_lower or "document" in profile_lower:
-            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+            return _build_colbert_encoder(
+                model_name, profile, profile_config, system_config
+            )
 
         raise ValueError(
             f"Cannot determine encoder type for model: {model_name} in profile: {profile}"

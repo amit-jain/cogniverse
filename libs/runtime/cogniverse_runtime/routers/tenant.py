@@ -133,7 +133,9 @@ async def get_instructions(tenant_id: str):
         config_key=_INSTRUCTIONS_KEY,
     )
     if entry is None or not entry.config_value:
-        raise HTTPException(status_code=404, detail="No instructions found for this tenant")
+        raise HTTPException(
+            status_code=404, detail="No instructions found for this tenant"
+        )
     value = entry.config_value
     return InstructionsResponse(
         text=value.get("text", ""),
@@ -289,7 +291,9 @@ def _entry_to_item(entry: dict, agent_name: str) -> Optional[MemoryItem]:
 async def list_memories(
     tenant_id: str,
     q: Optional[str] = Query(default=None, description="Search query"),
-    type: Optional[str] = Query(default=None, description="Filter by type: preference, strategy"),
+    type: Optional[str] = Query(
+        default=None, description="Filter by type: preference, strategy"
+    ),
     category: Optional[str] = Query(default=None, description="Filter by category"),
     limit: int = Query(default=20, ge=1, le=200, description="Max results"),
 ):
@@ -313,7 +317,10 @@ async def list_memories(
     for ns in namespaces:
         if q:
             raw = mgr.search_memory(
-                query=q, tenant_id=tenant_id, agent_name=ns, top_k=limit,
+                query=q,
+                tenant_id=tenant_id,
+                agent_name=ns,
+                top_k=limit,
             )
         else:
             raw = mgr.get_all_memories(tenant_id=tenant_id, agent_name=ns)
@@ -339,7 +346,9 @@ async def delete_memory(tenant_id: str, memory_id: str):
     mgr = _get_memory_manager(tenant_id)
 
     success = mgr.delete_memory(
-        memory_id=memory_id, tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT,
+        memory_id=memory_id,
+        tenant_id=tenant_id,
+        agent_name=_USER_MEMORY_AGENT,
     )
     if not success:
         raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
@@ -349,7 +358,10 @@ async def delete_memory(tenant_id: str, memory_id: str):
 @router.delete("/{tenant_id}/memories")
 async def clear_memories(
     tenant_id: str,
-    category: Optional[str] = Query(default=None, description="Clear only this category, or all user memories if omitted"),
+    category: Optional[str] = Query(
+        default=None,
+        description="Clear only this category, or all user memories if omitted",
+    ),
 ):
     """Clear user-owned memories. System memories (strategies) are not affected.
 
@@ -359,7 +371,8 @@ async def clear_memories(
 
     if category:
         results = mgr.get_all_memories(
-            tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT,
+            tenant_id=tenant_id,
+            agent_name=_USER_MEMORY_AGENT,
         )
         deleted = 0
         for r in results:
@@ -370,11 +383,14 @@ async def clear_memories(
                 mid = r.get("id")
                 if mid:
                     mgr.delete_memory(
-                        memory_id=str(mid), tenant_id=tenant_id,
+                        memory_id=str(mid),
+                        tenant_id=tenant_id,
                         agent_name=_USER_MEMORY_AGENT,
                     )
                     deleted += 1
-        logger.info("Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id)
+        logger.info(
+            "Cleared %d '%s' memories for tenant=%s", deleted, category, tenant_id
+        )
         return {"status": "cleared", "category": category, "deleted": deleted}
 
     mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=_USER_MEMORY_AGENT)
@@ -385,7 +401,9 @@ async def clear_memories(
 _JOBS_SERVICE = "tenant_jobs"
 
 
-def _build_cron_workflow(tenant_id: str, job_id: str, schedule: str, namespace: str) -> dict:
+def _build_cron_workflow(
+    tenant_id: str, job_id: str, schedule: str, namespace: str
+) -> dict:
     """Build an Argo CronWorkflow manifest for the given job."""
     return {
         "apiVersion": "argoproj.io/v1alpha1",
@@ -409,11 +427,18 @@ def _build_cron_workflow(tenant_id: str, job_id: str, schedule: str, namespace: 
                         "name": "run-job",
                         "container": {
                             "image": "cogniverse-runtime:latest",
-                            "command": ["python", "-m", "cogniverse_runtime.job_executor"],
+                            "command": [
+                                "python",
+                                "-m",
+                                "cogniverse_runtime.job_executor",
+                            ],
                             "args": [
-                                "--job-id", job_id,
-                                "--tenant-id", tenant_id,
-                                "--runtime-url", "http://cogniverse-runtime:28000",
+                                "--job-id",
+                                job_id,
+                                "--tenant-id",
+                                tenant_id,
+                                "--runtime-url",
+                                "http://cogniverse-runtime:28000",
                             ],
                         },
                     }
@@ -471,10 +496,14 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
         config_key=f"job_{job_id}",
         config_value=config_value,
     )
-    logger.info("Created job %s for tenant %s (schedule=%s)", job_id, tenant_id, body.schedule)
+    logger.info(
+        "Created job %s for tenant %s (schedule=%s)", job_id, tenant_id, body.schedule
+    )
 
     if _argo_api_url:
-        manifest = _build_cron_workflow(tenant_id, job_id, body.schedule, _argo_namespace)
+        manifest = _build_cron_workflow(
+            tenant_id, job_id, body.schedule, _argo_namespace
+        )
         await _submit_cron_workflow(manifest)
 
     return JobResponse(

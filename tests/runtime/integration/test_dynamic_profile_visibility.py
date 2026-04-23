@@ -60,6 +60,7 @@ def wired_app(
 ):
     """FastAPI app with admin router and profile_change_listener wired,
     mirroring runtime startup."""
+
     def listener(event, name, cfg):
         if event == "added" and cfg is not None:
             BackendRegistry.add_profile_to_backends(name, cfg)
@@ -75,11 +76,11 @@ def wired_app(
     app.include_router(admin.router, prefix="/admin")
     app.include_router(search.router, prefix="/search")
 
-    app.dependency_overrides[search.get_config_manager_dependency] = (
-        lambda: config_manager
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
     )
-    app.dependency_overrides[search.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
 
     with TestClient(app) as client:
@@ -99,9 +100,7 @@ def _wait_for_vespa_schema(vespa_url: str, schema: str, timeout: float = 30.0) -
         if resp.status_code == 200 and "errors" not in resp.json().get("root", {}):
             return
         time.sleep(1)
-    raise AssertionError(
-        f"Vespa never activated schema {schema} after {timeout}s"
-    )
+    raise AssertionError(f"Vespa never activated schema {schema} after {timeout}s")
 
 
 @pytest.mark.integration

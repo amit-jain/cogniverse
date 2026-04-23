@@ -233,4 +233,3 @@ class TestAnnotationRequestSerialization:
         assert d["assigned_to"] == "alice"
         assert d["assigned_at"] is not None
         assert d["sla_deadline"] is not None
-

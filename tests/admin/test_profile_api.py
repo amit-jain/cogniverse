@@ -200,9 +200,9 @@ class TestProfileAPICRUD:
             f"{response.json()}"
         )
         detail = response.json()["detail"]
-        assert any(
-            "tenant_id" in str(err.get("loc", [])) for err in detail
-        ), f"Expected tenant_id in validation error locs, got {detail}"
+        assert any("tenant_id" in str(err.get("loc", [])) for err in detail), (
+            f"Expected tenant_id in validation error locs, got {detail}"
+        )
 
     def test_create_profile_validation_errors(self, test_client: TestClient):
         """Test profile creation with validation errors."""

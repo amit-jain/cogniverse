@@ -66,7 +66,9 @@ def render_interactive_search_tab(agent_status: dict):
             st.warning("Runtime not available")
 
         st.button(
-            "Search", type="primary", disabled=not search_query or not runtime_available,
+            "Search",
+            type="primary",
+            disabled=not search_query or not runtime_available,
             on_click=lambda: st.session_state.update(trigger_search=True),
         )
 

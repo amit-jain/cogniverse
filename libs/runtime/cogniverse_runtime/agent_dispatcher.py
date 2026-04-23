@@ -46,9 +46,7 @@ class AgentDispatcher:
         self._sandbox_manager = sandbox_manager
         self._query_rewriter = None
 
-    def _init_agent_memory(
-        self, agent: Any, agent_name: str, tenant_id: str
-    ) -> None:
+    def _init_agent_memory(self, agent: Any, agent_name: str, tenant_id: str) -> None:
         """Auto-initialize MemoryAwareMixin for any agent that supports it.
 
         Checks at runtime whether the constructed agent inherits the mixin
@@ -67,9 +65,7 @@ class AgentDispatcher:
         try:
             agent.set_tenant_for_context(tenant_id)
         except Exception as exc:  # pragma: no cover - defensive
-            logger.debug(
-                "set_tenant_for_context failed for %s: %s", agent_name, exc
-            )
+            logger.debug("set_tenant_for_context failed for %s: %s", agent_name, exc)
 
         sys_cfg = self._config_manager.get_system_config()
         # Prefer llm_config.primary.model (authoritative, set via chart
@@ -93,9 +89,7 @@ class AgentDispatcher:
                 backend_host=sys_cfg.backend_url,
                 backend_port=sys_cfg.backend_port,
                 llm_model=model_name,
-                embedding_model=getattr(
-                    sys_cfg, "embedding_model", "nomic-embed-text"
-                ),
+                embedding_model=getattr(sys_cfg, "embedding_model", "nomic-embed-text"),
                 llm_base_url=llm_primary.api_base
                 or getattr(sys_cfg, "base_url", "http://localhost:11434"),
                 config_manager=self._config_manager,
@@ -137,7 +131,11 @@ class AgentDispatcher:
 
         # Action-based dispatch: optimization actions bypass normal routing
         action = context.get("action")
-        if action in ("optimize_routing", "get_optimization_status", "optimization_cycle_from_traces"):
+        if action in (
+            "optimize_routing",
+            "get_optimization_status",
+            "optimization_cycle_from_traces",
+        ):
             return await self._execute_optimization_action(
                 action, query, context, tenant_id
             )
@@ -145,9 +143,7 @@ class AgentDispatcher:
         if capabilities & {"gateway", "routing", "intelligent_routing"}:
             result = await self._execute_gateway_task(query, context, tenant_id)
         elif "orchestration" in capabilities:
-            result = await self._execute_orchestration_task(
-                query, context, tenant_id
-            )
+            result = await self._execute_orchestration_task(query, context, tenant_id)
         elif capabilities & {"search", "video_search", "retrieval"}:
             result = await self._execute_search_task(
                 query, tenant_id, top_k, conversation_history=conversation_history
@@ -181,7 +177,9 @@ class AgentDispatcher:
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
         asyncio.create_task(
-            self._maybe_auto_file_wiki(query, result, entities, agent_name, tenant_id, turn_count)
+            self._maybe_auto_file_wiki(
+                query, result, entities, agent_name, tenant_id, turn_count
+            )
         )
         return result
 
@@ -453,11 +451,19 @@ class AgentDispatcher:
                         config_manager=self._config_manager,
                         schema_loader=self._schema_loader,
                     )
-                    return [r.to_dict() for r in svc.search(
-                        query=q, profile="code_lateon_mv", tenant_id=tid, top_k=10,
-                    )]
+                    return [
+                        r.to_dict()
+                        for r in svc.search(
+                            query=q,
+                            profile="code_lateon_mv",
+                            tenant_id=tid,
+                            top_k=10,
+                        )
+                    ]
                 except Exception as exc:
-                    logger.info("Code search unavailable, proceeding without context: %s", exc)
+                    logger.info(
+                        "Code search unavailable, proceeding without context: %s", exc
+                    )
                     return []
 
             agent = CodingAgent(
@@ -570,7 +576,10 @@ class AgentDispatcher:
         return rewritten if rewritten else query
 
     async def _execute_gateway_task(
-        self, query: str, context: Dict[str, Any], tenant_id: str,
+        self,
+        query: str,
+        context: Dict[str, Any],
+        tenant_id: str,
     ) -> Dict[str, Any]:
         """Route query through GatewayAgent for triage.
 
@@ -599,7 +608,9 @@ class AgentDispatcher:
 
         if result.complexity == "complex":
             return await self._execute_orchestration_task(
-                query, context, tenant_id,
+                query,
+                context,
+                tenant_id,
                 gateway_context={
                     "modality": result.modality,
                     "generation_type": result.generation_type,
@@ -666,7 +677,9 @@ class AgentDispatcher:
             config_manager=self._config_manager,
             workflow_intelligence=workflow_intelligence,
         )
-        await asyncio.to_thread(self._init_agent_memory, agent, "orchestrator_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "orchestrator_agent", tenant_id
+        )
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
@@ -758,7 +771,9 @@ class AgentDispatcher:
 
         deps = SummarizerDeps(tenant_id=tenant_id)
         agent = SummarizerAgent(deps=deps, config_manager=self._config_manager)
-        await asyncio.to_thread(self._init_agent_memory, agent, "summarizer_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "summarizer_agent", tenant_id
+        )
 
         request = SummaryRequest(
             query=query,
@@ -804,7 +819,9 @@ class AgentDispatcher:
 
         deps = DetailedReportDeps(tenant_id=tenant_id)
         agent = DetailedReportAgent(deps=deps, config_manager=self._config_manager)
-        await asyncio.to_thread(self._init_agent_memory, agent, "detailed_report_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "detailed_report_agent", tenant_id
+        )
 
         request = ReportRequest(
             query=query,
@@ -886,7 +903,9 @@ class AgentDispatcher:
             tenant_id=tenant_id,
         )
         agent = DocumentAgent(deps=deps)
-        await asyncio.to_thread(self._init_agent_memory, agent, "document_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "document_agent", tenant_id
+        )
 
         results = await agent.search_documents(query=query, limit=top_k)
 
@@ -915,7 +934,9 @@ class AgentDispatcher:
             return result.get("results", [])
 
         agent = DeepResearchAgent(deps=deps, search_fn=search_fn)
-        await asyncio.to_thread(self._init_agent_memory, agent, "deep_research_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "deep_research_agent", tenant_id
+        )
 
         input_data = DeepResearchInput(query=query, tenant_id=tenant_id)
         result = await agent.process(input_data)
@@ -989,7 +1010,9 @@ class AgentDispatcher:
         )
         # Auto-init memory so the coding agent receives learned strategies
         # and tenant memories in inject_context_into_prompt.
-        await asyncio.to_thread(self._init_agent_memory, agent, "coding_agent", tenant_id)
+        await asyncio.to_thread(
+            self._init_agent_memory, agent, "coding_agent", tenant_id
+        )
 
         ctx = context or {}
         input_data = CodingInput(
@@ -1076,9 +1099,7 @@ class AgentDispatcher:
         )
         from cogniverse_runtime.routers.agents import get_annotation_queue
 
-        evaluator = RoutingSpanEvaluator(
-            optimizer=optimizer, tenant_id=tenant_id
-        )
+        evaluator = RoutingSpanEvaluator(optimizer=optimizer, tenant_id=tenant_id)
         cycle_results = await evaluator.evaluate_routing_spans()
         spans_evaluated = cycle_results.get("spans_evaluated", 0)
 

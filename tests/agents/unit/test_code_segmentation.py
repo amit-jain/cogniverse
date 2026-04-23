@@ -62,7 +62,7 @@ def python_source(tmp_path):
 @pytest.fixture
 def javascript_source(tmp_path):
     """Create a JavaScript source file."""
-    code = textwrap.dedent('''\
+    code = textwrap.dedent("""\
         function greet(name) {
             return `Hello, ${name}!`;
         }
@@ -80,7 +80,7 @@ def javascript_source(tmp_path):
         function multiply(a, b) {
             return a * b;
         }
-    ''')
+    """)
     p = tmp_path / "utils.js"
     p.write_text(code)
     return p
@@ -89,7 +89,7 @@ def javascript_source(tmp_path):
 @pytest.fixture
 def go_source(tmp_path):
     """Create a Go source file."""
-    code = textwrap.dedent('''\
+    code = textwrap.dedent("""\
         package main
 
         import "fmt"
@@ -107,7 +107,7 @@ def go_source(tmp_path):
             fmt.Printf("Starting server on %s:%d", s.Host, s.Port)
             return nil
         }
-    ''')
+    """)
     p = tmp_path / "server.go"
     p.write_text(code)
     return p
@@ -116,7 +116,7 @@ def go_source(tmp_path):
 @pytest.fixture
 def typescript_source(tmp_path):
     """Create a TypeScript source file."""
-    code = textwrap.dedent('''\
+    code = textwrap.dedent("""\
         function validate(input: string): boolean {
             return input.length > 0;
         }
@@ -132,7 +132,7 @@ def typescript_source(tmp_path):
                 return this.users;
             }
         }
-    ''')
+    """)
     p = tmp_path / "service.ts"
     p.write_text(code)
     return p
@@ -154,7 +154,10 @@ class TestCodeSegmentationStrategy:
         reqs = strategy.get_required_processors()
         assert "code_file" in reqs
         assert reqs["code_file"]["languages"] == [
-            "python", "javascript", "typescript", "go"
+            "python",
+            "javascript",
+            "typescript",
+            "go",
         ]
 
     def test_supported_extensions(self, strategy):
@@ -224,7 +227,8 @@ class TestPythonParsing:
     def test_class_signature(self, strategy, python_source):
         segments = strategy.parse_file(python_source)
         class_seg = next(
-            s for s in segments
+            s
+            for s in segments
             if s["metadata"]["type"] == "class" and s["metadata"]["name"] == "MyClass"
         )
         sig = class_seg["metadata"]["signature"]

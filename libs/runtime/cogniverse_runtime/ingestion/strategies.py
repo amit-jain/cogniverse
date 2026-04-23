@@ -388,18 +388,20 @@ class CodeSegmentationStrategy(BaseStrategy):
         if not segments:
             # If no functions/classes found, treat entire file as one segment
             text = source_bytes.decode("utf-8", errors="replace")
-            segments.append({
-                "content": text,
-                "metadata": {
-                    "file": str(file_path),
-                    "type": "module",
-                    "name": file_path.stem,
-                    "signature": "",
-                    "line_start": 1,
-                    "line_end": text.count("\n") + 1,
-                    "language": lang_name,
-                },
-            })
+            segments.append(
+                {
+                    "content": text,
+                    "metadata": {
+                        "file": str(file_path),
+                        "type": "module",
+                        "name": file_path.stem,
+                        "signature": "",
+                        "line_start": 1,
+                        "line_end": text.count("\n") + 1,
+                        "language": lang_name,
+                    },
+                }
+            )
 
         return segments
 
@@ -414,46 +416,48 @@ class CodeSegmentationStrategy(BaseStrategy):
         lang_name = self._lang_for_extension(file_path.suffix.lower()) or "unknown"
 
         extractable_types = {
-            "function_definition",      # Python
-            "class_definition",         # Python
-            "function_declaration",     # JS/TS/Go
-            "method_definition",        # JS/TS
-            "class_declaration",        # JS/TS
-            "arrow_function",           # JS/TS (only named, via parent)
-            "type_declaration",         # Go
-            "method_declaration",       # Go
+            "function_definition",  # Python
+            "class_definition",  # Python
+            "function_declaration",  # JS/TS/Go
+            "method_definition",  # JS/TS
+            "class_declaration",  # JS/TS
+            "arrow_function",  # JS/TS (only named, via parent)
+            "type_declaration",  # Go
+            "method_declaration",  # Go
         }
 
         if node.type in extractable_types:
-            text = source[node.start_byte:node.end_byte].decode(
+            text = source[node.start_byte : node.end_byte].decode(
                 "utf-8", errors="replace"
             )
             name = self._extract_name(node)
             signature = self._extract_signature(node, source)
             seg_type = "class" if "class" in node.type else "function"
 
-            segments.append({
-                "content": text,
-                "metadata": {
-                    "file": str(file_path),
-                    "type": seg_type,
-                    "name": name,
-                    "signature": signature,
-                    "line_start": node.start_point[0] + 1,
-                    "line_end": node.end_point[0] + 1,
-                    "language": lang_name,
-                },
-            })
+            segments.append(
+                {
+                    "content": text,
+                    "metadata": {
+                        "file": str(file_path),
+                        "type": seg_type,
+                        "name": name,
+                        "signature": signature,
+                        "line_start": node.start_point[0] + 1,
+                        "line_end": node.end_point[0] + 1,
+                        "language": lang_name,
+                    },
+                }
+            )
 
             # For classes, also extract child methods
             if "class" in node.type:
                 for child in node.children:
                     if child.type in (
-                        "block", "class_body", "declaration_list",
+                        "block",
+                        "class_body",
+                        "declaration_list",
                     ):
-                        self._extract_segments(
-                            child, source, file_path, segments
-                        )
+                        self._extract_segments(child, source, file_path, segments)
                 return
 
         for child in node.children:
@@ -464,8 +468,11 @@ class CodeSegmentationStrategy(BaseStrategy):
         """Extract the name identifier from an AST node."""
         for child in node.children:
             if child.type in (
-                "identifier", "name", "property_identifier",
-                "field_identifier", "type_identifier",
+                "identifier",
+                "name",
+                "property_identifier",
+                "field_identifier",
+                "type_identifier",
             ):
                 return child.text.decode("utf-8", errors="replace")
             if child.type == "type_spec":
@@ -480,17 +487,22 @@ class CodeSegmentationStrategy(BaseStrategy):
         start = node.start_byte
         # Find the body child to know where signature ends
         for child in node.children:
-            if child.type in ("block", "statement_block", "class_body",
-                              "declaration_list", "function_body"):
-                sig = source[start:child.start_byte].decode(
-                    "utf-8", errors="replace"
-                ).strip()
+            if child.type in (
+                "block",
+                "statement_block",
+                "class_body",
+                "declaration_list",
+                "function_body",
+            ):
+                sig = (
+                    source[start : child.start_byte]
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
                 return sig
 
         # Fallback: first line
-        text = source[node.start_byte:node.end_byte].decode(
-            "utf-8", errors="replace"
-        )
+        text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
         return text.split("\n")[0].strip()
 
 

@@ -86,15 +86,11 @@ class RuntimeClient:
 
         return resp.json()
 
-    async def stream_events(
-        self, task_id: str
-    ) -> AsyncIterator[Dict[str, Any]]:
+    async def stream_events(self, task_id: str) -> AsyncIterator[Dict[str, Any]]:
         """Subscribe to SSE events for a streaming task."""
         client = await self._get_client()
 
-        async with client.stream(
-            "GET", f"/events/workflows/{task_id}"
-        ) as response:
+        async with client.stream("GET", f"/events/workflows/{task_id}") as response:
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
                     data = line[6:]
@@ -159,35 +155,25 @@ class RuntimeClient:
         )
         return self._json_or_error(resp)
 
-    async def get_wiki_topic(
-        self, tenant_id: str, slug: str
-    ) -> Dict[str, Any]:
+    async def get_wiki_topic(self, tenant_id: str, slug: str) -> Dict[str, Any]:
         """Retrieve a topic page by slug (GET /wiki/topic/{slug})."""
         client = await self._get_client()
-        resp = await client.get(
-            f"/wiki/topic/{slug}", params={"tenant_id": tenant_id}
-        )
+        resp = await client.get(f"/wiki/topic/{slug}", params={"tenant_id": tenant_id})
         return self._json_or_error(resp)
 
     async def get_wiki_index(self, tenant_id: str) -> Dict[str, Any]:
         """Return the rendered wiki index (GET /wiki/index)."""
         client = await self._get_client()
-        resp = await client.get(
-            "/wiki/index", params={"tenant_id": tenant_id}
-        )
+        resp = await client.get("/wiki/index", params={"tenant_id": tenant_id})
         return self._json_or_error(resp)
 
     async def lint_wiki(self, tenant_id: str) -> Dict[str, Any]:
         """Run lint checks on the wiki (GET /wiki/lint)."""
         client = await self._get_client()
-        resp = await client.get(
-            "/wiki/lint", params={"tenant_id": tenant_id}
-        )
+        resp = await client.get("/wiki/lint", params={"tenant_id": tenant_id})
         return self._json_or_error(resp)
 
-    async def delete_wiki_topic(
-        self, tenant_id: str, slug: str
-    ) -> Dict[str, Any]:
+    async def delete_wiki_topic(self, tenant_id: str, slug: str) -> Dict[str, Any]:
         """Delete a topic page by slug (DELETE /wiki/topic/{slug})."""
         client = await self._get_client()
         resp = await client.delete(
@@ -195,9 +181,7 @@ class RuntimeClient:
         )
         return self._json_or_error(resp)
 
-    async def set_instructions(
-        self, tenant_id: str, text: str
-    ) -> Dict[str, Any]:
+    async def set_instructions(self, tenant_id: str, text: str) -> Dict[str, Any]:
         """Set per-tenant system instructions (PUT /admin/tenant/{tenant}/instructions)."""
         client = await self._get_client()
         resp = await client.put(
@@ -220,9 +204,7 @@ class RuntimeClient:
         params: Dict[str, Any] = {}
         if agent_name:
             params["agent_name"] = agent_name
-        resp = await client.get(
-            f"/admin/tenant/{tenant_id}/memories", params=params
-        )
+        resp = await client.get(f"/admin/tenant/{tenant_id}/memories", params=params)
         return self._json_or_error(resp)
 
     async def clear_memories(
@@ -233,9 +215,7 @@ class RuntimeClient:
         params: Dict[str, Any] = {}
         if agent_name:
             params["agent_name"] = agent_name
-        resp = await client.delete(
-            f"/admin/tenant/{tenant_id}/memories", params=params
-        )
+        resp = await client.delete(f"/admin/tenant/{tenant_id}/memories", params=params)
         return self._json_or_error(resp)
 
     async def list_jobs(self, tenant_id: str) -> Dict[str, Any]:
@@ -268,9 +248,7 @@ class RuntimeClient:
     async def delete_job(self, tenant_id: str, job_id: str) -> Dict[str, Any]:
         """Delete a per-tenant scheduled job (DELETE /admin/tenant/{tenant}/jobs/{job_id})."""
         client = await self._get_client()
-        resp = await client.delete(
-            f"/admin/tenant/{tenant_id}/jobs/{job_id}"
-        )
+        resp = await client.delete(f"/admin/tenant/{tenant_id}/jobs/{job_id}")
         return self._json_or_error(resp)
 
     @staticmethod

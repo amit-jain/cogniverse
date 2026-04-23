@@ -137,8 +137,12 @@ class TestCodingAgentDispatchWiring:
         assert profile["type"] == "code"
         assert profile["embedding_model"] == "lightonai/LateOn-Code-edge"
         assert profile["model_loader"] == "colbert"
-        assert profile["strategies"]["segmentation"]["class"] == "CodeSegmentationStrategy"
-        assert profile["strategies"]["embedding"]["class"] == "CodeTextEmbeddingStrategy"
+        assert (
+            profile["strategies"]["segmentation"]["class"] == "CodeSegmentationStrategy"
+        )
+        assert (
+            profile["strategies"]["embedding"]["class"] == "CodeTextEmbeddingStrategy"
+        )
         assert profile["schema_config"]["embedding_dim"] == 48
         assert profile["schema_config"]["binary_dim"] == 6
         assert profile["schema_config"]["num_patches"] == 2048
@@ -148,9 +152,12 @@ def _openshell_cli_available() -> bool:
     import subprocess as _sp
 
     try:
-        return _sp.run(
-            ["openshell", "--version"], capture_output=True, timeout=5
-        ).returncode == 0
+        return (
+            _sp.run(
+                ["openshell", "--version"], capture_output=True, timeout=5
+            ).returncode
+            == 0
+        )
     except (FileNotFoundError, _sp.TimeoutExpired):
         return False
 
@@ -241,15 +248,11 @@ def code_search_infra(vespa_with_schema):
         if emb_np.shape[0] > 2048:
             emb_np = emb_np[:2048]
 
-        float_dict = {
-            str(i): emb_np[i].tolist() for i in range(emb_np.shape[0])
-        }
+        float_dict = {str(i): emb_np[i].tolist() for i in range(emb_np.shape[0])}
         binary = np.packbits(
             np.where(emb_np > 0, 1, 0).astype(np.uint8), axis=1
         ).astype(np.int8)
-        binary_dict = {
-            str(i): binary[i].tolist() for i in range(binary.shape[0])
-        }
+        binary_dict = {str(i): binary[i].tolist() for i in range(binary.shape[0])}
 
         meta = seg["metadata"]
         doc = {
@@ -269,7 +272,8 @@ def code_search_infra(vespa_with_schema):
         }
         resp = requests.post(
             f"{base_url}/document/v1/{schema_name}/{schema_name}/docid/seg_{idx}",
-            json=doc, timeout=10,
+            json=doc,
+            timeout=10,
         )
         assert resp.status_code == 200, (
             f"Feed failed for seg_{idx}: {resp.status_code} - {resp.text}"
@@ -281,19 +285,32 @@ def code_search_infra(vespa_with_schema):
     # --- 3. Start OpenShell gateway ---
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
-        capture_output=True, timeout=30, check=False,
+        capture_output=True,
+        timeout=30,
+        check=False,
     )
     result = subprocess.run(
-        ["openshell", "gateway", "start", "--name", CODING_GW_NAME,
-         "--port", str(CODING_GW_PORT)],
-        capture_output=True, text=True, timeout=180,
+        [
+            "openshell",
+            "gateway",
+            "start",
+            "--name",
+            CODING_GW_NAME,
+            "--port",
+            str(CODING_GW_PORT),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
     )
     if result.returncode != 0:
         pytest.skip(f"Failed to start OpenShell gateway: {result.stderr}")
 
     subprocess.run(
         ["openshell", "gateway", "select", CODING_GW_NAME],
-        capture_output=True, timeout=10, check=False,
+        capture_output=True,
+        timeout=10,
+        check=False,
     )
 
     sandbox = SandboxManager(policy_dir="configs/openshell", enabled=True)
@@ -310,7 +327,9 @@ def code_search_infra(vespa_with_schema):
     sandbox.close()
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", CODING_GW_NAME],
-        capture_output=True, timeout=60, check=False,
+        capture_output=True,
+        timeout=60,
+        check=False,
     )
 
 
@@ -327,10 +346,12 @@ def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
         qt_cells = []
         for tok_idx in range(query_np.shape[0]):
             for v_idx in range(query_np.shape[1]):
-                qt_cells.append({
-                    "address": {"querytoken": str(tok_idx), "v": str(v_idx)},
-                    "value": float(query_np[tok_idx, v_idx]),
-                })
+                qt_cells.append(
+                    {
+                        "address": {"querytoken": str(tok_idx), "v": str(v_idx)},
+                        "value": float(query_np[tok_idx, v_idx]),
+                    }
+                )
 
         resp = _requests.post(
             f"{vespa_url}/search/",
@@ -390,7 +411,9 @@ class TestCodingAgentWithOllama:
         return lm
 
     @pytest.mark.asyncio
-    async def test_coding_agent_generates_working_code(self, dspy_configured, code_search_infra):
+    async def test_coding_agent_generates_working_code(
+        self, dspy_configured, code_search_infra
+    ):
         """LLM generates add(2,3) with real code search context,
         executes in OpenShell sandbox, stdout contains '5'."""
         from cogniverse_agents.coding_agent import (
@@ -445,7 +468,9 @@ class TestCodingAgentWithOllama:
         )
 
     @pytest.mark.asyncio
-    async def test_coding_agent_with_real_code_search(self, dspy_configured, code_search_infra):
+    async def test_coding_agent_with_real_code_search(
+        self, dspy_configured, code_search_infra
+    ):
         """Agent searches real Vespa code index with LateOn-Code-edge,
         generates email validation, executes in OpenShell sandbox."""
         from cogniverse_agents.coding_agent import (

@@ -63,7 +63,9 @@ def _ensure_delivery_embeddings(ollama_url: str) -> None:
         return
     for dest, desc in _DELIVERY_DESCRIPTIONS.items():
         _delivery_embeddings[dest] = _embed_text(desc, ollama_url)
-    logger.info("Computed delivery embeddings for %d destinations", len(_delivery_embeddings))
+    logger.info(
+        "Computed delivery embeddings for %d destinations", len(_delivery_embeddings)
+    )
 
 
 def _detect_deliveries(action: str, ollama_url: str) -> list:
@@ -80,7 +82,9 @@ def _detect_deliveries(action: str, ollama_url: str) -> list:
         sim = _cosine_sim(action_emb, ref_emb)
         if sim > _DELIVERY_THRESHOLD:
             matched.append((dest, sim))
-            logger.info("Detected delivery %r in action %r (sim=%.3f)", dest, action, sim)
+            logger.info(
+                "Detected delivery %r in action %r (sim=%.3f)", dest, action, sim
+            )
 
     return [dest for dest, _ in sorted(matched, key=lambda x: -x[1])]
 
@@ -93,9 +97,21 @@ def _is_pure_delivery(action: str) -> bool:
     """
     words = set(action.lower().split())
     processing_words = {
-        "summarize", "analyze", "report", "search", "find", "research",
-        "compare", "explain", "list", "describe", "create", "generate",
-        "write", "draft", "compile",
+        "summarize",
+        "analyze",
+        "report",
+        "search",
+        "find",
+        "research",
+        "compare",
+        "explain",
+        "list",
+        "describe",
+        "create",
+        "generate",
+        "write",
+        "draft",
+        "compile",
     }
     return not words.intersection(processing_words)
 
@@ -119,7 +135,11 @@ async def _call_agent(
         data = response.json()
         return data.get("response") or data.get("result") or str(data)
     except httpx.HTTPStatusError as exc:
-        logger.error("Agent call failed (%s): %s", exc.response.status_code, exc.response.text[:500])
+        logger.error(
+            "Agent call failed (%s): %s",
+            exc.response.status_code,
+            exc.response.text[:500],
+        )
         raise
     except Exception as exc:
         logger.error("Agent call error: %s", exc)
@@ -142,7 +162,9 @@ async def _deliver_to_wiki(
         "tenant_id": tenant_id,
     }
     try:
-        response = await client.post(f"{runtime_url}/wiki/save", json=payload, timeout=30.0)
+        response = await client.post(
+            f"{runtime_url}/wiki/save", json=payload, timeout=30.0
+        )
         response.raise_for_status()
         data = response.json()
         logger.info("Delivered to wiki: slug=%s", data.get("slug"))
@@ -159,7 +181,9 @@ async def _deliver_to_telegram(
     """Send content via the messaging gateway."""
     payload = {"tenant_id": tenant_id, "message": content}
     try:
-        response = await client.post(f"{runtime_url}/messaging/send", json=payload, timeout=30.0)
+        response = await client.post(
+            f"{runtime_url}/messaging/send", json=payload, timeout=30.0
+        )
         if response.status_code == 404:
             logger.warning("Messaging endpoint not available — skipping Telegram")
             return
@@ -189,7 +213,9 @@ async def _execute_action(
     if _is_pure_delivery(action) and deliveries:
         result = context
     else:
-        result = await _call_agent(client, runtime_url, tenant_id, query=action, context=context)
+        result = await _call_agent(
+            client, runtime_url, tenant_id, query=action, context=context
+        )
 
     for dest in deliveries:
         if dest == "wiki":
@@ -213,7 +239,9 @@ async def run_job(job_id: str, tenant_id: str, runtime_url: str) -> None:
         config_key=f"job_{job_id}",
     )
     if entry is None or not entry.config_value:
-        raise RuntimeError(f"Job {job_id} not found in ConfigStore for tenant {tenant_id}")
+        raise RuntimeError(
+            f"Job {job_id} not found in ConfigStore for tenant {tenant_id}"
+        )
 
     job = entry.config_value
     query: str = job["query"]
@@ -230,7 +258,13 @@ async def run_job(job_id: str, tenant_id: str, runtime_url: str) -> None:
         for action in post_actions:
             logger.info("Job %s executing post_action: %r", job_id, action)
             result = await _execute_action(
-                client, runtime_url, tenant_id, action, query, result, ollama_url,
+                client,
+                runtime_url,
+                tenant_id,
+                action,
+                query,
+                result,
+                ollama_url,
             )
 
     logger.info("Job %s completed", job_id)

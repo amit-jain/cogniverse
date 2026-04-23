@@ -13,6 +13,7 @@ skip_if_no_ollama = pytest.mark.skipif(
     reason="Ollama not available at http://localhost:11434",
 )
 
+
 def _deno_available() -> bool:
     """Check if Deno is available, including ~/.deno/bin."""
     import os
@@ -78,7 +79,9 @@ class TestRLMInferenceDirect:
         )
 
         assert result.answer, "answer must be a non-empty string"
-        assert "Paris" in result.answer, f"expected 'Paris' in answer, got: {result.answer!r}"
+        assert "Paris" in result.answer, (
+            f"expected 'Paris' in answer, got: {result.answer!r}"
+        )
 
     def test_process_returns_positive_latency(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
@@ -199,9 +202,11 @@ class TestRLMAwareMixinProcess:
             )
 
         # The underlying error should mention the missing model
-        assert "nonexistent-model-xyz-9999" in str(exc_info.value) or "not found" in str(
+        assert "nonexistent-model-xyz-9999" in str(
             exc_info.value
-        ), f"unexpected error message: {exc_info.value}"
+        ) or "not found" in str(exc_info.value), (
+            f"unexpected error message: {exc_info.value}"
+        )
 
 
 @skip_if_no_ollama
@@ -223,7 +228,8 @@ class TestWikiManagerMergeWithRLM:
         assert merged.strip(), "merged content must not be empty"
         # Both fact sets must be represented: creation year and release year
         assert "1991" in merged or "Guido" in merged, (
-            "merged content should preserve original creation facts; got: " + merged[:300]
+            "merged content should preserve original creation facts; got: "
+            + merged[:300]
         )
         assert "2023" in merged or "3.12" in merged, (
             "merged content should include new release facts; got: " + merged[:300]
@@ -240,7 +246,9 @@ class TestWikiManagerMergeWithRLM:
         wm = self._make_wiki_manager()
 
         # Patch RLMInference to raise so the fallback path is exercised
-        bad_config = LLMEndpointConfig(model="ollama/bad-model-xyz", api_base=_OLLAMA_API_BASE)
+        bad_config = LLMEndpointConfig(
+            model="ollama/bad-model-xyz", api_base=_OLLAMA_API_BASE
+        )
         broken_rlm = RLMInference(llm_config=bad_config, timeout_seconds=10)
 
         with mock.patch(

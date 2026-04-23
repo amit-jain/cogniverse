@@ -376,11 +376,15 @@ class TestSyntheticDataRequest:
             SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=0)
 
         with pytest.raises(ValidationError):
-            SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10001)
+            SyntheticDataRequest(
+                tenant_id="test:unit", optimizer="modality", count=10001
+            )
 
     def test_request_defaults(self):
         """Test default values for optional fields — tenant_id is required."""
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=100)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=100
+        )
 
         assert request.vespa_sample_size == 200
         assert request.strategies == ["diverse"]

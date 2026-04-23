@@ -35,9 +35,7 @@ def test_env_var_selects_remote_backend(monkeypatch):
 
 def test_no_url_falls_back_to_local(monkeypatch):
     monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_URL", raising=False)
-    with patch(
-        "cogniverse_core.common.models.semantic_embedder.SemanticEmbedder"
-    ):
+    with patch("cogniverse_core.common.models.semantic_embedder.SemanticEmbedder"):
         with patch("sentence_transformers.SentenceTransformer") as MockST:
             MockST.return_value = MagicMock(name="local-st")
             embedder = get_semantic_embedder()
@@ -75,7 +73,9 @@ def test_remote_encode_hits_v1_embeddings():
     embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000/", "nomic-embed-text")
 
     mock_response = _openai_embed_response([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
-    with patch.object(embedder._session, "post", return_value=mock_response) as mock_post:
+    with patch.object(
+        embedder._session, "post", return_value=mock_response
+    ) as mock_post:
         result = embedder.encode(["hello", "world"])
 
     # Trailing slash stripped, OpenAI-compatible endpoint

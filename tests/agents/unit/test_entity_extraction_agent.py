@@ -99,7 +99,9 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="Show me Barack Obama in Chicago", tenant_id=TEST_TENANT_ID)
+            EntityExtractionInput(
+                query="Show me Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+            )
         )
 
         assert isinstance(result, EntityExtractionOutput)
@@ -130,7 +132,9 @@ class TestEntityExtractionAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, entity_agent):
         """Test processing empty query"""
-        result = await entity_agent._process_impl(EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID))
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID)
+        )
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -140,7 +144,9 @@ class TestEntityExtractionAgent:
     async def test_process_missing_query(self, entity_agent):
         """Test processing with missing query field (defaults to empty string)"""
         # With typed inputs, we provide an empty query as equivalent to missing
-        result = await entity_agent._process_impl(EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID))
+        result = await entity_agent._process_impl(
+            EntityExtractionInput(query="", tenant_id=TEST_TENANT_ID)
+        )
 
         assert result.query == ""
         assert result.entity_count == 0
@@ -206,7 +212,9 @@ class TestEntityExtractionAgent:
         )
 
         result = await entity_agent._process_impl(
-            EntityExtractionInput(query="Obama and Trump at White House", tenant_id=TEST_TENANT_ID)
+            EntityExtractionInput(
+                query="Obama and Trump at White House", tenant_id=TEST_TENANT_ID
+            )
         )
 
         assert result.dominant_types[0] == "PERSON"  # Most common type
@@ -306,15 +314,27 @@ class TestGLiNERFastPath:
     async def test_fast_path_extracts_typed_entities(self, fast_agent):
         """GLiNER fast path converts raw dicts to Entity objects."""
         fast_agent._gliner_extractor.extract_entities.return_value = [
-            {"text": "Barack Obama", "label": "PERSON", "confidence": 0.95,
-             "start_pos": 0, "end_pos": 12},
-            {"text": "Chicago", "label": "LOCATION", "confidence": 0.88,
-             "start_pos": 16, "end_pos": 23},
+            {
+                "text": "Barack Obama",
+                "label": "PERSON",
+                "confidence": 0.95,
+                "start_pos": 0,
+                "end_pos": 12,
+            },
+            {
+                "text": "Chicago",
+                "label": "LOCATION",
+                "confidence": 0.88,
+                "start_pos": 16,
+                "end_pos": 23,
+            },
         ]
         fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = []
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID)
+            EntityExtractionInput(
+                query="Barack Obama in Chicago", tenant_id=TEST_TENANT_ID
+            )
         )
 
         assert result.path_used == "fast"
@@ -329,18 +349,35 @@ class TestGLiNERFastPath:
     async def test_fast_path_extracts_relationships(self, fast_agent):
         """SpaCy produces Relationship objects when 2+ entities found."""
         fast_agent._gliner_extractor.extract_entities.return_value = [
-            {"text": "Obama", "label": "PERSON", "confidence": 0.9,
-             "start_pos": 0, "end_pos": 5},
-            {"text": "White House", "label": "LOCATION", "confidence": 0.85,
-             "start_pos": 14, "end_pos": 25},
+            {
+                "text": "Obama",
+                "label": "PERSON",
+                "confidence": 0.9,
+                "start_pos": 0,
+                "end_pos": 5,
+            },
+            {
+                "text": "White House",
+                "label": "LOCATION",
+                "confidence": 0.85,
+                "start_pos": 14,
+                "end_pos": 25,
+            },
         ]
         fast_agent._spacy_analyzer.extract_semantic_relationships.return_value = [
-            {"subject": "Obama", "relation": "at", "object": "House",
-             "confidence": 0.7, "grammatical_pattern": "prep-at"},
+            {
+                "subject": "Obama",
+                "relation": "at",
+                "object": "House",
+                "confidence": 0.7,
+                "grammatical_pattern": "prep-at",
+            },
         ]
 
         result = await fast_agent._process_impl(
-            EntityExtractionInput(query="Obama at the White House", tenant_id=TEST_TENANT_ID)
+            EntityExtractionInput(
+                query="Obama at the White House", tenant_id=TEST_TENANT_ID
+            )
         )
 
         assert result.path_used == "fast"
@@ -354,8 +391,13 @@ class TestGLiNERFastPath:
     async def test_fast_path_skips_relationships_for_single_entity(self, fast_agent):
         """SpaCy relationship extraction skipped when fewer than 2 entities."""
         fast_agent._gliner_extractor.extract_entities.return_value = [
-            {"text": "Obama", "label": "PERSON", "confidence": 0.9,
-             "start_pos": 0, "end_pos": 5},
+            {
+                "text": "Obama",
+                "label": "PERSON",
+                "confidence": 0.9,
+                "start_pos": 0,
+                "end_pos": 5,
+            },
         ]
 
         result = await fast_agent._process_impl(
@@ -390,7 +432,9 @@ class TestGLiNERFastPath:
         """If GLiNER raises at runtime, should fall back to DSPy."""
         agent = _make_extraction_agent()
         agent._gliner_extractor = MagicMock()
-        agent._gliner_extractor.extract_entities.side_effect = RuntimeError("GLiNER OOM")
+        agent._gliner_extractor.extract_entities.side_effect = RuntimeError(
+            "GLiNER OOM"
+        )
         agent._spacy_analyzer = MagicMock()
 
         # Mock DSPy fallback
@@ -400,7 +444,9 @@ class TestGLiNERFastPath:
         agent.dspy_module = MagicMock()
         agent.dspy_module.forward.return_value = mock_result
 
-        input_data = EntityExtractionInput(query="Python programming", tenant_id=TEST_TENANT_ID)
+        input_data = EntityExtractionInput(
+            query="Python programming", tenant_id=TEST_TENANT_ID
+        )
         result = await agent._process_impl(input_data)
 
         assert result.entity_count >= 1
@@ -563,7 +609,9 @@ class TestEntityExtractionArtifactLoading:
         mock_tm.get_provider.return_value = MagicMock()
         fake_state = {"extractor.predict": {"signature": {"fields": []}, "demos": []}}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
@@ -592,9 +640,13 @@ class TestEntityExtractionArtifactLoading:
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
             entity_agent.telemetry_manager = mock_tm
             entity_agent._artifact_tenant_id = "test:unit"
             entity_agent._load_artifact()

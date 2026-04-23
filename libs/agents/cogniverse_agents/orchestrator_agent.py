@@ -104,9 +104,7 @@ class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration"""
 
     query: str = Field(..., description="Query to orchestrate")
-    tenant_id: str = Field(
-        ..., description="Tenant identifier (per-request, required)"
-    )
+    tenant_id: str = Field(..., description="Tenant identifier (per-request, required)")
     session_id: Optional[str] = Field(
         default=None, description="Session identifier (per-request)"
     )
@@ -665,12 +663,12 @@ class OrchestratorAgent(
         )
 
         raw_sequence = result.agent_sequence or ""
-        agent_sequence = [
-            a.strip() for a in raw_sequence.split(",") if a.strip()
-        ]
+        agent_sequence = [a.strip() for a in raw_sequence.split(",") if a.strip()]
         if not agent_sequence:
             # DSPy planner returned empty/None — fall back to search
-            logger.warning("DSPy planner returned empty agent_sequence, falling back to search_agent")
+            logger.warning(
+                "DSPy planner returned empty agent_sequence, falling back to search_agent"
+            )
             agent_sequence = ["search_agent"]
 
         # Parse parallel groups (LLM may return "None" or non-numeric strings)
@@ -1014,9 +1012,7 @@ class OrchestratorAgent(
         return {
             "query": query,
             "status": "success",
-            "results": {
-                name: tr["result"] for name, tr in task_results.items()
-            },
+            "results": {name: tr["result"] for name, tr in task_results.items()},
             "fusion_strategy": fusion_strategy.value,
             "fusion_quality": fusion_quality,
             "aggregated_content": fused["content"],
@@ -1043,11 +1039,14 @@ class OrchestratorAgent(
         query_lower = query.lower()
 
         # Temporal fusion for time-related queries with multiple modalities
-        temporal_keywords = ["timeline", "sequence", "chronological", "when", "duration"]
-        if (
-            any(kw in query_lower for kw in temporal_keywords)
-            and len(modalities) > 1
-        ):
+        temporal_keywords = [
+            "timeline",
+            "sequence",
+            "chronological",
+            "when",
+            "duration",
+        ]
+        if any(kw in query_lower for kw in temporal_keywords) and len(modalities) > 1:
             return FusionStrategy.TEMPORAL
 
         # Hierarchical fusion for comparison queries
@@ -1128,7 +1127,9 @@ class OrchestratorAgent(
             total_confidence += avg
             content_parts.append("")
 
-        avg_confidence = total_confidence / modality_count if modality_count > 0 else 0.0
+        avg_confidence = (
+            total_confidence / modality_count if modality_count > 0 else 0.0
+        )
         return {"content": "\n".join(content_parts), "confidence": avg_confidence}
 
     def _fuse_simple(self, task_results: Dict[str, Dict]) -> Dict[str, Any]:
@@ -1151,10 +1152,7 @@ class OrchestratorAgent(
 
     def _should_checkpoint(self) -> bool:
         """Check if checkpointing is enabled and configured."""
-        return (
-            self.checkpoint_config.enabled
-            and self.checkpoint_storage is not None
-        )
+        return self.checkpoint_config.enabled and self.checkpoint_storage is not None
 
     async def _save_checkpoint(
         self,
@@ -1192,7 +1190,9 @@ class OrchestratorAgent(
                 checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
                 workflow_id=workflow_id,
                 tenant_id=tenant_id,
-                workflow_status="running" if status == CheckpointStatus.ACTIVE else status.value,
+                workflow_status="running"
+                if status == CheckpointStatus.ACTIVE
+                else status.value,
                 current_phase=current_step,
                 original_query=plan.query,
                 execution_order=[[f"step_{i}"] for i in range(len(plan.steps))],
@@ -1282,7 +1282,9 @@ class OrchestratorAgent(
                 attributes={
                     "orchestration.workflow_id": str(workflow_id),
                     "orchestration.query": query[:200],
-                    "orchestration.agent_sequence": ",".join(agent_sequence) if agent_sequence else "",
+                    "orchestration.agent_sequence": ",".join(agent_sequence)
+                    if agent_sequence
+                    else "",
                     "orchestration.execution_time": float(execution_time),
                     "orchestration.success": bool(success),
                     "orchestration.tasks_completed": int(tasks_completed),
@@ -1387,9 +1389,7 @@ async def lifespan(app: FastAPI):
     # AgentRegistry reads agents from config.json > agents section.
     # Startup is cluster-scope (no request tenant); per-request flow
     # still routes through the dispatcher with its own tenant.
-    registry = AgentRegistry(
-        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-    )
+    registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
     deps = OrchestratorDeps()
     orchestrator_agent = OrchestratorAgent(
@@ -1437,9 +1437,7 @@ if __name__ == "__main__":
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
-    registry = AgentRegistry(
-        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-    )
+    registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
     deps = OrchestratorDeps()
     agent = OrchestratorAgent(
         deps=deps, registry=registry, config_manager=config_manager, port=8013

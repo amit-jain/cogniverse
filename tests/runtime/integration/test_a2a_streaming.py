@@ -133,7 +133,9 @@ def _collect_stream_events(agent, typed_input) -> list[dict[str, Any]]:
     return events
 
 
-def _send_a2a_stream(client, text, agent_name="summarizer_agent", tenant_id="test:unit"):
+def _send_a2a_stream(
+    client, text, agent_name="summarizer_agent", tenant_id="test:unit"
+):
     """Send A2A message/stream and collect SSE events."""
     payload = {
         "jsonrpc": "2.0",
@@ -346,7 +348,9 @@ class TestRoutingAgentStreaming:
 
         _assert_no_errors(events, "RoutingAgent")
         phases = _get_phases(events)
-        assert "context_enrichment" in phases, f"Missing context_enrichment phase: {phases}"
+        assert "context_enrichment" in phases, (
+            f"Missing context_enrichment phase: {phases}"
+        )
         assert "routing_decision" in phases, f"Missing routing_decision phase: {phases}"
         assert "complete" in phases, f"Missing complete phase: {phases}"
 
@@ -414,12 +418,18 @@ class TestOrchestratorAgentStreaming:
         )
         # Each step has agent_name (may include _agent suffix from LLM)
         valid_agents = {
-            "entity_extraction", "entity_extraction_agent",
-            "profile_selection", "profile_selection_agent",
-            "query_enhancement", "query_enhancement_agent",
-            "search", "search_agent",
-            "summarizer", "summarizer_agent",
-            "detailed_report", "detailed_report_agent",
+            "entity_extraction",
+            "entity_extraction_agent",
+            "profile_selection",
+            "profile_selection_agent",
+            "query_enhancement",
+            "query_enhancement_agent",
+            "search",
+            "search_agent",
+            "summarizer",
+            "summarizer_agent",
+            "detailed_report",
+            "detailed_report_agent",
         }
         for step in final_data["plan_steps"]:
             assert "agent_name" in step, f"Plan step missing agent_name: {step}"
@@ -951,9 +961,9 @@ class TestRoutingOptimizationIntegration:
             f"Routing after optimization should succeed, got: {route_result}"
         )
         # Gateway returns routed_to in gateway dict, not top-level recommended_agent
-        assert route_result.get("agent") or route_result.get("gateway", {}).get("routed_to"), (
-            f"Expected agent routing result, got: {route_result}"
-        )
+        assert route_result.get("agent") or route_result.get("gateway", {}).get(
+            "routed_to"
+        ), f"Expected agent routing result, got: {route_result}"
 
     def test_optimize_routing_empty_examples_triggers_cycle(
         self, streaming_dispatcher, real_telemetry, dspy_lm
@@ -1002,7 +1012,9 @@ class TestRoutingOptimizationIntegration:
         assert isinstance(result["metrics"], dict)
         # Optimizer status uses "metrics" sub-dict with successful_routes, not total_queries
         metrics = result["metrics"].get("metrics", result["metrics"])
-        assert "successful_routes" in metrics, f"Missing successful_routes in: {metrics}"
+        assert "successful_routes" in metrics, (
+            f"Missing successful_routes in: {metrics}"
+        )
 
     def test_optimization_cycle_from_traces(
         self, streaming_dispatcher, real_telemetry, dspy_lm
@@ -1078,7 +1090,9 @@ class TestFullOptimizationPipeline:
         # Verify all queries were routed to real agents
         # Gateway returns routed_to in nested gateway dict
         def _get_agent(r):
-            return r.get("recommended_agent") or r.get("gateway", {}).get("routed_to", "search_agent")
+            return r.get("recommended_agent") or r.get("gateway", {}).get(
+                "routed_to", "search_agent"
+            )
 
         def _get_confidence(r):
             return r.get("confidence") or r.get("gateway", {}).get("confidence", 0.5)
@@ -1153,6 +1167,6 @@ class TestFullOptimizationPipeline:
         assert final_result["status"] == "success", (
             f"Routing after optimization should succeed: {final_result}"
         )
-        assert final_result.get("agent") or final_result.get("gateway", {}).get("routed_to"), (
-            f"Expected routed agent, got: {final_result}"
-        )
+        assert final_result.get("agent") or final_result.get("gateway", {}).get(
+            "routed_to"
+        ), f"Expected routed agent, got: {final_result}"

@@ -144,9 +144,7 @@ class TestLabelMappings:
         gen_types = ["raw_results", "summary", "detailed_report"]
         for mod in modalities:
             for gt in gen_types:
-                assert (mod, gt) in SIMPLE_ROUTE_MAP, (
-                    f"Missing route for ({mod}, {gt})"
-                )
+                assert (mod, gt) in SIMPLE_ROUTE_MAP, f"Missing route for ({mod}, {gt})"
 
 
 # ---------------------------------------------------------------------------
@@ -196,47 +194,95 @@ class TestClassification:
 class TestComplexityDecision:
     def test_no_entities_is_always_complex(self, gateway_agent):
         """No entities → always complex, regardless of query content."""
-        assert gateway_agent._is_complex("analyze the data", "video", "raw_results", [], 0.0) is True
-        assert gateway_agent._is_complex("find videos", "video", "raw_results", [], 0.0) is True
-        assert gateway_agent._is_complex("hello", "video", "raw_results", [], 0.0) is True
+        assert (
+            gateway_agent._is_complex(
+                "analyze the data", "video", "raw_results", [], 0.0
+            )
+            is True
+        )
+        assert (
+            gateway_agent._is_complex("find videos", "video", "raw_results", [], 0.0)
+            is True
+        )
+        assert (
+            gateway_agent._is_complex("hello", "video", "raw_results", [], 0.0) is True
+        )
 
     def test_low_confidence_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.35)]
-        assert gateway_agent._is_complex("find videos", "video", "raw_results", entities, 0.35) is True
+        assert (
+            gateway_agent._is_complex(
+                "find videos", "video", "raw_results", entities, 0.35
+            )
+            is True
+        )
 
     def test_both_modality_is_complex(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("find stuff", "both", "raw_results", entities, 0.9) is True
+        assert (
+            gateway_agent._is_complex(
+                "find stuff", "both", "raw_results", entities, 0.9
+            )
+            is True
+        )
 
     def test_high_confidence_single_modality_is_simple(self, gateway_agent):
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("find videos", "video", "raw_results", entities, 0.9) is False
+        assert (
+            gateway_agent._is_complex(
+                "find videos", "video", "raw_results", entities, 0.9
+            )
+            is False
+        )
 
     def test_detailed_report_is_always_complex(self, gateway_agent):
         """detailed_report generation type always requires orchestration."""
         entities = [_make_entity("doc", "document_content", 0.9)]
-        assert gateway_agent._is_complex("find docs", "document", "detailed_report", entities, 0.9) is True
+        assert (
+            gateway_agent._is_complex(
+                "find docs", "document", "detailed_report", entities, 0.9
+            )
+            is True
+        )
 
     def test_analysis_keyword_is_complex(self, gateway_agent):
         """Queries with analysis/synthesis verbs need orchestration."""
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("analyze the video trends", "video", "raw_results", entities, 0.9) is True
+        assert (
+            gateway_agent._is_complex(
+                "analyze the video trends", "video", "raw_results", entities, 0.9
+            )
+            is True
+        )
 
     def test_multi_step_marker_is_complex(self, gateway_agent):
         """Multi-step queries need orchestration."""
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("find videos then summarize them", "video", "raw_results", entities, 0.9) is True
+        assert (
+            gateway_agent._is_complex(
+                "find videos then summarize them", "video", "raw_results", entities, 0.9
+            )
+            is True
+        )
 
     def test_compound_query_is_complex(self, gateway_agent):
         """Queries with many clauses need orchestration."""
         entities = [_make_entity("vid", "video_content", 0.9)]
         query = "find videos about cats and dogs and birds and fish"
-        assert gateway_agent._is_complex(query, "video", "raw_results", entities, 0.9) is True
+        assert (
+            gateway_agent._is_complex(query, "video", "raw_results", entities, 0.9)
+            is True
+        )
 
     def test_simple_search_is_not_complex(self, gateway_agent):
         """Plain search query with good confidence is simple."""
         entities = [_make_entity("vid", "video_content", 0.9)]
-        assert gateway_agent._is_complex("find cat videos", "video", "raw_results", entities, 0.9) is False
+        assert (
+            gateway_agent._is_complex(
+                "find cat videos", "video", "raw_results", entities, 0.9
+            )
+            is False
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -268,14 +314,19 @@ class TestProcessImpl:
             {"text": "documents", "label": "document_content", "score": 0.80},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Compare the video with the PDF document", tenant_id=TEST_TENANT_ID)
+            GatewayInput(
+                query="Compare the video with the PDF document",
+                tenant_id=TEST_TENANT_ID,
+            )
         )
         assert result.complexity == "complex"
         assert result.modality == "both"
         assert result.routed_to == "orchestrator_agent"
 
     @pytest.mark.asyncio
-    async def test_no_entities_is_always_complex(self, gateway_agent, mock_gliner_model):
+    async def test_no_entities_is_always_complex(
+        self, gateway_agent, mock_gliner_model
+    ):
         """No entities → always complex, regardless of query."""
         mock_gliner_model.predict_entities.return_value = []
         result = await gateway_agent._process_impl(
@@ -331,21 +382,27 @@ class TestProcessImpl:
             {"text": "podcast", "label": "audio_content", "score": 0.87},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="Find podcast episodes about AI", tenant_id=TEST_TENANT_ID)
+            GatewayInput(
+                query="Find podcast episodes about AI", tenant_id=TEST_TENANT_ID
+            )
         )
         assert result.complexity == "simple"
         assert result.modality == "audio"
         assert result.routed_to == "audio_analysis_agent"
 
     @pytest.mark.asyncio
-    async def test_document_detailed_report_is_complex(self, gateway_agent, mock_gliner_model):
+    async def test_document_detailed_report_is_complex(
+        self, gateway_agent, mock_gliner_model
+    ):
         """Document + detailed_report -> always complex (needs search→analyze→report)."""
         mock_gliner_model.predict_entities.return_value = [
             {"text": "spreadsheet", "label": "document_content", "score": 0.82},
             {"text": "report", "label": "detailed_report_request", "score": 0.78},
         ]
         result = await gateway_agent._process_impl(
-            GatewayInput(query="full writeup of the spreadsheet data", tenant_id=TEST_TENANT_ID)
+            GatewayInput(
+                query="full writeup of the spreadsheet data", tenant_id=TEST_TENANT_ID
+            )
         )
         assert result.complexity == "complex"
         assert result.generation_type == "detailed_report"
@@ -488,7 +545,9 @@ class TestArtifactLoading:
 
         artifact = {"fast_path_confidence_threshold": 0.55, "gliner_threshold": 0.35}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
 
@@ -524,7 +583,9 @@ class TestArtifactLoading:
 
         artifact = {"fast_path_confidence_threshold": 0.6}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(artifact))
 
@@ -544,9 +605,13 @@ class TestArtifactLoading:
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
             agent.telemetry_manager = mock_tm
             agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()

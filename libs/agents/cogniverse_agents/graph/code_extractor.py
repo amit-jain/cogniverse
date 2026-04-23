@@ -195,7 +195,12 @@ class _TreeWalker:
     def _extract_name(self, node) -> Optional[str]:
         """Find the identifier child of a definition node."""
         for child in node.children:
-            if child.type in ("identifier", "type_identifier", "name", "property_identifier"):
+            if child.type in (
+                "identifier",
+                "type_identifier",
+                "name",
+                "property_identifier",
+            ):
                 return self._text(child)
         return None
 
@@ -217,7 +222,12 @@ class _TreeWalker:
     def _extract_call_target(self, node) -> Optional[str]:
         """Extract the callee name from a call expression."""
         for child in node.children:
-            if child.type in ("identifier", "attribute", "member_expression", "field_expression"):
+            if child.type in (
+                "identifier",
+                "attribute",
+                "member_expression",
+                "field_expression",
+            ):
                 text = self._text(child)
                 if text:
                     if "." in text:
@@ -235,7 +245,9 @@ class _TreeWalker:
         return self._module_name
 
     def _text(self, node) -> str:
-        return self._source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        return self._source[node.start_byte : node.end_byte].decode(
+            "utf-8", errors="replace"
+        )
 
     def _add_definition_node(self, name: str, node_type: str) -> None:
         if name in self._seen_node_names:

@@ -112,7 +112,9 @@ class TestLearnedRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             reranker = LearnedReranker(
-                model="ollama/qwen2.5:3b", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="ollama/qwen2.5:3b",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             query = "deep learning tutorial"
 
@@ -145,7 +147,9 @@ class TestLearnedRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             reranker = LearnedReranker(
-                model="ollama/qwen2.5:3b", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="ollama/qwen2.5:3b",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             query = "machine learning tutorial"
 
@@ -182,7 +186,9 @@ class TestHybridRerankingIntegration:
             # Create hybrid reranker
             heuristic = MultiModalReranker()
             learned = LearnedReranker(
-                model="cohere/rerank-english-v3.0", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="cohere/rerank-english-v3.0",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
@@ -190,7 +196,8 @@ class TestHybridRerankingIntegration:
                 strategy="weighted_ensemble",
                 learned_weight=0.7,
                 heuristic_weight=0.3,
-                config_manager=mock_config_manager, tenant_id="test:unit",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
 
             query = "deep learning"
@@ -219,13 +226,16 @@ class TestHybridRerankingIntegration:
 
             heuristic = MultiModalReranker()
             learned = LearnedReranker(
-                model="cohere/rerank-english-v3.0", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="cohere/rerank-english-v3.0",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
                 learned_reranker=learned,
                 strategy="cascade",
-                config_manager=mock_config_manager, tenant_id="test:unit",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
 
             query = "python tutorial"
@@ -252,13 +262,16 @@ class TestHybridRerankingIntegration:
 
             heuristic = MultiModalReranker()
             learned = LearnedReranker(
-                model="cohere/rerank-english-v3.0", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="cohere/rerank-english-v3.0",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             hybrid = HybridReranker(
                 heuristic_reranker=heuristic,
                 learned_reranker=learned,
                 strategy="consensus",
-                config_manager=mock_config_manager, tenant_id="test:unit",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
 
             query = "data science"
@@ -296,7 +309,9 @@ class TestOllamaReranking:
 
             # Initialize with Ollama model using OpenAI compatibility
             reranker = LearnedReranker(
-                model="openai/bge-reranker-v2-m3", config_manager=mock_config_manager, tenant_id="test:unit"
+                model="openai/bge-reranker-v2-m3",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
             )
             reranker.api_base = "http://localhost:11434/v1"
 

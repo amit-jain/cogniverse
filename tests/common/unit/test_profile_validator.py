@@ -238,8 +238,13 @@ class TestEmbeddingTypeValidation:
     def test_invalid_embedding_types(self, validator: ProfileValidator):
         """Invalid embedding types should fail."""
         invalid_types = [
-            "", "unknown", "chunks",
-            "frame_based", "video_chunks", "document_colbert", "audio_dual",
+            "",
+            "unknown",
+            "chunks",
+            "frame_based",
+            "video_chunks",
+            "document_colbert",
+            "audio_dual",
         ]
 
         for embedding_type in invalid_types:

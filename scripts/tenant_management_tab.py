@@ -24,6 +24,7 @@ def get_runtime_api_url() -> str:
         return st.session_state["runtime_api_url"]
 
     from cogniverse_foundation.config.utils import create_default_config_manager
+
     return create_default_config_manager().get_system_config().agent_registry_url
 
 

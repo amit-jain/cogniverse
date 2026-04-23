@@ -69,9 +69,7 @@ def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[obje
 
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Quality Monitor")
-    parser.add_argument(
-        "--tenant-id", required=True, help="Tenant ID to monitor"
-    )
+    parser.add_argument("--tenant-id", required=True, help="Tenant ID to monitor")
     parser.add_argument(
         "--runtime-url",
         default="http://localhost:28000",
@@ -171,9 +169,7 @@ def main():
         # One-shot scheduled distillation for Argo CronWorkflows: force-build
         # a trigger from the current eval and submit it regardless of
         # thresholds, then exit cleanly so the CronWorkflow run completes.
-        logger.info(
-            f"Running forced optimization cycle for tenant={args.tenant_id}"
-        )
+        logger.info(f"Running forced optimization cycle for tenant={args.tenant_id}")
         try:
             result = asyncio.run(monitor.force_optimization_cycle())
             logger.info(f"Forced cycle result: {result}")

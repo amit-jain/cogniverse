@@ -388,21 +388,23 @@ class ProcessingStrategySet:
             for idx, code_path in enumerate(code_files):
                 segments = strategy.parse_file(code_path)
                 for seg in segments:
-                    code_file_list.append({
-                        "document_id": f"{code_path.stem}_{seg['metadata']['name']}_{seg['metadata']['line_start']}",
-                        "file_index": idx,
-                        "path": str(code_path),
-                        "filename": code_path.name,
-                        "document_type": code_path.suffix.lstrip("."),
-                        "extracted_text": seg["content"],
-                        "text_length": len(seg["content"]),
-                        "chunk_type": seg["metadata"]["type"],
-                        "chunk_name": seg["metadata"]["name"],
-                        "signature": seg["metadata"]["signature"],
-                        "line_start": seg["metadata"]["line_start"],
-                        "line_end": seg["metadata"]["line_end"],
-                        "language": seg["metadata"].get("language", "unknown"),
-                    })
+                    code_file_list.append(
+                        {
+                            "document_id": f"{code_path.stem}_{seg['metadata']['name']}_{seg['metadata']['line_start']}",
+                            "file_index": idx,
+                            "path": str(code_path),
+                            "filename": code_path.name,
+                            "document_type": code_path.suffix.lstrip("."),
+                            "extracted_text": seg["content"],
+                            "text_length": len(seg["content"]),
+                            "chunk_type": seg["metadata"]["type"],
+                            "chunk_name": seg["metadata"]["name"],
+                            "signature": seg["metadata"]["signature"],
+                            "line_start": seg["metadata"]["line_start"],
+                            "line_end": seg["metadata"]["line_end"],
+                            "language": seg["metadata"].get("language", "unknown"),
+                        }
+                    )
 
             pipeline_context.logger.info(
                 f"  Parsed {len(code_file_list)} code segments from {len(code_files)} files"

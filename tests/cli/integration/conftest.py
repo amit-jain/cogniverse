@@ -26,8 +26,12 @@ PORTS = {
 }
 
 
-def _cmd(args: list[str], *, timeout: int = 120, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=check)
+def _cmd(
+    args: list[str], *, timeout: int = 120, check: bool = True
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        args, capture_output=True, text=True, timeout=timeout, check=check
+    )
 
 
 def _cluster_exists() -> bool:
@@ -49,9 +53,7 @@ def k3d_cluster():
 
     result = _cmd(cmd, timeout=120, check=False)
     if result.returncode != 0:
-        pytest.fail(
-            f"k3d cluster creation failed: {result.stderr.strip()[:300]}"
-        )
+        pytest.fail(f"k3d cluster creation failed: {result.stderr.strip()[:300]}")
 
     yield {
         "cluster_name": CLUSTER_NAME,
@@ -85,33 +87,60 @@ def deployed_stack(k3d_cluster):
             timeout=600,
         )
     _cmd(
-        ["k3d", "image", "import",
-         "cogniverse/runtime:dev", "cogniverse/dashboard:dev",
-         "-c", CLUSTER_NAME],
+        [
+            "k3d",
+            "image",
+            "import",
+            "cogniverse/runtime:dev",
+            "cogniverse/dashboard:dev",
+            "-c",
+            CLUSTER_NAME,
+        ],
         timeout=300,
     )
 
     # Install Argo CRDs (chart references CronWorkflow resources)
     from cogniverse_cli.argo import install_argo_controller
+
     try:
         install_argo_controller(namespace="argo")
     except Exception as e:
         pytest.fail(f"Argo controller install failed: {e}")
 
     # Helm install
-    _cmd([
-        "helm", "install", "cogniverse", str(chart_path),
-        "--namespace", NAMESPACE, "--create-namespace",
-        "-f", str(values_file),
-        "--timeout", "10m",
-    ], timeout=660)
+    _cmd(
+        [
+            "helm",
+            "install",
+            "cogniverse",
+            str(chart_path),
+            "--namespace",
+            NAMESPACE,
+            "--create-namespace",
+            "-f",
+            str(values_file),
+            "--timeout",
+            "10m",
+        ],
+        timeout=660,
+    )
 
     # Wait for pods
-    _cmd([
-        "kubectl", "wait", "--for=condition=ready", "pod",
-        "-l", "app.kubernetes.io/instance=cogniverse",
-        "-n", NAMESPACE, "--timeout=300s",
-    ], check=False, timeout=310)
+    _cmd(
+        [
+            "kubectl",
+            "wait",
+            "--for=condition=ready",
+            "pod",
+            "-l",
+            "app.kubernetes.io/instance=cogniverse",
+            "-n",
+            NAMESPACE,
+            "--timeout=300s",
+        ],
+        check=False,
+        timeout=310,
+    )
 
     # Port-forward with offset ports
     port_forwards = []
@@ -127,7 +156,8 @@ def deployed_stack(k3d_cluster):
     for svc, ports in pf_specs:
         proc = subprocess.Popen(
             ["kubectl", "port-forward", svc, ports, "-n", NAMESPACE],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         port_forwards.append(proc)
 

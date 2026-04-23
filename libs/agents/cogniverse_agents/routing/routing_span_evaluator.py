@@ -227,7 +227,9 @@ class RoutingSpanEvaluator:
             routing_attrs = span_row.get("attributes.routing")
             if routing_attrs and isinstance(routing_attrs, dict):
                 # Phoenix flattened format
-                chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get("recommended_agent")
+                chosen_agent = routing_attrs.get("chosen_agent") or routing_attrs.get(
+                    "recommended_agent"
+                )
                 routing_confidence = routing_attrs.get("confidence")
                 processing_time = routing_attrs.get("processing_time", 0.0)
                 query = routing_attrs.get("query")
@@ -235,9 +237,8 @@ class RoutingSpanEvaluator:
             else:
                 # Phoenix flat format: routing attributes stored with dotted keys
                 attributes = span_row.get("attributes", {})
-                chosen_agent = (
-                    attributes.get("routing.chosen_agent")
-                    or attributes.get("routing.recommended_agent")
+                chosen_agent = attributes.get("routing.chosen_agent") or attributes.get(
+                    "routing.recommended_agent"
                 )
                 routing_confidence = attributes.get("routing.confidence")
                 processing_time = attributes.get("routing.processing_time", 0.0)

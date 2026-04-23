@@ -224,6 +224,7 @@ def vespa_with_schema():
         os.environ["VESPA_CONFIG_PORT"] = str(agent_config_port)
 
         from cogniverse_foundation.config import utils as config_utils
+
         config_utils._config_manager_singleton = None
 
         # Yield with manager for agent fixture access

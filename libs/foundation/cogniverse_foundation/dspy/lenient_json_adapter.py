@@ -71,7 +71,11 @@ class LenientJSONAdapter(JSONAdapter):
                 target = key
                 if key not in expected:
                     for alias, canonical in self._FIELD_ALIASES:
-                        if key == alias and canonical in expected and canonical not in fields:
+                        if (
+                            key == alias
+                            and canonical in expected
+                            and canonical not in fields
+                        ):
                             target = canonical
                             break
                 remapped[target] = value
@@ -96,6 +100,7 @@ class LenientJSONAdapter(JSONAdapter):
                 remapped[field_name] = _default_for(annotation)
 
             import json
+
             completion = json.dumps(remapped)
 
         return super().parse(signature, completion)

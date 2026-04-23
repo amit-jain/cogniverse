@@ -74,7 +74,9 @@ def _wait_for_data_port(http_port: int, timeout: int = 120) -> bool:
     return False
 
 
-def _wait_for_schema_ready(http_port: int, schema_name: str, timeout: int = 120) -> bool:
+def _wait_for_schema_ready(
+    http_port: int, schema_name: str, timeout: int = 120
+) -> bool:
     """Feed a minimal probe document to confirm the schema accepts writes."""
     probe = {
         "fields": {
@@ -108,7 +110,9 @@ def _wait_for_schema_ready(http_port: int, schema_name: str, timeout: int = 120)
                 requests.delete(url, timeout=5)
                 return True
             if i % 10 == 0:
-                print(f"   readiness attempt {i + 1}: {resp.status_code} {resp.text[:100]}")
+                print(
+                    f"   readiness attempt {i + 1}: {resp.status_code} {resp.text[:100]}"
+                )
         except Exception as exc:
             if i % 10 == 0:
                 print(f"   readiness attempt {i + 1}: {exc}")
@@ -161,18 +165,26 @@ def graph_vespa():
     config_port = _CONFIG_PORT
 
     machine = platform.machine().lower()
-    docker_platform = "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    docker_platform = (
+        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    )
 
     subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
     subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
 
     result = subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", CONTAINER_NAME,
-            "-p", f"{http_port}:8080",
-            "-p", f"{config_port}:19071",
-            "--platform", docker_platform,
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER_NAME,
+            "-p",
+            f"{http_port}:8080",
+            "-p",
+            f"{config_port}:19071",
+            "--platform",
+            docker_platform,
             "vespaengine/vespa",
         ],
         capture_output=True,
@@ -242,10 +254,18 @@ class TestGraphVespaUpsert:
         result = ExtractionResult(
             source_doc_id="test_upsert.py",
             nodes=[
-                Node(tenant_id=TENANT_ID, name="IntegrationAlpha", kind="entity",
-                     description="First integration node"),
-                Node(tenant_id=TENANT_ID, name="IntegrationBeta", kind="entity",
-                     description="Second integration node"),
+                Node(
+                    tenant_id=TENANT_ID,
+                    name="IntegrationAlpha",
+                    kind="entity",
+                    description="First integration node",
+                ),
+                Node(
+                    tenant_id=TENANT_ID,
+                    name="IntegrationBeta",
+                    kind="entity",
+                    description="Second integration node",
+                ),
             ],
             edges=[],
         )
@@ -333,12 +353,27 @@ class TestGraphVespaQueries:
                 Node(tenant_id=TENANT_ID, name="NeighborIn1"),
             ],
             edges=[
-                Edge(tenant_id=TENANT_ID, source="NeighborHub", target="NeighborOut1",
-                     relation="calls", source_doc_id="neighbors_test.py"),
-                Edge(tenant_id=TENANT_ID, source="NeighborHub", target="NeighborOut2",
-                     relation="imports", source_doc_id="neighbors_test.py"),
-                Edge(tenant_id=TENANT_ID, source="NeighborIn1", target="NeighborHub",
-                     relation="calls", source_doc_id="neighbors_test.py"),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="NeighborHub",
+                    target="NeighborOut1",
+                    relation="calls",
+                    source_doc_id="neighbors_test.py",
+                ),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="NeighborHub",
+                    target="NeighborOut2",
+                    relation="imports",
+                    source_doc_id="neighbors_test.py",
+                ),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="NeighborIn1",
+                    target="NeighborHub",
+                    relation="calls",
+                    source_doc_id="neighbors_test.py",
+                ),
             ],
         )
         manager.upsert(result)
@@ -365,12 +400,27 @@ class TestGraphVespaQueries:
                 Node(tenant_id=TENANT_ID, name="PathD"),
             ],
             edges=[
-                Edge(tenant_id=TENANT_ID, source="PathA", target="PathB",
-                     relation="calls", source_doc_id="path_test.py"),
-                Edge(tenant_id=TENANT_ID, source="PathB", target="PathC",
-                     relation="calls", source_doc_id="path_test.py"),
-                Edge(tenant_id=TENANT_ID, source="PathC", target="PathD",
-                     relation="calls", source_doc_id="path_test.py"),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="PathA",
+                    target="PathB",
+                    relation="calls",
+                    source_doc_id="path_test.py",
+                ),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="PathB",
+                    target="PathC",
+                    relation="calls",
+                    source_doc_id="path_test.py",
+                ),
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="PathC",
+                    target="PathD",
+                    relation="calls",
+                    source_doc_id="path_test.py",
+                ),
             ],
         )
         manager.upsert(result)
@@ -456,8 +506,15 @@ def real_doc_extractor():
     from cogniverse_agents.graph.doc_extractor import DocExtractor
 
     tech_labels = [
-        "Database", "Platform", "Tool", "Library", "Framework",
-        "Service", "Organization", "Model", "Algorithm",
+        "Database",
+        "Platform",
+        "Tool",
+        "Library",
+        "Framework",
+        "Service",
+        "Organization",
+        "Model",
+        "Algorithm",
     ]
     extractor = DocExtractor(labels=tech_labels)
     gliner = extractor._get_gliner()
@@ -515,7 +572,9 @@ class TestMultimodalGraphExtraction:
                 matches.append(edge)
         return matches
 
-    def test_whisper_transcript_extracts_real_entities(self, graph_manager, real_doc_extractor):
+    def test_whisper_transcript_extracts_real_entities(
+        self, graph_manager, real_doc_extractor
+    ):
         """Transcript → GLiNER → graph: specific entity + relationship assertions.
 
         Three known entities in the transcript (ColPali, LightOn, Vespa) must
@@ -602,9 +661,7 @@ class TestMultimodalGraphExtraction:
         )
 
         path = manager.get_path(lighton_node.name, vespa_node.name, max_depth=3)
-        assert path is not None, (
-            "A path must exist between LightOn and Vespa, got None"
-        )
+        assert path is not None, "A path must exist between LightOn and Vespa, got None"
         assert lighton_node.node_id in path
         assert vespa_node.node_id in path
 
@@ -629,7 +686,9 @@ class TestMultimodalGraphExtraction:
             f"Real Ollama embedding should be densely non-zero, got {non_zero_count}/768"
         )
 
-    def test_vlm_descriptions_extract_real_entities(self, graph_manager, real_doc_extractor):
+    def test_vlm_descriptions_extract_real_entities(
+        self, graph_manager, real_doc_extractor
+    ):
         """VLM descriptions → graph: each frame's entities are linked intra-frame.
 
         Three separate VLM frame descriptions each have distinct entities.
@@ -689,9 +748,7 @@ class TestMultimodalGraphExtraction:
             ("Ollama", ollama_node),
         ]
         missing = [name for name, node in required_found if node is None]
-        assert not missing, (
-            f"GLiNER must find all frame entities, missing: {missing}"
-        )
+        assert not missing, f"GLiNER must find all frame entities, missing: {missing}"
 
         kube_vespa = self._edges_between(result, "kubernetes", "vespa")
         assert len(kube_vespa) >= 1, (
@@ -714,14 +771,21 @@ class TestMultimodalGraphExtraction:
 
         time.sleep(2)
         neighbors = manager.get_neighbors(kubernetes_node.name)
-        kube_connections = {
-            e["target_node_id"] for e in neighbors["out_edges"]
-        } | {e["source_node_id"] for e in neighbors["in_edges"]}
+        kube_connections = {e["target_node_id"] for e in neighbors["out_edges"]} | {
+            e["source_node_id"] for e in neighbors["in_edges"]
+        }
         assert vespa_node.node_id in kube_connections, (
             f"Vespa must be a neighbor of Kubernetes (same frame), got {kube_connections}"
         )
 
-        for node in (kubernetes_node, vespa_node, dspy_node, colpali_node, docker_node, ollama_node):
+        for node in (
+            kubernetes_node,
+            vespa_node,
+            dspy_node,
+            colpali_node,
+            docker_node,
+            ollama_node,
+        ):
             doc = _get_vespa_doc(port, node.doc_id)
             assert doc is not None, f"Expected {node.name} to persist as {node.doc_id}"
             fields = doc["fields"]
@@ -768,7 +832,16 @@ class TestMultimodalGraphExtraction:
         }
 
         harvested = _extract_text_for_graph(pipeline_result)
-        for fragment in ("React", "Kubernetes", "PostgreSQL", "TypeScript", "Redis", "Prisma", "Docker", "Nginx"):
+        for fragment in (
+            "React",
+            "Kubernetes",
+            "PostgreSQL",
+            "TypeScript",
+            "Redis",
+            "Prisma",
+            "Docker",
+            "Nginx",
+        ):
             assert fragment in harvested, f"{fragment} should be in harvested text"
 
         result = real_doc_extractor.extract_from_text(
@@ -778,7 +851,16 @@ class TestMultimodalGraphExtraction:
         )
 
         names_lower = {n.name.lower() for n in result.nodes}
-        well_known = {"react", "kubernetes", "postgresql", "typescript", "redis", "prisma", "docker", "nginx"}
+        well_known = {
+            "react",
+            "kubernetes",
+            "postgresql",
+            "typescript",
+            "redis",
+            "prisma",
+            "docker",
+            "nginx",
+        }
         found = {w for w in well_known if any(w in n for n in names_lower)}
         assert len(found) >= 5, (
             f"GLiNER should find at least 5 of {well_known} in {names_lower}, found {found}"

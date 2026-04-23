@@ -580,7 +580,9 @@ class VespaTestManager:
             config_manager = self.config_manager
 
             # Load full config with backend section
-            full_config = get_config(tenant_id="test:unit", config_manager=config_manager)
+            full_config = get_config(
+                tenant_id="test:unit", config_manager=config_manager
+            )
 
             # Local instantiation in test utility (acceptable pattern)
             schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))

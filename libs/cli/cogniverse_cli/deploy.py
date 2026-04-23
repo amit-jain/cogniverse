@@ -9,9 +9,7 @@ RELEASE_NAME = "cogniverse"
 NAMESPACE = "cogniverse"
 
 
-def release_exists(
-    name: str = RELEASE_NAME, namespace: str = NAMESPACE
-) -> bool:
+def release_exists(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> bool:
     """Check if a Helm release exists."""
     result = subprocess.run(
         ["helm", "status", name, "-n", namespace],
@@ -55,13 +53,12 @@ def helm_install(
     if result.returncode != 0:
         # Print stderr but don't crash — let the CLI continue to health checks
         import sys
+
         print(result.stderr, file=sys.stderr)
         raise RuntimeError(f"helm {action} failed (exit {result.returncode})")
 
 
-def helm_uninstall(
-    name: str = RELEASE_NAME, namespace: str = NAMESPACE
-) -> None:
+def helm_uninstall(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> None:
     """Uninstall Helm release if it exists."""
     if not release_exists(name, namespace):
         return

@@ -68,9 +68,7 @@ class TestCreateCluster:
     """Tests for :func:`create_cluster`."""
 
     @patch("cogniverse_cli.cluster.subprocess.run")
-    def test_create_cluster_builds_correct_command(
-        self, mock_run: object
-    ) -> None:
+    def test_create_cluster_builds_correct_command(self, mock_run: object) -> None:
         """All default ports produce -p flags in the subprocess command."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
@@ -84,11 +82,7 @@ class TestCreateCluster:
         assert cmd[:4] == ["k3d", "cluster", "create", "cogniverse"]
 
         # Each default port should produce a -p flag
-        port_flags = [
-            cmd[i + 1]
-            for i in range(len(cmd))
-            if cmd[i] == "-p"
-        ]
+        port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
         assert len(port_flags) == len(DEFAULT_PORTS)
         for port in DEFAULT_PORTS:
             assert f"{port}:{port}@loadbalancer" in port_flags

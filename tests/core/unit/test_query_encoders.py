@@ -228,8 +228,12 @@ def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get
     }
     sys_config.inference_service_urls = {"general": "http://cogniverse-general:8000"}
 
-    encoder_a = QueryEncoderFactory.create_encoder(profile="profile_128", config=sys_config)
-    encoder_b = QueryEncoderFactory.create_encoder(profile="profile_64", config=sys_config)
+    encoder_a = QueryEncoderFactory.create_encoder(
+        profile="profile_128", config=sys_config
+    )
+    encoder_b = QueryEncoderFactory.create_encoder(
+        profile="profile_64", config=sys_config
+    )
 
     assert encoder_a is not encoder_b
     assert encoder_a.get_embedding_dim() == 128

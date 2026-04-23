@@ -28,9 +28,34 @@ console = Console()
 RUNTIME_URL = "http://localhost:28000"
 
 CODE_EXTENSIONS = {
-    ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".java", ".c", ".cpp",
-    ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh", ".bash",
-    ".yaml", ".yml", ".toml", ".json", ".sql", ".r", ".jl", ".lua", ".zig",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".go",
+    ".rs",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".php",
+    ".swift",
+    ".kt",
+    ".scala",
+    ".sh",
+    ".bash",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".json",
+    ".sql",
+    ".r",
+    ".jl",
+    ".lua",
+    ".zig",
 }
 
 DOCS_EXT_TO_PROFILE = {
@@ -59,14 +84,41 @@ DOCS_EXT_TO_PROFILE = {
 GRAPH_TEXT_EXTENSIONS = {".md", ".txt", ".rst", ".html", ".htm", ".pdf"}
 
 IGNORE_DIRS = {
-    ".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache",
-    ".pytest_cache", ".tox", "dist", "build", ".eggs",
-    ".ruff_cache", ".cache", ".idea", ".vscode",
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    "dist",
+    "build",
+    ".eggs",
+    ".ruff_cache",
+    ".cache",
+    ".idea",
+    ".vscode",
 }
 
 IGNORE_EXTENSIONS = {
-    ".lock", ".sum", ".pyc", ".pyo", ".pyd", ".so", ".dylib", ".dll",
-    ".class", ".o", ".a", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z",
+    ".lock",
+    ".sum",
+    ".pyc",
+    ".pyo",
+    ".pyd",
+    ".so",
+    ".dylib",
+    ".dll",
+    ".class",
+    ".o",
+    ".a",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".7z",
     ".DS_Store",
 }
 
@@ -282,24 +334,37 @@ def index_files(
                 file_profile = profile or _profile_for_file(file_path, content_type)
 
                 upload_result = _upload_file(
-                    client, file_path, rel_path, file_profile, tenant_id,
+                    client,
+                    file_path,
+                    rel_path,
+                    file_profile,
+                    tenant_id,
                 )
 
                 if upload_result and "error" not in upload_result:
                     total_chunks += upload_result.get("chunks_created", 0)
                     total_docs += upload_result.get("documents_fed", 0)
                     indexed += 1
-                    source_doc_id = upload_result.get(
-                        "video_id", str(rel_path)
-                    ) or str(rel_path)
+                    source_doc_id = upload_result.get("video_id", str(rel_path)) or str(
+                        rel_path
+                    )
                 elif upload_result:
-                    errors.append((str(rel_path), upload_result.get("status", 0), upload_result.get("error", "")))
+                    errors.append(
+                        (
+                            str(rel_path),
+                            upload_result.get("status", 0),
+                            upload_result.get("error", ""),
+                        )
+                    )
                     source_doc_id = str(rel_path)
                 else:
                     source_doc_id = str(rel_path)
 
                 graph_result = _extract_and_upsert_graph(
-                    client, file_path, source_doc_id, tenant_id,
+                    client,
+                    file_path,
+                    source_doc_id,
+                    tenant_id,
                 )
                 if graph_result and "error" not in graph_result:
                     total_nodes += graph_result.get("nodes_upserted", 0)

@@ -94,21 +94,21 @@ _ML_SEARCH_RESULTS = [
     {
         "title": "Introduction to Supervised Learning",
         "content": "Supervised machine learning algorithms learn patterns from labeled data. "
-                   "Common algorithms include linear regression, decision trees, and neural networks.",
+        "Common algorithms include linear regression, decision trees, and neural networks.",
         "score": 0.92,
         "content_type": "educational",
     },
     {
         "title": "Deep Learning Fundamentals",
         "content": "Deep learning uses multi-layer neural networks to model complex representations. "
-                   "Convolutional neural networks excel at image recognition tasks.",
+        "Convolutional neural networks excel at image recognition tasks.",
         "score": 0.87,
         "content_type": "tutorial",
     },
     {
         "title": "Reinforcement Learning Overview",
         "content": "Reinforcement learning trains agents through reward signals. "
-                   "Applications span robotics, game playing, and autonomous systems.",
+        "Applications span robotics, game playing, and autonomous systems.",
         "score": 0.81,
         "content_type": "overview",
     },
@@ -137,7 +137,9 @@ async def test_generates_report_from_results(report_agent):
         f"executive_summary too short ({len(result.executive_summary)} chars): "
         f"{result.executive_summary!r}"
     )
-    assert isinstance(result.detailed_findings, list), "detailed_findings must be a list"
+    assert isinstance(result.detailed_findings, list), (
+        "detailed_findings must be a list"
+    )
 
 
 @pytest.mark.asyncio
@@ -158,14 +160,20 @@ async def test_report_mentions_input_topics(report_agent):
     full_text = (
         result.executive_summary
         + " "
-        + " ".join(
-            str(f.get("content", "")) for f in result.detailed_findings
-        )
+        + " ".join(str(f.get("content", "")) for f in result.detailed_findings)
         + " "
         + " ".join(result.recommendations)
     ).lower()
 
-    ml_terms = ["machine learning", "ml", "learning", "neural", "algorithm", "model", "data"]
+    ml_terms = [
+        "machine learning",
+        "ml",
+        "learning",
+        "neural",
+        "algorithm",
+        "model",
+        "data",
+    ]
     matched = [t for t in ml_terms if t in full_text]
     assert matched, (
         f"Report does not mention any ML-related terms from {ml_terms}. "

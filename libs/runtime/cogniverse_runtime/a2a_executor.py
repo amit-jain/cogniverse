@@ -174,12 +174,15 @@ class CogniverseAgentExecutor(AgentExecutor):
 
             agent, typed_input = await asyncio.to_thread(
                 self._dispatcher.create_streaming_agent,
-                agent_name, query, tenant_id,
+                agent_name,
+                query,
+                tenant_id,
             )
 
             agent_lm = getattr(agent, "_dspy_lm", None)
             if agent_lm is not None:
                 import dspy
+
                 lm_ctx = dspy.context(lm=agent_lm)
             else:
                 lm_ctx = contextlib.nullcontext()

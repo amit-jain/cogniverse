@@ -257,7 +257,9 @@ class TestPhoenixExperimentPlugin:
             )
 
             assert result == mock_result
-            mock_client.datasets.get_dataset.assert_called_once_with(dataset="test_dataset")
+            mock_client.datasets.get_dataset.assert_called_once_with(
+                dataset="test_dataset"
+            )
             mock_solver.assert_called_once_with(
                 ["profile1"], ["strategy1"], {"top_k": 5}
             )

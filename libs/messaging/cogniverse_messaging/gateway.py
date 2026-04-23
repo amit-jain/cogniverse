@@ -235,9 +235,7 @@ class MessagingGateway:
                 tenant_id=tenant_id, slug=parsed.query
             )
             if result.get("status") == "error":
-                await update.message.reply_text(
-                    f"Topic '{parsed.query}' not found."
-                )
+                await update.message.reply_text(f"Topic '{parsed.query}' not found.")
             else:
                 await update.message.reply_text(
                     str(result.get("content", result))[:3500]
@@ -284,9 +282,7 @@ class MessagingGateway:
         subcmd = (parsed.instructions_subcommand or "").lower()
         if subcmd == "set":
             if not parsed.query:
-                await update.message.reply_text(
-                    "Usage: /instructions set <text>"
-                )
+                await update.message.reply_text("Usage: /instructions set <text>")
                 return
             result = await self.runtime_client.set_instructions(
                 tenant_id=tenant_id, text=parsed.query
@@ -298,13 +294,9 @@ class MessagingGateway:
             else:
                 await update.message.reply_text("Instructions updated.")
         elif subcmd == "show":
-            result = await self.runtime_client.get_instructions(
-                tenant_id=tenant_id
-            )
+            result = await self.runtime_client.get_instructions(tenant_id=tenant_id)
             if result.get("status") == "error":
-                await update.message.reply_text(
-                    "No instructions set for this tenant."
-                )
+                await update.message.reply_text("No instructions set for this tenant.")
             else:
                 text = result.get("text", "")
                 await update.message.reply_text(
@@ -324,7 +316,7 @@ class MessagingGateway:
             # Optional "agent=<name>" filter
             agent_name = None
             if parsed.query and parsed.query.startswith("agent="):
-                agent_name = parsed.query[len("agent="):].strip() or None
+                agent_name = parsed.query[len("agent=") :].strip() or None
             result = await self.runtime_client.list_memories(
                 tenant_id=tenant_id, agent_name=agent_name
             )
@@ -449,14 +441,10 @@ class MessagingGateway:
         self._app.add_handler(CommandHandler("help", self._handle_help))
 
         for command in ["search", "summarize", "report", "research", "code"]:
-            self._app.add_handler(
-                CommandHandler(command, self._handle_message)
-            )
+            self._app.add_handler(CommandHandler(command, self._handle_message))
 
         self._app.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND, self._handle_message
-            )
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
         self._app.add_handler(
             MessageHandler(filters.PHOTO | filters.VIDEO, self._handle_message)

@@ -194,7 +194,9 @@ class TestGatewayAgentArtifactRoundTrip:
     """Save threshold config to real Phoenix → GatewayAgent loads it → routing changes."""
 
     @pytest.mark.asyncio
-    async def test_gateway_loads_real_artifact_and_applies_thresholds(self, real_provider):
+    async def test_gateway_loads_real_artifact_and_applies_thresholds(
+        self, real_provider
+    ):
         """Full round-trip: save thresholds → load via _load_artifact → verify deps changed."""
         import json
 
@@ -407,7 +409,10 @@ class TestDSPyAgentArtifactRoundTrip:
         loaded_state = json.loads(loaded_json)
         assert "extractor.predict" in loaded_state
         assert len(loaded_state["extractor.predict"]["demos"]) == 2
-        assert loaded_state["extractor.predict"]["demos"][0]["query"] == "find ML transformer papers"
+        assert (
+            loaded_state["extractor.predict"]["demos"][0]["query"]
+            == "find ML transformer papers"
+        )
         assert "NVIDIA" in loaded_state["extractor.predict"]["demos"][1]["entities"]
 
         # Verify signature survived the round-trip
@@ -510,7 +515,10 @@ class TestDSPyAgentArtifactRoundTrip:
         assert loaded_json is not None
         loaded_state = json.loads(loaded_json)
         assert len(loaded_state["router.predict"]["demos"]) == 2
-        assert loaded_state["router.predict"]["demos"][0]["recommended_agent"] == "search_agent"
+        assert (
+            loaded_state["router.predict"]["demos"][0]["recommended_agent"]
+            == "search_agent"
+        )
         assert loaded_state["router.predict"]["demos"][1]["primary_intent"] == "compare"
 
         # Create fresh agent with real LM and verify 0 demos
@@ -607,7 +615,10 @@ class TestDSPyAgentArtifactRoundTrip:
         demos = after["enhancer.predict"]["demos"]
         assert len(demos) == 2, f"Expected 2 demos, got {len(demos)}"
         assert demos[0]["query"] == "find ML papers"
-        assert demos[0]["enhanced_query"] == "find machine learning research papers and publications"
+        assert (
+            demos[0]["enhanced_query"]
+            == "find machine learning research papers and publications"
+        )
         assert demos[1]["query"] == "cat videos"
         assert demos[1]["synonyms"] == "cat, kitten, feline"
 
@@ -694,9 +705,7 @@ class TestDSPyAgentArtifactRoundTrip:
 
         # Save a template index + template blob (the format load_historical_data expects)
         template_id = "tmpl_test_001"
-        await mgr.save_blob(
-            "workflow", "template_index", json.dumps([template_id])
-        )
+        await mgr.save_blob("workflow", "template_index", json.dumps([template_id]))
         from datetime import datetime
 
         template_data = {
@@ -789,20 +798,22 @@ class TestDispatcherArtifactWiring:
                 "entity_types": "CONCEPT",
             },
         ]
-        await mgr.save_blob("model", "entity_extraction", json.dumps(state, default=str))
+        await mgr.save_blob(
+            "model", "entity_extraction", json.dumps(state, default=str)
+        )
 
         # Set up dispatcher with real dependencies (same as runtime startup)
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-        registry = AgentRegistry(
-            tenant_id="test:unit", config_manager=config_manager
-        )
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
-        registry.register_agent(AgentEndpoint(
-            name="entity_extraction_agent",
-            url="http://localhost:8010",
-            capabilities=["entity_extraction", "named_entity_recognition"],
-        ))
+        registry.register_agent(
+            AgentEndpoint(
+                name="entity_extraction_agent",
+                url="http://localhost:8010",
+                capabilities=["entity_extraction", "named_entity_recognition"],
+            )
+        )
 
         dispatcher = AgentDispatcher(
             agent_registry=registry,
@@ -818,9 +829,7 @@ class TestDispatcherArtifactWiring:
             context={"tenant_id": tenant_id},
         )
 
-        assert result["status"] == "success", (
-            f"Dispatch failed: {result}"
-        )
+        assert result["status"] == "success", f"Dispatch failed: {result}"
         assert result["agent"] == "entity_extraction_agent"
 
     @pytest.mark.asyncio
@@ -862,15 +871,15 @@ class TestDispatcherArtifactWiring:
         # Set up dispatcher with real dependencies
         config_manager = create_default_config_manager()
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-        registry = AgentRegistry(
-            tenant_id="test:unit", config_manager=config_manager
-        )
+        registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
-        registry.register_agent(AgentEndpoint(
-            name="gateway_agent",
-            url="http://localhost:8000",
-            capabilities=["gateway", "routing"],
-        ))
+        registry.register_agent(
+            AgentEndpoint(
+                name="gateway_agent",
+                url="http://localhost:8000",
+                capabilities=["gateway", "routing"],
+            )
+        )
 
         dispatcher = AgentDispatcher(
             agent_registry=registry,
@@ -886,9 +895,7 @@ class TestDispatcherArtifactWiring:
                 context={"tenant_id": tenant_id},
             )
 
-        assert result["status"] == "success", (
-            f"Gateway dispatch failed: {result}"
-        )
+        assert result["status"] == "success", f"Gateway dispatch failed: {result}"
 
         # Verify the dispatcher actually applied the artifact threshold.
         # The cached _gateway_agent should have our optimized values.
@@ -995,7 +1002,10 @@ class TestArtifactAffectsBehavior:
         # The enhanced query should contain terms from the demo's expansion —
         # "machine learning" or "research" or "papers" (the demo maps ML → machine learning)
         enhanced_lower = result.enhanced_query.lower()
-        assert any(term in enhanced_lower for term in ("machine learning", "research", "paper", "publication")), (
+        assert any(
+            term in enhanced_lower
+            for term in ("machine learning", "research", "paper", "publication")
+        ), (
             f"Enhanced query should contain demo expansion terms "
             f"(machine learning, research, papers, publications), "
             f"got: '{result.enhanced_query}'"
@@ -1040,7 +1050,9 @@ class TestArtifactAffectsBehavior:
         )
 
         # Save artifact with demos mapping video queries -> search_agent
-        state = json.loads(json.dumps(agent_for_state.routing_module.dump_state(), default=str))
+        state = json.loads(
+            json.dumps(agent_for_state.routing_module.dump_state(), default=str)
+        )
         state["router.predict"]["demos"] = [
             {
                 "query": "find basketball highlights",
@@ -1059,9 +1071,7 @@ class TestArtifactAffectsBehavior:
                 "confidence": "0.85",
             },
         ]
-        await mgr.save_blob(
-            "model", "routing_decision", json.dumps(state, default=str)
-        )
+        await mgr.save_blob("model", "routing_decision", json.dumps(state, default=str))
 
         # Create fresh agent, load artifact
         agent = RoutingAgent(
@@ -1164,7 +1174,9 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM via DSPy fallback
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                EntityExtractionInput(query="Netflix producing AI documentaries", tenant_id="test:unit")
+                EntityExtractionInput(
+                    query="Netflix producing AI documentaries", tenant_id="test:unit"
+                )
             )
 
         # The demos teach: "Netflix producing AI documentaries" → Netflix=ORG, AI=CONCEPT
@@ -1175,9 +1187,7 @@ class TestArtifactAffectsBehavior:
         assert result.entity_count > 0, (
             f"Expected entity_count > 0, got {result.entity_count}"
         )
-        assert result.entities, (
-            "Expected non-empty entities list from DSPy fallback"
-        )
+        assert result.entities, "Expected non-empty entities list from DSPy fallback"
         # Check that known entities from the query were extracted
         entity_texts = [e.text.lower() for e in result.entities]
         entity_types = [e.type.upper() for e in result.entities]
@@ -1186,7 +1196,17 @@ class TestArtifactAffectsBehavior:
             f"got entities: {[(e.text, e.type) for e in result.entities]}"
         )
         # At least one entity should have a real type (ORG, CONCEPT, PERSON, etc.)
-        valid_types = {"ORG", "ORGANIZATION", "CONCEPT", "PERSON", "PLACE", "LOCATION", "TECHNOLOGY", "EVENT", "PRODUCT"}
+        valid_types = {
+            "ORG",
+            "ORGANIZATION",
+            "CONCEPT",
+            "PERSON",
+            "PLACE",
+            "LOCATION",
+            "TECHNOLOGY",
+            "EVENT",
+            "PRODUCT",
+        }
         assert any(t in valid_types for t in entity_types), (
             f"Entity types should include known types like ORG/CONCEPT, "
             f"got: {entity_types}"
@@ -1263,7 +1283,9 @@ class TestArtifactAffectsBehavior:
         # Process with real LLM
         with dspy.context(lm=lm):
             result = await agent._process_impl(
-                ProfileSelectionInput(query="find cooking videos", tenant_id="test:unit")
+                ProfileSelectionInput(
+                    query="find cooking videos", tenant_id="test:unit"
+                )
             )
 
         # The demo teaches: video queries → video_colpali_smol500_mv_frame
@@ -1313,9 +1335,7 @@ class TestArtifactAffectsBehavior:
 
         # Save template with patterns designed to match "find cooking videos"
         template_id = "tmpl_behavior_001"
-        await mgr.save_blob(
-            "workflow", "template_index", json.dumps([template_id])
-        )
+        await mgr.save_blob("workflow", "template_index", json.dumps([template_id]))
         template_data = {
             "template_id": template_id,
             "name": "video_search_with_entities",

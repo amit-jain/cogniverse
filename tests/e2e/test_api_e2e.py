@@ -72,7 +72,9 @@ class TestRoutingPipeline:
         # In the new architecture, the response comes from the gateway
         # pipeline. The agent field will be gateway_agent or orchestrator_agent.
         assert data["agent"] in (
-            "routing_agent", "gateway_agent", "orchestrator_agent",
+            "routing_agent",
+            "gateway_agent",
+            "orchestrator_agent",
         )
 
         # Content assertions: "cats playing piano" is an unambiguous video query
@@ -174,14 +176,11 @@ class TestRoutingPipeline:
                 "Search for 'animal videos' should return results from ingested data"
             )
             score_keys = ("score", "relevance", "relevance_score", "_score")
-            score_key = next(
-                (k for k in score_keys if k in results[0]), None
-            )
+            score_key = next((k for k in score_keys if k in results[0]), None)
             if score_key is not None:
                 scores = [r[score_key] for r in results]
                 assert scores == sorted(scores, reverse=True), (
-                    f"Results should be ranked by {score_key} descending, "
-                    f"got: {scores}"
+                    f"Results should be ranked by {score_key} descending, got: {scores}"
                 )
 
 
@@ -1688,7 +1687,13 @@ class TestBatchVideoIngestion:
         video_dir = "/app/data/testset/evaluation/sample_videos"
 
         # Verify the host copy exists (pod mount mirrors host)
-        host_dir = Path(__file__).parent.parent.parent / "data" / "testset" / "evaluation" / "sample_videos"
+        host_dir = (
+            Path(__file__).parent.parent.parent
+            / "data"
+            / "testset"
+            / "evaluation"
+            / "sample_videos"
+        )
         if not host_dir.exists():
             pytest.skip(f"Sample video dir not found on host: {host_dir}")
 

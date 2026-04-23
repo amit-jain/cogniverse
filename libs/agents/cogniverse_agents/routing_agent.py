@@ -78,15 +78,20 @@ class RoutingOutput(AgentOutput):
     )
 
     # Deprecated — kept for backward compat with downstream consumers
-    enhanced_query: str = Field("", description="Deprecated: use upstream QueryEnhancementAgent")
+    enhanced_query: str = Field(
+        "", description="Deprecated: use upstream QueryEnhancementAgent"
+    )
     entities: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Deprecated: use upstream EntityExtractionAgent"
+        default_factory=list,
+        description="Deprecated: use upstream EntityExtractionAgent",
     )
     relationships: List[Dict[str, Any]] = Field(
-        default_factory=list, description="Deprecated: use upstream EntityExtractionAgent"
+        default_factory=list,
+        description="Deprecated: use upstream EntityExtractionAgent",
     )
     query_variants: List[Dict[str, str]] = Field(
-        default_factory=list, description="Deprecated: use upstream QueryEnhancementAgent"
+        default_factory=list,
+        description="Deprecated: use upstream QueryEnhancementAgent",
     )
 
     model_config = ConfigDict(extra="allow")
@@ -204,7 +209,11 @@ class RoutingAgent(
         a2a_config = A2AAgentConfig(
             agent_name="routing_agent",
             agent_description="DSPy-powered routing decision-maker",
-            capabilities=["intelligent_routing", "query_analysis", "agent_orchestration"],
+            capabilities=[
+                "intelligent_routing",
+                "query_analysis",
+                "agent_orchestration",
+            ],
             port=port,
         )
 
@@ -256,7 +265,9 @@ class RoutingAgent(
             if blob:
                 state = json.loads(blob)
                 self.routing_module.load_state(state)
-                self.logger.info("RoutingAgent loaded optimized DSPy module from artifact")
+                self.logger.info(
+                    "RoutingAgent loaded optimized DSPy module from artifact"
+                )
         except Exception as e:
             self.logger.debug("No routing artifact to load (using defaults): %s", e)
 
@@ -428,7 +439,9 @@ class RoutingAgent(
                         attributes={
                             "routing.query": query[:200],
                             "routing.recommended_agent": decision.recommended_agent,
-                            "routing.primary_intent": routing_info.get("primary_intent", ""),
+                            "routing.primary_intent": routing_info.get(
+                                "primary_intent", ""
+                            ),
                             "routing.confidence": decision.confidence,
                             "routing.reasoning": decision.reasoning[:200],
                         },
@@ -573,7 +586,9 @@ class RoutingAgent(
             "context_enrichment",
             "Building routing context from entities, relationships, and memory...",
             data={
-                "entities_count": len(input_data.entities) if input_data.entities else 0,
+                "entities_count": len(input_data.entities)
+                if input_data.entities
+                else 0,
                 "has_enhanced_query": input_data.enhanced_query is not None,
             },
         )
@@ -671,9 +686,7 @@ if __name__ == "__main__":
 
         for query in test_queries:
             print(f"\nProcessing: {query}")
-            decision = await agent.route_query(
-                query=query, tenant_id="demo-tenant"
-            )
+            decision = await agent.route_query(query=query, tenant_id="demo-tenant")
             print(
                 f"Route to: {decision.recommended_agent} "
                 f"(confidence: {decision.confidence:.3f})"

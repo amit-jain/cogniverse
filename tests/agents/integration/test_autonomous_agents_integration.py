@@ -139,30 +139,44 @@ def orchestrator_with_real_agents(real_dspy_lm):
     # search and summarizer are in the registry but not in agents_by_url —
     # they fall through to the generic success response in dispatch_to_agent.
     agents_by_url = {
-        "http://localhost:8010": (EntityExtractionAgent(deps=EntityExtractionDeps()), EntityExtractionInput),
-        "http://localhost:8011": (ProfileSelectionAgent(deps=ProfileSelectionDeps()), ProfileSelectionInput),
-        "http://localhost:8012": (QueryEnhancementAgent(deps=QueryEnhancementDeps()), QueryEnhancementInput),
+        "http://localhost:8010": (
+            EntityExtractionAgent(deps=EntityExtractionDeps()),
+            EntityExtractionInput,
+        ),
+        "http://localhost:8011": (
+            ProfileSelectionAgent(deps=ProfileSelectionDeps()),
+            ProfileSelectionInput,
+        ),
+        "http://localhost:8012": (
+            QueryEnhancementAgent(deps=QueryEnhancementDeps()),
+            QueryEnhancementInput,
+        ),
     }
 
     agent_endpoints = {
         "entity_extraction": AgentEndpoint(
-            name="entity_extraction", url="http://localhost:8010",
+            name="entity_extraction",
+            url="http://localhost:8010",
             capabilities=["entity_extraction"],
         ),
         "profile_selection": AgentEndpoint(
-            name="profile_selection", url="http://localhost:8011",
+            name="profile_selection",
+            url="http://localhost:8011",
             capabilities=["profile_selection"],
         ),
         "query_enhancement": AgentEndpoint(
-            name="query_enhancement", url="http://localhost:8012",
+            name="query_enhancement",
+            url="http://localhost:8012",
             capabilities=["query_enhancement"],
         ),
         "search": AgentEndpoint(
-            name="search", url="http://localhost:8013",
+            name="search",
+            url="http://localhost:8013",
             capabilities=["search"],
         ),
         "summarizer": AgentEndpoint(
-            name="summarizer", url="http://localhost:8014",
+            name="summarizer",
+            url="http://localhost:8014",
             capabilities=["summarization"],
         ),
     }
@@ -196,7 +210,10 @@ def orchestrator_with_real_agents(real_dspy_lm):
 
         if entry is None:
             # Agent not available in-process (e.g. search needs Vespa)
-            resp.json.return_value = {"status": "success", "result": f"processed: {query[:50]}"}
+            resp.json.return_value = {
+                "status": "success",
+                "result": f"processed: {query[:50]}",
+            }
             return resp
 
         agent, input_cls = entry
@@ -204,7 +221,11 @@ def orchestrator_with_real_agents(real_dspy_lm):
             agent_input = input_cls(query=query)
             with dspy.context(lm=real_dspy_lm):
                 result = await agent._process_impl(agent_input)
-            result_dict = result.model_dump() if hasattr(result, "model_dump") else {"result": str(result)}
+            result_dict = (
+                result.model_dump()
+                if hasattr(result, "model_dump")
+                else {"result": str(result)}
+            )
             resp.json.return_value = {"status": "success", **result_dict}
         except Exception as e:
             resp.json.return_value = {"status": "error", "message": str(e)}
@@ -240,7 +261,10 @@ class TestEntityExtractionAgentIntegration:
     ):
         """CORRECTNESS: Validate actual entities are extracted"""
         result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query="Show me videos about Barack Obama in Chicago", tenant_id="test:unit")
+            EntityExtractionInput(
+                query="Show me videos about Barack Obama in Chicago",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE: Entities are actually found
@@ -285,7 +309,9 @@ class TestEntityExtractionAgentIntegration:
     ):
         """CORRECTNESS: Validate technical entity extraction"""
         result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query="Apple announces iPhone 15 in Cupertino", tenant_id="test:unit")
+            EntityExtractionInput(
+                query="Apple announces iPhone 15 in Cupertino", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: At least some entities extracted
@@ -352,7 +378,9 @@ class TestProfileSelectionAgentIntegration:
     ):
         """CORRECTNESS: Validate video query selects video profile"""
         result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query="Show me machine learning tutorial videos", tenant_id="test:unit")
+            ProfileSelectionInput(
+                query="Show me machine learning tutorial videos", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: Profile is selected
@@ -401,7 +429,9 @@ class TestProfileSelectionAgentIntegration:
     ):
         """CORRECTNESS: Validate image query selects image profile"""
         result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query="Find pictures of mountains and landscapes", tenant_id="test:unit")
+            ProfileSelectionInput(
+                query="Find pictures of mountains and landscapes", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE CORRECTNESS: Image query should prefer image profile or text
@@ -570,7 +600,9 @@ class TestOrchestratorAgentIntegration:
     async def test_orchestrate_validates_execution(self, orchestrator_with_real_agents):
         """CORRECTNESS: Validate agents are actually executed"""
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Show me videos about machine learning", tenant_id="test:unit")
+            OrchestratorInput(
+                query="Show me videos about machine learning", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: Plan created
@@ -624,7 +656,10 @@ class TestOrchestratorAgentIntegration:
     ):
         """CORRECTNESS: Validate dependency tracking works"""
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find detailed tutorials about Python programming", tenant_id="test:unit")
+            OrchestratorInput(
+                query="Find detailed tutorials about Python programming",
+                tenant_id="test:unit",
+            )
         )
 
         # VALIDATE: Plan has dependency structure
@@ -736,7 +771,9 @@ class TestOrchestratorAgentIntegration:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find machine learning tutorials", tenant_id="test:unit")
+            OrchestratorInput(
+                query="Find machine learning tutorials", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: 3-step plan created
@@ -829,7 +866,9 @@ class TestAgentCoordinationIntegration:
 
         # Step 2: Extract entities from enhanced query
         entity_result = await entity_agent_with_real_lm._process_impl(
-            EntityExtractionInput(query=query_result.enhanced_query, tenant_id="test:unit")
+            EntityExtractionInput(
+                query=query_result.enhanced_query, tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: Entity extraction works on enhanced query
@@ -839,7 +878,9 @@ class TestAgentCoordinationIntegration:
         # Step 3: Select profile with all context
         # Note: ProfileSelectionInput only accepts query and available_profiles
         profile_result = await profile_agent_with_real_lm._process_impl(
-            ProfileSelectionInput(query=query_result.enhanced_query, tenant_id="test:unit")
+            ProfileSelectionInput(
+                query=query_result.enhanced_query, tenant_id="test:unit"
+            )
         )
 
         # VALIDATE CORRECTNESS: Pipeline produces coherent output
@@ -892,7 +933,9 @@ class TestOrchestratorComplexPatterns:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find videos about neural networks", tenant_id="test:unit")
+            OrchestratorInput(
+                query="Find videos about neural networks", tenant_id="test:unit"
+            )
         )
 
         # VALIDATE: Two parallel groups created
@@ -1000,7 +1043,9 @@ class TestOrchestratorComplexPatterns:
             return_value=mock_cm,
         ):
             result = await orchestrator_with_real_agents._process_impl(
-                OrchestratorInput(query="Find machine learning tutorials", tenant_id="test:unit")
+                OrchestratorInput(
+                    query="Find machine learning tutorials", tenant_id="test:unit"
+                )
             )
 
         # VALIDATE: First agent failed

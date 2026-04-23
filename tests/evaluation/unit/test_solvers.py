@@ -258,9 +258,7 @@ class TestLiveSolver:
         with patch("asyncio.sleep") as mock_sleep:
             mock_sleep.side_effect = [None, KeyboardInterrupt()]
 
-            solver = create_live_solver(
-                config={"poll_interval": 1, "continuous": True}
-            )
+            solver = create_live_solver(config={"poll_interval": 1, "continuous": True})
 
             state = Mock()
             state.outputs = {}

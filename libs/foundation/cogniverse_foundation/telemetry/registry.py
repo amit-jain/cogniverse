@@ -21,10 +21,15 @@ _DEFAULT_TENANT_CACHE_CAPACITY = 16
 
 def _tenant_cache_capacity() -> int:
     try:
-        return max(1, int(os.environ.get(
-            "COGNIVERSE_TENANT_CACHE_CAPACITY",
-            _DEFAULT_TENANT_CACHE_CAPACITY,
-        )))
+        return max(
+            1,
+            int(
+                os.environ.get(
+                    "COGNIVERSE_TENANT_CACHE_CAPACITY",
+                    _DEFAULT_TENANT_CACHE_CAPACITY,
+                )
+            ),
+        )
     except (TypeError, ValueError):
         return _DEFAULT_TENANT_CACHE_CAPACITY
 

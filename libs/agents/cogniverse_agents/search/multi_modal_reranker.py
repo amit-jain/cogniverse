@@ -414,9 +414,7 @@ class ConfigurableMultiModalReranker:
     Configuration loaded from config.json under "reranking" section.
     """
 
-    def __init__(
-        self, tenant_id: str = None, config_manager: "ConfigManager" = None
-    ):
+    def __init__(self, tenant_id: str = None, config_manager: "ConfigManager" = None):
         """
         Initialize configurable reranker from config.json
 

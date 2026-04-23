@@ -74,7 +74,12 @@ async def save_wiki(request: WikiSaveRequest) -> Dict[str, Any]:
         entities=request.entities,
         agent_name=request.agent_name,
     )
-    return {"status": "saved", "doc_id": page.doc_id, "title": page.title, "slug": page.slug}
+    return {
+        "status": "saved",
+        "doc_id": page.doc_id,
+        "title": page.title,
+        "slug": page.slug,
+    }
 
 
 @router.post("/search")

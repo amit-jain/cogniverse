@@ -114,9 +114,7 @@ class TestBuildPhoenixProvider:
 
         assert result is None
 
-    def test_falls_back_to_localhost_for_unparseable_http_endpoint(
-        self, monkeypatch
-    ):
+    def test_falls_back_to_localhost_for_unparseable_http_endpoint(self, monkeypatch):
         """If urlparse fails to extract a hostname (e.g. malformed URL),
         the helper must still build a workable gRPC endpoint."""
         monkeypatch.delenv("PHOENIX_GRPC_ENDPOINT", raising=False)

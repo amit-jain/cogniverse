@@ -32,7 +32,12 @@ class TestCodeSegmentationRoundTrip:
     @pytest.fixture
     def cogniverse_source_dir(self):
         """Path to real Cogniverse agent source files."""
-        p = Path(__file__).resolve().parents[3] / "libs" / "agents" / "cogniverse_agents"
+        p = (
+            Path(__file__).resolve().parents[3]
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+        )
         if not p.exists():
             pytest.skip(f"Source directory not found: {p}")
         return p
@@ -67,7 +72,10 @@ class TestCodeSegmentationRoundTrip:
         """Parse DeepResearchAgent and verify known classes/functions exist."""
         agent_path = (
             Path(__file__).resolve().parents[3]
-            / "libs" / "agents" / "cogniverse_agents" / "deep_research_agent.py"
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "deep_research_agent.py"
         )
         if not agent_path.exists():
             pytest.skip(f"File not found: {agent_path}")
@@ -84,7 +92,10 @@ class TestCodeSegmentationRoundTrip:
         """Parse CodingAgent and verify known classes/functions exist."""
         agent_path = (
             Path(__file__).resolve().parents[3]
-            / "libs" / "agents" / "cogniverse_agents" / "coding_agent.py"
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "coding_agent.py"
         )
         if not agent_path.exists():
             pytest.skip(f"File not found: {agent_path}")
@@ -104,10 +115,7 @@ class TestCodeSegmentationRoundTrip:
             pytest.skip("search_agent.py not found")
 
         segments = strategy.parse_file(search_agent)
-        class_segs = [
-            s for s in segments
-            if s["metadata"]["type"] == "class"
-        ]
+        class_segs = [s for s in segments if s["metadata"]["type"] == "class"]
         assert len(class_segs) > 0, "No class segments found in search_agent.py"
 
         for seg in class_segs:
@@ -117,7 +125,10 @@ class TestCodeSegmentationRoundTrip:
         """Verify parse_file output can be transformed to ProcessingStrategySet format."""
         agent_path = (
             Path(__file__).resolve().parents[3]
-            / "libs" / "agents" / "cogniverse_agents" / "coding_agent.py"
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "coding_agent.py"
         )
         if not agent_path.exists():
             pytest.skip(f"File not found: {agent_path}")
@@ -126,20 +137,22 @@ class TestCodeSegmentationRoundTrip:
 
         code_file_list = []
         for seg in segments:
-            code_file_list.append({
-                "document_id": f"{agent_path.stem}_{seg['metadata']['name']}_{seg['metadata']['line_start']}",
-                "path": str(agent_path),
-                "filename": agent_path.name,
-                "document_type": agent_path.suffix.lstrip("."),
-                "extracted_text": seg["content"],
-                "text_length": len(seg["content"]),
-                "chunk_type": seg["metadata"]["type"],
-                "chunk_name": seg["metadata"]["name"],
-                "signature": seg["metadata"]["signature"],
-                "line_start": seg["metadata"]["line_start"],
-                "line_end": seg["metadata"]["line_end"],
-                "language": seg["metadata"].get("language", "unknown"),
-            })
+            code_file_list.append(
+                {
+                    "document_id": f"{agent_path.stem}_{seg['metadata']['name']}_{seg['metadata']['line_start']}",
+                    "path": str(agent_path),
+                    "filename": agent_path.name,
+                    "document_type": agent_path.suffix.lstrip("."),
+                    "extracted_text": seg["content"],
+                    "text_length": len(seg["content"]),
+                    "chunk_type": seg["metadata"]["type"],
+                    "chunk_name": seg["metadata"]["name"],
+                    "signature": seg["metadata"]["signature"],
+                    "line_start": seg["metadata"]["line_start"],
+                    "line_end": seg["metadata"]["line_end"],
+                    "language": seg["metadata"].get("language", "unknown"),
+                }
+            )
 
         assert len(code_file_list) > 0
         for item in code_file_list:
@@ -173,7 +186,10 @@ class TestCodeSearchVespaEndToEnd:
 
         agent_path = (
             Path(__file__).resolve().parents[3]
-            / "libs" / "agents" / "cogniverse_agents" / "coding_agent.py"
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "coding_agent.py"
         )
         if not agent_path.exists():
             pytest.skip(f"File not found: {agent_path}")
@@ -209,7 +225,9 @@ class TestCodeSearchVespaEndToEnd:
 
         logger.info(f"Query '{query}' encoded to shape {query_np.shape}")
 
-    def test_code_search_vespa_round_trip(self, vespa_with_schema, strategy, colbert_model):
+    def test_code_search_vespa_round_trip(
+        self, vespa_with_schema, strategy, colbert_model
+    ):
         """Full round-trip: parse → encode with LateOn-Code-edge → feed Vespa → search → verify.
 
         Uses the vespa_with_schema fixture's 128-dim schema. LateOn-Code-edge
@@ -231,7 +249,11 @@ class TestCodeSearchVespaEndToEnd:
         # 1. Parse real agent files
         repo_root = Path(__file__).resolve().parents[3]
         agent_files = [
-            repo_root / "libs" / "agents" / "cogniverse_agents" / "deep_research_agent.py",
+            repo_root
+            / "libs"
+            / "agents"
+            / "cogniverse_agents"
+            / "deep_research_agent.py",
             repo_root / "libs" / "agents" / "cogniverse_agents" / "coding_agent.py",
         ]
         all_segments = []
@@ -315,10 +337,12 @@ class TestCodeSearchVespaEndToEnd:
         qt_cells = []
         for tok_idx in range(query_np.shape[0]):
             for v_idx in range(query_np.shape[1]):
-                qt_cells.append({
-                    "address": {"querytoken": str(tok_idx), "v": str(v_idx)},
-                    "value": float(query_np[tok_idx, v_idx]),
-                })
+                qt_cells.append(
+                    {
+                        "address": {"querytoken": str(tok_idx), "v": str(v_idx)},
+                        "value": float(query_np[tok_idx, v_idx]),
+                    }
+                )
 
         search_resp = requests.post(
             f"{base_url}/search/",
@@ -359,8 +383,12 @@ class TestCodeSearchVespaEndToEnd:
         assert "deep_research_agent" in top_file, (
             f"Top result should be from deep_research_agent.py, got file={top_file!r} "
             f"name={top_name!r}. All hits: "
-            + str([(h['fields'].get('video_title'), h['fields'].get('video_id'))
-                   for h in hits])
+            + str(
+                [
+                    (h["fields"].get("video_title"), h["fields"].get("video_id"))
+                    for h in hits
+                ]
+            )
         )
         assert "research" in top_content.lower() or "evidence" in top_content.lower(), (
             f"Top result content should mention 'research' or 'evidence', "

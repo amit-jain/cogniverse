@@ -203,9 +203,7 @@ class SearchBackend(ABC):
     # up runtime profile changes until a restart. Any backend that
     # supports query-time profile resolution should override these.
 
-    def add_profile(
-        self, profile_name: str, profile_config: Dict[str, Any]
-    ) -> None:
+    def add_profile(self, profile_name: str, profile_config: Dict[str, Any]) -> None:
         """Register a new profile at runtime. Default: no-op."""
         return None
 

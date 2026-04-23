@@ -48,9 +48,7 @@ async def test_enqueue_and_subscribe_roundtrip():
     """Enqueue 3 events then subscribe — subscriber must receive all 3 in order."""
     queue = InMemoryEventQueue(task_id="task-rt-001", tenant_id="test")
 
-    events_to_send = [
-        _make_status_event("task-rt-001", "test", i) for i in range(3)
-    ]
+    events_to_send = [_make_status_event("task-rt-001", "test", i) for i in range(3)]
 
     # Enqueue all events before subscribing (tests replay from offset 0)
     for evt in events_to_send:
@@ -93,9 +91,7 @@ async def test_enqueue_concurrent_producer_consumer():
 
     assert len(received) == 3, f"Expected 3 events, got {len(received)}"
     phases = [e.phase for e in received]
-    assert phases == ["step_0", "step_1", "step_2"], (
-        f"Events out of order: {phases}"
-    )
+    assert phases == ["step_0", "step_1", "step_2"], f"Events out of order: {phases}"
 
 
 @pytest.mark.asyncio

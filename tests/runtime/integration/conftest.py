@@ -161,7 +161,9 @@ def vespa_instance(request):
                 body = resp.json()
                 errors = body.get("root", {}).get("errors", [])
                 if resp.status_code == 200 and not errors:
-                    logger.info(f"✅ Data schema '{data_schema_name}' ready (model.restrict)")
+                    logger.info(
+                        f"✅ Data schema '{data_schema_name}' ready (model.restrict)"
+                    )
                     break
             except Exception:
                 pass
@@ -281,7 +283,11 @@ def config_manager(vespa_instance):
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
     baseline_schemas = [
-        ("video_colpali_smol500_mv_frame", "test_unit", "video_colpali_smol500_mv_frame_schema.json"),
+        (
+            "video_colpali_smol500_mv_frame",
+            "test_unit",
+            "video_colpali_smol500_mv_frame_schema.json",
+        ),
         ("agent_memories", "test_unit", "agent_memories_schema.json"),
     ]
     for base_name, suffix, schema_filename in baseline_schemas:
@@ -440,11 +446,11 @@ def search_client(vespa_instance, config_manager, schema_loader, real_telemetry)
     test_app = FastAPI()
     test_app.include_router(search.router, prefix="/search")
 
-    test_app.dependency_overrides[search.get_config_manager_dependency] = (
-        lambda: config_manager
+    test_app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
     )
-    test_app.dependency_overrides[search.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    test_app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
 
     async def _noop_tenant_check(tenant_id: str) -> None:

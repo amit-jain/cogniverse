@@ -18,7 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -38,10 +40,13 @@ def discover_tenants() -> list[str]:
         )
 
         # Extract unique tenant IDs
-        tenant_ids = sorted(set(
-            config.tenant_id for config in configs
-            if config.tenant_id  # Filter out None
-        ))
+        tenant_ids = sorted(
+            set(
+                config.tenant_id
+                for config in configs
+                if config.tenant_id  # Filter out None
+            )
+        )
 
         logger.info(f"Discovered {len(tenant_ids)} tenants: {tenant_ids}")
 

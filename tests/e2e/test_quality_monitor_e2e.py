@@ -31,7 +31,9 @@ def _get_kubeconfig() -> str:
     try:
         result = subprocess.run(
             ["k3d", "kubeconfig", "write", "cogniverse"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.stdout.strip()
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -50,7 +52,10 @@ def _kubectl(*args, timeout=10) -> str:
         env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
     result = subprocess.run(
         ["kubectl", "-n", "cogniverse", *args],
-        capture_output=True, text=True, timeout=timeout, env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
     )
     return result.stdout.strip()
 
@@ -64,7 +69,9 @@ def _kubectl_available() -> bool:
             env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
         result = subprocess.run(
             ["kubectl", "version", "--client"],
-            capture_output=True, timeout=5, env=env,
+            capture_output=True,
+            timeout=5,
+            env=env,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -86,8 +93,12 @@ class TestQualityMonitorSidecar:
     def test_sidecar_container_running(self):
         """Runtime pod has a quality-monitor sidecar container."""
         pods = _kubectl(
-            "get", "pods", "-l", "app.kubernetes.io/component=runtime",
-            "-o", "jsonpath={.items[0].spec.containers[*].name}",
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "-o",
+            "jsonpath={.items[0].spec.containers[*].name}",
         )
         containers = pods.split()
         assert "quality-monitor" in containers, (
@@ -99,8 +110,12 @@ class TestQualityMonitorSidecar:
     def test_sidecar_container_not_crashlooping(self):
         """Quality monitor sidecar should be running, not CrashLoopBackOff."""
         statuses = _kubectl(
-            "get", "pods", "-l", "app.kubernetes.io/component=runtime",
-            "-o", "jsonpath={.items[0].status.containerStatuses[*].state}",
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "-o",
+            "jsonpath={.items[0].status.containerStatuses[*].state}",
         )
         assert "CrashLoopBackOff" not in statuses
         assert "Error" not in statuses
@@ -123,13 +138,17 @@ class TestPhoenixDatasets:
         client = Client(base_url=PHOENIX)
         import pandas as pd
 
-        df = pd.DataFrame([{
-            "timestamp": "2026-04-04T00:00:00",
-            "mean_mrr": 0.75,
-            "mean_ndcg": 0.70,
-            "mean_precision_at_5": 0.50,
-            "query_count": 10,
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "timestamp": "2026-04-04T00:00:00",
+                    "mean_mrr": 0.75,
+                    "mean_ndcg": 0.70,
+                    "mean_precision_at_5": 0.50,
+                    "query_count": 10,
+                }
+            ]
+        )
 
         dataset_name = "e2e-quality-baseline-test"
         try:
@@ -196,8 +215,10 @@ class TestArgoWorkflows:
         This test checks the daily gateway tuning flavor exists.
         """
         output = _kubectl(
-            "get", "cronworkflows",
-            "-o", "jsonpath={.items[*].metadata.name}",
+            "get",
+            "cronworkflows",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
         )
         workflows = output.split()
         daily = [w for w in workflows if "daily-gateway" in w]
@@ -208,14 +229,14 @@ class TestArgoWorkflows:
     def test_cleanup_cronworkflow_exists(self):
         """Daily cleanup CronWorkflow is deployed."""
         output = _kubectl(
-            "get", "cronworkflows",
-            "-o", "jsonpath={.items[*].metadata.name}",
+            "get",
+            "cronworkflows",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
         )
         workflows = output.split()
         cleanup = [w for w in workflows if "cleanup" in w]
-        assert len(cleanup) >= 1, (
-            f"Expected cleanup CronWorkflow, got: {workflows}"
-        )
+        assert len(cleanup) >= 1, f"Expected cleanup CronWorkflow, got: {workflows}"
 
     def test_workflow_submitter_rbac_consistent_with_argo(self):
         """RBAC role exists if and only if Argo CronWorkflows are actively managed.
@@ -224,16 +245,22 @@ class TestArgoWorkflows:
         (stale CronWorkflows from previous releases don't count).
         """
         roles_output = _kubectl(
-            "get", "roles",
-            "-o", "jsonpath={.items[*].metadata.name}",
+            "get",
+            "roles",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
         )
         roles = roles_output.split()
         has_rbac = any("workflow-submitter" in r for r in roles)
 
         # Check if Argo controller is running (not just stale CronWorkflows)
         argo_pods = _kubectl(
-            "get", "pods", "-l", "app.kubernetes.io/component=workflow-controller",
-            "-o", "jsonpath={.items[*].metadata.name}",
+            "get",
+            "pods",
+            "-l",
+            "app.kubernetes.io/component=workflow-controller",
+            "-o",
+            "jsonpath={.items[*].metadata.name}",
         )
         argo_active = bool(argo_pods.strip())
 

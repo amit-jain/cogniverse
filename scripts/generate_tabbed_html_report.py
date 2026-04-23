@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import List
 
 
-def format_video_tag(video_id: str, expected_videos: List[str], position: int = 0) -> str:
+def format_video_tag(
+    video_id: str, expected_videos: List[str], position: int = 0
+) -> str:
     """Format a video tag with appropriate styling"""
     if video_id in expected_videos:
         return f'<span class="video-tag correct-video">✓ {video_id}</span>'
     else:
         return f'<span class="video-tag incorrect-video">✗ {video_id}</span>'
+
 
 def format_position(position: int) -> str:
     """Format position indicator"""
@@ -23,6 +26,7 @@ def format_position(position: int) -> str:
         return f'<span class="position first">{position}</span>'
     else:
         return f'<span class="position">{position}</span>'
+
 
 def format_metric_badge(mrr: float) -> str:
     """Format MRR metric badge"""
@@ -34,9 +38,10 @@ def format_metric_badge(mrr: float) -> str:
         css_class = "metric-poor"
     return f'<span class="metric-badge {css_class}">MRR: {mrr:.3f}</span>'
 
+
 def generate_html_report(test_results_file: str = None):
     """Generate comprehensive HTML report from test results"""
-    
+
     # Load the test results
     if not test_results_file:
         results_dir = Path("outputs/test_results")
@@ -46,21 +51,21 @@ def generate_html_report(test_results_file: str = None):
             return
         test_results_file = json_files[-1]
         print(f"Using latest results file: {test_results_file}")
-    
-    with open(test_results_file, 'r') as f:
+
+    with open(test_results_file, "r") as f:
         data = json.load(f)
-    
+
     # Extract test queries
-    test_queries = [(q['query'], q['expected_videos']) for q in data['queries']]
-    
+    test_queries = [(q["query"], q["expected_videos"]) for q in data["queries"]]
+
     # Define profiles with display names
     profiles = [
         ("frame_based_colpali", "ColPali"),
-        ("colqwen_chunks", "ColQwen Chunks"), 
+        ("colqwen_chunks", "ColQwen Chunks"),
         ("direct_video_global", "VideoPrism Base"),
-        ("direct_video_global_large", "VideoPrism Large")
+        ("direct_video_global_large", "VideoPrism Large"),
     ]
-    
+
     # Define strategies for each profile
     profile_strategies = {
         "frame_based_colpali": [
@@ -69,28 +74,29 @@ def generate_html_report(test_results_file: str = None):
             ("hybrid_binary_bm25", "Hybrid + Desc"),
             ("bm25_only", "Text Only"),
             ("float_float", "Float"),
-            ("phased", "Phased")
+            ("phased", "Phased"),
         ],
         "colqwen_chunks": [
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
             ("hybrid_binary_bm25", "Hybrid"),
-            ("phased", "Phased")
+            ("phased", "Phased"),
         ],
         "direct_video_global": [
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
-            ("phased", "Phased")
+            ("phased", "Phased"),
         ],
         "direct_video_global_large": [
             ("float_float", "Float"),
             ("binary_binary", "Binary"),
-            ("phased", "Phased")
-        ]
+            ("phased", "Phased"),
+        ],
     }
-    
+
     # Generate HTML
-    html = """<!DOCTYPE html>
+    html = (
+        """<!DOCTYPE html>
 <html>
 <head>
     <title>Comprehensive Query Results - All Strategies</title>
@@ -317,98 +323,101 @@ def generate_html_report(test_results_file: str = None):
 <body>
     <div class="container">
         <h1>Comprehensive Query Results - All Strategies</h1>
-        <p style="text-align: center; color: #6c757d;">Generated on: """ + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + """</p>
+        <p style="text-align: center; color: #6c757d;">Generated on: """
+        + datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        + """</p>
         
         <!-- Profile Tabs -->
         <div class="profile-tabs">
 """
-    
+    )
+
     # Add profile tabs
     for i, (profile_key, profile_name) in enumerate(profiles):
         active_class = "active" if i == 0 else ""
         html += f'            <div class="profile-tab {active_class}" onclick="showProfile(\'{profile_key}\')">{profile_name}</div>\n'
-    
+
     html += """        </div>
         
         <!-- Profile Contents -->
 """
-    
+
     # Generate content for each profile
     for prof_idx, (profile_key, profile_name) in enumerate(profiles):
         active_class = "active" if prof_idx == 0 else ""
-        
+
         # Find this profile's results
         profile_data = None
-        for result in data['results']:
-            if result['profile'] == profile_key:
+        for result in data["results"]:
+            if result["profile"] == profile_key:
                 profile_data = result
                 break
-        
+
         html += f"""        <div id="{profile_key}" class="profile-content {active_class}">
 """
-        
-        if profile_data and 'error' in profile_data:
+
+        if profile_data and "error" in profile_data:
             # Show error message
             html += f"""            <div class="error-message">
-                Error: {profile_data['error']}
+                Error: {profile_data["error"]}
             </div>
 """
         elif profile_data:
             # Add strategy tabs for this profile
             html += """            <div class="strategy-tabs">
 """
-            
+
             strategies = profile_strategies.get(profile_key, [])
             for strat_idx, (strat_key, strat_name) in enumerate(strategies):
                 active_class = "active" if strat_idx == 0 else ""
-                html += f'                <div class="strategy-tab {active_class}" onclick="showStrategy(\'{profile_key}\', \'{strat_key}\')">{strat_name}</div>\n'
-            
+                html += f"                <div class=\"strategy-tab {active_class}\" onclick=\"showStrategy('{profile_key}', '{strat_key}')\">{strat_name}</div>\n"
+
             html += """            </div>
             
 """
-            
+
             # Generate content for each strategy
             for strat_idx, (strat_key, strat_name) in enumerate(strategies):
                 active_class = "active" if strat_idx == 0 else ""
-                
+
                 html += f"""            <div id="{profile_key}-{strat_key}" class="strategy-content {active_class}">
 """
-                
+
                 # Check if this is multi-strategy or single strategy result
-                if profile_data.get('strategies'):
+                if profile_data.get("strategies"):
                     # Multi-strategy results
-                    if strat_key in profile_data['strategies']:
-                        strategy_data = profile_data['strategies'][strat_key]
-                        queries_data = strategy_data['queries']
-                        metrics = strategy_data.get('aggregate_metrics', {})
+                    if strat_key in profile_data["strategies"]:
+                        strategy_data = profile_data["strategies"][strat_key]
+                        queries_data = strategy_data["queries"]
+                        metrics = strategy_data.get("aggregate_metrics", {})
                     else:
                         queries_data = []
                         metrics = {}
                 else:
                     # Single strategy results - only show for first strategy tab
                     if strat_idx == 0:
-                        queries_data = profile_data.get('queries', [])
-                        metrics = profile_data.get('aggregate_metrics', {})
+                        queries_data = profile_data.get("queries", [])
+                        metrics = profile_data.get("aggregate_metrics", {})
                     else:
                         queries_data = []
                         metrics = {}
-                
+
                 # Add summary stats
-                mrr = metrics.get('mrr', {}).get('mean', 0) if metrics else 0
-                recall1 = metrics.get('recall@1', {}).get('mean', 0) if metrics else 0
-                recall5 = metrics.get('recall@5', {}).get('mean', 0) if metrics else 0
-                
+                mrr = metrics.get("mrr", {}).get("mean", 0) if metrics else 0
+                recall1 = metrics.get("recall@1", {}).get("mean", 0) if metrics else 0
+                recall5 = metrics.get("recall@5", {}).get("mean", 0) if metrics else 0
+
                 html += f"""                <div class="summary-stats">
                     <div class="stat-box">
-                        <div class="stat-value">{mrr*100:.1f}%</div>
+                        <div class="stat-value">{mrr * 100:.1f}%</div>
                         <div class="stat-label">MRR Score</div>
                     </div>
                     <div class="stat-box">
-                        <div class="stat-value">{recall1*100:.1f}%</div>
+                        <div class="stat-value">{recall1 * 100:.1f}%</div>
                         <div class="stat-label">Recall@1</div>
                     </div>
                     <div class="stat-box">
-                        <div class="stat-value">{recall5*100:.1f}%</div>
+                        <div class="stat-value">{recall5 * 100:.1f}%</div>
                         <div class="stat-label">Recall@5</div>
                     </div>
                 </div>
@@ -423,40 +432,42 @@ def generate_html_report(test_results_file: str = None):
                     </thead>
                     <tbody>
 """
-                
+
                 # Add rows for each query
                 for query_data in queries_data:
-                    query = query_data['query']
-                    expected = query_data.get('expected', [])
-                    results = query_data.get('results', [])[:5]  # Top 5
-                    query_mrr = query_data.get('metrics', {}).get('mrr', 0)
-                    
+                    query = query_data["query"]
+                    expected = query_data.get("expected", [])
+                    results = query_data.get("results", [])[:5]  # Top 5
+                    query_mrr = query_data.get("metrics", {}).get("mrr", 0)
+
                     # Format expected videos
-                    expected_html = ' '.join([
-                        f'<span class="video-tag expected-video">{vid}</span>' 
-                        for vid in expected
-                    ])
-                    
+                    expected_html = " ".join(
+                        [
+                            f'<span class="video-tag expected-video">{vid}</span>'
+                            for vid in expected
+                        ]
+                    )
+
                     # Format results
                     results_html_parts = []
                     for i, vid in enumerate(results):
                         pos_html = format_position(i + 1)
                         vid_html = format_video_tag(vid, expected, i + 1)
                         results_html_parts.append(pos_html + vid_html)
-                    
+
                     if results_html_parts:
                         results_html_parts.append(format_metric_badge(query_mrr))
-                        results_html = ' '.join(results_html_parts)
+                        results_html = " ".join(results_html_parts)
                     else:
                         results_html = '<span style="color: #6c757d;">No results</span>'
-                    
+
                     html += f"""                        <tr>
                             <td>{query}</td>
                             <td>{expected_html}</td>
                             <td>{results_html}</td>
                         </tr>
 """
-                
+
                 html += """                    </tbody>
                 </table>
             </div>
@@ -466,10 +477,10 @@ def generate_html_report(test_results_file: str = None):
                 No data available for this profile
             </div>
 """
-        
+
         html += """        </div>
 """
-    
+
     # Add JavaScript for tab switching
     html += """    </div>
     
@@ -518,25 +529,29 @@ def generate_html_report(test_results_file: str = None):
 </body>
 </html>
 """
-    
+
     # Save HTML report
     output_dir = Path("outputs/reports")
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_path = output_dir / f"comprehensive_tabbed_report_{timestamp}.html"
-    
-    with open(report_path, 'w') as f:
+
+    with open(report_path, "w") as f:
         f.write(html)
-    
+
     return report_path
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate HTML report with original tabbed format")
-    parser.add_argument("file", nargs="?", help="JSON results file (uses latest if not specified)")
+    parser = argparse.ArgumentParser(
+        description="Generate HTML report with original tabbed format"
+    )
+    parser.add_argument(
+        "file", nargs="?", help="JSON results file (uses latest if not specified)"
+    )
     args = parser.parse_args()
-    
+
     report_path = generate_html_report(args.file)
     if report_path:
         print(f"✅ HTML report generated: {report_path}")

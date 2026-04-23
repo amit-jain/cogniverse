@@ -36,9 +36,7 @@ class AgentRegistry:
     Uses dependency injection for ConfigManager instead of singleton pattern.
     """
 
-    def __init__(
-        self, tenant_id: str, config_manager: "ConfigManager" = None
-    ):
+    def __init__(self, tenant_id: str, config_manager: "ConfigManager" = None):
         """Initialize agent registry with dependency injection
 
         Args:

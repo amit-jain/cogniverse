@@ -264,9 +264,7 @@ class TestConfigPersistence:
         tenant_id = "get_all_test_tenant"
 
         # Create multiple configs
-        config_manager.set_system_config(
-            SystemConfig(llm_model="model1")
-        )
+        config_manager.set_system_config(SystemConfig(llm_model="model1"))
         config_manager.set_routing_config(
             RoutingConfigUnified(tenant_id=tenant_id, routing_mode="hybrid")
         )
@@ -288,12 +286,8 @@ class TestConfigPersistence:
         tenant1 = "stats_tenant1"
 
         # Create some configs
-        config_manager.set_system_config(
-            SystemConfig(llm_model="model1")
-        )
-        config_manager.set_system_config(
-            SystemConfig(llm_model="model2")
-        )
+        config_manager.set_system_config(SystemConfig(llm_model="model1"))
+        config_manager.set_system_config(SystemConfig(llm_model="model2"))
         config_manager.set_routing_config(
             RoutingConfigUnified(tenant_id=tenant1, routing_mode="tiered")
         )

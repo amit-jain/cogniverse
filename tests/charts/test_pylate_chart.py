@@ -44,8 +44,10 @@ def _inference_deployments(docs: list[dict]) -> dict[str, dict]:
     for d in docs:
         if d.get("kind") != "Deployment":
             continue
-        component = d.get("metadata", {}).get("labels", {}).get(
-            "app.kubernetes.io/component", ""
+        component = (
+            d.get("metadata", {})
+            .get("labels", {})
+            .get("app.kubernetes.io/component", "")
         )
         if component.startswith("inference-"):
             out[component.removeprefix("inference-")] = d
@@ -56,9 +58,9 @@ def _runtime_env(docs: list[dict]) -> dict[str, str]:
     for d in docs:
         if (
             d.get("kind") == "Deployment"
-            and d.get("metadata", {}).get("labels", {}).get(
-                "app.kubernetes.io/component"
-            )
+            and d.get("metadata", {})
+            .get("labels", {})
+            .get("app.kubernetes.io/component")
             == "runtime"
         ):
             container = d["spec"]["template"]["spec"]["containers"][0]
@@ -119,7 +121,9 @@ def test_switching_general_to_vllm_does_not_affect_code():
         "inference.general.model=lightonai/Reason-ModernColBERT",
     )
     deps = _inference_deployments(docs)
-    general_image = deps["general"]["spec"]["template"]["spec"]["containers"][0]["image"]
+    general_image = deps["general"]["spec"]["template"]["spec"]["containers"][0][
+        "image"
+    ]
     code_image = deps["code"]["spec"]["template"]["spec"]["containers"][0]["image"]
     assert general_image.startswith("vllm/vllm-openai-cpu")
     assert code_image.startswith("cogniverse/pylate")

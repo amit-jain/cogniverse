@@ -24,11 +24,11 @@ except ImportError:
 
 # Color codes for terminal output
 class Colors:
-    BLUE = '\033[0;34m'
-    GREEN = '\033[0;32m'
-    YELLOW = '\033[1;33m'
-    RED = '\033[0;31m'
-    NC = '\033[0m'  # No Color
+    BLUE = "\033[0;34m"
+    GREEN = "\033[0;32m"
+    YELLOW = "\033[1;33m"
+    RED = "\033[0;31m"
+    NC = "\033[0m"  # No Color
 
 
 def log_info(message: str):
@@ -49,11 +49,11 @@ def log_error(message: str):
 
 # Package build order (dependency order)
 PACKAGES = [
-    "core",        # cogniverse_core
-    "agents",      # cogniverse_agents
-    "vespa",       # cogniverse_vespa
-    "runtime",     # cogniverse_runtime
-    "dashboard",   # cogniverse_dashboard
+    "core",  # cogniverse_core
+    "agents",  # cogniverse_agents
+    "vespa",  # cogniverse_vespa
+    "runtime",  # cogniverse_runtime
+    "dashboard",  # cogniverse_dashboard
 ]
 
 
@@ -80,7 +80,7 @@ def parse_version(version: str) -> Tuple[int, int, int, str]:
     Returns: (major, minor, patch, prerelease)
     """
     # Match semantic version: X.Y.Z or X.Y.Z-prerelease
-    match = re.match(r'^(\d+)\.(\d+)\.(\d+)(-[a-zA-Z0-9.]+)?$', version)
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(-[a-zA-Z0-9.]+)?$", version)
 
     if not match:
         raise ValueError(f"Invalid version format: {version}")
@@ -132,7 +132,7 @@ def bump_version(version: str, bump_type: str, prerelease_suffix: str = None) ->
             # Add or increment prerelease suffix
             if current_prerelease:
                 # Extract number from current prerelease
-                match = re.match(r'-(\w+)\.(\d+)', current_prerelease)
+                match = re.match(r"-(\w+)\.(\d+)", current_prerelease)
                 if match and match.group(1) == prerelease_suffix:
                     # Increment existing prerelease
                     num = int(match.group(2)) + 1
@@ -162,10 +162,10 @@ def get_package_version(package: str) -> str:
         log_error(f"pyproject.toml not found for package: {package}")
         sys.exit(1)
 
-    with open(pyproject_path, 'rb') as f:
+    with open(pyproject_path, "rb") as f:
         data = tomli.load(f)
 
-    return data['project']['version']
+    return data["project"]["version"]
 
 
 def set_package_version(package: str, new_version: str, dry_run: bool = False):
@@ -177,20 +177,20 @@ def set_package_version(package: str, new_version: str, dry_run: bool = False):
         sys.exit(1)
 
     # Read current pyproject.toml
-    with open(pyproject_path, 'rb') as f:
+    with open(pyproject_path, "rb") as f:
         data = tomli.load(f)
 
-    old_version = data['project']['version']
+    old_version = data["project"]["version"]
 
     if dry_run:
         log_info(f"  Would update {package}: {old_version} → {new_version}")
         return
 
     # Update version
-    data['project']['version'] = new_version
+    data["project"]["version"] = new_version
 
     # Write updated pyproject.toml
-    with open(pyproject_path, 'wb') as f:
+    with open(pyproject_path, "wb") as f:
         tomli_w.dump(data, f)
 
     log_success(f"  Updated {package}: {old_version} → {new_version}")
@@ -200,27 +200,26 @@ def get_package_name(package: str) -> str:
     """Get the package name from pyproject.toml."""
     pyproject_path = get_pyproject_path(package)
 
-    with open(pyproject_path, 'rb') as f:
+    with open(pyproject_path, "rb") as f:
         data = tomli.load(f)
 
-    return data['project']['name']
+    return data["project"]["name"]
 
 
 def check_git_status() -> bool:
     """Check if git working directory is clean."""
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=True
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
         )
         return len(result.stdout.strip()) == 0
     except subprocess.CalledProcessError:
         return False
 
 
-def git_commit_version_bump(new_version: str, packages: List[str], dry_run: bool = False):
+def git_commit_version_bump(
+    new_version: str, packages: List[str], dry_run: bool = False
+):
     """Commit version bump changes."""
     if dry_run:
         log_info(f"Would commit version bump to {new_version}")
@@ -252,8 +251,7 @@ def git_tag_version(new_version: str, dry_run: bool = False):
 
     try:
         subprocess.run(
-            ["git", "tag", "-a", tag_name, "-m", f"Release {new_version}"],
-            check=True
+            ["git", "tag", "-a", tag_name, "-m", f"Release {new_version}"], check=True
         )
         log_success(f"Created git tag: {tag_name}")
     except subprocess.CalledProcessError as e:
@@ -287,54 +285,46 @@ Examples:
 
   # With git commit and tag
   ./scripts/version_bump.py minor --commit --tag
-        """
+        """,
     )
 
     parser.add_argument(
         "bump_type",
         choices=["major", "minor", "patch", "prerelease"],
-        help="Type of version bump"
+        help="Type of version bump",
     )
 
     parser.add_argument(
-        "--package",
-        "-p",
-        help="Bump specific package only (default: all packages)"
+        "--package", "-p", help="Bump specific package only (default: all packages)"
     )
 
     parser.add_argument(
         "--prerelease-suffix",
         "-s",
         choices=["alpha", "beta", "rc"],
-        help="Prerelease suffix (required for prerelease bump)"
+        help="Prerelease suffix (required for prerelease bump)",
     )
 
     parser.add_argument(
         "--dry-run",
         "-n",
         action="store_true",
-        help="Preview changes without modifying files"
+        help="Preview changes without modifying files",
     )
 
     parser.add_argument(
-        "--commit",
-        "-c",
-        action="store_true",
-        help="Commit version bump changes"
+        "--commit", "-c", action="store_true", help="Commit version bump changes"
     )
 
     parser.add_argument(
-        "--tag",
-        "-t",
-        action="store_true",
-        help="Create git tag for new version"
+        "--tag", "-t", action="store_true", help="Create git tag for new version"
     )
 
     parser.add_argument(
         "--force",
         "-f",
         action="store_true",
-        help="Force bump even if git working directory is not clean"
+        help="Force bump even if git working directory is not clean",
     )
 
     args = parser.parse_args()

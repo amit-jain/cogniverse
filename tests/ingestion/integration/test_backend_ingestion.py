@@ -432,9 +432,7 @@ class TestProfileConfigPropagation:
     during ConfigUtils._ensure_backend_config() merge.
     """
 
-    def test_model_loader_survives_config_roundtrip(
-        self, ingestion_vespa_backend
-    ):
+    def test_model_loader_survives_config_roundtrip(self, ingestion_vespa_backend):
         """model_loader from config.json must reach EmbeddingGeneratorImpl.
 
         The full path: config.json → ConfigUtils.get("backend") → profiles →
@@ -444,9 +442,7 @@ class TestProfileConfigPropagation:
         config_manager = create_default_config_manager()
         from cogniverse_foundation.config.utils import get_config
 
-        config = get_config(
-            tenant_id="test:unit", config_manager=config_manager
-        )
+        config = get_config(tenant_id="test:unit", config_manager=config_manager)
         backend = config.get("backend")
         profiles = backend.get("profiles", {})
 
@@ -503,9 +499,7 @@ class TestProfileConfigPropagation:
             tenant_id="merge_test_tenant",
             profiles={"video_colpali_smol500_mv_frame": tenant_profile},
         )
-        config_manager.set_backend_config(
-            tenant_backend, tenant_id="merge_test_tenant"
-        )
+        config_manager.set_backend_config(tenant_backend, tenant_id="merge_test_tenant")
 
         # Now get config through ConfigUtils — should merge with system
         from cogniverse_foundation.config.utils import get_config
@@ -514,9 +508,7 @@ class TestProfileConfigPropagation:
             tenant_id="merge_test_tenant", config_manager=config_manager
         )
         backend = config.get("backend")
-        merged = backend.get("profiles", {}).get(
-            "video_colpali_smol500_mv_frame", {}
-        )
+        merged = backend.get("profiles", {}).get("video_colpali_smol500_mv_frame", {})
 
         assert merged.get("model_loader") == "colpali", (
             f"model_loader lost after tenant merge: got {merged.get('model_loader')!r}. "

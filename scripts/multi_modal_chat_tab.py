@@ -31,6 +31,7 @@ def run_async_in_streamlit(coro):
         loop = asyncio.get_event_loop()
         if loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, coro)
                 return future.result()
@@ -46,6 +47,7 @@ def initialize_chat_state():
         st.session_state.chat_messages = []
     if "chat_session_id" not in st.session_state:
         import uuid
+
         st.session_state.chat_session_id = str(uuid.uuid4())
     if "chat_tenant_id" not in st.session_state:
         st.session_state.chat_tenant_id = st.session_state["current_tenant"]
@@ -61,9 +63,7 @@ def validate_tenant_id(tenant_id: str) -> bool:
     return True
 
 
-async def check_agent_memory_capability(
-    routing_agent_url: str
-) -> Dict[str, Any]:
+async def check_agent_memory_capability(routing_agent_url: str) -> Dict[str, Any]:
     """
     Check if routing agent has memory enabled.
 
@@ -80,7 +80,9 @@ async def check_agent_memory_capability(
                 return {
                     "status": "success",
                     "has_memory": has_memory,
-                    "message": "Memory enabled" if has_memory else "Memory disabled in agent config",
+                    "message": "Memory enabled"
+                    if has_memory
+                    else "Memory disabled in agent config",
                 }
             return {
                 "status": "error",
@@ -245,9 +247,15 @@ def render_message(message: Dict[str, Any], index: int):
 
             if content:
                 if is_user:
-                    st.markdown(f"<div style='background-color: #e3f2fd; padding: 10px; border-radius: 10px;'>{content}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div style='background-color: #e3f2fd; padding: 10px; border-radius: 10px;'>{content}</div>",
+                        unsafe_allow_html=True,
+                    )
                 else:
-                    st.markdown(f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 10px;'>{content}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div style='background-color: #f5f5f5; padding: 10px; border-radius: 10px;'>{content}</div>",
+                        unsafe_allow_html=True,
+                    )
 
             result = message.get("result")
             if result:
@@ -314,6 +322,7 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         if st.button("🗑️ Clear Conversation", use_container_width=True):
             st.session_state.chat_messages = []
             import uuid
+
             st.session_state.chat_session_id = str(uuid.uuid4())
             st.rerun()
 

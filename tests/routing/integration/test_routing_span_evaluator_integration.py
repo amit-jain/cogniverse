@@ -58,6 +58,7 @@ async def routing_agent_with_spans(telemetry_manager_with_phoenix):
 
     # Poll for spans to arrive in Phoenix (gRPC export is async)
     from phoenix.client import Client
+
     client = Client(base_url="http://localhost:16006")
     project = telemetry_manager_with_phoenix.config.get_project_name(
         _TEST_TENANT, "routing"

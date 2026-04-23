@@ -85,9 +85,14 @@ class TestDashboardProfileIntegration:
                 version = (existing.version + 1) if existing else 1
                 now = datetime.now(timezone.utc)
                 entry = ConfigEntry(
-                    tenant_id=tenant_id, scope=scope, service=service,
-                    config_key=config_key, config_value=config_value,
-                    version=version, created_at=now, updated_at=now,
+                    tenant_id=tenant_id,
+                    scope=scope,
+                    service=service,
+                    config_key=config_key,
+                    config_value=config_value,
+                    version=version,
+                    created_at=now,
+                    updated_at=now,
                 )
                 self._data[k] = entry
                 return entry
@@ -95,20 +100,25 @@ class TestDashboardProfileIntegration:
             def get_config(self, tenant_id, scope, service, config_key, version=None):
                 return self._data.get(self._key(tenant_id, scope, service, config_key))
 
-            def get_config_history(self, tenant_id, scope, service, config_key, limit=10):
+            def get_config_history(
+                self, tenant_id, scope, service, config_key, limit=10
+            ):
                 entry = self.get_config(tenant_id, scope, service, config_key)
                 return [entry] if entry else []
 
             def list_configs(self, tenant_id, scope=None, service=None):
                 return [
-                    e for e in self._data.values()
+                    e
+                    for e in self._data.values()
                     if e.tenant_id == tenant_id
                     and (scope is None or e.scope == scope)
                     and (service is None or e.service == service)
                 ]
 
             def export_configs(self, tenant_id, include_history=False):
-                return {"configs": [e.config_value for e in self.list_configs(tenant_id)]}
+                return {
+                    "configs": [e.config_value for e in self.list_configs(tenant_id)]
+                }
 
             def import_configs(self, tenant_id, configs):
                 return 0

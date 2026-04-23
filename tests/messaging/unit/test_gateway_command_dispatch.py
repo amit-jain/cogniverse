@@ -27,24 +27,18 @@ def gateway_with_mock_client():
     )
     mock_client = MagicMock()
     # Each CRUD method becomes an AsyncMock returning a simple OK shape.
-    mock_client.search_wiki = AsyncMock(
-        return_value={"results": [], "count": 0}
-    )
+    mock_client.search_wiki = AsyncMock(return_value={"results": [], "count": 0})
     mock_client.get_wiki_topic = AsyncMock(
         return_value={"slug": "foo", "content": "topic body"}
     )
     mock_client.get_wiki_index = AsyncMock(return_value={"content": "INDEX"})
     mock_client.lint_wiki = AsyncMock(return_value={"issues": []})
-    mock_client.delete_wiki_topic = AsyncMock(
-        return_value={"status": "deleted"}
-    )
+    mock_client.delete_wiki_topic = AsyncMock(return_value={"status": "deleted"})
     mock_client.set_instructions = AsyncMock(
         return_value={"text": "x", "updated_at": "now"}
     )
     mock_client.get_instructions = AsyncMock(return_value={"text": "current"})
-    mock_client.list_memories = AsyncMock(
-        return_value={"memories": [], "count": 5}
-    )
+    mock_client.list_memories = AsyncMock(return_value={"memories": [], "count": 5})
     mock_client.clear_memories = AsyncMock(return_value={"status": "cleared"})
     mock_client.list_jobs = AsyncMock(return_value={"jobs": []})
     mock_client.create_job = AsyncMock(
@@ -81,9 +75,7 @@ class TestWikiDispatch:
 
         await g._handle_wiki_command(mock_update, parsed, "acme")
 
-        client.search_wiki.assert_awaited_once_with(
-            tenant_id="acme", query="ColPali"
-        )
+        client.search_wiki.assert_awaited_once_with(tenant_id="acme", query="ColPali")
         mock_update.message.reply_text.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -95,9 +87,7 @@ class TestWikiDispatch:
 
         await g._handle_wiki_command(mock_update, parsed, "acme")
 
-        client.get_wiki_topic.assert_awaited_once_with(
-            tenant_id="acme", slug="foo"
-        )
+        client.get_wiki_topic.assert_awaited_once_with(tenant_id="acme", slug="foo")
 
     @pytest.mark.asyncio
     async def test_wiki_index_calls_runtime_client(
@@ -130,9 +120,7 @@ class TestWikiDispatch:
 
         await g._handle_wiki_command(mock_update, parsed, "acme")
 
-        client.delete_wiki_topic.assert_awaited_once_with(
-            tenant_id="acme", slug="foo"
-        )
+        client.delete_wiki_topic.assert_awaited_once_with(tenant_id="acme", slug="foo")
 
     @pytest.mark.asyncio
     async def test_wiki_search_without_query_shows_usage(
@@ -201,9 +189,7 @@ class TestMemoriesDispatch:
 
         await g._handle_memories_command(mock_update, parsed, "acme")
 
-        client.list_memories.assert_awaited_once_with(
-            tenant_id="acme", agent_name=None
-        )
+        client.list_memories.assert_awaited_once_with(tenant_id="acme", agent_name=None)
 
     @pytest.mark.asyncio
     async def test_memories_list_with_agent_filter(
@@ -284,9 +270,7 @@ class TestJobsDispatch:
 
         await g._handle_jobs_command(mock_update, parsed, "acme")
 
-        client.delete_job.assert_awaited_once_with(
-            tenant_id="acme", job_id="abc12345"
-        )
+        client.delete_job.assert_awaited_once_with(tenant_id="acme", job_id="abc12345")
 
 
 @pytest.mark.unit
@@ -301,14 +285,18 @@ class TestParseJobsCreateArgs:
         assert result == ("0 9 * * 1", "latest AI papers", "latest AI papers")
 
     def test_no_quotes_returns_none(self):
-        assert MessagingGateway._parse_jobs_create_args(
-            "0 9 * * 1 latest"
-        ) == (None, None, None)
+        assert MessagingGateway._parse_jobs_create_args("0 9 * * 1 latest") == (
+            None,
+            None,
+            None,
+        )
 
     def test_unclosed_quote_returns_none(self):
-        assert MessagingGateway._parse_jobs_create_args(
-            '"0 9 * * 1 latest'
-        ) == (None, None, None)
+        assert MessagingGateway._parse_jobs_create_args('"0 9 * * 1 latest') == (
+            None,
+            None,
+            None,
+        )
 
     def test_empty_query_returns_none(self):
         assert MessagingGateway._parse_jobs_create_args('"0 9 * * 1"') == (

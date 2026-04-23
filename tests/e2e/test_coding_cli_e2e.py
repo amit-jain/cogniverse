@@ -199,7 +199,9 @@ class TestCodingAgentDispatch:
         result = data["result"]
         assert "plan" in result
         assert result["plan"], "Plan should not be empty"
-        assert len(result["code_changes"]) >= 1, "Should generate at least 1 code change"
+        assert len(result["code_changes"]) >= 1, (
+            "Should generate at least 1 code change"
+        )
         assert result["iterations_used"] >= 1
 
         exec_results = result.get("execution_results", [])
@@ -232,11 +234,13 @@ class TestCodingSession:
         with tempfile.TemporaryDirectory() as tmpdir:
             target_file = Path(tmpdir) / "subdir" / "hello.py"
             session.last_result = CodingResult(
-                code_changes=[{
-                    "file_path": str(target_file),
-                    "content": "def hello():\n    return 'world'\n",
-                    "change_type": "new",
-                }],
+                code_changes=[
+                    {
+                        "file_path": str(target_file),
+                        "content": "def hello():\n    return 'world'\n",
+                        "change_type": "new",
+                    }
+                ],
             )
 
             count = session.apply()
@@ -261,11 +265,13 @@ class TestCodingSession:
             target.write_text("obsolete")
 
             session.last_result = CodingResult(
-                code_changes=[{
-                    "file_path": str(target),
-                    "content": "",
-                    "change_type": "delete",
-                }],
+                code_changes=[
+                    {
+                        "file_path": str(target),
+                        "content": "",
+                        "change_type": "delete",
+                    }
+                ],
             )
             session.apply()
 

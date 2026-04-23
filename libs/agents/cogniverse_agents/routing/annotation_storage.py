@@ -33,7 +33,10 @@ class RoutingAnnotationStorage:
     - metadata.human_reviewed: Whether human has reviewed this
     """
 
-    def __init__(self, tenant_id: str,):
+    def __init__(
+        self,
+        tenant_id: str,
+    ):
         """
         Initialize annotation storage
 

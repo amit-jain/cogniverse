@@ -26,7 +26,9 @@ class EvaluationResult(dict):
         try:
             return self[name]
         except KeyError:
-            raise AttributeError(f"'EvaluationResult' has no attribute '{name}'") from None
+            raise AttributeError(
+                f"'EvaluationResult' has no attribute '{name}'"
+            ) from None
 
     def __setattr__(self, name: str, value: Any) -> None:
         self[name] = value

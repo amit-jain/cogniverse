@@ -40,14 +40,20 @@ class _StubClock:
 
 
 def test_extract_model_from_pylate_health_response():
-    assert _extract_model_from_health({"status": "ok", "model": "lightonai/LateOn"}) == "lightonai/LateOn"
+    assert (
+        _extract_model_from_health({"status": "ok", "model": "lightonai/LateOn"})
+        == "lightonai/LateOn"
+    )
     assert _extract_model_from_health({"status": "ok"}) is None
     assert _extract_model_from_health({"model": ""}) is None
     assert _extract_model_from_health("not a dict") is None
 
 
 def test_extract_model_from_vllm_v1_models_response():
-    body = {"object": "list", "data": [{"id": "lightonai/Reason-ModernColBERT", "object": "model"}]}
+    body = {
+        "object": "list",
+        "data": [{"id": "lightonai/Reason-ModernColBERT", "object": "model"}],
+    }
     assert _extract_model_from_v1_models(body) == "lightonai/Reason-ModernColBERT"
     assert _extract_model_from_v1_models({"object": "list", "data": []}) is None
     assert _extract_model_from_v1_models({"data": [{}]}) is None
@@ -96,9 +102,13 @@ def test_validate_raises_on_model_mismatch():
     ]
     urls = {"general": "http://general:8000"}
 
-    with pytest.raises(InferenceServiceMismatch, match="serves 'lightonai/Reason-ModernColBERT'.*expect 'lightonai/LateOn'"):
+    with pytest.raises(
+        InferenceServiceMismatch,
+        match="serves 'lightonai/Reason-ModernColBERT'.*expect 'lightonai/LateOn'",
+    ):
         validate_inference_services(
-            bindings, urls,
+            bindings,
+            urls,
             probe=lambda _: "lightonai/Reason-ModernColBERT",
             sleep=_StubSleep(),
         )
@@ -107,6 +117,7 @@ def test_validate_raises_on_model_mismatch():
 def test_validate_skips_undeployed_services_with_warning(caplog):
     """Missing services warn but don't fail startup — factory raises on use."""
     import logging
+
     bindings = [
         ProfileBinding("lateon_mv", "general", "lightonai/LateOn"),
         ProfileBinding("code_lateon_mv", "code", "lightonai/LateOn-Code-edge"),
@@ -115,7 +126,8 @@ def test_validate_skips_undeployed_services_with_warning(caplog):
 
     with caplog.at_level(logging.WARNING):
         validate_inference_services(
-            bindings, urls,
+            bindings,
+            urls,
             probe=lambda _: "lightonai/LateOn",
             sleep=_StubSleep(),
         )
@@ -131,7 +143,9 @@ def test_validate_raises_when_profiles_disagree_on_same_service():
     urls = {"general": "http://general:8000"}
 
     with pytest.raises(InferenceServiceMismatch, match="disagree on service 'general'"):
-        validate_inference_services(bindings, urls, probe=lambda _: "x", sleep=_StubSleep())
+        validate_inference_services(
+            bindings, urls, probe=lambda _: "x", sleep=_StubSleep()
+        )
 
 
 def test_validate_retries_when_service_not_ready_then_succeeds():
@@ -148,7 +162,8 @@ def test_validate_retries_when_service_not_ready_then_succeeds():
         return val
 
     validate_inference_services(
-        bindings, urls,
+        bindings,
+        urls,
         probe=probe,
         boot_deadline_seconds=60.0,
         retry_interval_seconds=5.0,
@@ -173,7 +188,8 @@ def test_validate_raises_after_boot_deadline():
 
     with pytest.raises(InferenceServiceMismatch, match="did not respond"):
         validate_inference_services(
-            bindings, urls,
+            bindings,
+            urls,
             probe=probe,
             boot_deadline_seconds=10.0,
             retry_interval_seconds=5.0,
@@ -184,7 +200,9 @@ def test_validate_raises_after_boot_deadline():
 
 def test_validate_skipped_when_no_bindings():
     """Profiles without inference_service mean no validation work."""
-    validate_inference_services([], {"general": "http://x"}, probe=lambda _: None, sleep=_StubSleep())
+    validate_inference_services(
+        [], {"general": "http://x"}, probe=lambda _: None, sleep=_StubSleep()
+    )
 
 
 def test_validate_dedupes_shared_service():

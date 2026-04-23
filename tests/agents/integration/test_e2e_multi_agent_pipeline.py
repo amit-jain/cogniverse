@@ -46,9 +46,7 @@ logger = logging.getLogger(__name__)
 # GLiNER availability check for GatewayAgent tests
 HAS_GLINER = importlib.util.find_spec("gliner") is not None
 
-skip_if_no_gliner = pytest.mark.skipif(
-    not HAS_GLINER, reason="GLiNER not installed"
-)
+skip_if_no_gliner = pytest.mark.skipif(not HAS_GLINER, reason="GLiNER not installed")
 
 
 @pytest.fixture(scope="module")
@@ -155,7 +153,9 @@ class TestE2EMultiAgentPipeline:
         QueryEnhancementAgent) rather than being computed by RoutingAgent.
         """
         query = "machine learning tutorial videos"
-        enhanced_query = "machine learning tutorial videos deep learning neural networks"
+        enhanced_query = (
+            "machine learning tutorial videos deep learning neural networks"
+        )
         entities = [
             {"text": "machine learning", "type": "CONCEPT", "confidence": 0.9},
         ]
@@ -433,7 +433,12 @@ class TestE2EGatewayPipeline:
         assert result is not None
         assert result.complexity in ("simple", "complex")
         assert result.modality in (
-            "video", "text", "audio", "image", "document", "both",
+            "video",
+            "text",
+            "audio",
+            "image",
+            "document",
+            "both",
         )
         assert result.routed_to is not None
         assert 0.0 <= result.confidence <= 1.0
@@ -472,9 +477,7 @@ class TestE2EGatewayPipeline:
         )
 
     @pytest.mark.asyncio
-    async def test_gateway_then_search_e2e(
-        self, gateway_agent, search_agent
-    ):
+    async def test_gateway_then_search_e2e(self, gateway_agent, search_agent):
         """
         E2E: GatewayAgent triages query, then SearchAgent executes.
 
@@ -502,9 +505,7 @@ class TestE2EGatewayPipeline:
 
         assert search_result is not None
         assert hasattr(search_result, "results")
-        logger.info(
-            f"Gateway → Search: {len(search_result.results)} results returned"
-        )
+        logger.info(f"Gateway → Search: {len(search_result.results)} results returned")
 
     @pytest.mark.asyncio
     async def test_gateway_minimal_query(self, gateway_agent):

@@ -379,5 +379,3 @@ class TestCheckpointConfig:
         assert config.level == CheckpointLevel.TASK
         assert config.project_name == "test_checkpoints"
         assert config.retain_completed_hours == 100
-
-

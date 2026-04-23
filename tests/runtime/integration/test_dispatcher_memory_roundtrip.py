@@ -87,18 +87,14 @@ class TestDispatcherMemoryRoundTrip:
             tenant_id="test:unit",
         )
 
-        memory_id = agent.update_memory(
-            "I prefer responses that include code examples"
-        )
+        memory_id = agent.update_memory("I prefer responses that include code examples")
         assert memory_id is True, (
             "update_memory must return True after a successful Mem0 write"
         )
 
         wait_for_vespa_indexing(delay=5, description="memory indexing")
 
-        context = agent.get_relevant_context(
-            "code examples preference", top_k=5
-        )
+        context = agent.get_relevant_context("code examples preference", top_k=5)
         assert context is not None, (
             "Newly stored memory should be findable via real Vespa search "
             "after indexing — if context is None the dispatcher's memory "

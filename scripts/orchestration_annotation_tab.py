@@ -59,6 +59,7 @@ def _extract_orchestration_attrs(span_row: Any) -> Dict[str, Any]:
 
     return attrs
 
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -160,7 +161,11 @@ def render_orchestration_annotation_tab():
             pattern = attrs.get("orchestration.pattern", "unknown")
             workflow_options.append(f"{wf_id}: {query[:50]}... ({pattern})")
 
-        selected_idx = st.selectbox("Select workflow to annotate", range(len(workflow_options)), format_func=lambda x: workflow_options[x])
+        selected_idx = st.selectbox(
+            "Select workflow to annotate",
+            range(len(workflow_options)),
+            format_func=lambda x: workflow_options[x],
+        )
 
         span_row = orch_spans.iloc[selected_idx]
         attrs = _extract_orchestration_attrs(span_row)
@@ -177,16 +182,24 @@ def render_orchestration_annotation_tab():
         with col3:
             st.metric("Tasks Completed", attrs.get("orchestration.tasks_completed", 0))
 
-        st.text_area("Query", attrs.get("orchestration.query", ""), height=100, disabled=True)
+        st.text_area(
+            "Query", attrs.get("orchestration.query", ""), height=100, disabled=True
+        )
 
         agents_raw = attrs.get("orchestration.agents_used", "[]")
         execution_raw = attrs.get("orchestration.execution_order", "[]")
         try:
-            agents_used = json.loads(agents_raw) if isinstance(agents_raw, str) else agents_raw
+            agents_used = (
+                json.loads(agents_raw) if isinstance(agents_raw, str) else agents_raw
+            )
         except (json.JSONDecodeError, TypeError):
             agents_used = [agents_raw] if agents_raw else []
         try:
-            execution_order = json.loads(execution_raw) if isinstance(execution_raw, str) else execution_raw
+            execution_order = (
+                json.loads(execution_raw)
+                if isinstance(execution_raw, str)
+                else execution_raw
+            )
         except (json.JSONDecodeError, TypeError):
             execution_order = [execution_raw] if execution_raw else []
 
@@ -281,9 +294,7 @@ def render_orchestration_annotation_tab():
                 value="acceptable",
             )
 
-            quality_score = st.slider(
-                "Quality score (0.0-1.0)", 0.0, 1.0, 0.7, 0.05
-            )
+            quality_score = st.slider("Quality score (0.0-1.0)", 0.0, 1.0, 0.7, 0.05)
 
             st.markdown("#### Feedback")
             col1, col2 = st.columns(2)
@@ -328,9 +339,7 @@ def render_orchestration_annotation_tab():
                         what_went_well=what_went_well,
                         what_went_wrong=what_went_wrong,
                         annotator_id=annotator_id,
-                        workflow_succeeded=(
-                            span_row.get("status_code") == "OK"
-                        ),
+                        workflow_succeeded=(span_row.get("status_code") == "OK"),
                         error_details=span_row.get("status_message"),
                     )
 
@@ -351,7 +360,9 @@ def render_orchestration_annotation_tab():
                     st.code(traceback.format_exc())
 
     else:
-        st.info("Click 'Refresh Workflows' to load orchestration workflows for annotation")
+        st.info(
+            "Click 'Refresh Workflows' to load orchestration workflows for annotation"
+        )
 
 
 if __name__ == "__main__":

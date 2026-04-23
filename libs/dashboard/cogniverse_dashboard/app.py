@@ -331,9 +331,7 @@ st.markdown(
 
 # Initialize session state
 if "analytics" not in st.session_state:
-    st.session_state.analytics = Analytics(
-        telemetry_url=_system_config.telemetry_url
-    )
+    st.session_state.analytics = Analytics(telemetry_url=_system_config.telemetry_url)
 
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = datetime.now()
@@ -370,7 +368,7 @@ with st.sidebar:
         value=st.session_state.get("active_tenant", ""),
         placeholder="org:tenant",
         help="Tenant scope for every dashboard feature. Must be registered "
-             "via POST /admin/tenants before use.",
+        "via POST /admin/tenants before use.",
         key="active_tenant_input",
     ).strip()
     if active_tenant != st.session_state.get("active_tenant"):
@@ -722,9 +720,7 @@ if not _selected_tenant:
 @st.cache_data(ttl=30)
 def _validate_tenant(tenant_id: str) -> tuple[bool, str]:
     try:
-        resp = httpx.get(
-            f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0
-        )
+        resp = httpx.get(f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0)
     except Exception as exc:  # pragma: no cover - network-dependent
         return False, f"runtime unreachable at {RUNTIME_URL}: {exc}"
     if resp.status_code == 200:
@@ -1463,9 +1459,7 @@ if enable_rca and len(tabs) > 6:
         # Run analysis - use filtered traces to match the stats
         with st.spinner("Analyzing failures and performance issues..."):
             # Convert filtered DataFrame back to TraceMetrics objects
-            filtered_traces = [
-                TraceMetrics(**row) for _, row in traces_df.iterrows()
-            ]
+            filtered_traces = [TraceMetrics(**row) for _, row in traces_df.iterrows()]
 
             rca_results = rca.analyze_failures(
                 filtered_traces,  # Use filtered traces instead of all traces
@@ -1856,7 +1850,8 @@ if enable_rca and len(tabs) > 6:
                                     st.code(phoenix_time_query, language="python")
                             config_manager = create_default_config_manager()
                             config = get_config(
-                                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+                                tenant_id=SYSTEM_TENANT_ID,
+                                config_manager=config_manager,
                             )
                             phoenix_base_url = config.get(
                                 "phoenix_base_url", "http://localhost:6006"
@@ -2926,12 +2921,9 @@ with main_tabs[10]:
 
     with col2:
         # Check if video search agent is available
-        search_agent_available = (
-            "error" not in agent_status
-            and (
-                agent_status.get("Search Agent", {}).get("status") == "online"
-                or agent_status.get("Video Search Agent", {}).get("status") == "online"
-            )
+        search_agent_available = "error" not in agent_status and (
+            agent_status.get("Search Agent", {}).get("status") == "online"
+            or agent_status.get("Video Search Agent", {}).get("status") == "online"
         )
         search_button_disabled = not search_query or not search_agent_available
 
@@ -3040,17 +3032,13 @@ with main_tabs[10]:
 
         # Summary metrics — Results count, Latency, Profile. The e2e
         # tests look for exactly three stMetric widgets here.
-        _total_count = sum(
-            len(results.get(s, [])) for s in ranking_strategies
-        )
+        _total_count = sum(len(results.get(s, [])) for s in ranking_strategies)
         _m1, _m2, _m3 = st.columns(3)
         with _m1:
             st.metric("Results", _total_count)
         with _m2:
             _ts = st.session_state.current_search_results.get("timestamp")
-            _lat_ms = (
-                (datetime.now() - _ts).total_seconds() * 1000 if _ts else 0
-            )
+            _lat_ms = (datetime.now() - _ts).total_seconds() * 1000 if _ts else 0
             st.metric("Latency", f"{_lat_ms:.0f}ms")
         with _m3:
             st.metric(
@@ -3162,7 +3150,9 @@ with main_tabs[10]:
                                                 "agent_name": "routing_agent",
                                                 "query": search_query,
                                                 "context": {
-                                                    "tenant_id": st.session_state["current_tenant"],
+                                                    "tenant_id": st.session_state[
+                                                        "current_tenant"
+                                                    ],
                                                     "action": "optimize_routing",
                                                     "examples": [
                                                         {
@@ -3245,7 +3235,10 @@ with main_tabs[10]:
             for point in final.get("key_points", []):
                 st.markdown(f"- {point}")
 
-    if not (hasattr(st.session_state, "current_search_results") and st.session_state.current_search_results):
+    if not (
+        hasattr(st.session_state, "current_search_results")
+        and st.session_state.current_search_results
+    ):
         st.info("👆 Enter a search query and click Search to see results")
 
     # Session Evaluation (unified for single and multi-turn)
@@ -3387,13 +3380,17 @@ with main_tabs[11]:
                     )
                     if resp.status_code == 200:
                         result = resp.json()
-                        answer = result.get("response", result.get("result", str(result)))
+                        answer = result.get(
+                            "response", result.get("result", str(result))
+                        )
                         st.markdown(answer)
                         st.session_state.chat_messages.append(
                             {"role": "assistant", "content": answer}
                         )
                     else:
-                        error_msg = f"Agent returned HTTP {resp.status_code}: {resp.text[:200]}"
+                        error_msg = (
+                            f"Agent returned HTTP {resp.status_code}: {resp.text[:200]}"
+                        )
                         st.error(error_msg)
                         st.session_state.chat_messages.append(
                             {"role": "assistant", "content": error_msg}

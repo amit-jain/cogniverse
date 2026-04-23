@@ -89,9 +89,7 @@ class TestDocumentTextEmbeddingStrategy:
         processors = strategy.get_required_processors()
         assert "embedding" in processors
         assert processors["embedding"]["type"] == "document_text"
-        assert (
-            processors["embedding"]["colbert_model"] == "lightonai/LateOn"
-        )
+        assert processors["embedding"]["colbert_model"] == "lightonai/LateOn"
 
     def test_custom_model(self):
         strategy = DocumentTextEmbeddingStrategy(colbert_model="custom/colbert")

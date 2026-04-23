@@ -45,7 +45,7 @@ def create_test_generator_config():
                     )
                 },
             ),
-        }
+        },
     )
 
 
@@ -90,7 +90,9 @@ class TestSyntheticDataService:
         """Test generating modality examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=10
+        )
 
         response = await service.generate(request)
 
@@ -108,7 +110,9 @@ class TestSyntheticDataService:
         """Test generating cross-modal fusion examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="cross_modal", count=15)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="cross_modal", count=15
+        )
 
         response = await service.generate(request)
 
@@ -122,7 +126,9 @@ class TestSyntheticDataService:
         """Test generating routing experience examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="routing", count=12)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="routing", count=12
+        )
 
         response = await service.generate(request)
 
@@ -136,7 +142,9 @@ class TestSyntheticDataService:
         """Test generating workflow execution examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="workflow", count=20)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="workflow", count=20
+        )
 
         response = await service.generate(request)
 
@@ -151,8 +159,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit",
-            optimizer="modality", count=10, vespa_sample_size=50
+            tenant_id="test:unit", optimizer="modality", count=10, vespa_sample_size=50
         )
 
         response = await service.generate(request)
@@ -165,7 +172,9 @@ class TestSyntheticDataService:
         """Test generation with max profiles setting"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=5, max_profiles=1)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=5, max_profiles=1
+        )
 
         response = await service.generate(request)
 
@@ -179,7 +188,9 @@ class TestSyntheticDataService:
 
         request = SyntheticDataRequest(
             tenant_id="test:unit",
-            optimizer="routing", count=8, strategies=["entity_rich"]
+            optimizer="routing",
+            count=8,
+            strategies=["entity_rich"],
         )
 
         response = await service.generate(request)
@@ -191,7 +202,9 @@ class TestSyntheticDataService:
         """Test generation with invalid optimizer name"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="nonexistent_optimizer", count=10)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="nonexistent_optimizer", count=10
+        )
 
         with pytest.raises(ValueError, match="Unknown optimizer"):
             await service.generate(request)
@@ -251,8 +264,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit",
-            optimizer="routing", count=8, vespa_sample_size=20
+            tenant_id="test:unit", optimizer="routing", count=8, vespa_sample_size=20
         )
 
         response = await service.generate(request)
@@ -283,7 +295,9 @@ class TestServiceErrorHandling:
         """Test error handling for invalid optimizer"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="invalid_name", count=10)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="invalid_name", count=10
+        )
 
         with pytest.raises(ValueError) as exc_info:
             await service.generate(request)
@@ -316,7 +330,9 @@ class TestServiceWithBackendConfig:
             backend_config=config, generator_config=create_test_generator_config()
         )
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=5)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=5
+        )
 
         response = await service.generate(request)
 
@@ -328,7 +344,9 @@ class TestServiceWithBackendConfig:
         """Test service falls back to default profiles when no config"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=5)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="modality", count=5
+        )
 
         response = await service.generate(request)
 

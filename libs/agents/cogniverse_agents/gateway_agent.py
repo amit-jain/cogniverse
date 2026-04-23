@@ -49,9 +49,7 @@ ALL_LABELS: List[str] = [
 # Simple route map: (modality, generation_type) -> agent name
 # ---------------------------------------------------------------------------
 
-SIMPLE_ROUTE_MAP: Dict[
-    Tuple[str, str], str
-] = {
+SIMPLE_ROUTE_MAP: Dict[Tuple[str, str], str] = {
     # raw_results
     ("video", "raw_results"): "search_agent",
     ("text", "raw_results"): "search_agent",
@@ -99,9 +97,7 @@ class GatewayOutput(AgentOutput):
     generation_type: Literal["raw_results", "summary", "detailed_report"] = Field(
         ..., description="Requested generation type"
     )
-    routed_to: str = Field(
-        ..., description="Target agent name or 'orchestrator_agent'"
-    )
+    routed_to: str = Field(..., description="Target agent name or 'orchestrator_agent'")
     confidence: float = Field(
         ..., ge=0.0, le=1.0, description="Classification confidence"
     )
@@ -193,7 +189,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             if blob:
                 config = json.loads(blob)
                 if "fast_path_confidence_threshold" in config:
-                    self.deps.fast_path_confidence_threshold = config["fast_path_confidence_threshold"]
+                    self.deps.fast_path_confidence_threshold = config[
+                        "fast_path_confidence_threshold"
+                    ]
                 if "gliner_threshold" in config:
                     self.deps.gliner_threshold = config["gliner_threshold"]
                 logger.info(
@@ -245,9 +243,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             for e in entities
         ]
 
-    def _classify_modality(
-        self, entities: List[Dict[str, Any]]
-    ) -> Tuple[str, float]:
+    def _classify_modality(self, entities: List[Dict[str, Any]]) -> Tuple[str, float]:
         """Determine the dominant modality from extracted entities.
 
         Returns (modality, confidence). If entities span multiple modalities,
@@ -293,16 +289,41 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         return best_type, gen_scores[best_type]
 
     # Keywords that signal multi-step or analytical queries requiring orchestration
-    _COMPLEXITY_KEYWORDS = frozenset({
-        "analyze", "analyse", "compare", "contrast", "summarize", "summarise",
-        "explain", "evaluate", "correlate", "investigate", "review", "assess",
-        "combine", "merge", "synthesize", "synthesise", "report",
-    })
+    _COMPLEXITY_KEYWORDS = frozenset(
+        {
+            "analyze",
+            "analyse",
+            "compare",
+            "contrast",
+            "summarize",
+            "summarise",
+            "explain",
+            "evaluate",
+            "correlate",
+            "investigate",
+            "review",
+            "assess",
+            "combine",
+            "merge",
+            "synthesize",
+            "synthesise",
+            "report",
+        }
+    )
 
-    _MULTI_STEP_MARKERS = frozenset({
-        "then", "after that", "followed by", "and also", "additionally",
-        "step by step", "first", "finally", "next",
-    })
+    _MULTI_STEP_MARKERS = frozenset(
+        {
+            "then",
+            "after that",
+            "followed by",
+            "and also",
+            "additionally",
+            "step by step",
+            "first",
+            "finally",
+            "next",
+        }
+    )
 
     def _is_complex(
         self,

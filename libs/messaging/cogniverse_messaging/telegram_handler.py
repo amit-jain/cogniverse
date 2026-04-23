@@ -31,9 +31,7 @@ def format_agent_response(response: Dict[str, Any]) -> List[str]:
 
         total = response.get("results_count", len(results))
         if total > MAX_RESULTS_PER_MESSAGE:
-            parts.append(
-                f"Showing {MAX_RESULTS_PER_MESSAGE} of {total} results."
-            )
+            parts.append(f"Showing {MAX_RESULTS_PER_MESSAGE} of {total} results.")
 
     if not parts:
         return ["No results found."]
@@ -52,19 +50,14 @@ def _format_results(results: List[Dict[str, Any]]) -> str:
             or result.get("source_id", "Unknown")
         )
         score = result.get("score", result.get("relevance_score"))
-        description = (
-            result.get("segment_description")
-            or result.get("description", "")
-        )
+        description = result.get("segment_description") or result.get("description", "")
 
         line = f"{i}. {title}"
         if score is not None:
             line += f" ({float(score):.0%})"
         if description:
             desc_short = (
-                description[:100] + "..."
-                if len(description) > 100
-                else description
+                description[:100] + "..." if len(description) > 100 else description
             )
             line += f"\n   {desc_short}"
 

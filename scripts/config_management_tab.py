@@ -66,15 +66,17 @@ def render_config_management_tab():
             st.error("✗ Unhealthy")
 
     # Main tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🖥️ System Config",
-        "🤖 Agent Configs",
-        "🔀 Routing Config",
-        "📊 Telemetry Config",
-        "🔧 Backend Profiles",
-        "📜 History",
-        "💾 Import/Export",
-    ])
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+        [
+            "🖥️ System Config",
+            "🤖 Agent Configs",
+            "🔀 Routing Config",
+            "📊 Telemetry Config",
+            "🔧 Backend Profiles",
+            "📜 History",
+            "💾 Import/Export",
+        ]
+    )
 
     with tab1:
         render_system_config_ui(manager, tenant_id)
@@ -172,7 +174,9 @@ def render_system_config_ui(manager, tenant_id: str):
         col1, col2 = st.columns(2)
 
         with col1:
-            telemetry_url = st.text_input("Phoenix URL", value=system_config.telemetry_url)
+            telemetry_url = st.text_input(
+                "Phoenix URL", value=system_config.telemetry_url
+            )
 
         with col2:
             telemetry_collector_endpoint = st.text_input(
@@ -299,7 +303,9 @@ def render_agent_configs_ui(manager, tenant_id: str):
                 llm_base_url = st.text_input(
                     "Base URL",
                     value=(
-                        existing_config.llm_base_url if existing_config else "http://localhost:11434"
+                        existing_config.llm_base_url
+                        if existing_config
+                        else "http://localhost:11434"
                     ),
                 )
 
@@ -389,7 +395,9 @@ def render_agent_configs_ui(manager, tenant_id: str):
 
                     # Save via ConfigManager
                     manager.set_agent_config(tenant_id, agent_name, new_config)
-                    st.success(f"✅ Agent configuration '{agent_name}' saved successfully!")
+                    st.success(
+                        f"✅ Agent configuration '{agent_name}' saved successfully!"
+                    )
                     st.rerun()
 
                 except Exception as e:
@@ -403,7 +411,9 @@ def render_routing_config_ui(manager, tenant_id: str):
     try:
         routing_config = manager.get_routing_config(tenant_id)
     except Exception:
-        st.warning(f"No routing config found for tenant '{tenant_id}'. Create a new one below.")
+        st.warning(
+            f"No routing config found for tenant '{tenant_id}'. Create a new one below."
+        )
         routing_config = RoutingConfigUnified(tenant_id=tenant_id)
 
     with st.form("routing_config_form"):
@@ -414,7 +424,9 @@ def render_routing_config_ui(manager, tenant_id: str):
             routing_mode = st.selectbox(
                 "Routing Mode",
                 options=["tiered", "direct", "adaptive"],
-                index=["tiered", "direct", "adaptive"].index(routing_config.routing_mode),
+                index=["tiered", "direct", "adaptive"].index(
+                    routing_config.routing_mode
+                ),
             )
 
         with col2:
@@ -424,7 +436,9 @@ def render_routing_config_ui(manager, tenant_id: str):
             )
 
         st.markdown("### Auto-Optimization")
-        st.info("Background optimization that runs automatically at regular intervals using Phoenix traces")
+        st.info(
+            "Background optimization that runs automatically at regular intervals using Phoenix traces"
+        )
 
         col1, col2, col3 = st.columns(3)
 
@@ -432,7 +446,7 @@ def render_routing_config_ui(manager, tenant_id: str):
             enable_optimization = st.checkbox(
                 "Enable Auto-Optimization",
                 value=routing_config.enable_auto_optimization,
-                help="Automatically optimize routing based on Phoenix trace data"
+                help="Automatically optimize routing based on Phoenix trace data",
             )
 
         with col2:
@@ -440,7 +454,7 @@ def render_routing_config_ui(manager, tenant_id: str):
                 "Optimization Interval (minutes)",
                 value=routing_config.optimization_interval_seconds // 60,
                 min_value=1,
-                help="How often to run auto-optimization"
+                help="How often to run auto-optimization",
             )
 
         with col3:
@@ -448,7 +462,7 @@ def render_routing_config_ui(manager, tenant_id: str):
                 "Min Samples for Optimization",
                 value=routing_config.min_samples_for_optimization,
                 min_value=1,
-                help="Minimum Phoenix traces required before optimization runs"
+                help="Minimum Phoenix traces required before optimization runs",
             )
 
         # Submit
@@ -478,7 +492,9 @@ def render_telemetry_config_ui(manager, tenant_id: str):
     try:
         telemetry_config = manager.get_telemetry_config(tenant_id)
     except Exception:
-        st.warning(f"No telemetry config found for tenant '{tenant_id}'. Create a new one below.")
+        st.warning(
+            f"No telemetry config found for tenant '{tenant_id}'. Create a new one below."
+        )
         telemetry_config = TelemetryConfig()
 
     with st.form("telemetry_config_form"):
@@ -509,7 +525,9 @@ def render_telemetry_config_ui(manager, tenant_id: str):
             telemetry_level = st.selectbox(
                 "Telemetry Level",
                 options=["disabled", "basic", "detailed", "verbose"],
-                index=["disabled", "basic", "detailed", "verbose"].index(telemetry_config.level.value),
+                index=["disabled", "basic", "detailed", "verbose"].index(
+                    telemetry_config.level.value
+                ),
             )
 
         st.markdown("### Provider Configuration")
@@ -519,12 +537,16 @@ def render_telemetry_config_ui(manager, tenant_id: str):
             provider = st.selectbox(
                 "Telemetry Provider",
                 options=["phoenix", "langsmith", ""],
-                index=["phoenix", "langsmith", ""].index(telemetry_config.provider or ""),
+                index=["phoenix", "langsmith", ""].index(
+                    telemetry_config.provider or ""
+                ),
                 help="Select telemetry backend provider (empty for auto-detect)",
             )
 
         with col2:
-            existing_http_endpoint = telemetry_config.provider_config.get("http_endpoint", "")
+            existing_http_endpoint = telemetry_config.provider_config.get(
+                "http_endpoint", ""
+            )
             http_endpoint = st.text_input(
                 "Provider HTTP Endpoint",
                 value=existing_http_endpoint,
@@ -610,11 +632,13 @@ def render_config_history_ui(manager, tenant_id: str):
         # Display as table
         history_data = []
         for entry in history:
-            history_data.append({
-                "Version": entry.version,
-                "Updated": entry.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
-                "Created": entry.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-            })
+            history_data.append(
+                {
+                    "Version": entry.version,
+                    "Updated": entry.updated_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    "Created": entry.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
 
         df = pd.DataFrame(history_data)
         st.dataframe(df, use_container_width=True)
@@ -642,7 +666,9 @@ def render_config_history_ui(manager, tenant_id: str):
                     config_key=config_key,
                     config_value=selected_entry.config_value,
                 )
-                st.success(f"✅ Rolled back to version {selected_version} (created as new version)")
+                st.success(
+                    f"✅ Rolled back to version {selected_version} (created as new version)"
+                )
                 st.rerun()
     else:
         st.info("No history found")
@@ -681,7 +707,9 @@ def render_import_export_ui(manager, tenant_id: str):
                 mime="application/json",
             )
 
-            st.success(f"✅ Exported {len(export_data.get('configs', []))} configurations")
+            st.success(
+                f"✅ Exported {len(export_data.get('configs', []))} configurations"
+            )
 
         except Exception as e:
             st.error(f"❌ Export failed: {e}")
@@ -736,10 +764,12 @@ def render_import_export_ui(manager, tenant_id: str):
         # Configs per scope
         if "configs_per_scope" in stats:
             st.markdown("#### Configurations by Scope")
-            scope_data = pd.DataFrame([
-                {"Scope": scope, "Count": count}
-                for scope, count in stats["configs_per_scope"].items()
-            ])
+            scope_data = pd.DataFrame(
+                [
+                    {"Scope": scope, "Count": count}
+                    for scope, count in stats["configs_per_scope"].items()
+                ]
+            )
             st.dataframe(scope_data, use_container_width=True)
 
     except Exception as e:

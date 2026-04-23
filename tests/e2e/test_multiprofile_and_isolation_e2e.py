@@ -182,7 +182,9 @@ class TestMultiProfileIngestion:
             if data.get("documents_fed", 0) > 0:
                 time.sleep(5)
                 results = _search(
-                    client, "person throwing discus", "video_colpali_smol500_mv_frame",
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
                     TENANT_ID,
                 )
                 assert results["results_count"] >= 1, (
@@ -195,14 +197,20 @@ class TestMultiProfileIngestion:
             _deploy_schema(client, "video_colpali_smol500_mv_frame", TENANT_ID)
 
             data1 = _upload_file(
-                client, real_video_path, "video_colpali_smol500_mv_frame", TENANT_ID,
+                client,
+                real_video_path,
+                "video_colpali_smol500_mv_frame",
+                TENANT_ID,
             )
             assert data1["status"] == "success"
             chunks_1 = data1["chunks_created"]
             assert chunks_1 >= 1
 
             data2 = _upload_file(
-                client, real_video_path, "video_colpali_smol500_mv_frame", TENANT_ID,
+                client,
+                real_video_path,
+                "video_colpali_smol500_mv_frame",
+                TENANT_ID,
             )
             assert data2["status"] == "success"
             chunks_2 = data2["chunks_created"]
@@ -217,7 +225,10 @@ class TestMultiProfileIngestion:
             _deploy_schema(client, "document_text_semantic", TENANT_ID)
 
             data = _upload_file(
-                client, real_document_path, "document_text_semantic", TENANT_ID,
+                client,
+                real_document_path,
+                "document_text_semantic",
+                TENANT_ID,
                 mime_type="text/markdown",
             )
             assert data["status"] == "success"
@@ -229,7 +240,10 @@ class TestMultiProfileIngestion:
             _deploy_schema(client, "audio_clap_semantic", TENANT_ID)
 
             data = _upload_file(
-                client, extracted_audio_path, "audio_clap_semantic", TENANT_ID,
+                client,
+                extracted_audio_path,
+                "audio_clap_semantic",
+                TENANT_ID,
                 mime_type="audio/wav",
             )
             assert data["status"] == "success"
@@ -263,9 +277,7 @@ class TestMultiProfileDashboardUI:
         # get_by_label also matches the adjacent help-button with the same
         # aria-label; narrow to the actual textbox by role to keep Playwright
         # strict-mode happy.
-        search_input = page.get_by_role(
-            "textbox", name="Enter your search query"
-        )
+        search_input = page.get_by_role("textbox", name="Enter your search query")
         search_input.fill("sports throwing discus")
         search_input.press("Enter")
         page.wait_for_timeout(5_000)
@@ -300,9 +312,7 @@ class TestMultiProfileDashboardUI:
         page.wait_for_load_state("networkidle")
 
         multiselect = page.locator('[data-testid="stMultiSelect"]')
-        assert multiselect.count() > 0, (
-            "Ingestion tab must have profile multiselect"
-        )
+        assert multiselect.count() > 0, "Ingestion tab must have profile multiselect"
 
         body_text = page.inner_text("body").lower()
         assert "video_colpali_smol500_mv_frame" in body_text, (
@@ -320,9 +330,11 @@ class TestMultiProfileDashboardUI:
 
         # Verify sidebar shows the correct tenant
         sidebar_text = page.locator('[data-testid="stSidebar"]').inner_text()
-        assert TENANT_ID.replace(":", " ").replace("_", " ") in sidebar_text.lower().replace(":", " ").replace("_", " ") or "flywheel" in sidebar_text.lower(), (
-            f"Sidebar must show active tenant {TENANT_ID}"
-        )
+        assert (
+            TENANT_ID.replace(":", " ").replace("_", " ")
+            in sidebar_text.lower().replace(":", " ").replace("_", " ")
+            or "flywheel" in sidebar_text.lower()
+        ), f"Sidebar must show active tenant {TENANT_ID}"
 
 
 @pytest.mark.e2e
@@ -341,15 +353,13 @@ class TestCrossTenantIsolation:
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_a
-                )
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_b
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
 
                 data = _upload_file(
-                    client, real_video_path, "video_colpali_smol500_mv_frame",
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
                     tenant_a,
                 )
                 assert data["status"] == "success"
@@ -361,16 +371,18 @@ class TestCrossTenantIsolation:
                 time.sleep(5)
 
                 results_a = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_a,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_a,
                 )
-                assert results_a["results_count"] >= 1, (
-                    "Tenant A must see its own data"
-                )
+                assert results_a["results_count"] >= 1, "Tenant A must see its own data"
 
                 results_b = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_b,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_b,
                 )
                 assert results_b["results_count"] == 0, (
                     f"Tenant B must NOT see tenant A's data, "
@@ -408,8 +420,12 @@ class TestCrossTenantIsolation:
                 assert schema_a != schema_b, (
                     f"Tenant schemas must be different: {schema_a} vs {schema_b}"
                 )
-                assert "one" in schema_a, f"Schema A must contain tenant suffix: {schema_a}"
-                assert "two" in schema_b, f"Schema B must contain tenant suffix: {schema_b}"
+                assert "one" in schema_a, (
+                    f"Schema A must contain tenant suffix: {schema_a}"
+                )
+                assert "two" in schema_b, (
+                    f"Schema B must contain tenant suffix: {schema_b}"
+                )
 
             finally:
                 _cleanup_tenant(client, tenant_a)
@@ -426,15 +442,13 @@ class TestCrossTenantIsolation:
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_a
-                )
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_b
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
 
                 data = _upload_file(
-                    client, real_video_path, "video_colpali_smol500_mv_frame",
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
                     tenant_b,
                 )
                 assert data["status"] == "success"
@@ -445,20 +459,22 @@ class TestCrossTenantIsolation:
                 time.sleep(5)
 
                 results_a = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_a,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_a,
                 )
                 assert results_a["results_count"] == 0, (
                     "Tenant A must NOT see tenant B's data"
                 )
 
                 results_b = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_b,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_b,
                 )
-                assert results_b["results_count"] >= 1, (
-                    "Tenant B must see its own data"
-                )
+                assert results_b["results_count"] >= 1, "Tenant B must see its own data"
 
             finally:
                 _cleanup_tenant(client, tenant_a)
@@ -475,20 +491,20 @@ class TestCrossTenantIsolation:
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
 
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_a
-                )
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_b
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
 
                 # Ingest into both tenants
                 data_a = _upload_file(
-                    client, real_video_path, "video_colpali_smol500_mv_frame",
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
                     tenant_a,
                 )
                 data_b = _upload_file(
-                    client, real_video_path, "video_colpali_smol500_mv_frame",
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
                     tenant_b,
                 )
 
@@ -505,12 +521,16 @@ class TestCrossTenantIsolation:
 
                 # Both tenants should see their own data
                 results_a = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_a,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_a,
                 )
                 results_b = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_b,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_b,
                 )
 
                 assert results_a["results_count"] >= 1, "Tenant A must see its data"
@@ -518,8 +538,12 @@ class TestCrossTenantIsolation:
 
                 # Results should reference different video_ids (same source but
                 # different ingestion runs produce different IDs)
-                ids_a = {r.get("metadata", {}).get("video_id") for r in results_a["results"]}
-                ids_b = {r.get("metadata", {}).get("video_id") for r in results_b["results"]}
+                ids_a = {
+                    r.get("metadata", {}).get("video_id") for r in results_a["results"]
+                }
+                ids_b = {
+                    r.get("metadata", {}).get("video_id") for r in results_b["results"]
+                }
                 assert ids_a.isdisjoint(ids_b), (
                     f"Tenants must have different video_ids: A={ids_a}, B={ids_b}"
                 )
@@ -536,12 +560,12 @@ class TestCrossTenantIsolation:
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             try:
                 _create_tenant(client, tenant_id)
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_id
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_id)
 
                 data = _upload_file(
-                    client, real_video_path, "video_colpali_smol500_mv_frame",
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
                     tenant_id,
                 )
                 assert data["status"] == "success"
@@ -552,8 +576,10 @@ class TestCrossTenantIsolation:
                 time.sleep(5)
 
                 results = _search(
-                    client, "person throwing discus",
-                    "video_colpali_smol500_mv_frame", tenant_id,
+                    client,
+                    "person throwing discus",
+                    "video_colpali_smol500_mv_frame",
+                    tenant_id,
                 )
                 assert results["results_count"] >= 1, (
                     "Data must be searchable before deletion"
@@ -561,9 +587,7 @@ class TestCrossTenantIsolation:
 
                 # Delete the tenant
                 resp = client.delete(f"/admin/tenants/{tenant_id}")
-                assert resp.status_code == 200, (
-                    f"Tenant deletion failed: {resp.text}"
-                )
+                assert resp.status_code == 200, f"Tenant deletion failed: {resp.text}"
                 time.sleep(3)
 
                 # Search after deletion should fail or return 0
@@ -585,9 +609,7 @@ class TestCrossTenantIsolation:
                 _cleanup_tenant(client, tenant_id)
 
 
-def _search_sync(
-    query: str, profile: str, tenant_id: str, top_k: int = 5
-) -> dict:
+def _search_sync(query: str, profile: str, tenant_id: str, top_k: int = 5) -> dict:
     """Thread-safe search call for concurrent testing."""
     with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
         resp = client.post(
@@ -628,8 +650,10 @@ class TestConcurrentMultiTenantSearch:
                 fed_tenants = []
                 for t in tenants:
                     data = _upload_file(
-                        client, real_video_path,
-                        "video_colpali_smol500_mv_frame", t,
+                        client,
+                        real_video_path,
+                        "video_colpali_smol500_mv_frame",
+                        t,
                     )
                     if data.get("documents_fed", 0) > 0:
                         fed_tenants.append(t)
@@ -675,7 +699,7 @@ class TestConcurrentMultiTenantSearch:
                     all_video_ids[t] = ids
 
                 for i, t1 in enumerate(fed_tenants):
-                    for t2 in fed_tenants[i + 1:]:
+                    for t2 in fed_tenants[i + 1 :]:
                         assert all_video_ids[t1].isdisjoint(all_video_ids[t2]), (
                             f"Tenant {t1} and {t2} share video_ids: "
                             f"{all_video_ids[t1] & all_video_ids[t2]}"
@@ -695,16 +719,14 @@ class TestConcurrentMultiTenantSearch:
             try:
                 _create_tenant(client, tenant_data)
                 _create_tenant(client, tenant_empty)
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_data
-                )
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_empty
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_data)
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_empty)
 
                 data = _upload_file(
-                    client, real_video_path,
-                    "video_colpali_smol500_mv_frame", tenant_data,
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
+                    tenant_data,
                 )
                 if data.get("documents_fed", 0) == 0:
                     pytest.skip("documents_fed=0")
@@ -713,12 +735,16 @@ class TestConcurrentMultiTenantSearch:
 
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     f_data = pool.submit(
-                        _search_sync, "throwing discus",
-                        "video_colpali_smol500_mv_frame", tenant_data,
+                        _search_sync,
+                        "throwing discus",
+                        "video_colpali_smol500_mv_frame",
+                        tenant_data,
                     )
                     f_empty = pool.submit(
-                        _search_sync, "throwing discus",
-                        "video_colpali_smol500_mv_frame", tenant_empty,
+                        _search_sync,
+                        "throwing discus",
+                        "video_colpali_smol500_mv_frame",
+                        tenant_empty,
                     )
 
                     r_data = f_data.result()
@@ -805,7 +831,9 @@ class TestLoadTesting:
                         resp.json().get("recommended_agent")
                         or resp.json().get("gateway", {}).get("routed_to")
                         or resp.json().get("agent")
-                    ) if resp.status_code == 200 else None,
+                    )
+                    if resp.status_code == 200
+                    else None,
                 }
 
         with ThreadPoolExecutor(max_workers=5) as pool:
@@ -822,9 +850,13 @@ class TestLoadTesting:
         for r in results:
             if r["status_code"] == 200:
                 assert r["agent"] in (
-                    "search_agent", "summarizer_agent",
-                    "text_analysis_agent", "detailed_report_agent",
-                    "routing_agent", "gateway_agent", "orchestrator_agent",
+                    "search_agent",
+                    "summarizer_agent",
+                    "text_analysis_agent",
+                    "detailed_report_agent",
+                    "routing_agent",
+                    "gateway_agent",
+                    "orchestrator_agent",
                 ), f"Invalid agent for '{r['query']}': {r['agent']}"
 
     def test_sequential_ingestion_different_tenants(self, real_video_path):
@@ -837,25 +869,25 @@ class TestLoadTesting:
             try:
                 _create_tenant(client, tenant_a)
                 _create_tenant(client, tenant_b)
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_a
-                )
-                _deploy_schema(
-                    client, "video_colpali_smol500_mv_frame", tenant_b
-                )
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_a)
+                _deploy_schema(client, "video_colpali_smol500_mv_frame", tenant_b)
 
                 # Ingest sequentially with pause between
                 data_a = _upload_file(
-                    client, real_video_path,
-                    "video_colpali_smol500_mv_frame", tenant_a,
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
+                    tenant_a,
                 )
                 assert data_a["status"] == "success", (
                     f"Tenant A ingestion failed: {data_a}"
                 )
                 time.sleep(3)
                 data_b = _upload_file(
-                    client, real_video_path,
-                    "video_colpali_smol500_mv_frame", tenant_b,
+                    client,
+                    real_video_path,
+                    "video_colpali_smol500_mv_frame",
+                    tenant_b,
                 )
                 assert data_b["status"] == "success", (
                     f"Tenant B ingestion failed: {data_b}"
@@ -872,12 +904,16 @@ class TestLoadTesting:
                 # Search concurrently — isolation must hold
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     f_a = pool.submit(
-                        _search_sync, "person throwing",
-                        "video_colpali_smol500_mv_frame", tenant_a,
+                        _search_sync,
+                        "person throwing",
+                        "video_colpali_smol500_mv_frame",
+                        tenant_a,
                     )
                     f_b = pool.submit(
-                        _search_sync, "person throwing",
-                        "video_colpali_smol500_mv_frame", tenant_b,
+                        _search_sync,
+                        "person throwing",
+                        "video_colpali_smol500_mv_frame",
+                        tenant_b,
                     )
                     r_a = f_a.result()
                     r_b = f_b.result()
@@ -885,8 +921,14 @@ class TestLoadTesting:
                 assert r_a["data"]["results_count"] >= 1
                 assert r_b["data"]["results_count"] >= 1
 
-                ids_a = {r.get("metadata", {}).get("video_id") for r in r_a["data"]["results"]}
-                ids_b = {r.get("metadata", {}).get("video_id") for r in r_b["data"]["results"]}
+                ids_a = {
+                    r.get("metadata", {}).get("video_id")
+                    for r in r_a["data"]["results"]
+                }
+                ids_b = {
+                    r.get("metadata", {}).get("video_id")
+                    for r in r_b["data"]["results"]
+                }
                 assert ids_a.isdisjoint(ids_b), (
                     f"Data leaked between tenants: A={ids_a}, B={ids_b}"
                 )

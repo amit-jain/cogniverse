@@ -93,9 +93,7 @@ class OnlineEvaluator:
             f"evaluators={self.evaluator_names})"
         )
 
-    async def evaluate_span(
-        self, span_data: Dict[str, Any]
-    ) -> List[OnlineEvalResult]:
+    async def evaluate_span(self, span_data: Dict[str, Any]) -> List[OnlineEvalResult]:
         """
         Evaluate a single routing span and optionally persist scores.
 
@@ -146,8 +144,8 @@ class OnlineEvaluator:
         self, span_data: Dict[str, Any], span_id: str
     ) -> OnlineEvalResult:
         """Classify routing outcome (success/failure/ambiguous) and score."""
-        outcome, status_description = (
-            self.routing_evaluator._classify_routing_outcome(span_data)
+        outcome, status_description = self.routing_evaluator._classify_routing_outcome(
+            span_data
         )
 
         score_map = {
@@ -230,8 +228,6 @@ class OnlineEvaluator:
             "total_evaluated": self._total_evaluated,
             "total_skipped": self._total_skipped,
             "sampling_rate": self.sampling_rate,
-            "effective_rate": (
-                self._total_evaluated / total if total > 0 else 0.0
-            ),
+            "effective_rate": (self._total_evaluated / total if total > 0 else 0.0),
             "evaluators": self.evaluator_names,
         }

@@ -40,8 +40,12 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _run(cmd: list[str], *, timeout: int = 60, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=timeout)
+def _run(
+    cmd: list[str], *, timeout: int = 60, check: bool = True
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd, capture_output=True, text=True, check=check, timeout=timeout
+    )
 
 
 def _wait_for_health(base_url: str, deadline_seconds: int = 300) -> None:
@@ -57,7 +61,9 @@ def _wait_for_health(base_url: str, deadline_seconds: int = 300) -> None:
     # Dump container logs so the failure is debuggable.
     logs = subprocess.run(
         ["docker", "logs", CONTAINER_NAME],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     raise AssertionError(
         f"sidecar at {base_url} did not become healthy within {deadline_seconds}s\n"
@@ -77,11 +83,17 @@ def running_sidecar():
     port = _free_port()
     _run(
         [
-            "docker", "run", "-d",
-            "--name", CONTAINER_NAME,
-            "-p", f"{port}:8080",
-            "-e", "MODEL_NAME=lightonai/LateOn",
-            "-e", "DEVICE=cpu",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER_NAME,
+            "-p",
+            f"{port}:8080",
+            "-e",
+            "MODEL_NAME=lightonai/LateOn",
+            "-e",
+            "DEVICE=cpu",
             IMAGE_TAG,
         ],
         timeout=30,

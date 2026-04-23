@@ -94,7 +94,7 @@ class TestWikiPage:
         )
         # Session doc_id uses timestamp digits
         assert page.doc_id.startswith("wiki_session_acme_production_")
-        suffix = page.doc_id[len("wiki_session_acme_production_"):]
+        suffix = page.doc_id[len("wiki_session_acme_production_") :]
         assert suffix.isdigit()
 
     def test_to_vespa_document_structure(self):
@@ -308,9 +308,7 @@ class TestSaveSession:
         mgr, backend = self._make_manager_with_mocks()
 
         with (
-            patch.object(
-                mgr, "_generate_embedding", return_value=[0.1] * 768
-            ),
+            patch.object(mgr, "_generate_embedding", return_value=[0.1] * 768),
             patch.object(mgr, "_rebuild_index") as mock_rebuild,
             patch.object(mgr, "_feed_page") as mock_feed,
         ):
@@ -416,7 +414,9 @@ class TestWikiLint:
 
         stale_ids = [p["doc_id"] for p in report["stale_pages"]]
         assert "doc_stale" in stale_ids
-        stale_entry = next(p for p in report["stale_pages"] if p["doc_id"] == "doc_stale")
+        stale_entry = next(
+            p for p in report["stale_pages"] if p["doc_id"] == "doc_stale"
+        )
         assert stale_entry["days_since_update"] > 30
 
     def test_detects_orphan_pages(self):

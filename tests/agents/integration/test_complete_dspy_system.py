@@ -357,8 +357,6 @@ class TestComposableModulePathSelection:
             assert len(variant["query"]) > 0, f"Variant has empty query: {variant}"
 
 
-
-
 @skip_if_no_ollama
 @pytest.mark.integration
 class TestAdvancedRoutingOptimizerWithRealLLM:
@@ -718,7 +716,6 @@ class TestAdaptiveThresholdLearnerIntegration:
         assert thresholds[ThresholdParameter.ROUTING_CONFIDENCE] == 0.7
 
 
-
 @pytest.mark.integration
 class TestForceOptimizerSelection:
     """Tests force_optimizer config routes to the correct DSPy optimizer.
@@ -955,7 +952,6 @@ class TestForceOptimizerSelection:
         # Policy should still be callable
         assert optimizer.routing_policy is not None
         assert hasattr(optimizer.routing_policy, "forward")
-
 
 
 if __name__ == "__main__":

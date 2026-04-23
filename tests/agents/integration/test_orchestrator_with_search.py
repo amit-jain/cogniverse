@@ -147,9 +147,7 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")
     )
-    registry = AgentRegistry(
-        tenant_id="test:unit", config_manager=config_manager
-    )
+    registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
     # All four sub-agents live at a single in-process ASGI host. Path routing
     # (/agents/{name}/process) selects the target agent, matching production
@@ -260,8 +258,8 @@ class TestOrchestratorWithRealAgents:
             result = await entity_agent._process_impl(
                 EntityExtractionInput(
                     query="Find videos about Python programming by Google",
-                tenant_id="test:unit",
-            )
+                    tenant_id="test:unit",
+                )
             )
 
         assert result is not None
@@ -334,7 +332,10 @@ class TestOrchestratorWithRealAgents:
         profile_agent = agent_instances["http://localhost:8011"]
         with dspy.context(lm=dspy_lm):
             result = await profile_agent._process_impl(
-                ProfileSelectionInput(query="find tutorial videos about deep learning", tenant_id="test:unit")
+                ProfileSelectionInput(
+                    query="find tutorial videos about deep learning",
+                    tenant_id="test:unit",
+                )
             )
 
         assert result is not None

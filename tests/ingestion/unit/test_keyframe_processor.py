@@ -308,4 +308,3 @@ class TestKeyframeProcessorHelperMethods:
             if hasattr(processor, "_calculate_histogram_difference"):
                 diff = processor._calculate_histogram_difference(hist1, hist2)
                 assert diff == 0.3  # 1 - 0.7
-

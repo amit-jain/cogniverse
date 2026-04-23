@@ -436,13 +436,9 @@ class QualityMonitor:
                     logger.debug(f"No spans found for {agent_type.value}")
                     continue
 
-                sampled = spans_df.sample(
-                    n=min(self.live_sample_count, len(spans_df))
-                )
+                sampled = spans_df.sample(n=min(self.live_sample_count, len(spans_df)))
 
-                agent_result = await self._evaluate_agent_spans(
-                    agent_type, sampled
-                )
+                agent_result = await self._evaluate_agent_spans(agent_type, sampled)
                 result.agent_results[agent_type] = agent_result
 
             except Exception as e:
@@ -535,7 +531,7 @@ class QualityMonitor:
     ) -> str:
         top_results = results[:5]
         results_text = "\n".join(
-            f"  {i+1}. {r.get('video_id', r.get('source_id', 'unknown'))} "
+            f"  {i + 1}. {r.get('video_id', r.get('source_id', 'unknown'))} "
             f"(score: {r.get('score', 'N/A')})"
             for i, r in enumerate(top_results)
         )
@@ -567,9 +563,7 @@ class QualityMonitor:
             f"Score: X/10"
         )
 
-    def _build_routing_judge_prompt(
-        self, query: str, routing: Dict[str, Any]
-    ) -> str:
+    def _build_routing_judge_prompt(self, query: str, routing: Dict[str, Any]) -> str:
         return (
             f"Query: {query}\n\n"
             f"Routing Decision: {json.dumps(routing, default=str)}\n\n"
@@ -670,7 +664,9 @@ class QualityMonitor:
                     verdicts[agent_type] = Verdict.OPTIMIZE
 
         except Exception as e:
-            logger.debug(f"XGBoost training decision failed (using naive verdicts): {e}")
+            logger.debug(
+                f"XGBoost training decision failed (using naive verdicts): {e}"
+            )
 
         return verdicts
 
@@ -687,9 +683,7 @@ class QualityMonitor:
             )
         return self._training_decision_model
 
-    def _build_modeling_context(
-        self, agent_type: AgentType, golden, live
-    ):
+    def _build_modeling_context(self, agent_type: AgentType, golden, live):
         """Build ModelingContext from eval results for XGBoost."""
         try:
             from cogniverse_agents.routing.xgboost_meta_models import ModelingContext
@@ -868,9 +862,7 @@ class QualityMonitor:
                         "category": "low_scoring",
                         "query": example.get("query", ""),
                         "score": example.get("score", 0.0),
-                        "output": json.dumps(
-                            example.get("output", {}), default=str
-                        ),
+                        "output": json.dumps(example.get("output", {}), default=str),
                     }
                 )
             for example in high:
@@ -880,9 +872,7 @@ class QualityMonitor:
                         "category": "high_scoring",
                         "query": example.get("query", ""),
                         "score": example.get("score", 0.0),
-                        "output": json.dumps(
-                            example.get("output", {}), default=str
-                        ),
+                        "output": json.dumps(example.get("output", {}), default=str),
                     }
                 )
 
@@ -973,12 +963,20 @@ class QualityMonitor:
                         "name": "optimize",
                         "container": {
                             "image": "cogniverse-runtime:latest",
-                            "command": ["python", "-m", "cogniverse_runtime.optimization_cli"],
+                            "command": [
+                                "python",
+                                "-m",
+                                "cogniverse_runtime.optimization_cli",
+                            ],
                             "args": [
-                                "--mode", "triggered",
-                                "--tenant-id", "{{workflow.parameters.tenant-id}}",
-                                "--agents", "{{workflow.parameters.agents}}",
-                                "--trigger-dataset", "{{workflow.parameters.trigger-dataset}}",
+                                "--mode",
+                                "triggered",
+                                "--tenant-id",
+                                "{{workflow.parameters.tenant-id}}",
+                                "--agents",
+                                "{{workflow.parameters.agents}}",
+                                "--trigger-dataset",
+                                "{{workflow.parameters.trigger-dataset}}",
                             ],
                         },
                     }
@@ -1006,15 +1004,14 @@ class QualityMonitor:
             logger.error(f"Failed to submit Argo workflow: {e}")
 
     async def update_baseline(
-        self, golden_result: Optional[GoldenEvalResult] = None,
+        self,
+        golden_result: Optional[GoldenEvalResult] = None,
         live_results: Optional[Dict[AgentType, float]] = None,
     ):
         """Update baselines after successful optimization."""
         if golden_result:
             await self._store_golden_eval_result(golden_result)
-            logger.info(
-                f"Updated golden baseline: MRR={golden_result.mean_mrr:.3f}"
-            )
+            logger.info(f"Updated golden baseline: MRR={golden_result.mean_mrr:.3f}")
 
         if live_results:
             store = self._get_dataset_store()
@@ -1057,10 +1054,7 @@ class QualityMonitor:
             with open(path, "w") as f:
                 json.dump(existing, f, indent=2)
             self._golden_queries = existing
-            logger.info(
-                f"Added {added} queries to golden set "
-                f"(total: {len(existing)})"
-            )
+            logger.info(f"Added {added} queries to golden set (total: {len(existing)})")
 
     async def close(self):
         """Clean up resources."""

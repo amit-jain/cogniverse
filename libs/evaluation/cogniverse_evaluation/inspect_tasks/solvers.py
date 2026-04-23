@@ -33,7 +33,9 @@ class CogniverseRetrievalSolver(Solver):
 
         # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
-        self.config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+        self.config = get_config(
+            tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+        )
         self.search_services = {}
 
         # Initialize search services for each profile

@@ -11,6 +11,7 @@ CLUSTER_NAME = "cogniverse"
 NAMESPACE = "cogniverse"
 DEFAULT_PORTS = [8080, 19071, 8000, 8501, 6006, 4317, 11434, 2746]
 
+
 def _get_arch() -> str:
     """Return architecture string for download URLs (amd64/arm64)."""
     machine = platform.machine().lower()
@@ -95,7 +96,9 @@ def install_prerequisite(tool: str) -> bool:
         return False
 
 
-def install_missing_prerequisites(missing: list[str], *, interactive: bool = True) -> list[str]:
+def install_missing_prerequisites(
+    missing: list[str], *, interactive: bool = True
+) -> list[str]:
     """Install missing tools after showing what will be installed.
 
     Returns list of tools that still can't be found after install attempts.
@@ -155,9 +158,13 @@ def create_cluster(
     if exclude_ports:
         ports = [p for p in ports if p not in exclude_ports]
     cmd = [
-        "k3d", "cluster", "create", name,
+        "k3d",
+        "cluster",
+        "create",
+        name,
         # Allow any port as NodePort (default range is 30000-32767)
-        "--k3s-arg", "--service-node-port-range=1-65535@server:0",
+        "--k3s-arg",
+        "--service-node-port-range=1-65535@server:0",
     ]
     if workspace_path:
         cmd.extend(["--volume", f"{workspace_path}:/cogniverse-src@server:0"])
@@ -193,7 +200,10 @@ _port_forward_procs: list[subprocess.Popen] = []
 
 
 def _start_single_port_forward(
-    svc_name: str, ns: str, local_port: int, svc_port: int,
+    svc_name: str,
+    ns: str,
+    local_port: int,
+    svc_port: int,
 ) -> subprocess.Popen:
     """Start a self-restarting port-forward as a detached daemon.
 
@@ -245,10 +255,14 @@ def restart_dead_port_forwards() -> None:
     for proc in _port_forward_procs:
         if proc.poll() is not None:
             # Process is dead — find its spec and restart
-            cmd_str = " ".join(proc.args) if isinstance(proc.args, list) else str(proc.args)
+            cmd_str = (
+                " ".join(proc.args) if isinstance(proc.args, list) else str(proc.args)
+            )
             for svc_name, ns, local_port, svc_port in PORT_FORWARD_SPECS:
                 if f"{local_port}:{svc_port}" in cmd_str:
-                    new_proc = _start_single_port_forward(svc_name, ns, local_port, svc_port)
+                    new_proc = _start_single_port_forward(
+                        svc_name, ns, local_port, svc_port
+                    )
                     alive_procs.append(new_proc)
                     new_pids.append(new_proc.pid)
                     break

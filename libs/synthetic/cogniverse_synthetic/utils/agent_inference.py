@@ -48,8 +48,12 @@ class AgentInferrer:
 
         # Role-based agent mappings from config (with fallbacks)
         self.ROLE_AGENTS = {
-            "summarizer": agents_config.get("summarizer_agent", {}).get("name", "summarizer_agent"),
-            "detailed_report": agents_config.get("detailed_report_agent", {}).get("name", "detailed_report_agent"),
+            "summarizer": agents_config.get("summarizer_agent", {}).get(
+                "name", "summarizer_agent"
+            ),
+            "detailed_report": agents_config.get("detailed_report_agent", {}).get(
+                "name", "detailed_report_agent"
+            ),
         }
         # Also check if config explicitly provides role mappings
         for name, cfg in agents_config.items():
@@ -255,7 +259,11 @@ class AgentInferrer:
             if modality.upper() in info["modalities"]:
                 compatible.append(agent_name)
 
-        return compatible if compatible else [self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")]
+        return (
+            compatible
+            if compatible
+            else [self.MODALITY_TO_AGENT.get("VIDEO", "video_search_agent")]
+        )
 
     def validate_agent_sequence(self, agent_sequence: List[str]) -> bool:
         """

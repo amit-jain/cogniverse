@@ -13,14 +13,22 @@ import pytest
 
 pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
-_SAMPLE_VIDEO_DIR = Path(__file__).resolve().parents[3] / "data" / "testset" / "evaluation" / "sample_videos"
+_SAMPLE_VIDEO_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "testset"
+    / "evaluation"
+    / "sample_videos"
+)
 
 
 def _sample_video() -> Path | None:
     """Return path to the smallest available sample video, or None."""
     if not _SAMPLE_VIDEO_DIR.exists():
         return None
-    candidates = sorted(_SAMPLE_VIDEO_DIR.glob("*.mp4")) + sorted(_SAMPLE_VIDEO_DIR.glob("*.mkv"))
+    candidates = sorted(_SAMPLE_VIDEO_DIR.glob("*.mp4")) + sorted(
+        _SAMPLE_VIDEO_DIR.glob("*.mkv")
+    )
     return candidates[0] if candidates else None
 
 
@@ -91,6 +99,4 @@ def test_pipeline_processes_test_video(sample_video_path, output_dir):
     first_frame = keyframes[0]
     frame_path_key = "path" if "path" in first_frame else "frame_path"
     frame_path = Path(first_frame[frame_path_key])
-    assert frame_path.exists(), (
-        f"Keyframe file does not exist at {frame_path}"
-    )
+    assert frame_path.exists(), f"Keyframe file does not exist at {frame_path}"

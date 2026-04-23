@@ -40,7 +40,9 @@ class VisualEvaluatorPlugin:
             )
 
             config_manager = create_default_config_manager()
-            config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+            config = get_config(
+                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+            )
             evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
 
             if not evaluator_config:

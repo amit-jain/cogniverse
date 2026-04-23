@@ -455,9 +455,7 @@ class StrategyLearner:
             for mem in existing:
                 mem_text = mem.get("memory", "")
                 if "strategy" in mem_text.lower():
-                    overlap = _text_overlap(
-                        strategy.to_memory_content(), mem_text
-                    )
+                    overlap = _text_overlap(strategy.to_memory_content(), mem_text)
                     if overlap > DEDUP_SIMILARITY_THRESHOLD:
                         logger.debug(
                             f"Strategy dedup: '{strategy.text[:50]}...' overlaps "

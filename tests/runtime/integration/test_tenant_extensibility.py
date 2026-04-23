@@ -24,7 +24,9 @@ TENANT_ID = "test_extensibility"
 
 def _llm_available():
     try:
-        return httpx.get("http://localhost:11434/api/tags", timeout=5).status_code == 200
+        return (
+            httpx.get("http://localhost:11434/api/tags", timeout=5).status_code == 200
+        )
     except Exception:
         return False
 
@@ -324,6 +326,7 @@ class TestJobExecutorRealLLM:
         analysis = getattr(result, "query_analysis", {})
         if isinstance(analysis, str):
             import json
+
             try:
                 analysis = json.loads(analysis)
             except Exception:
@@ -338,6 +341,7 @@ class TestJobExecutorRealLLM:
         entities = getattr(result, "extracted_entities", [])
         if isinstance(entities, str):
             import json
+
             try:
                 entities = json.loads(entities)
             except Exception:
@@ -382,6 +386,7 @@ class TestJobExecutorRealLLM:
         entities = getattr(result, "extracted_entities", [])
         if isinstance(entities, str):
             import json
+
             try:
                 entities = json.loads(entities)
             except Exception:

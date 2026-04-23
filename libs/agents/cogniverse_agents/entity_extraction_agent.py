@@ -210,9 +210,13 @@ class EntityExtractionAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info("EntityExtractionAgent loaded optimized DSPy module from artifact")
+                logger.info(
+                    "EntityExtractionAgent loaded optimized DSPy module from artifact"
+                )
         except Exception as e:
-            logger.debug("No entity extraction artifact to load (using defaults): %s", e)
+            logger.debug(
+                "No entity extraction artifact to load (using defaults): %s", e
+            )
 
     def _initialize_extractors(self) -> None:
         """Initialize GLiNER and SpaCy extractors for fast-path entity extraction."""
@@ -272,7 +276,9 @@ class EntityExtractionAgent(
             try:
                 entities, relationships, path_used = self._extract_fast_path(query)
             except Exception as e:
-                logger.warning("Fast path extraction failed, falling back to DSPy: %s", e)
+                logger.warning(
+                    "Fast path extraction failed, falling back to DSPy: %s", e
+                )
                 entities = await self._extract_dspy_path(prompt_query)
                 relationships = []
                 path_used = "dspy"
@@ -369,9 +375,9 @@ class EntityExtractionAgent(
             return
 
         try:
-            entities_json = json.dumps(
-                [e.model_dump() for e in entities], default=str
-            )[:1000]
+            entities_json = json.dumps([e.model_dump() for e in entities], default=str)[
+                :1000
+            ]
 
             with self.telemetry_manager.span(
                 "cogniverse.entity_extraction",

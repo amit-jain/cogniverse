@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 def _is_ollama_available() -> bool:
     try:
-        return httpx.get("http://localhost:11434/api/tags", timeout=5.0).status_code == 200
+        return (
+            httpx.get("http://localhost:11434/api/tags", timeout=5.0).status_code == 200
+        )
     except Exception:
         return False
 
@@ -41,16 +43,76 @@ def trigger_dataset_in_phoenix(real_telemetry):
 
     df = pd.DataFrame(
         [
-            {"agent": "search", "category": "high_scoring", "query": "man lifting weights in gym", "score": 0.95, "output": '{"results": [{"video_id": "v1"}]}'},
-            {"agent": "search", "category": "high_scoring", "query": "person running on track", "score": 0.88, "output": '{"results": [{"video_id": "v2"}, {"video_id": "v3"}]}'},
-            {"agent": "search", "category": "high_scoring", "query": "what is the dog doing", "score": 0.82, "output": '{"results": [{"video_id": "v4"}]}'},
-            {"agent": "search", "category": "high_scoring", "query": "show me the red car", "score": 0.90, "output": '{"results": [{"video_id": "v5"}]}'},
-            {"agent": "search", "category": "high_scoring", "query": "find the tall building", "score": 0.85, "output": '{"results": [{"video_id": "v6"}]}'},
-            {"agent": "search", "category": "low_scoring", "query": "when did the event happen after the explosion", "score": 0.15, "output": '{"results": []}'},
-            {"agent": "search", "category": "low_scoring", "query": "timeline of events before the crash", "score": 0.10, "output": '{"results": []}'},
-            {"agent": "search", "category": "low_scoring", "query": "sequence during the performance", "score": 0.20, "output": '{"results": []}'},
-            {"agent": "search", "category": "low_scoring", "query": "what happened after the goal", "score": 0.18, "output": '{"results": []}'},
-            {"agent": "search", "category": "low_scoring", "query": "before the sunrise over mountains", "score": 0.12, "output": '{"results": []}'},
+            {
+                "agent": "search",
+                "category": "high_scoring",
+                "query": "man lifting weights in gym",
+                "score": 0.95,
+                "output": '{"results": [{"video_id": "v1"}]}',
+            },
+            {
+                "agent": "search",
+                "category": "high_scoring",
+                "query": "person running on track",
+                "score": 0.88,
+                "output": '{"results": [{"video_id": "v2"}, {"video_id": "v3"}]}',
+            },
+            {
+                "agent": "search",
+                "category": "high_scoring",
+                "query": "what is the dog doing",
+                "score": 0.82,
+                "output": '{"results": [{"video_id": "v4"}]}',
+            },
+            {
+                "agent": "search",
+                "category": "high_scoring",
+                "query": "show me the red car",
+                "score": 0.90,
+                "output": '{"results": [{"video_id": "v5"}]}',
+            },
+            {
+                "agent": "search",
+                "category": "high_scoring",
+                "query": "find the tall building",
+                "score": 0.85,
+                "output": '{"results": [{"video_id": "v6"}]}',
+            },
+            {
+                "agent": "search",
+                "category": "low_scoring",
+                "query": "when did the event happen after the explosion",
+                "score": 0.15,
+                "output": '{"results": []}',
+            },
+            {
+                "agent": "search",
+                "category": "low_scoring",
+                "query": "timeline of events before the crash",
+                "score": 0.10,
+                "output": '{"results": []}',
+            },
+            {
+                "agent": "search",
+                "category": "low_scoring",
+                "query": "sequence during the performance",
+                "score": 0.20,
+                "output": '{"results": []}',
+            },
+            {
+                "agent": "search",
+                "category": "low_scoring",
+                "query": "what happened after the goal",
+                "score": 0.18,
+                "output": '{"results": []}',
+            },
+            {
+                "agent": "search",
+                "category": "low_scoring",
+                "query": "before the sunrise over mountains",
+                "score": 0.12,
+                "output": '{"results": []}',
+            },
         ]
     )
 

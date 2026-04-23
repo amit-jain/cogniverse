@@ -74,8 +74,11 @@ def real_search_fn(vespa_instance):
         )
         profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
         results = service.search(
-            query=query, profile=profile, tenant_id=tenant_id,
-            top_k=5, ranking_strategy="float_float",
+            query=query,
+            profile=profile,
+            tenant_id=tenant_id,
+            top_k=5,
+            ranking_strategy="float_float",
         )
         return [r.to_dict() for r in results]
 

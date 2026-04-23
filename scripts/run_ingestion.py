@@ -51,7 +51,9 @@ async def main_async():
         description="Content Ingestion Pipeline (video, image, audio, document)"
     )
     parser.add_argument(
-        "--tenant-id", type=str, required=True,
+        "--tenant-id",
+        type=str,
+        required=True,
         help=(
             "Tenant identifier (required). Schemas, memory, and telemetry "
             "are per-tenant in cogniverse — there is no default tenant. "
@@ -59,22 +61,45 @@ async def main_async():
             "POST /admin/tenants if it does not already exist."
         ),
     )
-    parser.add_argument("--video_dir", type=Path, help="Directory containing content files")
-    parser.add_argument("--content-dir", type=Path, help="Directory containing content files (alias for --video_dir)")
-    parser.add_argument("--output_dir", type=Path, help="Output directory for processed data")
     parser.add_argument(
-        "--backend", choices=["byaldi", "vespa"], default="vespa",
+        "--video_dir", type=Path, help="Directory containing content files"
+    )
+    parser.add_argument(
+        "--content-dir",
+        type=Path,
+        help="Directory containing content files (alias for --video_dir)",
+    )
+    parser.add_argument(
+        "--output_dir", type=Path, help="Output directory for processed data"
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["byaldi", "vespa"],
+        default="vespa",
         help="Search backend",
     )
-    parser.add_argument("--profile", nargs="+", help="Processing profiles (space-separated)")
     parser.add_argument(
-        "--content-type", choices=["video", "image", "audio", "document"],
-        default="video", help="Content type to ingest (default: video)",
+        "--profile", nargs="+", help="Processing profiles (space-separated)"
     )
-    parser.add_argument("--max-concurrent", type=int, default=3, help="Maximum concurrent items to process")
+    parser.add_argument(
+        "--content-type",
+        choices=["video", "image", "audio", "document"],
+        default="video",
+        help="Content type to ingest (default: video)",
+    )
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=3,
+        help="Maximum concurrent items to process",
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
-    parser.add_argument("--max-frames", type=int, help="Maximum frames per video / images per batch")
-    parser.add_argument("--test-mode", action="store_true", help="Use test mode with limited frames")
+    parser.add_argument(
+        "--max-frames", type=int, help="Maximum frames per video / images per batch"
+    )
+    parser.add_argument(
+        "--test-mode", action="store_true", help="Use test mode with limited frames"
+    )
 
     args = parser.parse_args()
 
@@ -91,14 +116,16 @@ async def main_async():
     if args.profile:
         profiles_to_process = args.profile
     else:
-        active = app_config.get("active_video_profile", "video_colpali_smol500_mv_frame")
+        active = app_config.get(
+            "active_video_profile", "video_colpali_smol500_mv_frame"
+        )
         profiles_to_process = [active]
 
     all_results = {}
     for profile in profiles_to_process:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Processing with profile: {profile}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         default_dir = Path("data/testset/evaluation/sample_videos")
         input_dir = content_dir or default_dir
@@ -182,7 +209,7 @@ async def main_async():
             print(f"   Failed: {failed}")
         print(f"   Documents fed: {total_docs_fed}")
         if total_time > 0 and total_docs_fed > 0:
-            print(f"   Throughput: {total_docs_fed/total_time:.1f} docs/sec")
+            print(f"   Throughput: {total_docs_fed / total_time:.1f} docs/sec")
 
         all_results[profile] = {
             "results": job_result,
@@ -194,9 +221,9 @@ async def main_async():
             "status": status_text,
         }
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("Overall Summary")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Processed {len(profiles_to_process)} profiles")
 
     for profile, result_data in all_results.items():
@@ -204,7 +231,9 @@ async def main_async():
             f"  {profile}: {result_data['successful']}/{result_data['total']} succeeded"
         )
         if result_data["successful"] > 0:
-            status_msg += f", {result_data['docs_fed']} docs in {result_data['time']:.1f}s"
+            status_msg += (
+                f", {result_data['docs_fed']} docs in {result_data['time']:.1f}s"
+            )
         print(status_msg)
 
     return 0

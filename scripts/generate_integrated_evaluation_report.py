@@ -19,21 +19,21 @@ def load_latest_files(results_dir: Path, experiments_dir: Path) -> tuple:
     test_data = None
     if test_files:
         try:
-            with open(test_files[-1], 'r') as f:
+            with open(test_files[-1], "r") as f:
                 test_data = json.load(f)
         except Exception as e:
             print(f"Warning: Could not load test results: {e}")
-    
+
     # Get latest experiment results
     experiment_files = sorted(experiments_dir.glob("experiment_details_*.json"))
     experiment_data = None
     if experiment_files:
         try:
-            with open(experiment_files[-1], 'r') as f:
+            with open(experiment_files[-1], "r") as f:
                 experiment_data = json.load(f)
         except Exception as e:
             print(f"Warning: Could not load experiment results: {e}")
-    
+
     # Get latest experiment summary CSV
     summary_files = sorted(experiments_dir.glob("experiment_summary_*.csv"))
     summary_df = None
@@ -42,11 +42,13 @@ def load_latest_files(results_dir: Path, experiments_dir: Path) -> tuple:
             summary_df = pd.read_csv(summary_files[-1])
         except Exception as e:
             print(f"Warning: Could not load experiment summary: {e}")
-    
+
     return test_data, experiment_data, summary_df
 
 
-def format_video_tag(video_id: str, expected_videos: List[str], position: int = 0) -> str:
+def format_video_tag(
+    video_id: str, expected_videos: List[str], position: int = 0
+) -> str:
     """Format a video tag with appropriate styling"""
     if video_id in expected_videos:
         return f'<span class="video-tag correct-video">✓ {video_id}</span>'
@@ -77,42 +79,42 @@ def generate_quantitative_tab(test_data: Dict) -> str:
     """Generate HTML for quantitative test results tab"""
     if not test_data:
         return "<p>No quantitative test results available</p>"
-    
+
     html = []
     results = test_data["results"]
-    
+
     for profile, strategies in results.items():
         profile_html = []
         for strategy, queries in strategies.items():
             # Calculate metrics
             all_mrr = []
             total_queries = 0
-            
+
             for query_text, query_data in queries.items():
                 if "metrics" in query_data:
                     all_mrr.append(query_data["metrics"].get("mean_reciprocal_rank", 0))
                     total_queries += 1
-            
+
             avg_mrr = sum(all_mrr) / len(all_mrr) if all_mrr else 0
-            
+
             # Strategy header
             strategy_html = f"""
             <div class="strategy-section">
                 <h4>{strategy} 
-                    <span class="metric-badge {'metric-good' if avg_mrr >= 0.7 else 'metric-medium' if avg_mrr >= 0.3 else 'metric-poor'}">
+                    <span class="metric-badge {"metric-good" if avg_mrr >= 0.7 else "metric-medium" if avg_mrr >= 0.3 else "metric-poor"}">
                         Avg MRR: {avg_mrr:.3f}
                     </span>
                     <span class="query-count">{total_queries} queries</span>
                 </h4>
                 <div class="query-results">
             """
-            
+
             # Add each query
             for query_text, query_data in queries.items():
                 expected = query_data.get("expected_videos", [])
                 retrieved = query_data.get("retrieved_videos", [])
                 mrr = query_data.get("metrics", {}).get("mean_reciprocal_rank", 0)
-                
+
                 query_html = f"""
                 <div class="query-item">
                     <div class="query-header">
@@ -121,7 +123,7 @@ def generate_quantitative_tab(test_data: Dict) -> str:
                     </div>
                     <div class="results-grid">
                 """
-                
+
                 # Add retrieved videos
                 for i, video_id in enumerate(retrieved[:5]):
                     query_html += f"""
@@ -130,61 +132,61 @@ def generate_quantitative_tab(test_data: Dict) -> str:
                             {format_video_tag(video_id, expected)}
                         </div>
                     """
-                
+
                 query_html += """
                     </div>
                 </div>
                 """
                 strategy_html += query_html
-            
+
             strategy_html += """
                 </div>
             </div>
             """
             profile_html.append(strategy_html)
-        
+
         html.append(f"""
         <div class="profile-section">
             <h3>{profile}</h3>
-            {''.join(profile_html)}
+            {"".join(profile_html)}
         </div>
         """)
-    
-    return ''.join(html)
+
+    return "".join(html)
 
 
 def generate_evaluation_tab(experiment_data: Dict, summary_df: pd.DataFrame) -> str:
     """Generate HTML for evaluation experiments tab"""
     if not experiment_data:
         return "<p>No evaluation experiment results available</p>"
-    
+
     html = []
-    
+
     # Summary statistics
     html.append(f"""
     <div class="evaluation-summary">
         <h3>Evaluation Summary</h3>
         <div class="stats-grid">
             <div class="stat-card">
-                <div class="stat-value">{experiment_data['summary']['total']}</div>
+                <div class="stat-value">{experiment_data["summary"]["total"]}</div>
                 <div class="stat-label">Total Experiments</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{experiment_data['summary']['successful']}</div>
+                <div class="stat-value">{experiment_data["summary"]["successful"]}</div>
                 <div class="stat-label">Successful</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{experiment_data['summary']['failed']}</div>
+                <div class="stat-value">{experiment_data["summary"]["failed"]}</div>
                 <div class="stat-label">Failed</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value">{experiment_data['summary']['successful']/experiment_data['summary']['total']*100:.1f}%</div>
+                <div class="stat-value">{experiment_data["summary"]["successful"] / experiment_data["summary"]["total"] * 100:.1f}%</div>
                 <div class="stat-label">Success Rate</div>
             </div>
         </div>
     </div>
     """)
-    
+
     # Profile comparison
     if summary_df is not None:
         html.append("""
@@ -201,68 +203,74 @@ def generate_evaluation_tab(experiment_data: Dict, summary_df: pd.DataFrame) -> 
                 </thead>
                 <tbody>
         """)
-        
+
         for _, row in summary_df.iterrows():
-            status_icon = "✅" if "Success" in str(row.get('Status', '')) else "❌"
+            status_icon = "✅" if "Success" in str(row.get("Status", "")) else "❌"
             html.append(f"""
                 <tr>
-                    <td>{row.get('Profile', 'N/A')}</td>
-                    <td>{row.get('Strategy', 'N/A')}</td>
-                    <td>{status_icon} {row.get('Status', 'N/A')}</td>
-                    <td class="experiment-name">{row.get('Experiment Name', 'N/A')}</td>
+                    <td>{row.get("Profile", "N/A")}</td>
+                    <td>{row.get("Strategy", "N/A")}</td>
+                    <td>{status_icon} {row.get("Status", "N/A")}</td>
+                    <td class="experiment-name">{row.get("Experiment Name", "N/A")}</td>
                 </tr>
             """)
-        
+
         html.append("""
                 </tbody>
             </table>
         </div>
         """)
-    
+
     # Detailed experiment results
     html.append("""
     <div class="experiment-details">
         <h3>Experiment Details</h3>
     """)
-    
-    for exp in experiment_data.get('experiments', []):
-        if exp['status'] == 'success':
+
+    for exp in experiment_data.get("experiments", []):
+        if exp["status"] == "success":
             exp_html = f"""
             <div class="experiment-card">
-                <h4>{exp.get('description', exp['experiment_name'])}</h4>
+                <h4>{exp.get("description", exp["experiment_name"])}</h4>
                 <div class="experiment-meta">
-                    <span class="profile-tag">{exp.get('profile', 'N/A')}</span>
-                    <span class="strategy-tag">{exp.get('strategy', 'N/A')}</span>
+                    <span class="profile-tag">{exp.get("profile", "N/A")}</span>
+                    <span class="strategy-tag">{exp.get("strategy", "N/A")}</span>
                 </div>
                 <div class="experiment-url">
-                    Phoenix URL: <a href="{experiment_data['dataset_url']}" target="_blank">View in Phoenix</a>
+                    Phoenix URL: <a href="{experiment_data["dataset_url"]}" target="_blank">View in Phoenix</a>
                 </div>
             </div>
             """
             html.append(exp_html)
-    
+
     html.append("</div>")
-    
-    return ''.join(html)
+
+    return "".join(html)
 
 
 def generate_integrated_report(
     test_results_file: Optional[str] = None,
     experiment_results_dir: Optional[str] = None,
-    output_file: Optional[str] = None
+    output_file: Optional[str] = None,
 ):
     """Generate integrated HTML report with tabs"""
-    
+
     # Set default paths
     results_dir = Path("outputs/test_results")
-    experiments_dir = Path(experiment_results_dir) if experiment_results_dir else Path("outputs/experiment_results")
-    
+    experiments_dir = (
+        Path(experiment_results_dir)
+        if experiment_results_dir
+        else Path("outputs/experiment_results")
+    )
+
     # Load data
-    test_data, experiment_data, summary_df = load_latest_files(results_dir, experiments_dir)
-    
+    test_data, experiment_data, summary_df = load_latest_files(
+        results_dir, experiments_dir
+    )
+
     # Generate timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
+
     # Generate HTML
     html = f"""
 <!DOCTYPE html>
@@ -308,16 +316,19 @@ def generate_integrated_report(
 </body>
 </html>
     """
-    
+
     # Save report
     if not output_file:
         output_dir = Path("outputs/reports")
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / f"integrated_evaluation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-    
-    with open(output_file, 'w') as f:
+        output_file = (
+            output_dir
+            / f"integrated_evaluation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        )
+
+    with open(output_file, "w") as f:
         f.write(html)
-    
+
     print(f"Report saved to: {output_file}")
     return output_file
 
@@ -325,10 +336,10 @@ def generate_integrated_report(
 def generate_comparison_tab(test_data: Dict, experiment_data: Dict) -> str:
     """Generate comparison between quantitative and evaluation results"""
     html = []
-    
+
     if not test_data or not experiment_data:
         return "<p>Need both quantitative and evaluation results for comparison</p>"
-    
+
     html.append("""
     <div class="comparison-grid">
         <div class="comparison-section">
@@ -337,10 +348,10 @@ def generate_comparison_tab(test_data: Dict, experiment_data: Dict) -> str:
         </div>
     </div>
     """)
-    
+
     # Add more detailed comparison logic here
-    
-    return ''.join(html)
+
+    return "".join(html)
 
 
 def generate_css() -> str:
@@ -598,15 +609,19 @@ def generate_javascript() -> str:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate integrated evaluation report")
+    parser = argparse.ArgumentParser(
+        description="Generate integrated evaluation report"
+    )
     parser.add_argument("--test-results", help="Path to quantitative test results JSON")
-    parser.add_argument("--experiments-dir", help="Path to experiments results directory")
+    parser.add_argument(
+        "--experiments-dir", help="Path to experiments results directory"
+    )
     parser.add_argument("--output", help="Output HTML file path")
-    
+
     args = parser.parse_args()
-    
+
     generate_integrated_report(
         test_results_file=args.test_results,
         experiment_results_dir=args.experiments_dir,
-        output_file=args.output
+        output_file=args.output,
     )

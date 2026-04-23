@@ -113,7 +113,10 @@ def test_roundtrip_query_side_produces_vespa_feed_payload(stub_sidecar):
     feed = processor.process_embeddings(tokens)
     assert set(feed.keys()) == {"embedding", "embedding_binary"}
     assert isinstance(feed["embedding"], dict) and len(feed["embedding"]) == 3
-    assert isinstance(feed["embedding_binary"], dict) and len(feed["embedding_binary"]) == 3
+    assert (
+        isinstance(feed["embedding_binary"], dict)
+        and len(feed["embedding_binary"]) == 3
+    )
     for token_idx in ("0", "1", "2"):
         # bfloat16 hex is 4 chars per value → 4 * 128 = 512 chars per token
         assert len(feed["embedding"][token_idx]) == 512

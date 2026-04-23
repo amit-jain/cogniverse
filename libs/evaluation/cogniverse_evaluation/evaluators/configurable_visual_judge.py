@@ -87,7 +87,9 @@ class ConfigurableVisualJudge(Evaluator):
 
         # Initialize ConfigManager for dependency injection
         frames_config_manager = create_default_config_manager()
-        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=frames_config_manager)
+        config = get_config(
+            tenant_id=SYSTEM_TENANT_ID, config_manager=frames_config_manager
+        )
         evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
         frames_per_video = evaluator_config.get("frames_per_video", 30)
         max_videos = evaluator_config.get("max_videos", 2)

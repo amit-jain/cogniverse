@@ -64,9 +64,10 @@ def _resolve_cli_tenant(tenant: str | None) -> str:
     raise click.ClickException(
         "No tenant configured. Pass --tenant <id>, set "
         "$COGNIVERSE_TENANT_ID, or register a tenant via the runtime: "
-        'curl -X POST http://localhost:28000/admin/tenants -H '
+        "curl -X POST http://localhost:28000/admin/tenants -H "
         "'Content-Type: application/json' -d '{\"tenant_id\":\"<id>\"}'"
     )
+
 
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
@@ -162,7 +163,9 @@ def cli() -> None:
     default=False,
     help="Enable Telegram messaging gateway (requires TELEGRAM_BOT_TOKEN env var).",
 )
-def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: bool) -> None:
+def up(
+    llm_mode: str, llm_url: str | None, image_source: str | None, messaging: bool
+) -> None:
     """Deploy the full Cogniverse stack."""
     # 1. Detect environment — a running k3d cluster counts as local, not prod
     k3d_running = cluster_exists()
@@ -187,7 +190,9 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
         still_missing = install_missing_prerequisites(missing)
         if still_missing:
             console.print(f"[red]Failed to install: {', '.join(still_missing)}[/red]")
-            console.print("[red]Please install manually using the commands above.[/red]")
+            console.print(
+                "[red]Please install manually using the commands above.[/red]"
+            )
             sys.exit(1)
         console.print("[green]Prerequisites installed[/green]")
 
@@ -224,11 +229,11 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
     set_values: dict[str, str] = {}
     if llm_mode == "auto":
         if host_llm_detected or _probe_host_llm():
-            console.print(
-                "[cyan]Using host LLM endpoint (external mode).[/cyan]"
-            )
+            console.print("[cyan]Using host LLM endpoint (external mode).[/cyan]")
             external_url = (
-                "http://host.docker.internal:11434" if use_k3d else "http://localhost:11434"
+                "http://host.docker.internal:11434"
+                if use_k3d
+                else "http://localhost:11434"
             )
             set_values["llm.builtin.enabled"] = "false"
             set_values["llm.external.enabled"] = "true"
@@ -255,9 +260,7 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
     if messaging:
         bot_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
         if not bot_token:
-            console.print(
-                "[red]--messaging requires TELEGRAM_BOT_TOKEN env var.[/red]"
-            )
+            console.print("[red]--messaging requires TELEGRAM_BOT_TOKEN env var.[/red]")
             sys.exit(1)
         set_values["messaging.enabled"] = "true"
         console.print("[cyan]Messaging gateway enabled (Telegram).[/cyan]")
@@ -271,7 +274,9 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
     if use_k3d:
         console.print("[cyan]Pre-pulling third-party images...[/cyan]")
         pull_and_import_third_party(
-            CLUSTER_NAME, values_file, skip_llm=llm_is_external,
+            CLUSTER_NAME,
+            values_file,
+            skip_llm=llm_is_external,
         )
     # 5c. Bootstrap secrets the chart references by name. Must happen
     # BEFORE helm install so gated-model pods (e.g. inference.embed with
@@ -310,16 +315,28 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
     console.print("[cyan]Waiting for all pods to be ready (up to 5 min)...[/cyan]")
     try:
         subprocess.run(
-            ["kubectl", "wait", "--for=condition=ready", "pod",
-             "-l", "app.kubernetes.io/instance=cogniverse",
-             "-n", NAMESPACE, "--timeout=300s"],
-            check=True, capture_output=True, timeout=310,
+            [
+                "kubectl",
+                "wait",
+                "--for=condition=ready",
+                "pod",
+                "-l",
+                "app.kubernetes.io/instance=cogniverse",
+                "-n",
+                NAMESPACE,
+                "--timeout=300s",
+            ],
+            check=True,
+            capture_output=True,
+            timeout=310,
         )
         console.print("[green]All cogniverse pods ready[/green]")
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         result = subprocess.run(
             ["kubectl", "get", "pods", "-n", NAMESPACE],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         console.print(f"[yellow]Some pods not ready:[/yellow]\n{result.stdout}")
 
@@ -344,7 +361,9 @@ def up(llm_mode: str, llm_url: str | None, image_source: str | None, messaging: 
     if ensure_sandbox_ready():
         console.print("  [green]Sandbox[/green] ready")
     else:
-        console.print("  [yellow]Sandbox[/yellow] disabled (coding agent execution unavailable)")
+        console.print(
+            "  [yellow]Sandbox[/yellow] disabled (coding agent execution unavailable)"
+        )
 
     console.print()
     _print_status_table()
@@ -452,7 +471,8 @@ def secrets() -> None:
 
 @secrets.command(name="sync")
 @click.option(
-    "--required/--optional", default=False,
+    "--required/--optional",
+    default=False,
     help="Fail if the token is missing instead of warning.",
 )
 def secrets_sync(required: bool) -> None:
@@ -480,7 +500,9 @@ def sandbox_sync() -> None:
 
     if not sync_gateway_certs_to_cluster():
         raise click.ClickException("Failed to sync openshell certs")
-    console.print("[green]Sandbox certs synced. Restart runtime to pick up changes.[/green]")
+    console.print(
+        "[green]Sandbox certs synced. Restart runtime to pick up changes.[/green]"
+    )
 
 
 @sandbox.command(name="status")
@@ -503,14 +525,20 @@ def sandbox_status() -> None:
 
     console.print(f"Active gateway: [bold]{gateway_dir.name}[/bold]")
     console.print(f"  Config: {gateway_dir}")
-    console.print(f"  Running: {'[green]yes[/green]' if gateway_running() else '[red]no[/red]'}")
+    console.print(
+        f"  Running: {'[green]yes[/green]' if gateway_running() else '[red]no[/red]'}"
+    )
 
     result = subprocess.run(
         ["kubectl", "get", "secret", "openshell-mtls", "-n", NAMESPACE],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     synced = result.returncode == 0
-    console.print(f"  Synced to cluster: {'[green]yes[/green]' if synced else '[red]no[/red]'}")
+    console.print(
+        f"  Synced to cluster: {'[green]yes[/green]' if synced else '[red]no[/red]'}"
+    )
 
 
 @cli.command()
@@ -534,21 +562,26 @@ def code(tenant: str | None, language: str, iterations: int, codebase: str) -> N
 @cli.command()
 @click.argument("path", type=click.Path(exists=True))
 @click.option(
-    "--type", "content_type",
+    "--type",
+    "content_type",
     type=click.Choice(["code", "docs", "video"]),
     default="code",
     help="Content type to index.",
 )
 @click.option("--tenant", default=None, help="Tenant ID.")
 @click.option("--profile", default=None, help="Override Vespa profile.")
-def index(path: str, content_type: str, tenant: str | None, profile: str | None) -> None:
+def index(
+    path: str, content_type: str, tenant: str | None, profile: str | None
+) -> None:
     """Index a directory into Vespa for agent context search."""
     from pathlib import Path as P
 
     from cogniverse_cli.index import index_files
 
     if content_type != "code":
-        console.print(f"[yellow]--type {content_type} is not yet implemented. Only 'code' is supported.[/yellow]")
+        console.print(
+            f"[yellow]--type {content_type} is not yet implemented. Only 'code' is supported.[/yellow]"
+        )
         return
 
     tenant_id = _resolve_cli_tenant(tenant)
@@ -563,18 +596,14 @@ def index(path: str, content_type: str, tenant: str | None, profile: str | None)
 @cli.command()
 @click.argument(
     "service",
-    type=click.Choice(
-        ["runtime", "dashboard", "vespa", "phoenix", "llm", "argo"]
-    ),
+    type=click.Choice(["runtime", "dashboard", "vespa", "phoenix", "llm", "argo"]),
 )
 @click.option("--follow", "-f", is_flag=True, help="Follow log output.")
 def logs(service: str, follow: bool) -> None:
     """View logs for a service."""
     # Guard: if service is "llm", check if the builtin statefulset exists
     if service == "llm" and not _llm_statefulset_exists():
-        console.print(
-            "[yellow]No builtin LLM pod found (external LLM mode).[/yellow]"
-        )
+        console.print("[yellow]No builtin LLM pod found (external LLM mode).[/yellow]")
         return
 
     resource = _SERVICE_KUBECTL_RESOURCE[service]

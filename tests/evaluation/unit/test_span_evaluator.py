@@ -73,7 +73,9 @@ class TestGetRecentSpans:
 
     @pytest.mark.asyncio
     async def test_returns_mock_when_provider_returns_empty_df(self, evaluator):
-        evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        evaluator.provider.telemetry.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame()
+        )
         df = await evaluator.get_recent_spans(hours=1)
         assert not df.empty
 
@@ -88,15 +90,17 @@ class TestGetRecentSpans:
     @pytest.mark.asyncio
     async def test_filters_embedding_dimension_spans(self, evaluator):
         """Spans with output_value like '(19, 128)' are embedding dimensions, skip them."""
-        raw_df = pd.DataFrame([
-            {
-                "context.span_id": "s1",
-                "context.trace_id": "t1",
-                "name": "search_service.search",
-                "attributes.input.value": "test query",
-                "attributes.output.value": "(19, 128)",
-            }
-        ])
+        raw_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "s1",
+                    "context.trace_id": "t1",
+                    "name": "search_service.search",
+                    "attributes.input.value": "test query",
+                    "attributes.output.value": "(19, 128)",
+                }
+            ]
+        )
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=raw_df)
         df = await evaluator.get_recent_spans(hours=1, operation_name=None)
         # Span with tuple-shaped output should be skipped
@@ -106,16 +110,22 @@ class TestGetRecentSpans:
     async def test_valid_search_results_span_included(self, evaluator):
         """Spans with proper search result structure are included."""
         import json
-        results = [{"video_id": "v_abc", "score": 0.9}, {"video_id": "v_def", "score": 0.7}]
-        raw_df = pd.DataFrame([
-            {
-                "context.span_id": "s2",
-                "context.trace_id": "t2",
-                "name": "search_service.search",
-                "attributes.input.value": "find dogs",
-                "attributes.output.value": json.dumps(results),
-            }
-        ])
+
+        results = [
+            {"video_id": "v_abc", "score": 0.9},
+            {"video_id": "v_def", "score": 0.7},
+        ]
+        raw_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "s2",
+                    "context.trace_id": "t2",
+                    "name": "search_service.search",
+                    "attributes.input.value": "find dogs",
+                    "attributes.output.value": json.dumps(results),
+                }
+            ]
+        )
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=raw_df)
         df = await evaluator.get_recent_spans(hours=1, operation_name=None)
         assert len(df) == 1
@@ -127,16 +137,19 @@ class TestGetRecentSpans:
     async def test_span_without_query_skipped(self, evaluator):
         """Spans with no query are dropped — can't evaluate without input."""
         import json
+
         results = [{"video_id": "v_abc", "score": 0.9}]
-        raw_df = pd.DataFrame([
-            {
-                "context.span_id": "s3",
-                "context.trace_id": "t3",
-                "name": "search_service.search",
-                "attributes.output.value": json.dumps(results),
-                # No input.value, no query field
-            }
-        ])
+        raw_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "s3",
+                    "context.trace_id": "t3",
+                    "name": "search_service.search",
+                    "attributes.output.value": json.dumps(results),
+                    # No input.value, no query field
+                }
+            ]
+        )
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=raw_df)
         df = await evaluator.get_recent_spans(hours=1, operation_name=None)
         assert len(df) == 0
@@ -145,18 +158,23 @@ class TestGetRecentSpans:
     async def test_operation_name_filter_applied(self, evaluator):
         """Spans not matching operation_name are dropped — result is empty."""
         import json
+
         results = [{"video_id": "v_x", "score": 0.8}]
-        raw_df = pd.DataFrame([
-            {
-                "context.span_id": "s4",
-                "context.trace_id": "t4",
-                "name": "other_service.call",
-                "attributes.input.value": "query",
-                "attributes.output.value": json.dumps(results),
-            }
-        ])
+        raw_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "s4",
+                    "context.trace_id": "t4",
+                    "name": "other_service.call",
+                    "attributes.input.value": "query",
+                    "attributes.output.value": json.dumps(results),
+                }
+            ]
+        )
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=raw_df)
-        df = await evaluator.get_recent_spans(hours=1, operation_name="search_service.search")
+        df = await evaluator.get_recent_spans(
+            hours=1, operation_name="search_service.search"
+        )
         # The provider returned rows, but they were all filtered by operation_name;
         # the formatted_spans list ends up empty → empty DataFrame returned, no mock fallback.
         assert len(df) == 0
@@ -165,6 +183,7 @@ class TestGetRecentSpans:
     async def test_limit_applied_to_results(self, evaluator):
         """Limit is respected when provider returns many rows."""
         import json
+
         results = [{"video_id": f"v_{i}", "score": 0.5} for i in range(3)]
         rows = [
             {
@@ -185,16 +204,19 @@ class TestGetRecentSpans:
     async def test_result_without_document_id_skipped(self, evaluator):
         """Results lacking document_id/video_id/source_id are not valid search results."""
         import json
+
         bad_results = [{"title": "something", "text": "no id field"}]
-        raw_df = pd.DataFrame([
-            {
-                "context.span_id": "s5",
-                "context.trace_id": "t5",
-                "name": "search_service.search",
-                "attributes.input.value": "query",
-                "attributes.output.value": json.dumps(bad_results),
-            }
-        ])
+        raw_df = pd.DataFrame(
+            [
+                {
+                    "context.span_id": "s5",
+                    "context.trace_id": "t5",
+                    "name": "search_service.search",
+                    "attributes.input.value": "query",
+                    "attributes.output.value": json.dumps(bad_results),
+                }
+            ]
+        )
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=raw_df)
         df = await evaluator.get_recent_spans(hours=1, operation_name=None)
         assert len(df) == 0
@@ -222,7 +244,9 @@ class TestEvaluateSpans:
     @pytest.mark.asyncio
     async def test_unknown_evaluator_skipped(self, evaluator):
         df = evaluator._create_mock_spans_df()
-        results = await evaluator.evaluate_spans(df, evaluator_names=["nonexistent_evaluator"])
+        results = await evaluator.evaluate_spans(
+            df, evaluator_names=["nonexistent_evaluator"]
+        )
         assert "nonexistent_evaluator" not in results
 
     @pytest.mark.asyncio
@@ -251,7 +275,9 @@ class TestEvaluateSpans:
         empty_df = pd.DataFrame(
             columns=["span_id", "trace_id", "operation_name", "attributes", "outputs"]
         )
-        results = await evaluator.evaluate_spans(empty_df, evaluator_names=["relevance"])
+        results = await evaluator.evaluate_spans(
+            empty_df, evaluator_names=["relevance"]
+        )
         assert "relevance" in results
         assert len(results["relevance"]) == 0
 
@@ -269,9 +295,13 @@ class TestEvaluateSpans:
 class TestRunEvaluationPipeline:
     @pytest.mark.asyncio
     async def test_returns_error_when_no_spans(self, evaluator):
-        evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        evaluator.provider.telemetry.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame()
+        )
 
-        with patch.object(evaluator, "_create_mock_spans_df", return_value=pd.DataFrame()):
+        with patch.object(
+            evaluator, "_create_mock_spans_df", return_value=pd.DataFrame()
+        ):
             result = await evaluator.run_evaluation_pipeline(
                 hours=1,
                 upload_evaluations=False,
@@ -316,7 +346,9 @@ class TestRunEvaluationPipeline:
         evaluator.provider.telemetry.annotations = MagicMock()
         evaluator.provider.telemetry.annotations.add_annotation = AsyncMock()
 
-        with patch.object(evaluator, "upload_evaluations", new_callable=AsyncMock) as mock_upload:
+        with patch.object(
+            evaluator, "upload_evaluations", new_callable=AsyncMock
+        ) as mock_upload:
             await evaluator.run_evaluation_pipeline(
                 hours=1,
                 evaluator_names=["relevance"],
@@ -328,7 +360,9 @@ class TestRunEvaluationPipeline:
     async def test_upload_not_called_when_disabled(self, evaluator):
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=None)
 
-        with patch.object(evaluator, "upload_evaluations", new_callable=AsyncMock) as mock_upload:
+        with patch.object(
+            evaluator, "upload_evaluations", new_callable=AsyncMock
+        ) as mock_upload:
             await evaluator.run_evaluation_pipeline(
                 hours=1,
                 evaluator_names=["relevance"],
@@ -345,9 +379,16 @@ class TestUploadEvaluations:
         mock_annotations.add_annotation = AsyncMock()
         evaluator.provider.telemetry.annotations = mock_annotations
 
-        eval_df = pd.DataFrame([
-            {"span_id": "s1", "score": 0.8, "label": "relevant", "explanation": "good"},
-        ])
+        eval_df = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "score": 0.8,
+                    "label": "relevant",
+                    "explanation": "good",
+                },
+            ]
+        )
         await evaluator.upload_evaluations({"relevance": eval_df})
 
         mock_annotations.add_annotation.assert_called_once_with(
@@ -376,8 +417,15 @@ class TestUploadEvaluations:
             side_effect=Exception("annotation api down")
         )
 
-        eval_df = pd.DataFrame([
-            {"span_id": "s1", "score": 0.5, "label": "relevant", "explanation": "ok"},
-        ])
+        eval_df = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "score": 0.5,
+                    "label": "relevant",
+                    "explanation": "ok",
+                },
+            ]
+        )
         # Should not raise
         await evaluator.upload_evaluations({"relevance": eval_df})

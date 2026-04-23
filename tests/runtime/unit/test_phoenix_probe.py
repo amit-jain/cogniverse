@@ -29,9 +29,7 @@ def disable_telemetry_required(monkeypatch):
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestPhoenixProbe:
-    def test_probe_succeeds_when_span_emits(
-        self, disable_telemetry_required, caplog
-    ):
+    def test_probe_succeeds_when_span_emits(self, disable_telemetry_required, caplog):
         mock_tm = MagicMock()
         mock_tm.config.enabled = True
         mock_tm.config.otlp_endpoint = "phoenix:4317"
@@ -71,7 +69,9 @@ class TestPhoenixProbe:
 
         # span() should never be called when telemetry is disabled.
         mock_tm.span.assert_not_called()
-        assert any("skipping Phoenix reachability probe" in r.message for r in caplog.records)
+        assert any(
+            "skipping Phoenix reachability probe" in r.message for r in caplog.records
+        )
 
     def test_probe_logs_warning_on_failure_when_optional(
         self, disable_telemetry_required, caplog
@@ -93,13 +93,10 @@ class TestPhoenixProbe:
                 _probe_phoenix_reachability()
 
         assert any(
-            "Phoenix reachability probe FAILED" in r.message
-            for r in caplog.records
+            "Phoenix reachability probe FAILED" in r.message for r in caplog.records
         )
 
-    def test_probe_raises_when_required_and_failing(
-        self, monkeypatch, caplog
-    ):
+    def test_probe_raises_when_required_and_failing(self, monkeypatch, caplog):
         """When TELEMETRY_REQUIRED=true, a probe failure must raise
         RuntimeError so the runtime refuses to start with broken telemetry."""
         monkeypatch.setenv("TELEMETRY_REQUIRED", "true")
@@ -116,9 +113,7 @@ class TestPhoenixProbe:
             with pytest.raises(RuntimeError, match="TELEMETRY_REQUIRED=true"):
                 _probe_phoenix_reachability()
 
-    def test_probe_treats_empty_required_as_false(
-        self, monkeypatch, caplog
-    ):
+    def test_probe_treats_empty_required_as_false(self, monkeypatch, caplog):
         """An empty TELEMETRY_REQUIRED env var (set to '') must be treated
         as 'not required' — Helm sometimes injects empty defaults."""
         monkeypatch.setenv("TELEMETRY_REQUIRED", "")

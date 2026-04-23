@@ -235,9 +235,7 @@ class TestSimplifiedWorkflowIntelligence:
         plan = WorkflowPlan(
             workflow_id="wf-1",
             original_query="test query",
-            tasks=[
-                WorkflowTask(task_id="t1", agent_name="agent1", query="test query")
-            ],
+            tasks=[WorkflowTask(task_id="t1", agent_name="agent1", query="test query")],
         )
         result = await intelligence.optimize_workflow_plan("test query", plan)
         assert isinstance(result, WorkflowPlan)

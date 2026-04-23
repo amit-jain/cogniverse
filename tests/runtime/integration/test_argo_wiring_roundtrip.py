@@ -109,9 +109,7 @@ class TestArgoWiringRoundTrip:
             assert manifest["kind"] == "CronWorkflow"
             assert manifest["spec"]["schedule"] == "0 9 * * 1"
 
-    def test_full_roundtrip_no_env_var_skips_workflow(
-        self, monkeypatch, tenant_client
-    ):
+    def test_full_roundtrip_no_env_var_skips_workflow(self, monkeypatch, tenant_client):
         """Symmetric round trip: with no ARGO_API_URL, POST /jobs must
         still persist the job to ConfigStore but NOT call submit. The
         bug had this path silently dropping ALL jobs because the global

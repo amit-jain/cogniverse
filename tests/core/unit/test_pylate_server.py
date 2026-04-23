@@ -36,7 +36,11 @@ class _FakeColBERT:
     ) -> list[np.ndarray]:
         token_count = 3 if is_query else 5
         return [
-            np.full((token_count, 128), float(i) + (0.1 if is_query else 0.2), dtype=np.float32)
+            np.full(
+                (token_count, 128),
+                float(i) + (0.1 if is_query else 0.2),
+                dtype=np.float32,
+            )
             for i, _ in enumerate(texts)
         ]
 
@@ -51,7 +55,9 @@ def server_app(monkeypatch):
     monkeypatch.setitem(sys.modules, "pylate", fake_pylate)
     monkeypatch.setitem(sys.modules, "pylate.models", fake_models)
 
-    spec = importlib.util.spec_from_file_location("pylate_inference_server", SERVER_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "pylate_inference_server", SERVER_PATH
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -66,7 +72,11 @@ def test_pooling_response_matches_remote_colbert_loader_expectation(server_app):
 
     resp = client.post(
         "/pooling",
-        json={"input": ["hello world", "second text"], "model": model_name, "is_query": False},
+        json={
+            "input": ["hello world", "second text"],
+            "model": model_name,
+            "is_query": False,
+        },
     )
     assert resp.status_code == 200
     body = resp.json()

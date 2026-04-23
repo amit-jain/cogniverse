@@ -242,9 +242,7 @@ class TestDatasetVersioningIntegration:
         """Save v1 → save v2 → list_versions → verify both exist in Phoenix."""
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
-        am = ArtifactManager(
-            telemetry_provider=real_provider, tenant_id=test_tenant_id
-        )
+        am = ArtifactManager(telemetry_provider=real_provider, tenant_id=test_tenant_id)
 
         ds_id_1, v1 = await am.save_prompts_versioned(
             "routing", {"system": "You are a router v1"}

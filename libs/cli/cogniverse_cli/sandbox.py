@@ -34,7 +34,9 @@ POD_GATEWAY_ENDPOINT = "https://host.docker.internal:19091"
 # libs/runtime/pyproject.toml so the runtime SDK and host gateway speak the
 # same gRPC/mTLS protocol.
 OPENSHELL_VERSION = "v0.0.13"
-OPENSHELL_INSTALL_URL = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh"
+OPENSHELL_INSTALL_URL = (
+    "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh"
+)
 
 
 def openshell_installed() -> bool:
@@ -55,7 +57,11 @@ def install_openshell() -> bool:
     console.print(f"Installing openshell {OPENSHELL_VERSION}...")
     try:
         result = subprocess.run(
-            ["sh", "-c", f"curl -LsSf {OPENSHELL_INSTALL_URL} | OPENSHELL_VERSION={OPENSHELL_VERSION} sh"],
+            [
+                "sh",
+                "-c",
+                f"curl -LsSf {OPENSHELL_INSTALL_URL} | OPENSHELL_VERSION={OPENSHELL_VERSION} sh",
+            ],
             capture_output=True,
             text=True,
             timeout=180,
@@ -70,7 +76,9 @@ def install_openshell() -> bool:
         return False
 
     if not openshell_installed():
-        console.print("[red]openshell install completed but CLI not found on PATH[/red]")
+        console.print(
+            "[red]openshell install completed but CLI not found on PATH[/red]"
+        )
         console.print("  [dim]Check ~/.local/bin is in PATH[/dim]")
         return False
 
@@ -139,7 +147,9 @@ def start_gateway() -> bool:
     return gateway_running()
 
 
-def _kubectl(args: list[str], *, input_data: Optional[str] = None) -> subprocess.CompletedProcess:
+def _kubectl(
+    args: list[str], *, input_data: Optional[str] = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["kubectl", *args],
         capture_output=True,
@@ -184,14 +194,22 @@ def sync_gateway_certs_to_cluster() -> bool:
     if ns_check.returncode != 0:
         _kubectl(["create", "namespace", NAMESPACE])
 
-    secret_yaml = _kubectl([
-        "create", "secret", "generic", MTLS_SECRET,
-        "-n", NAMESPACE,
-        f"--from-file=ca.crt={ca_crt}",
-        f"--from-file=tls.crt={tls_crt}",
-        f"--from-file=tls.key={tls_key}",
-        "--dry-run=client", "-o", "yaml",
-    ])
+    secret_yaml = _kubectl(
+        [
+            "create",
+            "secret",
+            "generic",
+            MTLS_SECRET,
+            "-n",
+            NAMESPACE,
+            f"--from-file=ca.crt={ca_crt}",
+            f"--from-file=tls.crt={tls_crt}",
+            f"--from-file=tls.key={tls_key}",
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
+    )
     if secret_yaml.returncode != 0:
         console.print(f"[red]Failed to build mTLS secret: {secret_yaml.stderr}[/red]")
         return False
@@ -205,32 +223,56 @@ def sync_gateway_certs_to_cluster() -> bool:
     metadata_for_pod = json.dumps(metadata)
 
     proc = subprocess.run(
-        ["kubectl", "create", "configmap", METADATA_CONFIGMAP,
-         "-n", NAMESPACE,
-         f"--from-literal=metadata.json={metadata_for_pod}",
-         "--dry-run=client", "-o", "yaml"],
-        capture_output=True, text=True, timeout=30, check=False,
+        [
+            "kubectl",
+            "create",
+            "configmap",
+            METADATA_CONFIGMAP,
+            "-n",
+            NAMESPACE,
+            f"--from-literal=metadata.json={metadata_for_pod}",
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     if proc.returncode != 0:
         console.print(f"[red]Failed to build metadata configmap: {proc.stderr}[/red]")
         return False
     apply_meta = _kubectl(["apply", "-f", "-"], input_data=proc.stdout)
     if apply_meta.returncode != 0:
-        console.print(f"[red]Failed to apply metadata configmap: {apply_meta.stderr}[/red]")
+        console.print(
+            f"[red]Failed to apply metadata configmap: {apply_meta.stderr}[/red]"
+        )
         return False
 
-    active_yaml = _kubectl([
-        "create", "configmap", ACTIVE_CONFIGMAP,
-        "-n", NAMESPACE,
-        f"--from-literal=active_gateway={GATEWAY_NAME}",
-        "--dry-run=client", "-o", "yaml",
-    ])
+    active_yaml = _kubectl(
+        [
+            "create",
+            "configmap",
+            ACTIVE_CONFIGMAP,
+            "-n",
+            NAMESPACE,
+            f"--from-literal=active_gateway={GATEWAY_NAME}",
+            "--dry-run=client",
+            "-o",
+            "yaml",
+        ]
+    )
     apply_active = _kubectl(["apply", "-f", "-"], input_data=active_yaml.stdout)
     if apply_active.returncode != 0:
-        console.print(f"[red]Failed to apply active configmap: {apply_active.stderr}[/red]")
+        console.print(
+            f"[red]Failed to apply active configmap: {apply_active.stderr}[/red]"
+        )
         return False
 
-    console.print(f"[green]OpenShell gateway certs synced to {NAMESPACE} namespace[/green]")
+    console.print(
+        f"[green]OpenShell gateway certs synced to {NAMESPACE} namespace[/green]"
+    )
     return True
 
 

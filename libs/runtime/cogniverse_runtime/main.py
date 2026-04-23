@@ -82,9 +82,7 @@ def _probe_phoenix_reachability() -> None:
             if hasattr(span, "set_attribute"):
                 span.set_attribute("startup.probe", True)
 
-        logger.info(
-            f"Phoenix reachability probe OK (otlp={tm.config.otlp_endpoint})"
-        )
+        logger.info(f"Phoenix reachability probe OK (otlp={tm.config.otlp_endpoint})")
     except Exception as exc:
         msg = (
             f"Phoenix reachability probe FAILED: {exc}. "
@@ -155,7 +153,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Vespa two-port architecture: container node (GET) converges before
     # content/distributor nodes (PUT/feed). We need feed readiness, so
     # probe with a document GET that exercises the content node path.
-    vespa_feed_probe = f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
+    vespa_feed_probe = (
+        f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
+    )
     logger.info(f"Waiting for backend feed readiness at {vespa_base}...")
 
     for attempt in range(60):
@@ -184,12 +184,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_foundation.config.utils import create_default_config_manager
 
     config_manager = create_default_config_manager()
+
     # Wire profile-change propagation: when /admin/profiles adds or removes
     # a backend profile, push the update into live search-backend instances
     # via BackendRegistry so the change is queryable without a pod restart.
-    def _profile_change_listener(
-        event: str, profile_name: str, profile_config
-    ) -> None:
+    def _profile_change_listener(event: str, profile_name: str, profile_config) -> None:
         if event == "added" and profile_config is not None:
             BackendRegistry.add_profile_to_backends(profile_name, profile_config)
         elif event == "removed":
@@ -212,17 +211,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _wire_argo_from_environment()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
-    app.dependency_overrides[ingestion.get_config_manager_dependency] = (
-        lambda: config_manager
+    app.dependency_overrides[ingestion.get_config_manager_dependency] = lambda: (
+        config_manager
     )
-    app.dependency_overrides[ingestion.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    app.dependency_overrides[ingestion.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
-    app.dependency_overrides[search.get_config_manager_dependency] = (
-        lambda: config_manager
+    app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+        config_manager
     )
-    app.dependency_overrides[search.get_schema_loader_dependency] = (
-        lambda: schema_loader
+    app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+        schema_loader
     )
     logger.info("Router dependencies configured")
 
@@ -241,7 +240,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     sandbox_enabled = (
         config.get("sandbox", {}).get("enabled", False)
-        or os.environ.get("COGNIVERSE_SANDBOX_ENABLED", "").lower() in ("true", "1", "yes")
+        or os.environ.get("COGNIVERSE_SANDBOX_ENABLED", "").lower()
+        in ("true", "1", "yes")
         or bool(os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"))
     )
     sandbox_manager = SandboxManager(enabled=sandbox_enabled)
@@ -352,7 +352,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.telemetry_url = os.environ["TELEMETRY_HTTP_ENDPOINT"]
         updated = True
     if os.environ.get("TELEMETRY_OTLP_ENDPOINT"):
-        system_config.telemetry_collector_endpoint = os.environ["TELEMETRY_OTLP_ENDPOINT"]
+        system_config.telemetry_collector_endpoint = os.environ[
+            "TELEMETRY_OTLP_ENDPOINT"
+        ]
         updated = True
     if os.environ.get("RUNTIME_URL"):
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]

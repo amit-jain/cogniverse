@@ -11,7 +11,6 @@ Tests:
 7. AgentBase.process() runs input/output rails
 """
 
-
 import pytest
 
 from cogniverse_core.agents.base import AgentBase, AgentDeps, AgentInput, AgentOutput
@@ -113,17 +112,21 @@ class TestRailChain:
         assert len(chain) == 0
 
     def test_sequential_execution(self):
-        chain = RailChain([
-            TopicBoundaryRail(allowed_topics=["video"]),
-            ContentSafetyRail(blocked_patterns=["<script>"]),
-        ])
+        chain = RailChain(
+            [
+                TopicBoundaryRail(allowed_topics=["video"]),
+                ContentSafetyRail(blocked_patterns=["<script>"]),
+            ]
+        )
         chain.check({"query": "video about cats"})
 
     def test_first_failure_raises(self):
-        chain = RailChain([
-            TopicBoundaryRail(allowed_topics=["video"]),
-            ContentSafetyRail(blocked_patterns=["cats"]),
-        ])
+        chain = RailChain(
+            [
+                TopicBoundaryRail(allowed_topics=["video"]),
+                ContentSafetyRail(blocked_patterns=["cats"]),
+            ]
+        )
         with pytest.raises(RailBlockedError, match="topic_boundary"):
             chain.check({"query": "weather forecast"})
 
@@ -134,11 +137,13 @@ class TestRailChain:
         assert chain.rail_names == ["topic_boundary"]
 
     def test_rail_names(self):
-        chain = RailChain([
-            TopicBoundaryRail(allowed_topics=["video"]),
-            ContentSafetyRail(blocked_patterns=[]),
-            OutputFormatRail(required_fields={}),
-        ])
+        chain = RailChain(
+            [
+                TopicBoundaryRail(allowed_topics=["video"]),
+                ContentSafetyRail(blocked_patterns=[]),
+                OutputFormatRail(required_fields={}),
+            ]
+        )
         assert chain.rail_names == [
             "topic_boundary",
             "content_safety",
@@ -183,9 +188,7 @@ class TestRailsConfig:
         assert len(config.build_output_chain()) == 0
 
     def test_unknown_rail_type_raises(self):
-        config = RailsConfig(
-            input_rails=[{"type": "nonexistent", "params": {}}]
-        )
+        config = RailsConfig(input_rails=[{"type": "nonexistent", "params": {}}])
         with pytest.raises(ValueError, match="Unknown rail type 'nonexistent'"):
             config.build_input_chain()
 
@@ -211,9 +214,11 @@ class TestAgentBaseRailsIntegration:
     @pytest.mark.asyncio
     async def test_input_rail_blocks_before_processing(self):
         agent = _TestAgent(deps=_TestDeps())
-        input_chain = RailChain([
-            TopicBoundaryRail(allowed_topics=["video"]),
-        ])
+        input_chain = RailChain(
+            [
+                TopicBoundaryRail(allowed_topics=["video"]),
+            ]
+        )
         agent.set_rails(input_rails=input_chain)
 
         with pytest.raises(RailBlockedError, match="topic_boundary"):
@@ -222,9 +227,11 @@ class TestAgentBaseRailsIntegration:
     @pytest.mark.asyncio
     async def test_input_rail_allows_valid_query(self):
         agent = _TestAgent(deps=_TestDeps())
-        input_chain = RailChain([
-            TopicBoundaryRail(allowed_topics=["video"]),
-        ])
+        input_chain = RailChain(
+            [
+                TopicBoundaryRail(allowed_topics=["video"]),
+            ]
+        )
         agent.set_rails(input_rails=input_chain)
 
         result = await agent.process(_TestInput(query="search for video clips"))
@@ -233,9 +240,11 @@ class TestAgentBaseRailsIntegration:
     @pytest.mark.asyncio
     async def test_output_rail_blocks_bad_output(self):
         agent = _TestAgent(deps=_TestDeps())
-        output_chain = RailChain([
-            OutputFormatRail(required_fields={"missing_field": "str"}),
-        ])
+        output_chain = RailChain(
+            [
+                OutputFormatRail(required_fields={"missing_field": "str"}),
+            ]
+        )
         agent.set_rails(output_rails=output_chain)
 
         with pytest.raises(RailBlockedError, match="Missing required field"):
@@ -244,9 +253,11 @@ class TestAgentBaseRailsIntegration:
     @pytest.mark.asyncio
     async def test_output_rail_allows_valid_output(self):
         agent = _TestAgent(deps=_TestDeps())
-        output_chain = RailChain([
-            OutputFormatRail(required_fields={"result": "str"}),
-        ])
+        output_chain = RailChain(
+            [
+                OutputFormatRail(required_fields={"result": "str"}),
+            ]
+        )
         agent.set_rails(output_rails=output_chain)
 
         result = await agent.process(_TestInput(query="test"))
@@ -261,9 +272,11 @@ class TestAgentBaseRailsIntegration:
     @pytest.mark.asyncio
     async def test_content_safety_rail_blocks_injection(self):
         agent = _TestAgent(deps=_TestDeps())
-        input_chain = RailChain([
-            ContentSafetyRail(blocked_patterns=["ignore previous instructions"]),
-        ])
+        input_chain = RailChain(
+            [
+                ContentSafetyRail(blocked_patterns=["ignore previous instructions"]),
+            ]
+        )
         agent.set_rails(input_rails=input_chain)
 
         with pytest.raises(RailBlockedError, match="content_safety"):

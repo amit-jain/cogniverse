@@ -330,10 +330,7 @@ class TestStrategyRetrieval:
 
     def test_respects_top_k(self, mock_memory_manager):
         mock_memory_manager.search_memory.side_effect = [
-            [
-                {"memory": f"strategy {i}", "score": 0.8}
-                for i in range(10)
-            ],
+            [{"memory": f"strategy {i}", "score": 0.8} for i in range(10)],
             [],
         ]
 
@@ -366,15 +363,14 @@ class TestStrategyRetrieval:
             memory_manager=mock_memory_manager, tenant_id="acme:alice"
         )
 
-        search_strategies = learner.get_strategies_for_agent(
-            "query", "search_agent"
-        )
+        search_strategies = learner.get_strategies_for_agent("query", "search_agent")
 
         # Verify the lookup used the agent-specific namespace — not the
         # shared STRATEGY_AGENT_NAME — so the vector store does the isolation.
         first_call_kwargs = mock_memory_manager.search_memory.call_args_list[0]
         actual_namespace = first_call_kwargs.kwargs.get(
-            "agent_name", first_call_kwargs.args[2] if len(first_call_kwargs.args) > 2 else None
+            "agent_name",
+            first_call_kwargs.args[2] if len(first_call_kwargs.args) > 2 else None,
         )
         assert actual_namespace == "_strategy_store_search_agent", (
             f"Expected namespace '_strategy_store_search_agent', got '{actual_namespace}'. "

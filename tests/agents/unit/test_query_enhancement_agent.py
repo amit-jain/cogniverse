@@ -140,7 +140,9 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, query_agent):
         """Test processing empty query"""
-        result = await query_agent._process_impl(QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
+        )
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -151,7 +153,9 @@ class TestQueryEnhancementAgent:
     @pytest.mark.asyncio
     async def test_process_missing_query(self, query_agent):
         """Test processing with missing query field (empty string equivalent)"""
-        result = await query_agent._process_impl(QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="", tenant_id=TEST_TENANT_ID)
+        )
 
         assert result.original_query == ""
         assert result.enhanced_query == ""
@@ -170,7 +174,9 @@ class TestQueryEnhancementAgent:
             )
         )
 
-        result = await query_agent._process_impl(QueryEnhancementInput(query="test", tenant_id=TEST_TENANT_ID))
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="test", tenant_id=TEST_TENANT_ID)
+        )
 
         assert result.confidence == 0.7  # Default fallback
 

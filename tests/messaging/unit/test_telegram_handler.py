@@ -1,6 +1,5 @@
 """Unit tests for Telegram message formatting and chunking."""
 
-
 from cogniverse_messaging.telegram_handler import (
     chunk_message,
     format_agent_response,
@@ -28,7 +27,11 @@ class TestResponseFormatting:
             "status": "success",
             "message": "Search complete",
             "results": [
-                {"video_title": "ML Tutorial", "score": 0.95, "segment_description": "Deep learning basics"},
+                {
+                    "video_title": "ML Tutorial",
+                    "score": 0.95,
+                    "segment_description": "Deep learning basics",
+                },
                 {"video_title": "AI Overview", "score": 0.8},
             ],
             "results_count": 2,
@@ -41,8 +44,7 @@ class TestResponseFormatting:
 
     def test_limits_results_shown(self):
         results = [
-            {"video_title": f"Video {i}", "score": 0.9 - i * 0.1}
-            for i in range(10)
+            {"video_title": f"Video {i}", "score": 0.9 - i * 0.1} for i in range(10)
         ]
         response = {
             "status": "success",

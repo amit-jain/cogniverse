@@ -58,12 +58,16 @@ class TestTenantInstructions:
                 json={"text": "Always prefer bullet-point summaries over prose"},
             )
             assert resp.status_code == 200
-            assert resp.json()["text"] == "Always prefer bullet-point summaries over prose"
+            assert (
+                resp.json()["text"] == "Always prefer bullet-point summaries over prose"
+            )
             assert resp.json()["updated_at"]
 
             resp = client.get(f"/admin/tenant/{TENANT_ID}/instructions")
             assert resp.status_code == 200
-            assert resp.json()["text"] == "Always prefer bullet-point summaries over prose"
+            assert (
+                resp.json()["text"] == "Always prefer bullet-point summaries over prose"
+            )
 
             resp = client.delete(f"/admin/tenant/{TENANT_ID}/instructions")
             assert resp.status_code == 200
@@ -92,11 +96,17 @@ class TestTenantInstructions:
                 },
             )
             baseline_result = baseline_resp.json().get("result", {})
-            baseline_text = baseline_result.get("result", "") if isinstance(baseline_result, dict) else str(baseline_result)
+            baseline_text = (
+                baseline_result.get("result", "")
+                if isinstance(baseline_result, dict)
+                else str(baseline_result)
+            )
 
             client.put(
                 f"/admin/tenant/{TENANT_ID}/instructions",
-                json={"text": "Always emphasize that this system uses ColPali visual retrieval for frame-level video search. Mention ColPali in every response."},
+                json={
+                    "text": "Always emphasize that this system uses ColPali visual retrieval for frame-level video search. Mention ColPali in every response."
+                },
             )
 
             instructed_resp = client.post(
@@ -108,13 +118,19 @@ class TestTenantInstructions:
                 },
             )
             instructed_result = instructed_resp.json().get("result", {})
-            instructed_text = instructed_result.get("result", "") if isinstance(instructed_result, dict) else str(instructed_result)
+            instructed_text = (
+                instructed_result.get("result", "")
+                if isinstance(instructed_result, dict)
+                else str(instructed_result)
+            )
 
             instruction_topic = "ColPali visual retrieval frame-level video search"
             baseline_sim = _semantic_similarity(instruction_topic, baseline_text)
             instructed_sim = _semantic_similarity(instruction_topic, instructed_text)
 
-            assert instructed_sim > baseline_sim or "colpali" in instructed_text.lower(), (
+            assert (
+                instructed_sim > baseline_sim or "colpali" in instructed_text.lower()
+            ), (
                 f"Instructions should influence response toward ColPali topic. "
                 f"Baseline sim={baseline_sim:.2f}, Instructed sim={instructed_sim:.2f}\n"
                 f"Baseline: {baseline_text[:200]}\nInstructed: {instructed_text[:200]}"
@@ -183,7 +199,6 @@ class TestTenantJobs:
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestTenantMemories:
-
     def test_create_search_delete_with_semantic_verification(self):
         """Full memory lifecycle: create → semantic search → verify content → delete → verify gone."""
         if not _memory_available():
@@ -446,12 +461,18 @@ class TestJobExecution:
         from cogniverse_runtime.job_executor import run_job
 
         agent_response = MagicMock()
-        agent_response.json.return_value = {"response": "Found 5 ColPali papers on video retrieval"}
+        agent_response.json.return_value = {
+            "response": "Found 5 ColPali papers on video retrieval"
+        }
         agent_response.raise_for_status = MagicMock()
         agent_response.status_code = 200
 
         wiki_response = MagicMock()
-        wiki_response.json.return_value = {"status": "saved", "doc_id": "wiki_test", "slug": "test_slug"}
+        wiki_response.json.return_value = {
+            "status": "saved",
+            "doc_id": "wiki_test",
+            "slug": "test_slug",
+        }
         wiki_response.raise_for_status = MagicMock()
         wiki_response.status_code = 200
 
@@ -478,24 +499,30 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.run(
-                run_job(job_id, TENANT_ID, RUNTIME)
-            )
+            asyncio.run(run_job(job_id, TENANT_ID, RUNTIME))
 
         urls_called = [c["url"] for c in call_log]
 
-        agent_calls = [c for c in call_log if "/agents/routing_agent/process" in c["url"]]
+        agent_calls = [
+            c for c in call_log if "/agents/routing_agent/process" in c["url"]
+        ]
         assert len(agent_calls) == 1, (
             f"Expected 1 routing_agent call (main query only), got {len(agent_calls)}: {urls_called}"
         )
-        assert agent_calls[0]["payload"]["query"] == "latest research on video retrieval with ColPali"
+        assert (
+            agent_calls[0]["payload"]["query"]
+            == "latest research on video retrieval with ColPali"
+        )
 
         wiki_calls = [c for c in call_log if "/wiki/save" in c["url"]]
         assert len(wiki_calls) == 1, (
             f"Expected 1 wiki/save call, got {len(wiki_calls)}: {urls_called}"
         )
         wiki_payload = wiki_calls[0]["payload"]
-        assert wiki_payload["response"]["answer"] == "Found 5 ColPali papers on video retrieval"
+        assert (
+            wiki_payload["response"]["answer"]
+            == "Found 5 ColPali papers on video retrieval"
+        )
         assert wiki_payload["tenant_id"] == TENANT_ID
 
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
@@ -527,7 +554,9 @@ class TestJobExecution:
         from cogniverse_runtime.job_executor import run_job
 
         agent_response = MagicMock()
-        agent_response.json.return_value = {"response": "ColPali achieves SOTA on video retrieval"}
+        agent_response.json.return_value = {
+            "response": "ColPali achieves SOTA on video retrieval"
+        }
         agent_response.raise_for_status = MagicMock()
         agent_response.status_code = 200
 
@@ -558,13 +587,13 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.run(
-                run_job(job_id, TENANT_ID, RUNTIME)
-            )
+            asyncio.run(run_job(job_id, TENANT_ID, RUNTIME))
 
         urls_called = [c["url"] for c in call_log]
 
-        agent_calls = [c for c in call_log if "/agents/routing_agent/process" in c["url"]]
+        agent_calls = [
+            c for c in call_log if "/agents/routing_agent/process" in c["url"]
+        ]
         assert len(agent_calls) == 2, (
             f"Expected 2 agent calls (main query + summarize), got {len(agent_calls)}: {urls_called}"
         )
@@ -641,11 +670,19 @@ class TestSearchBehavior:
             assert "score" in result
             assert "metadata" in result
             meta = result["metadata"]
-            assert "video_id" in meta, f"Result missing video_id: {result['document_id']}"
-            assert "segment_id" in meta, f"Result missing segment_id: {result['document_id']}"
+            assert "video_id" in meta, (
+                f"Result missing video_id: {result['document_id']}"
+            )
+            assert "segment_id" in meta, (
+                f"Result missing segment_id: {result['document_id']}"
+            )
             temporal = result.get("temporal_info", {})
-            assert "start_time" in temporal, f"Missing start_time for {result['document_id']}"
-            assert "end_time" in temporal, f"Missing end_time for {result['document_id']}"
+            assert "start_time" in temporal, (
+                f"Missing start_time for {result['document_id']}"
+            )
+            assert "end_time" in temporal, (
+                f"Missing end_time for {result['document_id']}"
+            )
             assert temporal["end_time"] > temporal["start_time"]
 
     def test_agent_search_returns_structured_response(self):

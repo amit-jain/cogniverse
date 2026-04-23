@@ -49,13 +49,19 @@ class GraphManager:
         self._code_extractor = CodeExtractor()
         self._doc_extractor = DocExtractor()
 
-    def extract_file(self, file_path: Path, source_doc_id: str) -> Optional[ExtractionResult]:
+    def extract_file(
+        self, file_path: Path, source_doc_id: str
+    ) -> Optional[ExtractionResult]:
         """Run the appropriate extractor for a file's extension."""
         ext = file_path.suffix.lower()
         if ext in code_extensions():
-            return self._code_extractor.extract(file_path, self._tenant_id, source_doc_id)
+            return self._code_extractor.extract(
+                file_path, self._tenant_id, source_doc_id
+            )
         if ext in doc_extensions():
-            return self._doc_extractor.extract(file_path, self._tenant_id, source_doc_id)
+            return self._doc_extractor.extract(
+                file_path, self._tenant_id, source_doc_id
+            )
         return None
 
     def upsert(self, result: ExtractionResult) -> Dict[str, int]:
@@ -82,10 +88,10 @@ class GraphManager:
         """Semantic + BM25 search over nodes."""
         embedding = self._generate_embedding(query)
         yql = (
-            f'select * from sources {self._schema_name} '
+            f"select * from sources {self._schema_name} "
             f'where tenant_id contains "{self._tenant_id}" '
             f'and doc_type contains "node" '
-            f'and userQuery() limit {top_k}'
+            f"and userQuery() limit {top_k}"
         )
         try:
             resp = self._backend.search(
@@ -113,7 +119,9 @@ class GraphManager:
             "depth": depth,
         }
 
-    def get_path(self, source: str, target: str, max_depth: int = 4) -> Optional[List[str]]:
+    def get_path(
+        self, source: str, target: str, max_depth: int = 4
+    ) -> Optional[List[str]]:
         """BFS shortest path between two node names."""
         source_id = normalize_name(source)
         target_id = normalize_name(target)
@@ -235,7 +243,10 @@ class GraphManager:
         """Visit all documents of a given doc_type via Document v1 visit API."""
         url = f"{self._backend._url}:{self._backend._port}"
         visit_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid"
-        params = {"wantedDocumentCount": str(top_k), "selection": f'{self._schema_name}.doc_type=="{doc_type}" and {self._schema_name}.tenant_id=="{self._tenant_id}"'}
+        params = {
+            "wantedDocumentCount": str(top_k),
+            "selection": f'{self._schema_name}.doc_type=="{doc_type}" and {self._schema_name}.tenant_id=="{self._tenant_id}"',
+        }
         try:
             resp = requests.get(visit_url, params=params, timeout=15)
             if not resp.ok:

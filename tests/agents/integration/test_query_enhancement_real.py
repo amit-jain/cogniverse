@@ -87,8 +87,7 @@ def test_enhances_short_query(enhancement_module):
     enhanced = result.enhanced_query
     assert enhanced, "enhanced_query must not be empty"
     assert len(enhanced) > len("cats"), (
-        f"Enhanced query must be longer than original 'cats'. "
-        f"Got: {enhanced!r}"
+        f"Enhanced query must be longer than original 'cats'. Got: {enhanced!r}"
     )
 
 
@@ -103,7 +102,16 @@ def test_preserves_intent(enhancement_module):
 
     all_output = f"{enhanced} {expansion} {synonyms}"
 
-    ml_terms = ["machine learning", "ml", "deep learning", "neural", "algorithm", "model", "training", "learning"]
+    ml_terms = [
+        "machine learning",
+        "ml",
+        "deep learning",
+        "neural",
+        "algorithm",
+        "model",
+        "training",
+        "learning",
+    ]
     matched = [t for t in ml_terms if t in all_output]
     assert matched, (
         f"Enhanced output does not preserve ML intent. "

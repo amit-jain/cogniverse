@@ -74,7 +74,12 @@ class TestEdgeDataclass:
         assert e1.edge_id != e2.edge_id
 
     def test_normalized_source_and_target(self):
-        edge = Edge(tenant_id="t1", source="SearchAgent", target="Vespa Backend", relation="calls")
+        edge = Edge(
+            tenant_id="t1",
+            source="SearchAgent",
+            target="Vespa Backend",
+            relation="calls",
+        )
         assert edge.source_node_id == "searchagent"
         assert edge.target_node_id == "vespa_backend"
 
@@ -123,9 +128,7 @@ class TestCodeExtractor:
         for e in result.edges:
             edges_by_rel.setdefault(e.relation, []).append(e)
         assert "defines" in edges_by_rel
-        assert any(
-            e.target_node_id == "greet" for e in edges_by_rel["defines"]
-        )
+        assert any(e.target_node_id == "greet" for e in edges_by_rel["defines"])
 
     def test_returns_none_for_unsupported_extension(self):
         with tempfile.TemporaryDirectory() as tmpdir:

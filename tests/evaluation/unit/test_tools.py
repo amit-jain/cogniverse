@@ -203,7 +203,9 @@ class TestPhoenixQueryTool:
             tool_func = phoenix_query_tool()
             results = await tool_func(
                 tenant_id="test:unit",
-                query_type="traces", filter="name == 'search'", limit=10
+                query_type="traces",
+                filter="name == 'search'",
+                limit=10,
             )
 
             assert isinstance(results, list)
@@ -233,7 +235,9 @@ class TestPhoenixQueryTool:
             return_value=mock_provider,
         ):
             tool_func = phoenix_query_tool()
-            result = await tool_func(tenant_id="test:unit", query_type="datasets", name="test_dataset")
+            result = await tool_func(
+                tenant_id="test:unit", query_type="datasets", name="test_dataset"
+            )
 
             assert result["name"] == "test_dataset"
             assert result["num_examples"] == 5
@@ -293,7 +297,9 @@ class TestPhoenixQueryTool:
             mock_provider.telemetry.traces.get_spans = AsyncMock(
                 return_value=mock_df_specific
             )
-            result = await tool_func(tenant_id="test:unit", query_type="experiments", name="exp1")
+            result = await tool_func(
+                tenant_id="test:unit", query_type="experiments", name="exp1"
+            )
             assert result == {
                 "experiment_name": "exp1",
                 "traces": mock_df_specific.to_dict(orient="records"),

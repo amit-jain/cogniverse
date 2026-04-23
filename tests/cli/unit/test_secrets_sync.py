@@ -7,11 +7,15 @@ from unittest.mock import patch
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=[], returncode=0, stdout=stdout, stderr=stderr
+    )
 
 
 def _err(returncode: int = 1, stderr: str = "boom") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout="", stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=[], returncode=returncode, stdout="", stderr=stderr
+    )
 
 
 def test_returns_false_when_token_missing_and_not_required(monkeypatch, tmp_path):
@@ -89,7 +93,11 @@ def test_sync_creates_namespace_and_applies_secret(monkeypatch, tmp_path):
     create_ns = [c for c in calls if c[0][:3] == ["kubectl", "create", "namespace"]]
     assert len(create_ns) == 1
 
-    render = [c for c in calls if "create" in c[0] and "secret" in c[0] and "--dry-run=client" in c[0]]
+    render = [
+        c
+        for c in calls
+        if "create" in c[0] and "secret" in c[0] and "--dry-run=client" in c[0]
+    ]
     assert len(render) == 1
     # Token injected via --from-literal
     assert any("--from-literal=HF_TOKEN=the-token" in a for a in render[0][0])

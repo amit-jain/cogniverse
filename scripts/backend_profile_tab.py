@@ -407,9 +407,7 @@ def render_create_profile_form(manager, tenant_id: str):
                     "deploy_schema": bool(deploy_schema),
                 }
                 with httpx.Client(timeout=60.0) as client:
-                    resp = client.post(
-                        f"{api_url}/admin/profiles", json=create_payload
-                    )
+                    resp = client.post(f"{api_url}/admin/profiles", json=create_payload)
                 if resp.status_code == 201:
                     data = resp.json()
                     st.success(f"✅ Profile '{profile_name}' created successfully!")
@@ -424,10 +422,10 @@ def render_create_profile_form(manager, tenant_id: str):
                         )
                     st.rerun()
                 else:
-                    detail = (
-                        resp.json().get("detail", resp.text) if resp.text else ""
+                    detail = resp.json().get("detail", resp.text) if resp.text else ""
+                    st.error(
+                        f"❌ Failed to create profile (HTTP {resp.status_code}): {detail}"
                     )
-                    st.error(f"❌ Failed to create profile (HTTP {resp.status_code}): {detail}")
             except Exception as e:
                 st.error(f"❌ Failed to create profile: {e}")
 

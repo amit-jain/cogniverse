@@ -47,9 +47,7 @@ _TEST_TENANT = "real_multi_agent_test"
 # GLiNER availability check
 HAS_GLINER = importlib.util.find_spec("gliner") is not None
 
-skip_if_no_gliner = pytest.mark.skipif(
-    not HAS_GLINER, reason="GLiNER not installed"
-)
+skip_if_no_gliner = pytest.mark.skipif(not HAS_GLINER, reason="GLiNER not installed")
 
 
 @pytest.fixture
@@ -178,7 +176,12 @@ class TestRealGatewayAgentIntegration:
         assert result is not None
         assert result.complexity in ("simple", "complex")
         assert result.modality in (
-            "video", "text", "audio", "image", "document", "both",
+            "video",
+            "text",
+            "audio",
+            "image",
+            "document",
+            "both",
         )
         assert result.routed_to is not None
         assert 0.0 <= result.confidence <= 1.0
@@ -305,9 +308,7 @@ class TestRealEntityExtractionIntegration:
         with dspy.context(lm=test_lm):
             deps = EntityExtractionDeps()
             # Patch out GLiNER initialization so it falls back to DSPy
-            with patch.object(
-                EntityExtractionAgent, "_initialize_extractors"
-            ):
+            with patch.object(EntityExtractionAgent, "_initialize_extractors"):
                 agent = EntityExtractionAgent(deps=deps, port=18011)
             agent._gliner_extractor = None
             agent._spacy_analyzer = None
@@ -398,7 +399,11 @@ class TestRealQueryEnhancementIntegration:
             input_data = QueryEnhancementInput(
                 query="videos about self-driving cars in San Francisco",
                 entities=[
-                    {"text": "self-driving cars", "type": "CONCEPT", "confidence": 0.92},
+                    {
+                        "text": "self-driving cars",
+                        "type": "CONCEPT",
+                        "confidence": 0.92,
+                    },
                     {"text": "San Francisco", "type": "PLACE", "confidence": 0.95},
                 ],
                 relationships=[
@@ -617,4 +622,6 @@ if __name__ == "__main__":
             ]
         )
     else:
-        pytest.main(["-v", "tests/agents/integration/test_real_multi_agent_integration.py"])
+        pytest.main(
+            ["-v", "tests/agents/integration/test_real_multi_agent_integration.py"]
+        )

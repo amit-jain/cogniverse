@@ -50,7 +50,7 @@ class TestExperimentTracker:
     @pytest.mark.unit
     def test_init_default_params(self, mock_dependencies):
         """Test initialization with default parameters."""
-        tracker = ExperimentTracker(tenant_id='test:unit')
+        tracker = ExperimentTracker(tenant_id="test:unit")
 
         assert tracker.experiment_project_name == "experiments"
         assert tracker.enable_quality_evaluators is True

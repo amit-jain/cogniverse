@@ -77,7 +77,10 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
 
 
 def pull_and_import_third_party(
-    cluster_name: str, values_file: Path, *, skip_llm: bool = False,
+    cluster_name: str,
+    values_file: Path,
+    *,
+    skip_llm: bool = False,
 ) -> None:
     """Pull third-party images locally and import into k3d.
 

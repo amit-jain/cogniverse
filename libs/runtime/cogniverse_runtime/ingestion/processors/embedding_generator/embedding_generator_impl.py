@@ -94,9 +94,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         try:
             if model_loader == "colbert":
-                model_name = self.profile_config.get(
-                    "semantic_model", self.model_name
-                )
+                model_name = self.profile_config.get("semantic_model", self.model_name)
                 self.colbert_model, _ = get_or_load_model(
                     model_name, self.profile_config, self.logger
                 )

@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
-
 class AnnotationThresholdsConfig(BaseModel):
     """Thresholds controlling when spans are flagged for annotation."""
 
@@ -61,9 +60,7 @@ class OptimizationTriggersConfig(BaseModel):
     annotation_lookback_hours: int = Field(
         24, description="How far back to look for annotation identification"
     )
-    span_eval_batch_size: int = Field(
-        100, description="Batch size for span evaluation"
-    )
+    span_eval_batch_size: int = Field(100, description="Batch size for span evaluation")
     max_annotations_per_cycle: int = Field(
         100, description="Max annotations per orchestrator run"
     )

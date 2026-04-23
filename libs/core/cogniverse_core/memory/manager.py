@@ -32,10 +32,15 @@ _DEFAULT_TENANT_CACHE_CAPACITY = 16
 
 def _tenant_cache_capacity() -> int:
     try:
-        return max(1, int(os.environ.get(
-            "COGNIVERSE_TENANT_CACHE_CAPACITY",
-            _DEFAULT_TENANT_CACHE_CAPACITY,
-        )))
+        return max(
+            1,
+            int(
+                os.environ.get(
+                    "COGNIVERSE_TENANT_CACHE_CAPACITY",
+                    _DEFAULT_TENANT_CACHE_CAPACITY,
+                )
+            ),
+        )
     except (TypeError, ValueError):
         return _DEFAULT_TENANT_CACHE_CAPACITY
 
@@ -56,12 +61,15 @@ def _on_tenant_evicted(tenant_id: str, instance: "Mem0MemoryManager") -> None:
     except Exception as exc:
         logger.debug("Mem0 eviction cleanup for %s: %s", tenant_id, exc)
 
+
 # Vespa standard ports — single source of truth for config port derivation.
 # Duplicated from cogniverse_vespa.config_utils to avoid cross-layer import
 # (core cannot depend on vespa).
 _VESPA_DEFAULT_DATA_PORT = 8080
 _VESPA_DEFAULT_CONFIG_PORT = 19071
-_VESPA_CONFIG_PORT_OFFSET = _VESPA_DEFAULT_CONFIG_PORT - _VESPA_DEFAULT_DATA_PORT  # 10991
+_VESPA_CONFIG_PORT_OFFSET = (
+    _VESPA_DEFAULT_CONFIG_PORT - _VESPA_DEFAULT_DATA_PORT
+)  # 10991
 
 
 def _calculate_config_port(data_port: int) -> int:
@@ -258,7 +266,8 @@ class Mem0MemoryManager:
                 logger.debug(
                     "ConfigManager.add_backend_profile for '%s' raised "
                     "(may be a harmless re-register): %s",
-                    base_schema_name, exc,
+                    base_schema_name,
+                    exc,
                 )
 
         config_backend = config.get("backend", {})

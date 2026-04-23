@@ -1,6 +1,5 @@
 """Unit tests for command routing."""
 
-
 from cogniverse_messaging.command_router import parse_message
 
 
@@ -57,18 +56,14 @@ class TestCommandParsing:
         assert result.is_help
 
     def test_photo_routes_to_search(self):
-        result = parse_message(
-            has_photo=True, photo_file_id="AgACAgIAAxk"
-        )
+        result = parse_message(has_photo=True, photo_file_id="AgACAgIAAxk")
         assert result.agent_name == "search_agent"
         assert result.has_media
         assert result.media_type == "photo"
         assert result.media_file_id == "AgACAgIAAxk"
 
     def test_video_routes_to_search(self):
-        result = parse_message(
-            has_video=True, video_file_id="BAACAgIAAxk"
-        )
+        result = parse_message(has_video=True, video_file_id="BAACAgIAAxk")
         assert result.agent_name == "search_agent"
         assert result.has_media
         assert result.media_type == "video"

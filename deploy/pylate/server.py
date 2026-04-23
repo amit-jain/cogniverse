@@ -15,7 +15,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("pylate_server")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 
 
 class PoolingRequest(BaseModel):
@@ -81,7 +83,9 @@ def build_app(model_name: str, device: str) -> FastAPI:
     @app.post("/pooling", response_model=PoolingResponse)
     def pooling(req: PoolingRequest) -> PoolingResponse:
         if not req.input:
-            raise HTTPException(status_code=400, detail="`input` must be a non-empty list")
+            raise HTTPException(
+                status_code=400, detail="`input` must be a non-empty list"
+            )
         embeddings = _encode(app.state.model, req.input, req.is_query)
         return PoolingResponse(
             data=[

@@ -160,7 +160,8 @@ class ConfigUtils:
                 if profile_name in merged_profiles:
                     # Merge non-empty tenant fields into system base
                     tenant_dict = {
-                        k: v for k, v in tenant_profile.to_dict().items()
+                        k: v
+                        for k, v in tenant_profile.to_dict().items()
                         if v  # Skip empty/falsy values (defaults from from_dict)
                     }
                     merged = merged_profiles[profile_name].to_dict()
@@ -247,21 +248,29 @@ class ConfigUtils:
             "routing_agent_url": lambda: self._system_config.routing_agent_url,
             "video_agent_url": lambda: self._system_config.video_agent_url,
             "summarizer_agent_url": lambda: self._system_config.summarizer_agent_url,
-            "detailed_report_agent_url": lambda: self._system_config.summarizer_agent_url,  # Alias
+            "detailed_report_agent_url": lambda: (
+                self._system_config.summarizer_agent_url
+            ),  # Alias
             "orchestrator_agent_port": lambda: 8013,  # OrchestratorAgent default
             "routing_agent_port": lambda: 8001,  # Hardcoded default
             "text_analysis_port": lambda: 8005,  # Hardcoded default
             "search_backend": lambda: self._system_config.search_backend,
             "backend_url": lambda: self._system_config.backend_url,
             "backend_port": lambda: self._system_config.backend_port,
-            "url": lambda: self._system_config.backend_url,  # Alias for backend dict access
-            "port": lambda: self._system_config.backend_port,  # Alias for backend dict access
+            "url": lambda: (
+                self._system_config.backend_url
+            ),  # Alias for backend dict access
+            "port": lambda: (
+                self._system_config.backend_port
+            ),  # Alias for backend dict access
             "llm_model": lambda: self._system_config.llm_model,
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
             "base_url": lambda: self._system_config.base_url,
             "llm_api_key": lambda: self._system_config.llm_api_key,
             "telemetry_url": lambda: self._system_config.telemetry_url,
-            "telemetry_collector_endpoint": lambda: self._system_config.telemetry_collector_endpoint,
+            "telemetry_collector_endpoint": lambda: (
+                self._system_config.telemetry_collector_endpoint
+            ),
             "environment": lambda: self._system_config.environment,
         }
 

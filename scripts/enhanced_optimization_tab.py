@@ -28,10 +28,12 @@ logger = logging.getLogger(__name__)
 def run_async_in_streamlit(coro):
     """Helper to run async operations in Streamlit"""
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, coro)
                 return future.result()
@@ -49,16 +51,18 @@ def render_enhanced_optimization_tab():
     )
 
     # Create sub-tabs for different optimization workflows
-    opt_tabs = st.tabs([
-        "📊 Overview",
-        "⭐ Search Annotations",
-        "📚 Golden Dataset",
-        "🔬 Synthetic Data",
-        "🎯 Module Optimization",
-        "🔄 Reranking Optimization",
-        "📈 Profile Selection",
-        "📉 Metrics Dashboard"
-    ])
+    opt_tabs = st.tabs(
+        [
+            "📊 Overview",
+            "⭐ Search Annotations",
+            "📚 Golden Dataset",
+            "🔬 Synthetic Data",
+            "🎯 Module Optimization",
+            "🔄 Reranking Optimization",
+            "📈 Profile Selection",
+            "📉 Metrics Dashboard",
+        ]
+    )
 
     with opt_tabs[0]:
         _render_overview_tab()
@@ -99,7 +103,7 @@ def _render_overview_tab():
             "Total Annotations",
             annotation_count,
             delta=None,
-            help="Human and LLM annotations collected"
+            help="Human and LLM annotations collected",
         )
 
     with col2:
@@ -109,7 +113,7 @@ def _render_overview_tab():
             "Golden Dataset Size",
             golden_count,
             delta=None,
-            help="Queries with ground truth labels"
+            help="Queries with ground truth labels",
         )
 
     with col3:
@@ -119,7 +123,7 @@ def _render_overview_tab():
             "Optimization Runs",
             len(opt_runs),
             delta=None,
-            help="Total optimization jobs triggered"
+            help="Total optimization jobs triggered",
         )
 
     with col4:
@@ -130,9 +134,11 @@ def _render_overview_tab():
             time_ago = datetime.now() - last_time
             st.metric(
                 "Last Optimization",
-                f"{time_ago.seconds // 60}m ago" if time_ago.seconds < 3600 else f"{time_ago.seconds // 3600}h ago",
+                f"{time_ago.seconds // 60}m ago"
+                if time_ago.seconds < 3600
+                else f"{time_ago.seconds // 3600}h ago",
                 delta=None,
-                help="Time since last optimization"
+                help="Time since last optimization",
             )
         else:
             st.metric("Last Optimization", "Never", delta=None)
@@ -159,21 +165,25 @@ def _render_overview_tab():
     st.subheader("📜 Recent Optimization History")
 
     if opt_runs:
-        history_df = pd.DataFrame([
-            {
-                "Timestamp": run.get("timestamp", datetime.now()).strftime("%Y-%m-%d %H:%M"),
-                "Type": run.get("type", "unknown"),
-                "Status": run.get("status", "unknown"),
-                "Examples": run.get("examples_count", 0),
-                "Optimizer": run.get("optimizer", "N/A")
-            }
-            for run in opt_runs[-10:]  # Last 10 runs
-        ])
+        history_df = pd.DataFrame(
+            [
+                {
+                    "Timestamp": run.get("timestamp", datetime.now()).strftime(
+                        "%Y-%m-%d %H:%M"
+                    ),
+                    "Type": run.get("type", "unknown"),
+                    "Status": run.get("status", "unknown"),
+                    "Examples": run.get("examples_count", 0),
+                    "Optimizer": run.get("optimizer", "N/A"),
+                }
+                for run in opt_runs[-10:]  # Last 10 runs
+            ]
+        )
 
         st.dataframe(
             history_df.sort_values("Timestamp", ascending=False),
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
         )
     else:
         st.info("No optimization runs yet. Start by collecting annotations!")
@@ -190,11 +200,13 @@ def _render_search_annotation_tab():
         col1, col2 = st.columns(2)
         with col1:
             st.text(f"Tenant: {tenant_id}")
-            lookback_hours = st.number_input("Lookback Hours", min_value=1, max_value=168, value=24)
+            lookback_hours = st.number_input(
+                "Lookback Hours", min_value=1, max_value=168, value=24
+            )
         with col2:
             annotation_type = st.selectbox(
                 "Annotation Type",
-                ["Thumbs Up/Down", "Star Rating (1-5)", "Relevance Score (0-1)"]
+                ["Thumbs Up/Down", "Star Rating (1-5)", "Relevance Score (0-1)"],
             )
 
     # Fetch search spans
@@ -219,13 +231,15 @@ def _render_search_annotation_tab():
                     return await provider.traces.get_spans(
                         project=phoenix_project,
                         start_time=start_time,
-                        end_time=end_time
+                        end_time=end_time,
                     )
 
                 spans_df = run_async_in_streamlit(fetch_spans())
 
                 # Filter for search spans
-                search_spans = spans_df[spans_df["name"].str.contains("search", case=False)]
+                search_spans = spans_df[
+                    spans_df["name"].str.contains("search", case=False)
+                ]
 
                 st.session_state["search_spans"] = search_spans
                 st.success(f"✅ Fetched {len(search_spans)} search results")
@@ -234,7 +248,10 @@ def _render_search_annotation_tab():
                 st.error(f"❌ Failed to fetch spans: {e}")
 
     # Display search results for annotation
-    if "search_spans" in st.session_state and not st.session_state["search_spans"].empty:
+    if (
+        "search_spans" in st.session_state
+        and not st.session_state["search_spans"].empty
+    ):
         spans = st.session_state["search_spans"]
 
         st.subheader(f"📋 Annotation Queue ({len(spans)} results)")
@@ -263,7 +280,9 @@ def _render_search_annotation_tab():
                     results = span.get("attributes.results", [])
                     if results:
                         for i, result in enumerate(results[:5]):  # Top 5
-                            st.write(f"{i + 1}. {result.get('title', result.get('id', 'Unknown'))}")
+                            st.write(
+                                f"{i + 1}. {result.get('title', result.get('id', 'Unknown'))}"
+                            )
                     else:
                         st.info("No results returned")
 
@@ -282,11 +301,17 @@ def _render_search_annotation_tab():
                     if annotation_type == "Thumbs Up/Down":
                         col1, col2, col3 = st.columns([1, 1, 2])
                         with col1:
-                            thumbs_up = st.form_submit_button("👍 Good", use_container_width=True)
+                            thumbs_up = st.form_submit_button(
+                                "👍 Good", use_container_width=True
+                            )
                         with col2:
-                            thumbs_down = st.form_submit_button("👎 Bad", use_container_width=True)
+                            thumbs_down = st.form_submit_button(
+                                "👎 Bad", use_container_width=True
+                            )
                         with col3:
-                            notes = st.text_input("Notes (optional)", key=f"notes_{idx}")
+                            notes = st.text_input(
+                                "Notes (optional)", key=f"notes_{idx}"
+                            )
 
                         if thumbs_up:
                             _save_search_annotation(
@@ -294,7 +319,7 @@ def _render_search_annotation_tab():
                                 rating=1.0,
                                 annotation_type="thumbs",
                                 notes=notes,
-                                tenant_id=tenant_id
+                                tenant_id=tenant_id,
                             )
                             st.success("✅ Saved: Thumbs Up")
 
@@ -304,7 +329,7 @@ def _render_search_annotation_tab():
                                 rating=0.0,
                                 annotation_type="thumbs",
                                 notes=notes,
-                                tenant_id=tenant_id
+                                tenant_id=tenant_id,
                             )
                             st.success("✅ Saved: Thumbs Down")
 
@@ -313,7 +338,9 @@ def _render_search_annotation_tab():
                         with col1:
                             stars = st.slider("Rating", 1, 5, 3, key=f"stars_{idx}")
                         with col2:
-                            notes = st.text_input("Notes (optional)", key=f"notes_{idx}")
+                            notes = st.text_input(
+                                "Notes (optional)", key=f"notes_{idx}"
+                            )
 
                         if st.form_submit_button("💾 Save Rating"):
                             _save_search_annotation(
@@ -321,16 +348,20 @@ def _render_search_annotation_tab():
                                 rating=stars / 5.0,  # Normalize to 0-1
                                 annotation_type="stars",
                                 notes=notes,
-                                tenant_id=tenant_id
+                                tenant_id=tenant_id,
                             )
                             st.success(f"✅ Saved: {stars} stars")
 
                     else:  # Relevance Score
                         col1, col2 = st.columns([1, 2])
                         with col1:
-                            relevance = st.slider("Relevance", 0.0, 1.0, 0.5, 0.1, key=f"rel_{idx}")
+                            relevance = st.slider(
+                                "Relevance", 0.0, 1.0, 0.5, 0.1, key=f"rel_{idx}"
+                            )
                         with col2:
-                            notes = st.text_input("Notes (optional)", key=f"notes_{idx}")
+                            notes = st.text_input(
+                                "Notes (optional)", key=f"notes_{idx}"
+                            )
 
                         if st.form_submit_button("💾 Save Score"):
                             _save_search_annotation(
@@ -338,7 +369,7 @@ def _render_search_annotation_tab():
                                 rating=relevance,
                                 annotation_type="relevance",
                                 notes=notes,
-                                tenant_id=tenant_id
+                                tenant_id=tenant_id,
                             )
                             st.success(f"✅ Saved: {relevance:.1f} relevance")
 
@@ -347,11 +378,7 @@ def _render_search_annotation_tab():
 
 
 def _save_search_annotation(
-    span_id: str,
-    rating: float,
-    annotation_type: str,
-    notes: str,
-    tenant_id: str
+    span_id: str, rating: float, annotation_type: str, notes: str, tenant_id: str
 ):
     """Save search result annotation via telemetry provider"""
     try:
@@ -362,7 +389,9 @@ def _save_search_annotation(
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
         # Create annotation
-        label = "positive" if rating >= 0.6 else "negative" if rating <= 0.4 else "neutral"
+        label = (
+            "positive" if rating >= 0.6 else "negative" if rating <= 0.4 else "neutral"
+        )
 
         annotation_data = {
             "label": label,
@@ -370,7 +399,7 @@ def _save_search_annotation(
             "explanation": notes or "User annotation",
             "annotation_type": annotation_type,
             "annotator": "human",
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
         # Save annotation using provider
@@ -417,28 +446,34 @@ def _render_golden_dataset_tab():
     if st.button("🏗️ Build Golden Dataset", type="primary"):
         with st.spinner("Building golden dataset from annotations..."):
             try:
-                golden_dataset = run_async_in_streamlit(_build_golden_dataset_from_phoenix(
-                    tenant_id=tenant_id,
-                    min_rating=min_rating,
-                    lookback_days=lookback_days
-                ))
+                golden_dataset = run_async_in_streamlit(
+                    _build_golden_dataset_from_phoenix(
+                        tenant_id=tenant_id,
+                        min_rating=min_rating,
+                        lookback_days=lookback_days,
+                    )
+                )
 
                 st.session_state["golden_dataset"] = golden_dataset
                 st.session_state["golden_dataset_size"] = len(golden_dataset)
 
-                st.success(f"✅ Built golden dataset with {len(golden_dataset)} queries")
+                st.success(
+                    f"✅ Built golden dataset with {len(golden_dataset)} queries"
+                )
 
                 # Display sample
                 if golden_dataset:
                     st.subheader("📋 Dataset Sample")
-                    sample_df = pd.DataFrame([
-                        {
-                            "Query": query,
-                            "Expected Videos": len(data.get("expected_videos", [])),
-                            "Avg Relevance": data.get("avg_relevance", 0.0)
-                        }
-                        for query, data in list(golden_dataset.items())[:10]
-                    ])
+                    sample_df = pd.DataFrame(
+                        [
+                            {
+                                "Query": query,
+                                "Expected Videos": len(data.get("expected_videos", [])),
+                                "Avg Relevance": data.get("avg_relevance", 0.0),
+                            }
+                            for query, data in list(golden_dataset.items())[:10]
+                        ]
+                    )
                     st.dataframe(sample_df, use_container_width=True)
 
             except Exception as e:
@@ -455,7 +490,7 @@ def _render_golden_dataset_tab():
         with col1:
             filename = st.text_input(
                 "Filename",
-                value=f"golden_dataset_{tenant_id}_{datetime.now().strftime('%Y%m%d')}.json"
+                value=f"golden_dataset_{tenant_id}_{datetime.now().strftime('%Y%m%d')}.json",
             )
         with col2:
             if st.button("📥 Download JSON"):
@@ -464,14 +499,12 @@ def _render_golden_dataset_tab():
                     label="Download",
                     data=json_str,
                     file_name=filename,
-                    mime="application/json"
+                    mime="application/json",
                 )
 
 
 async def _build_golden_dataset_from_phoenix(
-    tenant_id: str,
-    min_rating: float,
-    lookback_days: int
+    tenant_id: str, min_rating: float, lookback_days: int
 ) -> Dict:
     """Build golden dataset from annotated spans"""
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
@@ -487,9 +520,7 @@ async def _build_golden_dataset_from_phoenix(
     start_time = end_time - timedelta(days=lookback_days)
 
     spans_df = await provider.traces.get_spans(
-        project=phoenix_project,
-        start_time=start_time,
-        end_time=end_time
+        project=phoenix_project, start_time=start_time, end_time=end_time
     )
 
     # Filter for search spans with annotations
@@ -527,7 +558,9 @@ async def _build_golden_dataset_from_phoenix(
             "relevance_scores": relevance_scores,
             "avg_relevance": float(annotation_score),
             "profile": span.get("attributes.profile", "unknown"),
-            "timestamp": span.get("start_time", "").isoformat() if hasattr(span.get("start_time"), "isoformat") else str(span.get("start_time"))
+            "timestamp": span.get("start_time", "").isoformat()
+            if hasattr(span.get("start_time"), "isoformat")
+            else str(span.get("start_time")),
         }
 
     return golden_dataset
@@ -544,7 +577,7 @@ def _render_synthetic_data_tab():
         optimizer = st.selectbox(
             "Optimizer Type",
             ["modality", "cross_modal", "routing", "workflow", "unified"],
-            help="Which optimizer to generate data for"
+            help="Which optimizer to generate data for",
         )
     with col2:
         count = st.number_input("Examples to Generate", 10, 10000, 100, 10)
@@ -562,7 +595,7 @@ def _render_synthetic_data_tab():
             "✅ Enable Human-in-the-Loop Review",
             value=True,
             key="enable_approval_checkbox",
-            help="Review AI-generated outputs before using them in optimization (enabled by default)"
+            help="Review AI-generated outputs before using them in optimization (enabled by default)",
         )
 
     with col2:
@@ -580,16 +613,19 @@ def _render_synthetic_data_tab():
         with col1:
             confidence_threshold = st.slider(
                 "Auto-Approval Threshold",
-                0.0, 1.0, 0.85, 0.05,
+                0.0,
+                1.0,
+                0.85,
+                0.05,
                 help="Items with confidence ≥ this value are automatically approved",
-                key="confidence_threshold_slider"
+                key="confidence_threshold_slider",
             )
 
         with col2:
             st.metric(
                 "Expected Review Rate",
                 f"~{int((1 - confidence_threshold) * 100)}%",
-                help="Estimated percentage of items requiring review"
+                help="Estimated percentage of items requiring review",
             )
 
         st.caption(
@@ -603,9 +639,16 @@ def _render_synthetic_data_tab():
         with col1:
             strategies = st.multiselect(
                 "Sampling Strategies",
-                ["diverse", "temporal_recent", "entity_rich", "multi_modal_sequences", "by_modality", "cross_modal_pairs"],
+                [
+                    "diverse",
+                    "temporal_recent",
+                    "entity_rich",
+                    "multi_modal_sequences",
+                    "by_modality",
+                    "cross_modal_pairs",
+                ],
                 default=["diverse"],
-                help="How to sample content from Vespa"
+                help="How to sample content from Vespa",
             )
         with col2:
             max_profiles = st.slider("Max Profiles", 1, 10, 3)
@@ -635,13 +678,13 @@ def _render_synthetic_data_tab():
                     "vespa_sample_size": vespa_sample_size,
                     "strategies": strategies,
                     "max_profiles": max_profiles,
-                    "tenant_id": tenant_id
+                    "tenant_id": tenant_id,
                 }
 
                 response = requests.post(
                     f"{api_base}/synthetic/generate",
                     json=request_payload,
-                    timeout=300  # 5 minutes
+                    timeout=300,  # 5 minutes
                 )
 
                 if response.status_code == 200:
@@ -653,29 +696,36 @@ def _render_synthetic_data_tab():
                     if enable_approval:
                         _process_approval_workflow(result, confidence_threshold)
                     else:
-                        st.success(f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles")
+                        st.success(
+                            f"✅ Generated {result['count']} examples using {len(result['selected_profiles'])} profiles"
+                        )
 
                     # Show profile selection reasoning
-                    st.info(f"**Profile Selection**: {result['profile_selection_reasoning']}")
+                    st.info(
+                        f"**Profile Selection**: {result['profile_selection_reasoning']}"
+                    )
 
                     # Display metadata
                     col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric("Schema", result['schema_name'])
+                        st.metric("Schema", result["schema_name"])
                     with col2:
-                        st.metric("Generation Time", f"{result['metadata'].get('generation_time_ms', 0)}ms")
+                        st.metric(
+                            "Generation Time",
+                            f"{result['metadata'].get('generation_time_ms', 0)}ms",
+                        )
                     with col3:
-                        st.metric("Profiles Used", len(result['selected_profiles']))
+                        st.metric("Profiles Used", len(result["selected_profiles"]))
 
                     # Show selected profiles
                     st.subheader("📋 Selected Profiles")
-                    for profile in result['selected_profiles']:
+                    for profile in result["selected_profiles"]:
                         st.code(profile, language=None)
 
                     # Display sample data
-                    if result['data']:
+                    if result["data"]:
                         st.subheader("📊 Sample Generated Examples")
-                        sample_df = pd.DataFrame(result['data'][:10])
+                        sample_df = pd.DataFrame(result["data"][:10])
                         st.dataframe(sample_df, use_container_width=True)
 
                     # Show inline approval interface if enabled
@@ -684,10 +734,14 @@ def _render_synthetic_data_tab():
                         _render_inline_approval_interface()
 
                 else:
-                    st.error(f"❌ Generation failed: {response.status_code} - {response.text}")
+                    st.error(
+                        f"❌ Generation failed: {response.status_code} - {response.text}"
+                    )
 
             except requests.exceptions.ConnectionError:
-                st.error("❌ Cannot connect to API. Make sure the runtime service is running.")
+                st.error(
+                    "❌ Cannot connect to API. Make sure the runtime service is running."
+                )
             except requests.exceptions.Timeout:
                 st.error("❌ Request timed out. Try reducing the sample size or count.")
             except Exception as e:
@@ -695,7 +749,10 @@ def _render_synthetic_data_tab():
                 logger.exception("Synthetic data generation failed")
 
     # Export synthetic data
-    if "synthetic_data_result" in st.session_state and st.session_state["synthetic_data_result"]:
+    if (
+        "synthetic_data_result" in st.session_state
+        and st.session_state["synthetic_data_result"]
+    ):
         st.markdown("---")
         st.subheader("💾 Export Synthetic Data")
 
@@ -705,7 +762,7 @@ def _render_synthetic_data_tab():
         with col1:
             filename = st.text_input(
                 "Filename",
-                value=f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                value=f"synthetic_{result['optimizer']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
             )
         with col2:
             if st.button("📥 Download JSON"):
@@ -714,14 +771,14 @@ def _render_synthetic_data_tab():
                     label="Download",
                     data=json_str,
                     file_name=filename,
-                    mime="application/json"
+                    mime="application/json",
                 )
 
         # Use in optimization
         st.markdown("---")
         st.subheader("🎯 Use in Optimization")
         st.markdown(f"""
-        The generated data is ready for use with **{result['optimizer'].replace('_', ' ').title()} Optimizer**.
+        The generated data is ready for use with **{result["optimizer"].replace("_", " ").title()} Optimizer**.
 
         **Next Steps:**
         1. Review the generated examples above
@@ -745,38 +802,38 @@ def _render_synthetic_data_tab():
         "modality": {
             "description": "Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)",
             "schema": "ModalityExampleSchema",
-            "features": "Generates queries targeting specific modalities"
+            "features": "Generates queries targeting specific modalities",
         },
         "cross_modal": {
             "description": "Multi-modal fusion decisions",
             "schema": "FusionHistorySchema",
-            "features": "Creates fusion scenarios with improvement metrics"
+            "features": "Creates fusion scenarios with improvement metrics",
         },
         "routing": {
             "description": "Entity-based advanced routing",
             "schema": "RoutingExperienceSchema",
-            "features": "Generates queries with entities and relationships"
+            "features": "Generates queries with entities and relationships",
         },
         "workflow": {
             "description": "Multi-agent workflow orchestration",
             "schema": "WorkflowExecutionSchema",
-            "features": "Creates multi-step workflow patterns"
+            "features": "Creates multi-step workflow patterns",
         },
         "unified": {
             "description": "Combined routing and workflow planning",
             "schema": "Mixed schemas",
-            "features": "Generates diverse examples for multiple optimizers"
-        }
+            "features": "Generates diverse examples for multiple optimizers",
+        },
     }
 
     if optimizer in optimizer_info:
         info = optimizer_info[optimizer]
         st.info(f"""
-        **{optimizer.replace('_', ' ').title()} Optimizer**
+        **{optimizer.replace("_", " ").title()} Optimizer**
 
-        **Description**: {info['description']}
-        **Schema**: `{info['schema']}`
-        **Features**: {info['features']}
+        **Description**: {info["description"]}
+        **Schema**: `{info["schema"]}`
+        **Features**: {info["features"]}
         """)
 
 
@@ -802,7 +859,7 @@ def _render_routing_optimization_tab():
         optimizer_type = st.selectbox(
             "Module to Optimize",
             ["modality", "cross_modal", "routing", "workflow", "unified"],
-            help="Which routing/workflow module to optimize (modality=per-modality routing, cross_modal=fusion, routing=entity-based, workflow=orchestration, unified=combined)"
+            help="Which routing/workflow module to optimize (modality=per-modality routing, cross_modal=fusion, routing=entity-based, workflow=orchestration, unified=combined)",
         )
 
     with col2:
@@ -811,18 +868,20 @@ def _render_routing_optimization_tab():
             min_value=10,
             max_value=500,
             value=100,
-            help="Maximum optimization iterations"
+            help="Maximum optimization iterations",
         )
         use_synthetic = st.checkbox(
             "Use Synthetic Data",
             value=True,
-            help="Generate synthetic training data from Vespa backend"
+            help="Generate synthetic training data from Vespa backend",
         )
 
     # Golden dataset selection when synthetic data is disabled
     if not use_synthetic:
         st.markdown("### 📚 Golden Dataset Selection")
-        st.info("Using golden evaluation dataset from telemetry (harvested from traces)")
+        st.info(
+            "Using golden evaluation dataset from telemetry (harvested from traces)"
+        )
 
         # Query Phoenix for available datasets
         try:
@@ -849,54 +908,65 @@ def _render_routing_optimization_tab():
                 "http://localhost:6006/graphql",
                 json={"query": query},
                 headers={"Content-Type": "application/json"},
-                timeout=5
+                timeout=5,
             )
 
             datasets = []
             if response.status_code == 200:
                 result = response.json()
-                if result and 'data' in result and result['data']:
-                    for edge in result.get('data', {}).get('datasets', {}).get('edges', []):
-                        if edge and 'node' in edge:
-                            node = edge['node']
-                            datasets.append({
-                                'id': node['id'],
-                                'name': node['name'],
-                                'example_count': node['exampleCount'],
-                                'created_at': node.get('createdAt', ''),
-                                'description': node.get('description', '')
-                            })
+                if result and "data" in result and result["data"]:
+                    for edge in (
+                        result.get("data", {}).get("datasets", {}).get("edges", [])
+                    ):
+                        if edge and "node" in edge:
+                            node = edge["node"]
+                            datasets.append(
+                                {
+                                    "id": node["id"],
+                                    "name": node["name"],
+                                    "example_count": node["exampleCount"],
+                                    "created_at": node.get("createdAt", ""),
+                                    "description": node.get("description", ""),
+                                }
+                            )
 
             if datasets:
                 col1, col2 = st.columns([2, 1])
                 with col1:
                     # Create dataset options with descriptions
-                    dataset_options = [d['name'] for d in datasets]
+                    dataset_options = [d["name"] for d in datasets]
                     selected_dataset_name = st.selectbox(
                         "Select Telemetry Dataset",
                         options=dataset_options,
-                        help="Datasets stored in telemetry system"
+                        help="Datasets stored in telemetry system",
                     )
                     dataset_name = selected_dataset_name
 
                 with col2:
                     # Show info for selected dataset
-                    selected_dataset = next((d for d in datasets if d['name'] == selected_dataset_name), None)
+                    selected_dataset = next(
+                        (d for d in datasets if d["name"] == selected_dataset_name),
+                        None,
+                    )
                     if selected_dataset:
-                        st.metric("Dataset Size", selected_dataset['example_count'])
-                        if selected_dataset['description']:
+                        st.metric("Dataset Size", selected_dataset["example_count"])
+                        if selected_dataset["description"]:
                             st.caption(f"_{selected_dataset['description']}_")
-                        st.caption(f"Created: {selected_dataset['created_at'][:10] if selected_dataset['created_at'] else 'N/A'}")
+                        st.caption(
+                            f"Created: {selected_dataset['created_at'][:10] if selected_dataset['created_at'] else 'N/A'}"
+                        )
             else:
-                st.warning("No datasets found in telemetry. Upload a CSV to create a dataset or use the Golden Dataset tab.")
+                st.warning(
+                    "No datasets found in telemetry. Upload a CSV to create a dataset or use the Golden Dataset tab."
+                )
 
                 # Option to upload CSV and create telemetry dataset
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     uploaded_file = st.file_uploader(
                         "Upload CSV Dataset",
-                        type=['csv'],
-                        help="CSV with columns: query, expected_result, etc."
+                        type=["csv"],
+                        help="CSV with columns: query, expected_result, etc.",
                     )
                 with col2:
                     if uploaded_file:
@@ -904,7 +974,7 @@ def _render_routing_optimization_tab():
                             "Dataset Name",
                             value="",
                             placeholder="e.g., my_eval_dataset",
-                            help="Name for the telemetry dataset"
+                            help="Name for the telemetry dataset",
                         )
 
                 if uploaded_file and dataset_name:
@@ -918,7 +988,9 @@ def _render_routing_optimization_tab():
                                 )
 
                                 # Save uploaded file to temp location
-                                with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as tmp:
+                                with tempfile.NamedTemporaryFile(
+                                    mode="wb", suffix=".csv", delete=False
+                                ) as tmp:
                                     tmp.write(uploaded_file.getvalue())
                                     tmp_path = tmp.name
 
@@ -929,26 +1001,34 @@ def _render_routing_optimization_tab():
                                 dataset_id = dataset_manager.create_from_csv(
                                     csv_path=tmp_path,
                                     dataset_name=dataset_name,
-                                    description="Uploaded via optimization dashboard"
+                                    description="Uploaded via optimization dashboard",
                                 )
 
                                 # Clean up temp file
                                 import os
+
                                 os.unlink(tmp_path)
 
-                                st.success(f"✅ Created telemetry dataset '{dataset_name}' with ID: {dataset_id}")
-                                st.info("Refresh the page to see the new dataset in the dropdown")
+                                st.success(
+                                    f"✅ Created telemetry dataset '{dataset_name}' with ID: {dataset_id}"
+                                )
+                                st.info(
+                                    "Refresh the page to see the new dataset in the dropdown"
+                                )
 
                             except Exception as e:
                                 st.error(f"Failed to create telemetry dataset: {e}")
                                 import traceback
+
                                 st.code(traceback.format_exc())
                 else:
                     dataset_name = ""
 
         except Exception as e:
             # Show clean error message for connection issues
-            if "Connection refused" in str(e) or "ConnectionError" in str(type(e).__name__):
+            if "Connection refused" in str(e) or "ConnectionError" in str(
+                type(e).__name__
+            ):
                 st.warning("⚠️ Telemetry provider is not running")
             else:
                 st.warning(f"⚠️ Could not fetch telemetry datasets: {type(e).__name__}")
@@ -959,7 +1039,7 @@ def _render_routing_optimization_tab():
                 "Dataset Name (manual)",
                 value="",
                 placeholder="Enter telemetry dataset name",
-                help="Enter dataset name manually if you know it exists"
+                help="Enter dataset name manually if you know it exists",
             )
 
     # Advanced synthetic data configuration (only shown when using synthetic data)
@@ -972,7 +1052,7 @@ def _render_routing_optimization_tab():
                     min_value=10,
                     max_value=1000,
                     value=200,
-                    help="Number of synthetic examples to generate"
+                    help="Number of synthetic examples to generate",
                 )
             with col2:
                 _vespa_sample_size = st.number_input(
@@ -980,7 +1060,7 @@ def _render_routing_optimization_tab():
                     min_value=10,
                     max_value=1000,
                     value=500,
-                    help="Documents to sample from Vespa"
+                    help="Documents to sample from Vespa",
                 )
             with col3:
                 _max_profiles = st.number_input(
@@ -988,7 +1068,7 @@ def _render_routing_optimization_tab():
                     min_value=1,
                     max_value=10,
                     value=3,
-                    help="Maximum backend profiles to use"
+                    help="Maximum backend profiles to use",
                 )
     # Submit workflow button
     if st.button("🚀 Submit Module Optimization Workflow", type="primary"):
@@ -1005,12 +1085,17 @@ def _render_routing_optimization_tab():
                     {"name": "optimizer-category", "value": "routing"},
                     {"name": "optimizer-type", "value": optimizer_type},
                     {"name": "max-iterations", "value": str(max_iterations)},
-                    {"name": "use-synthetic-data", "value": "true" if use_synthetic else "false"}
+                    {
+                        "name": "use-synthetic-data",
+                        "value": "true" if use_synthetic else "false",
+                    },
                 ]
 
                 # Add dataset name if using golden dataset
                 if not use_synthetic:
-                    workflow_params.append({"name": "dataset-name", "value": dataset_name})
+                    workflow_params.append(
+                        {"name": "dataset-name", "value": dataset_name}
+                    )
 
                 # Create workflow specification
                 workflow_spec = {
@@ -1018,20 +1103,18 @@ def _render_routing_optimization_tab():
                     "kind": "Workflow",
                     "metadata": {
                         "generateName": f"routing-opt-{optimizer_type}-",
-                        "namespace": "cogniverse"
+                        "namespace": "cogniverse",
                     },
                     "spec": {
-                        "workflowTemplateRef": {
-                            "name": "batch-optimization"
-                        },
-                        "arguments": {
-                            "parameters": workflow_params
-                        }
-                    }
+                        "workflowTemplateRef": {"name": "batch-optimization"},
+                        "arguments": {"parameters": workflow_params},
+                    },
                 }
 
                 # Write to temporary file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".yaml", delete=False
+                ) as f:
                     yaml.dump(workflow_spec, f)
                     workflow_file = f.name
 
@@ -1042,7 +1125,7 @@ def _render_routing_optimization_tab():
                         ["argo", "submit", workflow_file, "-n", "cogniverse"],
                         capture_output=True,
                         text=True,
-                        timeout=30
+                        timeout=30,
                     )
                     if result.returncode != 0:
                         # Fallback to kubectl
@@ -1050,7 +1133,7 @@ def _render_routing_optimization_tab():
                             ["kubectl", "apply", "-f", workflow_file],
                             capture_output=True,
                             text=True,
-                            timeout=30
+                            timeout=30,
                         )
                 except FileNotFoundError:
                     # If argo CLI not found, use kubectl
@@ -1058,7 +1141,7 @@ def _render_routing_optimization_tab():
                         ["kubectl", "apply", "-f", workflow_file],
                         capture_output=True,
                         text=True,
-                        timeout=30
+                        timeout=30,
                     )
 
                 if result.returncode == 0:
@@ -1074,15 +1157,20 @@ def _render_routing_optimization_tab():
                     """)
                 else:
                     st.error(f"❌ Workflow submission failed:\n{result.stderr}")
-                    st.warning("Make sure you have kubectl or argo CLI configured and Kubernetes cluster is accessible")
+                    st.warning(
+                        "Make sure you have kubectl or argo CLI configured and Kubernetes cluster is accessible"
+                    )
 
                 # Clean up temp file
                 import os
+
                 os.unlink(workflow_file)
 
             except Exception as e:
                 st.error(f"❌ Error submitting workflow: {str(e)}")
-                st.info("**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed")
+                st.info(
+                    "**Prerequisites:**\n- Kubernetes cluster running\n- kubectl or argo CLI configured\n- cogniverse namespace exists\n- batch-optimization WorkflowTemplate deployed"
+                )
 
 
 def _render_reranking_optimization_tab():
@@ -1104,8 +1192,10 @@ def _render_reranking_optimization_tab():
     with col1:
         min_annotations = st.number_input(
             "Min Annotations Required",
-            10, 1000, 50,
-            help="Minimum annotations before training reranker"
+            10,
+            1000,
+            50,
+            help="Minimum annotations before training reranker",
         )
     with col2:
         current_annotations = st.session_state.get("annotation_count", 0)
@@ -1140,7 +1230,9 @@ def _render_reranking_optimization_tab():
 def _render_profile_selection_tab():
     """Render profile selection optimization with real Phoenix data"""
     st.subheader("📈 Profile Selection Optimization")
-    st.markdown("Learn which processing profile works best for different query types from telemetry data")
+    st.markdown(
+        "Learn which processing profile works best for different query types from telemetry data"
+    )
 
     # Tenant comes from the gate-validated session state
     tenant_id = st.session_state["current_tenant"]
@@ -1149,6 +1241,7 @@ def _render_profile_selection_tab():
     # Check telemetry provider availability
     try:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -1160,7 +1253,7 @@ def _render_profile_selection_tab():
                     start_time=datetime.now() - timedelta(minutes=1),
                     end_time=datetime.now(),
                     project=f"cogniverse-{tenant_id}",
-                    limit=1
+                    limit=1,
                 )
                 return True
             except Exception:
@@ -1193,21 +1286,28 @@ def _render_profile_selection_tab():
         # Get search spans using provider abstraction
         async def fetch_spans():
             return await provider.traces.get_spans(
-                start_time=start_time,
-                end_time=end_time
+                start_time=start_time, end_time=end_time
             )
 
         spans_df = run_async_in_streamlit(fetch_spans())
 
         if spans_df is None or spans_df.empty:
-            st.warning(f"No spans found in the last {lookback_days} days. Run searches first.")
+            st.warning(
+                f"No spans found in the last {lookback_days} days. Run searches first."
+            )
             return
 
         # Filter for search spans that have profile information
-        search_spans = spans_df[spans_df['name'].str.contains('search', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
+        search_spans = (
+            spans_df[spans_df["name"].str.contains("search", case=False, na=False)]
+            if "name" in spans_df.columns
+            else pd.DataFrame()
+        )
 
         if search_spans.empty:
-            st.info("No search spans found. Run video searches with different profiles to see performance data.")
+            st.info(
+                "No search spans found. Run video searches with different profiles to see performance data."
+            )
             return
 
         st.success(f"Found {len(search_spans)} search spans")
@@ -1221,7 +1321,7 @@ def _render_profile_selection_tab():
             st.write("Columns:", search_spans.columns.tolist())
 
         # Count profiles used (if profile attribute exists)
-        profile_cols = [col for col in search_spans.columns if 'profile' in col.lower()]
+        profile_cols = [col for col in search_spans.columns if "profile" in col.lower()]
 
         if profile_cols:
             st.markdown("#### Profile Usage")
@@ -1230,7 +1330,9 @@ def _render_profile_selection_tab():
                 st.write(f"**{col}:**")
                 st.bar_chart(profile_counts)
         else:
-            st.info("No profile information found in span attributes. Profile data needs to be logged to telemetry.")
+            st.info(
+                "No profile information found in span attributes. Profile data needs to be logged to telemetry."
+            )
 
         st.markdown("---")
 
@@ -1238,7 +1340,14 @@ def _render_profile_selection_tab():
         st.subheader("⚡ Performance Analysis")
 
         # Check if we have NDCG or quality scores
-        quality_cols = [col for col in search_spans.columns if any(metric in col.lower() for metric in ['ndcg', 'score', 'quality', 'accuracy'])]
+        quality_cols = [
+            col
+            for col in search_spans.columns
+            if any(
+                metric in col.lower()
+                for metric in ["ndcg", "score", "quality", "accuracy"]
+            )
+        ]
 
         if quality_cols:
             st.markdown("#### Quality Metrics Found")
@@ -1251,11 +1360,15 @@ def _render_profile_selection_tab():
                 for profile_col in profile_cols:
                     for quality_col in quality_cols:
                         # Group by profile and calculate average quality
-                        profile_quality = search_spans.groupby(profile_col)[quality_col].agg(['mean', 'count'])
+                        profile_quality = search_spans.groupby(profile_col)[
+                            quality_col
+                        ].agg(["mean", "count"])
                         st.write(f"**{profile_col} vs {quality_col}:**")
                         st.dataframe(profile_quality)
         else:
-            st.info("No quality metrics (NDCG, accuracy) found in spans. Run evaluations to collect quality data.")
+            st.info(
+                "No quality metrics (NDCG, accuracy) found in spans. Run evaluations to collect quality data."
+            )
 
         st.markdown("---")
 
@@ -1277,6 +1390,7 @@ def _render_profile_selection_tab():
 
         # Check if model exists
         from pathlib import Path
+
         model_dir = Path("outputs/models/profile_performance")
         model_exists = (model_dir / "xgboost_model.pkl").exists()
 
@@ -1294,8 +1408,12 @@ def _render_profile_selection_tab():
 
         if train_button:
             if not profile_cols or not quality_cols:
-                st.error("Cannot train: Need both profile information and quality metrics in telemetry spans")
-                st.info("Make sure search operations log profile names and evaluation results to telemetry")
+                st.error(
+                    "Cannot train: Need both profile information and quality metrics in telemetry spans"
+                )
+                st.info(
+                    "Make sure search operations log profile names and evaluation results to telemetry"
+                )
             else:
                 with st.spinner("Training profile selection model..."):
                     try:
@@ -1303,7 +1421,9 @@ def _render_profile_selection_tab():
                             ProfilePerformanceOptimizer,
                         )
 
-                        st.info(f"Extracting training data from {len(search_spans)} search spans...")
+                        st.info(
+                            f"Extracting training data from {len(search_spans)} search spans..."
+                        )
 
                         # Initialize optimizer
                         optimizer = ProfilePerformanceOptimizer()
@@ -1315,16 +1435,22 @@ def _render_profile_selection_tab():
                                 project_name=f"cogniverse-{tenant_id}",
                                 start_time=start_time,
                                 end_time=end_time,
-                                min_samples=10
+                                min_samples=10,
                             )
 
                         X, y, profile_names = run_async_in_streamlit(extract_data())
 
-                        st.info(f"Extracted {len(X)} training samples with {X.shape[1]} features")
-                        st.info(f"Found {len(profile_names)} profiles: {', '.join(profile_names)}")
+                        st.info(
+                            f"Extracted {len(X)} training samples with {X.shape[1]} features"
+                        )
+                        st.info(
+                            f"Found {len(profile_names)} profiles: {', '.join(profile_names)}"
+                        )
 
                         # Train model
-                        st.info("Training XGBoost classifier with optimized parameters...")
+                        st.info(
+                            "Training XGBoost classifier with optimized parameters..."
+                        )
                         metrics = optimizer.train(X, y, test_size=0.2)
 
                         # Show metrics
@@ -1332,11 +1458,15 @@ def _render_profile_selection_tab():
 
                         col1, col2, col3 = st.columns(3)
                         with col1:
-                            st.metric("Training Accuracy", f"{metrics['train_accuracy']:.2%}")
+                            st.metric(
+                                "Training Accuracy", f"{metrics['train_accuracy']:.2%}"
+                            )
                         with col2:
-                            st.metric("Test Accuracy", f"{metrics['test_accuracy']:.2%}")
+                            st.metric(
+                                "Test Accuracy", f"{metrics['test_accuracy']:.2%}"
+                            )
                         with col3:
-                            st.metric("Samples", metrics['n_samples'])
+                            st.metric("Samples", metrics["n_samples"])
 
                         # Show feature importance if available
                         if optimizer.model is not None:
@@ -1347,30 +1477,34 @@ def _render_profile_selection_tab():
                                 "has_temporal_keywords",
                                 "has_spatial_keywords",
                                 "has_object_keywords",
-                                "avg_word_length"
+                                "avg_word_length",
                             ]
                             importance = optimizer.model.feature_importances_
-                            importance_df = pd.DataFrame({
-                                'Feature': feature_names,
-                                'Importance': importance
-                            }).sort_values('Importance', ascending=False)
+                            importance_df = pd.DataFrame(
+                                {"Feature": feature_names, "Importance": importance}
+                            ).sort_values("Importance", ascending=False)
                             st.dataframe(importance_df, use_container_width=True)
 
                         # Save model
                         st.info("Saving model...")
                         optimizer.save()
                         st.success(f"✅ Model saved to {optimizer.model_dir}")
-                        st.info("Model can now be used for runtime profile recommendations")
+                        st.info(
+                            "Model can now be used for runtime profile recommendations"
+                        )
 
                     except ValueError as e:
                         st.error(f"Training failed: {e}")
-                        st.info("Make sure telemetry spans contain query text, profile names, and quality metrics")
+                        st.info(
+                            "Make sure telemetry spans contain query text, profile names, and quality metrics"
+                        )
                     except ImportError as e:
                         st.error(f"Missing required library: {e}")
                         st.info("Install with: uv pip install xgboost scikit-learn")
                     except Exception as e:
                         st.error(f"Training failed: {e}")
                         import traceback
+
                         st.code(traceback.format_exc())
 
         if load_button:
@@ -1386,29 +1520,40 @@ def _render_profile_selection_tab():
 
                         # Test prediction with example query
                         st.markdown("#### Test Prediction")
-                        test_query = st.text_input("Test query:", "Show me videos from last week")
+                        test_query = st.text_input(
+                            "Test query:", "Show me videos from last week"
+                        )
 
                         if test_query:
-                            profile, confidence = optimizer.predict_best_profile(test_query)
-                            st.info(f"Recommended profile: **{profile}** (confidence: {confidence:.2%})")
+                            profile, confidence = optimizer.predict_best_profile(
+                                test_query
+                            )
+                            st.info(
+                                f"Recommended profile: **{profile}** (confidence: {confidence:.2%})"
+                            )
 
                             # Show extracted features
                             features = optimizer.extract_query_features(test_query)
                             st.markdown("**Extracted features:**")
-                            st.json({
-                                "query_length": features.query_length,
-                                "word_count": features.word_count,
-                                "has_temporal_keywords": features.has_temporal_keywords,
-                                "has_spatial_keywords": features.has_spatial_keywords,
-                                "has_object_keywords": features.has_object_keywords,
-                                "avg_word_length": round(features.avg_word_length, 2)
-                            })
+                            st.json(
+                                {
+                                    "query_length": features.query_length,
+                                    "word_count": features.word_count,
+                                    "has_temporal_keywords": features.has_temporal_keywords,
+                                    "has_spatial_keywords": features.has_spatial_keywords,
+                                    "has_object_keywords": features.has_object_keywords,
+                                    "avg_word_length": round(
+                                        features.avg_word_length, 2
+                                    ),
+                                }
+                            )
                     else:
                         st.error("Failed to load model")
 
                 except Exception as e:
                     st.error(f"Error loading model: {e}")
                     import traceback
+
                     st.code(traceback.format_exc())
 
     except Exception as e:
@@ -1419,7 +1564,9 @@ def _render_profile_selection_tab():
 def _render_metrics_dashboard_tab():
     """Render unified optimization metrics dashboard with actual optimization metrics"""
     st.subheader("📉 Optimization Metrics Dashboard")
-    st.markdown("Track routing accuracy, search quality, and optimization improvements from telemetry")
+    st.markdown(
+        "Track routing accuracy, search quality, and optimization improvements from telemetry"
+    )
 
     # Tenant comes from the gate-validated session state
     tenant_id = st.session_state["current_tenant"]
@@ -1428,6 +1575,7 @@ def _render_metrics_dashboard_tab():
     # Check telemetry provider availability
     try:
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
@@ -1438,7 +1586,7 @@ def _render_metrics_dashboard_tab():
                     start_time=datetime.now() - timedelta(minutes=1),
                     end_time=datetime.now(),
                     project=f"cogniverse-{tenant_id}",
-                    limit=1
+                    limit=1,
                 )
                 return True
             except Exception:
@@ -1457,9 +1605,7 @@ def _render_metrics_dashboard_tab():
     col1, col2 = st.columns([3, 1])
     with col1:
         lookback_days = st.selectbox(
-            "Timeframe",
-            [7, 30, 90],
-            format_func=lambda x: f"Last {x} days"
+            "Timeframe", [7, 30, 90], format_func=lambda x: f"Last {x} days"
         )
     with col2:
         if st.button("🔄 Refresh Metrics"):
@@ -1491,13 +1637,15 @@ def _render_metrics_dashboard_tab():
             return await provider.traces.get_spans(
                 project=f"cogniverse-{tenant_id}",
                 start_time=start_time,
-                end_time=end_time
+                end_time=end_time,
             )
 
         spans_df = run_async_in_streamlit(_fetch_spans())
 
         if spans_df is None or spans_df.empty:
-            st.warning(f"No spans found in the last {lookback_days} days. Run some queries first.")
+            st.warning(
+                f"No spans found in the last {lookback_days} days. Run some queries first."
+            )
             return
 
         # Calculate routing metrics
@@ -1505,9 +1653,7 @@ def _render_metrics_dashboard_tab():
 
         routing_evaluator = RoutingEvaluator(provider=provider)
         routing_spans = routing_evaluator.query_routing_spans(
-            start_time=start_time,
-            end_time=end_time,
-            limit=1000
+            start_time=start_time, end_time=end_time, limit=1000
         )
 
         if routing_spans:
@@ -1522,10 +1668,16 @@ def _render_metrics_dashboard_tab():
                 st.metric("Total Decisions", routing_metrics.total_decisions)
 
             with col3:
-                st.metric("Avg Routing Latency", f"{routing_metrics.avg_routing_latency:.0f}ms")
+                st.metric(
+                    "Avg Routing Latency",
+                    f"{routing_metrics.avg_routing_latency:.0f}ms",
+                )
 
             with col4:
-                st.metric("Confidence Calibration", f"{routing_metrics.confidence_calibration:.3f}")
+                st.metric(
+                    "Confidence Calibration",
+                    f"{routing_metrics.confidence_calibration:.3f}",
+                )
 
             # Per-agent metrics
             st.markdown("#### Per-Agent Performance")
@@ -1533,21 +1685,29 @@ def _render_metrics_dashboard_tab():
             if routing_metrics.per_agent_precision:
                 agent_metrics_data = []
                 for agent in routing_metrics.per_agent_precision.keys():
-                    agent_metrics_data.append({
-                        "Agent": agent,
-                        "Precision": routing_metrics.per_agent_precision.get(agent, 0),
-                        "Recall": routing_metrics.per_agent_recall.get(agent, 0),
-                        "F1 Score": routing_metrics.per_agent_f1.get(agent, 0)
-                    })
+                    agent_metrics_data.append(
+                        {
+                            "Agent": agent,
+                            "Precision": routing_metrics.per_agent_precision.get(
+                                agent, 0
+                            ),
+                            "Recall": routing_metrics.per_agent_recall.get(agent, 0),
+                            "F1 Score": routing_metrics.per_agent_f1.get(agent, 0),
+                        }
+                    )
 
                 agent_df = pd.DataFrame(agent_metrics_data)
                 st.dataframe(
-                    agent_df.style.background_gradient(subset=["Precision", "Recall", "F1 Score"], cmap="RdYlGn"),
+                    agent_df.style.background_gradient(
+                        subset=["Precision", "Recall", "F1 Score"], cmap="RdYlGn"
+                    ),
                     use_container_width=True,
-                    hide_index=True
+                    hide_index=True,
                 )
         else:
-            st.info("No routing spans found. Routing metrics require cogniverse.routing spans in telemetry.")
+            st.info(
+                "No routing spans found. Routing metrics require cogniverse.routing spans in telemetry."
+            )
 
         st.markdown("---")
 
@@ -1555,7 +1715,11 @@ def _render_metrics_dashboard_tab():
         st.subheader("🔍 Search Quality Metrics")
 
         # Query for evaluation spans that contain NDCG scores
-        eval_spans = spans_df[spans_df['name'].str.contains('eval|ndcg', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
+        eval_spans = (
+            spans_df[spans_df["name"].str.contains("eval|ndcg", case=False, na=False)]
+            if "name" in spans_df.columns
+            else pd.DataFrame()
+        )
 
         if not eval_spans.empty:
             # Try to extract NDCG scores from span attributes
@@ -1569,7 +1733,9 @@ def _render_metrics_dashboard_tab():
             with col2:
                 st.metric("Search Queries Evaluated", "N/A")
         else:
-            st.info("No search evaluation data found. Run search evaluations to see NDCG metrics.")
+            st.info(
+                "No search evaluation data found. Run search evaluations to see NDCG metrics."
+            )
 
         st.markdown("---")
 
@@ -1577,34 +1743,46 @@ def _render_metrics_dashboard_tab():
         st.subheader("🏋️ Optimization Training Runs")
 
         # Look for optimization/training related spans
-        training_spans = spans_df[spans_df['name'].str.contains('train|optim', case=False, na=False)] if 'name' in spans_df.columns else pd.DataFrame()
+        training_spans = (
+            spans_df[spans_df["name"].str.contains("train|optim", case=False, na=False)]
+            if "name" in spans_df.columns
+            else pd.DataFrame()
+        )
 
         if not training_spans.empty:
             st.info(f"Found {len(training_spans)} training/optimization spans")
 
-            if 'start_time' in training_spans.columns:
+            if "start_time" in training_spans.columns:
                 # Group by day to show training activity
-                training_spans['date'] = pd.to_datetime(training_spans['start_time']).dt.date
-                daily_training = training_spans.groupby('date').size().reset_index(name='runs')
+                training_spans["date"] = pd.to_datetime(
+                    training_spans["start_time"]
+                ).dt.date
+                daily_training = (
+                    training_spans.groupby("date").size().reset_index(name="runs")
+                )
 
                 fig = go.Figure()
 
-                fig.add_trace(go.Bar(
-                    x=daily_training['date'],
-                    y=daily_training['runs'],
-                    name='Training Runs'
-                ))
+                fig.add_trace(
+                    go.Bar(
+                        x=daily_training["date"],
+                        y=daily_training["runs"],
+                        name="Training Runs",
+                    )
+                )
 
                 fig.update_layout(
                     title="Training Activity Over Time",
                     xaxis_title="Date",
                     yaxis_title="Number of Training Runs",
-                    height=300
+                    height=300,
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No training runs found. Run module optimizations to see training history.")
+            st.info(
+                "No training runs found. Run module optimizations to see training history."
+            )
 
     except Exception as e:
         st.error(f"Error fetching optimization metrics: {e}")
@@ -1634,12 +1812,14 @@ def _render_inline_approval_interface():
     )
 
     # Display each pending item for inline review
-    for idx, item in enumerate(pending_items[:5]):  # Show first 5 inline, rest in approval queue
+    for idx, item in enumerate(
+        pending_items[:5]
+    ):  # Show first 5 inline, rest in approval queue
         with st.expander(
             f"📝 Item {idx + 1}/{len(pending_items)} - "
             f"Confidence: {item.confidence:.2f} - "
             f"{item.data.get('query', 'N/A')[:60]}...",
-            expanded=(idx == 0)  # Expand first item
+            expanded=(idx == 0),  # Expand first item
         ):
             _render_inline_review_item(item, idx)
 
@@ -1706,16 +1886,12 @@ def _render_inline_review_item(item, idx: int):
             "✅ Approve",
             key=f"inline_approve_{idx}",
             type="primary",
-            use_container_width=True
+            use_container_width=True,
         ):
             _handle_inline_approval(item, idx)
 
     with col2:
-        if st.button(
-            "❌ Reject",
-            key=f"inline_reject_{idx}",
-            use_container_width=True
-        ):
+        if st.button("❌ Reject", key=f"inline_reject_{idx}", use_container_width=True):
             st.session_state[f"inline_rejecting_{idx}"] = True
 
     # Show rejection form if user clicked reject
@@ -1727,7 +1903,7 @@ def _render_inline_review_item(item, idx: int):
             "Why are you rejecting this item?",
             key=f"inline_feedback_{idx}",
             placeholder="e.g., Query doesn't include required entities, Poor grammar, Doesn't match topic...",
-            help="Provide specific feedback to help improve future generations"
+            help="Provide specific feedback to help improve future generations",
         )
 
         st.markdown("**Corrections (optional):**")
@@ -1738,7 +1914,7 @@ def _render_inline_review_item(item, idx: int):
                 "Corrected Entities (comma-separated)",
                 key=f"inline_entities_{idx}",
                 value=", ".join([str(e) for e in entities]),
-                help="Update the entities that should be included"
+                help="Update the entities that should be included",
             )
 
         with col2:
@@ -1746,7 +1922,7 @@ def _render_inline_review_item(item, idx: int):
                 "Corrected Topics (comma-separated)",
                 key=f"inline_topics_{idx}",
                 value=data.get("topics", ""),
-                help="Update the topics for better context"
+                help="Update the topics for better context",
             )
 
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -1756,11 +1932,13 @@ def _render_inline_review_item(item, idx: int):
                 "💾 Submit Rejection",
                 key=f"inline_submit_reject_{idx}",
                 type="primary",
-                use_container_width=True
+                use_container_width=True,
             ):
                 corrections = {}
                 if corrected_entities:
-                    corrections["entities"] = [e.strip() for e in corrected_entities.split(",")]
+                    corrections["entities"] = [
+                        e.strip() for e in corrected_entities.split(",")
+                    ]
                 if corrected_topics:
                     corrections["topics"] = corrected_topics.strip()
 
@@ -1769,7 +1947,9 @@ def _render_inline_review_item(item, idx: int):
                 st.rerun()
 
         with col2:
-            if st.button("Cancel", key=f"inline_cancel_{idx}", use_container_width=True):
+            if st.button(
+                "Cancel", key=f"inline_cancel_{idx}", use_container_width=True
+            ):
                 st.session_state[f"inline_rejecting_{idx}"] = False
                 st.rerun()
 
@@ -1782,6 +1962,7 @@ def _handle_inline_approval(item, idx: int):
         # Update item status
         item.status = ApprovalStatus.APPROVED
         import pandas as pd
+
         item.reviewed_at = pd.Timestamp.now()
 
         st.success(f"✅ Approved: {item.data.get('query', item.item_id)[:50]}...")
@@ -1795,7 +1976,9 @@ def _handle_inline_approval(item, idx: int):
             st.session_state.approved_items = approved_items
 
             # Update pending items
-            pending_items = [i for i in batch.pending_review if i.item_id != item.item_id]
+            pending_items = [
+                i for i in batch.pending_review if i.item_id != item.item_id
+            ]
             st.session_state.pending_items = pending_items
 
         st.rerun()
@@ -1821,6 +2004,7 @@ def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
         # Update item status
         item.status = ApprovalStatus.REJECTED
         import pandas as pd
+
         item.reviewed_at = pd.Timestamp.now()
 
         st.warning(f"❌ Rejected: {item.data.get('query', item.item_id)[:50]}...")
@@ -1836,7 +2020,9 @@ def _handle_inline_rejection(item, idx: int, feedback: str, corrections: Dict):
             st.session_state.rejected_items = rejected_items
 
             # Update pending items
-            pending_items = [i for i in batch.pending_review if i.item_id != item.item_id]
+            pending_items = [
+                i for i in batch.pending_review if i.item_id != item.item_id
+            ]
             st.session_state.pending_items = pending_items
 
         st.rerun()
@@ -1869,7 +2055,7 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
             confidence_extractor=confidence_extractor,
             feedback_handler=feedback_handler,
             confidence_threshold=confidence_threshold,
-            storage=None  # Using session state instead of Phoenix for demo
+            storage=None,  # Using session state instead of Phoenix for demo
         )
 
         # Process batch through approval agent
@@ -1879,7 +2065,7 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
         from cogniverse_agents.approval import ApprovalBatch, ApprovalStatus, ReviewItem
 
         review_items = []
-        for i, item_data in enumerate(result['data']):
+        for i, item_data in enumerate(result["data"]):
             confidence = confidence_extractor.extract(item_data)
             status = (
                 ApprovalStatus.AUTO_APPROVED
@@ -1891,16 +2077,14 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
                 item_id=f"{batch_id}_{i}",
                 data=item_data,
                 confidence=confidence,
-                status=status
+                status=status,
             )
             review_items.append(review_item)
 
         # The generator result records the tenant it ran for; if an
         # older record is missing it, fall back to the currently
         # selected dashboard tenant rather than a silent "default".
-        batch_tenant = result.get(
-            "tenant_id", st.session_state["current_tenant"]
-        )
+        batch_tenant = result.get("tenant_id", st.session_state["current_tenant"])
         batch = ApprovalBatch(
             batch_id=batch_id,
             items=review_items,
@@ -1933,9 +2117,9 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
             stats = agent.get_approval_stats(batch)
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Auto-Approved", stats['auto_approved'])
+                st.metric("Auto-Approved", stats["auto_approved"])
             with col2:
-                st.metric("Pending Review", stats['pending_review'])
+                st.metric("Pending Review", stats["pending_review"])
             with col3:
                 st.metric("Avg Confidence", f"{stats['avg_confidence']:.2f}")
 
@@ -1947,8 +2131,6 @@ def _process_approval_workflow(result: Dict, confidence_threshold: float):
 if __name__ == "__main__":
     # For standalone testing
     st.set_page_config(
-        page_title="Enhanced Optimization",
-        page_icon="🔧",
-        layout="wide"
+        page_title="Enhanced Optimization", page_icon="🔧", layout="wide"
     )
     render_enhanced_optimization_tab()

@@ -50,24 +50,49 @@ RUNTIME = "http://localhost:28000"
 # ---------------------------------------------------------------------------
 
 ENHANCEMENT_QUERIES = [
-    "ML transformer videos", "find AI tutorials", "deep learning frameworks",
-    "neural network architecture", "computer vision applications",
-    "NLP text processing", "reinforcement learning robotics",
-    "generative AI models", "transfer learning techniques", "autoML tools",
-    "object detection algorithms", "semantic segmentation methods",
-    "speech recognition systems", "recommendation engines", "time series forecasting",
-    "graph neural networks", "attention mechanisms explained", "CNN architectures",
-    "RNN LSTM tutorials", "GAN image generation",
+    "ML transformer videos",
+    "find AI tutorials",
+    "deep learning frameworks",
+    "neural network architecture",
+    "computer vision applications",
+    "NLP text processing",
+    "reinforcement learning robotics",
+    "generative AI models",
+    "transfer learning techniques",
+    "autoML tools",
+    "object detection algorithms",
+    "semantic segmentation methods",
+    "speech recognition systems",
+    "recommendation engines",
+    "time series forecasting",
+    "graph neural networks",
+    "attention mechanisms explained",
+    "CNN architectures",
+    "RNN LSTM tutorials",
+    "GAN image generation",
 ]
 
 PROFILE_QUERIES = [
-    "find basketball highlights", "cooking tutorial videos", "robotics engineering",
-    "music production content", "science experiments", "yoga workout videos",
-    "photography tutorials", "coding bootcamp recordings", "language learning videos",
-    "art history lectures", "wildlife documentary", "architecture design videos",
-    "gardening how-to", "chess strategy tutorials", "piano lessons online",
-    "fitness training clips", "travel vlog compilation", "astronomy lectures",
-    "medical education videos", "business strategy talks",
+    "find basketball highlights",
+    "cooking tutorial videos",
+    "robotics engineering",
+    "music production content",
+    "science experiments",
+    "yoga workout videos",
+    "photography tutorials",
+    "coding bootcamp recordings",
+    "language learning videos",
+    "art history lectures",
+    "wildlife documentary",
+    "architecture design videos",
+    "gardening how-to",
+    "chess strategy tutorials",
+    "piano lessons online",
+    "fitness training clips",
+    "travel vlog compilation",
+    "astronomy lectures",
+    "medical education videos",
+    "business strategy talks",
 ]
 
 ENTITY_QUERIES = [
@@ -174,6 +199,7 @@ def generate_spans_for_batch_jobs():
     # fixture under ~2 hours on CPU. Override via BATCH_SPAN_COUNT for
     # GPU-backed runs where 100+ is cheap.
     import os as _os
+
     spans_per_agent = int(_os.environ.get("BATCH_SPAN_COUNT", "20"))
 
     # Gateway spans — simple queries through gateway
@@ -216,10 +242,16 @@ def _kubectl_available() -> bool:
     try:
         result = subprocess.run(
             [
-                "kubectl", "--context", KUBECTL_CONTEXT,
-                "get", "ns", NAMESPACE,
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "get",
+                "ns",
+                NAMESPACE,
             ],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -241,15 +273,29 @@ def _run_batch_job(
     """Run a batch optimization job inside the k3d pod and return parsed JSON."""
     result = subprocess.run(
         [
-            "kubectl", "--context", KUBECTL_CONTEXT,
-            "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
             "--",
-            "python3", "-m", "cogniverse_runtime.optimization_cli",
-            "--mode", mode,
-            "--tenant-id", tenant_id,
-            "--lookback-hours", str(lookback_hours),
+            "python3",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+            "--mode",
+            mode,
+            "--tenant-id",
+            tenant_id,
+            "--lookback-hours",
+            str(lookback_hours),
         ],
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
     )
 
     if result.returncode != 0:
@@ -301,17 +347,26 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     )
     result = subprocess.run(
         [
-            "kubectl", "--context", KUBECTL_CONTEXT,
-            "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "exec",
+            "-n",
+            NAMESPACE,
+            DEPLOYMENT,
+            "-c",
+            CONTAINER,
             "--",
-            "python3", "-c", script,
+            "python3",
+            "-c",
+            script,
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"load_blob({kind}, {key}) failed: {result.stderr[-500:]}"
-        )
+        raise RuntimeError(f"load_blob({kind}, {key}) failed: {result.stderr[-500:]}")
     return result.stdout.strip()
 
 
@@ -355,9 +410,7 @@ class TestGatewayThresholds:
         assert isinstance(fp_threshold, float), (
             f"Expected float threshold, got {type(fp_threshold)}"
         )
-        assert 0 < fp_threshold < 1, (
-            f"Expected threshold in (0, 1), got {fp_threshold}"
-        )
+        assert 0 < fp_threshold < 1, f"Expected threshold in (0, 1), got {fp_threshold}"
 
     def test_gateway_thresholds_artifact_loadable(self):
         """Load the gateway threshold artifact and verify its content."""
@@ -378,7 +431,10 @@ class TestGatewayThresholds:
         )
 
         # Verify analysis data matches what the job reported
-        assert artifact["analysis"]["total_spans"] == job_result["thresholds"]["analysis"]["total_spans"], (
+        assert (
+            artifact["analysis"]["total_spans"]
+            == job_result["thresholds"]["analysis"]["total_spans"]
+        ), (
             f"Artifact total_spans ({artifact['analysis']['total_spans']}) "
             f"!= job total_spans ({job_result['thresholds']['analysis']['total_spans']})"
         )
@@ -391,7 +447,10 @@ class TestGatewayThresholds:
 
         # Analysis must have correct breakdown
         analysis = artifact["analysis"]
-        assert analysis["simple_count"] + analysis["complex_count"] == analysis["total_spans"], (
+        assert (
+            analysis["simple_count"] + analysis["complex_count"]
+            == analysis["total_spans"]
+        ), (
             f"simple ({analysis['simple_count']}) + complex ({analysis['complex_count']}) "
             f"should equal total ({analysis['total_spans']})"
         )
@@ -421,9 +480,7 @@ class TestGatewayThresholds:
         # p25 confidence should reflect real scores from our test queries
         # (our simple queries score 0.44-0.69, so p25 should be around 0.44)
         p25 = analysis.get("p25_confidence", 0)
-        assert p25 > 0.3, (
-            f"p25_confidence {p25} too low — our test queries score 0.44+"
-        )
+        assert p25 > 0.3, f"p25_confidence {p25} too low — our test queries score 0.44+"
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +519,24 @@ class TestWorkflowOptimization:
             "print(json.dumps(demos) if demos else '[]')"
         )
         out = subprocess.run(
-            ["kubectl", "--context", KUBECTL_CONTEXT,
-             "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
-             "--", "python3", "-c", script],
-            capture_output=True, text=True, timeout=60,
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "exec",
+                "-n",
+                NAMESPACE,
+                DEPLOYMENT,
+                "-c",
+                CONTAINER,
+                "--",
+                "python3",
+                "-c",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         demos = json.loads(out.stdout.strip() or "[]")
         assert len(demos) >= 1, f"Expected workflow demos, got {len(demos)}"
@@ -494,8 +565,7 @@ class TestWorkflowOptimization:
         demo_queries = {d["query"] for d in valid_demos}
         matching = demo_queries & known_queries
         assert matching, (
-            f"Expected demos for queries {known_queries}, "
-            f"got: {demo_queries}"
+            f"Expected demos for queries {known_queries}, got: {demo_queries}"
         )
 
         # Workflow demos reflect the orchestrator's agent_sequence — the agents
@@ -512,18 +582,29 @@ class TestWorkflowOptimization:
                 f"'compare with documents' workflow should use search or document agent, "
                 f"got: {agents}"
             )
-            assert any(a in agents for a in ("summarizer_agent", "detailed_report_agent")), (
+            assert any(
+                a in agents for a in ("summarizer_agent", "detailed_report_agent")
+            ), (
                 f"'compare' workflow should aggregate results via summarizer or "
                 f"report agent, got: {agents}"
             )
 
         # All agents must be valid registered agents
         known_agents = {
-            "search_agent", "summarizer_agent", "detailed_report_agent",
-            "entity_extraction_agent", "query_enhancement_agent",
-            "profile_selection_agent", "routing_agent", "image_search_agent",
-            "audio_analysis_agent", "document_agent", "deep_research_agent",
-            "coding_agent", "text_analysis_agent", "orchestrator_agent",
+            "search_agent",
+            "summarizer_agent",
+            "detailed_report_agent",
+            "entity_extraction_agent",
+            "query_enhancement_agent",
+            "profile_selection_agent",
+            "routing_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
+            "document_agent",
+            "deep_research_agent",
+            "coding_agent",
+            "text_analysis_agent",
+            "orchestrator_agent",
             "gateway_agent",
         }
         for demo in valid_demos:
@@ -580,15 +661,22 @@ class TestSimbaOptimization:
         # Signature fields must match QueryEnhancementSignature exactly
         sig = module["signature"]
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
-        for expected in ("Query", "Enhanced Query", "Expansion Terms", "Synonyms", "Confidence"):
+        for expected in (
+            "Query",
+            "Enhanced Query",
+            "Expansion Terms",
+            "Synonyms",
+            "Confidence",
+        ):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
-        assert sig["instructions"] == "Enhance query with synonyms, context, and related terms"
+        assert (
+            sig["instructions"]
+            == "Enhance query with synonyms, context, and related terms"
+        )
 
         # Must have learned demos — 0 demos means optimization did nothing
         demos = module.get("demos", [])
-        assert len(demos) >= 1, (
-            "SIMBA produced 0 demos — optimization was useless"
-        )
+        assert len(demos) >= 1, "SIMBA produced 0 demos — optimization was useless"
 
         # Each demo: real query with a DIFFERENT enhanced version
         for demo in demos:
@@ -600,7 +688,15 @@ class TestSimbaOptimization:
 
         # At least one demo should contain an ML-related query (our test data)
         demo_queries = " ".join(d["query"].lower() for d in demos)
-        ml_terms = ("learning", "neural", "ai", "detection", "vision", "nlp", "reinforcement")
+        ml_terms = (
+            "learning",
+            "neural",
+            "ai",
+            "detection",
+            "vision",
+            "nlp",
+            "reinforcement",
+        )
         assert any(t in demo_queries for t in ml_terms), (
             f"Demos should contain ML-related queries from our test data, "
             f"got: {[d['query'] for d in demos[:5]]}"
@@ -645,13 +741,14 @@ class TestProfileOptimization:
         field_names = [f.get("prefix", "").rstrip(":").strip() for f in sig["fields"]]
         for expected in ("Query", "Available Profiles", "Selected Profile", "Modality"):
             assert expected in field_names, f"Missing '{expected}', got: {field_names}"
-        assert sig["instructions"] == "Select optimal backend profile based on query analysis"
+        assert (
+            sig["instructions"]
+            == "Select optimal backend profile based on query analysis"
+        )
 
         # Must have learned demos
         demos = module.get("demos", [])
-        assert len(demos) >= 1, (
-            "Profile produced 0 demos — optimization was useless"
-        )
+        assert len(demos) >= 1, "Profile produced 0 demos — optimization was useless"
 
         # Known Vespa profiles
         known_profiles = {
@@ -664,7 +761,9 @@ class TestProfileOptimization:
         # Each demo: real query selecting a known profile
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile"), f"Demo missing selected_profile: {demo}"
+            assert demo.get("selected_profile"), (
+                f"Demo missing selected_profile: {demo}"
+            )
             assert demo["selected_profile"] in known_profiles, (
                 f"Demo selected unknown profile '{demo['selected_profile']}', "
                 f"expected one of {known_profiles}"
@@ -800,7 +899,15 @@ class TestEntityExtractionOptimization:
         # At least one demo should contain entity-related queries from our test data
         # (fixture generates queries like "ML transformer", "find AI tutorials" etc.)
         demo_queries = " ".join(d["query"].lower() for d in demos)
-        entity_terms = ("ml", "ai", "learning", "neural", "vision", "transformer", "deep")
+        entity_terms = (
+            "ml",
+            "ai",
+            "learning",
+            "neural",
+            "vision",
+            "transformer",
+            "deep",
+        )
         assert any(t in demo_queries for t in entity_terms), (
             f"Demos should contain entity-rich queries from test data, "
             f"got: {[d['query'] for d in demos[:5]]}"
@@ -868,11 +975,23 @@ class TestRoutingOptimization:
             try:
                 subprocess.run(
                     [
-                        "kubectl", "--context", KUBECTL_CONTEXT,
-                        "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
-                        "--", "python3", "-c", script,
+                        "kubectl",
+                        "--context",
+                        KUBECTL_CONTEXT,
+                        "exec",
+                        "-n",
+                        NAMESPACE,
+                        DEPLOYMENT,
+                        "-c",
+                        CONTAINER,
+                        "--",
+                        "python3",
+                        "-c",
+                        script,
                     ],
-                    capture_output=True, text=True, timeout=60,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
                 )
             except Exception:
                 pass
@@ -916,10 +1035,17 @@ class TestRoutingOptimization:
         assert len(demos) >= 1, "Routing produced 0 demos — optimization was useless"
 
         known_agents = {
-            "search_agent", "video_search_agent", "orchestrator_agent",
-            "summarizer_agent", "image_search_agent", "audio_analysis_agent",
-            "document_agent", "detailed_report_agent", "entity_extraction_agent",
-            "query_enhancement_agent", "profile_selection_agent",
+            "search_agent",
+            "video_search_agent",
+            "orchestrator_agent",
+            "summarizer_agent",
+            "image_search_agent",
+            "audio_analysis_agent",
+            "document_agent",
+            "detailed_report_agent",
+            "entity_extraction_agent",
+            "query_enhancement_agent",
+            "profile_selection_agent",
         }
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
@@ -967,19 +1093,32 @@ class TestArtifactLoadingRoundTrip:
         # 3. Restart runtime pod to trigger artifact loading
         subprocess.run(
             [
-                "kubectl", "--context", KUBECTL_CONTEXT,
-                "rollout", "restart", "deployment/cogniverse-runtime",
-                "-n", NAMESPACE,
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "rollout",
+                "restart",
+                "deployment/cogniverse-runtime",
+                "-n",
+                NAMESPACE,
             ],
-            check=True, timeout=30,
+            check=True,
+            timeout=30,
         )
         subprocess.run(
             [
-                "kubectl", "--context", KUBECTL_CONTEXT,
-                "rollout", "status", DEPLOYMENT,
-                "-n", NAMESPACE, "--timeout=120s",
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "rollout",
+                "status",
+                DEPLOYMENT,
+                "-n",
+                NAMESPACE,
+                "--timeout=120s",
             ],
-            check=True, timeout=150,
+            check=True,
+            timeout=150,
         )
         time.sleep(20)  # Wait for agent initialization + artifact loading
 
@@ -1031,7 +1170,9 @@ class TestArtifactLoadingRoundTrip:
         blob_after = _load_blob_in_pod("config", "gateway_thresholds")
         assert blob_after, "Gateway artifact not loadable after restart"
         artifact_after = json.loads(blob_after)
-        assert artifact_after["fast_path_confidence_threshold"] == optimized_threshold, (
+        assert (
+            artifact_after["fast_path_confidence_threshold"] == optimized_threshold
+        ), (
             f"Artifact threshold changed after restart: "
             f"{artifact_after['fast_path_confidence_threshold']} != {optimized_threshold}"
         )
@@ -1133,7 +1274,9 @@ class TestArtifactLoadingRoundTrip:
         # Verify demo structure: each should have query and selected_profile
         for demo in demos:
             assert demo.get("query"), f"Demo missing query: {demo}"
-            assert demo.get("selected_profile"), f"Demo missing selected_profile: {demo}"
+            assert demo.get("selected_profile"), (
+                f"Demo missing selected_profile: {demo}"
+            )
             assert demo["selected_profile"] in known_profiles, (
                 f"Demo selected unknown profile '{demo['selected_profile']}', "
                 f"expected one of {known_profiles}"
@@ -1155,15 +1298,29 @@ class TestSyntheticGeneration:
         """Run --mode synthetic for one optimizer type, verify structured result."""
         result = subprocess.run(
             [
-                "kubectl", "--context", KUBECTL_CONTEXT,
-                "exec", "-n", NAMESPACE, DEPLOYMENT, "-c", CONTAINER,
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "exec",
+                "-n",
+                NAMESPACE,
+                DEPLOYMENT,
+                "-c",
+                CONTAINER,
                 "--",
-                "python3", "-m", "cogniverse_runtime.optimization_cli",
-                "--mode", "synthetic",
-                "--tenant-id", TENANT_ID,
-                "--agents", "simba",
+                "python3",
+                "-m",
+                "cogniverse_runtime.optimization_cli",
+                "--mode",
+                "synthetic",
+                "--tenant-id",
+                TENANT_ID,
+                "--agents",
+                "simba",
             ],
-            capture_output=True, text=True, timeout=300,
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
 
         stdout = result.stdout.strip()
@@ -1188,12 +1345,12 @@ class TestSyntheticGeneration:
         )
         output = json.loads(stdout[json_start:json_end])
 
-        assert "results" in output, (
-            f"Synthetic output missing 'results' key: {output}"
-        )
+        assert "results" in output, f"Synthetic output missing 'results' key: {output}"
         assert "simba" in output["results"], (
             f"Synthetic output missing 'simba' result: {output['results']}"
         )
-        assert output["results"]["simba"]["status"] in ("success", "failed", "no_data"), (
-            f"Unexpected status: {output['results']['simba']}"
-        )
+        assert output["results"]["simba"]["status"] in (
+            "success",
+            "failed",
+            "no_data",
+        ), f"Unexpected status: {output['results']['simba']}"

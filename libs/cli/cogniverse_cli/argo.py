@@ -69,9 +69,7 @@ def deploy_workflow_templates(
         filtered = filter_workflow_templates(yaml_file)
         if not filtered:
             continue
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False
-        ) as tmp:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
             tmp_path = Path(tmp.name)
             yaml.dump_all(filtered, tmp, default_flow_style=False)
         try:

@@ -373,9 +373,7 @@ class RemoteColBERTLoader(ModelLoader):
 
     def load_model(self) -> Tuple[Any, Any]:
         """Return a ColBERT-compatible wrapper that calls the remote endpoint."""
-        self.logger.info(
-            f"Initialized remote ColBERT inference at {self.remote_url}"
-        )
+        self.logger.info(f"Initialized remote ColBERT inference at {self.remote_url}")
 
         class ColBERTRemoteWrapper:
             def __init__(self, endpoint_url, api_key, model_name, logger):
@@ -460,9 +458,7 @@ class ColPaliModelLoader(ModelLoader):
             # Load model — avoid device_map parameter which uses accelerate's
             # meta tensor dispatch and causes NotImplementedError on repeated
             # loads in the same process.
-            model = ColIdefics3.from_pretrained(
-                self.model_name, torch_dtype=dtype
-            )
+            model = ColIdefics3.from_pretrained(self.model_name, torch_dtype=dtype)
             model.eval()  # PyTorch evaluation mode (no dropout/batchnorm)
             if device != "cpu":
                 model = model.to(device)

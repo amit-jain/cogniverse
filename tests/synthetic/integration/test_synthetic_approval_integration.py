@@ -72,7 +72,6 @@ skip_if_no_teacher_api = pytest.mark.skipif(
 )
 
 
-
 # phoenix_container fixture is inherited from tests/conftest.py
 # It starts Phoenix Docker on ports 16006 (HTTP) and 14317 (gRPC)
 
@@ -210,7 +209,9 @@ class TestSyntheticApprovalIntegration:
         """Test complete workflow: generate -> review -> approve/reject -> regenerate"""
 
         # Step 1: Generate synthetic data
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="routing", count=5)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="routing", count=5
+        )
         response = await synthetic_service.generate(request)
 
         assert len(response.data) == 5
@@ -323,7 +324,9 @@ class TestSyntheticApprovalIntegration:
         """Test that rejected items are regenerated with feedback"""
 
         # Generate initial data
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="routing", count=1)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="routing", count=1
+        )
         response = await synthetic_service.generate(request)
 
         initial_query = response.data[0]["query"]
@@ -478,7 +481,9 @@ class TestSyntheticServiceIntegration:
     ):
         """Test that synthetic generation produces Phoenix traces"""
 
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="routing", count=3)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="routing", count=3
+        )
         response = await synthetic_service.generate(request)
 
         assert len(response.data) == 3
@@ -496,7 +501,9 @@ class TestSyntheticServiceIntegration:
 
         # Note: This requires full generator_config with all optimizers
         # For now just test routing
-        request = SyntheticDataRequest(tenant_id="test:unit", optimizer="routing", count=5)
+        request = SyntheticDataRequest(
+            tenant_id="test:unit", optimizer="routing", count=5
+        )
         response = await synthetic_service.generate(request)
 
         assert response.optimizer == "routing"

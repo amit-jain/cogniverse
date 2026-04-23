@@ -188,9 +188,7 @@ class VespaDockerManager:
             wait_for_vespa_indexing(delay=2)
 
         if not container_ready:
-            raise RuntimeError(
-                f"Container node not ready after {timeout} seconds"
-            )
+            raise RuntimeError(f"Container node not ready after {timeout} seconds")
 
         # Phase 2: Wait for content/distributor node (PUT-based feed probe).
         # GET probes only check the container node. The content node that
@@ -220,9 +218,7 @@ class VespaDockerManager:
             wait_for_vespa_indexing(delay=2)
 
         if not feed_ready:
-            raise RuntimeError(
-                f"Content node feed not ready after {timeout} seconds"
-            )
+            raise RuntimeError(f"Content node feed not ready after {timeout} seconds")
 
     def deploy_schemas(
         self,

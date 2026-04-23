@@ -92,9 +92,7 @@ class TestOrchestratorInputValidation:
 
         errors = excinfo.value.errors()
         tenant_errors = [e for e in errors if "tenant_id" in e.get("loc", ())]
-        assert tenant_errors, (
-            f"Expected a validation error on tenant_id, got: {errors}"
-        )
+        assert tenant_errors, f"Expected a validation error on tenant_id, got: {errors}"
 
     def test_accepts_explicit_tenant_id(self):
         """Explicit tenant_id round-trips through the model unchanged."""
@@ -144,7 +142,10 @@ class TestOrchestrationModule:
         # Planner was called with gateway_context
         mock_dspy_lm.assert_called_once()
         call_kwargs = mock_dspy_lm.call_args
-        assert call_kwargs.kwargs.get("gateway_context") == "intent: video_search, modality: VIDEO"
+        assert (
+            call_kwargs.kwargs.get("gateway_context")
+            == "intent: video_search, modality: VIDEO"
+        )
 
     def test_forward_propagates_error(self):
         """Test that DSPy failure propagates instead of silently falling back"""
@@ -343,7 +344,9 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
+            results = await orchestrator_agent._execute_plan(
+                plan, tenant_id="test:unit"
+            )
 
         assert len(results) == 2
         assert "query_enhancement_agent" in results
@@ -371,7 +374,9 @@ class TestOrchestratorAgent:
         results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
         assert "summarizer_agent" in results
-        assert results["summarizer_agent"]["status"] == "success" or True  # Agent exists in registry
+        assert (
+            results["summarizer_agent"]["status"] == "success" or True
+        )  # Agent exists in registry
 
     @pytest.mark.asyncio
     async def test_execute_plan_agent_error(self, orchestrator_agent):
@@ -397,7 +402,9 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
+            results = await orchestrator_agent._execute_plan(
+                plan, tenant_id="test:unit"
+            )
 
         assert "search_agent" in results
         assert results["search_agent"]["status"] == "error"
@@ -435,7 +442,9 @@ class TestOrchestratorAgent:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
+            results = await orchestrator_agent._execute_plan(
+                plan, tenant_id="test:unit"
+            )
 
         assert results["search_agent"]["status"] == "error"
         # Old behavior: message == "" for empty-str exceptions.
@@ -469,7 +478,9 @@ class TestOrchestratorAgent:
             new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator_agent._process_impl(
-                OrchestratorInput(query="Show me machine learning videos", tenant_id="test:unit")
+                OrchestratorInput(
+                    query="Show me machine learning videos", tenant_id="test:unit"
+                )
             )
 
         assert isinstance(result, OrchestratorOutput)
@@ -667,7 +678,9 @@ class TestOrchestratorCheckpointing:
             "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
             return_value=mock_cm,
         ):
-            await agent._execute_plan(plan, tenant_id="test:unit", workflow_id="wf_test")
+            await agent._execute_plan(
+                plan, tenant_id="test:unit", workflow_id="wf_test"
+            )
 
         # Checkpoint storage should have been called
         mock_storage.save_checkpoint.assert_called_once()
@@ -723,8 +736,16 @@ class TestOrchestratorFusion:
     def test_cross_modal_fusion(self, orchestrator_agent):
         """Test that multi-modality results use fusion"""
         agent_results = {
-            "video_search_agent": {"status": "success", "results": ["video1"], "confidence": 0.9},
-            "image_search_agent": {"status": "success", "results": ["image1"], "confidence": 0.7},
+            "video_search_agent": {
+                "status": "success",
+                "results": ["video1"],
+                "confidence": 0.9,
+            },
+            "image_search_agent": {
+                "status": "success",
+                "results": ["image1"],
+                "confidence": 0.7,
+            },
         }
 
         output = orchestrator_agent._aggregate_results("find dogs", agent_results)
@@ -827,9 +848,15 @@ class TestOrchestratorFusion:
 
     def test_detect_agent_modality(self, orchestrator_agent):
         """Test modality detection from agent name"""
-        assert orchestrator_agent._detect_agent_modality("video_search_agent") == "video"
-        assert orchestrator_agent._detect_agent_modality("image_search_agent") == "image"
-        assert orchestrator_agent._detect_agent_modality("audio_analysis_agent") == "audio"
+        assert (
+            orchestrator_agent._detect_agent_modality("video_search_agent") == "video"
+        )
+        assert (
+            orchestrator_agent._detect_agent_modality("image_search_agent") == "image"
+        )
+        assert (
+            orchestrator_agent._detect_agent_modality("audio_analysis_agent") == "audio"
+        )
         assert orchestrator_agent._detect_agent_modality("document_agent") == "document"
         assert orchestrator_agent._detect_agent_modality("search_agent") == "text"
 

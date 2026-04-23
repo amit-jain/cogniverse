@@ -56,9 +56,7 @@ class ConversationManager:
             logger.warning(f"Failed to load conversation history: {e}")
             return []
 
-    def store_turn(
-        self, chat_id: str, role: str, content: str
-    ) -> None:
+    def store_turn(self, chat_id: str, role: str, content: str) -> None:
         """Store a conversation turn.
 
         Args:
@@ -69,9 +67,7 @@ class ConversationManager:
         if not self.memory_manager or self.memory_manager.memory is None:
             return
 
-        memory_content = (
-            f"[chat:{chat_id}] [{role}] {content}"
-        )
+        memory_content = f"[chat:{chat_id}] [{role}] {content}"
 
         try:
             self.memory_manager.add_memory(

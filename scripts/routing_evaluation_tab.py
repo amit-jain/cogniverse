@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 def run_async_in_streamlit(coro):
     """Helper to run async operations in Streamlit"""
     import asyncio
+
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -187,7 +188,9 @@ def _render_summary_metrics(metrics):
         st.metric(
             label="Total Decisions",
             value=f"{metrics.total_decisions}",
-            delta=f"{metrics.ambiguous_count} ambiguous" if metrics.ambiguous_count > 0 else None,
+            delta=f"{metrics.ambiguous_count} ambiguous"
+            if metrics.ambiguous_count > 0
+            else None,
             help="Total routing decisions evaluated",
         )
 
@@ -218,7 +221,9 @@ def _render_per_agent_metrics(metrics):
     st.dataframe(
         df.style.format(
             {"Precision": "{:.2%}", "Recall": "{:.2%}", "F1 Score": "{:.2%}"}
-        ).background_gradient(cmap="RdYlGn", subset=["Precision", "Recall", "F1 Score"]),
+        ).background_gradient(
+            cmap="RdYlGn", subset=["Precision", "Recall", "F1 Score"]
+        ),
         use_container_width=True,
     )
 
@@ -226,7 +231,9 @@ def _render_per_agent_metrics(metrics):
     fig = go.Figure()
 
     fig.add_trace(
-        go.Bar(name="Precision", x=df["Agent"], y=df["Precision"], marker_color="lightblue")
+        go.Bar(
+            name="Precision", x=df["Agent"], y=df["Precision"], marker_color="lightblue"
+        )
     )
     fig.add_trace(
         go.Bar(name="Recall", x=df["Agent"], y=df["Recall"], marker_color="lightgreen")
@@ -267,6 +274,7 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
 
         # Filter for routing spans
         from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:
@@ -311,7 +319,9 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
 
         with col2:
             # Confidence vs success rate
-            confidence_df = pd.DataFrame({"confidence": confidences, "success": successes})
+            confidence_df = pd.DataFrame(
+                {"confidence": confidences, "success": successes}
+            )
 
             # Bin confidences into groups
             confidence_df["confidence_bin"] = pd.cut(
@@ -379,6 +389,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
 
         # Filter for routing spans
         from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+
         routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
 
         if routing_spans.empty:
@@ -467,8 +478,7 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
     # Initialize agents
     try:
         annotation_agent = AnnotationAgent(
-            tenant_id=tenant_id,
-            confidence_threshold=0.6
+            tenant_id=tenant_id, confidence_threshold=0.6
         )
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -493,7 +503,7 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                 max_value=1.0,
                 value=0.6,
                 step=0.05,
-                help="Spans below this confidence need review"
+                help="Spans below this confidence need review",
             )
         with col2:
             max_annotations = st.number_input(
@@ -501,7 +511,7 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                 min_value=1,
                 max_value=100,
                 value=20,
-                help="Maximum number of annotation requests to display"
+                help="Maximum number of annotation requests to display",
             )
 
     # Action buttons
@@ -531,7 +541,9 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                     try:
                         auto_annotations = llm_annotator.batch_annotate(requests)
                         st.session_state["auto_annotations"] = auto_annotations
-                        st.success(f"✅ Generated {len(auto_annotations)} LLM annotations")
+                        st.success(
+                            f"✅ Generated {len(auto_annotations)} LLM annotations"
+                        )
                     except Exception as e:
                         st.error(f"❌ Error generating annotations: {e}")
 
@@ -540,20 +552,21 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
         st.metric(
             label="Total Annotations",
             value=stats.get("total", 0),
-            delta=f"{stats.get('pending_review', 0)} pending review"
+            delta=f"{stats.get('pending_review', 0)} pending review",
         )
 
     # Display annotation requests and allow human review
-    if "annotation_requests" in st.session_state and st.session_state["annotation_requests"]:
+    if (
+        "annotation_requests" in st.session_state
+        and st.session_state["annotation_requests"]
+    ):
         st.subheader("📋 Annotation Queue")
 
         requests = st.session_state["annotation_requests"]
         auto_annotations = st.session_state.get("auto_annotations", [])
 
         # Create mapping of span_id to auto_annotation
-        auto_annotation_map = {
-            ann.span_id: ann for ann in auto_annotations
-        }
+        auto_annotation_map = {ann.span_id: ann for ann in auto_annotations}
 
         # Filter controls
         col1, col2 = st.columns(2)
@@ -561,19 +574,22 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
             priority_filter = st.multiselect(
                 "Filter by Priority",
                 options=[p.value for p in AnnotationPriority],
-                default=[p.value for p in AnnotationPriority]
+                default=[p.value for p in AnnotationPriority],
             )
         with col2:
             show_annotated = st.checkbox("Show LLM-Annotated", value=True)
 
         # Filter requests
         filtered_requests = [
-            r for r in requests
+            r
+            for r in requests
             if r.priority.value in priority_filter
             and (show_annotated or r.span_id not in auto_annotation_map)
         ]
 
-        st.info(f"Showing {len(filtered_requests)} of {len(requests)} annotation requests")
+        st.info(
+            f"Showing {len(filtered_requests)} of {len(requests)} annotation requests"
+        )
 
         # Display each request
         for idx, request in enumerate(filtered_requests):
@@ -600,7 +616,9 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                 with col2:
                     st.markdown("**Metadata:**")
                     st.write(f"Priority: {request.priority.value}")
-                    st.write(f"Timestamp: {request.timestamp.strftime('%Y-%m-%d %H:%M')}")
+                    st.write(
+                        f"Timestamp: {request.timestamp.strftime('%Y-%m-%d %H:%M')}"
+                    )
                     st.write(f"Span ID: `{request.span_id[:16]}...`")
 
                 # Show LLM annotation if available
@@ -615,13 +633,17 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                     with col2:
                         st.write(f"Confidence: `{auto_annotation.confidence:.2f}`")
                     with col3:
-                        st.write(f"Review Needed: {'Yes' if auto_annotation.requires_human_review else 'No'}")
+                        st.write(
+                            f"Review Needed: {'Yes' if auto_annotation.requires_human_review else 'No'}"
+                        )
 
                     st.markdown("**Reasoning:**")
                     st.info(auto_annotation.reasoning)
 
                     if auto_annotation.suggested_correct_agent:
-                        st.write(f"Suggested Agent: `{auto_annotation.suggested_correct_agent}`")
+                        st.write(
+                            f"Suggested Agent: `{auto_annotation.suggested_correct_agent}`"
+                        )
 
                 # Human review interface
                 st.markdown("---")
@@ -635,30 +657,44 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                         human_label = st.selectbox(
                             "Your Annotation",
                             options=[label.value for label in AnnotationLabel],
-                            index=0 if not auto_annotation else [label.value for label in AnnotationLabel].index(auto_annotation.label.value),
-                            key=f"label_{idx}"
+                            index=0
+                            if not auto_annotation
+                            else [label.value for label in AnnotationLabel].index(
+                                auto_annotation.label.value
+                            ),
+                            key=f"label_{idx}",
                         )
 
                     with col2:
                         suggested_agent = st.text_input(
                             "Suggested Agent (if wrong)",
-                            value=auto_annotation.suggested_correct_agent if auto_annotation and auto_annotation.suggested_correct_agent else "",
-                            key=f"agent_{idx}"
+                            value=auto_annotation.suggested_correct_agent
+                            if auto_annotation
+                            and auto_annotation.suggested_correct_agent
+                            else "",
+                            key=f"agent_{idx}",
                         )
 
                     reasoning = st.text_area(
                         "Reasoning",
                         value=auto_annotation.reasoning if auto_annotation else "",
                         height=100,
-                        key=f"reasoning_{idx}"
+                        key=f"reasoning_{idx}",
                     )
 
                     col1, col2 = st.columns(2)
                     with col1:
-                        submit_button = st.form_submit_button("✅ Submit Annotation", use_container_width=True)
+                        submit_button = st.form_submit_button(
+                            "✅ Submit Annotation", use_container_width=True
+                        )
                     with col2:
-                        if auto_annotation and not auto_annotation.requires_human_review:
-                            approve_button = st.form_submit_button("👍 Approve LLM Annotation", use_container_width=True)
+                        if (
+                            auto_annotation
+                            and not auto_annotation.requires_human_review
+                        ):
+                            approve_button = st.form_submit_button(
+                                "👍 Approve LLM Annotation", use_container_width=True
+                            )
                         else:
                             approve_button = False
 
@@ -668,7 +704,9 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                                 span_id=request.span_id,
                                 label=AnnotationLabel(human_label),
                                 reasoning=reasoning,
-                                suggested_agent=suggested_agent if suggested_agent else None
+                                suggested_agent=suggested_agent
+                                if suggested_agent
+                                else None,
                             )
                             if success:
                                 st.success("✅ Annotation saved!")

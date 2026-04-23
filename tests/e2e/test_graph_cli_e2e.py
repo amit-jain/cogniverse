@@ -46,8 +46,18 @@ class TestGraphEndpoints:
                         {"name": "EntityC", "description": "Third", "kind": "entity"},
                     ],
                     "edges": [
-                        {"source": "EntityA", "target": "EntityB", "relation": "calls", "provenance": "EXTRACTED"},
-                        {"source": "EntityB", "target": "EntityC", "relation": "calls", "provenance": "EXTRACTED"},
+                        {
+                            "source": "EntityA",
+                            "target": "EntityB",
+                            "relation": "calls",
+                            "provenance": "EXTRACTED",
+                        },
+                        {
+                            "source": "EntityB",
+                            "target": "EntityC",
+                            "relation": "calls",
+                            "provenance": "EXTRACTED",
+                        },
                     ],
                 },
             )
@@ -79,8 +89,18 @@ class TestGraphEndpoints:
                         {"name": "Gamma"},
                     ],
                     "edges": [
-                        {"source": "Alpha", "target": "Beta", "relation": "imports", "provenance": "EXTRACTED"},
-                        {"source": "Alpha", "target": "Gamma", "relation": "calls", "provenance": "EXTRACTED"},
+                        {
+                            "source": "Alpha",
+                            "target": "Beta",
+                            "relation": "imports",
+                            "provenance": "EXTRACTED",
+                        },
+                        {
+                            "source": "Alpha",
+                            "target": "Gamma",
+                            "relation": "calls",
+                            "provenance": "EXTRACTED",
+                        },
                     ],
                 },
             )
@@ -114,8 +134,18 @@ class TestGraphEndpoints:
                         {"name": "End"},
                     ],
                     "edges": [
-                        {"source": "Start", "target": "Middle", "relation": "calls", "provenance": "EXTRACTED"},
-                        {"source": "Middle", "target": "End", "relation": "calls", "provenance": "EXTRACTED"},
+                        {
+                            "source": "Start",
+                            "target": "Middle",
+                            "relation": "calls",
+                            "provenance": "EXTRACTED",
+                        },
+                        {
+                            "source": "Middle",
+                            "target": "End",
+                            "relation": "calls",
+                            "provenance": "EXTRACTED",
+                        },
                     ],
                 },
             )
@@ -176,7 +206,12 @@ class TestGraphEndpoints:
                 {"name": "Bar"},
             ],
             "edges": [
-                {"source": "Foo", "target": "Bar", "relation": "refs", "provenance": "INFERRED"},
+                {
+                    "source": "Foo",
+                    "target": "Bar",
+                    "relation": "refs",
+                    "provenance": "INFERRED",
+                },
             ],
         }
         with httpx.Client(timeout=60.0) as client:
@@ -205,9 +240,7 @@ class TestMultimodalGraphExtraction:
     """
 
     def test_video_upload_produces_graph_nodes(self):
-        video_path = Path(
-            "data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4"
-        )
+        video_path = Path("data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4")
         if not video_path.exists():
             pytest.skip(f"Sample video missing at {video_path}")
 

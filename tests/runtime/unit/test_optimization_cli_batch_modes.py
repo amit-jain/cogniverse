@@ -148,7 +148,15 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing", "synthetic"],
+        [
+            "simba",
+            "workflow",
+            "gateway-thresholds",
+            "profile",
+            "entity-extraction",
+            "routing",
+            "synthetic",
+        ],
     )
     def test_new_mode_accepted(self, parser, mode):
         args = parser.parse_args(["--mode", mode])
@@ -158,7 +166,15 @@ class TestCliArgumentParser:
 
     @pytest.mark.parametrize(
         "mode",
-        ["simba", "workflow", "gateway-thresholds", "profile", "entity-extraction", "routing", "synthetic"],
+        [
+            "simba",
+            "workflow",
+            "gateway-thresholds",
+            "profile",
+            "entity-extraction",
+            "routing",
+            "synthetic",
+        ],
     )
     def test_new_mode_with_tenant_and_lookback(self, parser, mode):
         args = parser.parse_args(

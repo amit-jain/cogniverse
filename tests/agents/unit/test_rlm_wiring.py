@@ -6,7 +6,6 @@ Also verifies real runtime behaviour: field assignment, type annotation,
 and WikiManager merge-threshold logic.
 """
 
-
 import pytest
 
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
@@ -40,7 +39,6 @@ class TestRLMWiring:
         mod = __import__(module, fromlist=[agent_cls])
         cls = getattr(mod, agent_cls)
         assert issubclass(cls, RLMAwareMixin)
-
 
 
 class TestDetailedReportInputRLMRuntime:

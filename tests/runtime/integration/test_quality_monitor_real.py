@@ -137,8 +137,7 @@ def seeded_vespa(vespa_instance, colpali_model, config_manager, schema_loader):
             last_state = msg or "ok"
             if TENANT_SCHEMA_NAME in msg or not errors:
                 logger.info(
-                    f"{TENANT_SCHEMA_NAME} visible to /search/ after "
-                    f"{attempt + 1}s"
+                    f"{TENANT_SCHEMA_NAME} visible to /search/ after {attempt + 1}s"
                 )
                 break
         time.sleep(1)
@@ -306,9 +305,7 @@ class TestGoldenEvalRealVespa:
             )
 
         # At least one query should have MRR > 0 (barbell or ocean should match)
-        has_positive_mrr = any(
-            s["mrr"] > 0 for s in result.per_query_scores
-        )
+        has_positive_mrr = any(s["mrr"] > 0 for s in result.per_query_scores)
         assert has_positive_mrr, (
             f"At least one golden query should match real Vespa data. "
             f"Scores: {[(s['query'], s['mrr']) for s in result.per_query_scores]}"
@@ -416,9 +413,7 @@ class TestForceOptimizationCycle:
         assert isinstance(result, dict), (
             f"force_optimization_cycle must return a dict, got: {result!r}"
         )
-        assert "status" in result, (
-            f"Result dict missing 'status' key: {result}"
-        )
+        assert "status" in result, f"Result dict missing 'status' key: {result}"
         assert result["status"] in ("ok", "no_data"), (
             f"Unexpected status value: {result['status']!r}"
         )
@@ -601,11 +596,13 @@ class TestXGBoostGateViaPhoenixProvider:
         from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
         provider = PhoenixProvider()
-        provider.initialize({
-            "tenant_id": "xgboost_gate_test",
-            "http_endpoint": phoenix_url,
-            "grpc_endpoint": real_telemetry.config.provider_config["grpc_endpoint"],
-        })
+        provider.initialize(
+            {
+                "tenant_id": "xgboost_gate_test",
+                "http_endpoint": phoenix_url,
+                "grpc_endpoint": real_telemetry.config.provider_config["grpc_endpoint"],
+            }
+        )
 
         from tests.utils.llm_config import get_llm_base_url, get_llm_model
 

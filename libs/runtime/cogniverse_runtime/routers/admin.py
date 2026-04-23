@@ -788,9 +788,7 @@ async def create_messaging_invite(
     import uuid
 
     token = uuid.uuid4().hex
-    expiry = (
-        datetime.utcnow() + timedelta(hours=request.expires_in_hours)
-    ).isoformat()
+    expiry = (datetime.utcnow() + timedelta(hours=request.expires_in_hours)).isoformat()
 
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
@@ -829,7 +827,12 @@ async def admin_delete_memory(tenant_id: str, memory_id: str):
 
     for ns in _ADMIN_ALL_NAMESPACES:
         if mgr.delete_memory(memory_id=memory_id, tenant_id=tenant_id, agent_name=ns):
-            logger.info("Admin deleted memory %s (ns=%s) for tenant %s", memory_id, ns, tenant_id)
+            logger.info(
+                "Admin deleted memory %s (ns=%s) for tenant %s",
+                memory_id,
+                ns,
+                tenant_id,
+            )
             return {"status": "deleted", "memory_id": memory_id}
 
     raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
@@ -838,7 +841,9 @@ async def admin_delete_memory(tenant_id: str, memory_id: str):
 @router.delete("/memories/{tenant_id}")
 async def admin_clear_memories(
     tenant_id: str,
-    type: Optional[str] = Query(default=None, description="Memory type to clear: preference, strategy, or all"),
+    type: Optional[str] = Query(
+        default=None, description="Memory type to clear: preference, strategy, or all"
+    ),
 ):
     """Admin: clear memories by type. Can clear system memories (strategies)."""
     from cogniverse_core.memory.manager import Mem0MemoryManager

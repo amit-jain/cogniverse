@@ -21,6 +21,7 @@ def _make_workflow_intelligence(**kwargs) -> WorkflowIntelligence:
     defaults.update(kwargs)
     return WorkflowIntelligence(**defaults)
 
+
 _TEST_TENANT = "synthetic_optimizer_test"
 
 

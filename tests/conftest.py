@@ -147,7 +147,11 @@ def cleanup_environment():
     """Clean up environment variables that might pollute tests"""
     # Save current environment
     saved_env = {}
-    env_vars_to_track = ["VESPA_SCHEMA", "MLFLOW_TRACKING_URI", "TELEMETRY_OTLP_ENDPOINT"]
+    env_vars_to_track = [
+        "VESPA_SCHEMA",
+        "MLFLOW_TRACKING_URI",
+        "TELEMETRY_OTLP_ENDPOINT",
+    ]
     for var in env_vars_to_track:
         if var in os.environ:
             saved_env[var] = os.environ[var]

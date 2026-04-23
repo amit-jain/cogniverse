@@ -175,23 +175,31 @@ def _handle_slash_command(session: CodingSession, line: str) -> bool:
             session.codebase_path = arg.strip()
             console.print(f"Codebase path set to [bold]{session.codebase_path}[/bold]")
         else:
-            console.print(f"Current codebase: [bold]{session.codebase_path or '(none)'}[/bold]")
+            console.print(
+                f"Current codebase: [bold]{session.codebase_path or '(none)'}[/bold]"
+            )
     elif cmd == "/iterations":
         if arg:
             try:
                 session.max_iterations = int(arg.strip())
-                console.print(f"Max iterations set to [bold]{session.max_iterations}[/bold]")
+                console.print(
+                    f"Max iterations set to [bold]{session.max_iterations}[/bold]"
+                )
             except ValueError:
                 console.print("[red]Invalid number[/red]")
         else:
-            console.print(f"Current max iterations: [bold]{session.max_iterations}[/bold]")
+            console.print(
+                f"Current max iterations: [bold]{session.max_iterations}[/bold]"
+            )
     elif cmd == "/clear":
         session.clear()
     elif cmd == "/help":
         for cmd_name, desc in SLASH_COMMANDS.items():
             console.print(f"  [bold]{cmd_name:15s}[/bold] {desc}")
     else:
-        console.print(f"[red]Unknown command: {cmd}[/red]. Type /help for available commands.")
+        console.print(
+            f"[red]Unknown command: {cmd}[/red]. Type /help for available commands."
+        )
 
     return True
 
@@ -210,7 +218,9 @@ def run_repl(
             console.print("[red]Runtime not healthy. Run `cogniverse up` first.[/red]")
             return
     except (httpx.ConnectError, httpx.ReadTimeout):
-        console.print("[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]")
+        console.print(
+            "[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]"
+        )
         return
 
     session = CodingSession(
@@ -221,8 +231,12 @@ def run_repl(
         runtime_url=runtime_url,
     )
 
-    console.print(f"[bold]Cogniverse Coding Agent[/bold] (tenant: {tenant_id}, lang: {language})")
-    console.print("[dim]Type a coding task, or /help for commands. Ctrl+D to exit.[/dim]")
+    console.print(
+        f"[bold]Cogniverse Coding Agent[/bold] (tenant: {tenant_id}, lang: {language})"
+    )
+    console.print(
+        "[dim]Type a coding task, or /help for commands. Ctrl+D to exit.[/dim]"
+    )
     console.print()
 
     while True:

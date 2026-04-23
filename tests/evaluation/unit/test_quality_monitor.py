@@ -187,12 +187,8 @@ class TestTriggerBuilding:
             mean_ndcg=0.4,
             mean_precision_at_5=0.2,
             query_count=10,
-            low_scoring_queries=[
-                {"query": "bad query", "mrr": 0.0}
-            ],
-            high_scoring_queries=[
-                {"query": "good query", "mrr": 1.0}
-            ],
+            low_scoring_queries=[{"query": "bad query", "mrr": 0.0}],
+            high_scoring_queries=[{"query": "good query", "mrr": 1.0}],
         )
         live = LiveEvalResult(
             timestamp=datetime.utcnow(),
@@ -204,9 +200,7 @@ class TestTriggerBuilding:
                     baseline_score=0.7,
                     degradation_pct=0.57,
                     sample_count=20,
-                    low_scoring_examples=[
-                        {"query": "bad summary", "score": 0.2}
-                    ],
+                    low_scoring_examples=[{"query": "bad summary", "score": 0.2}],
                     high_scoring_examples=[],
                 ),
             },
@@ -321,8 +315,7 @@ class TestArgoSubmission:
         assert "workflows/test-ns" in call_args[0][0]
         workflow = call_args[1]["json"]["workflow"]
         params = {
-            p["name"]: p["value"]
-            for p in workflow["spec"]["arguments"]["parameters"]
+            p["name"]: p["value"] for p in workflow["spec"]["arguments"]["parameters"]
         }
         assert params["agents"] == "search,summary"
         assert params["tenant-id"] == "test_tenant"
@@ -338,9 +331,10 @@ class TestGoldenEvaluation:
             body = json.loads(request.content)
             query = body.get("query", "")
             if "barbell" in query:
-                return httpx.Response(200, json={
-                    "results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]
-                })
+                return httpx.Response(
+                    200,
+                    json={"results": [{"source_id": "v_-HpCLXdtcas", "score": 0.9}]},
+                )
             return httpx.Response(200, json={"results": []})
 
         monitor._http_client = httpx.AsyncClient(
@@ -364,14 +358,14 @@ class TestGoldenEvaluation:
         import httpx
 
         monitor._http_client = httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(500, text="error")
-            ),
+            transport=httpx.MockTransport(lambda r: httpx.Response(500, text="error")),
             base_url="http://testserver",
         )
 
         with pytest.raises(RuntimeError, match="No golden queries evaluated"):
-            with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+            with patch.object(
+                monitor, "_store_golden_eval_result", new_callable=AsyncMock
+            ):
                 await monitor.evaluate_golden_set()
 
 
@@ -448,7 +442,9 @@ class TestStoreOperations:
 class TestUpdateBaseline:
     @pytest.mark.asyncio
     async def test_update_baseline_stores_golden(self, monitor):
-        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock) as mock:
+        with patch.object(
+            monitor, "_store_golden_eval_result", new_callable=AsyncMock
+        ) as mock:
             result = GoldenEvalResult(
                 timestamp=datetime.utcnow(),
                 tenant_id="test_tenant",
@@ -472,21 +468,34 @@ class TestEvaluateLiveTraffic:
         """Live traffic eval with mocked span evaluator."""
         import pandas as pd
 
-        mock_spans = pd.DataFrame([
-            {"span_id": "s1", "attributes": {"query": "test"}, "outputs": {"results": []}},
-        ])
+        mock_spans = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "attributes": {"query": "test"},
+                    "outputs": {"results": []},
+                },
+            ]
+        )
 
         with patch("cogniverse_evaluation.span_evaluator.SpanEvaluator") as MockEval:
             mock_eval = MagicMock()
             mock_eval.get_recent_spans = AsyncMock(return_value=mock_spans)
             MockEval.return_value = mock_eval
 
-            with patch.object(monitor, "_evaluate_agent_spans", new_callable=AsyncMock) as mock_agent:
+            with patch.object(
+                monitor, "_evaluate_agent_spans", new_callable=AsyncMock
+            ) as mock_agent:
                 mock_agent.return_value = AgentEvalResult(
-                    agent=AgentType.SEARCH, score=0.7, baseline_score=0.8,
-                    degradation_pct=0.12, sample_count=1,
+                    agent=AgentType.SEARCH,
+                    score=0.7,
+                    baseline_score=0.8,
+                    degradation_pct=0.12,
+                    sample_count=1,
                 )
-                with patch.object(monitor, "_store_live_eval_result", new_callable=AsyncMock):
+                with patch.object(
+                    monitor, "_store_live_eval_result", new_callable=AsyncMock
+                ):
                     result = await monitor.evaluate_live_traffic()
 
         assert result.tenant_id == "test_tenant"
@@ -498,18 +507,24 @@ class TestEvaluateAgentSpans:
         """Score search spans via LLM judge."""
         import pandas as pd
 
-        spans = pd.DataFrame([{
-            "span_id": "s1",
-            "attributes": {"query": "test video"},
-            "outputs": {"results": [{"video_id": "v1", "score": 0.9}]},
-        }])
+        spans = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "attributes": {"query": "test video"},
+                    "outputs": {"results": [{"video_id": "v1", "score": 0.9}]},
+                }
+            ]
+        )
 
         mock_judge = MagicMock()
         mock_judge._call_llm = AsyncMock(return_value="Score: 8/10. Good results.")
         mock_judge._extract_score_from_response = MagicMock(return_value=(0.8, "Good"))
         monitor._llm_judge = mock_judge
 
-        with patch.object(monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=0.85):
+        with patch.object(
+            monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=0.85
+        ):
             result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
 
         assert result.agent == AgentType.SEARCH
@@ -646,15 +661,20 @@ class TestForceOptimizationCycle:
             tenant_id="test_tenant",
         )
 
-        with patch.object(
-            monitor, "evaluate_golden_set", new_callable=AsyncMock
-        ) as mock_golden, patch.object(
-            monitor, "evaluate_live_traffic", new_callable=AsyncMock
-        ) as mock_live, patch.object(
-            monitor, "_store_trigger_dataset", new_callable=AsyncMock
-        ) as mock_store, patch.object(
-            monitor, "submit_optimization", new_callable=AsyncMock
-        ) as mock_submit:
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "_store_trigger_dataset", new_callable=AsyncMock
+            ) as mock_store,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
             mock_golden.return_value = golden_result
             mock_live.return_value = live_result
 
@@ -692,15 +712,18 @@ class TestForceOptimizationCycle:
             query_count=10,
         )
 
-        with patch.object(
-            monitor, "evaluate_golden_set", new_callable=AsyncMock
-        ) as mock_golden, patch.object(
-            monitor, "evaluate_live_traffic", new_callable=AsyncMock
-        ) as mock_live, patch.object(
-            monitor, "_store_trigger_dataset", new_callable=AsyncMock
-        ), patch.object(
-            monitor, "submit_optimization", new_callable=AsyncMock
-        ) as mock_submit:
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(monitor, "_store_trigger_dataset", new_callable=AsyncMock),
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
             mock_golden.return_value = golden_result
             mock_live.return_value = LiveEvalResult(
                 timestamp=datetime.utcnow(), tenant_id="test_tenant"
@@ -713,20 +736,23 @@ class TestForceOptimizationCycle:
         assert result["submitted_to_argo"] is False
 
     @pytest.mark.asyncio
-    async def test_force_cycle_returns_no_data_when_both_evals_fail(
-        self, monitor
-    ):
+    async def test_force_cycle_returns_no_data_when_both_evals_fail(self, monitor):
         """If both golden and live evals raise, the cycle must return a
         ``no_data`` status without crashing — Argo will retry on next run."""
-        with patch.object(
-            monitor, "evaluate_golden_set", new_callable=AsyncMock
-        ) as mock_golden, patch.object(
-            monitor, "evaluate_live_traffic", new_callable=AsyncMock
-        ) as mock_live, patch.object(
-            monitor, "_store_trigger_dataset", new_callable=AsyncMock
-        ) as mock_store, patch.object(
-            monitor, "submit_optimization", new_callable=AsyncMock
-        ) as mock_submit:
+        with (
+            patch.object(
+                monitor, "evaluate_golden_set", new_callable=AsyncMock
+            ) as mock_golden,
+            patch.object(
+                monitor, "evaluate_live_traffic", new_callable=AsyncMock
+            ) as mock_live,
+            patch.object(
+                monitor, "_store_trigger_dataset", new_callable=AsyncMock
+            ) as mock_store,
+            patch.object(
+                monitor, "submit_optimization", new_callable=AsyncMock
+            ) as mock_submit,
+        ):
             mock_golden.side_effect = Exception("phoenix down")
             mock_live.side_effect = Exception("phoenix down")
 
@@ -834,9 +860,7 @@ class TestSpanNameByAgent:
 
         agent = SearchAgent(deps=_PinDeps())
         agent.set_telemetry_manager(_Spy())
-        asyncio.run(
-            agent.process(_PinInput(query="hi", tenant_id="acme"))
-        )
+        asyncio.run(agent.process(_PinInput(query="hi", tenant_id="acme")))
 
         assert captured == ["SearchAgent.process"], (
             f"AgentBase emitted {captured!r}, but SPAN_NAME_BY_AGENT expects "

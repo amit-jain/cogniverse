@@ -112,7 +112,9 @@ class ConfigManager:
         except Exception as exc:
             logger.warning(
                 "profile_change_listener(%s, %s) raised: %s",
-                event_type, profile_name, exc,
+                event_type,
+                profile_name,
+                exc,
             )
 
     # ========== System Configuration ==========

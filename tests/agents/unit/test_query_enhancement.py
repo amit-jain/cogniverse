@@ -171,6 +171,7 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "generate_report_with_routing_decision")
         assert callable(agent.generate_report_with_routing_decision)
 
+
 @pytest.mark.unit
 class TestDSPyAgentOptimizer:
     """Test DSPy agent optimizer and pipeline."""
@@ -853,7 +854,6 @@ class TestDSPyIntegrationReadiness:
                 assert "object" in relationship
 
 
-
 # Query Enhancement System Tests
 
 
@@ -932,10 +932,10 @@ class TestQueryVariants:
             assert isinstance(v["query"], str)
 
 
-
 @pytest.mark.unit
 class TestComposableModuleSignatures:
     """Test composable module DSPy signature compatibility."""
+
 
 @pytest.mark.unit
 class TestQueryEnhancementIntegration:
@@ -960,6 +960,7 @@ class TestQueryEnhancementIntegration:
 
         # Should have path info for routing optimization
         assert isinstance(result.path_used, str)
+
 
 @pytest.mark.unit
 class TestDSPyComponentsIntegration:
@@ -1156,7 +1157,10 @@ class TestWorkflowIntelligence:
         from unittest.mock import Mock
 
         from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
-        intelligence = WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="test_tenant")
+
+        intelligence = WorkflowIntelligence(
+            telemetry_provider=Mock(), tenant_id="test_tenant"
+        )
 
         # Test video search queries
         assert (
@@ -1228,7 +1232,10 @@ class TestWorkflowIntelligence:
             WorkflowExecution,
             WorkflowIntelligence,
         )
-        intelligence = WorkflowIntelligence(telemetry_provider=Mock(), tenant_id="test_tenant")
+
+        intelligence = WorkflowIntelligence(
+            telemetry_provider=Mock(), tenant_id="test_tenant"
+        )
 
         # Add some mock executions
         successful_execution = WorkflowExecution(
@@ -1657,9 +1664,7 @@ class TestEnhancedQueryEnhancementAgent:
 
     def test_generate_variants_caps_at_three_terms(self, qe_agent):
         """Expansion variant uses at most 3 terms."""
-        variants = qe_agent._generate_variants(
-            "q", "q", ["a", "b", "c", "d", "e"]
-        )
+        variants = qe_agent._generate_variants("q", "q", ["a", "b", "c", "d", "e"])
         assert len(variants) == 1
         assert variants[0] == "q a b c"
 
@@ -1773,7 +1778,9 @@ class TestEnhancedQueryEnhancementAgent:
         the fallback must leave a non-identity signal."""
         qe_agent.call_dspy = AsyncMock(side_effect=RuntimeError("LLM down"))
 
-        inp = QueryEnhancementInput(query="show me AI tutorials", tenant_id=TEST_TENANT_ID)
+        inp = QueryEnhancementInput(
+            query="show me AI tutorials", tenant_id=TEST_TENANT_ID
+        )
         output = await qe_agent._process_impl(inp)
 
         assert isinstance(output, QueryEnhancementOutput)
@@ -1849,7 +1856,9 @@ class TestQueryEnhancementArtifactLoading:
         mock_tm.get_provider.return_value = MagicMock()
         fake_state = {"enhancer.predict": {"signature": {"fields": []}, "demos": []}}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
@@ -1876,9 +1885,13 @@ class TestQueryEnhancementArtifactLoading:
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
             qe_agent.telemetry_manager = mock_tm
             qe_agent._artifact_tenant_id = "test:unit"
             qe_agent._load_artifact()  # Should not raise

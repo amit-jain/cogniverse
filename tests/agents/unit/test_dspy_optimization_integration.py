@@ -330,6 +330,7 @@ class TestDSPyAgentIntegration:
                 from cogniverse_foundation.config.unified_config import (
                     LLMEndpointConfig,
                 )
+
                 deps = RoutingDeps(
                     telemetry_config=telemetry_config,
                     llm_config=LLMEndpointConfig(model="test/mock"),
@@ -342,8 +343,10 @@ class TestDSPyAgentIntegration:
                 assert agent is not None
                 assert hasattr(agent, "route_query")
 
+
 class TestDSPyEndToEndOptimization:
     """End-to-end integration tests for DSPy optimization."""
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

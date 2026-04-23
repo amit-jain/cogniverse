@@ -86,9 +86,7 @@ class TestWikiDeleteNoLongerOrphaned:
 
         g = MessagingGateway(bot_token="x", runtime_url="http://x")
         mock_client = MagicMock()
-        mock_client.delete_wiki_topic = AsyncMock(
-            return_value={"status": "deleted"}
-        )
+        mock_client.delete_wiki_topic = AsyncMock(return_value={"status": "deleted"})
         g.runtime_client = mock_client
 
         update = MagicMock()

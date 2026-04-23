@@ -24,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -38,11 +40,7 @@ class AutoOptimizationTrigger:
     3. Sufficient Phoenix traces have been collected
     """
 
-    def __init__(
-        self,
-        tenant_id: str,
-        module: str
-    ):
+    def __init__(self, tenant_id: str, module: str):
         self.tenant_id = tenant_id
         self.module = module
         self.config_manager = create_default_config_manager()
@@ -65,7 +63,7 @@ class AutoOptimizationTrigger:
             config_dict = {
                 "enabled": enabled,
                 "interval_seconds": routing_config.optimization_interval_seconds,
-                "min_samples": routing_config.min_samples_for_optimization
+                "min_samples": routing_config.min_samples_for_optimization,
             }
 
             logger.info(f"Auto-optimization config: {config_dict}")
@@ -75,7 +73,9 @@ class AutoOptimizationTrigger:
             logger.error(f"Failed to get routing config: {e}")
             return False, {}
 
-    async def check_trace_count(self, min_samples: int, lookback_hours: int = 24) -> tuple[bool, int]:
+    async def check_trace_count(
+        self, min_samples: int, lookback_hours: int = 24
+    ) -> tuple[bool, int]:
         """
         Check if enough traces have been collected
 
@@ -94,9 +94,7 @@ class AutoOptimizationTrigger:
             # Query spans using provider abstraction
             phoenix_project = f"cogniverse-{self.tenant_id}"
             spans_df = await self.provider.traces.get_spans(
-                start_time=start_time,
-                end_time=end_time,
-                project=phoenix_project
+                start_time=start_time, end_time=end_time, project=phoenix_project
             )
 
             if spans_df is None or spans_df.empty:
@@ -107,8 +105,7 @@ class AutoOptimizationTrigger:
             sufficient = count >= min_samples
 
             logger.info(
-                f"Traces: {count} found (need {min_samples}), "
-                f"sufficient={sufficient}"
+                f"Traces: {count} found (need {min_samples}), sufficient={sufficient}"
             )
 
             return sufficient, count
@@ -135,7 +132,7 @@ class AutoOptimizationTrigger:
 
         try:
             # Read last optimization timestamp
-            with open(marker_file, 'r') as f:
+            with open(marker_file, "r") as f:
                 last_run_str = f.read().strip()
                 last_run = datetime.fromisoformat(last_run_str)
 
@@ -161,7 +158,7 @@ class AutoOptimizationTrigger:
         marker_file = Path(f"/tmp/auto_opt_{self.tenant_id}_{self.module}.marker")
 
         try:
-            with open(marker_file, 'w') as f:
+            with open(marker_file, "w") as f:
                 f.write(datetime.now().isoformat())
             logger.info(f"Updated marker file: {marker_file}")
         except Exception as e:
@@ -183,11 +180,15 @@ class AutoOptimizationTrigger:
         )
 
         cmd = [
-            "python", "-m",
+            "python",
+            "-m",
             "cogniverse_runtime.optimization_cli",
-            "--mode", self.module,
-            "--tenant-id", self.tenant_id,
-            "--lookback-hours", str(lookback_hours),
+            "--mode",
+            self.module,
+            "--tenant-id",
+            self.tenant_id,
+            "--lookback-hours",
+            str(lookback_hours),
         ]
 
         try:
@@ -195,7 +196,7 @@ class AutoOptimizationTrigger:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600  # 1 hour timeout
+                timeout=3600,  # 1 hour timeout
             )
 
             if result.returncode == 0:
@@ -273,24 +274,17 @@ async def async_main():
     parser = argparse.ArgumentParser(
         description="Auto-optimization trigger - checks conditions and runs optimization"
     )
-    parser.add_argument(
-        "--tenant-id",
-        default="default",
-        help="Tenant identifier"
-    )
+    parser.add_argument("--tenant-id", default="default", help="Tenant identifier")
     parser.add_argument(
         "--module",
         required=True,
         choices=["modality", "cross_modal", "routing", "workflow", "unified"],
-        help="Module to optimize"
+        help="Module to optimize",
     )
 
     args = parser.parse_args()
 
-    trigger = AutoOptimizationTrigger(
-        tenant_id=args.tenant_id,
-        module=args.module
-    )
+    trigger = AutoOptimizationTrigger(tenant_id=args.tenant_id, module=args.module)
 
     exit_code = await trigger.run()
     return exit_code
@@ -299,6 +293,7 @@ async def async_main():
 def main():
     """Sync wrapper for CLI entry point"""
     import asyncio
+
     exit_code = asyncio.run(async_main())
     sys.exit(exit_code)
 

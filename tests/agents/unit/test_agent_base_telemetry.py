@@ -64,9 +64,7 @@ class _TelemetryDeps(AgentDeps):
     pass
 
 
-class _TelemetryAgent(
-    AgentBase[_TelemetryInput, _TelemetryOutput, _TelemetryDeps]
-):
+class _TelemetryAgent(AgentBase[_TelemetryInput, _TelemetryOutput, _TelemetryDeps]):
     async def _process_impl(self, input: _TelemetryInput) -> _TelemetryOutput:
         return _TelemetryOutput(result=f"processed: {input.query}")
 
@@ -180,9 +178,7 @@ class TestAgentBaseTelemetrySpan:
         agent = _TelemetryAgent(deps=deps)
         assert agent.telemetry_manager is None
 
-        result = await agent.process(
-            _TelemetryInput(query="hi", tenant_id="acme")
-        )
+        result = await agent.process(_TelemetryInput(query="hi", tenant_id="acme"))
         assert result.result == "processed: hi"
 
     @pytest.mark.asyncio
@@ -190,12 +186,8 @@ class TestAgentBaseTelemetrySpan:
         """If _process_impl raises, the exception must propagate out of the
         span context, not get silently absorbed by the wrap."""
 
-        class _BoomAgent(
-            AgentBase[_TelemetryInput, _TelemetryOutput, _TelemetryDeps]
-        ):
-            async def _process_impl(
-                self, input: _TelemetryInput
-            ) -> _TelemetryOutput:
+        class _BoomAgent(AgentBase[_TelemetryInput, _TelemetryOutput, _TelemetryDeps]):
+            async def _process_impl(self, input: _TelemetryInput) -> _TelemetryOutput:
                 raise RuntimeError("kaboom")
 
         spy = _SpyTelemetryManager()

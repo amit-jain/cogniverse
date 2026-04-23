@@ -180,9 +180,7 @@ class TestTelegramJobsDispatchRoundTrip:
         tenant_id = "tg_jobs_rt_test"
 
         update_create = _mock_telegram_update()
-        parsed_create = parse_message(
-            '/jobs create "0 9 * * 1" weekly news brief'
-        )
+        parsed_create = parse_message('/jobs create "0 9 * * 1" weekly news brief')
         await gateway._handle_jobs_command(update_create, parsed_create, tenant_id)
         update_create.message.reply_text.assert_awaited_once()
         create_reply = update_create.message.reply_text.call_args[0][0]

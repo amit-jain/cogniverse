@@ -251,7 +251,9 @@ class ProfileSelectionAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info("ProfileSelectionAgent loaded optimized DSPy module from artifact")
+                logger.info(
+                    "ProfileSelectionAgent loaded optimized DSPy module from artifact"
+                )
         except Exception as e:
             logger.debug("No profile artifact to load (using defaults): %s", e)
 
@@ -389,9 +391,7 @@ class ProfileSelectionAgent(
         # are swallowed.  The old broad except swallowed ValueError too,
         # which silently dropped missing-tenant requests instead of
         # surfacing a 400.
-        validated_tenant = require_tenant_id(
-            tenant_id, source="ProfileSelectionInput"
-        )
+        validated_tenant = require_tenant_id(tenant_id, source="ProfileSelectionInput")
         try:
             with self.telemetry_manager.span(
                 "cogniverse.profile_selection",

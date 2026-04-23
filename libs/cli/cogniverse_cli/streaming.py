@@ -127,7 +127,9 @@ def stream_coding_response(
     result: Optional[CodingResult] = None
 
     try:
-        with httpx.Client(timeout=httpx.Timeout(600.0, connect=10.0), follow_redirects=True) as client:
+        with httpx.Client(
+            timeout=httpx.Timeout(600.0, connect=10.0), follow_redirects=True
+        ) as client:
             with client.stream(
                 "POST",
                 f"{runtime_url}/a2a/",
@@ -135,9 +137,7 @@ def stream_coding_response(
                 headers={"Accept": "text/event-stream"},
             ) as response:
                 if response.status_code != 200:
-                    console.print(
-                        f"[red]Runtime error: {response.status_code}[/red]"
-                    )
+                    console.print(f"[red]Runtime error: {response.status_code}[/red]")
                     return None
 
                 current_phase = ""
@@ -162,7 +162,9 @@ def stream_coding_response(
                         break
 
     except httpx.ConnectError:
-        console.print("[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]")
+        console.print(
+            "[red]Cannot connect to runtime. Run `cogniverse up` first.[/red]"
+        )
         return None
     except httpx.ReadTimeout:
         console.print("[yellow]Request timed out (10 min limit).[/yellow]")
@@ -188,7 +190,9 @@ def _handle_event(event: dict, current_phase: str):
     parts = message.get("parts", [])
     text = ""
     for part in parts:
-        if isinstance(part, dict) and (part.get("kind") == "text" or part.get("type") == "text"):
+        if isinstance(part, dict) and (
+            part.get("kind") == "text" or part.get("type") == "text"
+        ):
             text = part.get("text", "")
             break
 

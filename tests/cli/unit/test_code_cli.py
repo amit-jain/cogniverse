@@ -60,7 +60,11 @@ class TestCodingResultParser:
             "result": {
                 "plan": "1. Create retry.py\n2. Add tests",
                 "code_changes": [
-                    {"file_path": "retry.py", "content": "def retry(): pass", "change_type": "new"},
+                    {
+                        "file_path": "retry.py",
+                        "content": "def retry(): pass",
+                        "change_type": "new",
+                    },
                 ],
                 "execution_results": [{"exit_code": 0, "stdout": "OK"}],
                 "summary": "Created retry decorator",
@@ -104,7 +108,11 @@ class TestCodingSession:
             file_path = str(Path(tmpdir) / "new_file.py")
             session.last_result = CodingResult(
                 code_changes=[
-                    {"file_path": file_path, "content": "print('hello')", "change_type": "new"},
+                    {
+                        "file_path": file_path,
+                        "content": "print('hello')",
+                        "change_type": "new",
+                    },
                 ],
             )
             count = session.apply()
@@ -118,7 +126,11 @@ class TestCodingSession:
             file_path.write_text("old content")
             session.last_result = CodingResult(
                 code_changes=[
-                    {"file_path": str(file_path), "content": "", "change_type": "delete"},
+                    {
+                        "file_path": str(file_path),
+                        "content": "",
+                        "change_type": "delete",
+                    },
                 ],
             )
             count = session.apply()
@@ -142,7 +154,9 @@ class TestCodingSession:
     def test_send_appends_to_history(self):
         session = self._make_session()
         mock_result = CodingResult(summary="Done")
-        with patch("cogniverse_cli.code.stream_coding_response", return_value=mock_result):
+        with patch(
+            "cogniverse_cli.code.stream_coding_response", return_value=mock_result
+        ):
             session.send("write a function")
         assert len(session.history) == 2
         assert session.history[0] == {"role": "user", "content": "write a function"}

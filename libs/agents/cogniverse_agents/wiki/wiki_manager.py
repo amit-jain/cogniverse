@@ -324,7 +324,11 @@ class WikiManager:
             try:
                 import json
 
-                existing_sources = json.loads(old_sources) if isinstance(old_sources, str) else old_sources
+                existing_sources = (
+                    json.loads(old_sources)
+                    if isinstance(old_sources, str)
+                    else old_sources
+                )
             except Exception:
                 existing_sources = []
             merged_sources = list(dict.fromkeys(existing_sources + sources))
@@ -449,9 +453,7 @@ class WikiManager:
         to avoid schema configuration requirements.
         """
         url = f"{self._backend._url}:{self._backend._port}"
-        get_url = (
-            f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
-        )
+        get_url = f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
         try:
             resp = requests.get(get_url, timeout=10)
             if resp.status_code != 200:

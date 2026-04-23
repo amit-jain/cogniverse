@@ -146,7 +146,9 @@ class TestCreateMemory:
         mgr.memory = MagicMock()
         mgr.add_memory.return_value = "mem-123"
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.post("/acme/memories", json={"text": "I prefer dark mode"})
 
         assert resp.status_code == 200
@@ -170,7 +172,9 @@ class TestCreateMemory:
         mgr.memory = MagicMock()
         mgr.add_memory.return_value = "mem-456"
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.post(
                 "/acme/memories",
                 json={"text": "Always use ColPali", "category": "search"},
@@ -202,12 +206,24 @@ class TestListMemories:
     def test_list_all_returns_memories_with_type(self, tenant_client):
         client, _ = tenant_client
         raw = [
-            {"id": "m1", "memory": "User prefers dark mode", "metadata": {}, "created_at": "2024-01-01"},
-            {"id": "m2", "memory": "User is in UTC+5", "metadata": {}, "created_at": "2024-01-02"},
+            {
+                "id": "m1",
+                "memory": "User prefers dark mode",
+                "metadata": {},
+                "created_at": "2024-01-01",
+            },
+            {
+                "id": "m2",
+                "memory": "User is in UTC+5",
+                "metadata": {},
+                "created_at": "2024-01-02",
+            },
         ]
         mgr = self._mock_mgr(raw)
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories")
 
         assert resp.status_code == 200
@@ -223,7 +239,9 @@ class TestListMemories:
         raw = [{"id": "m1", "memory": "strategy A", "metadata": {}}]
         mgr = self._mock_mgr(raw)
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories?q=strategy&limit=10")
 
         assert resp.status_code == 200
@@ -233,7 +251,9 @@ class TestListMemories:
         client, _ = tenant_client
         mgr = self._mock_mgr([])
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories")
 
         assert resp.status_code == 200
@@ -244,7 +264,9 @@ class TestListMemories:
         raw = [{"id": "s1", "memory": "Use chunk retrieval", "metadata": {}}]
         mgr = self._mock_mgr(raw)
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories?type=strategy")
 
         assert resp.status_code == 200
@@ -258,7 +280,9 @@ class TestListMemories:
         client, _ = tenant_client
         mgr = self._mock_mgr([])
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories?type=bogus")
 
         assert resp.status_code == 400
@@ -268,7 +292,9 @@ class TestListMemories:
         raw = [{"id": "p1", "memory": "dark mode", "metadata": {"category": "ui"}}]
         mgr = self._mock_mgr(raw)
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories?type=preference")
 
         data = resp.json()
@@ -281,7 +307,9 @@ class TestListMemories:
         mgr = MagicMock()
         mgr.memory = None  # not initialised
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.get("/acme/memories")
 
         assert resp.status_code == 503
@@ -296,13 +324,17 @@ class TestDeleteMemory:
         mgr.memory = MagicMock()
         mgr.delete_memory.return_value = True
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.delete("/acme/memories/mem-abc123")
 
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
         mgr.delete_memory.assert_called_once_with(
-            memory_id="mem-abc123", tenant_id="acme", agent_name="_user_memories",
+            memory_id="mem-abc123",
+            tenant_id="acme",
+            agent_name="_user_memories",
         )
 
     def test_404_when_delete_returns_false(self, tenant_client):
@@ -311,7 +343,9 @@ class TestDeleteMemory:
         mgr.memory = MagicMock()
         mgr.delete_memory.return_value = False
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.delete("/acme/memories/no-such-id")
 
         assert resp.status_code == 404
@@ -327,13 +361,16 @@ class TestClearMemories:
         mgr.memory = MagicMock()
         mgr.clear_agent_memory.return_value = True
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.delete("/acme/memories")
 
         assert resp.status_code == 200
         assert resp.json()["status"] == "cleared"
         mgr.clear_agent_memory.assert_called_once_with(
-            tenant_id="acme", agent_name="_user_memories",
+            tenant_id="acme",
+            agent_name="_user_memories",
         )
 
     def test_clears_by_category(self, tenant_client):
@@ -347,7 +384,9 @@ class TestClearMemories:
         ]
         mgr.delete_memory.return_value = True
 
-        with patch("cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr):
+        with patch(
+            "cogniverse_runtime.routers.tenant.Mem0MemoryManager", return_value=mgr
+        ):
             resp = client.delete("/acme/memories?category=ui")
 
         assert resp.status_code == 200
@@ -356,7 +395,9 @@ class TestClearMemories:
         assert data["category"] == "ui"
         assert data["deleted"] == 1
         mgr.delete_memory.assert_called_once_with(
-            memory_id="m1", tenant_id="acme", agent_name="_user_memories",
+            memory_id="m1",
+            tenant_id="acme",
+            agent_name="_user_memories",
         )
 
 
@@ -381,7 +422,9 @@ class TestMemoryAwareMixinInstructions:
 
         with (
             patch.object(agent, "get_relevant_context", return_value=None),
-            patch.object(agent, "get_strategies", return_value="## Learned Strategies\n- Try A"),
+            patch.object(
+                agent, "get_strategies", return_value="## Learned Strategies\n- Try A"
+            ),
             patch.object(agent, "_get_tenant_instructions", return_value="Be concise."),
         ):
             result = agent.inject_context_into_prompt("Base prompt", "test query")
@@ -416,7 +459,10 @@ class TestMemoryAwareMixinInstructions:
         agent = FakeAgent()
 
         mock_entry = MagicMock()
-        mock_entry.config_value = {"text": "Always be helpful.", "updated_at": "2024-01-01"}
+        mock_entry.config_value = {
+            "text": "Always be helpful.",
+            "updated_at": "2024-01-01",
+        }
         mock_cm = MagicMock()
         mock_cm.store.get_config.return_value = mock_entry
 
@@ -544,7 +590,11 @@ class TestCreateJob:
             ) as mock_submit:
                 resp = client.post(
                     "/acme/jobs",
-                    json={"name": "test", "schedule": "0 9 * * 1", "query": "test query"},
+                    json={
+                        "name": "test",
+                        "schedule": "0 9 * * 1",
+                        "query": "test query",
+                    },
                 )
                 assert resp.status_code == 200
                 mock_submit.assert_awaited_once()
@@ -661,7 +711,9 @@ class TestJobExecutor:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         result = asyncio.run(
-            _call_agent(mock_client, "http://localhost:28000", "acme", "latest AI papers")
+            _call_agent(
+                mock_client, "http://localhost:28000", "acme", "latest AI papers"
+            )
         )
 
         mock_client.post.assert_awaited_once()
@@ -746,9 +798,7 @@ class TestArgoEnvironmentWiring:
         assert tenant._argo_api_url == "http://argo-server:2746"
         assert tenant._argo_namespace == "production"
 
-    def test_helper_leaves_argo_url_none_when_env_var_missing(
-        self, monkeypatch
-    ):
+    def test_helper_leaves_argo_url_none_when_env_var_missing(self, monkeypatch):
         """When ARGO_API_URL is unset, the helper must explicitly set
         _argo_api_url to None — not raise — so that POST /jobs degrades
         gracefully (persist without scheduling)."""

@@ -110,16 +110,20 @@ class TestRESTMultiTurn:
         data = resp.json()
         assert data["status"] == "success"
         # Gateway may route through routing_agent (simple) or orchestrator (complex)
-        assert data["agent"] in ("routing_agent", "gateway_agent", "orchestrator_agent"), (
-            f"Expected routing/gateway/orchestrator agent, got {data['agent']}"
-        )
+        assert data["agent"] in (
+            "routing_agent",
+            "gateway_agent",
+            "orchestrator_agent",
+        ), f"Expected routing/gateway/orchestrator agent, got {data['agent']}"
         # If routing path, check downstream; if orchestrator, check orchestration_result
         if "downstream_result" in data:
             ds = data["downstream_result"]
             assert ds.get("agent") or ds.get("results") is not None
         elif "orchestration_result" in data:
             orch = data["orchestration_result"]
-            assert len(orch.get("plan_steps", [])) > 0, "Orchestrator should produce a plan"
+            assert len(orch.get("plan_steps", [])) > 0, (
+                "Orchestrator should produce a plan"
+            )
         # Conversation history was passed — the gateway/orchestrator handles rewrite internally
 
 

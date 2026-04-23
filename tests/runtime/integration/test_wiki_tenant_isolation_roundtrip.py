@@ -106,8 +106,7 @@ class TestWikiTenantIsolationRoundTrip:
         assert "wiki_tenant_b" in managers
         assert managers["wiki_tenant_a"] is not managers["wiki_tenant_b"]
         assert (
-            managers["wiki_tenant_a"]._tenant_id
-            != managers["wiki_tenant_b"]._tenant_id
+            managers["wiki_tenant_a"]._tenant_id != managers["wiki_tenant_b"]._tenant_id
         )
 
     def test_managers_use_distinct_schemas(self, per_tenant_wiki_app):

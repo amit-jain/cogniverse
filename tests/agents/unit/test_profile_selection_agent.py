@@ -349,9 +349,7 @@ class TestProfileSelectionAgent:
         )
 
         with pytest.raises(ValueError, match="tenant_id is required"):
-            await profile_agent._process_impl(
-                ProfileSelectionInput(query="cat videos")
-            )
+            await profile_agent._process_impl(ProfileSelectionInput(query="cat videos"))
 
     @pytest.mark.asyncio
     async def test_span_failure_does_not_raise(self, profile_agent):
@@ -394,7 +392,9 @@ class TestProfileSelectionArtifactLoading:
         mock_tm.get_provider.return_value = MagicMock()
         fake_state = {"selector.predict": {"signature": {"fields": []}, "demos": []}}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
@@ -423,9 +423,13 @@ class TestProfileSelectionArtifactLoading:
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
             profile_agent.telemetry_manager = mock_tm
             profile_agent._artifact_tenant_id = "test:unit"
             profile_agent._load_artifact()

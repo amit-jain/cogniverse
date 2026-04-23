@@ -165,10 +165,12 @@ class SandboxManager:
         try:
             session = self._client.create_session()
             self._client.wait_ready(
-                session.sandbox.name, timeout_seconds=120,
+                session.sandbox.name,
+                timeout_seconds=120,
             )
             result = session.exec(
-                command, timeout_seconds=timeout_seconds,
+                command,
+                timeout_seconds=timeout_seconds,
             )
             return {
                 "stdout": result.stdout,

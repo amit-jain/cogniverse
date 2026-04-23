@@ -61,7 +61,9 @@ class SimpleVideoPrismModel:
             )
 
             config_manager = create_default_config_manager()
-            config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+            config = get_config(
+                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+            )
             videoprism_path = config.get("videoprism_repo_path")
 
             if not videoprism_path:

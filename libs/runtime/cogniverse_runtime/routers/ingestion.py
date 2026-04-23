@@ -110,9 +110,7 @@ async def start_ingestion(
         # Get backend with dependency injection
         backend_registry = BackendRegistry.get_instance()
         try:
-            tenant_id = require_tenant_id(
-                request.tenant_id, source="IngestionRequest"
-            )
+            tenant_id = require_tenant_id(request.tenant_id, source="IngestionRequest")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         _backend = backend_registry.get_ingestion_backend(
@@ -190,9 +188,7 @@ async def upload_video(
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
         try:
-            upload_tenant_id = require_tenant_id(
-                tenant_id, source="/ingestion/upload"
-            )
+            upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 

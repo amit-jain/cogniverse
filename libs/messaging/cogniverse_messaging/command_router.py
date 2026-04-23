@@ -173,7 +173,7 @@ def parse_message(
 
     for command, agent in AGENT_COMMANDS.items():
         if text.startswith(command):
-            query = text[len(command):].strip()
+            query = text[len(command) :].strip()
             if not query:
                 return ParsedCommand(
                     agent_name=agent,

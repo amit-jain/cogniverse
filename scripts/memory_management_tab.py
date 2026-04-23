@@ -39,9 +39,7 @@ def render_memory_management_tab():
     try:
         import httpx
 
-        vespa_check_url = (
-            f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
-        )
+        vespa_check_url = f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
         vespa_response = httpx.get(vespa_check_url, timeout=2)
         vespa_available = vespa_response.status_code == 200
     except Exception:
@@ -81,10 +79,7 @@ def render_memory_management_tab():
             if "/" in llm_model:
                 llm_model = llm_model.split("/", 1)[1]
 
-            llm_base_url = (
-                llm_primary.get("api_base")
-                or system_config.base_url
-            )
+            llm_base_url = llm_primary.get("api_base") or system_config.base_url
             manager.initialize(
                 backend_host=system_config.backend_url,
                 backend_port=system_config.backend_port,

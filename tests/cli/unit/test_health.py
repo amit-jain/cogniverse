@@ -13,9 +13,7 @@ class TestWaitForUrl:
 
     @patch("cogniverse_cli.health.httpx.get")
     @patch("cogniverse_cli.health.time.sleep")
-    def test_succeeds_immediately(
-        self, mock_sleep: object, mock_get: object
-    ) -> None:
+    def test_succeeds_immediately(self, mock_sleep: object, mock_get: object) -> None:
         """When the first request returns 200 the function returns True
         without sleeping."""
         mock_get.return_value = httpx.Response(200)  # type: ignore[attr-defined]
@@ -39,20 +37,18 @@ class TestWaitForUrl:
         returns True."""
         # Timeline: start=0, first check=0, after sleep=5, second check=5
         mock_monotonic.side_effect = [  # type: ignore[attr-defined]
-            0,    # deadline calculation: 0 + 30 = 30
-            0,    # first while check
-            5,    # remaining calc after first failure
-            5,    # while check for second iteration
-            10,   # (not needed but safe)
+            0,  # deadline calculation: 0 + 30 = 30
+            0,  # first while check
+            5,  # remaining calc after first failure
+            5,  # while check for second iteration
+            10,  # (not needed but safe)
         ]
         mock_get.side_effect = [  # type: ignore[attr-defined]
             httpx.ConnectError("refused"),
             httpx.Response(200),
         ]
 
-        result = wait_for_url(
-            "http://localhost:8080/health", timeout=30, interval=5
-        )
+        result = wait_for_url("http://localhost:8080/health", timeout=30, interval=5)
 
         assert result is True
         assert mock_get.call_count == 2  # type: ignore[attr-defined]
@@ -69,16 +65,14 @@ class TestWaitForUrl:
         """When the deadline is exceeded the function returns False."""
         # Simulate time progressing past the deadline.
         mock_monotonic.side_effect = [  # type: ignore[attr-defined]
-            0,     # deadline = 0 + 2 = 2
-            0,     # first while check (0 < 2 → enter loop)
-            1,     # remaining after first failure (2 - 1 = 1 > 0)
-            3,     # second while check (3 < 2 → False, exit loop)
+            0,  # deadline = 0 + 2 = 2
+            0,  # first while check (0 < 2 → enter loop)
+            1,  # remaining after first failure (2 - 1 = 1 > 0)
+            3,  # second while check (3 < 2 → False, exit loop)
         ]
         mock_get.side_effect = httpx.ConnectError("refused")  # type: ignore[attr-defined]
 
-        result = wait_for_url(
-            "http://localhost:8080/health", timeout=2, interval=1
-        )
+        result = wait_for_url("http://localhost:8080/health", timeout=2, interval=1)
 
         assert result is False
 

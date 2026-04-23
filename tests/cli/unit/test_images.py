@@ -27,9 +27,7 @@ class TestBuildImages:
     """Tests for :func:`build_images`."""
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_calls_docker_build(
-        self, mock_run: object
-    ) -> None:
+    def test_build_images_calls_docker_build(self, mock_run: object) -> None:
         """One docker build command per image: runtime, dashboard, pylate."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
@@ -50,9 +48,7 @@ class TestBuildImages:
             assert cmd[1] == "build"
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_pylate_uses_its_own_context(
-        self, mock_run: object
-    ) -> None:
+    def test_build_images_pylate_uses_its_own_context(self, mock_run: object) -> None:
         """pylate builds from deploy/pylate (self-contained), not repo root."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0

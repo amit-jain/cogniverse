@@ -50,9 +50,14 @@ def dispatcher():
     )
 
 
-def _make_gateway_output(*, complexity="simple", modality="video",
-                          generation_type="raw_results", routed_to="search_agent",
-                          confidence=0.9):
+def _make_gateway_output(
+    *,
+    complexity="simple",
+    modality="video",
+    generation_type="raw_results",
+    routed_to="search_agent",
+    confidence=0.9,
+):
     """Build a mock GatewayOutput for tests."""
     output = Mock()
     output.complexity = complexity
@@ -73,7 +78,9 @@ class TestGatewayOrchestrationHandoff:
     async def test_simple_query_routes_to_downstream(self, dispatcher):
         """Simple query via GatewayAgent dispatches directly to execution agent."""
         gateway_output = _make_gateway_output(
-            complexity="simple", routed_to="search_agent", modality="video",
+            complexity="simple",
+            routed_to="search_agent",
+            modality="video",
         )
 
         # Registry: gateway_agent has ["gateway"],
@@ -135,8 +142,10 @@ class TestGatewayOrchestrationHandoff:
     async def test_complex_query_routes_to_orchestrator(self, dispatcher):
         """Complex query via GatewayAgent forwards to OrchestratorAgent."""
         gateway_output = _make_gateway_output(
-            complexity="complex", routed_to="orchestrator_agent",
-            modality="both", confidence=0.4,
+            complexity="complex",
+            routed_to="orchestrator_agent",
+            modality="both",
+            confidence=0.4,
         )
 
         gateway_ep = MagicMock()
@@ -484,7 +493,9 @@ class TestAnnotationQueueEndpoints:
     def test_full_lifecycle_via_http(self, annotation_client):
         """Full PENDING→ASSIGNED→COMPLETED lifecycle exercised through HTTP."""
         client, queue = annotation_client
-        queue.enqueue(_make_annotation_request("span-lifecycle", AnnotationPriority.HIGH))
+        queue.enqueue(
+            _make_annotation_request("span-lifecycle", AnnotationPriority.HIGH)
+        )
 
         # Step 1: Verify appears in queue as PENDING
         resp = client.get("/agents/annotations/queue")

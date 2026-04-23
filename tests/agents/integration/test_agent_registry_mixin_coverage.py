@@ -125,8 +125,7 @@ class TestAgentRegistryMixinCoverage:
             DetailedReportAgent,
         ):
             assert issubclass(agent_cls, MemoryAwareMixin), (
-                f"{agent_cls.__name__} must inherit from the extended "
-                f"MemoryAwareMixin"
+                f"{agent_cls.__name__} must inherit from the extended MemoryAwareMixin"
             )
             assert callable(getattr(agent_cls, "get_strategies", None)), (
                 f"{agent_cls.__name__} is missing get_strategies — it's "

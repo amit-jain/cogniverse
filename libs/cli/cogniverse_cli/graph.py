@@ -25,7 +25,9 @@ def cmd_stats(tenant_id: str, runtime_url: str = RUNTIME_URL) -> None:
     with _client(runtime_url) as client:
         resp = client.get("/graph/stats", params={"tenant_id": tenant_id})
     if resp.status_code != 200:
-        console.print(f"[red]Graph stats failed: {resp.status_code} {resp.text[:200]}[/red]")
+        console.print(
+            f"[red]Graph stats failed: {resp.status_code} {resp.text[:200]}[/red]"
+        )
         return
 
     data = resp.json()
@@ -56,7 +58,9 @@ def cmd_search(
             params={"tenant_id": tenant_id, "q": query, "top_k": top_k},
         )
     if resp.status_code != 200:
-        console.print(f"[red]Graph search failed: {resp.status_code} {resp.text[:200]}[/red]")
+        console.print(
+            f"[red]Graph search failed: {resp.status_code} {resp.text[:200]}[/red]"
+        )
         return
 
     data = resp.json()
@@ -87,7 +91,9 @@ def cmd_neighbors(
             params={"tenant_id": tenant_id, "node": node, "depth": depth},
         )
     if resp.status_code != 200:
-        console.print(f"[red]Graph neighbors failed: {resp.status_code} {resp.text[:200]}[/red]")
+        console.print(
+            f"[red]Graph neighbors failed: {resp.status_code} {resp.text[:200]}[/red]"
+        )
         return
 
     data = resp.json()
@@ -114,16 +120,22 @@ def cmd_path(
             },
         )
     if resp.status_code != 200:
-        console.print(f"[red]Graph path failed: {resp.status_code} {resp.text[:200]}[/red]")
+        console.print(
+            f"[red]Graph path failed: {resp.status_code} {resp.text[:200]}[/red]"
+        )
         return
 
     data = resp.json()
     path = data.get("path")
     if not path:
-        console.print(f"[yellow]No path found between '{source}' and '{target}' within depth {max_depth}[/yellow]")
+        console.print(
+            f"[yellow]No path found between '{source}' and '{target}' within depth {max_depth}[/yellow]"
+        )
         return
 
-    console.print(f"[bold]Path: [cyan]{source}[/cyan] → [cyan]{target}[/cyan][/bold] (length {data['length']})")
+    console.print(
+        f"[bold]Path: [cyan]{source}[/cyan] → [cyan]{target}[/cyan][/bold] (length {data['length']})"
+    )
     console.print("  " + " → ".join(path))
 
 
@@ -136,6 +148,8 @@ def _render_edges(label: str, edges: List[Dict[str, Any]], other_key: str) -> No
         other = edge.get(other_key, "?")
         relation = edge.get("relation", "?")
         provenance = edge.get("provenance", "")
-        console.print(f"    → [cyan]{other}[/cyan] [dim]({relation}, {provenance})[/dim]")
+        console.print(
+            f"    → [cyan]{other}[/cyan] [dim]({relation}, {provenance})[/dim]"
+        )
     if len(edges) > 20:
         console.print(f"    [dim]… and {len(edges) - 20} more[/dim]")

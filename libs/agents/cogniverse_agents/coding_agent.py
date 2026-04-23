@@ -63,7 +63,8 @@ class CodingOutput(AgentOutput):
         default_factory=list, description="List of modified file paths"
     )
     rlm_synthesis: Optional[str] = Field(
-        None, description="RLM-synthesized answer from codebase context (only when RLM enabled)"
+        None,
+        description="RLM-synthesized answer from codebase context (only when RLM enabled)",
     )
     rlm_telemetry: Optional[Dict[str, Any]] = Field(
         None, description="RLM telemetry metrics for A/B testing"
@@ -95,19 +96,13 @@ class CodeGenerationSignature(dspy.Signature):
 
     task: str = dspy.InputField(desc="Coding task description")
     plan: str = dspy.InputField(desc="Implementation plan")
-    code_context: str = dspy.InputField(
-        desc="Relevant existing code for reference"
-    )
+    code_context: str = dspy.InputField(desc="Relevant existing code for reference")
     language: str = dspy.InputField(desc="Programming language")
     previous_error: str = dspy.InputField(
         desc="Error from previous attempt, empty if first attempt"
     )
-    code: str = dspy.OutputField(
-        desc="Complete implementation code as a single file"
-    )
-    test_command: str = dspy.OutputField(
-        desc="Command to test/run the generated code"
-    )
+    code: str = dspy.OutputField(desc="Complete implementation code as a single file")
+    test_command: str = dspy.OutputField(desc="Command to test/run the generated code")
 
 
 class OutputEvaluationSignature(dspy.Signature):
@@ -256,7 +251,9 @@ class CodingAgent(
         rlm_telemetry = None
 
         if self.should_use_rlm_for_query(input.rlm, code_context):
-            self.emit_progress("rlm_synthesis", "Synthesizing codebase context with RLM...")
+            self.emit_progress(
+                "rlm_synthesis", "Synthesizing codebase context with RLM..."
+            )
             logger.info(f"RLM enabled for coding task: {input.task[:50]}...")
             try:
                 rlm_result = self.process_with_rlm(

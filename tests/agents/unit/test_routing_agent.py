@@ -127,7 +127,9 @@ class TestRoutingInputOutput:
             tenant_id="t1",
             enhanced_query="find robot videos in tournaments",
             entities=[{"text": "robots", "label": "OBJECT"}],
-            relationships=[{"subject": "robots", "relation": "play", "object": "soccer"}],
+            relationships=[
+                {"subject": "robots", "relation": "play", "object": "soccer"}
+            ],
         )
         assert inp.query == "find robots"
         assert inp.enhanced_query == "find robot videos in tournaments"
@@ -268,7 +270,9 @@ class TestRoutingDecision:
         assert result.recommended_agent == "summarizer_agent"
         # Enhanced query should have been used
         assert len(forward_calls) == 1
-        assert "summarize recent AI research papers from 2024" in forward_calls[0]["query"]
+        assert (
+            "summarize recent AI research papers from 2024" in forward_calls[0]["query"]
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -389,7 +393,9 @@ class TestRoutingArtifactLoading:
         mock_tm.get_provider.return_value = MagicMock()
         fake_state = {"router.predict": {"signature": {"fields": []}, "demos": []}}
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
             mock_am.load_blob = AsyncMock(return_value=json.dumps(fake_state))
 
@@ -421,9 +427,13 @@ class TestRoutingArtifactLoading:
         mock_tm = MagicMock()
         mock_tm.get_provider.return_value = MagicMock()
 
-        with patch("cogniverse_agents.optimizer.artifact_manager.ArtifactManager") as MockAM:
+        with patch(
+            "cogniverse_agents.optimizer.artifact_manager.ArtifactManager"
+        ) as MockAM:
             mock_am = MockAM.return_value
-            mock_am.load_blob = AsyncMock(side_effect=RuntimeError("connection refused"))
+            mock_am.load_blob = AsyncMock(
+                side_effect=RuntimeError("connection refused")
+            )
             agent.telemetry_manager = mock_tm
             agent._artifact_tenant_id = "test:unit"
             agent._load_artifact()

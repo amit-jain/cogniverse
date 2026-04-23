@@ -55,7 +55,13 @@ def monitor_with_xgboost(phoenix_container, tmp_path):
     provider = manager.get_provider(tenant_id="xgboost_test")
 
     golden_queries = [
-        {"query": "test", "expected_videos": ["v1"], "ground_truth": "test", "query_type": "test", "source": "test"},
+        {
+            "query": "test",
+            "expected_videos": ["v1"],
+            "ground_truth": "test",
+            "query_type": "test",
+            "source": "test",
+        },
     ]
     golden_path = tmp_path / "golden.json"
     golden_path.write_text(json.dumps(golden_queries))
@@ -73,6 +79,7 @@ def monitor_with_xgboost(phoenix_container, tmp_path):
     yield m
 
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
         loop.run_until_complete(m.close())
@@ -86,17 +93,13 @@ def monitor_with_xgboost(phoenix_container, tmp_path):
 class TestXGBoostQualityMonitorIntegration:
     """Test XGBoost meta-model integration with real Phoenix telemetry."""
 
-    def test_xgboost_model_initializes_with_real_provider(
-        self, monitor_with_xgboost
-    ):
+    def test_xgboost_model_initializes_with_real_provider(self, monitor_with_xgboost):
         """TrainingDecisionModel creates with real telemetry provider."""
         model = monitor_with_xgboost._get_training_decision_model()
         assert model is not None
         assert not model.is_trained
 
-    def test_untrained_model_uses_fallback_heuristic(
-        self, monitor_with_xgboost
-    ):
+    def test_untrained_model_uses_fallback_heuristic(self, monitor_with_xgboost):
         """Untrained XGBoost model uses fallback rules, not crash."""
         live = LiveEvalResult(
             timestamp=datetime.utcnow(),
@@ -117,9 +120,7 @@ class TestXGBoostQualityMonitorIntegration:
         # XGBoost overrides OPTIMIZE → SKIP (not enough data for training)
         assert verdicts[AgentType.SEARCH] == Verdict.SKIP
 
-    def test_trained_model_makes_informed_decision(
-        self, monitor_with_xgboost
-    ):
+    def test_trained_model_makes_informed_decision(self, monitor_with_xgboost):
         """Train XGBoost on sample data, verify it makes a decision."""
         from cogniverse_agents.routing.xgboost_meta_models import ModelingContext
         from cogniverse_agents.search.multi_modal_reranker import QueryModality
@@ -136,15 +137,17 @@ class TestXGBoostQualityMonitorIntegration:
         random.seed(42)
         for _ in range(50):
             sr = random.uniform(0.3, 0.95)
-            contexts.append(ModelingContext(
-                modality=QueryModality.VIDEO,
-                real_sample_count=random.randint(50, 300),
-                synthetic_sample_count=random.randint(0, 100),
-                success_rate=sr,
-                avg_confidence=sr + random.uniform(-0.1, 0.1),
-                days_since_last_training=random.randint(1, 30),
-                current_performance_score=sr,
-            ))
+            contexts.append(
+                ModelingContext(
+                    modality=QueryModality.VIDEO,
+                    real_sample_count=random.randint(50, 300),
+                    synthetic_sample_count=random.randint(0, 100),
+                    success_rate=sr,
+                    avg_confidence=sr + random.uniform(-0.1, 0.1),
+                    days_since_last_training=random.randint(1, 30),
+                    current_performance_score=sr,
+                )
+            )
             outcomes.append(0.15 if sr < 0.7 else 0.005)
 
         result = model.train(contexts, outcomes)
@@ -205,9 +208,7 @@ class TestXGBoostQualityMonitorIntegration:
         # XGBoost trained on data where low success_rate benefited → confirms OPTIMIZE
         assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
 
-    def test_modeling_context_built_from_eval_results(
-        self, monitor_with_xgboost
-    ):
+    def test_modeling_context_built_from_eval_results(self, monitor_with_xgboost):
         """_build_modeling_context extracts correct values from eval results."""
         live = LiveEvalResult(
             timestamp=datetime.utcnow(),

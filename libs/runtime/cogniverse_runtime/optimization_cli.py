@@ -418,9 +418,7 @@ def _create_teleprompter(trainset_size: int):
             max_errors=10,
         )
 
-    logger.info(
-        "Using BootstrapFewShot for %d examples", trainset_size
-    )
+    logger.info("Using BootstrapFewShot for %d examples", trainset_size)
     return BootstrapFewShot(
         max_bootstrapped_demos=4,
         max_labeled_demos=8,
@@ -448,7 +446,11 @@ async def _load_approved_synthetic_data(
 
     try:
         from cogniverse_agents.approval.interfaces import ApprovalStatus
-        approved_statuses = {ApprovalStatus.APPROVED.value, ApprovalStatus.AUTO_APPROVED.value}
+
+        approved_statuses = {
+            ApprovalStatus.APPROVED.value,
+            ApprovalStatus.AUTO_APPROVED.value,
+        }
     except ImportError:
         approved_statuses = {"approved", "auto_approved"}
 
@@ -458,6 +460,7 @@ async def _load_approved_synthetic_data(
         if isinstance(metadata, str):
             try:
                 import json as _json
+
                 metadata = _json.loads(metadata)
             except (ValueError, TypeError):
                 metadata = {}
@@ -467,7 +470,9 @@ async def _load_approved_synthetic_data(
 
     logger.info(
         "Loaded %d/%d approved synthetic examples for %s",
-        len(approved), len(demos), optimizer_type,
+        len(approved),
+        len(demos),
+        optimizer_type,
     )
     return approved
 
@@ -569,7 +574,9 @@ async def run_simba_optimization(
             trainset.append(example)
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos), production_count, len(trainset),
+        len(synthetic_demos),
+        production_count,
+        len(trainset),
     )
 
     # Compile DSPy module
@@ -713,7 +720,10 @@ async def run_workflow_optimization(
                     default=str,
                 ),
                 "output": _json.dumps(
-                    {"success": execution.success, "execution_time": execution.execution_time},
+                    {
+                        "success": execution.success,
+                        "execution_time": execution.execution_time,
+                    },
                     default=str,
                 ),
             }
@@ -735,9 +745,7 @@ async def run_workflow_optimization(
                     },
                     default=str,
                 ),
-                "output": _json.dumps(
-                    {"agent_name": agent_name}, default=str
-                ),
+                "output": _json.dumps({"agent_name": agent_name}, default=str),
             }
             for agent_name, perf_data in perf_report.items()
         ]
@@ -803,7 +811,11 @@ async def run_gateway_thresholds_optimization(
     gw_attrs = spans_df.get("attributes.gateway")
     if gw_attrs is None:
         logger.info("No attributes.gateway column in spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "reason": "no_gateway_attributes"}
+        return {
+            "status": "no_data",
+            "spans_found": len(spans_df),
+            "reason": "no_gateway_attributes",
+        }
 
     # Extract complexity and confidence from the nested dict
     spans_df = spans_df.copy()
@@ -820,7 +832,11 @@ async def run_gateway_thresholds_optimization(
     confidences = spans_df["_confidence"].dropna().astype(float)
     if confidences.empty:
         logger.info("No confidence data in gateway spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "reason": "no_confidence_data"}
+        return {
+            "status": "no_data",
+            "spans_found": len(spans_df),
+            "reason": "no_confidence_data",
+        }
 
     # Check error rates by complexity class
     status_col = "status_code"
@@ -831,13 +847,9 @@ async def run_gateway_thresholds_optimization(
 
     if status_col in spans_df.columns:
         if simple_total > 0:
-            simple_errors = len(
-                simple_spans[simple_spans[status_col] == "ERROR"]
-            )
+            simple_errors = len(simple_spans[simple_spans[status_col] == "ERROR"])
         if complex_total > 0:
-            complex_errors = len(
-                complex_spans[complex_spans[status_col] == "ERROR"]
-            )
+            complex_errors = len(complex_spans[complex_spans[status_col] == "ERROR"])
 
     simple_error_rate = simple_errors / max(simple_total, 1)
     complex_error_rate = complex_errors / max(complex_total, 1)
@@ -996,7 +1008,9 @@ async def run_profile_optimization(
             trainset.append(example)
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos), production_count, len(trainset),
+        len(synthetic_demos),
+        production_count,
+        len(trainset),
     )
 
     # Compile DSPy module
@@ -1109,7 +1123,9 @@ async def run_entity_extraction_optimization(
         logger.info("No valid training examples extracted from entity_extraction spans")
         return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
 
-    logger.info("Built %d training examples for entity extraction optimization", len(trainset))
+    logger.info(
+        "Built %d training examples for entity extraction optimization", len(trainset)
+    )
 
     # Merge approved synthetic data
     synthetic_demos = await _load_approved_synthetic_data(
@@ -1128,7 +1144,9 @@ async def run_entity_extraction_optimization(
             trainset.append(example)
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos), production_count, len(trainset),
+        len(synthetic_demos),
+        production_count,
+        len(trainset),
     )
 
     from cogniverse_agents.entity_extraction_agent import EntityExtractionModule
@@ -1217,7 +1235,9 @@ async def run_routing_optimization(
             r_attrs = {}
         query = r_attrs.get("query", "")
         # Handle both new ("recommended_agent") and legacy ("chosen_agent") field names
-        recommended_agent = r_attrs.get("recommended_agent", "") or r_attrs.get("chosen_agent", "")
+        recommended_agent = r_attrs.get("recommended_agent", "") or r_attrs.get(
+            "chosen_agent", ""
+        )
         primary_intent = r_attrs.get("primary_intent", "")
         confidence = float(r_attrs.get("confidence", 0.0))
 
@@ -1265,7 +1285,9 @@ async def run_routing_optimization(
             trainset.append(example)
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos), production_count, len(trainset),
+        len(synthetic_demos),
+        production_count,
+        len(trainset),
     )
 
     try:
@@ -1343,7 +1365,9 @@ async def run_synthetic_generation(
 
     logger.info(
         "Starting synthetic generation for tenant=%s types=%s count=%d",
-        tenant_id, optimizer_types, count,
+        tenant_id,
+        optimizer_types,
+        count,
     )
 
     config_manager = create_default_config_manager()
@@ -1406,15 +1430,21 @@ async def run_synthetic_generation(
             # Save as demonstrations with approval_status=pending
             demos = []
             for item in response.data:
-                demos.append({
-                    "input": json.dumps(item, default=str),
-                    "output": json.dumps(item.get("expected_output", ""), default=str),
-                    "metadata": json.dumps({
-                        "approval_status": "pending",
-                        "optimizer_type": opt_type,
-                        "generated_at": datetime.now().isoformat(),
-                    }),
-                })
+                demos.append(
+                    {
+                        "input": json.dumps(item, default=str),
+                        "output": json.dumps(
+                            item.get("expected_output", ""), default=str
+                        ),
+                        "metadata": json.dumps(
+                            {
+                                "approval_status": "pending",
+                                "optimizer_type": opt_type,
+                                "generated_at": datetime.now().isoformat(),
+                            }
+                        ),
+                    }
+                )
 
             if demos:
                 dataset_id = await am.save_demonstrations(
@@ -1435,7 +1465,9 @@ async def run_synthetic_generation(
             results[opt_type] = {"status": "failed", "error": str(e)}
 
     return {
-        "status": "success" if any(r["status"] == "success" for r in results.values()) else "failed",
+        "status": "success"
+        if any(r["status"] == "success" for r in results.values())
+        else "failed",
         "results": results,
     }
 
@@ -1473,8 +1505,8 @@ def main():
         type=float,
         default=24.0,
         help="Hours of span history to analyze. Accepts fractions (e.g. 0.1 "
-             "= 6 minutes) so e2e tests can scope to the current fixture "
-             "window without picking up spans from earlier runs.",
+        "= 6 minutes) so e2e tests can scope to the current fixture "
+        "window without picking up spans from earlier runs.",
     )
     args = parser.parse_args()
 

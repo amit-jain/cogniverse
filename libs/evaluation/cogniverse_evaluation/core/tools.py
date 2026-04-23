@@ -42,7 +42,9 @@ def video_search_tool():
 
             # Initialize ConfigManager for dependency injection
             config_manager = create_default_config_manager()
-            config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+            config = get_config(
+                tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+            )
 
             # Create search service with specified profile
             search_service = SearchService(config, profile)

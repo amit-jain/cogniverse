@@ -79,7 +79,10 @@ class TestTenantMemoryAPI:
         client, _ = tenant_api_client
         resp = client.post(
             "/test_tenant/memories",
-            json={"text": "I prefer using ColPali for all video searches", "category": "search"},
+            json={
+                "text": "I prefer using ColPali for all video searches",
+                "category": "search",
+            },
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -88,7 +91,9 @@ class TestTenantMemoryAPI:
         assert data["category"] == "search"
         assert data["id"]
 
-    def test_create_then_search_returns_owned_memory(self, tenant_api_client, shared_memory_vespa):
+    def test_create_then_search_returns_owned_memory(
+        self, tenant_api_client, shared_memory_vespa
+    ):
         client, _ = tenant_api_client
         vespa_url = f"http://localhost:{shared_memory_vespa['http_port']}"
 
@@ -97,7 +102,9 @@ class TestTenantMemoryAPI:
             json={"text": "I always prefer dark mode for all interfaces"},
         )
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=3, description="memory add")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=3, description="memory add"
+        )
 
         resp = client.get("/test_tenant/memories?q=dark+mode&type=preference")
         assert resp.status_code == 200
@@ -110,7 +117,9 @@ class TestTenantMemoryAPI:
             assert mem["owned"] is True
             if "dark" in mem["memory"].lower() or "mode" in mem["memory"].lower():
                 found = True
-        assert found, f"Expected dark mode memory, got: {[m['memory'] for m in data['memories']]}"
+        assert found, (
+            f"Expected dark mode memory, got: {[m['memory'] for m in data['memories']]}"
+        )
 
     def test_category_preserved_in_get(self, tenant_api_client, shared_memory_vespa):
         client, _ = tenant_api_client
@@ -118,10 +127,15 @@ class TestTenantMemoryAPI:
 
         client.post(
             "/test_tenant/memories",
-            json={"text": "I prefer chunk-level retrieval for temporal queries", "category": "retrieval"},
+            json={
+                "text": "I prefer chunk-level retrieval for temporal queries",
+                "category": "retrieval",
+            },
         )
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=3, description="memory add")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=3, description="memory add"
+        )
 
         resp = client.get("/test_tenant/memories?q=chunk+retrieval&category=retrieval")
         assert resp.status_code == 200
@@ -145,20 +159,26 @@ class TestTenantMemoryDelete:
         memory_id = resp.json()["id"]
         assert memory_id
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=2, description="memory add")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=2, description="memory add"
+        )
 
         resp = client.delete(f"/test_tenant/memories/{memory_id}")
         assert resp.status_code == 200
         assert resp.json()["status"] == "deleted"
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=2, description="memory delete")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=2, description="memory delete"
+        )
 
         resp = client.get("/test_tenant/memories?q=Python+data+science&type=preference")
         assert resp.status_code == 200
         for mem in resp.json()["memories"]:
             assert mem["id"] != memory_id, f"Deleted memory {memory_id} still returned"
 
-    def test_bulk_clear_only_removes_user_memories(self, tenant_api_client, shared_memory_vespa):
+    def test_bulk_clear_only_removes_user_memories(
+        self, tenant_api_client, shared_memory_vespa
+    ):
         client, mm = tenant_api_client
         vespa_url = f"http://localhost:{shared_memory_vespa['http_port']}"
 
@@ -173,7 +193,9 @@ class TestTenantMemoryDelete:
             json={"text": "I prefer TensorFlow over PyTorch for deep learning"},
         )
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=3, description="memory add")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=3, description="memory add"
+        )
 
         before_strategies = client.get("/test_tenant/memories?type=strategy")
         strategy_count_before = before_strategies.json()["count"]
@@ -182,7 +204,9 @@ class TestTenantMemoryDelete:
         assert resp.status_code == 200
         assert resp.json()["status"] == "cleared"
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=3, description="memory clear")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=3, description="memory clear"
+        )
 
         resp = client.get("/test_tenant/memories?type=preference")
         assert resp.status_code == 200
@@ -205,7 +229,9 @@ class TestTenantMemoryTypeFilter:
         resp = client.get("/test_tenant/memories?type=bogus")
         assert resp.status_code == 400
 
-    def test_strategy_type_returns_not_owned(self, tenant_api_client, shared_memory_vespa):
+    def test_strategy_type_returns_not_owned(
+        self, tenant_api_client, shared_memory_vespa
+    ):
         """Strategies created by system are visible but not owned."""
         client, mm = tenant_api_client
         vespa_url = f"http://localhost:{shared_memory_vespa['http_port']}"
@@ -216,7 +242,9 @@ class TestTenantMemoryTypeFilter:
             agent_name="_strategy_store",
         )
 
-        wait_for_vespa_indexing(backend_url=vespa_url, delay=3, description="strategy add")
+        wait_for_vespa_indexing(
+            backend_url=vespa_url, delay=3, description="strategy add"
+        )
 
         resp = client.get("/test_tenant/memories?type=strategy")
         assert resp.status_code == 200
@@ -357,12 +385,12 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.run(
-                run_job(job_id, "test_tenant", "http://localhost:28000")
-            )
+            asyncio.run(run_job(job_id, "test_tenant", "http://localhost:28000"))
 
         calls = mock_client.post.call_args_list
-        assert len(calls) == 2, f"Expected 2 calls (query + 1 post_action), got {len(calls)}"
+        assert len(calls) == 2, (
+            f"Expected 2 calls (query + 1 post_action), got {len(calls)}"
+        )
 
         first_payload = calls[0][1]["json"]
         assert first_payload["query"] == "find recent papers on ColPali retrieval"

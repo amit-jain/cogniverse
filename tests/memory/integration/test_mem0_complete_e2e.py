@@ -213,7 +213,6 @@ class TestMemorySystemCompleteE2E:
             or "golden" in text_b.lower()
         )
 
-
         # Cleanup
         memory_manager.clear_agent_memory("tenant_a", "isolation_test")
         memory_manager.clear_agent_memory("tenant_b", "isolation_test")
@@ -448,9 +447,7 @@ class TestMemorySystemCompleteE2E:
             except Exception:
                 pass
 
-
     def test_12_final_verification(self, memory_manager, shared_memory_vespa):
         """Final verification that system is still healthy"""
 
         assert memory_manager.health_check() is True
-
