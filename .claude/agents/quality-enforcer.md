@@ -58,6 +58,18 @@ When invoked, you MUST:
 
 ## Test Execution Process
 
+### Step 0: Honour a Pre-Verified Baseline
+
+If the invoker provides a "BASELINE ALREADY VERIFIED" list of test files/paths in the prompt, treat those as green and skip them. Your job becomes the **delta run**: identify import-graph-reachable tests affected by the diff that are NOT in the baseline, and run only those. Re-running the baseline costs real wall time (the full agent+runtime affected suite is 6–10 minutes; a delta run is typically under 60 seconds) and catches the same bugs.
+
+Still run everything when:
+- No baseline is provided
+- The diff includes cross-cutting concerns (config, backends, registries, telemetry, memory, schema — see cross-cutting-concerns.md). The baseline claim does not cover transitive regressions through these.
+- The diff is large (20+ files) or touches core framework code
+- You suspect the baseline list was hand-compiled from memory (ask the invoker for specific file paths if they gave a vague summary)
+
+Report which tests came from the baseline (trusted) vs which you ran (delta). If no baseline is given, proceed with the full Step 1 grep analysis as usual.
+
 ### Step 1: Comprehensive Grep Analysis
 
 **IMPORTANT**: Refer to `docs/plan/test-execution-strategy.md` and `docs/plan/cross-cutting-concerns.md` for detailed guidance.

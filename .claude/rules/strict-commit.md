@@ -70,6 +70,8 @@ vs. formatter). Running only one locally lets the other slip into CI.
 **Wiring coverage**: For changes that connect components (A writes, B reads), verify at least one test exercises the full round-trip (save → load → assert equality). Flag if only constructor-acceptance tests exist.
 **Reject if tests are missing**: If code changes wire components together but no round-trip integration test exists, quality-enforcer MUST fail the check — even if all existing tests pass. Missing tests = incomplete implementation.
 
+**Baseline-aware invocation**: When you have already run tests manually during implementation, pass a `BASELINE ALREADY VERIFIED:` block in the prompt with the specific test files you've verified. The agent runs only import-graph-reachable tests NOT in that list, then reports baseline vs delta. Skip the baseline directive and let it run the full scope when the diff touches cross-cutting concerns (config, backends, registries, telemetry, memory, schema) or is large (20+ files) — transitive regressions via those layers can invalidate the baseline.
+
 ---
 
 ## Agent 4: commit-enforcer
