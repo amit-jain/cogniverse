@@ -362,7 +362,28 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
   configs/schemas/video_videoprism_base_mv_chunk_30s_schema.json
 ```
 
-### 3. Run Test Ingestion
+### 3. Download Test Dataset
+
+Sample videos, QA pairs, and captions for the evaluation suite live under
+`data/testset/`, which is in `.gitignore` (files are not tracked). Fetch them
+with the bundled script:
+
+```bash
+# Minimal: 13 test videos (~500 MB) — enough for e2e / ingestion tests
+./scripts/download_test_data.sh --test-only
+
+# Full Video-ChatGPT benchmark (~50 GB)
+./scripts/download_test_data.sh
+
+# QA/captions only, no videos
+./scripts/download_test_data.sh --no-videos
+```
+
+Without this step, fixture-gated tests (`tests/e2e/`, ingestion integration)
+will `pytest.skip` on missing files such as
+`data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4`.
+
+### 4. Run Test Ingestion
 
 ```bash
 # Ingest sample videos (default tenant)
@@ -373,7 +394,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --tenant-id default
 ```
 
-### 4. Verify End-to-End
+### 5. Verify End-to-End
 
 ```bash
 # Run comprehensive test suite
