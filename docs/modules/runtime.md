@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 1. Load configuration
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
 
     # 2. Initialize SchemaLoader
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
@@ -904,7 +904,7 @@ Pydantic models for backend profile CRUD operations:
 ```python
 class ProfileCreateRequest(BaseModel):
     profile_name: str          # Unique identifier
-    tenant_id: str = "default"
+    tenant_id: str              # Required: tenant identifier for isolation
     type: str = "video"        # video, image, audio, text
     description: str = ""
     schema_name: str           # Base schema (must have template)

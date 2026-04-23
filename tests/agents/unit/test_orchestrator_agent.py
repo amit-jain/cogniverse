@@ -80,6 +80,29 @@ def orchestrator_agent(mock_agent_registry):
         return agent
 
 
+class TestOrchestratorInputValidation:
+    """Pydantic-level contract tests for OrchestratorInput."""
+
+    def test_rejects_missing_tenant_id(self):
+        """Constructing OrchestratorInput without tenant_id must raise — no silent 'default'."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            OrchestratorInput(query="find ML videos")
+
+        errors = excinfo.value.errors()
+        tenant_errors = [e for e in errors if "tenant_id" in e.get("loc", ())]
+        assert tenant_errors, (
+            f"Expected a validation error on tenant_id, got: {errors}"
+        )
+
+    def test_accepts_explicit_tenant_id(self):
+        """Explicit tenant_id round-trips through the model unchanged."""
+        inp = OrchestratorInput(query="find ML videos", tenant_id="acme:production")
+        assert inp.tenant_id == "acme:production"
+        assert inp.query == "find ML videos"
+
+
 class TestOrchestrationModule:
     """Test DSPy module for orchestration"""
 
@@ -446,7 +469,7 @@ class TestOrchestratorAgent:
             new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator_agent._process_impl(
-                OrchestratorInput(query="Show me machine learning videos")
+                OrchestratorInput(query="Show me machine learning videos", tenant_id="test:unit")
             )
 
         assert isinstance(result, OrchestratorOutput)
@@ -461,7 +484,9 @@ class TestOrchestratorAgent:
     @pytest.mark.asyncio
     async def test_process_empty_query(self, orchestrator_agent):
         """Test processing empty query"""
-        result = await orchestrator_agent._process_impl(OrchestratorInput(query=""))
+        result = await orchestrator_agent._process_impl(
+            OrchestratorInput(query="", tenant_id="test:unit")
+        )
 
         assert result.query == ""
         assert len(result.plan_steps) == 0
@@ -855,7 +880,7 @@ class TestOrchestratorIntelligence:
             return_value=mock_cm,
         ):
             await agent._process_impl(
-                OrchestratorInput(query="Show me ML videos")
+                OrchestratorInput(query="Show me ML videos", tenant_id="test:unit")
             )
 
         # Template matching was called
@@ -932,11 +957,6 @@ class TestOrchestratorIntelligence:
         assert orchestrator_agent.event_queue is None
         # Should not raise
         await orchestrator_agent._emit_event({"type": "test"})
-
-
-# ---------------------------------------------------------------------------
-# Artifact loading
-# ---------------------------------------------------------------------------
 
 
 class TestOrchestratorArtifactLoading:

@@ -184,6 +184,26 @@ class TestProfileAPICRUD:
             assert data["profile_name"] == "test_full"
             assert data["tenant_id"] == "test_tenant"
 
+    def test_create_profile_rejects_missing_tenant_id(self, test_client: TestClient):
+        """POST /admin/profiles without tenant_id must 422 — no silent "default"."""
+        body_without_tenant = {
+            "profile_name": "test_missing_tenant",
+            "type": "video",
+            "schema_name": "video_test",
+            "embedding_model": "vidore/colsmol-500m",
+            "embedding_type": "multi_vector",
+        }
+
+        response = test_client.post("/admin/profiles", json=body_without_tenant)
+        assert response.status_code == 422, (
+            f"Expected 422 (missing tenant_id), got {response.status_code}: "
+            f"{response.json()}"
+        )
+        detail = response.json()["detail"]
+        assert any(
+            "tenant_id" in str(err.get("loc", [])) for err in detail
+        ), f"Expected tenant_id in validation error locs, got {detail}"
+
     def test_create_profile_validation_errors(self, test_client: TestClient):
         """Test profile creation with validation errors."""
         # Invalid profile name (spaces not allowed)

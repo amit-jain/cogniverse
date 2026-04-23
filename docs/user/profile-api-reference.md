@@ -70,7 +70,7 @@ Create a new backend profile for a tenant.
 ```json
 {
   "profile_name": "string (required)",
-  "tenant_id": "string (optional, default: 'default')",
+  "tenant_id": "string (required)",
   "type": "string (optional, default: 'video')",
   "schema_name": "string (required)",
   "embedding_model": "string (required)",
@@ -149,7 +149,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 **Validation Rules:**
 
 - `profile_name`: Must be unique within tenant, alphanumeric + underscore + hyphen
-- `tenant_id`: Optional (defaults to "default"), non-empty if provided
+- `tenant_id`: Required, non-empty — identifies the tenant owning the profile
 - `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "text", "document"
 - `schema_name`: Must exist in schema directory
 - `embedding_model`: Format `org/model` or `model-name`
@@ -519,7 +519,7 @@ curl -X POST http://localhost:8000/admin/profiles/video_colpali_mv_frame/deploy 
 ```typescript
 {
   profile_name: string,        // Required, unique within tenant
-  tenant_id?: string,          // Optional (default: "default")
+  tenant_id: string,           // Required: tenant identifier for isolation
   type?: string,               // Optional (default: "video")
   schema_name: string,         // Required, must exist in schema dir
   embedding_model: string,     // Required (e.g., "vidore/colpali")

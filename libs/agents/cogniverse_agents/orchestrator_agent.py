@@ -105,7 +105,7 @@ class OrchestratorInput(AgentInput):
 
     query: str = Field(..., description="Query to orchestrate")
     tenant_id: str = Field(
-        default="default", description="Tenant identifier (per-request)"
+        ..., description="Tenant identifier (per-request, required)"
     )
     session_id: Optional[str] = Field(
         default=None, description="Session identifier (per-request)"
@@ -147,7 +147,7 @@ class FusionStrategy(Enum):
 
     SCORE_BASED = "score"
     TEMPORAL = "temporal"
-    SEMANTIC = "semantic"  # TODO: batch optimization via Argo
+    SEMANTIC = "semantic"
     HIERARCHICAL = "hierarchical"
     SIMPLE = "simple"
 

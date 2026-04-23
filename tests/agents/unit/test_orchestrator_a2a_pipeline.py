@@ -119,7 +119,7 @@ class TestA2APipelineFlow:
             new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
-                OrchestratorInput(query="ML videos")
+                OrchestratorInput(query="ML videos", tenant_id="test:unit")
             )
 
         assert isinstance(result, OrchestratorOutput)
@@ -189,7 +189,7 @@ class TestRegistryDiscovery:
             new=AsyncMock(return_value=mock_client),
         ):
             await orchestrator._process_impl(
-                OrchestratorInput(query="machine learning")
+                OrchestratorInput(query="machine learning", tenant_id="test:unit")
             )
 
         # Verify registry was consulted
@@ -208,7 +208,7 @@ class TestRegistryDiscovery:
 
         # summarizer is NOT in the mock registry
         result = await orchestrator._process_impl(
-            OrchestratorInput(query="summarize this")
+            OrchestratorInput(query="summarize this", tenant_id="test:unit")
         )
 
         assert "summarizer" in result.agent_results
@@ -238,7 +238,7 @@ class TestParallelExecution:
             new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
-                OrchestratorInput(query="ML videos")
+                OrchestratorInput(query="ML videos", tenant_id="test:unit")
             )
 
         # Steps 0,1 parallel (no deps), step 2 depends on 0,1, step 3 depends on 2
@@ -267,7 +267,7 @@ class TestParallelExecution:
             new=AsyncMock(return_value=mock_client),
         ):
             result = await orchestrator._process_impl(
-                OrchestratorInput(query="test query")
+                OrchestratorInput(query="test query", tenant_id="test:unit")
             )
 
         assert len(result.agent_results) == 4
@@ -305,7 +305,9 @@ class TestErrorHandling:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            result = await orchestrator._process_impl(OrchestratorInput(query="test"))
+            result = await orchestrator._process_impl(
+                OrchestratorInput(query="test", tenant_id="test:unit")
+            )
 
         assert result.agent_results["search"]["status"] == "error"
         assert "Agent unreachable" in result.agent_results["search"]["message"]
@@ -313,7 +315,9 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_empty_query_returns_error(self, orchestrator):
         """Empty query returns error without executing pipeline."""
-        result = await orchestrator._process_impl(OrchestratorInput(query=""))
+        result = await orchestrator._process_impl(
+            OrchestratorInput(query="", tenant_id="test:unit")
+        )
 
         assert result.final_output["status"] == "error"
         assert "Empty query" in result.final_output["message"]
@@ -354,6 +358,7 @@ class TestConversationHistory:
                 OrchestratorInput(
                     query="show me longer ones",
                     conversation_history=history,
+                    tenant_id="test:unit",
                 )
             )
 
@@ -383,7 +388,9 @@ class TestConversationHistory:
             "cogniverse_agents.orchestrator_agent._get_http_client",
             new=AsyncMock(return_value=mock_client),
         ):
-            await orchestrator._process_impl(OrchestratorInput(query="search for dogs"))
+            await orchestrator._process_impl(
+                OrchestratorInput(query="search for dogs", tenant_id="test:unit")
+            )
 
         assert captured_kwargs["conversation_context"] == ""
 

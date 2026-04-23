@@ -117,14 +117,20 @@ class TestProfileRouting:
 
     def test_get_profile_config_success(self, search_service):
         """Valid profile returns its config."""
-        config = search_service._get_profile_config("frame_based_colpali")
+        config = search_service._get_profile_config(
+            "frame_based_colpali", tenant_id="test:unit"
+        )
         assert config["embedding_model"] == "vidore/colSmol-256M"
         assert config["embedding_dim"] == 128
 
     def test_get_profile_config_multiple_profiles(self, search_service):
         """Different profiles return different configs."""
-        colpali = search_service._get_profile_config("frame_based_colpali")
-        videoprism = search_service._get_profile_config("video_videoprism_base")
+        colpali = search_service._get_profile_config(
+            "frame_based_colpali", tenant_id="test:unit"
+        )
+        videoprism = search_service._get_profile_config(
+            "video_videoprism_base", tenant_id="test:unit"
+        )
 
         assert colpali["embedding_model"] != videoprism["embedding_model"]
         assert colpali["embedding_dim"] != videoprism["embedding_dim"]
@@ -132,7 +138,7 @@ class TestProfileRouting:
     def test_get_profile_config_unknown_raises(self, search_service):
         """Unknown profile raises ValueError with available profiles."""
         with pytest.raises(ValueError, match="Profile 'nonexistent' not found") as exc:
-            search_service._get_profile_config("nonexistent")
+            search_service._get_profile_config("nonexistent", tenant_id="test:unit")
 
         # Error message includes available profiles
         assert "frame_based_colpali" in str(exc.value)

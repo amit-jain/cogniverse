@@ -570,7 +570,7 @@ class TestOrchestratorAgentIntegration:
     async def test_orchestrate_validates_execution(self, orchestrator_with_real_agents):
         """CORRECTNESS: Validate agents are actually executed"""
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Show me videos about machine learning")
+            OrchestratorInput(query="Show me videos about machine learning", tenant_id="test:unit")
         )
 
         # VALIDATE: Plan created
@@ -624,7 +624,7 @@ class TestOrchestratorAgentIntegration:
     ):
         """CORRECTNESS: Validate dependency tracking works"""
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find detailed tutorials about Python programming")
+            OrchestratorInput(query="Find detailed tutorials about Python programming", tenant_id="test:unit")
         )
 
         # VALIDATE: Plan has dependency structure
@@ -651,7 +651,7 @@ class TestOrchestratorAgentIntegration:
     async def test_empty_query_no_orchestration(self, orchestrator_with_real_agents):
         """CORRECTNESS: Empty query should not execute agents"""
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="")
+            OrchestratorInput(query="", tenant_id="test:unit")
         )
 
         # VALIDATE CORRECTNESS: No execution for empty query
@@ -682,7 +682,7 @@ class TestOrchestratorAgentIntegration:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Show me AI videos")
+            OrchestratorInput(query="Show me AI videos", tenant_id="test:unit")
         )
 
         # VALIDATE: Parallel groups were created
@@ -736,7 +736,7 @@ class TestOrchestratorAgentIntegration:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find machine learning tutorials")
+            OrchestratorInput(query="Find machine learning tutorials", tenant_id="test:unit")
         )
 
         # VALIDATE: 3-step plan created
@@ -892,7 +892,7 @@ class TestOrchestratorComplexPatterns:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Find videos about neural networks")
+            OrchestratorInput(query="Find videos about neural networks", tenant_id="test:unit")
         )
 
         # VALIDATE: Two parallel groups created
@@ -944,7 +944,7 @@ class TestOrchestratorComplexPatterns:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query="Machine learning tutorials")
+            OrchestratorInput(query="Machine learning tutorials", tenant_id="test:unit")
         )
 
         # VALIDATE: Parallel groups structure
@@ -1000,7 +1000,7 @@ class TestOrchestratorComplexPatterns:
             return_value=mock_cm,
         ):
             result = await orchestrator_with_real_agents._process_impl(
-                OrchestratorInput(query="Find machine learning tutorials")
+                OrchestratorInput(query="Find machine learning tutorials", tenant_id="test:unit")
             )
 
         # VALIDATE: First agent failed
@@ -1044,7 +1044,7 @@ class TestOrchestratorComplexPatterns:
         assert len(long_query) > 500, "Query should be longer than 500 characters"
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query=long_query)
+            OrchestratorInput(query=long_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Orchestrator handled long query
@@ -1070,7 +1070,7 @@ class TestOrchestratorComplexPatterns:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query=multi_sentence_query)
+            OrchestratorInput(query=multi_sentence_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Plan created for complex query
@@ -1097,7 +1097,7 @@ class TestOrchestratorComplexPatterns:
         )
 
         result = await orchestrator_with_real_agents._process_impl(
-            OrchestratorInput(query=special_query)
+            OrchestratorInput(query=special_query, tenant_id="test:unit")
         )
 
         # VALIDATE: Special characters don't break orchestration

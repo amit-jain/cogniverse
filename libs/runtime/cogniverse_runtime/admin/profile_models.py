@@ -22,7 +22,8 @@ class ProfileCreateRequest(BaseModel):
         max_length=100,
     )
     tenant_id: str = Field(
-        default="default", description="Tenant identifier for multi-tenancy isolation"
+        ...,
+        description="Tenant identifier for multi-tenancy isolation (required)",
     )
     type: str = Field(
         default="video",

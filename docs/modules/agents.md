@@ -1464,7 +1464,7 @@ import asyncio
 class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration."""
     query: str = Field(..., description="Query to orchestrate")
-    tenant_id: str = Field(default="default", description="Tenant identifier (per-request)")
+    tenant_id: str = Field(..., description="Tenant identifier (per-request, required)")
     session_id: Optional[str] = Field(default=None, description="Session identifier (per-request)")
 
 class OrchestratorOutput(AgentOutput):
@@ -1658,8 +1658,10 @@ and checks for cancellation between steps.
 
 ```python
 async def _execute_plan(
-    self, plan: OrchestrationPlan,
-    workflow_id: str = "", tenant_id: str = "default",
+    self,
+    plan: OrchestrationPlan,
+    tenant_id: str,
+    workflow_id: str = "",
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     agent_results = {}
