@@ -13,9 +13,8 @@ from cogniverse_agents.search.learned_reranker import LearnedReranker
 from cogniverse_agents.search.multi_modal_reranker import (
     ConfigurableMultiModalReranker,
     MultiModalReranker,
-    QueryModality,
-    RerankerSearchResult,
 )
+from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 
 @pytest.fixture

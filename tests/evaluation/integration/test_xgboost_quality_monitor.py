@@ -123,7 +123,7 @@ class TestXGBoostQualityMonitorIntegration:
     def test_trained_model_makes_informed_decision(self, monitor_with_xgboost):
         """Train XGBoost on sample data, verify it makes a decision."""
         from cogniverse_agents.routing.xgboost_meta_models import ModelingContext
-        from cogniverse_agents.search.multi_modal_reranker import QueryModality
+        from cogniverse_agents.search.types import QueryModality
 
         model = monitor_with_xgboost._get_training_decision_model()
 

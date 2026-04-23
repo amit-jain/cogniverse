@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 
 
 class TestCrossModalOptimizer:

@@ -6,52 +6,12 @@ Improves result quality by analyzing complementarity, temporal alignment, and
 modality-query alignment.
 """
 
-from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
-
-
-class QueryModality(Enum):
-    """Query modality types"""
-
-    VIDEO = "video"
-    IMAGE = "image"
-    AUDIO = "audio"
-    DOCUMENT = "document"
-    TEXT = "text"
-    MIXED = "mixed"
-
-
-@dataclass
-class RerankerSearchResult:
-    """
-    Search result for reranking operations.
-
-    Note: This is distinct from cogniverse_agents.search.base.SearchResult
-    which uses Document objects for API responses. This dataclass is used
-    internally by rerankers for scoring and comparison.
-
-    Attributes:
-        id: Unique result identifier
-        title: Result title
-        content: Result content/description
-        modality: Source modality
-        score: Original search score
-        metadata: Additional result metadata
-        timestamp: Optional temporal information
-    """
-
-    id: str
-    title: str
-    content: str
-    modality: str
-    score: float
-    metadata: Dict[str, Any]
-    timestamp: Optional[datetime] = None
 
 
 class MultiModalReranker:

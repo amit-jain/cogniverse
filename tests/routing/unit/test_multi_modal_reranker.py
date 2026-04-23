@@ -9,11 +9,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from cogniverse_agents.search.multi_modal_reranker import (
-    MultiModalReranker,
-    QueryModality,
-    RerankerSearchResult,
-)
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 
 @pytest.mark.unit

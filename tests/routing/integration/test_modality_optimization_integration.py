@@ -13,7 +13,7 @@ from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.xgboost_meta_models import TrainingStrategy
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_synthetic import ModalityExampleSchema
 

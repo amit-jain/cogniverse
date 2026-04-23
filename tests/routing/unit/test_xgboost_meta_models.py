@@ -13,7 +13,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategy,
     TrainingStrategyModel,
 )
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 
 
 def _make_mock_telemetry_provider():

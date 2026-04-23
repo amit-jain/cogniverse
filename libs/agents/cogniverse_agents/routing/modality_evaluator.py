@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from cogniverse_agents.routing.modality_example import ModalityExample
 from cogniverse_agents.routing.modality_span_collector import ModalitySpanCollector
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 
 logger = logging.getLogger(__name__)
 

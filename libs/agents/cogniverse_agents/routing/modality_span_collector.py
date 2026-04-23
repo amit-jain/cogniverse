@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 

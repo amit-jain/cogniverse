@@ -16,11 +16,8 @@ if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 from cogniverse_agents.search.learned_reranker import LearnedReranker
-from cogniverse_agents.search.multi_modal_reranker import (
-    MultiModalReranker,
-    QueryModality,
-    RerankerSearchResult,
-)
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)

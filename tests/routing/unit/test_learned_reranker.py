@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from cogniverse_agents.search.learned_reranker import LearnedReranker
-from cogniverse_agents.search.multi_modal_reranker import RerankerSearchResult
+from cogniverse_agents.search.types import RerankerSearchResult
 
 
 class TestLearnedReranker:
@@ -57,7 +57,9 @@ class TestLearnedReranker:
                 "max_results_to_rerank": 100,
             }
 
-            reranker = LearnedReranker(config_manager=mock_config_manager)
+            reranker = LearnedReranker(
+                tenant_id="test_tenant", config_manager=mock_config_manager
+            )
             assert reranker.model == "cohere/rerank-english-v3.0"
             assert reranker.default_top_n == 10
             assert reranker.max_results_to_rerank == 100
@@ -69,7 +71,9 @@ class TestLearnedReranker:
         ) as mock_config:
             mock_config.return_value = {}
             reranker = LearnedReranker(
-                model="jina/jina-reranker-v2-base", config_manager=mock_config_manager
+                model="jina/jina-reranker-v2-base",
+                tenant_id="test_tenant",
+                config_manager=mock_config_manager,
             )
             assert reranker.model == "jina/jina-reranker-v2-base"
 
@@ -107,7 +111,9 @@ class TestLearnedReranker:
         ) as mock_config:
             mock_config.return_value = {}
             reranker = LearnedReranker(
-                model="cohere/rerank-english-v3.0", config_manager=mock_config_manager
+                model="cohere/rerank-english-v3.0",
+                tenant_id="test_tenant",
+                config_manager=mock_config_manager,
             )
             results = await reranker.rerank("test query", [])
             assert results == []
@@ -130,6 +136,7 @@ class TestLearnedReranker:
                 mock_config.return_value = {}
                 reranker = LearnedReranker(
                     model="cohere/rerank-english-v3.0",
+                    tenant_id="test_tenant",
                     config_manager=mock_config_manager,
                 )
                 results = await reranker.rerank("test query", sample_results)
@@ -169,7 +176,9 @@ class TestLearnedReranker:
                 mock_response.results = []
                 mock_arerank.return_value = mock_response
 
-                reranker = LearnedReranker(config_manager=mock_config_manager)
+                reranker = LearnedReranker(
+                    tenant_id="test_tenant", config_manager=mock_config_manager
+                )
                 await reranker.rerank("test", sample_results)
 
                 # Should only send 1 document to LiteLLM
@@ -190,6 +199,7 @@ class TestLearnedReranker:
                 mock_config.return_value = {}
                 reranker = LearnedReranker(
                     model="cohere/rerank-english-v3.0",
+                    tenant_id="test_tenant",
                     config_manager=mock_config_manager,
                 )
                 results = await reranker.rerank("test query", sample_results)
@@ -214,6 +224,7 @@ class TestLearnedReranker:
                 mock_config.return_value = {}
                 reranker = LearnedReranker(
                     model="cohere/rerank-english-v3.0",
+                    tenant_id="test_tenant",
                     config_manager=mock_config_manager,
                 )
                 results = reranker.rerank_sync("test query", sample_results)
@@ -234,7 +245,9 @@ class TestLearnedReranker:
                 "max_results_to_rerank": 50,
             }
 
-            reranker = LearnedReranker(config_manager=mock_config_manager)
+            reranker = LearnedReranker(
+                tenant_id="test_tenant", config_manager=mock_config_manager
+            )
             info = reranker.get_model_info()
 
             assert info["model"] == "cohere/rerank-english-v3.0"

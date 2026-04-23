@@ -13,7 +13,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     ModelingContext,
     TrainingStrategy,
 )
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 import numpy as np
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 if TYPE_CHECKING:

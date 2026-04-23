@@ -5,7 +5,7 @@ Unit tests for ModalityCacheManager
 import pytest
 
 from cogniverse_agents.routing.modality_cache import LRUCache, ModalityCacheManager
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from tests.utils.async_polling import wait_for_cache_expiration
 
 

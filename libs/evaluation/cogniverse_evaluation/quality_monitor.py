@@ -687,7 +687,7 @@ class QualityMonitor:
         """Build ModelingContext from eval results for XGBoost."""
         try:
             from cogniverse_agents.routing.xgboost_meta_models import ModelingContext
-            from cogniverse_agents.search.multi_modal_reranker import QueryModality
+            from cogniverse_agents.search.types import QueryModality
 
             modality_map = {
                 AgentType.SEARCH: QueryModality.VIDEO,

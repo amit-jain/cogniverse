@@ -25,7 +25,7 @@ from cogniverse_agents.routing.xgboost_meta_models import (
     TrainingStrategy,
     TrainingStrategyModel,
 )
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from litellm import arerank, rerank
 
-from cogniverse_agents.search.multi_modal_reranker import RerankerSearchResult
+from cogniverse_agents.search.types import RerankerSearchResult
 from cogniverse_foundation.config.utils import get_config_value
 
 logger = logging.getLogger(__name__)
