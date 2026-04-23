@@ -1,9 +1,8 @@
-"""
-Online Evaluator for real-time routing span scoring.
+"""Online Evaluator for real-time routing span scoring.
 
-Evaluates individual routing spans as they are extracted by the
-RoutingSpanEvaluator, producing scores that are persisted as telemetry
-annotations for drift detection and continuous quality monitoring.
+Scores individual `cogniverse.routing` spans produced by GatewayAgent and
+persists the scores as telemetry annotations for drift detection and
+continuous quality monitoring.
 """
 
 from __future__ import annotations

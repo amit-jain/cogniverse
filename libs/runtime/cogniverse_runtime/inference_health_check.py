@@ -151,7 +151,25 @@ def validate_inference_services(
         logger.info("No profiles reference an inference_service; skipping probe.")
         return
 
-    # Dedupe — many profiles may share one service; probe it once.
+    # Filter out bindings whose service isn't deployed here. A profile
+    # conflict on an undeployed service is not a startup failure — the profile
+    # will fail on first use with a clear error. Only conflicts on services
+    # that ARE deployed matter, because those change the meaning of requests
+    # the runtime will actually route.
+    referenced = {b.service_name for b in bindings}
+    missing = sorted(referenced - service_urls.keys())
+    if missing:
+        logger.warning(
+            "Profiles reference inference services not deployed here: %s. "
+            "Available: %s. Profiles bound to missing services will fail on "
+            "first use.",
+            missing,
+            sorted(service_urls),
+        )
+    bindings = [b for b in bindings if b.service_name in service_urls]
+
+    # Dedupe — many profiles may share one service; probe it once. Raise on
+    # conflicts only among deployed services.
     unique: dict[str, str] = {}
     for b in bindings:
         existing = unique.get(b.service_name)
@@ -162,22 +180,6 @@ def validate_inference_services(
                 f"service can only serve one model."
             )
         unique[b.service_name] = b.expected_model
-
-    # Profiles can reference services that are not deployed in this
-    # environment — e.g. the "code" service is optional. Skip probing those
-    # and let the factory raise a clear error if/when a user actually tries
-    # to use the profile. Only log a warning.
-    missing = [s for s in unique if s not in service_urls]
-    if missing:
-        available = sorted(service_urls)
-        logger.warning(
-            "Profiles reference inference services not deployed here: %s. "
-            "Available: %s. Profiles bound to missing services will fail on "
-            "first use.",
-            missing,
-            available,
-        )
-        unique = {k: v for k, v in unique.items() if k in service_urls}
 
     deadline = now() + boot_deadline_seconds
     for service_name, expected_model in unique.items():

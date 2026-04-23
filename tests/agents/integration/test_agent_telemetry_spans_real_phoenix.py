@@ -73,7 +73,7 @@ class DetailedReportAgent(
         return _TelemetryTestOutput(result=f"reported: {input.query}")
 
 
-class RoutingAgent(
+class GatewayAgent(
     AgentBase[_TelemetryTestInput, _TelemetryTestOutput, _TelemetryTestDeps]
 ):
     async def _process_impl(self, input):
@@ -159,7 +159,7 @@ class TestAgentTelemetrySpansRealPhoenix:
             AgentType.SEARCH: SearchAgent,
             AgentType.SUMMARY: SummarizerAgent,
             AgentType.REPORT: DetailedReportAgent,
-            AgentType.ROUTING: RoutingAgent,
+            AgentType.GATEWAY: GatewayAgent,
         }
 
         project_name = real_telemetry.config.get_project_name("telemetry_real_test")

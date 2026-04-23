@@ -10,7 +10,6 @@ Usage:
     python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
-    python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
     python -m cogniverse_runtime.optimization_cli --mode triggered \
         --tenant-id acme:production --agents search,summary \
@@ -276,10 +275,6 @@ async def _optimize_agent(
                 technical_details=output.get("technical_details", ""),
                 confidence=row.get("score", 0.8),
             ).with_inputs("search_results", "query_context", "analysis_depth")
-        elif agent_name == "routing":
-            # Routing optimization already handled by OptimizationOrchestrator.
-            # Feed misrouted queries as additional experiences.
-            continue
         else:
             continue
 
@@ -769,6 +764,107 @@ async def run_workflow_optimization(
     }
 
 
+GATEWAY_DEFAULT_THRESHOLD = 0.4
+
+
+def _compute_gateway_thresholds(spans_df) -> dict:
+    """Pure function: calibrate gateway thresholds from a spans DataFrame.
+
+    Extracted from :func:`run_gateway_thresholds_optimization` so the
+    calibration algorithm can be unit-tested against deterministic inputs.
+    The async wrapper handles Phoenix I/O and artifact persistence.
+
+    Returns one of:
+    - ``{"status": "no_data", "spans_found": N, "reason": ...}`` when the
+      input lacks the required attributes or has no confidence values.
+    - ``{"status": "ready", "spans_found": N, "thresholds": {...}}`` with
+      the calibrated ``fast_path_confidence_threshold``, ``gliner_threshold``
+      and an ``analysis`` subdict.
+
+    The ``ready`` status is not yet ``success`` because the artifact hasn't
+    been persisted — the wrapper writes the dataset and converts.
+    """
+    if spans_df.empty:
+        return {"status": "no_data", "spans_found": 0}
+
+    # Phoenix stores custom span attributes as a dict in ``attributes.gateway``
+    # column (not as separate flattened columns). Extract fields from it.
+    gw_attrs = spans_df.get("attributes.gateway")
+    if gw_attrs is None:
+        return {
+            "status": "no_data",
+            "spans_found": len(spans_df),
+            "reason": "no_gateway_attributes",
+        }
+
+    df = spans_df.copy()
+    df["_complexity"] = gw_attrs.apply(
+        lambda d: d.get("complexity", "") if isinstance(d, dict) else ""
+    )
+    df["_confidence"] = gw_attrs.apply(
+        lambda d: d.get("confidence", None) if isinstance(d, dict) else None
+    )
+
+    simple_spans = df[df["_complexity"] == "simple"]
+    complex_spans = df[df["_complexity"] == "complex"]
+
+    confidences = df["_confidence"].dropna().astype(float)
+    if confidences.empty:
+        return {
+            "status": "no_data",
+            "spans_found": len(df),
+            "reason": "no_confidence_data",
+        }
+
+    simple_total = len(simple_spans)
+    complex_total = len(complex_spans)
+    status_col = "status_code"
+    simple_errors = 0
+    complex_errors = 0
+    if status_col in df.columns:
+        if simple_total > 0:
+            simple_errors = len(simple_spans[simple_spans[status_col] == "ERROR"])
+        if complex_total > 0:
+            complex_errors = len(complex_spans[complex_spans[status_col] == "ERROR"])
+
+    simple_error_rate = simple_errors / max(simple_total, 1)
+    complex_error_rate = complex_errors / max(complex_total, 1)
+    mean_confidence = float(confidences.mean())
+    p25_confidence = float(confidences.quantile(0.25))
+
+    # Threshold calibration — if simple routing is failing often, raise the
+    # threshold so more queries go to orchestrator; if complex routing rarely
+    # fails AND mean confidence is high, lower the threshold to keep more
+    # queries on the fast path.
+    current = GATEWAY_DEFAULT_THRESHOLD
+    if simple_error_rate > 0.2:
+        optimized_threshold = min(current + 0.1, 0.95)
+    elif complex_error_rate < 0.05 and mean_confidence > 0.8:
+        optimized_threshold = max(current - 0.05, 0.5)
+    else:
+        optimized_threshold = current
+
+    optimized_gliner_threshold = max(0.15, min(p25_confidence * 0.8, 0.5))
+
+    return {
+        "status": "ready",
+        "spans_found": len(df),
+        "thresholds": {
+            "fast_path_confidence_threshold": optimized_threshold,
+            "gliner_threshold": round(optimized_gliner_threshold, 3),
+            "analysis": {
+                "total_spans": len(df),
+                "simple_count": simple_total,
+                "complex_count": complex_total,
+                "simple_error_rate": round(simple_error_rate, 4),
+                "complex_error_rate": round(complex_error_rate, 4),
+                "mean_confidence": round(mean_confidence, 4),
+                "p25_confidence": round(p25_confidence, 4),
+            },
+        },
+    }
+
+
 async def run_gateway_thresholds_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
@@ -806,89 +902,13 @@ async def run_gateway_thresholds_optimization(
 
     logger.info("Found %d gateway spans", len(spans_df))
 
-    # Phoenix stores custom span attributes as a dict in "attributes.gateway"
-    # column, not as separate flattened columns. Extract fields from the dict.
-    gw_attrs = spans_df.get("attributes.gateway")
-    if gw_attrs is None:
-        logger.info("No attributes.gateway column in spans")
-        return {
-            "status": "no_data",
-            "spans_found": len(spans_df),
-            "reason": "no_gateway_attributes",
-        }
+    result = _compute_gateway_thresholds(spans_df)
+    if result["status"] != "ready":
+        logger.info("Gateway threshold calibration skipped: %s", result.get("reason"))
+        return result
 
-    # Extract complexity and confidence from the nested dict
-    spans_df = spans_df.copy()
-    spans_df["_complexity"] = gw_attrs.apply(
-        lambda d: d.get("complexity", "") if isinstance(d, dict) else ""
-    )
-    spans_df["_confidence"] = gw_attrs.apply(
-        lambda d: d.get("confidence", None) if isinstance(d, dict) else None
-    )
+    threshold_config = result["thresholds"]
 
-    simple_spans = spans_df[spans_df["_complexity"] == "simple"]
-    complex_spans = spans_df[spans_df["_complexity"] == "complex"]
-
-    confidences = spans_df["_confidence"].dropna().astype(float)
-    if confidences.empty:
-        logger.info("No confidence data in gateway spans")
-        return {
-            "status": "no_data",
-            "spans_found": len(spans_df),
-            "reason": "no_confidence_data",
-        }
-
-    # Check error rates by complexity class
-    status_col = "status_code"
-    simple_errors = 0
-    simple_total = len(simple_spans)
-    complex_errors = 0
-    complex_total = len(complex_spans)
-
-    if status_col in spans_df.columns:
-        if simple_total > 0:
-            simple_errors = len(simple_spans[simple_spans[status_col] == "ERROR"])
-        if complex_total > 0:
-            complex_errors = len(complex_spans[complex_spans[status_col] == "ERROR"])
-
-    simple_error_rate = simple_errors / max(simple_total, 1)
-    complex_error_rate = complex_errors / max(complex_total, 1)
-
-    # Compute optimized thresholds:
-    # If simple queries have high error rate, raise the fast-path threshold
-    # (send more queries to orchestrator). If complex queries rarely fail,
-    # we can lower it to keep more queries on the fast path.
-    current_threshold = 0.4  # default from GatewayDeps.fast_path_confidence_threshold
-    mean_confidence = float(confidences.mean())
-
-    if simple_error_rate > 0.2:
-        # Too many simple-routed queries are failing — raise threshold
-        optimized_threshold = min(current_threshold + 0.1, 0.95)
-    elif complex_error_rate < 0.05 and mean_confidence > 0.8:
-        # Complex routing is rarely needed and confidence is high — lower threshold
-        optimized_threshold = max(current_threshold - 0.05, 0.5)
-    else:
-        optimized_threshold = current_threshold
-
-    # Also tune gliner_threshold based on confidence distribution
-    p25_confidence = float(confidences.quantile(0.25))
-    optimized_gliner_threshold = max(0.15, min(p25_confidence * 0.8, 0.5))
-
-    threshold_config = {
-        "fast_path_confidence_threshold": optimized_threshold,
-        "gliner_threshold": round(optimized_gliner_threshold, 3),
-        "analysis": {
-            "total_spans": len(spans_df),
-            "simple_count": simple_total,
-            "complex_count": complex_total,
-            "simple_error_rate": round(simple_error_rate, 4),
-            "complex_error_rate": round(complex_error_rate, 4),
-            "mean_confidence": round(mean_confidence, 4),
-            "p25_confidence": round(p25_confidence, 4),
-        },
-    }
-
-    # Save threshold config as artifact
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
@@ -900,14 +920,14 @@ async def run_gateway_thresholds_optimization(
 
     logger.info(
         "Gateway threshold optimization complete — threshold %.2f -> %.2f, artifact %s",
-        current_threshold,
-        optimized_threshold,
+        GATEWAY_DEFAULT_THRESHOLD,
+        threshold_config["fast_path_confidence_threshold"],
         dataset_id,
     )
 
     return {
         "status": "success",
-        "spans_found": len(spans_df),
+        "spans_found": result["spans_found"],
         "artifact_id": dataset_id,
         "thresholds": threshold_config,
     }
@@ -1192,159 +1212,6 @@ async def run_entity_extraction_optimization(
         return {"status": "failed", "error": str(e)}
 
 
-async def run_routing_optimization(
-    tenant_id: str,
-    lookback_hours: float = 24.0,
-) -> dict:
-    """Routing decision optimization.
-
-    Reads cogniverse.routing spans, builds training examples from
-    (query) -> (recommended_agent, primary_intent) pairs, compiles the
-    DSPyAdvancedRoutingModule, and saves the optimized module as an artifact.
-    """
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-    logger.info(
-        "Starting routing optimization for tenant=%s lookback=%dh",
-        tenant_id,
-        lookback_hours,
-    )
-
-    config_manager = create_default_config_manager()
-    telemetry_manager = get_telemetry_manager()
-    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
-    spans_df = await _query_spans_by_name(
-        telemetry_provider, tenant_id, SPAN_NAME_ROUTING, lookback_hours
-    )
-
-    if spans_df.empty:
-        logger.info("No routing spans found — nothing to optimize")
-        return {"status": "no_data", "spans_found": 0}
-
-    logger.info("Found %d routing spans", len(spans_df))
-
-    import dspy
-
-    trainset = []
-    for _, row in spans_df.iterrows():
-        r_attrs = row.get("attributes.routing", {})
-        if not isinstance(r_attrs, dict):
-            r_attrs = {}
-        query = r_attrs.get("query", "")
-        # Handle both new ("recommended_agent") and legacy ("chosen_agent") field names
-        recommended_agent = r_attrs.get("recommended_agent", "") or r_attrs.get(
-            "chosen_agent", ""
-        )
-        primary_intent = r_attrs.get("primary_intent", "")
-        confidence = float(r_attrs.get("confidence", 0.0))
-
-        if not query or not recommended_agent:
-            continue
-
-        if confidence < 0.5:
-            continue
-
-        example = dspy.Example(
-            query=query,
-            context="",
-            primary_intent=primary_intent,
-            needs_video_search=str(
-                "video" in recommended_agent.lower()
-                or "search" in recommended_agent.lower()
-            ),
-            recommended_agent=recommended_agent,
-            confidence=str(confidence),
-        ).with_inputs("query", "context")
-        trainset.append(example)
-
-    if not trainset:
-        logger.info("No valid training examples extracted from routing spans")
-        return {"status": "no_data", "spans_found": len(spans_df), "examples": 0}
-
-    logger.info("Built %d training examples for routing optimization", len(trainset))
-
-    # Merge approved synthetic data
-    import json as _json
-
-    synthetic_demos = await _load_approved_synthetic_data(
-        telemetry_provider, tenant_id, "routing"
-    )
-    production_count = len(trainset)
-    for demo in synthetic_demos:
-        inp = demo.get("input", "")
-        if isinstance(inp, str):
-            try:
-                inp = _json.loads(inp)
-            except (ValueError, TypeError):
-                continue
-        if isinstance(inp, dict):
-            example = dspy.Example(**inp).with_inputs("query")
-            trainset.append(example)
-    logger.info(
-        "Merged %d synthetic + %d production = %d total training examples",
-        len(synthetic_demos),
-        production_count,
-        len(trainset),
-    )
-
-    try:
-        from cogniverse_agents.routing.dspy_relationship_router import (
-            DSPyAdvancedRoutingModule,
-        )
-
-        module = DSPyAdvancedRoutingModule(analysis_module=None)
-    except (ImportError, Exception):
-        from cogniverse_agents.routing.dspy_routing_signatures import (
-            BasicQueryAnalysisSignature,
-        )
-
-        module = dspy.ChainOfThought(BasicQueryAnalysisSignature)
-
-    from cogniverse_foundation.config.utils import get_config
-
-    config = get_config(tenant_id=tenant_id, config_manager=config_manager)
-    llm_config = config.get_llm_config()
-    llm_endpoint = llm_config.resolve("optimization")
-
-    dspy.configure(
-        lm=dspy.LM(
-            f"ollama_chat/{llm_endpoint.model}",
-            api_base=llm_endpoint.api_base,
-        )
-    )
-
-    teleprompter = _create_teleprompter(len(trainset))
-
-    try:
-        compiled = teleprompter.compile(module, trainset=trainset)
-
-        import json as _json
-
-        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-        dataset_id = await artifact_manager.save_blob(
-            kind="model",
-            key="routing_decision",
-            content=_json.dumps(compiled.dump_state(), default=str),
-        )
-
-        logger.info("Routing optimization complete — artifact %s", dataset_id)
-        return {
-            "status": "success",
-            "spans_found": len(spans_df),
-            "training_examples": len(trainset),
-            "artifact_id": dataset_id,
-        }
-
-    except Exception as e:
-        logger.error("Routing DSPy compilation failed: %s", e)
-        return {"status": "failed", "error": str(e)}
-
-
 async def run_synthetic_generation(
     tenant_id: str,
     optimizer_types: list[str] | None = None,
@@ -1363,7 +1230,7 @@ async def run_synthetic_generation(
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
     if optimizer_types is None:
-        optimizer_types = ["simba", "routing", "profile", "workflow"]
+        optimizer_types = ["simba", "profile", "workflow"]
 
     logger.info(
         "Starting synthetic generation for tenant=%s types=%s count=%d",
@@ -1486,7 +1353,6 @@ def main():
             "gateway-thresholds",
             "profile",
             "entity-extraction",
-            "routing",
             "synthetic",
         ],
         required=True,
@@ -1571,15 +1437,8 @@ def main():
                 lookback_hours=args.lookback_hours,
             )
         )
-    elif args.mode == "routing":
-        result = asyncio.run(
-            run_routing_optimization(
-                tenant_id=args.tenant_id,
-                lookback_hours=args.lookback_hours,
-            )
-        )
     elif args.mode == "synthetic":
-        optimizer_types = ["simba", "routing", "profile", "workflow"]
+        optimizer_types = ["simba", "profile", "workflow"]
         if args.agents:
             optimizer_types = [a.strip() for a in args.agents.split(",")]
         result = asyncio.run(

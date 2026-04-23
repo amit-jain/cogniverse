@@ -49,7 +49,7 @@ class RuntimeClient:
         """Post a task to an agent and return the response.
 
         Args:
-            agent_name: Target agent (routing_agent, search_agent, etc.)
+            agent_name: Target agent (gateway_agent, search_agent, etc.)
             query: User query text
             tenant_id: Tenant identifier (org:user format)
             context_id: Conversation identifier (Telegram chat_id)
@@ -127,7 +127,7 @@ class RuntimeClient:
         tenant_id: str,
         query: str,
         response: Dict[str, Any],
-        agent_name: str = "routing_agent",
+        agent_name: str = "gateway_agent",
         entities: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Save an agent interaction as a wiki page (POST /wiki/save)."""

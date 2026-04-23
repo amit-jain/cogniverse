@@ -195,9 +195,7 @@ def main():
     print("\\n5️⃣ Processing test videos...")
     try:
         print("🎬 Starting video processing...")
-        result = subprocess.run(
-            [sys.executable, "scripts/process_test_videos.py"], check=True
-        )
+        subprocess.run([sys.executable, "scripts/process_test_videos.py"], check=True)
         print("✅ Video processing completed!")
     except subprocess.CalledProcessError:
         print("❌ Video processing failed")

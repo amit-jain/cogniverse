@@ -48,12 +48,12 @@ class TestRuntimeClientIntegration:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_dispatch_routing_agent(self):
-        """Dispatch a query to routing_agent via real runtime."""
+    async def test_dispatch_gateway_agent(self):
+        """Dispatch a query to gateway_agent via real runtime."""
         client = RuntimeClient(RUNTIME_URL)
         try:
             response = await client.dispatch_agent(
-                agent_name="routing_agent",
+                agent_name="gateway_agent",
                 query="Show me videos about machine learning",
                 tenant_id="flywheel_org:production",
                 context_id="test_chat_123",
@@ -132,10 +132,10 @@ class TestMessageHandlingIntegration:
             await client.close()
 
     @pytest.mark.asyncio
-    async def test_plain_text_routes_through_routing_agent(self):
-        """Plain text → routing_agent → response formatted."""
+    async def test_plain_text_routes_through_gateway_agent(self):
+        """Plain text → gateway_agent → response formatted."""
         parsed = parse_message(text="What videos do you have about cooking?")
-        assert parsed.agent_name == "routing_agent"
+        assert parsed.agent_name == "gateway_agent"
 
         client = RuntimeClient(RUNTIME_URL)
         try:

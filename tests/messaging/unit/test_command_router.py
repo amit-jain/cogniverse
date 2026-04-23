@@ -4,9 +4,9 @@ from cogniverse_messaging.command_router import parse_message
 
 
 class TestCommandParsing:
-    def test_plain_text_routes_to_routing_agent(self):
+    def test_plain_text_routes_to_gateway_agent(self):
         result = parse_message(text="Show me videos of cats")
-        assert result.agent_name == "routing_agent"
+        assert result.agent_name == "gateway_agent"
         assert result.query == "Show me videos of cats"
         assert not result.is_command
 
@@ -80,12 +80,12 @@ class TestCommandParsing:
 
     def test_empty_text(self):
         result = parse_message(text="")
-        assert result.agent_name == "routing_agent"
+        assert result.agent_name == "gateway_agent"
         assert result.query == ""
 
     def test_none_text(self):
         result = parse_message(text=None)
-        assert result.agent_name == "routing_agent"
+        assert result.agent_name == "gateway_agent"
 
     def test_wiki_save(self):
         result = parse_message(text="/wiki save")

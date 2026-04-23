@@ -387,15 +387,15 @@ class TestAdminMemoryManagement:
 @pytest.mark.e2e
 @skip_if_no_runtime
 class TestJobExecution:
-    """Job execution: query → routing_agent → post_actions routed."""
+    """Job execution: query → gateway_agent → post_actions routed."""
 
-    def test_routing_agent_processes_search_query(self):
+    def test_gateway_agent_processes_search_query(self):
         """Routing agent receives a search query and routes to search_agent."""
         with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "find videos about outdoor nature scenes",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -437,9 +437,9 @@ class TestJobExecution:
     def test_job_execute_with_wiki_delivery(self):
         """Create job → execute → verify wiki save actually happened.
 
-        The job executor reads config from real Vespa, calls routing_agent
+        The job executor reads config from real Vespa, calls gateway_agent
         for the main query (mocked), then dispatches "save to wiki" which
-        should call POST /wiki/save (not routing_agent). We intercept HTTP
+        should call POST /wiki/save (not gateway_agent). We intercept HTTP
         calls to verify the wiki endpoint was called with the right content.
         """
         import asyncio
@@ -504,10 +504,10 @@ class TestJobExecution:
         urls_called = [c["url"] for c in call_log]
 
         agent_calls = [
-            c for c in call_log if "/agents/routing_agent/process" in c["url"]
+            c for c in call_log if "/agents/gateway_agent/process" in c["url"]
         ]
         assert len(agent_calls) == 1, (
-            f"Expected 1 routing_agent call (main query only), got {len(agent_calls)}: {urls_called}"
+            f"Expected 1 gateway_agent call (main query only), got {len(agent_calls)}: {urls_called}"
         )
         assert (
             agent_calls[0]["payload"]["query"]
@@ -532,7 +532,7 @@ class TestJobExecution:
         """Post_action "summarize and send on Telegram" should process then deliver.
 
         "summarize and send on Telegram" has processing intent (summarize) +
-        delivery (Telegram). The executor should call routing_agent to summarize,
+        delivery (Telegram). The executor should call gateway_agent to summarize,
         then POST /messaging/send with the summary.
         """
         import asyncio
@@ -592,7 +592,7 @@ class TestJobExecution:
         urls_called = [c["url"] for c in call_log]
 
         agent_calls = [
-            c for c in call_log if "/agents/routing_agent/process" in c["url"]
+            c for c in call_log if "/agents/gateway_agent/process" in c["url"]
         ]
         assert len(agent_calls) == 2, (
             f"Expected 2 agent calls (main query + summarize), got {len(agent_calls)}: {urls_called}"

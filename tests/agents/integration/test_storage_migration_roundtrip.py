@@ -11,7 +11,7 @@ Requires Docker to be running. Uses the ``phoenix_container`` and
 Components tested:
 1. ArtifactManager.save_blob / load_blob
 2. RoutingOptimizer — checkpoint save/load
-3. AdaptiveThresholdLearner — threshold state persist/reload
+3. XGBoost meta-model round-trips
 4. XGBoost meta-models — TrainingDecisionModel, TrainingStrategyModel, FusionBenefitModel
 5. WorkflowIntelligence — execution persist/reload
 6. MLflowIntegration — DSPy module save/load via telemetry blobs
@@ -110,50 +110,7 @@ class TestBlobRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# 2. RoutingOptimizer checkpoint round-trip
-# ---------------------------------------------------------------------------
-
-
-class TestAdaptiveThresholdRoundTrip:
-    """Verify AdaptiveThresholdLearner persist/reload through real Phoenix."""
-
-    @pytest.mark.asyncio
-    async def test_threshold_state_round_trip(self, real_provider):
-        """Persist threshold states, reload in new learner, verify deques."""
-        from cogniverse_agents.routing.adaptive_threshold_learner import (
-            AdaptiveThresholdLearner,
-            ThresholdParameter,
-        )
-
-        learner = AdaptiveThresholdLearner(
-            telemetry_provider=real_provider,
-            tenant_id="threshold-test",
-        )
-
-        # Simulate some threshold updates
-        if ThresholdParameter.ROUTING_CONFIDENCE in learner.threshold_states:
-            state = learner.threshold_states[ThresholdParameter.ROUTING_CONFIDENCE]
-            state.current_value = 0.82
-            state.best_value = 0.85
-
-        await learner._persist_state()
-
-        # Create new learner and reload
-        learner2 = AdaptiveThresholdLearner(
-            telemetry_provider=real_provider,
-            tenant_id="threshold-test",
-        )
-
-        await learner2.load_stored_state()
-
-        if ThresholdParameter.ROUTING_CONFIDENCE in learner2.threshold_states:
-            state2 = learner2.threshold_states[ThresholdParameter.ROUTING_CONFIDENCE]
-            assert state2.current_value == 0.82
-            assert state2.best_value == 0.85
-
-
-# ---------------------------------------------------------------------------
-# 4. XGBoost meta-model round-trips
+# 2. XGBoost meta-model round-trips
 # ---------------------------------------------------------------------------
 
 
@@ -306,7 +263,7 @@ class TestWorkflowIntelligenceRoundTrip:
             query_type="video_search",
             execution_time=2.5,
             success=True,
-            agent_sequence=["routing_agent", "video_search_agent"],
+            agent_sequence=["gateway_agent", "video_search_agent"],
             task_count=2,
             parallel_efficiency=0.85,
             confidence_score=0.92,

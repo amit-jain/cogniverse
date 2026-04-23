@@ -89,13 +89,13 @@ class TestRESTMultiTurn:
             f"Rewritten query '{data['rewritten_query']}' should reference cats/videos"
         )
 
-    def test_routing_agent_executes_downstream_with_rewrite(self):
+    def test_gateway_agent_executes_downstream_with_rewrite(self):
         """Routing agent should execute downstream search with query rewrite."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "find more sports video clips like those",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -109,12 +109,11 @@ class TestRESTMultiTurn:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "success"
-        # Gateway may route through routing_agent (simple) or orchestrator (complex)
+        # Gateway may route through gateway_agent (simple) or orchestrator (complex)
         assert data["agent"] in (
-            "routing_agent",
             "gateway_agent",
             "orchestrator_agent",
-        ), f"Expected routing/gateway/orchestrator agent, got {data['agent']}"
+        ), f"Expected gateway/orchestrator agent, got {data['agent']}"
         # If routing path, check downstream; if orchestrator, check orchestration_result
         if "downstream_result" in data:
             ds = data["downstream_result"]

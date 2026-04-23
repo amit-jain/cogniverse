@@ -56,7 +56,7 @@ def generate_html_report(test_results_file: str = None):
         data = json.load(f)
 
     # Extract test queries
-    test_queries = [(q["query"], q["expected_videos"]) for q in data["queries"]]
+    [(q["query"], q["expected_videos"]) for q in data["queries"]]
 
     # Define profiles with display names
     profiles = [

@@ -286,7 +286,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # List command
-    list_parser = subparsers.add_parser("list", help="List available datasets")
+    subparsers.add_parser("list", help="List available datasets")
 
     # Merge command
     merge_parser = subparsers.add_parser("merge", help="Merge multiple datasets")

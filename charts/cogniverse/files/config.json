@@ -3,15 +3,6 @@
   "default_tenant": "flywheel_org:production",
   "active_video_profile": "video_colpali_smol500_mv_frame",
   "agents": {
-    "routing_agent": {
-      "url": "{{ include "cogniverse.runtimeUrl" . }}",
-      "enabled": true,
-      "capabilities": [
-        "routing",
-        "query_analysis"
-      ],
-      "modalities": []
-    },
     "search_agent": {
       "url": "{{ include "cogniverse.runtimeUrl" . }}",
       "enabled": true,
@@ -181,10 +172,6 @@
       "adapter_path": null
     },
     "overrides": {
-      "routing_agent": {
-        "temperature": 0.1,
-        "max_tokens": 1000
-      },
       "summarizer_agent": {
         "model": "ollama/gemma4:e2b"
       },
@@ -202,15 +189,10 @@
       "llm_auto_annotator": null
     }
   },
-  "routing_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
   "video_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
   "detailed_report_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
   "summarizer_agent_url": "{{ include "cogniverse.runtimeUrl" . }}",
   "orchestrator_agent_port": 8013,
-  "routing_agent": {
-    "enable_advanced_optimization": true,
-    "enable_memory": false
-  },
   "automation_rules": {
     "annotation_thresholds": {
       "confidence_threshold": 0.6,

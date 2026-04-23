@@ -278,7 +278,7 @@ def main():
     restore_parser.add_argument("--force", action="store_true", help="Force restore")
 
     # List backups command
-    list_parser = subparsers.add_parser("list", help="List backups")
+    subparsers.add_parser("list", help="List backups")
 
     # Clean command
     clean_parser = subparsers.add_parser("clean", help="Clean old data")
@@ -295,7 +295,7 @@ def main():
     )
 
     # Analyze command
-    analyze_parser = subparsers.add_parser("analyze", help="Analyze data directory")
+    subparsers.add_parser("analyze", help="Analyze data directory")
 
     # Export datasets command
     export_parser = subparsers.add_parser("export-datasets", help="Export datasets")

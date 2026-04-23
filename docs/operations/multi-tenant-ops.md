@@ -687,27 +687,24 @@ print(f"  P99 Latency: {stats.get('p99_latency', 0)}ms")
 
 ### Tenant-Specific Optimization
 
+Trigger on-demand optimization for a tenant via the admin API:
+
 ```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+import requests
 
-# Run optimization per tenant
-async def start_tenant_optimization(tenant_id: str):
-    orchestrator = OptimizationOrchestrator(
-        tenant_id=tenant_id,
-        span_eval_interval_minutes=15,
-        annotation_interval_minutes=30
+# Submit an optimization run for a specific tenant
+def trigger_tenant_optimization(tenant_id: str, mode: str = "gateway-thresholds"):
+    response = requests.post(
+        f"http://localhost:8000/admin/tenant/{tenant_id}/optimize",
+        json={"mode": mode},
     )
+    result = response.json()
+    print(f"Workflow submitted: {result['workflow_name']}")
+    print(f"Track progress: {result['status_url']}")
+    return result
 
-    # Start tenant-specific optimization
-    await orchestrator.start()
-
-    print(f"✅ Optimization started for {tenant_id}")
-    print(f"   Span evaluation: Every 15 minutes")
-    print(f"   Model retraining: Based on annotations")
-
-# Usage
-import asyncio
-asyncio.run(start_tenant_optimization("acme_corp"))
+# Available modes: gateway-thresholds, simba, workflow, profile, entity-extraction, synthetic
+trigger_tenant_optimization("acme_corp", mode="gateway-thresholds")
 ```
 
 ---

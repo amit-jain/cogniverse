@@ -62,7 +62,7 @@ if file_path and file_path.exists():
     has_query = "is_query" in df.columns and df["is_query"].any()
     query_info = ""
     if has_query:
-        query_df = df[df["is_query"] == True]
+        query_df = df[df["is_query"]]
         num_queries = len(query_df)
         if num_queries > 0:
             if num_queries == 1:
@@ -84,7 +84,7 @@ if file_path and file_path.exists():
         df["point_type"] = df["is_query"].apply(lambda x: "Query" if x else "Document")
 
         # If multiple queries, give them unique labels
-        query_indices = df[df["is_query"] == True].index
+        query_indices = df[df["is_query"]].index
         for i, idx in enumerate(query_indices):
             df.loc[idx, "point_type"] = f"Query {i + 1}"
 
@@ -112,8 +112,8 @@ if file_path and file_path.exists():
         st.markdown("---")
         st.subheader("🎯 Query Analysis")
 
-        query_df = df[df["is_query"] == True]
-        doc_df = df[df["is_query"] != True]
+        query_df = df[df["is_query"]]
+        doc_df = df[not df["is_query"]]
 
         # Display query details
         for i, (idx, query_row) in enumerate(query_df.iterrows()):

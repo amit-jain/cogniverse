@@ -154,7 +154,7 @@ flowchart TB
 flowchart TB
     Start["<span style='color:#000'>optimization_cli module<br/>Per-Agent Optimization CLI</span>"]
 
-    Step1["<span style='color:#000'>Step 1: Run Agent Optimization<br/>• Execute per-agent optimizer<br/>• Generate prompt artifacts<br/>• Modes: simba/gateway-thresholds/routing/etc.</span>"]
+    Step1["<span style='color:#000'>Step 1: Run Agent Optimization<br/>• Execute per-agent optimizer<br/>• Generate prompt artifacts<br/>• Modes: simba/gateway-thresholds/entity-extraction/etc.</span>"]
 
     Step2["<span style='color:#000'>Step 2: Upload to Modal<br/>• Upload artifacts to Modal volume<br/>• Path: /artifacts/*.json</span>"]
 
@@ -534,8 +534,6 @@ http://localhost:8000
 
 - `entity-extraction` - Entity extraction optimization
 
-- `routing` - Entity-based advanced routing
-
 - `workflow` - Multi-agent workflow orchestration
 
 - `profile` - Search profile selection
@@ -567,11 +565,6 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --mode gateway-thresholds \
   --tenant-id acme_corp
 
-# Optimize entity-based routing
-uv run python -m cogniverse_runtime.optimization_cli \
-  --mode routing \
-  --tenant-id default
-
 # Clean up old logs
 uv run python -m cogniverse_runtime.optimization_cli \
   --mode cleanup \
@@ -580,7 +573,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **Command Line Options:**
 ```bash
---mode CHOICE                # simba|gateway-thresholds|entity-extraction|routing|workflow|profile|cleanup (required)
+--mode CHOICE                # simba|gateway-thresholds|entity-extraction|workflow|profile|cleanup (required)
 --tenant-id ID               # Tenant identifier (default: default)
 --log-retention-days DAYS    # Days to retain logs (cleanup mode, default: 7)
 ```
@@ -608,7 +601,7 @@ See `workflows/scheduled-optimization.yaml` for automatic scheduled optimization
 
 - **Weekly**: Sunday 3 AM UTC (all modes)
 
-- **Daily**: 4 AM UTC (routing mode only)
+- **Daily**: 4 AM UTC (gateway-thresholds mode)
 
 ---
 
@@ -1042,7 +1035,7 @@ User Command
     ├─> python -m cogniverse_runtime.optimization_cli --mode <MODE> --tenant-id <TENANT>
     │       │
     │       ├─> Step 1: Run Per-Agent Optimizer
-    │       │   • Mode: simba | gateway-thresholds | entity-extraction | routing | workflow | profile
+    │       │   • Mode: simba | gateway-thresholds | entity-extraction | workflow | profile
     │       │   • Collects Phoenix spans for the agent
     │       │   • Selects DSPy optimizer based on training data size
     │       │   • Output: artifacts saved to optimization output directory
@@ -1294,7 +1287,6 @@ uv run python scripts/run_experiments_with_visualization.py \
 uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme_corp
 uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme_corp
 uv run python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme_corp
-uv run python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id acme_corp
 uv run python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme_corp
 uv run python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme_corp
 

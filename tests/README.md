@@ -323,16 +323,16 @@ class TestBaseAgent:
 **Implementation Layer Test:**
 ```python
 import pytest
-from cogniverse_agents.routing.routing_agent import RoutingAgent
+from cogniverse_agents.gateway_agent import GatewayAgent
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-class TestRoutingAgent:
-    """Test routing agent with DSPy optimization."""
+class TestGatewayAgent:
+    """Test gateway agent classification + fast-path routing."""
 
-    def test_route_query_with_gepa(self):
-        """Test GEPA-optimized routing."""
-        # Test implementation with mocked LLM
+    def test_classify_simple_query(self):
+        """Test GLiNER-based complexity classification."""
+        # Test implementation with mocked GLiNER
         pass
 ```
 
@@ -382,10 +382,10 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v --tb=long
 ### Debug Specific Test
 ```bash
 # Run single test with debugger
-JAX_PLATFORM_NAME=cpu uv run pytest tests/routing/unit/test_routing_agent.py::TestRoutingAgent::test_route_query -vv --pdb
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_gateway_agent.py::TestGatewayAgent::test_classify -vv --pdb
 
 # Run with full output
-JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_routing_agent.py -vv -s
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/test_gateway_agent.py -vv -s
 ```
 
 ### Check Test Discovery

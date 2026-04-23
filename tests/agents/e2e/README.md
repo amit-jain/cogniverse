@@ -16,7 +16,7 @@ This directory contains **real** end-to-end integration tests for **cogniverse-a
 - Tests different query types and complexity levels
 
 ### 3. **TestRealAgentRoutingIntegration**  
-- Tests RoutingAgent routing decisions with real LLMs
+- Tests GatewayAgent routing decisions with real LLMs
 - Validates agent selection and workflow recommendations
 - Tests confidence scoring and reasoning
 

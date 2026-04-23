@@ -252,232 +252,61 @@ sequenceDiagram
 
 ## 3. DSPy Routing Optimization Flow
 
-### Advanced Multi-Stage Optimizer
+### On-Demand Gateway Optimization
 
-The routing system uses DSPy's advanced optimization techniques (GEPA, MIPROv2, SIMBA, BootstrapFewShot) to continuously improve routing decisions based on experience.
+Optimization runs on-demand via the dashboard or Argo Workflow submission. The `optimization_cli` reads Phoenix spans and compiles updated DSPy modules per tenant.
 
-**Location**: `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`
+**Location**: `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
 ```python
-# 1. Initialize optimizer for tenant
-from cogniverse_agents.routing.advanced_optimizer import (
-    AdvancedRoutingOptimizer,
-    AdvancedOptimizerConfig
-)
+# Trigger optimization via the runtime API
+# POST /admin/tenant/{tenant_id}/optimize
+# Body: {"mode": "gateway-thresholds"}
 
-config = AdvancedOptimizerConfig(
-    optimizer_strategy="adaptive",  # Auto-selects based on data size
-    experience_replay_size=1000,
-    gepa_threshold=200,             # Use GEPA when 200+ examples
-    mipro_threshold=100,            # Use MIPROv2 when 100+ examples
-    simba_threshold=50,             # Use SIMBA when 50+ examples
-    bootstrap_threshold=20,         # Use Bootstrap when 20+ examples
-    min_experiences_for_training=50
-)
+# The runtime submits an Argo Workflow that runs:
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode gateway-thresholds \
+  --tenant-id customer_a
 
-optimizer = AdvancedRoutingOptimizer(
-    tenant_id="customer_a",
-    config=config
-)
+# Check run status:
+# GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}
 ```
 
-### Recording Routing Experiences
+### Gateway Threshold Optimization
 
 ```python
-# 2. After each routing decision, record the outcome
-from cogniverse_agents.routing.advanced_optimizer import RoutingExperience
+# optimization_cli._compute_gateway_thresholds() computes
+# optimal GLiNER confidence thresholds from Phoenix spans
+from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
 
-reward = await optimizer.record_routing_experience(
-    query="machine learning tutorial",
-    entities=[{"text": "machine learning", "type": "TOPIC"}],
-    relationships=[],
-    enhanced_query="machine learning tutorial videos",
-    chosen_agent="video_search",
-    routing_confidence=0.92,
+# spans_df: DataFrame from Phoenix with GLiNER routing spans
+thresholds = _compute_gateway_thresholds(spans_df)
+# Returns: {"fast_path_confidence_threshold": 0.62, ...}
 
-    # Outcome metrics (collected after agent execution)
-    search_quality=0.85,        # Quality of search results (0-1)
-    agent_success=True,         # Did agent complete successfully
-    user_satisfaction=0.9,      # Explicit user feedback (optional)
-    processing_time=1.2         # Seconds
-)
-
-# Reward computed from weighted combination:
-# reward = (search_quality * 0.4) + (agent_success * 0.3) + (user_satisfaction * 0.3) - (time_penalty)
-# Result: 0.855
+# GATEWAY_DEFAULT_THRESHOLD = 0.4 (module constant)
 ```
 
-### Experience Replay and Learning
+### DSPy Module Optimization (SIMBA/Profile)
 
 ```python
-# 3. Experience stored in replay buffer (simple list)
-# libs/agents/cogniverse_agents/routing/advanced_optimizer.py:652-655
+# The simba and profile modes compile DSPy modules for agents
+# Adaptive selection based on training data size:
+#   < 100 examples → Bootstrap
+#   100-500 examples → SIMBA
+#   500-1000 examples → MIPRO
+#   > 1000 examples → GEPA
 
-# Add to experience replay buffer
-self.experience_replay.append(experience)
-if len(self.experience_replay) > self.config.experience_replay_size:
-    self.experience_replay.pop(0)  # FIFO queue
-
-# 4. Automatic optimization triggers when conditions met
-def _should_trigger_optimization(self) -> bool:
-    if len(self.experiences) < self.config.min_experiences_for_training:
-        return False
-    # Trigger every N experiences
-    if len(self.experiences) % self.config.update_frequency == 0:
-        return True
-    # Trigger if performance is declining
-    recent_rewards = [exp.reward for exp in self.experiences[-10:]]
-    if len(recent_rewards) >= 10:
-        if np.mean(recent_rewards) < self.metrics.avg_reward - 0.1:
-            return True
-    return False
-```
-
-### Multi-Stage DSPy Optimization
-
-```python
-# 5. When optimization triggers, adaptive algorithm selection
-# libs/agents/cogniverse_agents/routing/advanced_optimizer.py:342-363
-
-from dspy.teleprompt import GEPA, MIPROv2, SIMBA, BootstrapFewShot
-
-# Optimizer initialized with DSPy's actual optimizers
-self.gepa_optimizer = GEPA(
-    metric=routing_accuracy_metric,
-    auto="light",
-    reflection_lm=current_lm  # LLM for reflective prompt evolution
-)
-self.mipro_optimizer = MIPROv2(metric=routing_accuracy_metric)
-self.simba_optimizer = SIMBA(metric=routing_accuracy_metric)
-self.bootstrap_optimizer = BootstrapFewShot(metric=routing_accuracy_metric)
-
-# Adaptive selection based on dataset size
-optimization_stages = [
-    ("bootstrap", bootstrap_optimizer, 20),   # 20+ examples
-    ("simba", simba_optimizer, 50),           # 50+ examples
-    ("mipro", mipro_optimizer, 100),          # 100+ examples
-    ("gepa", gepa_optimizer, 200),            # 200+ examples (most advanced)
-]
-
-# Select optimizer based on current experience count
-dataset_size = len(self.experience_replay)
-if dataset_size >= 200:
-    selected_optimizer = gepa_optimizer      # Reflective prompt evolution
-    optimizer_name = "gepa"
-elif dataset_size >= 100:
-    selected_optimizer = mipro_optimizer     # Metric-aware optimization
-    optimizer_name = "mipro"
-elif dataset_size >= 50:
-    selected_optimizer = simba_optimizer     # Similarity-based memory
-    optimizer_name = "simba"
-else:
-    selected_optimizer = bootstrap_optimizer # Few-shot learning
-    optimizer_name = "bootstrap"
-```
-
-### Optimization Execution
-
-```python
-# 6. Run optimization on routing module
-import dspy
-
-# Prepare training data from experiences
-trainset = []
-for exp in self.experience_replay[-config.batch_size:]:
-    trainset.append(
-        dspy.Example(
-            query=exp.query,
-            enhanced_query=exp.enhanced_query,
-            agent_type=exp.chosen_agent
-        ).with_inputs("query", "enhanced_query")
-    )
-
-# Compile routing module with selected optimizer
-optimized_module = selected_optimizer.compile(
-    student=routing_module,
-    trainset=trainset
-)
-
-# 7. Update routing module with optimized version
-self.routing_module = optimized_module
-
-# 8. Track optimization metrics
-self.metrics = OptimizationMetrics(
-    total_experiences=len(self.experiences),
-    avg_reward=np.mean([e.reward for e in self.experiences]),
-    successful_routes=sum(1 for e in self.experiences if e.agent_success),
-    failed_routes=sum(1 for e in self.experiences if not e.agent_success),
-    confidence_accuracy=self._compute_confidence_accuracy(),
-    last_updated=datetime.now()
-)
-```
-
-### Complete Workflow
-
-```python
-# Full routing optimization workflow
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_agents.agent_registry import AgentRegistry
-from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from pathlib import Path
 
-# 1. Initialize orchestrator with optimizer
 config_manager = create_default_config_manager()
 registry = AgentRegistry(config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
-optimizer = AdvancedRoutingOptimizer(tenant_id="customer_a")
 
-# 2. Process user query (async)
+# Process user query — GatewayAgent routes, OrchestratorAgent plans
 decision = await agent._process_impl(OrchestratorInput(query="cooking videos", tenant_id="customer_a"))
-
-# 3. Execute search with chosen agent (synchronous)
-config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-search_agent = SearchAgent(
-    deps=SearchAgentDeps(profile="video_colpali_smol500_mv_frame"),
-    config_manager=config_manager,
-    schema_loader=schema_loader
-)
-results = search_agent.search_by_text(query="cooking videos", tenant_id="customer_a", top_k=10)
-
-# 4. Record experience with outcome
-# compute_search_quality() is application-defined evaluation function
-reward = await optimizer.record_routing_experience(
-    query="cooking videos",
-    entities=decision.entities,
-    relationships=[],
-    enhanced_query=decision.enhanced_query,
-    chosen_agent=decision.recommended_agent,
-    routing_confidence=decision.confidence,
-    search_quality=compute_search_quality(results),  # Application-defined
-    agent_success=True,
-    processing_time=1.5
-)
-
-# 5. Optimizer automatically triggers training when thresholds met
-# After 200+ experiences, GEPA reflective optimization runs
-# Routing module continuously improves based on feedback
 ```
-
-### Key Architecture Differences from Documentation
-
-**What Actually Exists**:
-
-- ✅ `AdvancedRoutingOptimizer` orchestrates everything
-- ✅ DSPy's GEPA/MIPROv2/SIMBA/Bootstrap (not custom implementations)
-- ✅ `RoutingExperience` dataclass for tracking
-- ✅ Simple list-based experience replay (not separate buffer class)
-- ✅ Adaptive algorithm selection based on dataset size
-- ✅ Continuous learning from routing outcomes
-
-**What Doesn't Exist**:
-
-- ❌ Standalone `GEPAOptimizer` class
-- ❌ Separate `ExperienceBuffer` class
-- ❌ Custom GEPA implementation
 
 ## 4. Memory-Augmented Search Flow
 

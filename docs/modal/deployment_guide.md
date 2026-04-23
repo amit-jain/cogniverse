@@ -18,33 +18,35 @@ Modal provides serverless GPU infrastructure for:
 
 ### 1. DSPy Optimization (Teacher/Student)
 
-The routing optimizer uses teacher/student patterns with DSPy optimizers:
+The optimizer package uses teacher/student patterns with DSPy optimizers:
 
 ```python
-# Run the optimization orchestrator
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+    DSPyAgentPromptOptimizer,
+    DSPyAgentOptimizerPipeline,
+)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
-# OptimizationOrchestrator requires llm_config and telemetry_provider
-orchestrator = OptimizationOrchestrator(
-    llm_config=LLMEndpointConfig(
-        model="openai/HuggingFaceTB/SmolLM3-3B",
-        api_base="https://username--general-inference-service-serve.modal.run",
-    ),
-    telemetry_provider=telemetry_provider,  # from TelemetryManager.get_tenant_provider()
-    tenant_id="production",
+# Student model on Modal GPU endpoint
+endpoint_config = LLMEndpointConfig(
+    model="openai/HuggingFaceTB/SmolLM3-3B",
+    api_base="https://username--general-inference-service-serve.modal.run",
 )
 
-# Start the orchestrator loop (run_once for a single pass)
-await orchestrator.run_once()
+optimizer = DSPyAgentPromptOptimizer(config={
+    "optimization": {"max_bootstrapped_demos": 8, "max_labeled_demos": 16}
+})
+optimizer.initialize_language_model(endpoint_config=endpoint_config)
 
-# Available DSPy optimizers (MIPROv2 is used in the orchestrator):
-from dspy.teleprompt import MIPROv2
+# Run optimization pipeline (teacher: Claude/GPT-4, student: Modal endpoint)
+pipeline = DSPyAgentOptimizerPipeline(optimizer)
+await pipeline.optimize_all_modules()
 
-# Teacher (Claude/GPT-4) generates training examples
-# Student (SmolLM3-3B on Modal) learns from teacher examples via MIPROv2
 # Optimized prompts saved via ArtifactManager → telemetry DatasetStore
+await pipeline.save_optimized_prompts(
+    tenant_id="production",
+    telemetry_provider=telemetry_provider,
+)
 ```
 
 ### 2. VLM for Video Processing

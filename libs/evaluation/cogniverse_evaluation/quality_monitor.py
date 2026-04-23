@@ -30,7 +30,7 @@ class AgentType(str, Enum):
     SEARCH = "search"
     SUMMARY = "summary"
     REPORT = "report"
-    ROUTING = "routing"
+    GATEWAY = "gateway"
 
 
 class Verdict(int, Enum):
@@ -47,7 +47,7 @@ SPAN_NAME_BY_AGENT = {
     AgentType.SEARCH: "SearchAgent.process",
     AgentType.SUMMARY: "SummarizerAgent.process",
     AgentType.REPORT: "DetailedReportAgent.process",
-    AgentType.ROUTING: "RoutingAgent.process",
+    AgentType.GATEWAY: "GatewayAgent.process",
 }
 
 
@@ -470,7 +470,7 @@ class QualityMonitor:
             elif agent_type == AgentType.REPORT:
                 report = outputs.get("report", "")
                 prompt = self._build_report_judge_prompt(query, report)
-            elif agent_type == AgentType.ROUTING:
+            elif agent_type == AgentType.GATEWAY:
                 # Routing already has its own feedback loop via OptimizationOrchestrator.
                 # Still score here for unified visibility.
                 routing = outputs.get("routing_decision", {})
@@ -693,7 +693,7 @@ class QualityMonitor:
                 AgentType.SEARCH: QueryModality.VIDEO,
                 AgentType.SUMMARY: QueryModality.TEXT,
                 AgentType.REPORT: QueryModality.TEXT,
-                AgentType.ROUTING: QueryModality.MIXED,
+                AgentType.GATEWAY: QueryModality.MIXED,
             }
 
             score = 0.0

@@ -817,9 +817,9 @@ class TestLoadTesting:
             # 300-450s; 180s timeout was too tight.
             with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
                 resp = client.post(
-                    "/agents/routing_agent/process",
+                    "/agents/gateway_agent/process",
                     json={
-                        "agent_name": "routing_agent",
+                        "agent_name": "gateway_agent",
                         "query": query,
                         "context": {"tenant_id": TENANT_ID},
                     },
@@ -854,7 +854,6 @@ class TestLoadTesting:
                     "summarizer_agent",
                     "text_analysis_agent",
                     "detailed_report_agent",
-                    "routing_agent",
                     "gateway_agent",
                     "orchestrator_agent",
                 ), f"Invalid agent for '{r['query']}': {r['agent']}"

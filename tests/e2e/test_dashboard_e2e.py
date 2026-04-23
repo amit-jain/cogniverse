@@ -369,8 +369,9 @@ class TestMultiModalChat:
 
         # At least one agent response should be visible (routed / search result)
         assert (
-            "routing_agent" in body_text
+            "gateway_agent" in body_text
             or "search_agent" in body_text
+            or "orchestrator_agent" in body_text
             or "routed" in body_text
         ), "At least one agent response must be visible in the conversation"
 
@@ -1634,40 +1635,105 @@ class TestStreamingEndpointFromDashboard:
         assert isinstance(result["results"], list)
 
 
-class TestSearchAnnotationToPhoenix:
-    """Verify Phoenix persistence path for annotations."""
+class TestManualOptimizationTrigger:
+    """The Optimization tab exposes a Run Optimization control that
+    submits an Argo Workflow via POST /admin/tenant/{id}/optimize. This
+    test drives the UI end-to-end: mode select → Run → success message
+    with a ``manual-optimize-...`` workflow name → Refresh status shows
+    a real Argo phase. No mocks — the click hits the live runtime, which
+    hits the live Argo API, which creates a real Workflow in k3d."""
 
-    def test_annotation_persist_to_phoenix_via_api(self, page):
-        """Verify the runtime accepts annotation data for optimization.
+    def test_run_optimization_submits_workflow_and_status_reflects_argo(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Optimization")
+        page.wait_for_load_state("networkidle")
 
-        Calls the same endpoint the dashboard's Save Annotation uses,
-        verifying the full path: annotation → runtime → optimizer.
-        """
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "test annotation query",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "optimize_routing",
-                        "examples": [
-                            {
-                                "query": "basketball highlights",
-                                "chosen_agent": "search_agent",
-                                "confidence": 0.85,
-                                "search_quality": 0.9,
-                                "agent_success": True,
-                            }
-                        ],
-                    },
-                },
-            )
-
-        assert resp.status_code == 200, f"Annotation persist failed: {resp.text}"
-        data = resp.json()
-        assert data.get("status") == "optimization_triggered", (
-            f"Annotation should trigger optimization, got: {data}"
+        # The Run Optimization subsection must be rendered under
+        # Optimization Controls.
+        body_text = page.inner_text("body")
+        assert "Run Optimization" in body_text, (
+            "Optimization tab must expose the 'Run Optimization' section "
+            "(added with manual-optimize Argo submit feature). Body:\n"
+            f"{body_text[:1500]}"
         )
-        assert data.get("training_examples") == 1
+
+        # Mode dropdown must list every mode the endpoint accepts. Absence
+        # of any means the UI got out of sync with _MANUAL_OPTIMIZE_MODES.
+        # Streamlit renders the selectbox's selected value inline in the
+        # tab body; additional options appear when opened. We assert on
+        # the full tab body_text — scoped by the click_top_tab above.
+        mode_widgets = page.locator('[data-testid="stSelectbox"]')
+        assert mode_widgets.count() > 0, "At least one selectbox must exist"
+        # The default value ``gateway-thresholds`` is always rendered.
+        # The other options only appear when the dropdown is opened; open
+        # it explicitly so we can assert the full option list.
+        mode_select = page.locator('[data-testid="stSelectbox"]:has-text("Mode")').first
+        mode_select.click()
+        page.wait_for_timeout(1_000)
+        opt_region_text = page.inner_text("body")
+        for expected in (
+            "gateway-thresholds",
+            "simba",
+            "workflow",
+            "profile",
+            "entity-extraction",
+        ):
+            assert expected in opt_region_text, (
+                f"Mode selectbox option {expected!r} missing after "
+                f"opening dropdown. Body tail:\n{opt_region_text[-2000:]}"
+            )
+        # Close the dropdown before clicking Run (otherwise the click
+        # selects a mode instead).
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(500)
+
+        # Click Run. The button is disabled unless a tenant is set — we
+        # set TENANT_ID above, so it must be enabled.
+        run_btn = page.locator('button:has-text("▶️ Run")')
+        assert run_btn.count() > 0, "Run button must exist"
+        assert run_btn.first.is_enabled(), (
+            "Run button should be enabled when an Active Tenant is set"
+        )
+        run_btn.first.click()
+        page.wait_for_load_state("networkidle", timeout=30_000)
+        page.wait_for_timeout(3_000)  # allow Streamlit rerun
+
+        # The dashboard prints `✅ Submitted: manual-optimize-<mode>-<suffix>`
+        # on 200. The workflow_name prefix is what we pin — the Argo
+        # suffix is random.
+        body_text = page.inner_text("body")
+        assert "manual-optimize-gateway-thresholds-" in body_text, (
+            "Expected a manual-optimize workflow name in the UI after "
+            "clicking Run — either the POST failed or Streamlit didn't "
+            f"rerun. Body tail:\n{body_text[-1500:]}"
+        )
+
+        # The "Last run: <name> (mode: <mode>)" line should be visible.
+        assert "Last run:" in body_text and "mode: gateway-thresholds" in body_text, (
+            f"Last run status line missing: {body_text[-800:]}"
+        )
+
+        # Click Refresh status — the dashboard calls GET
+        # /admin/tenant/{id}/optimize/runs/{name}, which returns a real
+        # Argo phase.
+        refresh_btn = page.locator('button:has-text("🔄 Refresh status")')
+        assert refresh_btn.count() > 0, (
+            "Refresh status button must appear after a successful submit"
+        )
+        refresh_btn.first.click()
+        page.wait_for_load_state("networkidle", timeout=20_000)
+        page.wait_for_timeout(3_000)
+
+        # After refresh, the UI renders `Phase: <phase>` in an info box.
+        # The phase must be one of the known Argo terminal/in-flight
+        # phases — never blank (blank = Argo didn't respond).
+        body_text = page.inner_text("body")
+        phase_ok = any(
+            f"Phase: {p}" in body_text
+            for p in ("Pending", "Running", "Succeeded", "Failed", "Error")
+        )
+        assert phase_ok, (
+            "Refresh status must render `Phase: <Pending|Running|...>` "
+            f"from Argo. Body tail:\n{body_text[-1500:]}"
+        )

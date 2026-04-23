@@ -115,10 +115,6 @@ def render_system_config_ui(manager, tenant_id: str):
         col1, col2 = st.columns(2)
 
         with col1:
-            routing_agent_url = st.text_input(
-                "Routing Agent URL",
-                value=system_config.routing_agent_url,
-            )
             video_agent_url = st.text_input(
                 "Video Agent URL",
                 value=system_config.video_agent_url,
@@ -199,7 +195,6 @@ def render_system_config_ui(manager, tenant_id: str):
         if submitted:
             # Create updated config
             updated_config = SystemConfig(
-                routing_agent_url=routing_agent_url,
                 video_agent_url=video_agent_url,
                 summarizer_agent_url=summarizer_agent_url,
                 search_backend=search_backend,

@@ -31,7 +31,16 @@ argo:
           cpu: 500m
           memory: 256Mi
     server:
-      enabled: false  # No UI server needed — dashboard submits via CLI
+      # Enabled so the runtime can submit Workflows / CronWorkflows via the
+      # Argo REST API (/api/v1/workflows/... and /api/v1/cronworkflows/...).
+      # Used by POST /admin/tenant/{id}/jobs (scheduled) and
+      # POST /admin/tenant/{id}/optimize (on-demand).
+      enabled: true
+      # `server` auth means argo-server uses its own ServiceAccount to talk to
+      # the Kubernetes API; in-cluster callers (runtime) hit the REST API
+      # without presenting a user token.
+      authModes:
+        - server
   # Optimization schedule configuration
   optimization:
     weekly:

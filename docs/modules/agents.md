@@ -115,15 +115,13 @@ graph TD
     Root --> MultiOrch["<span style='color:#000'>multi_agent_orchestrator.py</span>"]
     Root --> More32["<span style='color:#000'>... (32 total agent files at top level)</span>"]
 
-    Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>39 files</span>"]
+    Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>21 files</span>"]
     RoutingDir --> RoutingInit["<span style='color:#000'>__init__.py</span>"]
-    RoutingDir --> ParallelExec["<span style='color:#000'>parallel_executor.py</span>"]
-    RoutingDir --> AdvOpt["<span style='color:#000'>advanced_optimizer.py</span>"]
     RoutingDir --> ModalCache["<span style='color:#000'>modality_cache.py</span>"]
     RoutingDir --> RelExtract["<span style='color:#000'>relationship_extraction_tools.py</span>"]
     RoutingDir --> DspyRouter["<span style='color:#000'>dspy_relationship_router.py</span>"]
-    RoutingDir --> QueryEnh["<span style='color:#000'>query_enhancement_engine.py</span>"]
-    RoutingDir --> MoreRouting["<span style='color:#000'>... (39 utility files)</span>"]
+    RoutingDir --> ModalOpt["<span style='color:#000'>modality_optimizer.py</span>"]
+    RoutingDir --> MoreRouting["<span style='color:#000'>... (utility files)</span>"]
 
     Root --> SearchDir["<span style='color:#000'><b>search/</b><br/>7 files</span>"]
     SearchDir --> SearchInit["<span style='color:#000'>__init__.py</span>"]

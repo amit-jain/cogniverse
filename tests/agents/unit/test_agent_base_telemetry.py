@@ -147,9 +147,9 @@ class TestAgentBaseTelemetrySpan:
 
     @pytest.mark.asyncio
     async def test_subclass_set_telemetry_manager_pre_init_is_preserved(self):
-        """Subclasses (e.g. RoutingAgent) initialize ``telemetry_manager`` BEFORE
-        calling ``super().__init__()``. AgentBase must NOT clobber that value
-        with its auto-init from deps."""
+        """Subclasses that initialize ``telemetry_manager`` BEFORE calling
+        ``super().__init__()`` must retain their value — AgentBase must NOT
+        clobber it with its auto-init from deps."""
         spy = _SpyTelemetryManager()
 
         class _PreInitAgent(_TelemetryAgent):

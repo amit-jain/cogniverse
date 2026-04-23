@@ -2,8 +2,8 @@
 """
 DSPy Agent Optimizer - Prompt optimization for multi-agent system
 
-This module provides DSPy-based optimization for agent prompts across the routing system.
-It optimizes prompts for RoutingAgent, SummarizerAgent, DetailedReportAgent, and QueryAnalysisToolV3.
+This module provides DSPy-based optimization for agent prompts across the multi-agent system.
+It optimizes prompts for GatewayAgent, SummarizerAgent, DetailedReportAgent, and QueryAnalysisToolV3.
 """
 
 import ast

@@ -9,13 +9,16 @@
 
 ```text
 libs/agents/cogniverse_agents/routing/
-├── optimization_orchestrator.py    # Complete optimization pipeline orchestrator
-├── advanced_optimizer.py           # GRPO routing optimizer with DSPy
-├── unified_optimizer.py            # Bidirectional routing + orchestration learning
 ├── modality_optimizer.py          # Per-modality optimization with XGBoost
 ├── cross_modal_optimizer.py       # Cross-modal fusion optimization
 ├── optimizer_coordinator.py       # Facade for optimizer routing
 └── optimizer.py                   # Base optimizer with auto-tuning
+
+libs/runtime/cogniverse_runtime/
+├── optimization_cli.py            # CLI for per-agent optimization modes
+│                                  # Modes: simba|gateway-thresholds|entity-extraction|
+│                                  #        workflow|profile|cleanup|triggered|synthetic
+└── routers/tenant.py              # POST /admin/tenant/{id}/optimize (on-demand submit)
 
 libs/synthetic/                     # Synthetic data generation system
 ├── cogniverse_synthetic/
@@ -24,7 +27,6 @@ libs/synthetic/                     # Synthetic data generation system
 │   │   ├── base.py               # Base generator classes
 │   │   ├── modality.py           # ModalityOptimizer training data
 │   │   ├── cross_modal.py        # CrossModalOptimizer training data
-│   │   ├── routing.py            # AdvancedRoutingOptimizer training data
 │   │   └── workflow.py           # WorkflowIntelligence training data
 │   ├── profile_selector.py       # LLM-based profile selection
 │   ├── backend_querier.py        # Vespa content sampling
@@ -50,11 +52,10 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 
 ### Key Features
 - **Advanced DSPy Optimization**: GEPA, MIPROv2, SIMBA, BootstrapFewShot optimizers
-- **GRPO (Gradient-based Reward Policy Optimization)**: Experience replay and reward signals
+- **Gateway Threshold Tuning**: `_compute_gateway_thresholds()` derives GLiNER thresholds from Phoenix spans
 - **Modality-Specific Optimization**: Per-modality routing with XGBoost meta-learning
-- **Unified Optimization**: Bidirectional learning between routing and orchestration
-- **Optimizer Coordination**: Facade pattern for routing optimization requests
-- **Complete Optimization Pipeline**: Automatic span evaluation, annotation, and feedback loops
+- **Optimizer Coordination**: Facade pattern for optimizer requests
+- **On-Demand Workflows**: Dashboard triggers POST `/admin/tenant/{id}/optimize`, which submits an Argo Workflow
 
 ### Dependencies
 
@@ -62,12 +63,11 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 
 ```python
 # Optimizers (require full module paths)
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
+
+# CLI optimization (gateway-thresholds mode)
+from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds, GATEWAY_DEFAULT_THRESHOLD
 
 # Synthetic Data Generation (exported at package level)
 from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest, SyntheticDataResponse
@@ -78,43 +78,43 @@ from cogniverse_synthetic import OPTIMIZER_REGISTRY
 
 ## Architecture
 
-### 1. Multi-Stage Optimization Architecture
+### 1. Optimization Architecture
 
 ```mermaid
 flowchart TB
-    Orchestrator["<span style='color:#000'>Optimization Orchestrator<br/>• Continuous span evaluation every 15m<br/>• Annotation workflow every 30m<br/>• Feedback loop integration every 15m<br/>• Automatic optimization triggering</span>"]
+    Dashboard["<span style='color:#000'>Dashboard / Argo Trigger<br/>POST /admin/tenant/{id}/optimize</span>"]
 
-    Orchestrator --> Unified["<span style='color:#000'>Unified Optimizer Bidirectional Learning<br/>• Routing Optimization ←→ Orchestration Outcomes<br/>• Workflow Intelligence integration<br/>• Cross-pollination of insights</span>"]
+    Dashboard --> OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>Modes: simba | gateway-thresholds | entity-extraction<br/>workflow | profile | cleanup | triggered</span>"]
 
-    Unified --> AdvRouting["<span style='color:#000'>Advanced<br/>Routing<br/>Optimizer</span>"]
-    Unified --> Modality["<span style='color:#000'>Modality<br/>Optimizer</span>"]
-    Unified --> CrossModal["<span style='color:#000'>Cross-Modal<br/>Optimizer</span>"]
-    Unified --> Coordinator["<span style='color:#000'>Optimizer<br/>Coordinator<br/>Facade</span>"]
+    OptCLI --> GatewayOpt["<span style='color:#000'>Gateway Threshold Optimizer<br/>_compute_gateway_thresholds(spans_df)</span>"]
+    OptCLI --> Modality["<span style='color:#000'>Modality<br/>Optimizer</span>"]
+    OptCLI --> CrossModal["<span style='color:#000'>Cross-Modal<br/>Optimizer</span>"]
+    OptCLI --> Coordinator["<span style='color:#000'>Optimizer<br/>Coordinator<br/>Facade</span>"]
 
-    style Orchestrator fill:#90caf9,stroke:#1565c0,color:#000
-    style Unified fill:#ffcc80,stroke:#ef6c00,color:#000
-    style AdvRouting fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style OptCLI fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GatewayOpt fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Modality fill:#ce93d8,stroke:#7b1fa2,color:#000
     style CrossModal fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Coordinator fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
-### 2. Advanced Routing Optimizer Architecture (GRPO)
+### 2. Gateway Threshold Optimization Architecture
 
 ```mermaid
 flowchart TB
-    Collection["<span style='color:#000'>Routing Experience Collection<br/>• Query, entities, relationships, enhanced_query<br/>• Chosen agent, routing confidence<br/>• Search quality, agent success, user satisfaction<br/>• Processing time → Computed reward</span>"]
+    Phoenix["<span style='color:#000'>Phoenix Spans<br/>GatewayAgent routing telemetry</span>"]
 
-    Collection --> Buffer["<span style='color:#000'>Experience Replay Buffer<br/>• Store routing experiences max 1000<br/>• Sample batches for training batch_size=32<br/>• Track metrics: avg_reward, success_rate, confidence_accuracy</span>"]
+    Phoenix --> Compute["<span style='color:#000'>_compute_gateway_thresholds(spans_df)<br/>• Read GLiNER confidence scores from spans<br/>• Percentile-based threshold derivation<br/>• GATEWAY_DEFAULT_THRESHOLD = 0.4</span>"]
 
-    Buffer --> Pipeline["<span style='color:#000'>Multi-Stage DSPy Optimization Pipeline<br/>Dataset Size < 20: BootstrapFewShot<br/>Dataset Size >= 50: SIMBA similarity-based memory<br/>Dataset Size >= 100: MIPROv2 metric-aware instruction<br/>Dataset Size >= 200: GEPA reflective prompt evolution<br/>Optimizer Selection: adaptive, gepa, mipro, simba</span>"]
+    Compute --> Thresholds["<span style='color:#000'>Optimized Thresholds<br/>fast_path_confidence_threshold<br/>per-tenant config update</span>"]
 
-    Pipeline --> Policy["<span style='color:#000'>Optimized Routing Policy Module<br/>• RoutingPolicySignature query → recommended_agent + confidence<br/>• ChainOfThought reasoning<br/>• Confidence calibration<br/>• Exploration vs Exploitation epsilon-greedy</span>"]
+    Thresholds --> Gateway["<span style='color:#000'>GatewayAgent<br/>Updated at next restart via ConfigStore</span>"]
 
-    style Collection fill:#90caf9,stroke:#1565c0,color:#000
-    style Buffer fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Pipeline fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Policy fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Phoenix fill:#90caf9,stroke:#1565c0,color:#000
+    style Compute fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Thresholds fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Gateway fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Modality Optimizer Architecture (XGBoost Meta-Learning)
@@ -139,279 +139,45 @@ flowchart TB
 
 ## Core Components
 
-### 1. **OptimizationOrchestrator** (`optimization_orchestrator.py`)
+### 1. **Gateway Threshold Optimizer** (`optimization_cli.py`)
 
-Complete end-to-end optimization pipeline orchestrator.
+On-demand gateway confidence threshold tuning using Phoenix span data.
 
-**Key Methods:**
+**Key Functions:**
 
 ```python
-async def start(self) -> None:
-    """
-    Start continuous optimization processes:
-    - Span evaluation (every span_eval_interval_minutes)
-    - Annotation workflow (every annotation_interval_minutes)
-    - Feedback loop (every feedback_interval_minutes)
-    - Metrics reporting (every 5 minutes)
-    """
+GATEWAY_DEFAULT_THRESHOLD = 0.4
 
-async def run_once(self) -> Dict[str, Any]:
+def _compute_gateway_thresholds(spans_df) -> dict:
     """
-    Run single optimization cycle (for testing):
-    1. Evaluate spans from Phoenix
-    2. Identify spans needing annotation
-    3. Generate LLM annotations
-    4. Process feedback loop
+    Derive optimized GLiNER confidence thresholds from Phoenix spans.
 
-    Returns optimization results
-    """
-
-def get_metrics(self) -> Dict[str, Any]:
-    """
-    Get orchestrator metrics including uptime and component stats
+    Reads gateway routing spans and uses percentile analysis to
+    find the threshold that minimises misrouting while maintaining
+    fast-path hit rate.
 
     Returns:
-        Dict with keys: spans_evaluated, experiences_created, annotations_requested,
-        annotations_completed, optimizations_triggered, total_improvement, started_at,
-        last_optimization, uptime_seconds
+        {"fast_path_confidence_threshold": float, ...}
     """
 ```
 
-**Constructor Parameters:**
+**On-Demand Submission:**
 ```python
-__init__(
-    llm_config: LLMEndpointConfig,          # REQUIRED: LLM config for optimizer and annotator
-    telemetry_provider: TelemetryProvider,  # REQUIRED: Telemetry provider for artifact persistence
-    tenant_id: str = "default",
-    span_eval_interval_minutes: int = 15,
-    annotation_interval_minutes: int = 30,
-    feedback_interval_minutes: int = 15,
-    confidence_threshold: float = 0.6,
-    min_annotations_for_optimization: int = 50,
-    optimization_improvement_threshold: float = 0.05
-)
+# Dashboard or Argo submits via runtime API:
+# POST /admin/tenant/{tenant_id}/optimize
+# Body: {"mode": "gateway-thresholds"}
+# Returns: {workflow_name, namespace, mode, status_url}
+
+# Check run status:
+# GET /admin/tenant/{tenant_id}/optimize/runs/{workflow_name}
+# Returns: {phase, started_at, finished_at, message}
 ```
 
-**Internal Components:**
-
-- `RoutingSpanEvaluator` - Extract routing experiences from telemetry
-
-- `AnnotationAgent` - Identify low-quality spans
-
-- `LLMAutoAnnotator` - Generate annotations automatically
-
-- `RoutingAnnotationStorage` - Store annotations in Phoenix
-
-- `AnnotationFeedbackLoop` - Feed annotations to optimizer
-
-- `AdvancedRoutingOptimizer` - GRPO optimization
-
-**File:** `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py`
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
 ---
 
-### 2. **AdvancedRoutingOptimizer**
-
-GRPO-based routing optimizer with multi-stage DSPy optimization.
-
-**Key Methods:**
-
-```python
-async def record_routing_experience(
-    query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]],
-    enhanced_query: str,
-    chosen_agent: str,
-    routing_confidence: float,
-    search_quality: float,
-    agent_success: bool,
-    processing_time: float = 0.0,
-    user_satisfaction: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None
-) -> float:
-    """
-    Record routing experience and compute reward signal
-
-    Reward Computation:
-    reward = search_quality * weight_sq
-           + agent_success * weight_success
-           + user_satisfaction * weight_us
-           - processing_time_penalty
-
-    Returns computed reward (0-1)
-    """
-
-async def get_routing_recommendations(
-    query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Get routing recommendations using optimized policy
-
-    Returns:
-        {
-            "recommended_agent": str,
-            "confidence": float,
-            "reasoning": str,
-            "optimization_ready": bool,
-            "experiences_count": int,
-            "training_step": int
-        }
-    """
-
-async def optimize_routing_decision(
-    query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]],
-    enhanced_query: str,
-    baseline_prediction: Dict[str, Any]
-) -> Dict[str, Any]:
-    """
-    Apply GRPO optimization to improve routing decision
-
-    Uses epsilon-greedy exploration:
-    - Exploration (ε): Random agent selection for learning
-    - Exploitation (1-ε): Use optimized policy
-
-    Returns optimized routing decision with confidence calibration
-    """
-
-def get_optimization_status(self) -> Dict[str, Any]:
-    """
-    Get optimization status and metrics:
-    - Optimizer readiness
-    - Experience counts
-    - Training step
-    - Metrics: avg_reward, success_rate, confidence_accuracy
-    """
-```
-
-**Configuration (AdvancedOptimizerConfig):**
-```python
-@dataclass
-class AdvancedOptimizerConfig:
-    # Learning parameters
-    learning_rate: float = 0.001
-    batch_size: int = 32
-    experience_replay_size: int = 1000
-    update_frequency: int = 10
-
-    # Optimizer selection
-    optimizer_strategy: str = "adaptive"  # "gepa", "mipro", "simba", "bootstrap"
-    force_optimizer: Optional[str] = None
-    enable_multi_stage: bool = True
-
-    # Optimizer thresholds
-    bootstrap_threshold: int = 20
-    simba_threshold: int = 50
-    mipro_threshold: int = 100
-    gepa_threshold: int = 200
-
-    # Reward computation
-    search_quality_weight: float = 0.4
-    agent_success_weight: float = 0.3
-    user_satisfaction_weight: float = 0.3
-    processing_time_penalty: float = 0.1
-
-    # Exploration
-    exploration_epsilon: float = 0.1
-    epsilon_decay: float = 0.995
-    min_epsilon: float = 0.05
-
-    # Minimum experiences before training
-    min_experiences_for_training: int = 50
-```
-
-**Multi-Stage Optimizer Selection:**
-```python
-# Adaptive strategy selects best optimizer based on dataset size:
-- Dataset < 20:   BootstrapFewShot (few-shot learning)
-- Dataset >= 50:  SIMBA (similarity-based memory augmentation)
-- Dataset >= 100: MIPROv2 (metric-aware instruction optimization)
-- Dataset >= 200: GEPA (reflective prompt evolution)
-```
-
-**File:** `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`
-
----
-
-### 3. **UnifiedOptimizer**
-
-Bidirectional learning between routing and orchestration.
-
-**Key Methods:**
-
-```python
-async def integrate_orchestration_outcomes(
-    workflow_executions: List[WorkflowExecution]
-) -> Dict[str, Any]:
-    """
-    Convert orchestration workflows → routing experiences
-
-    Learns from successful orchestration patterns:
-    - When parallel orchestration outperforms sequential
-    - When multi-agent synergy produces better results
-    - When orchestration is beneficial vs single agent
-
-    Returns:
-        {
-            "workflows_processed": int,
-            "routing_experiences_created": int,
-            "patterns_learned": Dict[str, int],
-            "total_workflows_integrated": int
-        }
-    """
-
-async def optimize_unified_policy(self) -> Dict[str, Any]:
-    """
-    Trigger unified optimization across routing + orchestration:
-
-    1. Optimize orchestration workflows (WorkflowIntelligence)
-    2. Optimize routing decisions (AdvancedRoutingOptimizer)
-    3. Cross-pollinate (orchestration insights → routing knowledge)
-
-    Returns combined optimization results
-    """
-
-def _workflow_to_routing_experience(
-    workflow: WorkflowExecution
-) -> RoutingExperience:
-    """
-    Convert WorkflowExecution to RoutingExperience
-
-    Mappings:
-    - chosen_agent: First agent in workflow sequence
-    - search_quality: Based on user_satisfaction or success
-    - agent_success: workflow.success
-    - metadata: Captures orchestration_pattern, agent_sequence
-    """
-```
-
-**Constructor:**
-```python
-__init__(
-    routing_optimizer: AdvancedRoutingOptimizer,
-    workflow_intelligence: WorkflowIntelligence
-)
-```
-
-**Learning Signals:**
-
-- `orchestration_was_beneficial`: success + user_satisfaction > 0.7
-
-- `multi_agent_synergy`: len(agent_sequence) > 1
-
-- `parallel_efficiency`: From workflow metadata
-
-- `orchestration_pattern`: Sequential, parallel, or conditional
-
-**File:** `libs/agents/cogniverse_agents/routing/unified_optimizer.py`
-
----
-
-### 4. **ModalityOptimizer**
+### 2. **ModalityOptimizer**
 
 Per-modality routing optimization with XGBoost meta-learning.
 
@@ -546,7 +312,7 @@ class ModalityRoutingModule(dspy.Module):
 
 ---
 
-### 5. **OptimizerCoordinator**
+### 3. **OptimizerCoordinator**
 
 Facade pattern for routing optimization requests to appropriate optimizers.
 
@@ -561,10 +327,8 @@ def optimize(
     """
     Route optimization request to appropriate optimizer:
 
-    - ROUTING → AdvancedRoutingOptimizer
     - MODALITY → ModalityOptimizer
     - CROSS_MODAL → CrossModalOptimizer
-    - UNIFIED → UnifiedOptimizer
 
     Returns optimization results
     """
@@ -593,19 +357,15 @@ def get_optimization_status(self) -> Dict[str, Any]:
 **Lazy Loading:**
 ```python
 # Optimizers loaded on-demand to minimize memory usage
-_get_routing_optimizer()     # AdvancedRoutingOptimizer(tenant_id, llm_config, telemetry_provider)
 _get_modality_optimizer()    # ModalityOptimizer(llm_config, telemetry_provider, tenant_id)
 _get_cross_modal_optimizer() # CrossModalOptimizer(telemetry_provider, tenant_id)
-_get_unified_optimizer()     # UnifiedOptimizer(routing_optimizer, workflow_intelligence)
 ```
 
 **OptimizationType Enum:**
 ```python
 class OptimizationType(Enum):
-    ROUTING = "routing"          # AdvancedRoutingOptimizer
     MODALITY = "modality"        # ModalityOptimizer
     CROSS_MODAL = "cross_modal"  # CrossModalOptimizer
-    UNIFIED = "unified"          # UnifiedOptimizer
     ORCHESTRATION = "orchestration"
 ```
 
@@ -613,7 +373,7 @@ class OptimizationType(Enum):
 
 ---
 
-### 6. **RoutingOptimizer**
+### 4. **RoutingOptimizer**
 
 Base optimizer for routing strategies with auto-tuning.
 
@@ -653,27 +413,6 @@ def _calculate_current_metrics(self) -> OptimizationMetrics:
     - Confidence correlation (alignment with success)
     - Error rate
     """
-```
-
-**AdvancedRoutingOptimizer** (`cogniverse_agents.routing.advanced_optimizer`):
-```python
-class AdvancedRoutingOptimizer:
-    """
-    Multi-stage GRPO optimization with DSPy 3.0 advanced optimizers.
-    Handles Bootstrap → SIMBA → MIPROv2 → GEPA progression.
-    """
-
-    async def _optimize_gliner(self):
-        """Optimize GLiNER threshold (0.1-0.9 grid search)"""
-
-    async def _optimize_llm(self):
-        """Optimize LLM temperature or use DSPy BootstrapFewShot"""
-
-    async def _optimize_keyword(self):
-        """Analyze keyword effectiveness, update keyword lists"""
-
-    async def _optimize_composite(self):
-        """Optimize ensemble weights and confidence thresholds"""
 ```
 
 **Configuration (OptimizationConfig):**
@@ -717,117 +456,37 @@ class OptimizationConfig:
 
 ## Usage Examples
 
-### Example 1: Complete Optimization Orchestration (Production)
+### Example 1: On-Demand Gateway Threshold Optimization
+
+```bash
+# Submit gateway-threshold optimization via the runtime API (dashboard or CLI):
+curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "gateway-thresholds"}'
+# Returns: {"workflow_name": "opt-gateway-acme-...", "namespace": "cogniverse",
+#           "mode": "gateway-thresholds", "status_url": "/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-..."}
+
+# Check status:
+curl http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-...
+# Returns: {"phase": "Succeeded", "started_at": "...", "finished_at": "...", "message": ""}
+```
 
 ```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+# The Argo Workflow runs optimization_cli internally:
+# uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
 
-# Initialize orchestrator with production config
-orchestrator = OptimizationOrchestrator(
-    llm_config=LLMEndpointConfig(
-        model="ollama_chat/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-    span_eval_interval_minutes=15,      # Evaluate spans every 15 minutes
-    annotation_interval_minutes=30,     # Identify spans for annotation every 30 minutes
-    feedback_interval_minutes=15,       # Process feedback every 15 minutes
-    confidence_threshold=0.6,           # Annotate spans with confidence < 0.6
-    min_annotations_for_optimization=50, # Trigger optimization at 50 annotations
-    optimization_improvement_threshold=0.05  # Accept if improvement > 5%
-)
+# To call the threshold computation directly in tests:
+from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds, GATEWAY_DEFAULT_THRESHOLD
 
-# Start continuous optimization (runs indefinitely)
-await orchestrator.start()
-
-# Get metrics
-metrics = orchestrator.get_metrics()
-print(f"Spans evaluated: {metrics['spans_evaluated']}")
-print(f"Experiences created: {metrics['experiences_created']}")
-print(f"Annotations completed: {metrics['annotations_completed']}")
-print(f"Optimizations triggered: {metrics['optimizations_triggered']}")
+thresholds = _compute_gateway_thresholds(spans_df)
+# Returns: {"fast_path_confidence_threshold": 0.62, ...}
+print(f"Default threshold: {GATEWAY_DEFAULT_THRESHOLD}")  # 0.4
+print(f"Computed threshold: {thresholds['fast_path_confidence_threshold']:.2f}")  # 0.62
 ```
 
 ---
 
-### Example 2: Advanced Routing Optimizer with GRPO
-
-```python
-from cogniverse_agents.routing.advanced_optimizer import (
-    AdvancedRoutingOptimizer,
-    AdvancedOptimizerConfig
-)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-# Configure advanced optimizer
-config = AdvancedOptimizerConfig(
-    optimizer_strategy="adaptive",  # Auto-select best optimizer
-    learning_rate=0.001,
-    batch_size=32,
-    experience_replay_size=1000,
-    min_experiences_for_training=50,
-    exploration_epsilon=0.1,  # 10% exploration
-    epsilon_decay=0.995,
-    # Reward weights
-    search_quality_weight=0.4,
-    agent_success_weight=0.3,
-    user_satisfaction_weight=0.3,
-    processing_time_penalty=0.1
-)
-
-# Initialize optimizer with required parameters
-optimizer = AdvancedRoutingOptimizer(
-    tenant_id="production",             # REQUIRED parameter
-    llm_config=LLMEndpointConfig(       # REQUIRED parameter
-        model="ollama_chat/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-    telemetry_provider=telemetry_provider,
-    config=config,
-)
-
-# Record routing experience
-reward = await optimizer.record_routing_experience(
-    query="Show me videos where Marie Curie discusses radioactivity",
-    entities=[{"text": "Marie Curie", "label": "person"}],
-    relationships=[{"head": "Marie Curie", "relation": "discusses", "tail": "radioactivity"}],
-    enhanced_query="Show me videos where Marie Curie discusses radioactivity in physics lectures",
-    chosen_agent="video_search_agent",
-    routing_confidence=0.85,
-    search_quality=0.92,  # Quality of search results (0-1)
-    agent_success=True,   # Agent completed successfully
-    user_satisfaction=0.95,  # Explicit user feedback
-    processing_time=1.2  # seconds
-)
-
-print(f"Computed reward: {reward:.3f}")  # 0.923
-
-# Get routing recommendations (uses optimized policy)
-recommendations = await optimizer.get_routing_recommendations(
-    query="Find lecture videos about quantum mechanics",
-    entities=[{"text": "quantum mechanics", "label": "topic"}],
-    relationships=[]
-)
-
-print(f"Recommended agent: {recommendations['recommended_agent']}")  # video_search_agent
-print(f"Confidence: {recommendations['confidence']:.2f}")  # 0.88
-print(f"Reasoning: {recommendations['reasoning']}")
-print(f"Optimization ready: {recommendations['optimization_ready']}")  # True
-print(f"Training step: {recommendations['training_step']}")  # 15
-
-# Get optimization status
-status = optimizer.get_optimization_status()
-print(f"Total experiences: {status['total_experiences']}")  # 523
-print(f"Avg reward: {status['metrics']['avg_reward']}")  # 0.831
-print(f"Success rate: {status['metrics']['success_rate']}")  # 0.89
-print(f"Confidence accuracy: {status['metrics']['confidence_accuracy']}")  # 0.76
-```
-
----
-
-### Example 3: Modality-Specific Optimization with XGBoost
+### Example 2: Modality-Specific Optimization with XGBoost
 
 ```python
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer, QueryModality
@@ -896,70 +555,13 @@ for modality, details in summary['modalities'].items():
     print(f"{modality}: {details['training_count']} trainings, last: {details['last_training']}")
 ```
 
----
-
-### Example 4: Unified Optimizer (Bidirectional Learning)
+### Example 3: OptimizerCoordinator (Facade Pattern)
 
 ```python
-from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator, OptimizationType
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-# Initialize components
-llm_config = LLMEndpointConfig(
-    model="ollama_chat/qwen3:4b",
-    api_base="http://localhost:11434",
-)
-routing_optimizer = AdvancedRoutingOptimizer(
-    tenant_id="production",
-    llm_config=llm_config,
-    telemetry_provider=telemetry_provider,
-)
-workflow_intelligence = WorkflowIntelligence(
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-)
-
-# Create unified optimizer
-unified_optimizer = UnifiedOptimizer(
-    routing_optimizer=routing_optimizer,
-    workflow_intelligence=workflow_intelligence
-)
-
-# Get successful workflows from orchestration
-successful_workflows = workflow_intelligence.get_successful_workflows(
-    min_quality=0.7,  # User satisfaction >= 0.7
-    limit=100
-)
-
-# Integrate orchestration outcomes into routing optimization
-integration_results = await unified_optimizer.integrate_orchestration_outcomes(
-    successful_workflows
-)
-
-print(f"Workflows processed: {integration_results['workflows_processed']}")  # 100
-print(f"Routing experiences created: {integration_results['routing_experiences_created']}")  # 87
-print(f"Patterns learned: {integration_results['patterns_learned']}")
-# {'parallel': 42, 'sequential': 28, 'conditional': 17}
-
-# Run unified optimization cycle
-optimization_results = await unified_optimizer.optimize_unified_policy()
-
-print(f"Workflow optimization: {optimization_results['workflow_optimization']}")
-print(f"Routing optimization: {optimization_results['routing_optimization']}")
-print(f"Integration: {optimization_results['integration']}")
-```
-
----
-
-### Example 5: Unified Optimizer
-
-```python
-from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-# Initialize coordinator
+# Initialize coordinator with lazy-loaded optimizers
 coordinator = OptimizerCoordinator(
     llm_config=LLMEndpointConfig(
         model="ollama_chat/qwen3:4b",
@@ -981,12 +583,6 @@ training_data = [
     # ... more examples
 ]
 
-# Route to appropriate optimizer automatically
-routing_result = coordinator.optimize(
-    type=OptimizationType.ROUTING,
-    training_data=training_data
-)
-
 modality_result = coordinator.optimize(
     type=OptimizationType.MODALITY,
     training_data=training_data,
@@ -998,14 +594,6 @@ cross_modal_result = coordinator.optimize(
     training_data=training_data
 )
 
-# Get direct access to optimizer for advanced usage
-routing_optimizer = coordinator.get_optimizer(OptimizationType.ROUTING)
-recommendations = await routing_optimizer.get_routing_recommendations(
-    query="Find lecture videos",
-    entities=[],
-    relationships=[]
-)
-
 # Get status of all optimizers
 status = coordinator.get_optimization_status()
 print(f"Loaded optimizers: {status['loaded_optimizers']}")
@@ -1013,66 +601,9 @@ print(f"Loaded optimizers: {status['loaded_optimizers']}")
 
 ---
 
-### Example 6: Single Optimization Cycle (Testing)
-
-```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-# Initialize orchestrator
-orchestrator = OptimizationOrchestrator(
-    llm_config=LLMEndpointConfig(
-        model="ollama_chat/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-    telemetry_provider=telemetry_provider,
-    tenant_id="test",
-    span_eval_interval_minutes=15,
-    annotation_interval_minutes=30,
-    feedback_interval_minutes=15
-)
-
-# Run single optimization cycle (non-blocking)
-results = await orchestrator.run_once()
-
-print(f"Span evaluation: {results['span_evaluation']}")
-# {
-#     "spans_processed": 45,
-#     "experiences_created": 38,
-#     "avg_confidence": 0.78
-# }
-
-print(f"Annotation requests: {results['annotation_requests']}")  # 12
-print(f"Annotations generated: {results['annotations_generated']}")  # 10
-print(f"Feedback loop: {results['feedback_loop']}")
-# {
-#     "annotations_processed": 10,
-#     "experiences_updated": 10
-# }
-```
-
----
-
 ## Production Considerations
 
 ### 1. **Performance Optimization**
-
-**Experience Replay Buffer:**
-```python
-# Configure for memory efficiency
-config = AdvancedOptimizerConfig(
-    experience_replay_size=1000,  # Limit memory usage
-    batch_size=32,                # Balance training speed vs memory
-    update_frequency=10           # Optimize every 10 experiences
-)
-
-# For high-volume systems, use sampling
-batch_experiences = np.random.choice(
-    experience_replay,
-    size=min(batch_size, len(experience_replay)),
-    replace=False
-).tolist()
-```
 
 **Lazy Loading:**
 ```python
@@ -1084,14 +615,13 @@ coordinator = OptimizerCoordinator(
 )  # No optimizers loaded yet
 
 # Optimizers loaded on first use
-routing_optimizer = coordinator.get_optimizer(OptimizationType.ROUTING)  # Now loaded
+modality_optimizer = coordinator.get_optimizer(OptimizationType.MODALITY)  # Now loaded
 ```
 
 **Asynchronous Optimization:**
 ```python
-# Run optimization in background without blocking
-if self._should_trigger_optimization():
-    asyncio.create_task(self._run_optimization_step())  # Non-blocking
+# Argo Workflow runs CLI modes in background without blocking runtime
+# POST /admin/tenant/{tenant_id}/optimize → submits Argo Workflow → returns immediately
 ```
 
 ---
@@ -1102,13 +632,6 @@ if self._should_trigger_optimization():
 ```python
 # Only use high-confidence spans for training
 min_confidence = 0.7  # Adjust based on model calibration
-
-# Filter low-quality experiences
-high_quality_experiences = [
-    exp for exp in experiences
-    if exp.routing_confidence >= min_confidence
-    and exp.search_quality >= 0.6
-]
 ```
 
 **Synthetic Data Control:**
@@ -1121,16 +644,6 @@ strategy = training_strategy_model.select_strategy(context)
 # PURE_REAL: Use only real data when >= 50 examples
 ```
 
-**Experience Replay Diversity:**
-```python
-# Ensure diverse training batches (avoid overfitting to recent patterns)
-batch_experiences = np.random.choice(
-    experience_replay,  # Sample from historical buffer, not just recent
-    size=batch_size,
-    replace=False
-)
-```
-
 ---
 
 ### 3. **Multi-Tenant Isolation**
@@ -1138,30 +651,16 @@ batch_experiences = np.random.choice(
 **Tenant-Specific Optimization:**
 ```python
 # Each tenant has isolated optimization state via telemetry
+# Optimization is submitted per-tenant via the runtime API:
+# POST /admin/tenant/tenant_a/optimize  {"mode": "gateway-thresholds"}
+# POST /admin/tenant/tenant_b/optimize  {"mode": "simba"}
+
+# ModalityOptimizer uses tenant-scoped telemetry provider for artifact isolation
 provider_a = telemetry_manager.get_provider(tenant_id="tenant_a")
-optimizer_tenant_a = AdvancedRoutingOptimizer(
-    tenant_id="tenant_a",
-    llm_config=llm_config,
-    telemetry_provider=provider_a,
-)
-
-provider_b = telemetry_manager.get_provider(tenant_id="tenant_b")
-optimizer_tenant_b = AdvancedRoutingOptimizer(
-    tenant_id="tenant_b",
-    llm_config=llm_config,
-    telemetry_provider=provider_b,
-)
-
-# Separate experience storage per tenant
-orchestrator_a = OptimizationOrchestrator(
+modality_optimizer_a = ModalityOptimizer(
     llm_config=llm_config,
     telemetry_provider=provider_a,
     tenant_id="tenant_a",
-)
-orchestrator_b = OptimizationOrchestrator(
-    llm_config=llm_config,
-    telemetry_provider=provider_b,
-    tenant_id="tenant_b",
 )
 ```
 
@@ -1186,124 +685,37 @@ shared_modality_optimizer = ModalityOptimizer(
 
 ### 4. **Monitoring and Observability**
 
-**Optimization Metrics Tracking:**
-```python
-# OptimizationOrchestrator provides comprehensive metrics
-metrics = orchestrator.get_metrics()
+**Workflow Status Monitoring:**
+```bash
+# Check status of a submitted optimization workflow
+curl http://localhost:8000/admin/tenant/acme:production/optimize/runs/<workflow_name>
+# {"phase": "Running", "started_at": "2026-04-24T03:00:00Z", "finished_at": null, "message": ""}
 
-# Key metrics to monitor:
-- spans_evaluated: Total spans processed
-- experiences_created: Routing experiences generated
-- annotations_requested: Low-quality spans identified
-- annotations_completed: Annotations generated
-- optimizations_triggered: Number of optimization runs
-- total_improvement: Cumulative performance improvement
-
-# Alert on anomalies:
-if metrics["optimizations_triggered"] == 0 and uptime > 24h:
-    logger.warning("No optimizations triggered in 24h - check thresholds")
-
-if metrics["annotations_completed"] / metrics["annotations_requested"] < 0.3:
-    logger.warning("Low annotation success rate - check LLM availability")
+# List all optimization workflows
+argo list -n cogniverse --selector workflow-type=optimization
 ```
 
-**Performance Degradation Detection:**
+**Performance Degradation Detection via QualityMonitor:**
 ```python
-# Automatic triggering on performance degradation
-config = AdvancedOptimizerConfig(
-    performance_degradation_threshold=0.1  # 10% accuracy drop triggers optimization
-)
-
-# Monitor baseline vs current performance
-current_metrics = optimizer._calculate_current_metrics()
-if optimizer.baseline_metrics:
-    degradation = optimizer.baseline_metrics.accuracy - current_metrics.accuracy
-    if degradation > 0.1:
-        logger.warning(f"Performance degradation: {degradation:.2%}")
-        await optimizer.optimize()  # Auto-trigger optimization
-```
-
-**Logging Best Practices:**
-```python
-# Structured logging for observability
-logger.info(
-    f"GRPO optimization step {self.training_step} complete",
-    extra={
-        "optimizer": "AdvancedRoutingOptimizer",
-        "training_step": self.training_step,
-        "epsilon": self.current_epsilon,
-        "experiences_count": len(self.experiences),
-        "avg_reward": self.metrics.avg_reward
-    }
-)
+# QualityMonitor (cogniverse_evaluation) checks agent scores and submits
+# optimization workflows automatically via quality_monitor_cli
+# uv run python -m cogniverse_runtime.quality_monitor_cli --tenant-id default --runtime-url http://localhost:8000
 ```
 
 ---
 
 ### 5. **Production Deployment**
 
-**Continuous Optimization Service:**
-```python
-# Deploy as long-running service
-async def main():
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    llm_config = LLMEndpointConfig(
-        model="ollama_chat/qwen3:4b",
-        api_base="http://localhost:11434",
-    )
-    orchestrator = OptimizationOrchestrator(
-        llm_config=llm_config,
-        telemetry_provider=telemetry_provider,
-        tenant_id="production",
-        span_eval_interval_minutes=15,
-        annotation_interval_minutes=30,
-        feedback_interval_minutes=15,
-        min_annotations_for_optimization=50
-    )
+**Optimization is on-demand, not a long-running service.**
 
-    try:
-        await orchestrator.start()  # Runs indefinitely
-    except KeyboardInterrupt:
-        logger.info("Shutting down optimization orchestrator")
-    except Exception as e:
-        logger.error(f"Orchestrator failed: {e}")
-        # Restart with exponential backoff
-        await asyncio.sleep(60)
-        await main()
+```bash
+# Trigger via dashboard UI button or direct API call:
+curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
+  -d '{"mode": "gateway-thresholds"}'
 
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**Graceful Shutdown:**
-```python
-# Save state before shutdown
-async def shutdown():
-    logger.info("Saving optimization state before shutdown...")
-    await optimizer._persist_data()
-    await optimizer.save_checkpoint()
-    logger.info("Optimization state saved")
-```
-
-**Health Checks:**
-```python
-# Expose health check endpoint
-def get_health() -> Dict[str, Any]:
-    status = optimizer.get_optimization_status()
-
-    is_healthy = (
-        status["optimizer_ready"]
-        and status["total_experiences"] > 50
-        and status["metrics"]["avg_reward"] > 0.5
-    )
-
-    return {
-        "healthy": is_healthy,
-        "optimizer_ready": status["optimizer_ready"],
-        "total_experiences": status["total_experiences"],
-        "avg_reward": status["metrics"]["avg_reward"],
-        "last_updated": status["metrics"]["last_updated"]
-    }
+# Or run directly via CLI (e.g., from Argo Workflow template):
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode gateway-thresholds --tenant-id acme:production
 ```
 
 ---
@@ -1327,9 +739,9 @@ uv run python -m cogniverse_runtime.optimization_cli \
   --mode gateway-thresholds \
   --tenant-id default
 
-# Optimize entity-based routing
+# Optimize entity extraction
 uv run python -m cogniverse_runtime.optimization_cli \
-  --mode routing \
+  --mode entity-extraction \
   --tenant-id default
 
 # Optimize workflow orchestration
@@ -1350,7 +762,7 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **Available Options:**
 
-- `--mode`: Which agent to optimize (simba/gateway-thresholds/entity-extraction/routing/workflow/profile/cleanup)
+- `--mode`: Which agent to optimize (simba/gateway-thresholds/entity-extraction/workflow/profile/cleanup/triggered/synthetic)
 
 - `--tenant-id`: Tenant identifier (default: "default")
 
@@ -1414,9 +826,9 @@ argo cron resume daily-optimization-check -n cogniverse
 
 **What Gets Optimized:**
 
-- Weekly: All modules (modality, cross_modal, routing, workflow) + DSPy optimizer
+- Weekly: All modules (modality, cross_modal, workflow, gateway-thresholds) + DSPy optimizer
 
-- Daily: Quick routing optimization only
+- Daily: gateway-thresholds optimization
 
 **Automatic Execution:**
 
@@ -1432,9 +844,9 @@ argo cron resume daily-optimization-check -n cogniverse
 
 #### Module Optimization vs DSPy Optimization
 
-**Module Optimization** (`optimizer-category: routing`):
+**Module Optimization** (`optimizer-category: modality`):
 
-- **What**: modality, cross_modal, routing, workflow, unified modules
+- **What**: modality, cross_modal, workflow modules
 
 - **How**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
 
@@ -1485,9 +897,9 @@ The optimization infrastructure integrates with the Streamlit dashboard:
 
 **Execution Modes:**
 
-1. **Automatic (Scheduled)**: CronWorkflows check Phoenix and optimize when criteria met
+1. **Automatic (Scheduled)**: CronWorkflows run optimization_cli on schedule
 
-2. **Manual (UI-triggered)**: Submit workflows from dashboard on demand
+2. **Manual (Dashboard-triggered)**: Dashboard button calls POST `/admin/tenant/{id}/optimize` → submits Argo Workflow on demand
 
 See `docs/development/ui-dashboard.md` for full UI documentation.
 
@@ -1495,71 +907,24 @@ See `docs/development/ui-dashboard.md` for full UI documentation.
 
 ### 7. **Error Handling and Recovery**
 
-**Fallback Strategies:**
-```python
-# Graceful degradation when optimization fails
-try:
-    optimized_prediction = await optimizer.optimize_routing_decision(
-        query, entities, relationships, enhanced_query, baseline_prediction
-    )
-except Exception as e:
-    logger.error(f"Optimization failed: {e}, using baseline")
-    optimized_prediction = baseline_prediction  # Fallback to baseline
+**Workflow Failure Handling:**
+```bash
+# Check failed workflow details
+argo get <workflow-name> -n cogniverse -o json | jq '.status.message'
+
+# Retry a failed optimization
+argo resubmit <workflow-name> -n cogniverse
 ```
 
-**Checkpoint and Recovery:**
-```python
-# Save checkpoints periodically (persisted to telemetry via ArtifactManager)
-await optimizer.save_checkpoint()
+**Artifact Persistence:**
 
-# Restore from checkpoint after crash
-await optimizer.load_checkpoint()
-```
-
-**Experience Persistence:**
-```python
-# Auto-persist every 10 experiences via telemetry
-if len(self.experiences) % 10 == 0:
-    await self._persist_data()
-
-# Load on startup
-async def load_stored_data(self):
-    demos = await self._artifact_manager.load_demonstrations("routing_optimizer")
-    if demos:
-        self.experiences = [RoutingExperience(**d) for d in demos]
-        logger.info(f"Loaded {len(self.experiences)} routing experiences")
-```
+Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. The ModalityOptimizer and DSPyAgentPromptOptimizer save compiled modules that agents reload at startup.
 
 ---
 
 ## Testing
 
 ### Test Files
-
-**Optimization Orchestrator:**
-
-- Location: `tests/routing/integration/test_orchestration_optimization_integration.py`
-
-- Focus: End-to-end optimization pipeline, span evaluation, annotation workflow
-
-- Key Tests:
-  - `test_optimization_orchestrator_initialization`
-  - `test_run_once_optimization_cycle`
-  - `test_continuous_optimization_loop`
-
-- Note: Unit tests are in `tests/routing/unit/test_orchestration_optimization.py` (different focus)
-
-**Advanced Routing Optimizer:**
-
-- Location: `tests/agents/unit/test_advanced_routing_optimizer.py`
-
-- Focus: GRPO optimization, experience replay, multi-stage optimizer selection
-
-- Key Tests:
-  - `test_record_routing_experience`
-  - `test_multi_stage_optimizer_selection`
-  - `test_grpo_optimization_step`
-  - `test_confidence_calibration`
 
 **Modality Optimizer:**
 
@@ -1573,100 +938,25 @@ async def load_stored_data(self):
   - `test_modality_model_training`
   - `test_predict_agent_with_trained_model`
 
-**Unified Optimizer:**
-
-- Location: `tests/routing/integration/test_complete_optimization_integration.py`
-
-- Focus: Bidirectional learning between routing and orchestration
-
-- Key Tests:
-  - `test_integrate_orchestration_outcomes`
-  - `test_unified_policy_optimization`
-  - `test_workflow_to_routing_experience_conversion`
-
 **Optimizer Coordinator:**
 
 - Location: `tests/routing/unit/test_optimizer_coordinator.py`
 
 - Focus: Facade pattern, lazy loading, optimizer routing
 
+**Gateway Threshold Computation:**
+
+- Location: `tests/runtime/unit/test_optimization_cli.py`
+
+- Key Tests:
+  - `test_compute_gateway_thresholds`
+  - `test_gateway_default_threshold`
+
 ---
 
 ### Test Scenarios
 
-**1. Multi-Stage Optimizer Selection:**
-```python
-def test_multi_stage_optimizer_selection():
-    """Test that correct optimizer is selected based on dataset size"""
-    config = AdvancedOptimizerConfig(optimizer_strategy="adaptive")
-    optimizer = AdvancedRoutingOptimizer(
-        tenant_id="test",
-        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
-        telemetry_provider=telemetry_provider,
-        config=config,
-    )
-
-    # Small dataset → BootstrapFewShot
-    small_trainset = [create_example() for _ in range(15)]
-    info = optimizer.advanced_optimizer.get_optimization_info(len(small_trainset))
-    assert info["primary_optimizer"] == "bootstrap"
-
-    # Medium dataset → SIMBA
-    medium_trainset = [create_example() for _ in range(60)]
-    info = optimizer.advanced_optimizer.get_optimization_info(len(medium_trainset))
-    assert info["primary_optimizer"] == "simba"
-
-    # Large dataset → GEPA
-    large_trainset = [create_example() for _ in range(250)]
-    info = optimizer.advanced_optimizer.get_optimization_info(len(large_trainset))
-    assert info["primary_optimizer"] == "gepa"
-```
-
-**2. Reward Signal Computation:**
-```python
-@pytest.mark.asyncio
-async def test_reward_signal_computation():
-    """Test reward computation from routing outcomes"""
-    optimizer = AdvancedRoutingOptimizer(
-        tenant_id="test",
-        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
-        telemetry_provider=telemetry_provider,
-    )
-
-    # High-quality routing
-    reward_high = await optimizer.record_routing_experience(
-        query="test query",
-        entities=[],
-        relationships=[],
-        enhanced_query="test query",
-        chosen_agent="video_search_agent",
-        routing_confidence=0.9,
-        search_quality=0.95,
-        agent_success=True,
-        user_satisfaction=0.92,
-        processing_time=0.5
-    )
-
-    assert reward_high > 0.85  # High reward for good performance
-
-    # Low-quality routing
-    reward_low = await optimizer.record_routing_experience(
-        query="test query",
-        entities=[],
-        relationships=[],
-        enhanced_query="test query",
-        chosen_agent="video_search_agent",
-        routing_confidence=0.3,
-        search_quality=0.4,
-        agent_success=False,
-        user_satisfaction=0.3,
-        processing_time=5.0
-    )
-
-    assert reward_low < 0.4  # Low reward for poor performance
-```
-
-**3. XGBoost Meta-Model Training:**
+**1. XGBoost Meta-Model Training:**
 ```python
 @pytest.mark.asyncio
 async def test_xgboost_meta_model_training():
@@ -1677,7 +967,6 @@ async def test_xgboost_meta_model_training():
         tenant_id="test",
     )
 
-    # Create modeling contexts
     contexts = [
         ModelingContext(
             modality=QueryModality.VIDEO,
@@ -1693,62 +982,41 @@ async def test_xgboost_meta_model_training():
         )
     ]
 
-    # Train decision model
     optimizer.training_decision_model.train(contexts, targets=[True, False])
 
-    # Test predictions
-    should_train_1, improvement_1 = optimizer.training_decision_model.should_train(contexts[0])
-    assert should_train_1 == True  # High sample count, long time since training
+    should_train_1, _ = optimizer.training_decision_model.should_train(contexts[0])
+    assert should_train_1 == True
 
-    should_train_2, improvement_2 = optimizer.training_decision_model.should_train(contexts[1])
-    assert should_train_2 == False  # Low sample count, recent training
+    should_train_2, _ = optimizer.training_decision_model.should_train(contexts[1])
+    assert should_train_2 == False
 ```
 
-**4. Integration Test - Complete Optimization Cycle:**
+**2. Gateway Threshold Computation:**
 ```python
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_complete_optimization_cycle():
-    """Test end-to-end optimization orchestration"""
-    orchestrator = OptimizationOrchestrator(
-        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
-        telemetry_provider=telemetry_provider,
-        tenant_id="test",
-        span_eval_interval_minutes=1,
-        annotation_interval_minutes=1,
-        feedback_interval_minutes=1,
-        min_annotations_for_optimization=5
-    )
+def test_compute_gateway_thresholds():
+    """Test threshold derivation from Phoenix spans"""
+    from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds, GATEWAY_DEFAULT_THRESHOLD
+    import pandas as pd
 
-    # Run single cycle
-    results = await orchestrator.run_once()
+    spans_df = pd.DataFrame({
+        "gliner_confidence": [0.3, 0.5, 0.6, 0.7, 0.8, 0.9],
+        "routing_correct": [False, True, True, True, True, True],
+    })
 
-    # Verify span evaluation
-    assert results["span_evaluation"]["spans_processed"] >= 0
-    assert results["span_evaluation"]["experiences_created"] >= 0
-
-    # Verify annotation workflow
-    assert results["annotation_requests"] >= 0
-
-    # Verify feedback loop
-    assert results["feedback_loop"]["annotations_processed"] >= 0
-
-    # Verify metrics updated
-    metrics = orchestrator.get_metrics()
-    assert metrics["spans_evaluated"] > 0
+    result = _compute_gateway_thresholds(spans_df)
+    assert "fast_path_confidence_threshold" in result
+    assert GATEWAY_DEFAULT_THRESHOLD == 0.4
 ```
 
 ---
 
 **Coverage:**
 
-- **Unit tests**: 95%+ coverage of optimizer logic, reward computation, meta-models
+- **Unit tests**: ModalityOptimizer logic, XGBoost meta-models, gateway threshold computation
 
-- **Integration tests**: Complete optimization cycles, span evaluation, modality optimization
+- **Integration tests**: Modality optimization with synthetic data, optimizer coordinator routing
 
-- **Performance tests**: Optimization speed, memory usage, convergence rates
-
-- **Error handling tests**: Graceful degradation, checkpoint recovery, fallback strategies
+- **Error handling tests**: Graceful degradation, artifact persistence
 
 ---
 
@@ -1944,8 +1212,8 @@ flowchart TB
     end
 
     subgraph "Orchestration"
-        Orch["<span style='color:#000'>OptimizationOrchestrator</span>"]
-        Client["<span style='color:#000'>ModelClient</span>"]
+        Orch["<span style='color:#000'>DSPyAgentOptimizerPipeline</span>"]
+        Client["<span style='color:#000'>DSPyAgentPromptOptimizer</span>"]
     end
 
     subgraph "LLM Factory"
@@ -2028,33 +1296,7 @@ with dspy.context(lm=local_lm):
     result = module(query="Route this query...")
 ```
 
-### OptimizationOrchestrator
-
-**Location:** `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py`
-
-Orchestrates the complete routing optimization pipeline with continuous span evaluation, annotation, and feedback.
-
-```python
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-# Initialize with required LLM config
-orchestrator = OptimizationOrchestrator(
-    llm_config=LLMEndpointConfig(
-        model="ollama_chat/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-    span_eval_interval_minutes=15,
-    confidence_threshold=0.6,
-)
-
-# Start continuous optimization loop
-await orchestrator.start()
-```
-
-#### Configuration Structure
+### LLM Configuration Structure
 
 LLM configuration is centralized in the `llm_config` section of `config.json`:
 
@@ -2203,14 +1445,6 @@ class AgenticRouter(dspy.Signature):
 ### CLI Usage
 
 ```bash
-# Run optimization orchestrator
-uv run python -m cogniverse_agents.optimizer.orchestrator \
-    --config config.json
-
-# Setup services only
-uv run python -m cogniverse_agents.optimizer.orchestrator \
-    --config config.json --setup-only
-
 # Run router optimizer directly
 uv run python -m cogniverse_agents.optimizer.router_optimizer \
     --student-model google/gemma-3-1b-it \
@@ -2256,7 +1490,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 | `optimizer/dspy_agent_optimizer.py` | Multi-agent prompt optimization |
 | `optimizer/router_optimizer.py` | Router MIPROv2 optimization |
 | `optimizer/schemas.py` | RoutingDecision, AgenticRouter schemas |
-| `routing/optimization_orchestrator.py` | Continuous routing optimization pipeline |
+| `optimizer/artifact_manager.py` | Artifact persistence via Phoenix DatasetStore |
 
 ---
 
@@ -2286,14 +1520,16 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 **File References:**
 
-- `libs/agents/cogniverse_agents/routing/optimization_orchestrator.py` - Complete optimization pipeline
-
-- `libs/agents/cogniverse_agents/routing/advanced_optimizer.py` - GRPO optimization with multi-stage DSPy
-
-- `libs/agents/cogniverse_agents/routing/unified_optimizer.py` - Bidirectional routing + orchestration learning
-
 - `libs/agents/cogniverse_agents/routing/modality_optimizer.py` - Per-modality optimization with XGBoost
 
 - `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py` - Facade for optimizer routing
 
 - `libs/agents/cogniverse_agents/routing/optimizer.py` - Base optimizer with auto-tuning
+
+- `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py` - Multi-agent DSPy prompt optimization
+
+- `libs/agents/cogniverse_agents/optimizer/router_optimizer.py` - Router MIPROv2 optimization
+
+- `libs/runtime/cogniverse_runtime/optimization_cli.py` - On-demand CLI modes (gateway-thresholds, simba, workflow, etc.)
+
+- `libs/runtime/cogniverse_runtime/routers/tenant.py` - Dashboard-triggered optimization API endpoints

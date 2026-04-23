@@ -106,12 +106,6 @@ spec:
             parameters:
             - name: mode
               value: simba
-        - name: routing
-          template: run-agent-optimizer
-          arguments:
-            parameters:
-            - name: mode
-              value: routing
         - name: profile
           template: run-agent-optimizer
           arguments:
@@ -305,7 +299,7 @@ spec:
           - "--tenant-id"
           - "default"
           - "--agents"
-          - "simba,routing,profile,workflow"
+          - "simba,profile,workflow"
         env:
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
@@ -441,6 +435,14 @@ rules:
 - apiGroups: ["argoproj.io"]
   resources: ["workflows"]
   verbs: ["create", "get", "list"]
+# Argo Emissary (the init container Argo injects into every Workflow pod)
+# writes task results back to the cluster after the main container exits.
+# Without this permission the Workflow is marked ``Error`` even when the
+# main container succeeded — a silent corruption of the Succeeded/Failed
+# signal the dashboard polls via GET /admin/tenant/{id}/optimize/runs/{id}.
+- apiGroups: ["argoproj.io"]
+  resources: ["workflowtaskresults"]
+  verbs: ["create", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

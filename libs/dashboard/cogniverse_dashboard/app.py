@@ -3,12 +3,10 @@
 Interactive Analytics Dashboard
 Standalone version that avoids videoprism dependencies
 
-ENHANCED WITH COMPREHENSIVE OPTIMIZATION UI:
-- 🔧 Optimization Tab: Triggers existing AdvancedRoutingOptimizer with user examples
-- 📥 Ingestion Testing Tab: Interactive video processing with multiple profiles
-- 🔍 Interactive Search Tab: Live search testing with relevance annotation
-- 🔗 Agent Integration: All tabs communicate with agents via HTTP
-- 📊 Status Monitoring: Real-time optimization and processing status tracking
+Tabs:
+- 📥 Ingestion Testing: Interactive video processing with multiple profiles
+- 🔍 Interactive Search: Live search testing with relevance annotation
+- 📊 Status Monitoring: Real-time agent connectivity + telemetry
 - 📈 Multi-Modal Performance: Per-modality metrics and cross-modal patterns
 """
 
@@ -484,7 +482,8 @@ def get_agent_config():
     return {
         "runtime_url": RUNTIME_URL,
         "agents": [
-            "routing_agent",
+            "gateway_agent",
+            "orchestrator_agent",
             "search_agent",
             "text_analysis_agent",
             "summarizer_agent",
@@ -581,46 +580,7 @@ async def call_agent_async(agent_url: str, task_data: dict) -> dict:
     try:
         action = task_data.get("action", "")
 
-        if action == "optimize_routing":
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    f"{RUNTIME_URL}/agents/routing_agent/process",
-                    json={
-                        "agent_name": "routing_agent",
-                        "query": "optimize routing",
-                        "context": {
-                            "action": "optimize_routing",
-                            "examples": task_data.get("examples", []),
-                            "optimizer": task_data.get("optimizer", "adaptive"),
-                            "min_improvement": task_data.get("min_improvement", 0.05),
-                        },
-                    },
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {
-                    "status": "error",
-                    "message": f"HTTP {response.status_code}: {response.text}",
-                }
-
-        elif action == "get_optimization_status":
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{RUNTIME_URL}/agents/routing_agent/process",
-                    json={
-                        "agent_name": "routing_agent",
-                        "query": "optimization status",
-                        "context": {"action": "get_optimization_status"},
-                    },
-                )
-                if response.status_code == 200:
-                    return response.json()
-                return {
-                    "status": "error",
-                    "message": f"HTTP {response.status_code}: {response.text}",
-                }
-
-        elif action == "process_video":
+        if action == "process_video":
             # task_data is built inside a tab, which is only rendered after
             # the gate has committed a valid tenant to session state.
             _tenant = st.session_state["current_tenant"]
@@ -2363,218 +2323,104 @@ with main_tabs[6]:
     # Optimization Controls
     st.subheader("🚀 Optimization Controls")
 
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        # Check if routing agent is available
-        routing_agent_available = (
-            "error" not in agent_status
-            and agent_status.get("Routing Agent", {}).get("status") == "online"
+    # Manual optimization trigger — submits a one-off Argo Workflow that
+    # runs optimization_cli in a fresh pod (same image as this runtime).
+    st.markdown("**🚀 Run Optimization**")
+    st.caption(
+        "Submits an Argo Workflow running optimization_cli for the selected "
+        "mode against the active tenant. Same code the weekly CronWorkflow "
+        "runs — just on demand."
+    )
+    opt_col1, opt_col2 = st.columns([2, 1])
+    with opt_col1:
+        opt_mode = st.selectbox(
+            "Mode",
+            options=[
+                "gateway-thresholds",
+                "simba",
+                "workflow",
+                "profile",
+                "entity-extraction",
+            ],
+            help="gateway-thresholds is the cheapest and safest to try first.",
         )
-
-        button_disabled = not uploaded_files or not routing_agent_available
-        button_help = (
-            "Upload routing examples first"
-            if not uploaded_files
-            else (
-                "Routing agent is offline"
-                if not routing_agent_available
-                else "Trigger optimization with uploaded examples"
-            )
-        )
-
-        if st.button(
-            "🔧 Trigger Routing Optimization",
+    with opt_col2:
+        opt_tenant = st.session_state.get("current_tenant")
+        trigger = st.button(
+            "▶️ Run",
             type="primary",
-            disabled=button_disabled,
-            help=button_help,
-        ):
-            if uploaded_files:
-                with st.spinner("🚀 Triggering routing optimization..."):
-                    try:
-                        # Prepare routing examples for the agent
-                        routing_examples = []
-                        for file in uploaded_files:
-                            if "routing" in file.name.lower():
-                                file.seek(0)  # Reset file pointer
-                                content = json.loads(file.read())
-                                routing_examples.append(content)
+            disabled=not opt_tenant,
+            help=(
+                "Select an Active Tenant in the sidebar first"
+                if not opt_tenant
+                else f"Triggers optimization for tenant: {opt_tenant}"
+            ),
+        )
 
-                        if routing_examples:
-                            # Send optimization request to routing agent via real A2A call
-                            optimization_task = {
-                                "action": "optimize_routing",
-                                "examples": routing_examples,
-                                "optimizer": "adaptive",  # Use GEPA/MIPROv2/SIMBA
-                                "min_improvement": 0.05,
-                            }
-
-                            # Make real async call to routing agent
-                            routing_agent_url = agent_config.get(
-                                "routing_agent_url", "http://localhost:8001"
-                            )
-                            result = run_async_in_streamlit(
-                                call_agent_async(routing_agent_url, optimization_task)
-                            )
-
-                            if result.get("status") == "optimization_triggered":
-                                st.success(
-                                    "✅ Routing optimization triggered successfully!"
-                                )
-                                st.info(
-                                    f"📊 {result.get('message', 'Using AdvancedRoutingOptimizer')}"
-                                )
-                                st.info(
-                                    f"🔢 Training examples: {result.get('training_examples', 0)}"
-                                )
-                                st.info(
-                                    "🔄 Optimization running in background. Check status for updates."
-                                )
-
-                                # Store successful optimization request in session state
-                                if "optimization_requests" not in st.session_state:
-                                    st.session_state.optimization_requests = []
-                                st.session_state.optimization_requests.append(
-                                    {
-                                        "timestamp": datetime.now(),
-                                        "type": "routing",
-                                        "status": "running",
-                                        "examples_count": result.get(
-                                            "training_examples", 0
-                                        ),
-                                        "optimizer": result.get(
-                                            "optimizer", "adaptive"
-                                        ),
-                                        "response": result,
-                                    }
-                                )
-                            elif result.get("status") == "insufficient_data":
-                                st.warning(
-                                    f"⚠️ {result.get('message', 'Insufficient training data')}"
-                                )
-                                st.info(
-                                    f"📊 Examples found: {result.get('training_examples', 0)}"
-                                )
-                            elif result.get("status") == "error":
-                                if "Connection refused" in result.get(
-                                    "message", ""
-                                ) or "Request failed" in result.get("message", ""):
-                                    st.error("❌ Could not connect to routing agent")
-                                    st.info(
-                                        "💡 Make sure routing agent is running: `uv run python src/app/agents/routing_agent.py`"
-                                    )
-                                else:
-                                    st.error(
-                                        f"❌ Optimization failed: {result.get('message', 'Unknown error')}"
-                                    )
-                            else:
-                                st.error(f"❌ Unexpected response: {result}")
-
-                            # Store examples count for reference
-                            total_examples = sum(
-                                len(ex.get("good_routes", []))
-                                + len(ex.get("bad_routes", []))
-                                for ex in routing_examples
-                            )
-                            st.caption(f"📊 Total examples processed: {total_examples}")
-                        else:
-                            st.error(
-                                "❌ No valid routing examples found. Please upload routing_examples.json"
-                            )
-
-                    except Exception as e:
-                        st.error(f"❌ Error triggering optimization: {str(e)}")
+    if trigger and opt_tenant:
+        try:
+            resp = httpx.post(
+                f"{RUNTIME_URL}/admin/tenant/{opt_tenant}/optimize",
+                json={"mode": opt_mode},
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                st.session_state["last_optimize_run"] = data
+                st.success(f"✅ Submitted: {data['workflow_name']}")
             else:
-                st.error("Please upload routing examples first")
+                st.error(f"❌ Submit failed ({resp.status_code}): {resp.text[:300]}")
+        except Exception as e:
+            st.error(f"❌ Failed to reach runtime: {e}")
 
-    with col2:
-        if st.button("📊 View Optimization Status"):
-            with st.spinner("📊 Getting optimization status..."):
-                try:
-                    # Get real optimization status from routing agent
-                    routing_agent_url = agent_config.get(
-                        "routing_agent_url", "http://localhost:8001"
-                    )
-                    status_task = {"action": "get_optimization_status"}
-                    status_result = run_async_in_streamlit(
-                        call_agent_async(routing_agent_url, status_task)
-                    )
-
-                    if status_result.get("status") == "active":
-                        st.success("✅ Routing Agent Connected")
-                        metrics = status_result.get("metrics", {})
-                        optimizer_ready = status_result.get("optimizer_ready", False)
-
-                        # Show real metrics from agent
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.metric(
-                                "Optimizer Ready", "Yes" if optimizer_ready else "No"
-                            )
-                            if metrics:
-                                st.metric(
-                                    "Total Experiences",
-                                    metrics.get("total_experiences", 0),
-                                )
-                                st.metric(
-                                    "Successful Routes",
-                                    metrics.get("successful_routes", 0),
-                                )
-                        with col_b:
-                            if metrics:
-                                st.metric(
-                                    "Average Reward",
-                                    f"{metrics.get('avg_reward', 0):.3f}",
-                                )
-                                st.metric(
-                                    "Confidence Accuracy",
-                                    f"{metrics.get('confidence_accuracy', 0):.2%}",
-                                )
-
-                    elif status_result.get("status") == "error":
-                        if "Connection refused" in status_result.get(
-                            "message", ""
-                        ) or "Request failed" in status_result.get("message", ""):
-                            st.error("❌ Routing agent not available")
-                            st.info(
-                                "💡 Start routing agent: `uv run python src/app/agents/routing_agent.py`"
-                            )
-                        else:
-                            st.error(
-                                f"❌ Agent error: {status_result.get('message', 'Unknown error')}"
-                            )
-
-                    else:
-                        st.warning(f"⚠️ Unexpected status response: {status_result}")
-
-                except Exception as e:
-                    st.error(f"❌ Failed to get optimization status: {str(e)}")
-                    st.error(
-                        "🔧 Check routing agent configuration and ensure it's running"
-                    )
-
-    with col3:
-        if st.button("📋 Generate Report"):
+    last_run = st.session_state.get("last_optimize_run")
+    if last_run:
+        st.markdown(
+            f"**Last run:** `{last_run['workflow_name']}` (mode: {last_run['mode']})"
+        )
+        if st.button("🔄 Refresh status"):
             try:
-                report_data = display_streaming_result(
-                    agent_name="detailed_report_agent",
-                    query="Generate optimization performance report with findings and recommendations",
-                    tenant_id=st.session_state["current_tenant"],
+                resp = httpx.get(
+                    f"{RUNTIME_URL}{last_run['status_url']}",
+                    timeout=10.0,
                 )
-
-                if report_data:
-                    st.download_button(
-                        label="Download Report",
-                        data=json.dumps(report_data, indent=2),
-                        file_name=f"optimization_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                        mime="application/json",
+                if resp.status_code == 200:
+                    status = resp.json()
+                    phase = status.get("phase") or "Pending"
+                    st.info(
+                        f"Phase: **{phase}** | started={status.get('started_at') or '—'} "
+                        f"| finished={status.get('finished_at') or '—'}"
                     )
-                    st.success("✅ Report generated successfully!")
+                    if status.get("message"):
+                        st.caption(status["message"])
                 else:
-                    st.error("❌ Failed to generate report")
+                    st.warning(f"Status unavailable ({resp.status_code})")
             except Exception as e:
-                st.error(f"❌ Report generation failed: {str(e)}")
-                st.error("🔧 Ensure routing agent supports report generation")
+                st.warning(f"Could not fetch status: {e}")
+
+    st.markdown("---")
+
+    if st.button("📋 Generate Report"):
+        try:
+            report_data = display_streaming_result(
+                agent_name="detailed_report_agent",
+                query="Generate optimization performance report with findings and recommendations",
+                tenant_id=st.session_state["current_tenant"],
+            )
+
+            if report_data:
+                st.download_button(
+                    label="Download Report",
+                    data=json.dumps(report_data, indent=2),
+                    file_name=f"optimization_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                )
+                st.success("✅ Report generated successfully!")
+            else:
+                st.error("❌ Failed to generate report")
+        except Exception as e:
+            st.error(f"❌ Report generation failed: {str(e)}")
+            st.error("🔧 Ensure routing agent supports report generation")
 
     # Real System Status (no hardcoded claims)
     st.subheader("📊 System Status")
@@ -3142,43 +2988,6 @@ with main_tabs[10]:
                                             annotation
                                         )
 
-                                    # Also persist to Phoenix via runtime
-                                    try:
-                                        httpx.post(
-                                            f"{RUNTIME_URL}/agents/routing_agent/process",
-                                            json={
-                                                "agent_name": "routing_agent",
-                                                "query": search_query,
-                                                "context": {
-                                                    "tenant_id": st.session_state[
-                                                        "current_tenant"
-                                                    ],
-                                                    "action": "optimize_routing",
-                                                    "examples": [
-                                                        {
-                                                            "query": search_query,
-                                                            "chosen_agent": "search_agent",
-                                                            "confidence": score,
-                                                            "search_quality": (
-                                                                0.9
-                                                                if relevance
-                                                                == "Highly Relevant"
-                                                                else 0.5
-                                                                if relevance
-                                                                == "Somewhat Relevant"
-                                                                else 0.1
-                                                            ),
-                                                            "agent_success": relevance
-                                                            != "Not Relevant",
-                                                        }
-                                                    ],
-                                                },
-                                            },
-                                            timeout=10.0,
-                                        )
-                                    except Exception:
-                                        pass  # Non-blocking — don't break UI for telemetry
-
     # Show annotation count
     if (
         hasattr(st.session_state, "search_annotations")
@@ -3368,9 +3177,9 @@ with main_tabs[11]:
             with st.spinner("Routing query to agents..."):
                 try:
                     resp = httpx.post(
-                        f"{RUNTIME_URL}/agents/routing_agent/process",
+                        f"{RUNTIME_URL}/agents/gateway_agent/process",
                         json={
-                            "agent_name": "routing_agent",
+                            "agent_name": "gateway_agent",
                             "query": chat_input_area,
                             "context": {
                                 "tenant_id": st.session_state["current_tenant"],

@@ -333,7 +333,7 @@ class TestProcessAgentTaskDispatch:
 
         registry.register_agent(
             AgentEndpoint(
-                name="routing_agent",
+                name="gateway_agent",
                 url="http://localhost:8001",
                 capabilities=["routing", "query_analysis"],
             )
@@ -341,7 +341,7 @@ class TestProcessAgentTaskDispatch:
 
         mock_result = {
             "status": "success",
-            "agent": "routing_agent",
+            "agent": "gateway_agent",
             "message": "Routed 'test' to search_agent",
             "recommended_agent": "search_agent",
             "confidence": 0.9,
@@ -353,9 +353,9 @@ class TestProcessAgentTaskDispatch:
             return_value=mock_result,
         ) as mock_dispatch:
             response = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "test query",
                     "context": {"tenant_id": "test:unit"},
                 },
@@ -410,7 +410,7 @@ class TestProcessAgentTaskDispatch:
             )
         )
 
-        mock_result = {"status": "success", "agent": "routing_agent"}
+        mock_result = {"status": "success", "agent": "gateway_agent"}
 
         with patch(
             "cogniverse_runtime.routers.agents.AgentDispatcher.dispatch",

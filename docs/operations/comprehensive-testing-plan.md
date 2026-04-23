@@ -943,44 +943,50 @@ print(f"Recommendation: {'Use fusion' if benefit > 0.5 else 'Single modality suf
 
 - When single modality is sufficient
 
-### 7.5 Advanced Routing Optimizer (GRPO)
+### 7.5 Gateway Threshold Optimization (On-Demand)
 
-**Test AdvancedRoutingOptimizer:**
+**Trigger gateway-threshold optimization via the admin API:**
 ```python
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+import requests
 
-# Initialize GRPO optimizer
-grpo = AdvancedRoutingOptimizer(tenant_id="your_org:production")
-
-# Record routing experience
-reward = await grpo.record_routing_experience(
-    query="Show me machine learning videos",
-    entities=[{"text": "machine learning", "label": "topic"}],
-    relationships=[],
-    enhanced_query="Show me machine learning videos",
-    chosen_agent="video_search_agent",
-    routing_confidence=0.9,
-    search_quality=0.85,
-    agent_success=True,
-    user_satisfaction=0.9,
-    processing_time=1.5
+# Trigger on-demand gateway threshold optimization
+response = requests.post(
+    "http://localhost:8000/admin/tenant/your_org:production/optimize",
+    json={"mode": "gateway-thresholds"}
 )
+result = response.json()
+print(f"Workflow: {result['workflow_name']}")
+print(f"Status URL: {result['status_url']}")
 
-print(f"Reward computed: {reward:.3f}")
+# Poll for completion
+status = requests.get(result["status_url"]).json()
+print(f"Phase: {status['phase']}")
+```
 
-# Get optimization status
-status = grpo.get_optimization_status()
-print(f"Total experiences: {status['total_experiences']}")
-print(f"Avg reward: {status['metrics']['avg_reward']:.3f}")
+**Test the CLI function directly:**
+```python
+from cogniverse_runtime.optimization_cli import (
+    _compute_gateway_thresholds,
+    GATEWAY_DEFAULT_THRESHOLD,
+)
+import pandas as pd
+
+spans_df = pd.DataFrame({
+    "confidence": [0.9, 0.3, 0.8, 0.2, 0.7],
+    "routing_correct": [True, False, True, False, True],
+})
+thresholds = _compute_gateway_thresholds(spans_df)
+print(f"Computed threshold: {thresholds['fast_path_confidence_threshold']:.3f}")
+print(f"Default threshold: {GATEWAY_DEFAULT_THRESHOLD}")
 ```
 
 **Learning Points:**
 
-- GRPO uses experience replay for learning
+- Gateway thresholds are computed from span data, not reward signals
 
-- Computes reward from multiple signals
+- On-demand optimization via `POST /admin/tenant/{id}/optimize` submits an Argo Workflow
 
-- Auto-selects DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
+- `GATEWAY_DEFAULT_THRESHOLD = 0.4` is the fallback when insufficient span data exists
 
 **✅ Layer 7 Complete**: Individual agents working, routing decisions functional, optimizers trainable
 

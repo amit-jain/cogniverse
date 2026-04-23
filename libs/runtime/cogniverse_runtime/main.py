@@ -100,16 +100,41 @@ def _wire_argo_from_environment() -> None:
     """Wire the tenant router's Argo config from environment variables.
 
     Populates ``tenant._argo_api_url`` so ``POST /{tenant}/jobs`` submits
-    the CronWorkflow step. Extracted into a helper so it can be unit-tested
-    without spinning up the whole FastAPI lifespan.
+    the CronWorkflow step and ``POST /{tenant}/optimize`` submits one-off
+    Workflows. Extracted into a helper so it can be unit-tested without
+    spinning up the whole FastAPI lifespan.
     """
     argo_api_url = os.environ.get("ARGO_API_URL") or None
     argo_namespace = os.environ.get("ARGO_NAMESPACE", "cogniverse")
-    tenant.set_argo_config(api_url=argo_api_url, namespace=argo_namespace)
+    runtime_image = os.environ.get("RUNTIME_IMAGE") or "cogniverse-runtime:latest"
+    # Name of the SA the Workflow pods run as — must be RBAC-bound to post
+    # ``workflowtaskresults``. The chart sets this; fall back only for tests.
+    runtime_sa = os.environ.get("RUNTIME_SERVICE_ACCOUNT") or "default"
+    # Snapshot the runtime-pod env vars the optimizer needs. Keep the list
+    # explicit so we don't accidentally leak other env into Workflow pods.
+    pod_env = {
+        k: os.environ[k]
+        for k in (
+            "BACKEND_URL",
+            "BACKEND_PORT",
+            "TELEMETRY_HTTP_ENDPOINT",
+            "TELEMETRY_OTLP_ENDPOINT",
+            "LLM_ENDPOINT",
+            "OLLAMA_API_BASE",
+        )
+        if os.environ.get(k)
+    }
+    tenant.set_argo_config(
+        api_url=argo_api_url,
+        namespace=argo_namespace,
+        runtime_image=runtime_image,
+        pod_env=pod_env,
+        service_account=runtime_sa,
+    )
     if argo_api_url:
         logger.info(
-            f"Argo CronWorkflow submission enabled (url={argo_api_url}, "
-            f"namespace={argo_namespace})"
+            f"Argo submission enabled (url={argo_api_url}, "
+            f"namespace={argo_namespace}, image={runtime_image})"
         )
     else:
         logger.warning(

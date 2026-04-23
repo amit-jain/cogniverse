@@ -125,8 +125,8 @@ class OnlineEvaluationConfig(BaseModel):
 class AutomationRulesConfig(BaseModel):
     """Declarative automation rules for the optimization pipeline.
 
-    Centralizes the thresholds, intervals, and trigger conditions consumed
-    by OptimizationOrchestrator, AnnotationAgent, and AnnotationFeedbackLoop.
+    Thresholds, intervals, and trigger conditions consumed by
+    OptimizationOrchestrator and AnnotationAgent.
     """
 
     annotation_thresholds: AnnotationThresholdsConfig = Field(
@@ -231,7 +231,7 @@ class RoutingConfig:
     )
 
     # LLM configuration (Slow Path - Tier 2)
-    # NOTE: model/endpoint defaults are populated from llm_config.resolve("routing_agent")
+    # Model/endpoint defaults are populated from llm_config.resolve("gateway_agent")
     # at startup. Do NOT hardcode model names here.
     llm_config: dict[str, Any] = field(
         default_factory=lambda: {

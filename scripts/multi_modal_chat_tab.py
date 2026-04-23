@@ -63,16 +63,18 @@ def validate_tenant_id(tenant_id: str) -> bool:
     return True
 
 
-async def check_agent_memory_capability(routing_agent_url: str) -> Dict[str, Any]:
+async def check_agent_memory_capability(orchestrator_agent_url: str) -> Dict[str, Any]:
     """
     Check if routing agent has memory enabled.
 
-    Note: Memory is handled internally by the RoutingAgent through MemoryAwareMixin.
+    Note: Memory is handled internally by the GatewayAgent through MemoryAwareMixin.
     The agent automatically uses memory when processing queries if enabled in config.
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(f"{routing_agent_url}/agents/routing_agent")
+            response = await client.get(
+                f"{orchestrator_agent_url}/agents/orchestrator_agent"
+            )
             if response.status_code == 200:
                 agent_info = response.json()
                 capabilities = agent_info.get("capabilities", [])
@@ -99,7 +101,7 @@ async def check_agent_memory_capability(routing_agent_url: str) -> Dict[str, Any
 
 
 async def route_and_process_query(
-    routing_agent_url: str,
+    orchestrator_agent_url: str,
     tenant_id: str,
     query: str,
     file_info: Optional[Dict[str, Any]] = None,
@@ -107,7 +109,7 @@ async def route_and_process_query(
     """
     Route query to appropriate agent and process.
 
-    Note: Memory is handled internally by the RoutingAgent if enabled in config.
+    Note: Memory is handled internally by the GatewayAgent if enabled in config.
     The agent automatically retrieves relevant context and stores interactions.
     """
     try:
@@ -120,7 +122,7 @@ async def route_and_process_query(
                     history.append({"role": role, "content": content[:200]})
 
             task_data = {
-                "agent_name": "routing_agent",
+                "agent_name": "orchestrator_agent",
                 "query": query,
                 "context": {
                     "tenant_id": tenant_id,
@@ -136,7 +138,7 @@ async def route_and_process_query(
                 task_data["context"]["file"] = file_info
 
             response = await client.post(
-                f"{routing_agent_url}/agents/routing_agent/process",
+                f"{orchestrator_agent_url}/agents/orchestrator_agent/process",
                 json=task_data,
                 timeout=120.0,
             )
@@ -299,12 +301,14 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
                 st.error("❌ Invalid format. Use: org_name:tenant_name")
 
         if st.button("🔍 Check Memory Status", use_container_width=True):
-            if "routing_agent_url" not in agent_config:
-                raise KeyError("agent_config missing required key 'routing_agent_url'")
-            routing_agent_url = agent_config["routing_agent_url"]
+            if "orchestrator_agent_url" not in agent_config:
+                raise KeyError(
+                    "agent_config missing required key 'orchestrator_agent_url'"
+                )
+            orchestrator_agent_url = agent_config["orchestrator_agent_url"]
             with st.spinner("Checking agent capabilities..."):
                 result = run_async_in_streamlit(
-                    check_agent_memory_capability(routing_agent_url)
+                    check_agent_memory_capability(orchestrator_agent_url)
                 )
                 if result.get("has_memory"):
                     st.success("✅ " + result["message"])
@@ -364,9 +368,9 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
     )
 
     if send_button:
-        if "routing_agent_url" not in agent_config:
-            raise KeyError("agent_config missing required key 'routing_agent_url'")
-        routing_agent_url = agent_config["routing_agent_url"]
+        if "orchestrator_agent_url" not in agent_config:
+            raise KeyError("agent_config missing required key 'orchestrator_agent_url'")
+        orchestrator_agent_url = agent_config["orchestrator_agent_url"]
 
         file_info = None
         if uploaded_file:
@@ -383,7 +387,7 @@ def render_multi_modal_chat_tab(agent_config: Dict[str, str]):
         with st.spinner("Processing your request..."):
             result = run_async_in_streamlit(
                 route_and_process_query(
-                    routing_agent_url,
+                    orchestrator_agent_url,
                     tenant_id,
                     user_input,
                     file_info=file_info,

@@ -191,7 +191,7 @@ def _render_review_item(item, idx: int):
 def _handle_approval(item, idx: int):
     """Handle item approval"""
     try:
-        decision = ReviewDecision(
+        ReviewDecision(
             item_id=item.item_id,
             approved=True,
             reviewer=st.session_state.get("user_email", "unknown"),

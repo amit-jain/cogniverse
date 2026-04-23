@@ -7,6 +7,7 @@ Allows tenants to customize their agent experience:
 """
 
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -31,6 +32,17 @@ _config_manager: Optional[ConfigManager] = None
 _argo_api_url: Optional[str] = None
 _argo_namespace: str = "cogniverse"
 
+# Runtime-pod environment snapshot used when building Argo Workflow manifests
+# for manual optimization runs. Populated at startup from env vars read by
+# main.py so the spawned Workflow pods inherit the deployment's service DNS.
+_runtime_pod_env: Dict[str, str] = {}
+_runtime_image: str = "cogniverse-runtime:latest"
+# ServiceAccount the spawned Workflow pod runs as. Must have RBAC for
+# ``workflowtaskresults.argoproj.io`` (Argo Emissary writes results after the
+# main container exits). Falls back to ``default`` only for local/unit tests;
+# the chart wires the real SA name at startup.
+_runtime_service_account: str = "default"
+
 
 def set_config_manager(config_manager: ConfigManager) -> None:
     """Inject ConfigManager (called from main.py lifespan)."""
@@ -38,11 +50,42 @@ def set_config_manager(config_manager: ConfigManager) -> None:
     _config_manager = config_manager
 
 
-def set_argo_config(api_url: Optional[str], namespace: str = "cogniverse") -> None:
-    """Inject Argo API URL (called from main.py lifespan, optional)."""
-    global _argo_api_url, _argo_namespace
+def set_argo_config(
+    api_url: Optional[str],
+    namespace: str = "cogniverse",
+    runtime_image: Optional[str] = None,
+    pod_env: Optional[Dict[str, str]] = None,
+    service_account: Optional[str] = None,
+) -> None:
+    """Inject Argo API URL + pod-env snapshot (called from main.py lifespan).
+
+    ``runtime_image`` is the OCI image reference for cogniverse-runtime; the
+    manual-optimize endpoint spawns Workflow pods from the same image so
+    their Python environment matches the live runtime.
+
+    ``pod_env`` is a snapshot of service-DNS env vars (BACKEND_URL,
+    TELEMETRY_HTTP_ENDPOINT, etc.) taken from the runtime pod; propagated
+    into the Workflow pod spec so the optimizer can reach Vespa/Phoenix/LLM.
+
+    ``service_account`` is the SA name the Workflow pods run as — must be
+    RBAC-bound to write ``workflowtaskresults`` (the Emissary posts results
+    after the main container exits, otherwise Argo marks the Workflow
+    ``Error`` even though the real work succeeded).
+    """
+    global \
+        _argo_api_url, \
+        _argo_namespace, \
+        _runtime_image, \
+        _runtime_pod_env, \
+        _runtime_service_account
     _argo_api_url = api_url
     _argo_namespace = namespace
+    if runtime_image:
+        _runtime_image = runtime_image
+    if pod_env:
+        _runtime_pod_env = dict(pod_env)
+    if service_account:
+        _runtime_service_account = service_account
 
 
 def _require_config_manager() -> ConfigManager:
@@ -468,6 +511,222 @@ async def _submit_cron_workflow(manifest: dict) -> None:
                 )
     except Exception as exc:
         logger.error("Failed to submit CronWorkflow to Argo: %s", exc)
+
+
+# Modes accepted by POST /{tenant_id}/optimize. Matches the `--mode` choices
+# declared by cogniverse_runtime.optimization_cli (minus `triggered` and
+# `cleanup`, which aren't intended for interactive dashboard use, and
+# `synthetic` which has its own scheduled CronWorkflow).
+_MANUAL_OPTIMIZE_MODES = {
+    "gateway-thresholds",
+    "simba",
+    "workflow",
+    "profile",
+    "entity-extraction",
+}
+
+
+_LABEL_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _sanitize_label_value(value: str) -> str:
+    """K8s label values must match ``([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]``
+    and be ≤63 chars. Tenant IDs like ``org:env`` contain colons that violate
+    this, so replace unsupported chars with ``-`` and trim edges. The raw
+    tenant_id is still passed through the ``--tenant-id`` CLI arg, so the
+    sanitized label is for grouping/filtering only."""
+    cleaned = _LABEL_SAFE_RE.sub("-", value).strip("-_.")[:63]
+    return cleaned or "unknown"
+
+
+def _build_optimization_workflow_manifest(
+    tenant_id: str, mode: str, namespace: str
+) -> dict:
+    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``.
+
+    Uses the same container image and service-DNS env vars as the live
+    runtime pod, so the spawned optimizer can reach Vespa/Phoenix/LLM
+    exactly like the CronWorkflow-driven weekly optimization does.
+    """
+    env = [{"name": k, "value": v} for k, v in _runtime_pod_env.items() if v]
+    return {
+        "apiVersion": "argoproj.io/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+            "generateName": f"manual-optimize-{mode}-",
+            "namespace": namespace,
+            "labels": {
+                "app": "cogniverse",
+                "cogniverse.ai/trigger": "manual",
+                "cogniverse.ai/mode": mode,
+                "cogniverse.ai/tenant": _sanitize_label_value(tenant_id),
+            },
+        },
+        "spec": {
+            # Argo Emissary posts ``workflowtaskresults`` under the pod's SA.
+            # The default namespace SA lacks that permission in typical
+            # installs; bind the Workflow to the runtime SA which the chart
+            # RBAC grants.
+            "serviceAccountName": _runtime_service_account,
+            # Auto-delete completed workflows after 1 hour so the
+            # namespace doesn't fill with dashboard-triggered runs.
+            "ttlStrategy": {
+                "secondsAfterCompletion": 3600,
+                "secondsAfterSuccess": 3600,
+                "secondsAfterFailure": 3600,
+            },
+            "entrypoint": "run",
+            "templates": [
+                {
+                    "name": "run",
+                    "container": {
+                        "image": _runtime_image,
+                        "command": [
+                            "python",
+                            "-m",
+                            "cogniverse_runtime.optimization_cli",
+                        ],
+                        "args": [
+                            "--mode",
+                            mode,
+                            "--tenant-id",
+                            tenant_id,
+                            "--lookback-hours",
+                            "48",
+                        ],
+                        "env": env,
+                        "resources": {
+                            "requests": {"cpu": "2", "memory": "4Gi"},
+                            "limits": {"cpu": "4", "memory": "8Gi"},
+                        },
+                    },
+                }
+            ],
+        },
+    }
+
+
+async def _submit_workflow(manifest: dict) -> dict:
+    """Submit a one-off Workflow to Argo. Returns the server response."""
+    namespace = manifest["metadata"]["namespace"]
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{_argo_api_url}/api/v1/workflows/{namespace}",
+                json={"workflow": manifest},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Argo API unreachable: {exc}"
+        ) from exc
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Argo Workflow submit failed ({response.status_code}): "
+                f"{response.text[:500]}"
+            ),
+        )
+    return response.json()
+
+
+class ManualOptimizeRequest(BaseModel):
+    mode: str
+
+
+class ManualOptimizeResponse(BaseModel):
+    workflow_name: str
+    namespace: str
+    mode: str
+    status_url: str
+
+
+class OptimizeRunStatus(BaseModel):
+    workflow_name: str
+    phase: Optional[str]
+    started_at: Optional[str]
+    finished_at: Optional[str]
+    message: Optional[str]
+
+
+@router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
+async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
+    """Manually trigger an optimization run for a tenant via Argo.
+
+    Submits a one-off Workflow that invokes ``optimization_cli --mode <mode>``
+    in a fresh pod. Mirrors what the scheduled ``agent-optimization``
+    CronWorkflow runs weekly — just on demand instead of on a schedule.
+    """
+    if _argo_api_url is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Argo is not configured on this deployment.",
+        )
+    if body.mode not in _MANUAL_OPTIMIZE_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown optimization mode: {body.mode!r}. "
+                f"Supported: {sorted(_MANUAL_OPTIMIZE_MODES)}"
+            ),
+        )
+
+    manifest = _build_optimization_workflow_manifest(
+        tenant_id, body.mode, _argo_namespace
+    )
+    response = await _submit_workflow(manifest)
+
+    # Argo assigns the final name after generateName expansion.
+    workflow_name = response.get("metadata", {}).get("name", "")
+    if not workflow_name:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Argo returned no workflow name: {response}",
+        )
+    return ManualOptimizeResponse(
+        workflow_name=workflow_name,
+        namespace=_argo_namespace,
+        mode=body.mode,
+        status_url=f"/admin/tenant/{tenant_id}/optimize/runs/{workflow_name}",
+    )
+
+
+@router.get(
+    "/{tenant_id}/optimize/runs/{workflow_name}",
+    response_model=OptimizeRunStatus,
+)
+async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
+    """Return current phase + timestamps for a dashboard-triggered run."""
+    if _argo_api_url is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Argo is not configured on this deployment.",
+        )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{_argo_api_url}/api/v1/workflows/{_argo_namespace}/{workflow_name}",
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Argo API unreachable: {exc}"
+        ) from exc
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Argo API error ({response.status_code}): {response.text[:500]}",
+        )
+    data = response.json()
+    status_block = data.get("status", {}) or {}
+    return OptimizeRunStatus(
+        workflow_name=workflow_name,
+        phase=status_block.get("phase"),
+        started_at=status_block.get("startedAt"),
+        finished_at=status_block.get("finishedAt"),
+        message=status_block.get("message"),
+    )
 
 
 @router.post("/{tenant_id}/jobs", response_model=JobResponse)

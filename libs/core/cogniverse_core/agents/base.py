@@ -210,8 +210,8 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         self._output_rails: Optional["RailChain"] = None
 
         # Telemetry: auto-initialized from deps.telemetry_config if present.
-        # Subclasses (e.g. RoutingAgent) may set self.telemetry_manager before
-        # calling super().__init__(); in that case we leave it alone.
+        # Subclasses may set self.telemetry_manager before calling
+        # super().__init__(); in that case we leave it alone.
         if not hasattr(self, "telemetry_manager"):
             self.telemetry_manager: Optional[Any] = None
             self._auto_init_telemetry_manager()

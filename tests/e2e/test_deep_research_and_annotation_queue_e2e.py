@@ -70,9 +70,9 @@ class TestAnnotationQueueE2E:
 
             # Trigger a routing request to create spans that could be annotated
             client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "search for video clips of animals",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -83,94 +83,6 @@ class TestAnnotationQueueE2E:
             assert resp.status_code == 200
             data = resp.json()
             assert isinstance(data["statistics"]["total"], int)
-
-    def test_assign_and_complete_lifecycle(self):
-        """Optimization cycle seeds queue → assign → complete → verify state.
-
-        Seeds Phoenix with a few low-confidence routing spans first; the
-        optimization cycle scans the last hour of routing spans and only
-        enqueues those scoring below the AnnotationAgent confidence
-        threshold (default 0.6). Without seeding, a fresh suite has no
-        spans → empty queue → nothing to assign.
-        """
-        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            # Seed: trigger several routing decisions on ambiguous queries
-            # so Phoenix has cogniverse.routing spans in the lookback window.
-            # The classifier emits lower confidence on short / vague text.
-            seed_queries = [
-                "stuff",
-                "things about that",
-                "the other one",
-                "more like before",
-                "what was that thing",
-            ]
-            for q in seed_queries:
-                client.post(
-                    "/agents/routing_agent/process",
-                    json={
-                        "agent_name": "routing_agent",
-                        "query": q,
-                        "context": {"tenant_id": TENANT_ID},
-                    },
-                )
-
-            # Trigger the real optimization cycle — this is how production works.
-            # It reads spans from Phoenix, identifies low-confidence ones,
-            # enqueues them, and optionally runs DSPy compilation.
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "optimize_routing",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "optimize_routing",
-                    },
-                },
-            )
-            assert resp.status_code == 200
-
-            resp = client.get("/agents/annotations/queue")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert "statistics" in data
-            assert "pending" in data
-
-            pending = data["pending"]
-            assert len(pending) > 0, (
-                f"Optimization cycle should populate queue with low-confidence spans. "
-                f"Queue stats: {data['statistics']}"
-            )
-
-            span_id = pending[0]["span_id"]
-
-            # Assign
-            resp = client.post(
-                f"/agents/annotations/queue/{span_id}/assign",
-                json={"reviewer": "e2e_test_reviewer"},
-            )
-            assert resp.status_code == 200
-            assign_data = resp.json()
-            assert assign_data["status"] == "assigned"
-            assert assign_data["annotation"]["assigned_to"] == "e2e_test_reviewer"
-            assert assign_data["annotation"]["status"] == "assigned"
-            assert assign_data["annotation"]["sla_deadline"] is not None
-
-            # Complete
-            resp = client.post(
-                f"/agents/annotations/queue/{span_id}/complete",
-                json={"label": "correct_routing"},
-            )
-            assert resp.status_code == 200
-            complete_data = resp.json()
-            assert complete_data["status"] == "completed"
-            assert complete_data["annotation"]["status"] == "completed"
-            assert complete_data["annotation"]["completed_at"] is not None
-
-            # Verify queue state updated
-            resp = client.get("/agents/annotations/queue")
-            stats = resp.json()["statistics"]["by_status"]
-            assert stats.get("completed", 0) >= 1
 
     def test_assign_nonexistent_returns_404(self):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:

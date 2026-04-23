@@ -12,9 +12,9 @@ Architecture note (A2A gateway):
 
     Entity extraction, query enhancement, and profile selection are handled by
     dedicated A2A agents that are invoked internally by the orchestrator --
-    they are NOT called inline by the routing_agent anymore.
+    they are NOT called inline by the gateway_agent anymore.
 
-    The routing_agent is now a thin DSPy-powered decision-maker. Both
+    The gateway_agent is now a thin DSPy-powered decision-maker. Both
     ``gateway`` and ``routing`` capabilities route through the gateway
     pipeline in the dispatcher.
 
@@ -45,7 +45,7 @@ class TestRoutingPipeline:
     """Scenario 1: Routing agent routes query via the gateway pipeline.
 
     In the A2A architecture, both 'gateway' and 'routing' capabilities route
-    through _execute_gateway_task in the dispatcher. The routing_agent no
+    through _execute_gateway_task in the dispatcher. The gateway_agent no
     longer does entity extraction or query enhancement inline -- those are
     handled by dedicated upstream A2A agents via the orchestrator.
 
@@ -57,9 +57,9 @@ class TestRoutingPipeline:
         """Routing agent returns success via the gateway pipeline."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "Show me videos of cats playing piano",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
@@ -72,7 +72,6 @@ class TestRoutingPipeline:
         # In the new architecture, the response comes from the gateway
         # pipeline. The agent field will be gateway_agent or orchestrator_agent.
         assert data["agent"] in (
-            "routing_agent",
             "gateway_agent",
             "orchestrator_agent",
         )
@@ -101,9 +100,9 @@ class TestRoutingPipeline:
         """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "Find videos about Tesla cars in San Francisco",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
@@ -148,9 +147,9 @@ class TestRoutingPipeline:
     def test_routing_executes_downstream(self):
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "search for animal videos",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -190,7 +189,7 @@ class TestQueryEnhancementViaGateway:
     """Scenarios 2-3: Query enhancement and entity extraction are now handled
     by dedicated A2A agents via the orchestrator pipeline.
 
-    The routing_agent no longer returns enhanced_query or entities at the
+    The gateway_agent no longer returns enhanced_query or entities at the
     top level. These tests verify the gateway pipeline works end-to-end.
     """
 
@@ -306,9 +305,9 @@ class TestOrchestration:
             base_url=RUNTIME, timeout=900.0, transport=transport
         ) as client:
             resp1 = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "search for cat videos",
                     "context": {"tenant_id": TENANT_ID, "session_id": session_id},
                     "top_k": 3,
@@ -319,9 +318,9 @@ class TestOrchestration:
             assert data1["status"] == "success"
 
             resp2 = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "show me longer ones",
                     "context": {"tenant_id": TENANT_ID, "session_id": session_id},
                     "top_k": 3,
@@ -636,7 +635,7 @@ class TestAgentOperations:
         is gone. Hitting the old URL must now produce 404 / 405."""
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             resp = client.post(
-                "/agents/routing_agent/upload",
+                "/agents/gateway_agent/upload",
                 files={"file": ("test.txt", b"test content", "text/plain")},
             )
         assert resp.status_code in (404, 405)
@@ -950,7 +949,7 @@ class TestAgentRegistryAndHealth:
 
     def test_get_agent_info(self):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            resp = client.get("/agents/routing_agent")
+            resp = client.get("/agents/gateway_agent")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -958,7 +957,7 @@ class TestAgentRegistryAndHealth:
 
     def test_agent_card(self):
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
-            resp = client.get("/agents/routing_agent/card")
+            resp = client.get("/agents/gateway_agent/card")
 
         assert resp.status_code == 200
         card = resp.json()
@@ -967,12 +966,11 @@ class TestAgentRegistryAndHealth:
     @pytest.mark.parametrize(
         "agent_name",
         [
-            "routing_agent",
+            "gateway_agent",
             "search_agent",
             "text_analysis_agent",
             "summarizer_agent",
             "detailed_report_agent",
-            "gateway_agent",
             "entity_extraction_agent",
             "query_enhancement_agent",
             "profile_selection_agent",
@@ -1148,7 +1146,7 @@ class TestStreamingAllAgents:
         [
             ("summarizer_agent", "summarize AI trends briefly", True),
             ("detailed_report_agent", "write a report on search results", True),
-            ("routing_agent", "find videos about cats", True),
+            ("gateway_agent", "find videos about cats", True),
         ],
     )
     def test_streaming_agent_returns_events(self, agent_name, query, expect_streaming):
@@ -1206,143 +1204,6 @@ class TestStreamingAllAgents:
             assert "status" in types, (
                 f"{agent_name}: streaming agent should emit progress events, got: {types}"
             )
-
-
-@pytest.mark.e2e
-@skip_if_no_runtime
-class TestOptimizationE2E:
-    """End-to-end optimization through the runtime API."""
-
-    def test_record_examples_triggers_optimization(self):
-        """POST optimize_routing with examples → optimization_triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "optimize routing",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "optimize_routing",
-                        "examples": [
-                            {
-                                "query": "find cat videos",
-                                "chosen_agent": "search_agent",
-                                "confidence": 0.9,
-                                "search_quality": 0.85,
-                                "agent_success": True,
-                            },
-                        ],
-                    },
-                },
-            )
-
-        assert resp.status_code == 200, f"Optimization failed: {resp.text}"
-        data = resp.json()
-        assert data.get("status") == "optimization_triggered", (
-            f"Should trigger optimization, got: {data}"
-        )
-        assert data.get("training_examples") == 1
-
-    def test_auto_optimization_cycle_from_traces(self):
-        """POST optimize_routing without examples → runs full cycle from traces."""
-        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "optimize routing",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "optimize_routing",
-                    },
-                },
-            )
-
-        assert resp.status_code == 200, f"Optimization cycle failed: {resp.text}"
-        data = resp.json()
-        assert data.get("status") == "optimization_triggered", (
-            f"Auto cycle should trigger optimization, got: {data}"
-        )
-        assert data.get("optimizer") == "OptimizationOrchestrator"
-        assert "cycle_results" in data
-        assert isinstance(data["cycle_results"], dict)
-
-    def test_optimization_status(self):
-        """GET optimization status returns optimizer state."""
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "optimization status",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "get_optimization_status",
-                    },
-                },
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "status" in data
-        assert "optimizer_ready" in data
-        assert isinstance(data["optimizer_ready"], bool)
-        assert "metrics" in data
-        assert isinstance(data["metrics"], dict)
-
-    def test_route_after_optimization_succeeds(self):
-        """Routing works after optimization was triggered."""
-        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
-            # First trigger optimization
-            client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "optimize routing",
-                    "context": {
-                        "tenant_id": TENANT_ID,
-                        "action": "optimize_routing",
-                        "examples": [
-                            {
-                                "query": "basketball videos",
-                                "chosen_agent": "search_agent",
-                                "confidence": 0.8,
-                                "search_quality": 0.7,
-                                "agent_success": True,
-                            },
-                        ],
-                    },
-                },
-            )
-
-            # Then route a query — should use optimized model
-            resp = client.post(
-                "/agents/routing_agent/process",
-                json={
-                    "agent_name": "routing_agent",
-                    "query": "find basketball highlights",
-                    "context": {"tenant_id": TENANT_ID},
-                },
-            )
-
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "success"
-        # Response varies by dispatch path: direct routing, gateway, or orchestrator
-        agent = (
-            data.get("recommended_agent")
-            or data.get("gateway", {}).get("routed_to")
-            or data.get("agent")  # orchestrator path returns agent key
-        )
-        assert agent, f"No agent in response: {list(data.keys())}"
-        confidence = (
-            data.get("confidence")
-            or data.get("gateway", {}).get("confidence")
-            or data.get("gateway_context", {}).get("confidence")
-            or 0.1  # orchestrated queries don't have top-level confidence
-        )
-        assert confidence > 0.0, f"Expected positive confidence, got {confidence}"
 
 
 @pytest.mark.e2e

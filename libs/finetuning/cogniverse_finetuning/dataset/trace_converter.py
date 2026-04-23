@@ -268,9 +268,12 @@ class TraceToInstructionConverter:
             Filtered DataFrame with agent-specific spans
         """
         # Agent span naming convention: agent_type appears in span name
-        # e.g., "RoutingAgent.route", "ProfileSelectionAgent.select_profiles"
+        # e.g., "GatewayAgent.process", "ProfileSelectionAgent.select_profiles".
+        # The ``routing`` agent_type is the stable external API name for
+        # the classification-and-route concept; the implementing agent is
+        # GatewayAgent, so "gateway" must also match.
         agent_keywords = {
-            "routing": ["routing", "route"],
+            "routing": ["routing", "route", "gateway"],
             "profile_selection": ["profile", "selection"],
             "entity_extraction": ["entity", "extraction"],
         }
@@ -614,7 +617,7 @@ class TraceToTrajectoryConverter:
     ) -> pd.DataFrame:
         """Filter spans for specific agent type."""
         agent_keywords = {
-            "routing": ["routing", "route"],
+            "routing": ["routing", "route", "gateway"],
             "profile_selection": ["profile", "selection"],
             "entity_extraction": ["entity", "extraction"],
         }

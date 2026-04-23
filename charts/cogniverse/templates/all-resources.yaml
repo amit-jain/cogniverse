@@ -272,13 +272,27 @@ spec:
         # cannot parse "https://" prefixes.
         {{- end }}
         {{- if .Values.argo.enabled }}
-        # Audit fix #3 — wire Argo so the runtime can submit CronWorkflows
-        # for scheduled jobs. Without these vars, _argo_api_url stays None
-        # and POST /{tenant}/jobs persists configs that never trigger.
+        # Wire Argo so the runtime can submit CronWorkflows (for scheduled
+        # jobs) and one-off Workflows (for dashboard-triggered optimisation).
+        # argo-workflows subchart exposes its server as ``{release}-argo-workflows-server``
+        # in the same namespace when server.enabled=true; the dashboard path
+        # requires that flag.
         - name: ARGO_API_URL
-          value: "http://argo-server.argo.svc.cluster.local:2746"
+          value: "http://{{ .Release.Name }}-argo-workflows-server.{{ .Release.Namespace }}.svc.cluster.local:2746"
         - name: ARGO_NAMESPACE
           value: {{ .Release.Namespace | quote }}
+        # RUNTIME_IMAGE is baked in at install time so
+        # POST /{tenant}/optimize can spawn Workflow pods from the same
+        # image as the live runtime pod.
+        - name: RUNTIME_IMAGE
+          value: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+        # Workflow pods must run under the runtime SA, which the chart RBAC
+        # binds to the ``workflowtaskresults`` permission Argo Emissary needs
+        # after the main container exits. Falling back to ``default`` causes
+        # the Workflow to be marked ``Error`` even when the main container
+        # succeeded.
+        - name: RUNTIME_SERVICE_ACCOUNT
+          value: {{ include "cogniverse.serviceAccountName" . | quote }}
         {{- end }}
         # Generic inference-service URL map. Profiles pick a service by key
         # via their ``inference_service`` field; the runtime resolves the URL

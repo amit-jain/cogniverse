@@ -1,18 +1,13 @@
 """Per-agent strategy filter + agent strategy injection round-trip tests.
 
-Audit fixes #6, #8, #9 — all three broken in the same way: strategies were
-stored with a metadata.agent tag at write time but the tag was never read
-at retrieval time, so every agent received every strategy regardless of
-which agent it was learned for.
+``StrategyLearner.get_strategies_for_agent()`` filters stored strategies by
+``metadata.agent`` at retrieval time so an agent only receives strategies
+learned for itself (search_agent strategies never leak into coding_agent
+prompts, etc.).
 
-Fix #6: StrategyLearner.get_strategies_for_agent() now filters post-fetch by
-  metadata.agent, so search_agent strategies are invisible to coding_agent.
-
-Fix #8: RoutingAgent._process_impl() calls inject_context_into_prompt() which
-  calls get_strategies() → get_strategies_for_agent(agent_name="routing_agent").
-  Before the fix, RoutingAgent lacked MemoryAwareMixin entirely.
-
-Fix #9: Same pattern for CodingAgent — it lacked MemoryAwareMixin before the fix.
+Agents that include ``MemoryAwareMixin`` call ``inject_context_into_prompt``
+in ``_process_impl`` to prepend matching strategies to their LLM prompt; the
+mixin routes the fetch through ``get_strategies_for_agent(agent_name=...)``.
 
 These tests use real Mem0 backed by real Vespa (via memory_manager fixture).
 No mocks at the Mem0/Vespa boundary.
@@ -122,7 +117,7 @@ class TestPerAgentStrategyFilter:
     def test_cross_agent_isolation_both_directions(self, memory_manager):
         """Two distinct strategies for two agents — each sees only its own.
 
-        Seeding search_agent + routing_agent strategies into the same tenant,
+        Seeding search_agent + gateway_agent strategies into the same tenant,
         then verifying neither agent sees the other's strategy."""
         tenant_id = f"cross_agent_test_{int(time.time() * 1000)}"
 
@@ -138,7 +133,7 @@ class TestPerAgentStrategyFilter:
         )
         _seed_strategy(
             memory_manager,
-            "routing_agent",
+            "gateway_agent",
             tenant_id,
             routing_text,
             applies_when="query routing",
@@ -156,7 +151,7 @@ class TestPerAgentStrategyFilter:
         )
         routing_results = learner.get_strategies_for_agent(
             query="route this complex multimodal query",
-            agent_name="routing_agent",
+            agent_name="gateway_agent",
             top_k=10,
         )
 
@@ -164,29 +159,27 @@ class TestPerAgentStrategyFilter:
         routing_texts = [r.get("memory", "") for r in routing_results]
 
         assert not any("escalate to orchestration" in t for t in search_texts), (
-            f"routing_agent strategy leaked into search_agent results: {search_texts}"
+            f"gateway_agent strategy leaked into search_agent results: {search_texts}"
         )
         assert not any("temporal proximity" in t for t in routing_texts), (
-            f"search_agent strategy leaked into routing_agent results: {routing_texts}"
+            f"search_agent strategy leaked into gateway_agent results: {routing_texts}"
         )
 
 
 @pytest.mark.integration
-class TestRoutingAgentStrategyInjection:
-    """Fix #8 — RoutingAgent.inject_context_into_prompt returns strategies
-    from Mem0 when memory is initialized for routing_agent."""
+class TestGatewayAgentStrategyInjection:
+    """``MemoryAwareMixin.inject_context_into_prompt`` returns strategies from
+    Mem0 when memory is initialized for gateway_agent."""
 
-    def test_routing_agent_receives_strategies_via_mixin(self, memory_manager):
-        """inject_context_into_prompt must include strategies seeded for routing_agent.
-
-        Before fix #8, RoutingAgent lacked MemoryAwareMixin entirely — this
-        method didn't exist on the class, so no strategy injection happened."""
-        tenant_id = f"routing_strat_test_{int(time.time() * 1000)}"
+    def test_gateway_agent_receives_strategies_via_mixin(self, memory_manager):
+        """inject_context_into_prompt must include strategies seeded for
+        gateway_agent. This guards the mixin's strategy-injection path."""
+        tenant_id = f"gateway_strat_test_{int(time.time() * 1000)}"
         routing_text = "escalate to orchestration when query spans multiple modalities"
 
         _seed_strategy(
             memory_manager,
-            "routing_agent",
+            "gateway_agent",
             tenant_id,
             routing_text,
             applies_when="multi-modal routing",
@@ -195,13 +188,13 @@ class TestRoutingAgentStrategyInjection:
         # Allow Vespa to index the new strategy before querying.
         time.sleep(_MEM0_INDEX_WAIT_S)
 
-        # Wire up the mixin directly — no need to construct a full RoutingAgent
+        # Wire up the mixin directly — no need to construct a full agent
         # (which requires telemetry, LLM config, etc.). The mixin is the unit
         # under test here.
         proxy = _MemoryProxy()
         proxy.memory_manager = memory_manager
         proxy._memory_initialized = True
-        proxy._memory_agent_name = "routing_agent"
+        proxy._memory_agent_name = "gateway_agent"
         proxy._memory_tenant_id = tenant_id
 
         enriched = proxy.inject_context_into_prompt(
@@ -210,19 +203,16 @@ class TestRoutingAgentStrategyInjection:
         )
 
         assert enriched != "route this complex multimodal query", (
-            f"routing_agent strategy not injected into prompt — "
+            f"gateway_agent strategy not injected into prompt — "
             f"inject_context_into_prompt returned the raw prompt unchanged. "
-            f"Fix #8 (RoutingAgent MemoryAwareMixin) may have regressed. "
             f"Enriched prompt: {enriched[:300]}"
         )
 
-    def test_routing_agent_memory_init_sets_agent_name(
+    def test_gateway_agent_memory_init_sets_agent_name(
         self, memory_manager, vespa_instance, config_manager, schema_loader
     ):
-        """initialize_memory() must set _memory_agent_name = 'routing_agent'
-        so that get_strategies() retrieves routing_agent-tagged strategies only.
-
-        Before fix #8, RoutingAgent had no mixin and this method didn't exist."""
+        """initialize_memory() must set _memory_agent_name = 'gateway_agent'
+        so that get_strategies() retrieves gateway_agent-tagged strategies only."""
         from tests.utils.llm_config import (
             get_llm_base_url,
             get_llm_model,
@@ -231,7 +221,7 @@ class TestRoutingAgentStrategyInjection:
 
         proxy = _MemoryProxy()
         success = proxy.initialize_memory(
-            agent_name="routing_agent",
+            agent_name="gateway_agent",
             tenant_id="routing_init_test",
             backend_host="http://localhost",
             backend_port=vespa_instance["http_port"],
@@ -243,9 +233,9 @@ class TestRoutingAgentStrategyInjection:
             schema_loader=schema_loader,
             auto_create_schema=False,
         )
-        assert success, "initialize_memory returned False for routing_agent proxy"
-        assert proxy._memory_agent_name == "routing_agent", (
-            f"_memory_agent_name is {proxy._memory_agent_name!r}, expected 'routing_agent'. "
+        assert success, "initialize_memory returned False for gateway_agent proxy"
+        assert proxy._memory_agent_name == "gateway_agent", (
+            f"_memory_agent_name is {proxy._memory_agent_name!r}, expected 'gateway_agent'. "
             f"get_strategies() will filter on the wrong agent name."
         )
         assert proxy.is_memory_enabled(), (

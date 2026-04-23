@@ -23,6 +23,37 @@ def reset_config_manager():
     tenant._config_manager = original
 
 
+@pytest.fixture(autouse=True)
+def reset_argo_module_state():
+    """Reset Argo module-level state between tests.
+
+    `set_argo_config` stores api_url/namespace/runtime_image/pod_env in
+    module globals; without a reset, one test's snapshot bleeds into the
+    next (e.g. the empty-pod-env test saw `pod_env` set by a prior test
+    and asserted against stale data).
+    """
+    snapshot = (
+        tenant._argo_api_url,
+        tenant._argo_namespace,
+        tenant._runtime_image,
+        dict(tenant._runtime_pod_env),
+        tenant._runtime_service_account,
+    )
+    tenant._argo_api_url = None
+    tenant._argo_namespace = "cogniverse"
+    tenant._runtime_image = "cogniverse-runtime:latest"
+    tenant._runtime_pod_env = {}
+    tenant._runtime_service_account = "default"
+    yield
+    (
+        tenant._argo_api_url,
+        tenant._argo_namespace,
+        tenant._runtime_image,
+        tenant._runtime_pod_env,
+        tenant._runtime_service_account,
+    ) = snapshot
+
+
 @pytest.fixture
 def mock_config_manager():
     """Mock ConfigManager with a backing store."""
@@ -825,6 +856,45 @@ class TestArgoEnvironmentWiring:
 
         assert tenant._argo_api_url is None
 
+    def test_helper_snapshots_runtime_image_and_pod_env(self, monkeypatch):
+        """_wire_argo_from_environment reads RUNTIME_IMAGE and a curated
+        subset of service-DNS env vars so the manual-optimize endpoint can
+        propagate them into spawned Workflow pods."""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        monkeypatch.setenv("ARGO_API_URL", "http://argo:2746")
+        monkeypatch.setenv("RUNTIME_IMAGE", "cogniverse-runtime:v-from-env")
+        monkeypatch.setenv("BACKEND_URL", "http://vespa-from-env:8080")
+        monkeypatch.setenv("BACKEND_PORT", "8080")
+        monkeypatch.setenv("TELEMETRY_HTTP_ENDPOINT", "http://phoenix-env:6006")
+        monkeypatch.setenv("LLM_ENDPOINT", "http://llm-env:11434")
+        # Ensure an env var NOT in the allow-list does not leak through.
+        monkeypatch.setenv("SOME_OTHER_VAR", "should-not-propagate")
+
+        _wire_argo_from_environment()
+
+        assert tenant._runtime_image == "cogniverse-runtime:v-from-env"
+        assert tenant._runtime_pod_env == {
+            "BACKEND_URL": "http://vespa-from-env:8080",
+            "BACKEND_PORT": "8080",
+            "TELEMETRY_HTTP_ENDPOINT": "http://phoenix-env:6006",
+            "LLM_ENDPOINT": "http://llm-env:11434",
+        }
+        assert "SOME_OTHER_VAR" not in tenant._runtime_pod_env
+
+    def test_helper_defaults_runtime_image_when_missing(self, monkeypatch):
+        """Without RUNTIME_IMAGE set, the default 'cogniverse-runtime:latest'
+        is used so local dev still works. (Production Helm values always
+        set it; defaulting is for dev/tests.)"""
+        from cogniverse_runtime.main import _wire_argo_from_environment
+
+        monkeypatch.setenv("ARGO_API_URL", "http://argo:2746")
+        monkeypatch.delenv("RUNTIME_IMAGE", raising=False)
+
+        _wire_argo_from_environment()
+
+        assert tenant._runtime_image == "cogniverse-runtime:latest"
+
     def test_round_trip_env_var_set_then_post_submits_workflow(
         self, monkeypatch, tenant_client
     ):
@@ -886,3 +956,404 @@ class TestArgoEnvironmentWiring:
             )
             assert resp.status_code == 200
             mock_submit.assert_not_awaited()
+
+
+@pytest.fixture
+def argo_configured_client(mock_config_manager):
+    """TestClient with Argo configured so /optimize endpoints are live."""
+    tenant.set_config_manager(mock_config_manager)
+    tenant.set_argo_config(
+        api_url="http://argo.test:2746",
+        namespace="cogniverse",
+        runtime_image="cogniverse-runtime:test-v42",
+        pod_env={
+            "BACKEND_URL": "http://vespa.test:8080",
+            "BACKEND_PORT": "8080",
+            "TELEMETRY_HTTP_ENDPOINT": "http://phoenix.test:6006",
+            "LLM_ENDPOINT": "http://llm.test:11434",
+        },
+    )
+    app = FastAPI()
+    app.include_router(tenant.router)
+    try:
+        with TestClient(app, raise_server_exceptions=False) as client:
+            yield client
+    finally:
+        tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestBuildOptimizationWorkflowManifest:
+    """Manifest builder produces a runnable one-off Workflow spec."""
+
+    def test_manifest_shape_and_ttl(self):
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="cogniverse-runtime:v9",
+            pod_env={"BACKEND_URL": "http://vespa:8080"},
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="acme", mode="simba", namespace="cogniverse"
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+        assert manifest["apiVersion"] == "argoproj.io/v1alpha1"
+        assert manifest["kind"] == "Workflow"
+        assert manifest["metadata"]["generateName"] == "manual-optimize-simba-"
+        assert manifest["metadata"]["namespace"] == "cogniverse"
+
+        labels = manifest["metadata"]["labels"]
+        assert labels["cogniverse.ai/trigger"] == "manual"
+        assert labels["cogniverse.ai/mode"] == "simba"
+        assert labels["cogniverse.ai/tenant"] == "acme"
+
+        ttl = manifest["spec"]["ttlStrategy"]
+        assert ttl["secondsAfterCompletion"] == 3600
+        assert ttl["secondsAfterSuccess"] == 3600
+        assert ttl["secondsAfterFailure"] == 3600
+
+    def test_manifest_sets_service_account_name(self):
+        """Workflow pods must run under the configured runtime SA so Argo
+        Emissary has RBAC to post ``workflowtaskresults``. Without it Argo
+        marks otherwise-successful Workflows as ``Error``."""
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="cogniverse-runtime:v9",
+            pod_env={},
+            service_account="cogniverse",
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="acme", mode="simba", namespace="cogniverse"
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+        assert manifest["spec"]["serviceAccountName"] == "cogniverse"
+
+    def test_manifest_falls_back_to_default_sa_when_unconfigured(self):
+        """Local/dev/unit-test callers that never set the SA get a sane
+        fallback — the Workflow still serialises."""
+        # Reset to module defaults explicitly.
+        tenant._runtime_service_account = "default"
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="cogniverse-runtime:v9",
+            pod_env={},
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="acme", mode="simba", namespace="cogniverse"
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+        assert manifest["spec"]["serviceAccountName"] == "default"
+
+    def test_tenant_label_sanitized_for_k8s(self):
+        """K8s labels reject ``:`` (and other chars common in tenant IDs).
+        The tenant label must be sanitized, while the CLI arg preserves
+        the raw ID so the optimizer loads the right tenant config."""
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="cogniverse-runtime:v9",
+            pod_env={},
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="flywheel_org:production",
+                mode="simba",
+                namespace="cogniverse",
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+        label = manifest["metadata"]["labels"]["cogniverse.ai/tenant"]
+        assert ":" not in label
+        assert label == "flywheel_org-production"
+        # CLI arg still carries the original tenant_id — the optimizer
+        # needs it unmodified to resolve config / Phoenix project.
+        args = manifest["spec"]["templates"][0]["container"]["args"]
+        assert "flywheel_org:production" in args
+
+    def test_sanitize_label_value_edge_cases(self):
+        assert tenant._sanitize_label_value("acme") == "acme"
+        assert tenant._sanitize_label_value("acme:prod") == "acme-prod"
+        assert tenant._sanitize_label_value(":::") == "unknown"
+        assert tenant._sanitize_label_value("_leading-trail.") == "leading-trail"
+        assert len(tenant._sanitize_label_value("x" * 100)) == 63
+
+    def test_manifest_container_uses_configured_image_and_args(self):
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="cogniverse-runtime:v9",
+            pod_env={
+                "BACKEND_URL": "http://vespa:8080",
+                "LLM_ENDPOINT": "http://llm:11434",
+            },
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="acme:prod", mode="gateway-thresholds", namespace="ns1"
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+        container = manifest["spec"]["templates"][0]["container"]
+        assert container["image"] == "cogniverse-runtime:v9"
+        assert container["command"] == [
+            "python",
+            "-m",
+            "cogniverse_runtime.optimization_cli",
+        ]
+        assert container["args"] == [
+            "--mode",
+            "gateway-thresholds",
+            "--tenant-id",
+            "acme:prod",
+            "--lookback-hours",
+            "48",
+        ]
+
+        env_names = {e["name"]: e["value"] for e in container["env"]}
+        assert env_names == {
+            "BACKEND_URL": "http://vespa:8080",
+            "LLM_ENDPOINT": "http://llm:11434",
+        }
+
+    def test_manifest_empty_pod_env_produces_no_env_entries(self):
+        tenant.set_argo_config(
+            api_url="http://argo.test:2746",
+            namespace="cogniverse",
+            runtime_image="img:v1",
+            pod_env={},
+        )
+        try:
+            manifest = tenant._build_optimization_workflow_manifest(
+                tenant_id="t", mode="profile", namespace="cogniverse"
+            )
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+        assert manifest["spec"]["templates"][0]["container"]["env"] == []
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestPostManualOptimize:
+    """Real FastAPI route → dispatcher → manifest → Argo POST, happy + error paths."""
+
+    def test_submits_workflow_with_correct_body(self, argo_configured_client):
+        """Happy path: route calls Argo POST /workflows with a Workflow manifest
+        carrying the selected mode + tenant, and returns the name Argo assigned."""
+        client = argo_configured_client
+        captured: Dict[str, Any] = {}
+
+        async def fake_post(self, url, json=None, **kwargs):
+            captured["url"] = url
+            captured["body"] = json
+            resp = MagicMock()
+            resp.status_code = 201
+            resp.json = MagicMock(
+                return_value={"metadata": {"name": "manual-optimize-simba-abcde"}}
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            resp = client.post("/acme/optimize", json={"mode": "simba"})
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["workflow_name"] == "manual-optimize-simba-abcde"
+        assert data["namespace"] == "cogniverse"
+        assert data["mode"] == "simba"
+        assert (
+            data["status_url"]
+            == "/admin/tenant/acme/optimize/runs/manual-optimize-simba-abcde"
+        )
+
+        # Argo contract: endpoint + manifest wrapping
+        assert captured["url"] == "http://argo.test:2746/api/v1/workflows/cogniverse"
+        assert "workflow" in captured["body"]
+        submitted = captured["body"]["workflow"]
+        assert submitted["kind"] == "Workflow"
+        assert submitted["metadata"]["labels"]["cogniverse.ai/mode"] == "simba"
+        assert submitted["metadata"]["labels"]["cogniverse.ai/tenant"] == "acme"
+
+    def test_rejects_unknown_mode(self, argo_configured_client):
+        resp = argo_configured_client.post(
+            "/acme/optimize", json={"mode": "not-a-real-mode"}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "not-a-real-mode" in detail
+        assert "entity-extraction" in detail  # shows supported list
+
+    def test_503_when_argo_not_configured(self, mock_config_manager):
+        tenant.set_config_manager(mock_config_manager)
+        tenant.set_argo_config(api_url=None, namespace="cogniverse")
+        app = FastAPI()
+        app.include_router(tenant.router)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.post("/acme/optimize", json={"mode": "simba"})
+        assert resp.status_code == 503
+        assert "Argo" in resp.json()["detail"]
+
+    def test_502_when_argo_returns_error(self, argo_configured_client):
+        client = argo_configured_client
+
+        async def fake_post(self, url, json=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 500
+            resp.text = "internal server error"
+            return resp
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            resp = client.post("/acme/optimize", json={"mode": "simba"})
+        assert resp.status_code == 502
+        assert "500" in resp.json()["detail"]
+
+    def test_502_when_argo_returns_no_workflow_name(self, argo_configured_client):
+        """Defensive: if Argo accepts but omits the assigned name, fail loud."""
+        client = argo_configured_client
+
+        async def fake_post(self, url, json=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 201
+            resp.json = MagicMock(return_value={"metadata": {}})
+            return resp
+
+        with patch("httpx.AsyncClient.post", new=fake_post):
+            resp = client.post("/acme/optimize", json={"mode": "simba"})
+        assert resp.status_code == 502
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestGetManualOptimizeStatus:
+    """GET status proxies the Argo workflow phase + timestamps."""
+
+    def test_extracts_phase_and_timestamps(self, argo_configured_client):
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            assert url == "http://argo.test:2746/api/v1/workflows/cogniverse/wf-abc"
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "status": {
+                        "phase": "Succeeded",
+                        "startedAt": "2025-01-01T12:00:00Z",
+                        "finishedAt": "2025-01-01T12:04:00Z",
+                        "message": "ok",
+                    }
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-abc")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["workflow_name"] == "wf-abc"
+        assert data["phase"] == "Succeeded"
+        assert data["started_at"] == "2025-01-01T12:00:00Z"
+        assert data["finished_at"] == "2025-01-01T12:04:00Z"
+        assert data["message"] == "ok"
+
+    def test_pending_workflow_has_no_timestamps(self, argo_configured_client):
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            # Argo omits startedAt/finishedAt while pending; phase may also be missing.
+            resp.json = MagicMock(return_value={"status": {}})
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-pending")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["phase"] is None
+        assert data["started_at"] is None
+        assert data["finished_at"] is None
+
+    def test_404_from_argo_propagates(self, argo_configured_client):
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 404
+            resp.text = "not found"
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/missing")
+        assert resp.status_code == 404
+
+    def test_502_when_argo_returns_other_error(self, argo_configured_client):
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 500
+            resp.text = "down"
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf1")
+        assert resp.status_code == 502
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestSetArgoConfig:
+    """set_argo_config snapshots image + pod_env, leaves defaults on None."""
+
+    def test_updates_all_fields(self):
+        tenant.set_argo_config(
+            api_url="http://x:1",
+            namespace="ns",
+            runtime_image="img:t1",
+            pod_env={"A": "1", "B": "2"},
+            service_account="runner",
+        )
+        try:
+            assert tenant._argo_api_url == "http://x:1"
+            assert tenant._argo_namespace == "ns"
+            assert tenant._runtime_image == "img:t1"
+            assert tenant._runtime_pod_env == {"A": "1", "B": "2"}
+            assert tenant._runtime_service_account == "runner"
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+    def test_omitting_optional_args_preserves_prior_snapshot(self):
+        """Calling set_argo_config without runtime_image/pod_env/service_account
+        keeps previously snapshotted values — guards against clearing the pod
+        env on a later argo-disable call."""
+        tenant.set_argo_config(
+            api_url="http://x:1",
+            namespace="ns",
+            runtime_image="img:keep",
+            pod_env={"KEEP": "yes"},
+            service_account="runner-keep",
+        )
+        try:
+            tenant.set_argo_config(api_url="http://y:2", namespace="ns2")
+            assert tenant._runtime_image == "img:keep"
+            assert tenant._runtime_pod_env == {"KEEP": "yes"}
+            assert tenant._runtime_service_account == "runner-keep"
+            assert tenant._argo_api_url == "http://y:2"
+            assert tenant._argo_namespace == "ns2"
+        finally:
+            tenant.set_argo_config(api_url=None, namespace="cogniverse")

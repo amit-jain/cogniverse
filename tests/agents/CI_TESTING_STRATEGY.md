@@ -52,7 +52,7 @@ CI testing strategy for **cogniverse-agents** package (Implementation Layer) in 
    - Configuration loading
 
 **Coverage highlights**:
-- `routing_agent.py`: 82% (comprehensive core functionality)
+- `gateway_agent.py`: 82% (comprehensive core functionality)
 - `video_search_agent.py`: 76% (search and reranking)
 - DSPy modules: Core signature and module structure
 - Multi-agent workflows: Template and aggregation logic
@@ -144,7 +144,7 @@ import pytest
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-class TestRoutingAgent:
+class TestGatewayAgent:
     """Core routing agent functionality."""
 
     def test_route_video_query(self):
@@ -159,7 +159,7 @@ class TestRoutingAgent:
 
 @pytest.mark.unit
 # No ci_fast marker - runs only in full suite
-class TestRoutingAgentEdgeCases:
+class TestGatewayAgentEdgeCases:
     """Extended edge case tests."""
 
     def test_malformed_query_handling(self):
@@ -309,8 +309,8 @@ class TestMultiTenantRouting:
 
     def test_tenant_specific_agent_registry(self):
         """Test agent registry per tenant."""
-        agent1 = RoutingAgent(tenant_id="tenant_a")
-        agent2 = RoutingAgent(tenant_id="tenant_b")
+        agent1 = GatewayAgent(tenant_id="tenant_a")
+        agent2 = GatewayAgent(tenant_id="tenant_b")
         # Validate isolation
         pass
 

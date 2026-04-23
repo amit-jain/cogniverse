@@ -628,7 +628,6 @@ uv run python scripts/deploy_json_schema.py \
 python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id default
-python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
 python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7

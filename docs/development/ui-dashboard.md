@@ -213,9 +213,9 @@ def render_system_config_ui(manager, tenant_id):
 
     with st.form("system_config_form"):
         # Agent service URLs
-        routing_agent_url = st.text_input(
-            "Routing Agent URL",
-            value=system_config.routing_agent_url
+        video_agent_url = st.text_input(
+            "Video Agent URL",
+            value=system_config.video_agent_url
         )
         # ... other fields
 
@@ -223,8 +223,7 @@ def render_system_config_ui(manager, tenant_id):
         if submitted:
             # Update config
             updated_config = SystemConfig(
-                tenant_id=tenant_id,
-                routing_agent_url=routing_agent_url,
+                video_agent_url=video_agent_url,
                 # ... other fields
             )
             manager.set_system_config(updated_config)
@@ -1067,8 +1066,8 @@ Vespa Port: [8080]
 Version: 2
 Updated: 2025-10-07 14:30:00
 Changes:
-  - routing_agent_url: http://localhost:8000 → http://localhost:8001
   - video_agent_url: http://localhost:8002 (added)
+  - backend_url: http://localhost (updated)
 
 [Rollback to Version 1] [Export Version]
 ```

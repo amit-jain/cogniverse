@@ -41,7 +41,7 @@ class TestPreferencePairDeduplication:
             [
                 {
                     "context.span_id": "span1",
-                    "name": "routing_agent",
+                    "name": "gateway_agent",
                     "attributes.input.query": "test query",
                     "attributes.output.response": "same response",
                     "start_time": datetime.utcnow(),
@@ -80,7 +80,7 @@ class TestPreferencePairDeduplication:
             [
                 {
                     "context.span_id": "span1",
-                    "name": "routing_agent",
+                    "name": "gateway_agent",
                     "attributes.input.query": "test query",
                     "attributes.output.response": "default response",
                     "start_time": datetime.utcnow(),
@@ -120,14 +120,14 @@ class TestPreferencePairDeduplication:
             [
                 {
                     "context.span_id": "span1",
-                    "name": "routing_agent",
+                    "name": "gateway_agent",
                     "attributes.input.query": "query1",
                     "attributes.output.response": "default1",
                     "start_time": datetime.utcnow(),
                 },
                 {
                     "context.span_id": "span2",
-                    "name": "routing_agent",
+                    "name": "gateway_agent",
                     "attributes.input.query": "query2",
                     "attributes.output.response": "default2",
                     "start_time": datetime.utcnow(),
@@ -198,7 +198,7 @@ class TestPropertyAccess:
                 [
                     {
                         "context.span_id": "span1",
-                        "name": "routing_agent",
+                        "name": "gateway_agent",
                         "attributes.input.query": "test",
                         "attributes.output.response": "response",
                         "start_time": datetime.utcnow(),

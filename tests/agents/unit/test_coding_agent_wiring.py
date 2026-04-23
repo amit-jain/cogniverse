@@ -40,8 +40,7 @@ class TestCodingAgentMemoryWiring:
     def test_process_impl_calls_inject_context_into_prompt(self):
         """Pin the wiring at the source level. A regression where someone
         removes the inject_context_into_prompt call would silently drop
-        learned strategies for the coding agent — the same bug we just
-        fixed for RoutingAgent (audit fix #8)."""
+        learned strategies for the coding agent."""
         from cogniverse_agents.coding_agent import CodingAgent
 
         source = inspect.getsource(CodingAgent._process_impl)

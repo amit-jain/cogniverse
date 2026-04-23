@@ -245,14 +245,12 @@ class ConfigUtils:
 
         # System config mappings
         system_keys = {
-            "routing_agent_url": lambda: self._system_config.routing_agent_url,
             "video_agent_url": lambda: self._system_config.video_agent_url,
             "summarizer_agent_url": lambda: self._system_config.summarizer_agent_url,
             "detailed_report_agent_url": lambda: (
                 self._system_config.summarizer_agent_url
             ),  # Alias
             "orchestrator_agent_port": lambda: 8013,  # OrchestratorAgent default
-            "routing_agent_port": lambda: 8001,  # Hardcoded default
             "text_analysis_port": lambda: 8005,  # Hardcoded default
             "search_backend": lambda: self._system_config.search_backend,
             "backend_url": lambda: self._system_config.backend_url,
@@ -325,12 +323,10 @@ class ConfigUtils:
         all_keys.update(
             [
                 "backend",
-                "routing_agent_url",
                 "video_agent_url",
                 "summarizer_agent_url",
                 "detailed_report_agent_url",
                 "orchestrator_agent_port",
-                "routing_agent_port",
                 "text_analysis_port",
                 "search_backend",
                 "backend_url",

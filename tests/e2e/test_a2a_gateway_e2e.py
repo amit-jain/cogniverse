@@ -482,14 +482,14 @@ class TestGatewaySearchPipeline:
 
 @pytest.mark.e2e
 @skip_if_no_runtime
-class TestRoutingAgentThin:
-    """The routing agent is now a thin decision-maker. Both 'gateway' and
-    'routing' capabilities route through _execute_gateway_task in the
-    dispatcher, so POST to routing_agent/process goes through the gateway
-    pipeline. The routing_agent no longer does entity extraction or query
-    enhancement inline."""
+class TestGatewayAgentThin:
+    """The gateway agent is a thin decision-maker: GLiNER classification +
+    fast-path vs orchestrator routing. POST to gateway_agent/process goes
+    through _execute_gateway_task in the dispatcher. The gateway does NOT
+    perform entity extraction or query enhancement inline — those are
+    separate agents invoked by the orchestrator when needed."""
 
-    def test_routing_agent_routes_video_to_search(self):
+    def test_gateway_agent_routes_video_to_search(self):
         """'show me cooking videos' through routing → gateway classifies as
         simple video → routes to search_agent → returns Vespa results.
 
@@ -498,9 +498,9 @@ class TestRoutingAgentThin:
         """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "show me cooking videos",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 5,
@@ -537,9 +537,9 @@ class TestRoutingAgentThin:
         enhanced_query — those moved to dedicated A2A agents."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "find videos about machine learning",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -558,7 +558,7 @@ class TestRoutingAgentThin:
             "Routing agent should not return inline relationships"
         )
         # enhanced_query should not be at top level (it's in downstream if anywhere)
-        assert "enhanced_query" not in data or data.get("agent") != "routing_agent", (
+        assert "enhanced_query" not in data or data.get("agent") != "gateway_agent", (
             "Top-level enhanced_query indicates old inline routing, not A2A architecture"
         )
 
@@ -566,9 +566,9 @@ class TestRoutingAgentThin:
         """Audio query through routing → gateway → audio_analysis_agent."""
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "listen to podcasts about deep learning",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -592,9 +592,9 @@ class TestRoutingAgentThin:
         """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "find images of neural network architectures",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,
@@ -618,9 +618,9 @@ class TestRoutingAgentThin:
         """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
-                "/agents/routing_agent/process",
+                "/agents/gateway_agent/process",
                 json={
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "query": "find PDF documents about Python",
                     "context": {"tenant_id": TENANT_ID},
                     "top_k": 3,

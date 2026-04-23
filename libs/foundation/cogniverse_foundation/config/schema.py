@@ -16,7 +16,6 @@ SYSTEM_CONFIG_SCHEMA = {
     "required": ["tenant_id", "search_backend"],
     "properties": {
         "tenant_id": {"type": "string", "minLength": 1},
-        "routing_agent_url": {"type": "string", "format": "uri"},
         "video_agent_url": {"type": "string", "format": "uri"},
         "summarizer_agent_url": {"type": "string", "format": "uri"},
         "search_backend": {"type": "string", "enum": ["vespa"]},

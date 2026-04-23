@@ -334,7 +334,6 @@ uv run streamlit run scripts/approval_queue_tab.py --server.port 8502
 from datetime import datetime
 from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest
 from cogniverse_agents.approval import HumanApprovalAgent, ApprovalStorageImpl, ApprovalStatus
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 
 # Step 1: Generate synthetic data
 # Initialize service (backend auto-discovered via registry)
@@ -381,13 +380,10 @@ await storage.append_to_training_dataset(
     items=approved_items
 )
 
-# Step 5: Load dataset and train optimizer
+# Step 5: Dataset available for optimization CLI
 # Dataset is now available in telemetry backend for training
-# Optimizer can access it through telemetry provider APIs
-
-# Train optimizer with approved data
-optimizer = AdvancedRoutingOptimizer(tenant_id="your_org:production")
-result = await optimizer.optimize_routing_policy()  # Trains with approved data from telemetry
+# Run optimization to consume the approved data:
+# uv run python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id your_org:production
 ```
 
 ### Approval Workflow States

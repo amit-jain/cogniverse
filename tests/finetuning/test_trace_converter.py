@@ -131,7 +131,7 @@ class TestInstructionDataset:
 class TestAgentFiltering:
     """Test agent-specific span filtering"""
 
-    def test_filter_routing_agent_spans(self):
+    def test_filter_gateway_agent_spans(self):
         """Test filtering for routing agent spans"""
         mock_provider = Mock()
         mock_provider.traces = Mock()
@@ -143,7 +143,7 @@ class TestAgentFiltering:
         spans_df = pd.DataFrame(
             {
                 "context.span_id": ["span1", "span2", "span3"],
-                "name": ["routing_agent", "search_agent", "routing_agent"],
+                "name": ["gateway_agent", "search_agent", "gateway_agent"],
                 "attributes.agent_type": ["routing", "search", "routing"],
             }
         )
@@ -164,7 +164,7 @@ class TestAgentFiltering:
         spans_df = pd.DataFrame(
             {
                 "context.span_id": ["span1", "span2"],
-                "name": ["profile_selection_agent", "routing_agent"],
+                "name": ["profile_selection_agent", "gateway_agent"],
                 "attributes.agent_type": ["profile_selection", "routing"],
             }
         )
@@ -185,7 +185,7 @@ class TestAgentFiltering:
         spans_df = pd.DataFrame(
             {
                 "context.span_id": ["span1", "span2"],
-                "name": ["entity_extraction_agent", "routing_agent"],
+                "name": ["entity_extraction_agent", "gateway_agent"],
                 "attributes.agent_type": ["entity_extraction", "routing"],
             }
         )
@@ -426,7 +426,7 @@ class TestTraceToTrajectoryConverter:
         spans_df = pd.DataFrame(
             {
                 "context.span_id": ["span1", "span2", "span3"],
-                "name": ["routing_agent", "search_agent", "routing_agent"],
+                "name": ["gateway_agent", "search_agent", "gateway_agent"],
             }
         )
 
@@ -540,7 +540,7 @@ class TestTraceToTrajectoryConverterAsync:
             return_value=pd.DataFrame(
                 {
                     "context.span_id": ["span1"],
-                    "name": ["routing_agent"],
+                    "name": ["gateway_agent"],
                     # No session_id column
                 }
             )
@@ -566,10 +566,10 @@ class TestTraceToTrajectoryConverterAsync:
             {
                 "context.span_id": ["span1", "span2", "span3", "span4"],
                 "name": [
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
                 ],
                 "attributes.session_id": [
                     "session1",
@@ -617,10 +617,10 @@ class TestTraceToTrajectoryConverterAsync:
             {
                 "context.span_id": ["span1", "span2", "span3", "span4"],
                 "name": [
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
                 ],
                 "attributes.session_id": [
                     "session1",
@@ -666,7 +666,7 @@ class TestTraceToTrajectoryConverterAsync:
         spans_df = pd.DataFrame(
             {
                 "context.span_id": ["span1", "span2"],
-                "name": ["routing_agent", "routing_agent"],
+                "name": ["gateway_agent", "gateway_agent"],
                 "attributes.session_id": ["session1", "session1"],
                 "start_time": [
                     datetime(2025, 1, 1, 12, 0, 0),
@@ -716,10 +716,10 @@ class TestTraceToTrajectoryConverterAsync:
             {
                 "context.span_id": ["span1", "span2", "span3", "span4"],
                 "name": [
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
-                    "routing_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
+                    "gateway_agent",
                 ],
                 "attributes.session_id": [
                     "session1",

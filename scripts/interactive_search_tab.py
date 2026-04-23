@@ -202,42 +202,6 @@ def render_interactive_search_tab(agent_status: dict):
                                     f"Annotation saved for result #{i + 1}: {_relevance}"
                                 )
 
-                                # Persist to Phoenix via runtime for optimization
-                                try:
-                                    import httpx as _httpx
-
-                                    _httpx.post(
-                                        f"{runtime_url}/agents/routing_agent/process",
-                                        json={
-                                            "agent_name": "routing_agent",
-                                            "query": search_query,
-                                            "context": {
-                                                "tenant_id": current_tenant,
-                                                "action": "optimize_routing",
-                                                "examples": [
-                                                    {
-                                                        "query": search_query,
-                                                        "chosen_agent": "search_agent",
-                                                        "confidence": score,
-                                                        "search_quality": (
-                                                            0.9
-                                                            if _relevance
-                                                            == "Highly Relevant"
-                                                            else 0.5
-                                                            if _relevance == "Relevant"
-                                                            else 0.1
-                                                        ),
-                                                        "agent_success": _relevance
-                                                        != "Not Relevant",
-                                                    }
-                                                ],
-                                            },
-                                        },
-                                        timeout=10.0,
-                                    )
-                                except Exception:
-                                    pass  # Non-blocking
-
             # Summarize Results (Streaming)
             if result_count > 0 and st.button("📝 Summarize Results (Streaming)"):
                 from phoenix_dashboard_standalone import display_streaming_result

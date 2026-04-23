@@ -148,6 +148,30 @@ def test_validate_raises_when_profiles_disagree_on_same_service():
         )
 
 
+def test_validate_ignores_conflict_on_undeployed_service():
+    """A profile conflict on a service that isn't deployed must NOT fail
+    startup. The runtime can still serve every profile bound to deployed
+    services; the conflicting ones will fail on first use with a clear
+    factory error. This matters for multi-profile configs (e.g., video +
+    image variants) shipped in a single config.json but only partially
+    deployed per environment."""
+    bindings = [
+        ProfileBinding("colpali_profile", "image", "vidore/colsmol-500m"),
+        ProfileBinding("colqwen_profile", "image", "vidore/colqwen-omni-v0.1"),
+        ProfileBinding("text_profile", "colbert", "lightonai/LateOn"),
+    ]
+    # Only ``colbert`` is deployed — the ``image`` service is absent, so the
+    # conflict between colpali/colqwen profiles is not startup-fatal.
+    urls = {"colbert": "http://colbert:8000"}
+
+    validate_inference_services(
+        bindings,
+        urls,
+        probe=lambda _: "lightonai/LateOn",
+        sleep=_StubSleep(),
+    )
+
+
 def test_validate_retries_when_service_not_ready_then_succeeds():
     bindings = [ProfileBinding("lateon_mv", "general", "lightonai/LateOn")]
     urls = {"general": "http://general:8000"}

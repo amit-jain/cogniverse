@@ -60,7 +60,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ## Optimization System Performance
 
-> **Note**: GEPA (Experience-Guided Policy Adaptation) optimizer is implemented in `libs/agents/cogniverse_agents/routing/advanced_optimizer.py` and automatically selected when dataset size >= 200 examples.
+> **Note**: GEPA (Experience-Guided Policy Adaptation) optimizer is available via `dspy.teleprompt.GEPA` and automatically selected by `DSPyAgentOptimizerPipeline` when dataset size >= 200 examples.
 
 ### DSPy Optimizer Performance
 | Optimizer | Training Time | Memory | Convergence |
@@ -71,7 +71,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **GEPA** | < 45 min | 12GB | 50-150 iterations |
 | **SIMBA** | < 30 min | 8GB | 30-80 iterations |
 
-> **Note**: Available optimizers include: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 (via `libs/core/cogniverse_core/registries/dspy_registry.py`), plus GEPA and SIMBA (via `libs/agents/cogniverse_agents/routing/advanced_optimizer.py`).
+> **Note**: Available optimizers include: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 (via `libs/core/cogniverse_core/registries/dspy_registry.py`), plus GEPA and SIMBA (via `dspy.teleprompt`).
 
 ### Query Enhancement Performance
 | Component | Training Time | Memory | Description |

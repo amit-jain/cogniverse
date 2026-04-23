@@ -249,7 +249,7 @@ class ConfigManager:
     # ========== Routing Configuration ==========
 
     def get_routing_config(
-        self, tenant_id: str = None, service: str = "routing_agent"
+        self, tenant_id: str = None, service: str = "gateway_agent"
     ) -> RoutingConfigUnified:
         """
         Get routing configuration.
@@ -283,7 +283,7 @@ class ConfigManager:
         self,
         routing_config: RoutingConfigUnified,
         tenant_id: Optional[str] = None,
-        service: str = "routing_agent",
+        service: str = "gateway_agent",
     ) -> RoutingConfigUnified:
         """
         Set routing configuration.

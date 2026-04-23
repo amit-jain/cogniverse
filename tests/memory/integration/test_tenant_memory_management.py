@@ -341,14 +341,14 @@ class TestTenantJobsCRUD:
 
 @pytest.mark.integration
 class TestJobExecution:
-    """Job executor reads config from real Vespa and routes through routing_agent."""
+    """Job executor reads config from real Vespa and routes through gateway_agent."""
 
     def test_executor_reads_stored_job_and_routes_query(self, tenant_api_client):
-        """Create job via API → job_executor reads from same ConfigStore → calls routing_agent.
+        """Create job via API → job_executor reads from same ConfigStore → calls gateway_agent.
 
         The job is stored in real Vespa via the tenant API. The job_executor
         reads it back from the same Vespa instance, then routes the query and
-        each post_action through routing_agent (mocked HTTP transport only).
+        each post_action through gateway_agent (mocked HTTP transport only).
         """
         client, _ = tenant_api_client
 
@@ -398,7 +398,7 @@ class TestJobExecution:
         assert first_payload["tenant_id"] == "test_tenant"
         assert "context" not in first_payload
 
-        # Second call is _deliver_to_wiki (pure delivery skips routing_agent)
+        # Second call is _deliver_to_wiki (pure delivery skips gateway_agent)
         second_payload = calls[1][1]["json"]
         assert second_payload["query"] == "find recent papers on ColPali retrieval"
         assert second_payload["tenant_id"] == "test_tenant"

@@ -18,7 +18,7 @@ class TestWikiEndpoints:
                     "query": "e2e test wiki save",
                     "response": {"message": "This is an e2e test of wiki"},
                     "entities": ["e2e_testing", "wiki_feature"],
-                    "agent_name": "routing_agent",
+                    "agent_name": "gateway_agent",
                     "tenant_id": TENANT_ID,
                 },
             )

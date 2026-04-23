@@ -27,8 +27,8 @@ def render_memory_management_tab():
     # Agent selection (tenant comes from the gate)
     agent_name = st.text_input(
         "Agent Name",
-        value="routing_agent",
-        help="Enter agent name (e.g., routing_agent, video_agent)",
+        value="gateway_agent",
+        help="Enter agent name (e.g., gateway_agent, orchestrator_agent)",
     )
     st.caption(f"Memories scoped to tenant **{tenant_id}**")
 

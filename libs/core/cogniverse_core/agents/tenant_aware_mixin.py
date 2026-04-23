@@ -163,7 +163,7 @@ class TenantAwareAgentMixin:
             context = agent.get_tenant_context()
             # {
             #     "tenant_id": "customer_a",
-            #     "agent_type": "RoutingAgent"
+            #     "agent_type": "GatewayAgent"
             # }
         """
         context = {
@@ -281,7 +281,7 @@ class TenantAwareAgentMixin:
                 "search_completed",
                 {"query": "machine learning", "results": 10}
             )
-            # Logs: [customer_a] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
+            # Logs: [customer_a] [GatewayAgent] search_completed: {'query': 'machine learning', 'results': 10}
         """
         log_func = getattr(logger, level, logger.info)
 

@@ -597,7 +597,7 @@ class TestWorkflowOptimization:
             "entity_extraction_agent",
             "query_enhancement_agent",
             "profile_selection_agent",
-            "routing_agent",
+            "gateway_agent",
             "image_search_agent",
             "audio_analysis_agent",
             "document_agent",

@@ -694,9 +694,6 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 Optimize routing and search agents via the optimization CLI:
 
 ```bash
-# Run a full routing optimization cycle
-python -m cogniverse_runtime.optimization_cli --mode routing --tenant-id default
-
 # Optimize gateway confidence thresholds
 python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default
 
@@ -721,7 +718,6 @@ Available optimization modes:
 
 | Mode | What It Optimizes |
 |------|-------------------|
-| `routing` | DSPy routing module with SIMBA/MIPROv2 |
 | `gateway-thresholds` | GLiNER confidence thresholds |
 | `entity-extraction` | Entity extraction accuracy |
 | `profile` | Profile performance ranking |

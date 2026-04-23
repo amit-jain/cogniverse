@@ -1,21 +1,16 @@
 """
 Integration tests for DSPy artifact telemetry round-trip.
 
-Verifies the full save-then-load pipeline through ArtifactManager,
-DSPyIntegrationMixin, and AdvancedRoutingOptimizer against a REAL Phoenix
-Docker instance.
+Verifies the full save-then-load pipeline through ArtifactManager and
+DSPyIntegrationMixin against a REAL Phoenix Docker instance.
 
 Requires Docker to be running. Uses the ``phoenix_container`` and
 ``telemetry_manager_with_phoenix`` fixtures from tests/conftest.py.
 """
 
-import asyncio
-
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
 @pytest.fixture
@@ -139,50 +134,6 @@ class TestTenantIsolation:
 
         assert (await mgr_a.load_prompts("router")) == {"system": "A's prompt"}
         assert (await mgr_b.load_prompts("router")) == {"system": "B's prompt"}
-
-
-class TestOptimizerExperienceRoundTrip:
-    """Verify AdvancedRoutingOptimizer persists and reloads experiences
-    through real Phoenix."""
-
-    @pytest.mark.asyncio
-    async def test_record_then_persist_then_reload(self, real_provider):
-        """Record experiences, persist to Phoenix, reload in new optimizer."""
-        config_kwargs = dict(
-            tenant_id="optimizer-exp-test",
-            llm_config=LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            ),
-            telemetry_provider=real_provider,
-        )
-
-        # Create optimizer and record an experience
-        optimizer = AdvancedRoutingOptimizer(**config_kwargs)
-        reward = await optimizer.record_routing_experience(
-            query="find cats in videos",
-            entities=["cat"],
-            relationships=[],
-            enhanced_query="find feline content in video library",
-            chosen_agent="video_search",
-            routing_confidence=0.9,
-            search_quality=0.85,
-            agent_success=True,
-        )
-
-        assert isinstance(reward, float)
-        assert len(optimizer.experiences) == 1
-
-        # Persist to real Phoenix
-        await optimizer._persist_data()
-
-        # Create a NEW optimizer from the same provider — should load from Phoenix
-        optimizer2 = AdvancedRoutingOptimizer(**config_kwargs)
-        # Allow async callback to complete
-        await asyncio.sleep(0.5)
-
-        assert len(optimizer2.experiences) == 1
-        assert optimizer2.experiences[0].query == "find cats in videos"
-        assert optimizer2.experiences[0].chosen_agent == "video_search"
 
 
 # ---------------------------------------------------------------------------

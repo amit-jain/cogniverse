@@ -9,20 +9,20 @@ A2AStarletteApplication (a2a-sdk). This class only holds configuration
 metadata (name, capabilities, version) and the optional DSPy module.
 
 Usage:
-    class RoutingInput(AgentInput):
+    class GatewayInput(AgentInput):
         query: str
         context: Optional[str] = None
 
-    class RoutingOutput(AgentOutput):
+    class GatewayOutput(AgentOutput):
         recommended_agent: str
         confidence: float
 
-    class RoutingDeps(AgentDeps):
+    class GatewayDeps(AgentDeps):
         model_name: str = "smollm3:3b"
 
-    class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
-        async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
-            return RoutingOutput(recommended_agent="search", confidence=0.9)
+    class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
+        async def _process_impl(self, input: GatewayInput) -> GatewayOutput:
+            return GatewayOutput(recommended_agent="search", confidence=0.9)
 """
 
 import logging

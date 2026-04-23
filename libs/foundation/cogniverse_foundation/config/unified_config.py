@@ -90,7 +90,7 @@ class LLMConfig:
         return a copy of primary.
 
         Args:
-            component: Component name (e.g., "routing_agent", "summarizer_agent")
+            component: Component name (e.g., "gateway_agent", "summarizer_agent")
 
         Returns:
             Fully resolved LLMEndpointConfig
@@ -147,7 +147,6 @@ class SystemConfig:
     """
 
     # Agent service URLs
-    routing_agent_url: str = "http://localhost:8001"
     video_agent_url: str = "http://localhost:8002"
     summarizer_agent_url: str = "http://localhost:8004"
 
@@ -196,7 +195,6 @@ class SystemConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
-            "routing_agent_url": self.routing_agent_url,
             "video_agent_url": self.video_agent_url,
             "summarizer_agent_url": self.summarizer_agent_url,
             "ingestion_api_url": self.ingestion_api_url,
@@ -222,7 +220,6 @@ class SystemConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "SystemConfig":
         """Create from dictionary"""
         return cls(
-            routing_agent_url=data.get("routing_agent_url", "http://localhost:8001"),
             video_agent_url=data.get("video_agent_url", "http://localhost:8002"),
             summarizer_agent_url=data.get(
                 "summarizer_agent_url", "http://localhost:8004"

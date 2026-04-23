@@ -245,7 +245,10 @@ class TrainingMethodSelector:
     ) -> pd.DataFrame:
         """Filter spans for specific agent type."""
         agent_keywords = {
-            "routing": ["routing", "route"],
+            # ``routing`` is the stable agent_type for classification-and-route
+            # spans; the implementing agent is GatewayAgent, so "gateway" must
+            # match too.
+            "routing": ["routing", "route", "gateway"],
             "profile_selection": ["profile", "selection"],
             "entity_extraction": ["entity", "extraction"],
         }

@@ -185,10 +185,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 ```python
 @dataclass
 class SystemConfig:
-    tenant_id: str = "default"
-
     # Agent service URLs
-    routing_agent_url: str = "http://localhost:8001"
     video_agent_url: str = "http://localhost:8002"
     summarizer_agent_url: str = "http://localhost:8004"
 

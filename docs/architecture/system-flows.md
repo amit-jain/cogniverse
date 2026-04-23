@@ -452,7 +452,7 @@ flowchart LR
 
 ## Optimization & Learning Flows
 
-### Scenario 10: GRPO Optimization Cycle with Packages
+### Scenario 10: Gateway Optimization Cycle with Packages
 
 ```mermaid
 flowchart TB
@@ -460,19 +460,19 @@ flowchart TB
 
     Telemetry --> SpanEval[<span style='color:#000'>Span Evaluator<br/>cogniverse_evaluation</span>]
 
-    SpanEval --> Extract{<span style='color:#000'>Extract Experiences<br/>per tenant</span>}
+    SpanEval --> Extract{<span style='color:#000'>Extract Signals<br/>per tenant</span>}
     Extract --> Quality[<span style='color:#000'>Quality Signals</span>]
     Extract --> Latency[<span style='color:#000'>Latency Metrics</span>]
     Extract --> UserFeedback[<span style='color:#000'>User Feedback</span>]
 
-    Quality --> GRPO[<span style='color:#000'>AdvancedRoutingOptimizer<br/>(GRPO-based)<br/>cogniverse_agents</span>]
-    Latency --> GRPO
-    UserFeedback --> GRPO
+    Quality --> OptCLI[<span style='color:#000'>optimization_cli<br/>(gateway-thresholds/simba/etc.)<br/>cogniverse_runtime</span>]
+    Latency --> OptCLI
+    UserFeedback --> OptCLI
 
-    GRPO --> UpdateDSPy[<span style='color:#000'>Update DSPy Module<br/>cogniverse_agents</span>]
-    UpdateDSPy --> NewModel[<span style='color:#000'>Optimized Routing Model<br/>tenant-specific</span>]
+    OptCLI --> UpdateDSPy[<span style='color:#000'>Update DSPy Module<br/>cogniverse_agents</span>]
+    UpdateDSPy --> NewModel[<span style='color:#000'>Optimized Agent Model<br/>tenant-specific</span>]
 
-    NewModel --> Deploy[<span style='color:#000'>Deploy to Routing Agent<br/>cogniverse_agents</span>]
+    NewModel --> Deploy[<span style='color:#000'>Deploy to Gateway Agent<br/>cogniverse_agents</span>]
     Deploy --> Monitor[<span style='color:#000'>Monitor Performance<br/>cogniverse_telemetry_phoenix</span>]
 
     Monitor --> Telemetry
@@ -484,48 +484,43 @@ flowchart TB
     style Quality fill:#ffcc80,stroke:#ef6c00,color:#000
     style Latency fill:#ffcc80,stroke:#ef6c00,color:#000
     style UserFeedback fill:#90caf9,stroke:#1565c0,color:#000
-    style GRPO fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OptCLI fill:#ffcc80,stroke:#ef6c00,color:#000
     style UpdateDSPy fill:#81d4fa,stroke:#0288d1,color:#000
     style NewModel fill:#81d4fa,stroke:#0288d1,color:#000
     style Deploy fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Monitor fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### Scenario 11: Experience Collection & Optimization
+### Scenario 11: Span Collection & Optimization
 
 ```mermaid
 sequenceDiagram
-    participant Routing as Routing Agent<br/>cogniverse_agents
+    participant Gateway as Gateway Agent<br/>cogniverse_agents
     participant Phoenix as Phoenix<br/>cogniverse_telemetry_phoenix
     participant SpanEval as Span Evaluator<br/>cogniverse_evaluation
-    participant GRPO as AdvancedRoutingOptimizer<br/>cogniverse_agents
+    participant OptCLI as optimization_cli<br/>cogniverse_runtime
     participant Deploy as Deployment<br/>cogniverse_runtime
 
     loop Continuous Operation
-        Routing->>Phoenix: Record routing decisions<br/>with tenant context
+        Gateway->>Phoenix: Record routing decisions<br/>with tenant context
         Phoenix->>Phoenix: Store spans (tenant-isolated projects)
     end
 
-    Note over SpanEval: Triggered periodically<br/>or on-demand
+    Note over OptCLI: Triggered on-demand (dashboard)<br/>or by Argo workflow
 
-    SpanEval->>Phoenix: Fetch recent spans (tenant-scoped)
-    Phoenix-->>SpanEval: routing_spans[] (filtered by tenant)
+    OptCLI->>Phoenix: Fetch recent spans (tenant-scoped)
+    Phoenix-->>OptCLI: gateway_spans[] (filtered by tenant)
 
-    SpanEval->>SpanEval: Extract experiences per tenant
-    Note over SpanEval: Experience = {<br/>  query: str,<br/>  prediction: modality,<br/>  reward: float,<br/>  tenant_id: str,<br/>  context: dict<br/>}
+    OptCLI->>OptCLI: Compute optimized thresholds / compile DSPy module
+    Note over OptCLI: _compute_gateway_thresholds(spans_df)<br/>gateway-thresholds mode
 
-    SpanEval->>GRPO: record_routing_experience(...)
+    SpanEval->>Phoenix: Evaluate span quality (ongoing)
+    Phoenix-->>SpanEval: eval_results
 
-    activate GRPO
-    GRPO->>GRPO: Store experience in tenant-specific buffer
-    GRPO->>GRPO: Sample mini-batch
-    GRPO->>GRPO: Compute gradients
-    GRPO->>GRPO: Update policy
-    GRPO-->>Deploy: optimization_metrics + tenant_id
-    deactivate GRPO
+    OptCLI-->>Deploy: optimization_artifacts + tenant_id
 
-    Deploy->>Routing: Deploy optimized module (tenant-aware)
-    Routing->>Phoenix: Record deployment event (tenant context)
+    Deploy->>Gateway: Deploy optimized module (tenant-aware)
+    Gateway->>Phoenix: Record deployment event (tenant context)
 ```
 
 ### Scenario 12: Cross-Modal Optimization

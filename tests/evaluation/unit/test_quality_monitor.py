@@ -694,7 +694,7 @@ class TestForceOptimizationCycle:
             "search",
             "summary",
             "report",
-            "routing",
+            "gateway",
         }
 
     @pytest.mark.asyncio
@@ -811,7 +811,7 @@ class TestSpanNameByAgent:
             AgentType.SEARCH: "SearchAgent",
             AgentType.SUMMARY: "SummarizerAgent",
             AgentType.REPORT: "DetailedReportAgent",
-            AgentType.ROUTING: "RoutingAgent",
+            AgentType.GATEWAY: "GatewayAgent",
         }
         for agent_type, expected_class in expected.items():
             span_name = SPAN_NAME_BY_AGENT[agent_type]

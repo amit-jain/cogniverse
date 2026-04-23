@@ -129,17 +129,6 @@ class AgentDispatcher:
 
         conversation_history = context.get("conversation_history", [])
 
-        # Action-based dispatch: optimization actions bypass normal routing
-        action = context.get("action")
-        if action in (
-            "optimize_routing",
-            "get_optimization_status",
-            "optimization_cycle_from_traces",
-        ):
-            return await self._execute_optimization_action(
-                action, query, context, tenant_id
-            )
-
         enrichment = {
             k: context[k]
             for k in (
@@ -1056,96 +1045,4 @@ class AgentDispatcher:
             "agent": "coding_agent",
             "message": f"Coding task complete for '{query}'",
             "result": result.model_dump(),
-        }
-
-    async def _execute_optimization_action(
-        self,
-        action: str,
-        query: str,
-        context: Dict[str, Any],
-        tenant_id: str,
-    ) -> Dict[str, Any]:
-        """Handle optimization actions (optimize_routing, get_optimization_status).
-
-        Creates an AdvancedRoutingOptimizer backed by real telemetry, records
-        provided examples, and triggers optimization or returns status.
-        """
-        from cogniverse_agents.routing.advanced_optimizer import (
-            AdvancedRoutingOptimizer,
-        )
-        from cogniverse_foundation.config.utils import get_config
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        llm_cfg = config.get_llm_config().resolve("routing_agent")
-        telemetry_manager = get_telemetry_manager()
-        telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
-
-        optimizer = AdvancedRoutingOptimizer(
-            tenant_id=tenant_id,
-            llm_config=llm_cfg,
-            telemetry_provider=telemetry_provider,
-        )
-
-        if action == "get_optimization_status":
-            status = optimizer.get_optimization_status()
-            return {
-                "status": "active",
-                "optimizer_ready": True,
-                "metrics": status,
-            }
-
-        # optimize_routing / optimization_cycle_from_traces
-        examples = context.get("examples", [])
-
-        if examples:
-            for ex in examples:
-                await optimizer.record_routing_experience(
-                    query=ex.get("query", ""),
-                    entities=[],
-                    relationships=[],
-                    enhanced_query=ex.get("query", ""),
-                    chosen_agent=ex.get("chosen_agent", "search_agent"),
-                    routing_confidence=ex.get("confidence", 0.5),
-                    search_quality=ex.get("search_quality", 0.5),
-                    agent_success=ex.get("agent_success", True),
-                    processing_time=ex.get("processing_time", 1.0),
-                )
-
-            return {
-                "status": "optimization_triggered",
-                "training_examples": len(examples),
-                "optimizer": "AdvancedRoutingOptimizer",
-            }
-
-        # No examples: run automated optimization cycle from traces
-        from cogniverse_agents.routing.annotation_agent import AnnotationAgent
-        from cogniverse_agents.routing.routing_span_evaluator import (
-            RoutingSpanEvaluator,
-        )
-        from cogniverse_runtime.routers.agents import get_annotation_queue
-
-        evaluator = RoutingSpanEvaluator(optimizer=optimizer, tenant_id=tenant_id)
-        cycle_results = await evaluator.evaluate_routing_spans()
-        spans_evaluated = cycle_results.get("spans_evaluated", 0)
-
-        # Identify low-confidence routing spans and enqueue them for human
-        # annotation. Without this, the AnnotationQueue stayed empty after
-        # every optimization cycle — the evaluator only fed the optimizer
-        # but never produced annotation requests.
-        try:
-            annotation_agent = AnnotationAgent(tenant_id=tenant_id)
-            requests = await annotation_agent.identify_spans_needing_annotation()
-            queue = get_annotation_queue()
-            enqueued = queue.enqueue_batch(requests) if requests else 0
-        except Exception as exc:
-            logger.warning("Annotation enqueue failed (non-fatal): %s", exc)
-            enqueued = 0
-
-        return {
-            "status": "optimization_triggered",
-            "optimizer": "OptimizationOrchestrator",
-            "cycle_results": cycle_results,
-            "spans_evaluated": spans_evaluated,
-            "annotations_enqueued": enqueued,
         }

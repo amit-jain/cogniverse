@@ -244,8 +244,7 @@ class CogniverseAgentExecutor(AgentExecutor):
         """Fall back to orchestrator_agent when no agent_name is provided.
 
         The orchestrator plans and executes against the agent registry for
-        both simple and complex queries — it is the A2A replacement for the
-        legacy monolithic routing_agent.
+        both simple and complex queries.
         """
         return "orchestrator_agent"
 

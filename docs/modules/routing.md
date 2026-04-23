@@ -39,7 +39,6 @@ libs/agents/cogniverse_agents/
 ├── query_enhancement_agent.py          # Query enhancement A2A agent
 ├── routing/
 │   ├── dspy_routing_signatures.py      # DSPy routing signatures
-│   ├── advanced_optimizer.py           # GRPO optimization (batch jobs)
 │   ├── config.py                       # Configuration system
 │   ├── cross_modal_optimizer.py        # Multi-modal fusion
 │   ├── modality_cache.py               # Per-modality caching (LRU)
@@ -47,7 +46,6 @@ libs/agents/cogniverse_agents/
 │   ├── modality_evaluator.py           # Modality evaluation
 │   ├── modality_metrics.py             # Performance metrics
 │   ├── xgboost_meta_models.py          # XGBoost meta-learning
-│   ├── routing_span_evaluator.py       # Routing span evaluation
 │   └── ... (additional DSPy and utility files)
 ```
 
@@ -275,124 +273,7 @@ async def _process_impl(
 
 ---
 
-### 3. AdvancedRoutingOptimizer (advanced_optimizer.py:137-1358)
-
-**Purpose**: GRPO optimization with DSPy 3.0 advanced optimizers
-
-**Key Features**:
-
-- Multi-stage optimization (Bootstrap → SIMBA → MIPROv2 → GEPA)
-- Experience replay buffer
-- Reward-based learning
-- Confidence calibration
-- Exploration vs exploitation (ε-greedy)
-
-**Architecture**:
-```python
-class AdvancedRoutingOptimizer:
-    def __init__(
-        self,
-        tenant_id: str,                          # REQUIRED - no default
-        llm_config: LLMEndpointConfig,           # REQUIRED
-        telemetry_provider: TelemetryProvider,   # REQUIRED
-        config: Optional[AdvancedOptimizerConfig] = None,
-    ):
-        # Experience storage
-        self.experiences: List[RoutingExperience] = []
-        self.experience_replay: List[RoutingExperience] = []  # LRU buffer
-
-        # Metrics
-        self.metrics: OptimizationMetrics = ...
-
-        # GRPO components
-        self.advanced_optimizer = None  # Multi-stage optimizer
-        self.routing_policy = None      # DSPy module
-        self.confidence_calibrator = None
-
-        # Exploration
-        self.current_epsilon = 0.1  # ε-greedy
-```
-
-**Key Methods**:
-
-```python
-async def record_routing_experience(
-    self,
-    query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]],
-    enhanced_query: str,
-    chosen_agent: str,
-    routing_confidence: float,
-    search_quality: float,
-    agent_success: bool,
-    processing_time: float = 0.0,
-    user_satisfaction: Optional[float] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> float:
-    """
-    Record routing experience and compute reward
-
-    Reward computation:
-    reward = (search_quality × 0.4)
-           + (agent_success × 0.3)
-           + (user_satisfaction × 0.3)
-           - (time_penalty)
-
-    Triggers optimization every N experiences or on performance decline
-    """
-
-async def optimize_routing_decision(
-    self,
-    query: str,
-    entities: List[Dict[str, Any]],
-    relationships: List[Dict[str, Any]],
-    enhanced_query: str,
-    baseline_prediction: Dict[str, Any],
-) -> Dict[str, Any]:
-    """
-    Apply GRPO optimization to routing decision
-
-    Process:
-    1. Check if optimization ready (min experiences)
-    2. Apply exploration vs exploitation (ε-greedy)
-    3. Use optimized policy for prediction
-    4. Calibrate confidence score
-    5. Return optimized decision
-    """
-
-def _create_advanced_optimizer(self):
-    """
-    Create multi-stage optimizer based on dataset size
-
-    Stages:
-    - Bootstrap (0-20): Few-shot learning
-    - SIMBA (20-50): Similarity-based memory
-    - MIPROv2 (50-100): Metric-aware instruction optimization
-    - GEPA (100+): Reflective prompt evolution
-    """
-```
-
-**Optimization Stages**:
-```python
-# Adaptive optimizer selection
-if dataset_size < 20:
-    optimizer = BootstrapFewShot(metric=routing_accuracy_metric)
-elif dataset_size < 50:
-    optimizer = SIMBA(metric=routing_accuracy_metric)
-elif dataset_size < 100:
-    optimizer = MIPROv2(metric=routing_accuracy_metric)
-else:
-    optimizer = GEPA(
-        metric=routing_accuracy_metric,
-        auto="light",
-        reflection_lm=current_lm
-    )
-```
-
----
-
-### 5. QueryEnhancementAgent (query_enhancement_agent.py)
+### 3. QueryEnhancementAgent (query_enhancement_agent.py)
 
 **Purpose**: A2A agent that enriches queries via `ComposableQueryAnalysisModule` — part of the orchestration pipeline for complex queries
 
@@ -1324,68 +1205,7 @@ print(f"Confidence: {result.confidence}")
 # Confidence: 0.82
 ```
 
-### Example 3: GRPO Optimization
-
-```python
-from cogniverse_agents.routing.advanced_optimizer import (
-    AdvancedRoutingOptimizer,
-    AdvancedOptimizerConfig,
-)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-
-# Initialize optimizer
-config = AdvancedOptimizerConfig(
-    optimizer_strategy="adaptive",  # Selects optimizer based on data size
-    min_experiences_for_training=50,
-    learning_rate=0.001,
-    batch_size=32
-)
-
-optimizer = AdvancedRoutingOptimizer(
-    tenant_id="your_org:production",
-    llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
-    telemetry_provider=telemetry_provider,
-    config=config,
-)
-
-# Record routing experience
-reward = await optimizer.record_routing_experience(
-    query="Show videos of Boston Dynamics robots",
-    entities=[{"text": "Boston Dynamics", "label": "ORGANIZATION"}, ...],
-    relationships=[("Boston Dynamics", "creates", "robots"), ...],
-    enhanced_query="Boston Dynamics robots (robotics OR quadruped OR Atlas robot)",
-    chosen_agent="video_search_agent",
-    routing_confidence=0.85,
-    search_quality=0.92,  # High quality results
-    agent_success=True,
-    processing_time=0.5,
-    user_satisfaction=0.95
-)
-
-print(f"Reward: {reward:.3f}")
-
-# Get optimization status
-status = optimizer.get_optimization_status()
-print(f"Total experiences: {status['total_experiences']}")
-print(f"Training step: {status['training_step']}")
-print(f"Success rate: {status['metrics']['success_rate']}")
-print(f"Avg reward: {status['metrics']['avg_reward']}")
-
-# Get routing recommendations (uses optimized policy)
-recommendations = await optimizer.get_routing_recommendations(
-    query="Robots in manufacturing",
-    entities=[...],
-    relationships=[...]
-)
-
-print(f"Recommended agent: {recommendations['recommended_agent']}")
-print(f"Confidence: {recommendations['confidence']}")
-print(f"Reasoning: {recommendations['reasoning']}")
-print(f"Optimization ready: {recommendations['optimization_ready']}")
-```
-
-### Example 4: Cross-Modal Fusion
+### Example 3: Cross-Modal Fusion
 
 ```python
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
@@ -1735,45 +1555,34 @@ Located in: `tests/routing/integration/`
 
 **Key Test Files**:
 
-- `test_tiered_routing.py` - End-to-end tiered routing
-- `test_routing_agent_with_advanced_features.py` - Full routing agent
-- `test_orchestration_end_to_end.py` - Multi-agent orchestration with routing
-- `test_e2e_cache_lazy_metrics.py` - Caching with metrics
-- `test_modality_routing_integration.py` - Per-modality routing integration
-- `test_complete_optimization_integration.py` - Complete optimization flow
+- `test_deep_research_integration.py` - Deep research flow integration
+- `test_feature_integration.py` - Feature-level routing integration
 - `test_modality_optimization_integration.py` - Modality optimization integration
-- `test_routing_span_evaluator_integration.py` - Routing span evaluator tests
-- `test_production_routing_integration.py` - Production-level integration tests
+- `test_trace_connectivity.py` - A2A trace propagation
 
 **Example Test**:
 ```python
-# tests/routing/integration/test_e2e_cache_lazy_metrics.py
+# tests/routing/unit/test_modality_cache.py
 
-@pytest.mark.integration
-async def test_cache_integration_with_metrics():
-    """Test cache integration with metrics tracking"""
+@pytest.mark.unit
+def test_cache_hit_and_miss():
+    """Test cache hit/miss tracking"""
     cache = ModalityCacheManager(cache_size_per_modality=100)
-    metrics = ModalityMetricsTracker()
 
     query = "Find videos about machine learning"
     modality = QueryModality.VIDEO
 
-    # First request (cache miss)
+    # First access — cache miss
     result1 = cache.get_cached_result(query, modality)
     assert result1 is None
-    metrics.record_modality_execution(modality, latency_ms=150, success=True)
 
-    # Cache result
+    # Store result
     cache.cache_result(query, modality, {"videos": ["v1", "v2"]})
 
-    # Second request (cache hit)
+    # Second access — cache hit
     result2 = cache.get_cached_result(query, modality)
     assert result2 is not None
-    metrics.record_modality_execution(modality, latency_ms=1, success=True)
-
-    # Verify cache stats
-    stats = cache.get_cache_stats(modality)
-    assert stats["hit_rate"] > 0
+    assert "videos" in result2
 ```
 
 ### E2E Tests

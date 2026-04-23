@@ -1,7 +1,6 @@
-"""
-Workflow Generator
+"""Workflow Generator.
 
-Generates WorkflowExecution synthetic data for WorkflowIntelligence and UnifiedOptimizer training.
+Generates WorkflowExecution synthetic training data for WorkflowIntelligence.
 """
 
 import logging

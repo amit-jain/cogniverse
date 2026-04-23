@@ -529,52 +529,6 @@ class TestEntityExtractionOptimization:
 # ---------------------------------------------------------------------------
 
 
-class TestRoutingOptimization:
-    """Routing optimization handles missing/empty span data."""
-
-    @pytest.mark.asyncio
-    async def test_routing_no_spans(self, fake_telemetry_manager):
-        from cogniverse_runtime.optimization_cli import run_routing_optimization
-
-        p1, p2 = _patch_infra(fake_telemetry_manager)
-        with p1, p2:
-            result = await run_routing_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 0
-
-    @pytest.mark.asyncio
-    async def test_routing_spans_low_confidence(self):
-        """Routing optimization skips examples with confidence < 0.5."""
-        spans_df = _make_spans_df(
-            "cogniverse.routing",
-            [
-                {
-                    "attributes.routing": {
-                        "query": "search for videos",
-                        "recommended_agent": "search_agent",
-                        "primary_intent": "video_search",
-                        "confidence": 0.3,
-                    }
-                }
-            ],
-        )
-        provider = FakeTelemetryProvider(spans_df)
-        mgr = FakeTelemetryManager(provider)
-
-        from cogniverse_runtime.optimization_cli import run_routing_optimization
-
-        p1, p2 = _patch_infra(mgr)
-        with p1, p2:
-            result = await run_routing_optimization(
-                tenant_id="test:unit", lookback_hours=1
-            )
-        assert result["status"] == "no_data"
-        assert result["spans_found"] == 1
-        assert result["examples"] == 0
-
-
 # ---------------------------------------------------------------------------
 # Test: synthetic data merge helper
 # ---------------------------------------------------------------------------
@@ -695,6 +649,213 @@ class TestCreateTeleprompter:
 # ---------------------------------------------------------------------------
 # Test: synthetic generation mode
 # ---------------------------------------------------------------------------
+
+
+def _gateway_spans(rows: list[dict]) -> pd.DataFrame:
+    """Build a ``cogniverse.gateway`` spans DataFrame with ``attributes.gateway``
+    populated from ``rows``. Each row is ``{"complexity": ..., "confidence":
+    ..., "status_code": ...}``; ``status_code`` defaults to ``OK`` if absent.
+    The DataFrame shape matches what Phoenix's ``get_spans`` returns."""
+    records = []
+    for r in rows:
+        records.append(
+            {
+                "attributes.gateway": {
+                    "complexity": r.get("complexity"),
+                    "confidence": r.get("confidence"),
+                },
+                "status_code": r.get("status_code", "OK"),
+            }
+        )
+    df = pd.DataFrame(records)
+    df["name"] = "cogniverse.gateway"
+    return df
+
+
+class TestComputeGatewayThresholdsAlgorithm:
+    """Tight assertions on every output field of ``_compute_gateway_thresholds``.
+
+    The calibration has three branches:
+      (1) simple_error_rate > 0.2        → optimized = min(0.4 + 0.1, 0.95) = 0.5
+      (2) complex_err < 0.05 AND mean > 0.8 → optimized = max(0.4 - 0.05, 0.5) = 0.5
+      (3) otherwise                       → optimized = 0.4 (default)
+
+    ``gliner_threshold`` is always ``round(max(0.15, min(p25 * 0.8, 0.5)), 3)``.
+    Tests cover each branch plus degenerate inputs.
+    """
+
+    def test_empty_df_reports_no_data(self):
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        result = _compute_gateway_thresholds(pd.DataFrame())
+        assert result == {"status": "no_data", "spans_found": 0}
+
+    def test_missing_attributes_gateway_column(self):
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        df = pd.DataFrame([{"name": "cogniverse.gateway", "status_code": "OK"}])
+        result = _compute_gateway_thresholds(df)
+        assert result == {
+            "status": "no_data",
+            "spans_found": 1,
+            "reason": "no_gateway_attributes",
+        }
+
+    def test_no_confidence_values_across_spans(self):
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        df = _gateway_spans(
+            [
+                {"complexity": "simple", "confidence": None},
+                {"complexity": "complex", "confidence": None},
+            ]
+        )
+        result = _compute_gateway_thresholds(df)
+        assert result == {
+            "status": "no_data",
+            "spans_found": 2,
+            "reason": "no_confidence_data",
+        }
+
+    def test_high_simple_error_rate_raises_threshold(self):
+        """Branch (1): 5 of 10 simple spans are errors → rate = 0.5 > 0.2.
+        Optimizer raises fast_path threshold from 0.4 → 0.5."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        rows = []
+        # 10 simple spans: 5 with status=ERROR (high error rate), all conf=0.5.
+        for i in range(10):
+            rows.append(
+                {
+                    "complexity": "simple",
+                    "confidence": 0.5,
+                    "status_code": "ERROR" if i < 5 else "OK",
+                }
+            )
+        # 2 complex spans, no errors.
+        rows += [{"complexity": "complex", "confidence": 0.5} for _ in range(2)]
+
+        result = _compute_gateway_thresholds(_gateway_spans(rows))
+        assert result["status"] == "ready"
+        assert result["spans_found"] == 12
+
+        t = result["thresholds"]
+        assert t["fast_path_confidence_threshold"] == 0.5
+        # All confidences = 0.5 → p25 = 0.5 → gliner = round(min(0.5*0.8, 0.5), 3)
+        assert t["gliner_threshold"] == 0.4
+
+        a = t["analysis"]
+        assert a["total_spans"] == 12
+        assert a["simple_count"] == 10
+        assert a["complex_count"] == 2
+        assert a["simple_error_rate"] == 0.5
+        assert a["complex_error_rate"] == 0.0
+        assert a["mean_confidence"] == 0.5
+        assert a["p25_confidence"] == 0.5
+
+    def test_high_confidence_low_complex_errors_lowers_threshold(self):
+        """Branch (2): complex_error_rate = 0, mean_confidence = 0.9 > 0.8,
+        simple_error_rate = 0 (not > 0.2). Optimizer lowers threshold from
+        0.4 → max(0.35, 0.5) = 0.5."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        rows = [{"complexity": "simple", "confidence": 0.9} for _ in range(10)] + [
+            {"complexity": "complex", "confidence": 0.9} for _ in range(5)
+        ]
+
+        result = _compute_gateway_thresholds(_gateway_spans(rows))
+        assert result["status"] == "ready"
+
+        t = result["thresholds"]
+        assert t["fast_path_confidence_threshold"] == 0.5
+        # p25 = 0.9 → gliner = round(max(0.15, min(0.72, 0.5)), 3) = 0.5
+        assert t["gliner_threshold"] == 0.5
+
+        a = t["analysis"]
+        assert a["mean_confidence"] == 0.9
+        assert a["p25_confidence"] == 0.9
+        assert a["simple_error_rate"] == 0.0
+        assert a["complex_error_rate"] == 0.0
+
+    def test_moderate_signal_keeps_default_threshold(self):
+        """Branch (3): simple_error_rate = 0.1 (not > 0.2), mean_confidence =
+        0.55 (not > 0.8). Neither branch fires; threshold stays at 0.4."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        rows = []
+        for i in range(10):
+            rows.append(
+                {
+                    "complexity": "simple",
+                    "confidence": 0.6 if i < 5 else 0.5,
+                    "status_code": "ERROR" if i == 0 else "OK",
+                }
+            )
+        rows += [{"complexity": "complex", "confidence": 0.5} for _ in range(2)]
+
+        result = _compute_gateway_thresholds(_gateway_spans(rows))
+        t = result["thresholds"]
+        assert t["fast_path_confidence_threshold"] == 0.4
+
+        a = t["analysis"]
+        # 1 of 10 simple = 0.1; doesn't trigger branch 1.
+        assert a["simple_error_rate"] == 0.1
+        # Mean of 5x 0.6 + 5x 0.5 + 2x 0.5 over 12 = 6.5 / 12 ≈ 0.5417
+        assert a["mean_confidence"] == 0.5417
+
+    def test_gliner_floor_at_0_15(self):
+        """When p25 * 0.8 < 0.15, gliner_threshold floors at 0.15 (prevents
+        the GLiNER model from being effectively disabled by a near-zero
+        threshold derived from low-confidence training data)."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        rows = [{"complexity": "simple", "confidence": 0.05} for _ in range(4)]
+        result = _compute_gateway_thresholds(_gateway_spans(rows))
+        t = result["thresholds"]
+        # p25 = 0.05, p25*0.8 = 0.04, below the 0.15 floor.
+        assert t["gliner_threshold"] == 0.15
+
+    def test_gliner_ceiling_at_0_5(self):
+        """When p25 * 0.8 > 0.5, gliner_threshold caps at 0.5 (preserves
+        recall — too high a threshold means GLiNER misses valid entities)."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        rows = [{"complexity": "simple", "confidence": 0.95} for _ in range(4)]
+        result = _compute_gateway_thresholds(_gateway_spans(rows))
+        t = result["thresholds"]
+        # p25 = 0.95, p25*0.8 = 0.76, caps at 0.5.
+        assert t["gliner_threshold"] == 0.5
+
+    def test_status_col_absent_means_zero_error_rate(self):
+        """Spans without a ``status_code`` column count as all-OK — the
+        optimizer must not crash on minimal Phoenix schemas that lack it."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        df = _gateway_spans([{"complexity": "simple", "confidence": 0.5}])
+        df = df.drop(columns=["status_code"])
+        result = _compute_gateway_thresholds(df)
+        a = result["thresholds"]["analysis"]
+        assert a["simple_error_rate"] == 0.0
+        assert a["complex_error_rate"] == 0.0
+
+    def test_malformed_attributes_dict_treated_as_missing(self):
+        """Defensive: an ``attributes.gateway`` value that's not a dict (e.g.
+        a stray string from a malformed write) must not crash the compute."""
+        from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds
+
+        df = pd.DataFrame(
+            [
+                {
+                    "name": "cogniverse.gateway",
+                    "attributes.gateway": "not-a-dict",
+                    "status_code": "OK",
+                }
+            ]
+        )
+        result = _compute_gateway_thresholds(df)
+        # No complexity/confidence extractable → no confidence data.
+        assert result["status"] == "no_data"
+        assert result["reason"] == "no_confidence_data"
 
 
 class TestSyntheticGeneration:

@@ -97,7 +97,7 @@ def parse_message(
 
     if not text:
         return ParsedCommand(
-            agent_name="routing_agent",
+            agent_name="gateway_agent",
             query="",
             is_command=False,
         )
@@ -188,7 +188,7 @@ def parse_message(
             )
 
     return ParsedCommand(
-        agent_name="routing_agent",
+        agent_name="gateway_agent",
         query=text,
         is_command=False,
     )

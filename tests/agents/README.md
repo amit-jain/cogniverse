@@ -42,10 +42,10 @@ Test individual agent components in isolation with full mocking of external depe
 
 ### Test Files
 
-#### `test_routing_agent.py`
-Tests the central RoutingAgent functionality:
+#### `test_gateway_agent.py`
+Tests the central GatewayAgent functionality:
 ```python
-class TestRoutingAgent:
+class TestGatewayAgent:
     def test_analyze_and_route_video_query(self)
     def test_route_to_video_search_agent(self)
     def test_route_to_summarizer_agent(self)
@@ -53,15 +53,15 @@ class TestRoutingAgent:
     def test_unsupported_query_type(self)
 ```
 
-#### `test_a2a_routing_agent.py`
+#### `test_a2a_gateway_agent.py`
 Tests A2A (Agent-to-Agent) communication protocol:
 ```python
-class TestA2ARoutingAgent:
+class TestA2AGatewayAgent:
     def test_send_to_agent_success(self)
     def test_send_to_agent_http_error(self)
     def test_send_to_agent_connection_error(self)
 
-class TestA2ARoutingAgentIntegration:
+class TestA2AGatewayAgentIntegration:
     def test_video_search_routing_integration(self)
     def test_summarizer_routing_integration(self)
 ```
@@ -97,7 +97,7 @@ class TestDSPyIntegrationMixin:
     def test_prompt_optimization(self)
 
 class TestDSPyAgentIntegration:
-    def test_routing_agent_dspy_integration(self)
+    def test_gateway_agent_dspy_integration(self)
     def test_summarizer_agent_dspy_integration(self)
 ```
 
@@ -110,7 +110,7 @@ class TestDSPyAgentIntegration:
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -m unit -v
 
 # Run specific test file
-JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/test_routing_agent.py -v
+JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/unit/test_gateway_agent.py -v
 
 # Run with coverage (UV workspace packages)
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/ -v --cov=libs/agents/cogniverse_agents --cov-report=term-missing --cov-report=html
@@ -143,10 +143,10 @@ class TestDetailedReportAgentIntegration:
     def test_generate_report_edge_cases(self)
 ```
 
-#### `test_routing_agent_integration.py`
+#### `test_gateway_agent_integration.py`
 Tests routing agent with FastAPI integration:
 ```python
-class TestRoutingAgentFastAPIIntegration:
+class TestGatewayAgentFastAPIIntegration:
     def test_agent_card_endpoint(self)
     def test_send_task_endpoint(self)
     def test_health_check_endpoint(self)
@@ -167,7 +167,7 @@ class TestDSPyOptimizerIntegration:
 JAX_PLATFORM_NAME=cpu timeout 300 uv run python -m pytest tests/agents/integration/ -v
 
 # Run specific integration test
-JAX_PLATFORM_NAME=cpu timeout 120 uv run python -m pytest tests/agents/integration/test_routing_agent_integration.py -v
+JAX_PLATFORM_NAME=cpu timeout 120 uv run python -m pytest tests/agents/integration/test_gateway_agent_integration.py -v
 
 # Run with markers
 JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -m integration -v

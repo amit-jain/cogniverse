@@ -214,7 +214,7 @@ class TestGatewayOrchestrationHandoff:
             return_value=mock_gateway_result,
         ) as mock_gw:
             result = await dispatcher.dispatch(
-                agent_name="routing_agent",
+                agent_name="legacy_routing_capability_agent",
                 query="test",
                 context={"tenant_id": "t1"},
             )
@@ -325,7 +325,8 @@ class TestNoMultiAgentOrchestrator:
 
     @pytest.mark.ci_fast
     def test_no_get_optimizer_calls(self):
-        """agent_dispatcher must not call _get_optimizer (removed from thin RoutingAgent)."""
+        """agent_dispatcher must not call _get_optimizer — optimizer-lookup
+        was removed from the routing path when optimization moved to Argo."""
         import inspect
 
         source = inspect.getsource(AgentDispatcher)

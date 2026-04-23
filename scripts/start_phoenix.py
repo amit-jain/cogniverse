@@ -333,7 +333,7 @@ class PhoenixServer:
         try:
             response = requests.get(f"http://{self.host}:{self.port}/health", timeout=2)
             return response.status_code == 200
-        except:
+        except requests.RequestException:
             return False
 
     def _wait_for_server(self, timeout: int = 30):
@@ -351,7 +351,7 @@ class PhoenixServer:
                         f"Phoenix server is ready at http://{self.host}:{self.port}"
                     )
                     return True
-            except:
+            except requests.RequestException:
                 pass
 
             time.sleep(1)
@@ -393,7 +393,7 @@ class PhoenixServer:
                         check=True,
                     )
                     status["container_status"] = result.stdout.strip()
-                except:
+                except subprocess.CalledProcessError:
                     pass
 
             try:
@@ -481,13 +481,13 @@ def main():
     )
 
     # Stop command
-    stop_parser = subparsers.add_parser("stop", help="Stop Phoenix server")
+    subparsers.add_parser("stop", help="Stop Phoenix server")
 
     # Restart command
-    restart_parser = subparsers.add_parser("restart", help="Restart Phoenix server")
+    subparsers.add_parser("restart", help="Restart Phoenix server")
 
     # Status command
-    status_parser = subparsers.add_parser("status", help="Get Phoenix server status")
+    subparsers.add_parser("status", help="Get Phoenix server status")
 
     args = parser.parse_args()
 

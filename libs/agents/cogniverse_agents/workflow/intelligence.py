@@ -574,11 +574,7 @@ class WorkflowIntelligence:
     def get_successful_workflows(
         self, min_quality: float = 0.7, limit: int = 100
     ) -> List[WorkflowExecution]:
-        """
-        Get successful workflows for integration with routing optimization
-
-        This is called by UnifiedOptimizer to extract high-quality workflows
-        that should inform routing decisions.
+        """Return successful high-quality workflows for downstream optimization.
 
         Args:
             min_quality: Minimum user_satisfaction score (0.0-1.0)

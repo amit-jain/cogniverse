@@ -546,7 +546,6 @@ flowchart LR
 
 | Mode | What It Optimizes | When to Use |
 |------|-------------------|-------------|
-| `routing` | DSPy routing module (agent selection) | After routing accuracy evaluation |
 | `gateway-thresholds` | GLiNER confidence thresholds | When fast-path misroutes queries |
 | `entity-extraction` | Entity extraction accuracy | When entities are missed or wrong |
 | `profile` | Profile performance ranking | After multi-profile experiments |
@@ -558,10 +557,6 @@ flowchart LR
 ### Run Optimization
 
 ```bash
-# Single mode — optimize routing decisions
-python -m cogniverse_runtime.optimization_cli \
-  --mode routing --tenant-id acme:production
-
 # Full workflow — all modes in sequence
 python -m cogniverse_runtime.optimization_cli \
   --mode workflow --tenant-id acme:production

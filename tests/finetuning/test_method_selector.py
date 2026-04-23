@@ -45,7 +45,7 @@ class TestPropertyAccess:
                 [
                     {
                         "context.span_id": "span1",
-                        "name": "routing_agent",
+                        "name": "gateway_agent",
                         "start_time": datetime.utcnow(),
                     }
                 ]
@@ -223,7 +223,7 @@ class TestDataAnalysis:
                 [
                     {
                         "context.span_id": "span1",
-                        "name": "routing_agent",
+                        "name": "gateway_agent",
                         "start_time": datetime.utcnow(),
                     }
                 ]
@@ -254,7 +254,7 @@ class TestDataAnalysis:
             [
                 {
                     "context.span_id": f"span{i}",
-                    "name": "routing_agent",
+                    "name": "gateway_agent",
                     "start_time": datetime.utcnow(),
                 }
                 for i in range(25)
@@ -309,11 +309,11 @@ class TestAgentFiltering:
         """Create selector"""
         return TrainingMethodSelector()
 
-    def test_filter_routing_agent_spans(self, selector):
+    def test_filter_gateway_agent_spans(self, selector):
         """Test filtering for routing agent"""
         spans_df = pd.DataFrame(
             [
-                {"name": "routing_agent", "context.span_id": "span1"},
+                {"name": "gateway_agent", "context.span_id": "span1"},
                 {"name": "video_search_agent", "context.span_id": "span2"},
                 {"name": "router_decision", "context.span_id": "span3"},
             ]
@@ -331,7 +331,7 @@ class TestAgentFiltering:
         spans_df = pd.DataFrame(
             [
                 {"name": "profile_selector", "context.span_id": "span1"},
-                {"name": "routing_agent", "context.span_id": "span2"},
+                {"name": "gateway_agent", "context.span_id": "span2"},
                 {"name": "selection_decision", "context.span_id": "span3"},
             ]
         )
@@ -348,7 +348,7 @@ class TestAgentFiltering:
         spans_df = pd.DataFrame(
             [
                 {"name": "entity_extractor", "context.span_id": "span1"},
-                {"name": "routing_agent", "context.span_id": "span2"},
+                {"name": "gateway_agent", "context.span_id": "span2"},
                 {"name": "extraction_task", "context.span_id": "span3"},
             ]
         )

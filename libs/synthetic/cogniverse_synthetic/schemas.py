@@ -89,11 +89,8 @@ class FusionHistorySchema(BaseModel):
 
 
 class RoutingExperienceSchema(BaseModel):
-    """
-    Training example for AdvancedRoutingOptimizer
-
-    Represents a routing decision with entity extraction and quality metrics.
-    """
+    """Training example representing a routing decision with entity
+    extraction and quality metrics."""
 
     query: str = Field(..., description="User query text")
     entities: List[Dict[str, Any]] = Field(
@@ -153,11 +150,8 @@ class RoutingExperienceSchema(BaseModel):
 
 
 class WorkflowExecutionSchema(BaseModel):
-    """
-    Training example for WorkflowIntelligence and UnifiedOptimizer
-
-    Represents a complete workflow execution with performance metrics.
-    """
+    """Training example representing a complete workflow execution with
+    performance metrics. Consumed by WorkflowIntelligence."""
 
     workflow_id: str = Field(..., description="Unique workflow identifier")
     query: str = Field(..., description="User query text")

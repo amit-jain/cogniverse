@@ -1,8 +1,7 @@
-"""
-Routing Generator
+"""Routing Generator.
 
-Generates RoutingExperience synthetic data for AdvancedRoutingOptimizer training.
-Uses DSPy modules for LLM-driven entity-rich query generation with optional optimization.
+Generates RoutingExperience synthetic training data via DSPy LLM-driven
+entity-rich query generation.
 """
 
 import logging

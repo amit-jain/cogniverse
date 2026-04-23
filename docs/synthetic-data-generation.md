@@ -13,9 +13,7 @@ The system extends DSPy optimization to all routing and orchestration components
 
 1. **ModalityOptimizer** - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
 2. **CrossModalOptimizer** - Multi-modal fusion decisions
-3. **RoutingOptimizer** - Entity-based advanced routing
-4. **WorkflowOptimizer** - Multi-agent workflow orchestration
-5. **UnifiedOptimizer** - Combined routing and workflow planning
+3. **WorkflowOptimizer** - Multi-agent workflow orchestration
 
 ## Architecture
 
@@ -588,38 +586,6 @@ optimizer = CrossModalOptimizer(tenant_id="acme")
 optimizer.train_fusion_model()  # Trains on recorded internal history
 ```
 
-### Advanced Routing
-
-```python
-from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer, RoutingExperience
-from cogniverse_synthetic import SyntheticDataService
-from cogniverse_synthetic.schemas import SyntheticDataRequest
-
-# Generate entity-based routing data
-service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="routing", count=200)
-response = await service.generate(request)
-
-# Convert to RoutingExperience
-experiences = [RoutingExperience(**ex) for ex in response.data]
-
-# Record experiences and optimize
-optimizer = AdvancedRoutingOptimizer(tenant_id="your_org:production")
-for exp in experiences:
-    await optimizer.record_routing_experience(
-        query=exp.query,
-        entities=exp.entities,
-        relationships=exp.relationships,
-        enhanced_query=exp.enhanced_query,
-        chosen_agent=exp.chosen_agent,
-        routing_confidence=exp.routing_confidence,
-        search_quality=exp.search_quality,
-        agent_success=exp.agent_success,
-        user_satisfaction=exp.user_satisfaction,
-        processing_time=exp.processing_time
-    )
-result = await optimizer.optimize_routing_policy()  # Uses recorded experiences
-```
 
 ### Workflow Intelligence
 

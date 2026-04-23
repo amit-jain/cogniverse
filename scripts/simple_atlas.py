@@ -3,6 +3,7 @@
 Simple working embedding atlas visualization
 """
 
+import importlib.util
 import os
 from pathlib import Path
 
@@ -11,14 +12,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-# Import dimension reduction tools if available
-try:
-    from sklearn.cluster import KMeans
-    from umap import UMAP
-
-    UMAP_AVAILABLE = True
-except ImportError:
-    UMAP_AVAILABLE = False
+UMAP_AVAILABLE = (
+    importlib.util.find_spec("umap") is not None
+    and importlib.util.find_spec("sklearn.cluster") is not None
+)
+if not UMAP_AVAILABLE:
     st.warning("UMAP not available. Install with: pip install umap-learn scikit-learn")
 
 # Fix for environment variable
@@ -284,8 +282,8 @@ with tab1:
 
     if has_query:
         # Separate query and document points
-        doc_mask = df["is_query"] == False
-        query_mask = df["is_query"] == True
+        doc_mask = not df["is_query"]
+        query_mask = df["is_query"]
 
         doc_df = df[doc_mask].copy()  # Make explicit copies
         query_df = df[query_mask].copy()

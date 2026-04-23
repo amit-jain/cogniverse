@@ -421,13 +421,11 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         confidence: float,
         reasoning: str,
     ) -> None:
-        """Emit a cogniverse.routing span mirroring the RoutingAgent shape.
+        """Emit a cogniverse.routing span with the gateway's decision.
 
-        Downstream evaluators (RoutingEvaluator, AnnotationAgent,
-        RoutingSpanEvaluator, ModalitySpanCollector) filter on the
-        `cogniverse.routing` span name and read `routing.*` attributes.
-        Emitting it here lets those consumers observe gateway routing
-        decisions the same way they observed legacy RoutingAgent decisions.
+        Downstream telemetry consumers (RoutingEvaluator, AnnotationAgent,
+        ModalitySpanCollector) filter on the `cogniverse.routing` span name
+        and read `routing.*` attributes.
         """
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
