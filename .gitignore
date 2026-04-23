@@ -122,3 +122,4 @@ workflow_intelligence.db
 .colgrep/
 .playwright-mcp/
 .worktrees/
+.superpowers/
