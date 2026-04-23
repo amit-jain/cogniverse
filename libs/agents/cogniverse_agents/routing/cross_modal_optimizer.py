@@ -415,7 +415,9 @@ class CrossModalOptimizer:
             backend_config=backend_config,
             generator_config=generator_config,
         )
-        request = SyntheticDataRequest(optimizer="cross_modal", count=count)
+        request = SyntheticDataRequest(
+            optimizer="cross_modal", count=count, tenant_id=self.tenant_id
+        )
         response = await service.generate(request)
 
         # Add to fusion history

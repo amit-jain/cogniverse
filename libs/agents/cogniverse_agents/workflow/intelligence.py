@@ -19,7 +19,6 @@ from typing import Any, Dict, List, Optional
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.workflow_types import (
     WorkflowPlan,
-    WorkflowStatus,
     WorkflowTask,
 )
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
@@ -105,6 +104,7 @@ class WorkflowIntelligence:
         if not tenant_id:
             raise ValueError("tenant_id is required for WorkflowIntelligence")
         self.logger = logging.getLogger(__name__)
+        self.tenant_id = tenant_id
         self.max_history_size = max_history_size
         self.optimization_strategy = optimization_strategy
         self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
@@ -633,7 +633,9 @@ class WorkflowIntelligence:
             backend_config=backend_config,
             generator_config=generator_config,
         )
-        request = SyntheticDataRequest(optimizer="workflow", count=count)
+        request = SyntheticDataRequest(
+            optimizer="workflow", count=count, tenant_id=self.tenant_id
+        )
         response = await service.generate(request)
 
         initial_count = len(self.workflow_history)

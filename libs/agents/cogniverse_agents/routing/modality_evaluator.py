@@ -387,7 +387,9 @@ class ModalityEvaluator:
 
                 # Generate using SyntheticDataService directly
                 request = SyntheticDataRequest(
-                    optimizer="modality", count=synthetic_count
+                    optimizer="modality",
+                    count=synthetic_count,
+                    tenant_id=self.tenant_id,
                 )
                 response = await service.generate(request)
 

@@ -457,7 +457,9 @@ class ModalityOptimizer:
             service = SyntheticDataService(
                 backend=self.vespa_client, backend_config=self.backend_config
             )
-            request = SyntheticDataRequest(optimizer="modality", count=synthetic_count)
+            request = SyntheticDataRequest(
+                optimizer="modality", count=synthetic_count, tenant_id=self.tenant_id
+            )
             response = await service.generate(request)
             # Convert to ModalityExample objects
             synthetic_examples = [
@@ -472,7 +474,9 @@ class ModalityOptimizer:
             service = SyntheticDataService(
                 backend=self.vespa_client, backend_config=self.backend_config
             )
-            request = SyntheticDataRequest(optimizer="modality", count=synthetic_count)
+            request = SyntheticDataRequest(
+                optimizer="modality", count=synthetic_count, tenant_id=self.tenant_id
+            )
             response = await service.generate(request)
             # Convert to ModalityExample objects
             synthetic_examples = [

@@ -184,6 +184,7 @@ class TrainingMethodSelector:
         provider: TelemetryProvider,
         project: str,
         agent_type: Literal["routing", "profile_selection", "entity_extraction"],
+        tenant_id: str,
         min_sft_examples: int = 50,
         min_dpo_pairs: int = 20,
         generate_synthetic: bool = True,
@@ -230,7 +231,7 @@ class TrainingMethodSelector:
             )
 
             approved_batch = await self._generate_and_approve_synthetic(
-                agent_type=agent_type, num_needed=num_needed
+                agent_type=agent_type, num_needed=num_needed, tenant_id=tenant_id
             )
 
             logger.info(
@@ -288,7 +289,7 @@ class TrainingMethodSelector:
         return ("insufficient", 1.0)
 
     async def _generate_and_approve_synthetic(
-        self, agent_type: str, num_needed: int
+        self, agent_type: str, num_needed: int, tenant_id: str
     ) -> any:
         """
         Generate synthetic data and send through approval workflow.
@@ -324,6 +325,7 @@ class TrainingMethodSelector:
         request = SyntheticDataRequest(
             optimizer=optimizer_name,
             count=num_needed,
+            tenant_id=tenant_id,
             modality="VIDEO" if optimizer_name == "modality" else None,
         )
 

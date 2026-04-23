@@ -930,15 +930,14 @@ if not _selected_tenant:
     )
     st.stop()
 
+
 # Validate the tenant against the runtime's registered list before
 # letting tabs render. Cached for 30s so the sidebar picker stays
 # responsive.
 @st.cache_data(ttl=30)
 def _validate_tenant(tenant_id: str) -> tuple[bool, str]:
     try:
-        resp = httpx.get(
-            f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0
-        )
+        resp = httpx.get(f"{RUNTIME_URL}/admin/tenants/{tenant_id}", timeout=5.0)
     except Exception as exc:  # pragma: no cover - network-dependent
         return False, f"runtime unreachable at {RUNTIME_URL}: {exc}"
     if resp.status_code == 200:
@@ -2945,6 +2944,7 @@ with monitoring_tabs[6]:
                             analyze_dataset_status(
                                 dataset_provider,
                                 ft_project,
+                                tenant_id=st.session_state["current_tenant"],
                                 agent_type=agent_filter,
                                 min_sft_examples=50,
                                 min_dpo_pairs=20,
@@ -2956,6 +2956,7 @@ with monitoring_tabs[6]:
                             analyze_dataset_status(
                                 dataset_provider,
                                 ft_project,
+                                tenant_id=st.session_state["current_tenant"],
                                 modality=agent_filter,
                                 min_sft_examples=100,  # Triplets threshold
                             )

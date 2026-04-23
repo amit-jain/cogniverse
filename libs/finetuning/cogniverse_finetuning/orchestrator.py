@@ -548,6 +548,7 @@ class FinetuningOrchestrator:
             provider=self.provider,
             project=config.project,
             agent_type=config.agent_type,
+            tenant_id=config.tenant_id,
             min_sft_examples=config.min_sft_examples,
             min_dpo_pairs=config.min_dpo_pairs,
             generate_synthetic=config.generate_synthetic,
@@ -1099,6 +1100,7 @@ async def finetune(
 async def analyze_dataset_status(
     telemetry_provider: TelemetryProvider,
     project: str,
+    tenant_id: str,
     agent_type: Optional[str] = None,
     modality: Optional[str] = None,
     min_sft_examples: int = 50,
@@ -1140,6 +1142,7 @@ async def analyze_dataset_status(
         provider=telemetry_provider,
         project=project,
         agent_type=agent_type,
+        tenant_id=tenant_id,
         min_sft_examples=min_sft_examples,
         min_dpo_pairs=min_dpo_pairs,
         generate_synthetic=False,  # Just analyze, don't generate
