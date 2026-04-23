@@ -636,6 +636,7 @@ def render_config_history_ui(manager, tenant_id: str):
             if st.button(f"🔄 Rollback to Version {selected_version}"):
                 # Rollback = create new version with old config value
                 manager.store.set_config(
+                    tenant_id=tenant_id,
                     scope=ConfigScope(scope),
                     service=service,
                     config_key=config_key,

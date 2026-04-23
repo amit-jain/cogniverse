@@ -152,6 +152,7 @@ async def generate_batch_synthetic_data(
         200, ge=1, le=10000, description="Vespa sample size"
     ),
     max_profiles: int = Query(3, ge=1, le=10, description="Max profiles to use"),
+    tenant_id: str = Query(..., description="Tenant identifier (required)"),
 ) -> dict:
     """
     Generate multiple batches of synthetic data
@@ -185,6 +186,7 @@ async def generate_batch_synthetic_data(
                 count=count_per_batch,
                 vespa_sample_size=vespa_sample_size,
                 max_profiles=max_profiles,
+                tenant_id=tenant_id,
             )
 
             response = await service.generate(request)

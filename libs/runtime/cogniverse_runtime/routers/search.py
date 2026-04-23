@@ -169,7 +169,7 @@ async def search(
                             "type": "final",
                             "data": {
                                 "query": request.query,
-                                "profile": request.profile,
+                                "profile": profile,
                                 "strategy": request.strategy,
                                 "results_count": len(results),
                                 "results": [r.to_dict() for r in results],
@@ -203,7 +203,7 @@ async def search(
 
                 return SearchResponse(
                     query=request.query,
-                    profile=request.profile,
+                    profile=profile,
                     strategy=request.strategy,
                     results_count=len(results),
                     results=[r.to_dict() for r in results],
