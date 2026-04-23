@@ -295,7 +295,7 @@ for attr in search_attributes:
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Initialize manager (requires tenant_id)
-manager = Mem0MemoryManager(tenant_id="default")
+manager = Mem0MemoryManager(tenant_id="your_org:production")
 manager.initialize(
     backend_host="localhost",
     backend_port=8080,
@@ -324,7 +324,7 @@ print(f"Memory manager initialized: {manager.memory is not None}")
 # Add memory for routing agent
 manager.add_memory(
     content="User prefers video results for cooking queries",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="routing_agent",
     metadata={"context": "preference_learning"}
 )
@@ -337,7 +337,7 @@ print("Memory added successfully")
 # Search for memory
 results = manager.search_memory(
     query="cooking preferences",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="routing_agent",
     top_k=5
 )
@@ -363,7 +363,7 @@ for i, result in enumerate(results, 1):
 ```python
 # Get all memories for agent
 all_memories = manager.get_all_memories(
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="routing_agent"
 )
 
@@ -378,7 +378,7 @@ memory_id = all_memories[0]['id'] if all_memories else None
 if memory_id:
     manager.delete_memory(
         memory_id=memory_id,
-        tenant_id="default",
+        tenant_id="your_org:production",
         agent_name="routing_agent"
     )
     print(f"Deleted memory: {memory_id}")
@@ -408,7 +408,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Get system config for tenant
 system_config = SystemConfig(
-    tenant_id="default",
+    tenant_id="your_org:production",
     llm_model="gpt-4",
     backend_url="http://localhost",
     backend_port=8080
@@ -453,7 +453,7 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 config = TelemetryConfig()
 telemetry = PhoenixProvider(
     config=config,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 # Check Phoenix connection
@@ -513,7 +513,7 @@ config_manager = create_default_config_manager()
 backend = VespaVideoSearchClient(
     backend_url="http://localhost",
     backend_port=19071,  # Use your Vespa instance's actual port
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager  # REQUIRED - no default value
 )
 
@@ -535,7 +535,7 @@ print(f"Backend type: {type(backend).__name__}")
 # Profiles are managed via config_manager, not directly through backend
 from cogniverse_foundation.config.utils import get_config
 
-config = get_config(tenant_id="default", config_manager=config_manager)
+config = get_config(tenant_id="your_org:production", config_manager=config_manager)
 
 # List available profiles from config
 profiles = config.backend_profile_configs
@@ -641,11 +641,11 @@ from cogniverse_foundation.config.unified_config import BackendConfig, Synthetic
 
 # Initialize service with backend and config
 backend_config = BackendConfig(
-    tenant_id="default",
+    tenant_id="your_org:production",
     url="http://localhost",
     port=8080
 )
-generator_config = SyntheticGeneratorConfig(tenant_id="default")
+generator_config = SyntheticGeneratorConfig(tenant_id="your_org:production")
 
 service = SyntheticDataService(
     backend=backend,  # Backend instance
@@ -678,7 +678,7 @@ request = SyntheticDataRequest(
     vespa_sample_size=50,
     strategies=["diverse"],
     max_profiles=2,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 # Generate data
@@ -787,7 +787,7 @@ agent = SearchAgent(
 # Run search (synchronous) — tenant_id is per-request
 result = agent.search_by_text(
     query="machine learning tutorials",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
 )
 
@@ -887,7 +887,7 @@ from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize optimizer
-optimizer = ModalityOptimizer(tenant_id="default")
+optimizer = ModalityOptimizer(tenant_id="your_org:production")
 
 # Optimize single modality
 result = await optimizer.optimize_modality(
@@ -920,7 +920,7 @@ from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 
 # Initialize optimizer
-cm_optimizer = CrossModalOptimizer(tenant_id="default")
+cm_optimizer = CrossModalOptimizer(tenant_id="your_org:production")
 
 # Predict if fusion would help for a query
 benefit = cm_optimizer.predict_fusion_benefit(
@@ -950,7 +950,7 @@ print(f"Recommendation: {'Use fusion' if benefit > 0.5 else 'Single modality suf
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
 
 # Initialize GRPO optimizer
-grpo = AdvancedRoutingOptimizer(tenant_id="default")
+grpo = AdvancedRoutingOptimizer(tenant_id="your_org:production")
 
 # Record routing experience
 reward = await grpo.record_routing_experience(
@@ -1105,8 +1105,8 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest
 from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
 # Initialize service
-backend_config = BackendConfig(tenant_id="default", url="http://localhost", port=8080)
-generator_config = SyntheticGeneratorConfig(tenant_id="default")
+backend_config = BackendConfig(tenant_id="your_org:production", url="http://localhost", port=8080)
+generator_config = SyntheticGeneratorConfig(tenant_id="your_org:production")
 
 service = SyntheticDataService(
     backend=None,  # Or pass actual backend instance
@@ -1121,7 +1121,7 @@ request = SyntheticDataRequest(
     vespa_sample_size=50,
     strategies=["diverse"],
     max_profiles=2,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 # Generate data
@@ -1464,7 +1464,7 @@ if decision.recommended_agent == "video_search_agent":
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
-    results = agent.search_by_text(query="machine learning", tenant_id="default", top_k=5)
+    results = agent.search_by_text(query="machine learning", tenant_id="your_org:production", top_k=5)
     print(f"Found {len(results)} results")
 ```
 
@@ -1661,7 +1661,7 @@ argo get <workflow-name> -n cogniverse -o json | \
 
 - Fix: `uv pip install mem0`
 
-- Verify: Can create Mem0MemoryManager(tenant_id="default")
+- Verify: Can create Mem0MemoryManager(tenant_id="your_org:production")
 
 **Backend Config Not Found:**
 

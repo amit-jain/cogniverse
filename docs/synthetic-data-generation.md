@@ -442,7 +442,7 @@ request = SyntheticDataRequest(
     vespa_sample_size=200,      # Number of documents to sample from backend
     strategies=["diverse"],
     max_profiles=3,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 response = await service.generate(request)
@@ -604,7 +604,7 @@ response = await service.generate(request)
 experiences = [RoutingExperience(**ex) for ex in response.data]
 
 # Record experiences and optimize
-optimizer = AdvancedRoutingOptimizer(tenant_id="default")
+optimizer = AdvancedRoutingOptimizer(tenant_id="your_org:production")
 for exp in experiences:
     await optimizer.record_routing_experience(
         query=exp.query,
@@ -638,7 +638,7 @@ from cogniverse_agents.workflow.intelligence import WorkflowExecution
 executions = [WorkflowExecution(**ex) for ex in response.data]
 
 # Record workflow executions and optimize
-workflow_intel = WorkflowIntelligence(tenant_id="default")
+workflow_intel = WorkflowIntelligence(tenant_id="your_org:production")
 for execution in executions:
     workflow_intel.record_execution(execution)
 result = await workflow_intel.optimize_from_ground_truth()  # Uses recorded executions

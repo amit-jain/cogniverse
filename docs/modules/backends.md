@@ -1289,7 +1289,7 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 registry = get_backend_registry()
 backend = registry.get_ingestion_backend(
     "vespa",
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager,
     schema_loader=schema_loader,
 )

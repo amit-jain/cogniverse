@@ -482,7 +482,7 @@ def ingest_multimodal_content(content_path: str, content_type: str):
     if content_type == "VIDEO":
         # VideoIngestionPipeline handles all embedding generation per profile
         pipeline = VideoIngestionPipeline(
-            tenant_id="default",
+            tenant_id="your_org:production",
             config_manager=config_manager,
         )
         # process_video_async() runs keyframe extraction, transcription,

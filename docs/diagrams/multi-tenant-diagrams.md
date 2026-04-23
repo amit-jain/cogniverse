@@ -320,7 +320,7 @@ sequenceDiagram
     Script->>Foundation: create_default_config_manager()
     Foundation-->>Script: config_manager
 
-    Script->>Foundation: get_config(tenant_id="default", config_manager)
+    Script->>Foundation: get_config(tenant_id="your_org:production", config_manager)
     Foundation-->>Script: app_config
 
     Script->>Builder: build_simple_pipeline(tenant_id, video_dir, schema, backend)

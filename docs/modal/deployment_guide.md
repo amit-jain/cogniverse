@@ -455,7 +455,7 @@ telemetry_config = config_manager.get_telemetry_config("default")
 telemetry = TelemetryManager(telemetry_config)
 
 # Note: span() requires tenant_id parameter
-with telemetry.span("modal.vlm.describe", tenant_id="default") as span:
+with telemetry.span("modal.vlm.describe", tenant_id="your_org:production") as span:
     span.set_attribute("provider", "modal")
     span.set_attribute("model", "qwen2-vl-7b")
     result = await modal_vlm.describe(frame)

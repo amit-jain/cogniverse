@@ -387,7 +387,7 @@ KeyError: Agent 'search_agent' not found in registry
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.common.agent_models import AgentEndpoint
 
-registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
 agents = registry.list_agents()
 print(agents)
 

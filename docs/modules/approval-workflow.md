@@ -80,7 +80,7 @@ from cogniverse_foundation.telemetry.manager import TelemetryManager
 storage = ApprovalStorageImpl(
     grpc_endpoint="http://localhost:4317",  # gRPC for span export
     http_endpoint="http://localhost:6006",  # HTTP for queries
-    tenant_id="default",
+    tenant_id="your_org:production",
     telemetry_manager=None  # Optional, creates one if not provided
 )
 ```
@@ -349,7 +349,7 @@ from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 storage = ApprovalStorageImpl(
     grpc_endpoint="http://localhost:4317",
     http_endpoint="http://localhost:6006",
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 approval_agent = HumanApprovalAgent(
@@ -386,7 +386,7 @@ await storage.append_to_training_dataset(
 # Optimizer can access it through telemetry provider APIs
 
 # Train optimizer with approved data
-optimizer = AdvancedRoutingOptimizer(tenant_id="default")
+optimizer = AdvancedRoutingOptimizer(tenant_id="your_org:production")
 result = await optimizer.optimize_routing_policy()  # Trains with approved data from telemetry
 ```
 

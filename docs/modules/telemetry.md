@@ -865,7 +865,7 @@ test_config = TelemetryConfig(
 manager = TelemetryManager(test_config)
 ```
 
-#### `get_telemetry_manager(config_manager=None, tenant_id="default") -> TelemetryManager` (module function)
+#### `get_telemetry_manager(config_manager=None, tenant_id="your_org:production") -> TelemetryManager` (module function)
 Get the global telemetry manager instance. On first call, loads config from ConfigManager automatically. This is the preferred way to access the singleton.
 
 **Parameters:**

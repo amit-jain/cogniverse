@@ -577,7 +577,7 @@ def multi_tenant_configs():
     return {
         "acme_corp": SystemConfig(tenant_id="acme_corp"),
         "globex_inc": SystemConfig(tenant_id="globex_inc"),
-        "default": SystemConfig(tenant_id="default")
+        "default": SystemConfig(tenant_id="your_org:production")
     }
 
 @pytest.fixture

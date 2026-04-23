@@ -778,7 +778,7 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 # Initialize with required config_manager and store
 store = VespaConfigStore(backend_url="http://localhost", backend_port=8080)
 config_manager = ConfigManager(store=store)
-pm = PromptManager(config_manager=config_manager, tenant_id="default")
+pm = PromptManager(config_manager=config_manager, tenant_id="your_org:production")
 
 # Check status
 status = pm.get_status()

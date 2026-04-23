@@ -135,7 +135,7 @@ from cogniverse_agents.wiki.wiki_manager import WikiManager
 
 wm = WikiManager(
     backend=vespa_backend,      # VespaSearchBackend instance
-    tenant_id="default",        # Tenant identifier
+    tenant_id="your_org:production",        # Tenant identifier
     schema_name="wiki_pages_default",  # Vespa schema name for this tenant
 )
 ```
@@ -239,7 +239,7 @@ store = VespaConfigStore(
 manager = ConfigManager(store=store)
 
 # Get system configuration
-system_config = manager.get_system_config(tenant_id="default")
+system_config = manager.get_system_config(tenant_id="your_org:production")
 print(f"LLM: {system_config.llm_model}")
 print(f"Backend: {system_config.backend_url}")
 ```
@@ -461,7 +461,7 @@ video_agent_config = AgentConfig(
 )
 
 manager.set_agent_config(
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="video_search_agent",
     agent_config=video_agent_config
 )
@@ -592,7 +592,7 @@ from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 # Get configuration history
 history = manager.store.get_config_history(
-    tenant_id="default",
+    tenant_id="your_org:production",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -618,7 +618,7 @@ print(f"Current LLM: {current.llm_model}")
 
 # Get configuration history to find version to restore
 history = manager.store.get_config_history(
-    tenant_id="default",
+    tenant_id="your_org:production",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -630,7 +630,7 @@ target_entry = next((e for e in history if e.version == 5), None)
 if target_entry:
     # Re-apply the historical configuration
     manager.store.set_config(
-        tenant_id="default",
+        tenant_id="your_org:production",
         scope=ConfigScope.SYSTEM,
         service="system",
         config_key="system_config",
@@ -859,7 +859,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Check if configuration exists
 configs = manager.store.list_configs(
-    tenant_id="default",
+    tenant_id="your_org:production",
     scope=ConfigScope.SYSTEM
 )
 print(f"Available configs: {configs}")
@@ -868,7 +868,7 @@ print(f"Available configs: {configs}")
 try:
     config = manager.get_system_config("default")
 except Exception:
-    manager.set_system_config(SystemConfig(tenant_id="default"), tenant_id="default")
+    manager.set_system_config(SystemConfig(tenant_id="your_org:production"), tenant_id="your_org:production")
 ```
 
 ### Version Conflicts
@@ -878,7 +878,7 @@ Configuration versioning is tracked automatically via the `get_config_history` m
 ```python
 # Check version history before updates
 history = manager.store.get_config_history(
-    tenant_id="default",
+    tenant_id="your_org:production",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -890,7 +890,7 @@ if history:
     print(f"Current version: {history[0].version}")
 
 # Make update (creates new version automatically)
-manager.set_system_config(config, tenant_id="default")
+manager.set_system_config(config, tenant_id="your_org:production")
 ```
 
 ### Storage Backend Issues

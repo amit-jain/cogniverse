@@ -291,7 +291,7 @@ import json
 
 # Initialize tool with required config_manager
 config_manager = create_default_config_manager()
-player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
+player_tool = VideoPlayerTool(tenant_id="your_org:production", config_manager=config_manager)
 
 # Search results with frame timestamps
 search_results = json.dumps({
@@ -473,7 +473,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 async def test_video_player_generation(config_manager):
     # Use config_manager fixture (passed as pytest fixture)
     # Or create one: config_manager = create_default_config_manager()
-    tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
+    tool = VideoPlayerTool(tenant_id="your_org:production", config_manager=config_manager)
 
     search_results = json.dumps({
         "results": [
@@ -529,7 +529,7 @@ async def test_video_player_generation(config_manager):
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
-player_tool = VideoPlayerTool(tenant_id="default", config_manager=config_manager)
+player_tool = VideoPlayerTool(tenant_id="your_org:production", config_manager=config_manager)
 
 result = await player_tool.execute(
     video_id="missing_video",

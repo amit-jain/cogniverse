@@ -229,7 +229,7 @@ from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 client = VespaVideoSearchClient(
     backend_url="http://localhost",
     backend_port=8080,
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager
 )
 

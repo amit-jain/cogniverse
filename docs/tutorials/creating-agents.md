@@ -548,7 +548,7 @@ Register in the agent registry:
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.common.agent_models import AgentEndpoint
 
-registry = AgentRegistry(tenant_id="default", config_manager=config_manager)
+registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
 
 # Register agent endpoint (not the class)
 # A2A agents use "/tasks/send" endpoint (overrides AgentEndpoint default of "/process")

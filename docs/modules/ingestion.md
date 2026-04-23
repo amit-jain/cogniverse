@@ -1425,7 +1425,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline, Pipeli
 async def ingest_video():
     # Create pipeline for ColPali frame-based processing
     pipeline = VideoIngestionPipeline(
-        tenant_id="default",  # Required parameter
+        tenant_id="your_org:production",  # Required parameter
         schema_name="video_colpali_smol500_mv_frame",
         debug_mode=True
     )
@@ -1478,7 +1478,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
 # Create pipeline
 pipeline = VideoIngestionPipeline(
-    tenant_id="default",
+    tenant_id="your_org:production",
     schema_name="video_colpali_smol500_mv_frame"
 )
 
@@ -1512,7 +1512,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 async def ingest_with_videoprism():
     # Create pipeline for VideoPrism single-vector embeddings
     pipeline = VideoIngestionPipeline(
-        tenant_id="default",
+        tenant_id="your_org:production",
         schema_name="video_videoprism_lvt_base_sv_chunk_6s"
     )
 
@@ -1569,7 +1569,7 @@ from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 async def ingest_with_colqwen():
     # Create pipeline for ColQwen chunk processing
     pipeline = VideoIngestionPipeline(
-        tenant_id="default",
+        tenant_id="your_org:production",
         schema_name="video_colqwen_omni_mv_chunk_30s"
     )
 
@@ -1655,7 +1655,7 @@ async def ingest_with_custom_strategy():
     strategy_set = StrategyFactory.create_from_profile_config(custom_profile)
 
     # Use in pipeline (manual initialization)
-    pipeline = VideoIngestionPipeline(tenant_id="default", app_config=app_config)
+    pipeline = VideoIngestionPipeline(tenant_id="your_org:production", app_config=app_config)
     pipeline.strategy_set = strategy_set
     pipeline.processor_manager.initialize_from_strategies(strategy_set)
 
@@ -1692,7 +1692,7 @@ async def main():
         print(f"Processing with profile: {profile}")
         print(f"{'='*60}\n")
 
-        pipeline = VideoIngestionPipeline(tenant_id="default", schema_name=profile)
+        pipeline = VideoIngestionPipeline(tenant_id="your_org:production", schema_name=profile)
 
         results = pipeline.process_directory(
             video_dir=video_dir,

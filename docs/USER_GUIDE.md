@@ -168,7 +168,7 @@ agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=sche
 # Search by text (synchronous) — tenant_id is per-request
 results = agent.search_by_text(
     query="machine learning tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
 )
 
@@ -195,7 +195,7 @@ agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=sche
 # Single profile search
 colpali_results = agent.search_by_text(
     query="cooking tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
 )
 
@@ -205,7 +205,7 @@ videoprism_agent = SearchAgent(deps=videoprism_deps, config_manager=config_manag
 
 videoprism_results = videoprism_agent.search_by_text(
     query="cooking tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
 )
 ```
@@ -215,7 +215,7 @@ videoprism_results = videoprism_agent.search_by_text(
 # Search with date filters
 results = agent.search_by_text(
     query="machine learning tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
     start_date="2024-01-01",
     end_date="2024-12-31",
@@ -246,7 +246,7 @@ async def main():
     # Route query (async — decides which agent should handle this)
     decision = await routing_agent.route_query(
         query="cooking recipes with pasta",
-        tenant_id="default",
+        tenant_id="your_org:production",
     )
 
     print(f"Recommended Agent: {decision.recommended_agent}")
@@ -322,7 +322,7 @@ config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Get memory manager (singleton per tenant via __new__)
-memory = Mem0MemoryManager(tenant_id="default")
+memory = Mem0MemoryManager(tenant_id="your_org:production")
 
 # Initialize with required parameters
 memory.initialize(
@@ -338,7 +338,7 @@ memory.initialize(
 # Add user preference
 memory.add_memory(
     content="User prefers beginner-level Python tutorials",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="search_agent",
     metadata={"user_id": "user_123"}
 )
@@ -346,7 +346,7 @@ memory.add_memory(
 # Search memories
 user_memories = memory.search_memory(
     query="Python tutorial preferences",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="search_agent",
     top_k=5
 )
@@ -494,7 +494,7 @@ agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=sche
 # search_by_text is synchronous — no await needed
 results = agent.search_by_text(
     query="cooking pasta",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
 )
 
@@ -509,7 +509,7 @@ for result in results:
 # Search with date filters
 results = agent.search_by_text(
     query="tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
     start_date="2024-01-01",
     end_date="2024-12-31",
@@ -518,7 +518,7 @@ results = agent.search_by_text(
 # Search with more results for client-side filtering
 results = agent.search_by_text(
     query="Python tutorial",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=50,
 )
 ```
@@ -1147,7 +1147,7 @@ agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=sche
 # search_by_text — tenant_id is per-request
 results = agent.search_by_text(
     query="machine learning",
-    tenant_id="default",
+    tenant_id="your_org:production",
     top_k=10,
     start_date="2024-01-01",  # Optional
     end_date="2024-12-31",    # Optional
@@ -1196,7 +1196,7 @@ config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Instantiate (per-tenant singleton pattern)
-memory = Mem0MemoryManager(tenant_id="default")
+memory = Mem0MemoryManager(tenant_id="your_org:production")
 
 # Initialize with all required parameters
 memory.initialize(
@@ -1212,20 +1212,20 @@ memory.initialize(
 # Add memory (requires tenant_id and agent_name)
 memory.add_memory(
     content="User prefers Python tutorials",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="search_agent"
 )
 
 # Search memory
 relevant_memories = memory.search_memory(
     query="tutorial preferences",
-    tenant_id="default",
+    tenant_id="your_org:production",
     agent_name="search_agent",
     top_k=5
 )
 
 # Get all memories
-all_memories = memory.get_all_memories(tenant_id="default", agent_name="search_agent")
+all_memories = memory.get_all_memories(tenant_id="your_org:production", agent_name="search_agent")
 ```
 
 ---

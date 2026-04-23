@@ -486,7 +486,7 @@ class VideoSearchAgent:
             raise ValueError("schema_loader is required")
 
         self.config_manager = config_manager
-        self.config = get_config(tenant_id="default", config_manager=config_manager)
+        self.config = get_config(tenant_id="your_org:production", config_manager=config_manager)
         self.schema_loader = schema_loader
 
         # Default profile from config (used when caller doesn't specify)
@@ -504,7 +504,7 @@ class VideoSearchAgent:
 
 #### Key Methods
 
-**`search(query, profile=None, tenant_id="default", top_k=10, start_date=None, end_date=None) -> List[SearchResult]`**
+**`search(query, profile=None, tenant_id="your_org:production", top_k=10, start_date=None, end_date=None) -> List[SearchResult]`**
 
 Text-to-video search. **This method is synchronous** (not async). Profile and tenant_id are per-request.
 
@@ -4215,7 +4215,7 @@ FastAPI-based HTTP server for serving video files to the video player tool.
 from cogniverse_agents.tools.video_file_server import VideoFileServer
 from cogniverse_foundation.config.utils import get_config
 
-config = get_config(tenant_id="default", config_manager=manager)
+config = get_config(tenant_id="your_org:production", config_manager=manager)
 server = VideoFileServer(port=8888, config=config)
 
 # Start server (async)
@@ -4241,7 +4241,7 @@ Google ADK tool for generating interactive HTML video players with search result
 ```python
 from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
 
-player = VideoPlayerTool(tenant_id="default", config_manager=manager)
+player = VideoPlayerTool(tenant_id="your_org:production", config_manager=manager)
 
 result = await player.execute(
     video_id="tutorial_001",

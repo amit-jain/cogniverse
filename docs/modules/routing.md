@@ -1307,7 +1307,7 @@ gateway = GatewayAgent(deps=deps, config_manager=config_manager)
 
 # Classify a query
 query = "Show me videos of robots playing soccer"
-input_data = GatewayInput(query=query, tenant_id="default")
+input_data = GatewayInput(query=query, tenant_id="your_org:production")
 
 result = await gateway._process_impl(input_data)
 print(f"Complexity: {result.complexity}")    # "simple" or "complex"
@@ -1375,7 +1375,7 @@ config = AdvancedOptimizerConfig(
 )
 
 optimizer = AdvancedRoutingOptimizer(
-    tenant_id="default",
+    tenant_id="your_org:production",
     llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
     telemetry_provider=telemetry_provider,
     config=config,
@@ -1429,7 +1429,7 @@ from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 # Initialize optimizer (both telemetry_provider and tenant_id are required)
 optimizer = CrossModalOptimizer(
     telemetry_provider=telemetry_provider,
-    tenant_id="default",
+    tenant_id="your_org:production",
 )
 
 # Predict fusion benefit

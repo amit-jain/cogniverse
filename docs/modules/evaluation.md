@@ -910,7 +910,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 # Get telemetry provider
 registry = TelemetryRegistry()
-provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
 evaluator = RoutingEvaluator(provider=provider)
 
@@ -953,7 +953,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 async def calculate_routing_metrics():
     # Get telemetry provider
     registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 
@@ -995,7 +995,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 async def get_routing_spans():
     # Get telemetry provider
     registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 
@@ -1353,7 +1353,7 @@ def log_session_evaluation(
 ```python
 from cogniverse_evaluation.providers import get_evaluation_provider
 
-provider = get_evaluation_provider(tenant_id="default")
+provider = get_evaluation_provider(tenant_id="your_org:production")
 
 provider.log_session_evaluation(
     session_id="sess_abc123",
@@ -1607,7 +1607,7 @@ async def evaluate_routing_decisions():
     """Evaluate routing decision quality."""
     # Get telemetry provider
     registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
     # Initialize evaluator for routing project
     evaluator = RoutingEvaluator(
@@ -1909,7 +1909,7 @@ async def production_monitoring_pipeline():
     # Get telemetry provider
     from cogniverse_foundation.telemetry.registry import TelemetryRegistry
     registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
     routing_eval = RoutingEvaluator(provider=provider)
     routing_spans = await routing_eval.query_routing_spans(
@@ -2469,7 +2469,7 @@ def test_routing_metrics_calculation():
 
     # Get telemetry provider
     registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="default")
+    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 

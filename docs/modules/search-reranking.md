@@ -762,14 +762,14 @@ config_manager = create_default_config_manager()
 # Option 1: Load model from config.json
 reranker = LearnedReranker(
     config_manager=config_manager,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 # Option 2: Override with specific model
 reranker = LearnedReranker(
     model="cohere/rerank-english-v3.0",
     config_manager=config_manager,
-    tenant_id="default"
+    tenant_id="your_org:production"
 )
 
 # Rerank with neural model
@@ -799,12 +799,12 @@ hybrid = HybridReranker(
     heuristic_reranker=MultiModalReranker(),
     learned_reranker=LearnedReranker(
         config_manager=config_manager,
-        tenant_id="default"
+        tenant_id="your_org:production"
     ),
     strategy="weighted_ensemble",
     learned_weight=0.7,
     heuristic_weight=0.3,
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager
 )
 
@@ -839,7 +839,7 @@ config_manager = create_default_config_manager()
 
 # Auto-initializes from config.json
 reranker = ConfigurableMultiModalReranker(
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager
 )
 
@@ -869,7 +869,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 config_manager = create_default_config_manager()
 hybrid = HybridReranker(
     strategy="cascade",
-    tenant_id="default",
+    tenant_id="your_org:production",
     config_manager=config_manager
 )
 

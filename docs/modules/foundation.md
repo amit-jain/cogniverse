@@ -144,22 +144,22 @@ config_manager.set_agent_config(
 
 | Method | Description |
 |--------|-------------|
-| `get_system_config(tenant_id="default")` | Get system configuration |
+| `get_system_config(tenant_id="your_org:production")` | Get system configuration |
 | `set_system_config(system_config, tenant_id=None)` | Set system configuration |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
 | `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
 | `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
-| `get_routing_config(tenant_id="default", service="routing_agent")` | Get routing configuration |
+| `get_routing_config(tenant_id="your_org:production", service="routing_agent")` | Get routing configuration |
 | `set_routing_config(routing_config, tenant_id=None, service="routing_agent")` | Set routing configuration |
-| `get_telemetry_config(tenant_id="default", service="telemetry")` | Get telemetry configuration |
+| `get_telemetry_config(tenant_id="your_org:production", service="telemetry")` | Get telemetry configuration |
 | `set_telemetry_config(telemetry_config, tenant_id=None, service="telemetry")` | Set telemetry configuration |
-| `get_backend_config(tenant_id="default", service="backend")` | Get backend configuration |
+| `get_backend_config(tenant_id="your_org:production", service="backend")` | Get backend configuration |
 | `set_backend_config(backend_config, tenant_id=None, service="backend")` | Set backend configuration |
-| `get_backend_profile(profile_name, tenant_id="default", service="backend")` | Get specific backend profile |
-| `add_backend_profile(profile, tenant_id="default", service="backend")` | Add/update backend profile |
-| `update_backend_profile(profile_name, overrides, base_tenant_id="default", target_tenant_id=None, service="backend")` | Partial profile update |
-| `list_backend_profiles(tenant_id="default", service="backend")` | List all backend profiles |
-| `delete_backend_profile(profile_name, tenant_id="default", service="backend")` | Delete backend profile |
+| `get_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Get specific backend profile |
+| `add_backend_profile(profile, tenant_id="your_org:production", service="backend")` | Add/update backend profile |
+| `update_backend_profile(profile_name, overrides, base_tenant_id="your_org:production", target_tenant_id=None, service="backend")` | Partial profile update |
+| `list_backend_profiles(tenant_id="your_org:production", service="backend")` | List all backend profiles |
+| `delete_backend_profile(profile_name, tenant_id="your_org:production", service="backend")` | Delete backend profile |
 | `export_configs(tenant_id, output_path)` | Export all configs to JSON |
 | `get_stats()` | Get configuration statistics |
 
@@ -548,7 +548,7 @@ config_manager.update_backend_profile(
         "embedding_model": "colpali-custom",
         "top_k": 25
     },
-    base_tenant_id="default",  # Get from system
+    base_tenant_id="your_org:production",  # Get from system
     target_tenant_id="acme"    # Save to tenant
 )
 ```

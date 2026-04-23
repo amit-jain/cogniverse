@@ -351,7 +351,7 @@ def get_available_videos():
     from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id="your_org:production", config_manager=config_manager)
     backend = VespaSearchBackend(
         backend_url=config.get("backend_url", "http://localhost"),
         backend_port=config.get("backend_port", 8080)
@@ -1212,7 +1212,7 @@ def get_vespa_client():
     from cogniverse_vespa.search_backend import VespaSearchBackend
     from cogniverse_foundation.config.utils import create_default_config_manager, get_config
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="default", config_manager=config_manager)
+    config = get_config(tenant_id="your_org:production", config_manager=config_manager)
     return VespaSearchBackend(
         backend_url=config.get("backend_url", "http://localhost"),
         backend_port=config.get("backend_port", 8080)
