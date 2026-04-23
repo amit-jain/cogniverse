@@ -6,6 +6,7 @@ and SearchBackend interfaces, with self-registration to the backend registry.
 """
 
 import logging
+import re
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from cogniverse_core.registries.exceptions import BackendDeploymentError
@@ -951,7 +952,6 @@ class VespaBackend(Backend):
             RuntimeError: If deployment fails
         """
         import json
-        import re
 
         import requests
         from vespa.package import Validation, ValidationID
@@ -1048,7 +1048,6 @@ class VespaBackend(Backend):
             schema_names: Names of schemas that were just deployed
             timeout: Maximum seconds to wait for convergence
         """
-        import re
         import time
 
         import requests
@@ -1085,11 +1084,21 @@ class VespaBackend(Backend):
                     if not errors:
                         remaining.discard(name)
                         continue
-                    joined = " ".join(e.get("message", "") for e in errors)
                     # Vespa lists every deployed source ref in its error
-                    # message; once the current name appears there the
-                    # search layer has picked it up.
-                    if name in joined:
+                    # message as "cogniverse_content, cogniverse_content.<doc>,
+                    # ...". Parse exactly; substring match gives false positives
+                    # on name prefixes (e.g., lateon_mv in code_lateon_mv).
+                    deployed: set[str] = set()
+                    for err in errors:
+                        match = re.search(r"Valid source refs are (.+)$", err.get("message", ""))
+                        if not match:
+                            continue
+                        raw = match.group(1).rstrip().rstrip(".")
+                        for part in raw.split(","):
+                            part = part.strip()
+                            if "." in part:
+                                deployed.add(part.split(".", 1)[1])
+                    if name in deployed:
                         remaining.discard(name)
                 except (requests.exceptions.ConnectionError, ValueError):
                     pass
