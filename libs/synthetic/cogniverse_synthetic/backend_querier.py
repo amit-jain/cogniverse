@@ -215,21 +215,18 @@ class BackendQuerier:
             for field_name in self.field_mappings.topic_fields:
                 if field_name in doc:
                     sample["topic"] = doc[field_name]
-                    sample["video_title"] = doc[field_name]  # Backward compat
                     break
 
             # Extract description fields
             for field_name in self.field_mappings.description_fields:
                 if field_name in doc:
                     sample["description"] = doc[field_name]
-                    sample["segment_description"] = doc[field_name]  # Backward compat
                     break
 
             # Extract transcript fields
             for field_name in self.field_mappings.transcript_fields:
                 if field_name in doc:
                     sample["transcript"] = doc[field_name]
-                    sample["audio_transcript"] = doc[field_name]  # Backward compat
                     break
 
             # Extract temporal fields
@@ -316,9 +313,6 @@ class BackendQuerier:
                 if self.field_mappings.topic_fields:
                     topic_field = self.field_mappings.topic_fields[0]
                     sample[topic_field] = f"{topic.title()} Tutorial"
-                    sample["video_title"] = (
-                        f"{topic.title()} Tutorial"  # Backward compat
-                    )
 
                 # Add description field (first configured description field name)
                 if self.field_mappings.description_fields:
@@ -326,9 +320,6 @@ class BackendQuerier:
                     sample[desc_field] = (
                         f"This segment covers {topic} concepts and practical examples."
                     )
-                    sample["segment_description"] = sample[
-                        desc_field
-                    ]  # Backward compat
 
                 # Add transcript field (first configured transcript field name)
                 if self.field_mappings.transcript_fields:
@@ -336,7 +327,6 @@ class BackendQuerier:
                     sample[trans_field] = (
                         f"In this tutorial, we'll explore {topic} and how to apply it in real-world scenarios."
                     )
-                    sample["audio_transcript"] = sample[trans_field]  # Backward compat
 
                 # Add temporal fields
                 temporal_mapping = self.field_mappings.temporal_fields
@@ -344,8 +334,6 @@ class BackendQuerier:
                 end_field = temporal_mapping.get("end", "end_time")
                 sample[start_field] = float(i * 30)
                 sample[end_field] = float((i + 1) * 30)
-                sample["start_time"] = float(i * 30)  # Backward compat
-                sample["end_time"] = float((i + 1) * 30)  # Backward compat
 
                 # Add profile metadata
                 sample["profile_metadata"] = {

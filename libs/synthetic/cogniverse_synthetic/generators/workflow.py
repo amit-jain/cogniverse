@@ -148,7 +148,7 @@ class WorkflowGenerator(BaseGenerator):
         # Get topic from content or use default
         if sampled_content:
             sample = random.choice(sampled_content)
-            title = sample.get("video_title", sample.get("title", ""))
+            title = sample.get("topic", "")
             if title:
                 # Extract first few words as topic
                 words = title.split()[:3]
