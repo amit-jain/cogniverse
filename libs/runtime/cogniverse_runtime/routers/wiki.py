@@ -1,11 +1,9 @@
 """Wiki endpoints — save, search, and retrieve wiki knowledge pages.
 
-Audit fix #12 — wiki is now per-tenant. The router used to bind a single
-``WikiManager(tenant_id="default")`` at startup, so every tenant's writes
-ended up in the default wiki. The fix replaces that singleton with a
-factory pattern (mirroring routers/graph.py): main.py installs a factory
-that returns a per-tenant ``WikiManager`` and the router resolves the
-right manager from the request's ``tenant_id`` on each call.
+Wiki state is per-tenant. The runtime injects a factory via
+``set_wiki_manager_factory``; each request resolves a
+``WikiManager`` bound to the request's ``tenant_id`` through
+``get_wiki_manager_for_tenant``. Same pattern as ``routers/graph.py``.
 """
 
 import logging
