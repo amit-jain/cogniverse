@@ -1026,7 +1026,7 @@ Loads ColBERT late-interaction models via PyLate for document and audio semantic
 from cogniverse_core.common.models import ColBERTModelLoader
 
 loader = ColBERTModelLoader(
-    model_name="lightonai/Reason-ModernColBERT",
+    model_name="lightonai/LateOn",
     config={"model_loader": "colbert"},
     logger=logger,
 )

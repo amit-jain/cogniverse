@@ -30,29 +30,35 @@ class QueryEncoder(ABC):
 
 
 class ColBERTQueryEncoder(QueryEncoder):
-    """Query encoder for ColBERT models (text-only, per-token embeddings)."""
+    """Query encoder for ColBERT models (text-only, per-token embeddings).
 
-    def __init__(self, model_name: str = "lightonai/Reason-ModernColBERT"):
+    ``embedding_dim`` must match the deployed Vespa schema's per-token tensor
+    size. The factory reads it from the profile's ``schema_config.embedding_dim``.
+    ``inference_service_url``, when set, switches to the remote HTTP loader
+    pointing at the deployed service.
+    """
 
+    def __init__(
+        self,
+        model_name: str = "lightonai/LateOn",
+        *,
+        embedding_dim: int,
+        inference_service_url: Optional[str] = None,
+    ):
         config = {
             "embedding_model": model_name,
             "embedding_type": "multi_vector",
             "model_loader": "colbert",
         }
-        # Use remote inference if available (SystemConfig stores the URL)
-        from cogniverse_foundation.config.utils import create_default_config_manager
-
-        try:
-            cm = create_default_config_manager()
-            sc = cm.get_system_config()
-            if sc.colbert_inference_url:
-                config["remote_inference_url"] = sc.colbert_inference_url
-        except Exception:
-            pass
+        if inference_service_url:
+            config["remote_inference_url"] = inference_service_url
 
         self.model, _ = get_or_load_model(model_name, config, logger)
-        self.embedding_dim = 128
-        logger.info(f"Loaded ColBERT query encoder: {model_name}")
+        self.embedding_dim = embedding_dim
+        logger.info(
+            f"Loaded ColBERT query encoder: {model_name} (dim={embedding_dim}, "
+            f"remote={'yes' if inference_service_url else 'no'})"
+        )
 
     def encode(self, query: str) -> np.ndarray:
         """Encode query to per-token embeddings."""
@@ -196,6 +202,41 @@ class VideoPrismQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
+def _build_colbert_encoder(
+    model_name: str,
+    profile: str,
+    profile_config: dict,
+    system_config: "SystemConfig",
+) -> "ColBERTQueryEncoder":
+    """Construct a ColBERTQueryEncoder, wiring dim + remote URL from config."""
+    schema_config = profile_config.get("schema_config", {})
+    embedding_dim = schema_config.get("embedding_dim")
+    if embedding_dim is None:
+        raise ValueError(
+            f"Profile {profile!r} routes to ColBERTQueryEncoder but is missing "
+            f"schema_config.embedding_dim. Add it to configs/config.json."
+        )
+
+    service_name = profile_config.get("inference_service")
+    inference_url: Optional[str] = None
+    if service_name:
+        service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+        inference_url = service_urls.get(service_name)
+        if not inference_url:
+            available = sorted(service_urls)
+            raise ValueError(
+                f"Profile {profile!r} specifies inference_service={service_name!r} "
+                f"but no URL is configured. Deployed services: {available}. "
+                f"Enable inference.{service_name} in the Helm values or remove "
+                f"the inference_service field to fall back to local loading."
+            )
+    return ColBERTQueryEncoder(
+        model_name,
+        embedding_dim=embedding_dim,
+        inference_service_url=inference_url,
+    )
+
+
 class QueryEncoderFactory:
     """Factory to create appropriate query encoder based on profile.
 
@@ -250,7 +291,9 @@ class QueryEncoderFactory:
             return cls._encoder_cache[model_name]
 
         # Create new encoder
-        encoder = cls._create_encoder_instance(model_name, profile)
+        encoder = cls._create_encoder_instance(
+            model_name, profile, profile_config, config
+        )
         cls._encoder_cache[model_name] = encoder
         logger.info(
             f"Cached new encoder for model: {model_name} ({type(encoder).__name__})"
@@ -258,30 +301,53 @@ class QueryEncoderFactory:
         return encoder
 
     @staticmethod
-    def _create_encoder_instance(model_name: str, profile: str) -> QueryEncoder:
-        """Create a new encoder instance based on model name."""
-        if "colpali" in model_name.lower() or "colsmol" in model_name.lower():
+    def _create_encoder_instance(
+        model_name: str,
+        profile: str,
+        profile_config: dict,
+        system_config: "SystemConfig",
+    ) -> QueryEncoder:
+        """Create a new encoder instance based on model loader / name.
+
+        Preference order:
+          1. ``profile_config["model_loader"]`` (authoritative when set).
+          2. Model-name substring match.
+          3. Profile-name substring match.
+        """
+        model_loader = profile_config.get("model_loader")
+
+        if model_loader == "colbert":
+            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+        if model_loader == "colpali":
             return ColPaliQueryEncoder(model_name)
-        elif "colqwen" in model_name.lower():
+        if model_loader == "colqwen":
             return ColQwenQueryEncoder(model_name)
-        elif "videoprism" in model_name.lower():
+        if model_loader == "videoprism":
             return VideoPrismQueryEncoder(model_name)
-        elif "colbert" in model_name.lower():
-            return ColBERTQueryEncoder(model_name)
-        else:
-            # Fallback: try to infer from profile name
-            if "colpali" in profile.lower():
-                return ColPaliQueryEncoder(model_name)
-            elif "colqwen" in profile.lower():
-                return ColQwenQueryEncoder(model_name)
-            elif "videoprism" in profile.lower():
-                return VideoPrismQueryEncoder(model_name)
-            elif "colbert" in profile.lower() or "document" in profile.lower():
-                return ColBERTQueryEncoder(model_name)
-            else:
-                raise ValueError(
-                    f"Cannot determine encoder type for model: {model_name} in profile: {profile}"
-                )
+
+        name = model_name.lower()
+        if "colpali" in name or "colsmol" in name:
+            return ColPaliQueryEncoder(model_name)
+        if "colqwen" in name:
+            return ColQwenQueryEncoder(model_name)
+        if "videoprism" in name:
+            return VideoPrismQueryEncoder(model_name)
+        if "colbert" in name or "lateon" in name:
+            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+
+        profile_lower = profile.lower()
+        if "colpali" in profile_lower:
+            return ColPaliQueryEncoder(model_name)
+        if "colqwen" in profile_lower:
+            return ColQwenQueryEncoder(model_name)
+        if "videoprism" in profile_lower:
+            return VideoPrismQueryEncoder(model_name)
+        if "colbert" in profile_lower or "document" in profile_lower:
+            return _build_colbert_encoder(model_name, profile, profile_config, system_config)
+
+        raise ValueError(
+            f"Cannot determine encoder type for model: {model_name} in profile: {profile}"
+        )
 
     @staticmethod
     def get_supported_profiles(config: Optional["SystemConfig"] = None) -> list:

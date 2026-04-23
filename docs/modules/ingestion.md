@@ -987,7 +987,7 @@ result = generator.generate_embeddings(
 - `embedding_type` - Determines which attribute stores the result (required, raises `ValueError` if missing)
 - `embedding_model` - Model identifier for the loader (required, raises `ValueError` if missing)
 - `model_loader` - Selects the loader class in `ModelLoaderFactory` (required, raises `ValueError` if missing)
-- `semantic_model` - Secondary model for `multi_vector` embedding type (e.g., `lightonai/Reason-ModernColBERT`)
+- `semantic_model` - Secondary model for `multi_vector` embedding type (e.g., `lightonai/LateOn`)
 
 ---
 

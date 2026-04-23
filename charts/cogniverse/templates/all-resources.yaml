@@ -280,14 +280,21 @@ spec:
         - name: ARGO_NAMESPACE
           value: {{ .Release.Namespace | quote }}
         {{- end }}
-        {{- if .Values.inference.colpali.enabled }}
-        - name: COLPALI_INFERENCE_URL
-          value: "http://{{ $fullName }}-vllm-colpali:{{ .Values.inference.colpali.service.port }}"
-        {{- end }}
-        {{- if .Values.inference.colbert.enabled }}
-        - name: COLBERT_INFERENCE_URL
-          value: "http://{{ $fullName }}-vllm-colbert:{{ .Values.inference.colbert.service.port }}"
-        {{- end }}
+        # Generic inference-service URL map. Profiles pick a service by key
+        # via their ``inference_service`` field; the runtime resolves the URL
+        # from this JSON dict.
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {
+            {{- $first := true -}}
+            {{- range $name, $cfg := .Values.inference -}}
+            {{- if $cfg.enabled }}
+            {{- if not $first }},{{ end -}}
+            {{- $first = false }}
+              "{{ $name }}": "http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}"
+            {{- end -}}
+            {{- end }}
+            }
         {{- range $key, $value := .Values.runtime.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -924,29 +931,49 @@ spec:
 {{- end }}
 {{- range $name, $cfg := .Values.inference }}
 {{- if $cfg.enabled }}
+{{- $engine := default "vllm" $cfg.engine }}
 ---
-# vLLM Inference Deployment: {{ $name }}
+# Inference Deployment: {{ $name }} (engine={{ $engine }})
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $fullName }}-vllm-{{ $name }}
+  name: {{ $fullName }}-{{ $name | kebabcase }}
   labels:
     {{- include "cogniverse.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: vllm-{{ $name }}
+    app.kubernetes.io/component: inference-{{ $name }}
 spec:
   replicas: {{ $cfg.replicaCount }}
   selector:
     matchLabels:
       {{- include "cogniverse.selectorLabels" $ | nindent 6 }}
-      app.kubernetes.io/component: vllm-{{ $name }}
+      app.kubernetes.io/component: inference-{{ $name }}
   template:
     metadata:
       labels:
         {{- include "cogniverse.selectorLabels" $ | nindent 8 }}
-        app.kubernetes.io/component: vllm-{{ $name }}
+        app.kubernetes.io/component: inference-{{ $name }}
     spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
       containers:
+      {{- if eq $engine "pylate" }}
+      - name: pylate
+        image: "{{ $cfg.pylate.image.repository }}:{{ $cfg.pylate.image.tag }}"
+        imagePullPolicy: {{ $cfg.pylate.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ $cfg.pylate.containerPort }}
+        env:
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: DEVICE
+          value: {{ $cfg.pylate.device | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ $cfg.pylate.containerPort | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+      {{- else }}
       - name: vllm
         image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
         imagePullPolicy: {{ $cfg.image.pullPolicy }}
@@ -980,6 +1007,7 @@ spec:
           {{- range $cfg.extraArgs }}
           - {{ . | quote }}
           {{- end }}
+      {{- end }}
         livenessProbe:
           {{- toYaml $cfg.livenessProbe | nindent 10 }}
         readinessProbe:
@@ -994,14 +1022,13 @@ spec:
         emptyDir:
           sizeLimit: 10Gi
 ---
-# vLLM Service: {{ $name }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $fullName }}-vllm-{{ $name }}
+  name: {{ $fullName }}-{{ $name | kebabcase }}
   labels:
     {{- include "cogniverse.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: vllm-{{ $name }}
+    app.kubernetes.io/component: inference-{{ $name }}
 spec:
   type: {{ $cfg.service.type }}
   ports:
@@ -1014,7 +1041,7 @@ spec:
     {{- end }}
   selector:
     {{- include "cogniverse.selectorLabels" $ | nindent 4 }}
-    app.kubernetes.io/component: vllm-{{ $name }}
+    app.kubernetes.io/component: inference-{{ $name }}
 {{- end }}
 {{- end }}
 ---

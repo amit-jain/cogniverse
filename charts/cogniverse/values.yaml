@@ -489,18 +489,31 @@ llm:
     url: ""
 
 # ===========================================
-# vLLM Inference Service (embedding models)
+# Inference Services (embedding models)
 # ===========================================
-# Serves ColPali and ColBERT via /pooling endpoint for per-token embeddings.
-# Each model runs as a separate vLLM instance (vLLM = one model per process).
+# Each entry under ``inference`` deploys one pod serving one model. Keys are
+# logical tags the deployer chooses; profiles reference a service by its key
+# via ``inference_service`` in the profile. No magic — rename freely.
+#
+# Per-entry fields:
+#   - engine: "vllm" | "pylate" — picks the container image
+#   - model:  HF model id the pod serves
+#   - type:   "multi_vector" | "single_vector" — retrieval style (metadata for
+#             the runtime; does not affect the pod itself)
+#
+# The runtime receives a single ``INFERENCE_SERVICE_URLS`` env var containing
+# a JSON map of {key → url} for every enabled service. Profiles route per
+# request by looking up their ``inference_service`` in that map.
 inference:
-  colpali:
+  image:
     enabled: false
+    engine: vllm
+    model: vidore/colsmol-500m
+    type: multi_vector
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
-    model: vidore/colsmol-500m
     dtype: float32
     extraArgs: []
     replicaCount: 1
@@ -532,22 +545,37 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
-  colbert:
+  # General-purpose multi-vector text retrieval. Default target for profiles
+  # with ``inference_service: "general"`` (e.g., document_text_semantic,
+  # lateon_mv). Swap between vLLM + Reason-ModernColBERT and pylate + LateOn
+  # by flipping engine + model.
+  general:
     enabled: true
-    image:
-      repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
-      pullPolicy: IfNotPresent
-    model: lightonai/Reason-ModernColBERT
-    dtype: float32
-    extraArgs:
-      - "--max-model-len"
-      - "8192"
+    engine: pylate
+    model: lightonai/LateOn
+    type: multi_vector
     replicaCount: 1
     service:
       type: ClusterIP
       port: 8000
       nodePort: 29002
+    # vLLM-specific (used when engine=vllm)
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    dtype: float32
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
+    # pylate-specific (used when engine=pylate)
+    pylate:
+      image:
+        repository: cogniverse/pylate
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      device: cpu
+      containerPort: 8000
     resources:
       limits:
         cpu: "4"
@@ -572,13 +600,65 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
-  # Dedicated semantic-embedding service. Splits embedding traffic off the
-  # shared Ollama pod (Ollama serializes requests per model, so embedding
-  # calls queue behind LLM token streams). vLLM's continuous batching
-  # absorbs concurrent requests; benchmark on M-series CPU showed ~10 rps
-  # at conc=8 vs Ollama's ~1 rps under load.
+  # Code-search multi-vector text retrieval. Deployed in parallel with
+  # ``general`` when enabled — independent pods, different models.
+  # Profiles route here via ``inference_service: "code"``.
+  code:
+    enabled: false
+    engine: pylate
+    model: lightonai/LateOn-Code-edge
+    type: multi_vector
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29004
+    # vLLM-specific (unused by default since default engine is pylate)
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    dtype: float32
+    extraArgs: []
+    # pylate-specific
+    pylate:
+      image:
+        repository: cogniverse/pylate
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      device: cpu
+      containerPort: 8000
+    resources:
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 5
+
+  # Dedicated single-vector dense-embedding service. Splits embedding traffic
+  # off the shared Ollama pod (Ollama serializes requests per model, so
+  # embedding calls queue behind LLM token streams).
   embed:
     enabled: false
+    engine: vllm
+    type: single_vector
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64

@@ -1249,4 +1249,28 @@ class TestRemoteColBERTLoader:
         call_args = model.session.post.call_args
         assert "/pooling" in call_args[0][0]
         assert call_args[1]["json"]["input"] == ["hello world"]
+        assert call_args[1]["json"]["is_query"] is False
         assert len(result) == 1
+
+    def test_remote_wrapper_forwards_is_query_true(self):
+        """Query-side encoding must set is_query=True in the payload."""
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.common.models import RemoteColBERTLoader
+
+        loader = RemoteColBERTLoader(
+            model_name="test/colbert",
+            config={"remote_inference_url": "http://test:9999"},
+        )
+        model, _ = loader.load_model()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": [{"data": [[0.1, 0.2]]}]}
+        mock_response.raise_for_status = MagicMock()
+        model.session.post = MagicMock(return_value=mock_response)
+
+        model.encode(["what is x"], is_query=True)
+
+        payload = model.session.post.call_args[1]["json"]
+        assert payload["is_query"] is True

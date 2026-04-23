@@ -250,7 +250,7 @@ class AudioEmbeddingStrategy(BaseStrategy):
     def __init__(
         self,
         clap_model: str = "laion/clap-htsat-unfused",
-        colbert_model: str = "lightonai/Reason-ModernColBERT",
+        colbert_model: str = "lightonai/LateOn",
     ):
         self.clap_model = clap_model
         self.colbert_model = colbert_model
@@ -505,7 +505,7 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        colbert_model: str = "lightonai/Reason-ModernColBERT",
+        colbert_model: str = "lightonai/LateOn",
     ):
         self.colbert_model = colbert_model
 

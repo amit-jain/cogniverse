@@ -42,7 +42,7 @@ class TestWikiEndpoints:
     def test_wiki_index(self):
         """GET /wiki/index returns content."""
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
-            resp = client.get("/wiki/index")
+            resp = client.get("/wiki/index", params={"tenant_id": TENANT_ID})
         assert resp.status_code == 200
         data = resp.json()
         assert "content" in data

@@ -126,6 +126,20 @@ dashboard:
       cpu: "2"
       memory: "4Gi"
 
+# Dev overrides: use locally-built images for pylate containers. Applies
+# to any inference service whose engine=pylate.
+inference:
+  general:
+    pylate:
+      image:
+        tag: "dev"
+        pullPolicy: Never
+  code:
+    pylate:
+      image:
+        tag: "dev"
+        pullPolicy: Never
+
 phoenix:
   replicaCount: 1
   service:

@@ -3,7 +3,7 @@
 **Experience-Guided Multi-Agent System for Multi-Modal Understanding**
 
 
-Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and Reason-ModernColBERT embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 11-package UV workspace with multi-tenant isolation.
+Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 11-package UV workspace with multi-tenant isolation.
 
 ## 🎯 What Makes Cogniverse Different
 

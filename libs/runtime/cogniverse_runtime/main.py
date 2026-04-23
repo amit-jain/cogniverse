@@ -7,6 +7,7 @@ This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
 """
 
 import asyncio
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -357,14 +358,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.agent_registry_url = os.environ["RUNTIME_URL"]
         updated = True
     # Inference URLs: set from env if present, clear if absent (prevents
-    # stale URLs from previous deployments persisting in Vespa config)
+    # stale URLs from previous deployments persisting in Vespa config).
+    # COLPALI keeps its dedicated var; ColBERT-family services are carried
+    # in the INFERENCE_SERVICE_URLS JSON dict keyed by service name.
     new_colpali = os.environ.get("COLPALI_INFERENCE_URL", "")
-    new_colbert = os.environ.get("COLBERT_INFERENCE_URL", "")
+    new_service_urls_json = os.environ.get("INFERENCE_SERVICE_URLS", "")
+    if new_service_urls_json:
+        try:
+            new_service_urls = json.loads(new_service_urls_json)
+            if not isinstance(new_service_urls, dict):
+                raise ValueError("INFERENCE_SERVICE_URLS must be a JSON object")
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.error(
+                f"Invalid INFERENCE_SERVICE_URLS env var: {exc}. "
+                f"Expected JSON object like {{'general': 'http://...'}}"
+            )
+            raise
+    else:
+        new_service_urls = {}
     if new_colpali != system_config.colpali_inference_url:
         system_config.colpali_inference_url = new_colpali
         updated = True
-    if new_colbert != system_config.colbert_inference_url:
-        system_config.colbert_inference_url = new_colbert
+    if new_service_urls != system_config.inference_service_urls:
+        system_config.inference_service_urls = new_service_urls
         updated = True
     if updated:
         config_manager.set_system_config(system_config)
@@ -391,11 +407,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("COLPALI_INFERENCE_URL"):
         system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
         updated = True
-    if os.environ.get("COLBERT_INFERENCE_URL"):
-        system_config.colbert_inference_url = os.environ["COLBERT_INFERENCE_URL"]
-        updated = True
     if updated:
         config_manager.set_system_config(system_config)
+
+    # 7d. Validate each inference service actually serves the model the
+    # profiles expect. Closes the silent-wrong-embedding failure mode.
+    # Disabled with SKIP_INFERENCE_VALIDATION=1 (e.g., when running the
+    # runtime without any inference pods deployed).
+    if os.environ.get("SKIP_INFERENCE_VALIDATION") != "1":
+        from cogniverse_foundation.config.utils import ConfigUtils
+        from cogniverse_runtime.inference_health_check import (
+            collect_profile_bindings,
+            validate_inference_services,
+        )
+
+        config_path = ConfigUtils._discover_config_file()
+        if config_path and config_path.exists():
+            with open(config_path) as f:
+                raw_config = json.load(f)
+            profiles = raw_config.get("backend", {}).get("profiles", {})
+            bindings = collect_profile_bindings(profiles)
+            validate_inference_services(bindings, system_config.inference_service_urls)
+        else:
+            logger.warning(
+                "Skipping inference-service validation: no config.json found"
+            )
 
     # 8. Wire tenant manager dependencies
     tenant_manager.set_config_manager(config_manager)

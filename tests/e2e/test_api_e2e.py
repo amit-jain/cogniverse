@@ -1049,6 +1049,9 @@ class TestA2AProtocol:
                         "configuration": {
                             "acceptedOutputModes": ["text"],
                         },
+                        "metadata": {
+                            "tenant_id": TENANT_ID,
+                        },
                     },
                 },
             )

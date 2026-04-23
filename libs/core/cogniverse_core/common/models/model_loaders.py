@@ -403,6 +403,7 @@ class RemoteColBERTLoader(ModelLoader):
                     payload = {
                         "input": batch,
                         "model": self.model_name,
+                        "is_query": is_query,
                     }
 
                     # Use /pooling for per-token embeddings (vLLM),

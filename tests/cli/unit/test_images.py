@@ -30,20 +30,41 @@ class TestBuildImages:
     def test_build_images_calls_docker_build(
         self, mock_run: object
     ) -> None:
-        """Two docker build commands are issued, one per image."""
+        """One docker build command per image: runtime, dashboard, pylate."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
 
         tags = build_images(Path("/fake/root"))
 
-        assert len(tags) == 2
-        assert mock_run.call_count == 2  # type: ignore[attr-defined]
+        assert tags == [
+            "cogniverse/runtime:dev",
+            "cogniverse/dashboard:dev",
+            "cogniverse/pylate:dev",
+        ]
+        assert mock_run.call_count == 3  # type: ignore[attr-defined]
 
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
             cmd = call[0][0]
             assert cmd[0] == "docker"
             assert cmd[1] == "build"
+
+    @patch("cogniverse_cli.images.subprocess.run")
+    def test_build_images_pylate_uses_its_own_context(
+        self, mock_run: object
+    ) -> None:
+        """pylate builds from deploy/pylate (self-contained), not repo root."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        build_images(Path("/fake/root"))
+
+        pylate_call = mock_run.call_args_list[2]  # type: ignore[attr-defined]
+        cmd = pylate_call[0][0]
+        assert "deploy/pylate/Dockerfile" in cmd
+        assert cmd[-1] == "deploy/pylate"  # build context is its own directory
+        assert "cogniverse/pylate:dev" in cmd
 
 
 class TestImportImages:

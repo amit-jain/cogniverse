@@ -178,9 +178,16 @@ class SystemConfig:
     # Agent Registry URL for Curated Registry pattern (A2A discovery)
     agent_registry_url: str = "http://localhost:8000"
 
-    # Inference service URLs (vLLM endpoints for remote model serving)
+    # ColPali stays on its own URL for now — distinct HTTP contract from
+    # ColBERT-family services (image processing vs text pooling).
     colpali_inference_url: str = ""
-    colbert_inference_url: str = ""
+
+    # Map of inference-service logical name -> URL. Keys match the Helm
+    # ``inference.*`` block names (e.g., "general", "code"). Profiles pick a
+    # service via the ``inference_service`` field; the runtime resolves the
+    # URL from this map. Populated from the JSON in the
+    # ``INFERENCE_SERVICE_URLS`` env var at startup.
+    inference_service_urls: Dict[str, str] = field(default_factory=dict)
 
     # Metadata
     environment: str = "development"
@@ -206,7 +213,7 @@ class SystemConfig:
             "agents": self.agents,
             "agent_registry_url": self.agent_registry_url,
             "colpali_inference_url": self.colpali_inference_url,
-            "colbert_inference_url": self.colbert_inference_url,
+            "inference_service_urls": dict(self.inference_service_urls),
             "environment": self.environment,
             "metadata": self.metadata,
         }
@@ -235,7 +242,7 @@ class SystemConfig:
             agents=data.get("agents", {}),
             agent_registry_url=data.get("agent_registry_url", "http://localhost:8000"),
             colpali_inference_url=data.get("colpali_inference_url", ""),
-            colbert_inference_url=data.get("colbert_inference_url", ""),
+            inference_service_urls=dict(data.get("inference_service_urls") or {}),
             environment=data.get("environment", "development"),
             metadata=data.get("metadata", {}),
         )
