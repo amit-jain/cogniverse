@@ -413,7 +413,7 @@ pip install dist/cogniverse_dashboard-*.whl
 
 # Verify imports
 python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
-python -c "from cogniverse_agents.routing_agent import RoutingAgent"
+python -c "from cogniverse_agents.orchestrator_agent import OrchestratorAgent"
 python -c "from cogniverse_vespa import VespaBackend"
 python -c "from cogniverse_runtime.main import app"
 python -c "print('All packages imported successfully')"

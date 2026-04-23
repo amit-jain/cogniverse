@@ -474,7 +474,7 @@ flowchart TB
 **Classes:**
 
 - PascalCase: `SearchAgent`, `VespaSchemaManager`
-- Descriptive names: `RoutingAgent` not `RA`
+- Descriptive names: `OrchestratorAgent` not `OA`
 
 **Functions:**
 
@@ -499,7 +499,7 @@ cd libs/agents
 uv pip install -e .
 
 # Make changes
-vim cogniverse_agents/routing_agent.py
+vim cogniverse_agents/orchestrator_agent.py
 
 # Run package tests
 cd ../..
@@ -519,7 +519,7 @@ uv run ruff format libs/agents/
 vim libs/core/cogniverse_core/agents/base.py
 
 # Make changes in agents (uses core)
-vim libs/agents/cogniverse_agents/routing_agent.py
+vim libs/agents/cogniverse_agents/orchestrator_agent.py
 
 # Changes in core immediately visible to agents (workspace)
 uv run pytest tests/agents/ -v
@@ -717,7 +717,7 @@ uv run pytest tests/routing/integration/ -v
 
 **Single test**:
 ```bash
-uv run pytest tests/agents/unit/test_routing_agent.py::TestRoutingAgentLegacy::test_routing_agent_initialization -v
+uv run pytest tests/agents/unit/test_orchestrator_agent.py -v
 ```
 
 **With coverage**:
@@ -729,80 +729,48 @@ uv run pytest tests/agents/ --cov=cogniverse_agents --cov-report=html
 
 **Unit test example**:
 ```python
-# tests/agents/unit/test_routing_agent.py
+# tests/agents/unit/test_orchestrator_agent.py
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
 @pytest.fixture
-def routing_deps():
-    """Create RoutingDeps for testing"""
-    telemetry_config = TelemetryConfig(enabled=False)
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    return RoutingDeps(
-        telemetry_config=telemetry_config,
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-    )
+def orchestrator(config_manager):
+    registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
+    return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 @pytest.mark.unit
-class TestRoutingAgent:
+class TestOrchestratorAgent:
     @pytest.mark.ci_fast
-    def test_routing_agent_initialization(self, routing_deps):
-        """Test RoutingAgent initialization with typed deps"""
-        agent = RoutingAgent(deps=routing_deps)
-
-        assert agent.deps is not None
-        # tenant_id is per-request, not in deps
-        assert hasattr(agent, "routing_module")
-        assert hasattr(agent, "logger")
+    def test_orchestrator_initialization(self, orchestrator):
+        """Test OrchestratorAgent initializes correctly"""
+        assert orchestrator.deps is not None
+        assert hasattr(orchestrator, "logger")
 ```
 
 **Integration test example**:
 ```python
-# tests/routing/integration/test_tiered_routing.py
+# tests/routing/integration/test_orchestration_pipeline.py
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_full_routing_pipeline(config_manager):
-    """Test routing agent with real Vespa backend"""
-    # Initialize agent
-    telemetry_config = TelemetryConfig(enabled=False)
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
-        telemetry_config=telemetry_config,
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-    )
-    agent = RoutingAgent(deps=deps)
+async def test_full_orchestration_pipeline(config_manager):
+    """Test orchestrator with real Vespa backend"""
+    registry = AgentRegistry(tenant_id="test:integration", config_manager=config_manager)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-    # Initialize Vespa (requires config_manager)
-    vespa = VespaVideoSearchClient(
-        backend_url="http://localhost",
-        backend_port=8080,
-        tenant_id="test",
-        config_manager=config_manager
+    result = await orchestrator._process_impl(
+        OrchestratorInput(
+            query="machine learning tutorial",
+            tenant_id="test:integration",
+        )
     )
 
-    # Route query
-    decision = await agent.route_query("machine learning tutorial")
-
-    # Execute search (sync method, takes query_params dict or string)
-    results = vespa.search({
-        "query": "machine learning tutorial",
-        "ranking": "bm25_only",
-        "top_k": 10
-    })
-
-    assert len(results) >= 0
+    assert result is not None
 ```
 
 ### Test Fixtures

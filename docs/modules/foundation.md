@@ -135,7 +135,7 @@ system_config = config_manager.get_system_config(tenant_id="acme")
 # Set agent configuration
 config_manager.set_agent_config(
     tenant_id="acme",
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     agent_config=agent_config
 )
 ```
@@ -187,7 +187,7 @@ from cogniverse_foundation.config.agent_config import (
 )
 
 agent_config = AgentConfig(
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     agent_version="1.0.0",
     agent_description="Routes queries to appropriate agents",
     agent_url="http://localhost:8001",
@@ -274,7 +274,7 @@ from cogniverse_sdk.interfaces.config_store import ConfigScope
 value = config_manager.get_config_value(
     tenant_id="acme",
     scope=ConfigScope.AGENT,
-    service="routing_agent",
+    service="orchestrator_agent",
     config_key="optimizer_config"
 )
 ```
@@ -415,7 +415,7 @@ telemetry = get_telemetry_manager()
 
 # Basic span
 with telemetry.span("agent.process", tenant_id="acme") as span:
-    span.set_attribute("agent.name", "routing_agent")
+    span.set_attribute("agent.name", "orchestrator_agent")
     span.set_attribute("query.length", len(query))
     result = await process_query(query)
 
@@ -518,7 +518,7 @@ from cogniverse_foundation.config.agent_config import (
     AgentConfig, ModuleConfig, DSPyModuleType
 )
 agent_config = AgentConfig(
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     agent_version="1.0.0",
     agent_description="Routes queries",
     agent_url="http://localhost:8001",
@@ -533,7 +533,7 @@ agent_config = AgentConfig(
 )
 config_manager.set_agent_config(
     tenant_id="acme",
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     agent_config=agent_config
 )
 ```

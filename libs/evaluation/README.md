@@ -144,7 +144,7 @@ pip install cogniverse-evaluation
 
 ```python
 from cogniverse_evaluation.evaluators import GoldenDatasetEvaluator
-from cogniverse_agents.routing import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 
 # Initialize evaluator with golden dataset
 evaluator = GoldenDatasetEvaluator(
@@ -152,10 +152,10 @@ evaluator = GoldenDatasetEvaluator(
     metrics=["accuracy", "precision", "recall", "f1"]
 )
 
-# Evaluate routing agent
-routing_agent = RoutingAgent(config=config)
+# Evaluate orchestrator agent
+orchestrator_agent = OrchestratorAgent(deps=OrchestratorDeps(...))
 results = await evaluator.evaluate(
-    agent=routing_agent,
+    agent=orchestrator_agent,
     num_samples=100
 )
 
@@ -269,10 +269,10 @@ metric = SemanticSimilarityMetric(model_name="all-MiniLM-L6-v2")
 results = metric.compute(predicted_summaries, reference_summaries)
 ```
 
-### Routing Agent Evaluation
+### Orchestrator Agent Evaluation
 
 ```python
-from cogniverse_evaluation.evaluators import RoutingEvaluator
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
 
 # Initialize routing evaluator
 evaluator = RoutingEvaluator(
@@ -280,9 +280,9 @@ evaluator = RoutingEvaluator(
     metrics=["routing_accuracy", "confidence", "latency"]
 )
 
-# Evaluate routing decisions
+# Evaluate routing decisions via OrchestratorAgent
 results = await evaluator.evaluate(
-    routing_agent=routing_agent,
+    agent=orchestrator_agent,
     test_queries=test_queries
 )
 

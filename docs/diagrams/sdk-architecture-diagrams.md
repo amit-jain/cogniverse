@@ -297,7 +297,7 @@ flowchart TB
     AgentsPkg["<span style='color:#000'>cogniverse_agents</span>"]
 
     subgraph AgentsSubg["<span style='color:#000'>Agents</span>"]
-        RoutingAgent["<span style='color:#000'>RoutingAgent</span>"]
+        GatewayAgent["<span style='color:#000'>GatewayAgent</span>"]
         SearchAgent["<span style='color:#000'>SearchAgent</span>"]
         OrchestratorAgent["<span style='color:#000'>OrchestratorAgent</span>"]
     end
@@ -319,7 +319,7 @@ flowchart TB
         QueryEncoders["<span style='color:#000'>Query Encoders</span>"]
     end
 
-    AgentsPkg --> RoutingAgent
+    AgentsPkg --> GatewayAgent
     AgentsPkg --> SearchAgent
     AgentsPkg --> OrchestratorAgent
     AgentsPkg --> RoutingConfig
@@ -332,7 +332,7 @@ flowchart TB
     AgentsPkg --> VideoPlayer
 
     style AgentsPkg fill:#ffcc80,stroke:#ef6c00,stroke-width:3px,color:#000
-    style RoutingAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GatewayAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style SearchAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style OrchestratorAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style RoutingConfig fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -451,16 +451,16 @@ sequenceDiagram
     Runtime->>Foundation: config_manager = create_default_config_manager()
     Foundation-->>Runtime: config manager with tenant isolation
 
-    Runtime->>Agents: Import RoutingAgent
-    Agents-->>Runtime: RoutingAgent class
+    Runtime->>Agents: Import OrchestratorAgent
+    Agents-->>Runtime: OrchestratorAgent class
 
-    Runtime->>Agents: agent = RoutingAgent(config)
+    Runtime->>Agents: agent = OrchestratorAgent(deps)
     Agents->>Core: Initialize agent context
     Core->>Foundation: Get telemetry for tenant
     Foundation-->>Core: TelemetryManager(tenant="acme_corp")
     Core-->>Agents: Context ready
 
-    Runtime->>Agents: result = agent.route_query(query)
+    Runtime->>Agents: result = agent.process(OrchestratorInput(query, tenant_id))
     Agents->>Agents: GLiNER entity extraction
     Agents->>Agents: LLM-based routing decision
 
@@ -557,7 +557,7 @@ flowchart TB
     end
 
     subgraph AgentsImports["<span style='color:#000'>cogniverse_agents Imports</span>"]
-        AgentsRouting["<span style='color:#000'>from cogniverse_agents.routing_agent import RoutingAgent</span>"]
+        AgentsRouting["<span style='color:#000'>from cogniverse_agents.orchestrator_agent import OrchestratorAgent</span>"]
         AgentsSearch["<span style='color:#000'>from cogniverse_agents.search_agent import SearchAgent</span>"]
         AgentsReranker["<span style='color:#000'>from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker</span>"]
     end

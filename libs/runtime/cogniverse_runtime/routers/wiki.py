@@ -53,7 +53,7 @@ class WikiSaveRequest(BaseModel):
     query: str
     response: Dict[str, Any]
     entities: List[str] = []
-    agent_name: str = "routing_agent"
+    agent_name: str = "summarizer_agent"
     tenant_id: str = Field(..., description="Tenant identity; required")
 
 

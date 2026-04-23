@@ -1291,7 +1291,9 @@ async def run_routing_optimization(
     )
 
     try:
-        from cogniverse_agents.routing_agent import DSPyAdvancedRoutingModule
+        from cogniverse_agents.routing.dspy_relationship_router import (
+            DSPyAdvancedRoutingModule,
+        )
 
         module = DSPyAdvancedRoutingModule(analysis_module=None)
     except (ImportError, Exception):

@@ -34,7 +34,7 @@ The Core package is in the **Core Layer** for all agent implementations in Cogni
 - **Component Registries**: Dynamic registration and discovery of agents, backends, and schemas
 - **Memory System**: Mem0-based persistent agent memory
 
-All concrete agent implementations (RoutingAgent, SearchAgent, etc.) inherit from these base classes.
+All concrete agent implementations (OrchestratorAgent, SearchAgent, etc.) inherit from these base classes.
 
 ---
 
@@ -193,31 +193,25 @@ class AgentDeps(BaseModel):
 
 ```python
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 
-class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps]):
-    async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
+class MyAgent(A2AAgent[AgentInput, AgentOutput, AgentDeps]):
+    async def _process_impl(self, input: AgentInput) -> AgentOutput:
         # Use DSPy module if available
         if self.dspy_module:
             result = self.dspy_module(query=input.query)
-            return RoutingOutput(
-                recommended_agent=result.agent,
-                confidence=result.confidence
-            )
-        return RoutingOutput(recommended_agent="search", confidence=0.5)
+            return AgentOutput(result=result.answer)
+        return AgentOutput(result="default")
 
-# Create and run agent (RoutingDeps uses llm_config, not model_name)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
-    telemetry_config=...,
-    llm_config=LLMEndpointConfig(model="ollama/qwen3:4b", api_base="http://localhost:11434"),
-)  # No tenant_id at construction — arrives per-request
+# Create agent (deps are tenant-agnostic; tenant_id arrives per-request)
+deps = AgentDeps()
 config = A2AAgentConfig(
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     agent_description="Routes queries to appropriate agents",
     capabilities=["intelligent_routing", "query_analysis", "agent_orchestration"],
     port=8001
 )
-agent = RoutingAgent(deps=deps, config=config)
+agent = MyAgent(deps=deps, config=config)
 # The A2A HTTP server is managed by the runtime's A2AStarletteApplication,
 # not embedded in the agent. Agents expose a /process endpoint via the runtime.
 ```
@@ -664,7 +658,7 @@ flowchart TB
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
-        Agents["<span style='color:#000'>cogniverse-agents<br/>(RoutingAgent, SearchAgent)</span>"]
+        Agents["<span style='color:#000'>cogniverse-agents<br/>(OrchestratorAgent, SearchAgent)</span>"]
         Vespa["<span style='color:#000'>cogniverse-vespa<br/>(Vespa backend)</span>"]
         Synthetic["<span style='color:#000'>cogniverse-synthetic<br/>(data gen)</span>"]
     end
@@ -1115,7 +1109,7 @@ result = model.extract_embeddings(video_input)
 
 ## Related Documentation
 
-- [Agents Module](./agents.md) - Concrete agent implementations (RoutingAgent, SearchAgent, etc.)
+- [Agents Module](./agents.md) - Concrete agent implementations (OrchestratorAgent, SearchAgent, etc.)
 - [Multi-Agent Interactions](../architecture/multi-agent-interactions.md) - A2A protocol flows
 - [SDK Architecture](../architecture/sdk-architecture.md) - Package structure
 - [Creating Agents Tutorial](../tutorials/creating-agents.md) - Step-by-step agent creation

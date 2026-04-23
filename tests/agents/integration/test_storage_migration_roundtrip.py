@@ -114,63 +114,6 @@ class TestBlobRoundTrip:
 # ---------------------------------------------------------------------------
 
 
-class TestRoutingOptimizerCheckpoint:
-    """Verify AutoTuningOptimizer checkpoint save/load through real Phoenix.
-
-    save_checkpoint/load_checkpoint live on AutoTuningOptimizer (subclass),
-    which requires a strategy instance.
-    """
-
-    @pytest.mark.asyncio
-    async def test_checkpoint_round_trip(self, real_provider):
-        """Save a checkpoint via blob, load it in a new optimizer, verify state."""
-        from cogniverse_agents.routing.base import RoutingStrategy
-        from cogniverse_agents.routing.optimizer import AutoTuningOptimizer
-
-        # Minimal strategy stub for test
-        class StubStrategy(RoutingStrategy):
-            config = {"strategy_type": "stub"}
-
-            async def route(self, query, context=None):
-                return None
-
-            def get_confidence(self, query, context=None):
-                return 0.5
-
-        strategy = StubStrategy()
-
-        optimizer = AutoTuningOptimizer(
-            strategy=strategy,
-            telemetry_provider=real_provider,
-            tenant_id="checkpoint-test",
-        )
-
-        # Set state that gets checkpointed
-        optimizer.optimization_attempts = 7
-        optimizer.best_performance = 0.91
-        optimizer.best_params = {"learning_rate": 0.01, "batch_size": 32}
-
-        await optimizer.save_checkpoint()
-
-        # Create a new optimizer and load the checkpoint
-        optimizer2 = AutoTuningOptimizer(
-            strategy=StubStrategy(),
-            telemetry_provider=real_provider,
-            tenant_id="checkpoint-test",
-        )
-
-        await optimizer2.load_checkpoint()
-
-        assert optimizer2.optimization_attempts == 7
-        assert optimizer2.best_performance == 0.91
-        assert optimizer2.best_params == {"learning_rate": 0.01, "batch_size": 32}
-
-
-# ---------------------------------------------------------------------------
-# 3. AdaptiveThresholdLearner state round-trip
-# ---------------------------------------------------------------------------
-
-
 class TestAdaptiveThresholdRoundTrip:
     """Verify AdaptiveThresholdLearner persist/reload through real Phoenix."""
 

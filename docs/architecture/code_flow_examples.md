@@ -105,9 +105,9 @@ curl -X POST http://localhost:8000/search/ \
 ```python
 # 1. Receive and parse request
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
@@ -118,20 +118,13 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 # request is the incoming HTTP request object (e.g., FastAPI Request)
 tenant_id = request.headers.get("X-Tenant-ID", "default")
 
-# 3. Initialize routing agent with typed dependencies
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-routing_agent = RoutingAgent(deps=deps, port=8001)
+# 3. Initialize orchestrator (tenant-agnostic at construction)
+registry = AgentRegistry(config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # 4. Route query with DSPy optimization (async)
-routing_decision = await routing_agent.route_query(
-    query="machine learning tutorial"
+routing_decision = await orchestrator._process_impl(
+    OrchestratorInput(query="machine learning tutorial", tenant_id=tenant_id)
 )
 # Decision: Route to search agent for tutorial content
 
@@ -160,10 +153,10 @@ When a user sends a follow-up message like "show me longer ones" after searching
 
 ```bash
 # Turn 2: follow-up with conversation history
-curl -X POST http://localhost:8000/agents/routing_agent/process \
+curl -X POST http://localhost:8000/agents/orchestrator_agent/process \
   -H "Content-Type: application/json" \
   -d '{
-    "agent_name": "routing_agent",
+    "agent_name": "orchestrator_agent",
     "query": "show me longer ones",
     "context": {"tenant_id": "flywheel_org:production"},
     "top_k": 5,
@@ -179,7 +172,7 @@ curl -X POST http://localhost:8000/agents/routing_agent/process \
 # 1. REST endpoint receives request with conversation_history
 # libs/runtime/cogniverse_runtime/routers/agents.py
 task = AgentTask(
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     query="show me longer ones",
     conversation_history=[
         {"role": "user", "content": "search for cat videos"},
@@ -190,9 +183,10 @@ task = AgentTask(
 
 # 2. AgentDispatcher._execute_routing_task routes the query
 # libs/runtime/cogniverse_runtime/agent_dispatcher.py
-routing_result = await routing_agent.route_query("show me longer ones")
+routing_result = await orchestrator._process_impl(
+    OrchestratorInput(query="show me longer ones", tenant_id=tenant_id)
+)
 # routing_result.recommended_agent = "search_agent"
-# routing_result.metadata["needs_orchestration"] = False
 
 # 3. Non-orchestration path: execute downstream agent
 # _execute_downstream_agent dispatches based on capabilities
@@ -217,7 +211,7 @@ results = search_service.search(query="show me longer cat videos", ...)
 # 6. Response includes both routing and search results
 # {
 #   "status": "success",
-#   "agent": "routing_agent",
+#   "agent": "orchestrator_agent",
 #   "recommended_agent": "search_agent",
 #   "downstream_result": {
 #     "agent": "search_agent",
@@ -234,15 +228,15 @@ sequenceDiagram
     participant U as User / Chat Tab
     participant REST as POST /agents/{name}/process
     participant D as AgentDispatcher
-    participant R as RoutingAgent
+    participant R as OrchestratorAgent
     participant DDA as _execute_downstream_agent
     participant S as SearchService
     participant QR as ConversationalQueryRewriteModule
 
     U->>REST: query="show me longer ones"<br/>conversation_history=[{cat videos}...]
-    REST->>D: dispatch(routing_agent, query, context)
-    D->>R: route_query("show me longer ones")
-    R-->>D: recommended_agent=search_agent<br/>needs_orchestration=False
+    REST->>D: dispatch(orchestrator_agent, query, context)
+    D->>R: _process_impl(query="show me longer ones")
+    R-->>D: recommended_agent=search_agent
 
     D->>DDA: execute(search_agent, query, history)
     DDA->>QR: rewrite("show me longer ones", history)
@@ -422,28 +416,22 @@ self.metrics = OptimizationMetrics(
 
 ```python
 # Full routing optimization workflow
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# 1. Initialize routing agent with optimizer
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-agent = RoutingAgent(deps=deps, port=8001)
+# 1. Initialize orchestrator with optimizer
+config_manager = create_default_config_manager()
+registry = AgentRegistry(config_manager=config_manager)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 optimizer = AdvancedRoutingOptimizer(tenant_id="customer_a")
 
 # 2. Process user query (async)
-decision = await agent.route_query(query="cooking videos")
+decision = await agent._process_impl(OrchestratorInput(query="cooking videos", tenant_id="customer_a"))
 
 # 3. Execute search with chosen agent (synchronous)
 config_manager = create_default_config_manager()
@@ -671,7 +659,7 @@ with tracer.start_as_current_span("search_request") as trace_span:
 
     # Routing: 10ms
     with tracer.start_as_current_span("routing"):
-        decision = await router.route_query(query)
+        decision = await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id=tenant_id))
 
     # Search: 200ms
     with tracer.start_as_current_span("search"):

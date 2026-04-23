@@ -378,7 +378,7 @@ The routing system uses a DSPy-powered decision pipeline with an A2A agent archi
 | Stage | Agent | Purpose |
 |-------|-------|---------|
 | Entity extraction | `QueryEnhancementAgent` | Enrich queries with entities and relationships |
-| Classification | `RoutingAgent` | DSPy module selects execution agent + confidence |
+| Classification | `OrchestratorAgent` | DSPy module selects execution agent + confidence |
 | Execution | `SearchAgent` / `OrchestratorAgent` | Handle single or multi-agent workflows |
 
 ### Test Routing via the API
@@ -706,7 +706,7 @@ The user sends `/start abc123def456...` to the bot to link their Telegram accoun
 | `/instructions` | — | View system instructions |
 | `/jobs create ...` | — | Create background processing jobs |
 | `/jobs list` | — | List job status |
-| Plain text | routing_agent | `what videos do you have on transformers?` |
+| Plain text | orchestrator_agent | `what videos do you have on transformers?` |
 | Photo/video | search_agent | Send media to search for similar content |
 | `/help` | — | Show all available commands |
 
@@ -735,7 +735,7 @@ curl -X POST http://localhost:8000/wiki/save \
     "query": "how does ColPali work?",
     "response": {"answer": "ColPali uses patch-level embeddings..."},
     "entities": ["ColPali", "patch_embeddings"],
-    "agent_name": "routing_agent",
+    "agent_name": "summarizer_agent",
     "tenant_id": "acme:production"
   }'
 
@@ -803,7 +803,7 @@ cogniverse graph search "query encoder" --top-k 10
 cogniverse graph neighbors "SearchAgent" --depth 2
 
 # Find path between two nodes
-cogniverse graph path "RoutingAgent" "SearchAgent" --max-depth 5
+cogniverse graph path "OrchestratorAgent" "SearchAgent" --max-depth 5
 ```
 
 ### REST API
@@ -816,7 +816,7 @@ curl "http://localhost:8000/graph/search?query=encoder&tenant_id=default&top_k=1
 curl "http://localhost:8000/graph/neighbors?node_id=SearchAgent&tenant_id=default&depth=2"
 
 # Find path between nodes
-curl "http://localhost:8000/graph/path?source=RoutingAgent&target=SearchAgent&tenant_id=default"
+curl "http://localhost:8000/graph/path?source=OrchestratorAgent&target=SearchAgent&tenant_id=default"
 
 # Graph statistics
 curl "http://localhost:8000/graph/stats?tenant_id=default"

@@ -17,7 +17,6 @@ import logging
 import time
 from pathlib import Path
 
-import dspy
 import pytest
 
 from cogniverse_agents.search_agent import SearchInput
@@ -443,14 +442,14 @@ class TestMultiQueryFusionIntegration:
         """
         Test multi-query fusion end-to-end with real Vespa and real query encoder.
 
-        Creates a RoutingOutput with query_variants and passes it through
+        Creates a RoutingContext with query_variants and passes it through
         search_with_routing_decision, exercising real encoding and real Vespa search.
         """
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robot playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,
@@ -504,11 +503,11 @@ class TestMultiQueryFusionIntegration:
 
         Target: <60000ms (accounts for real model encoding + parallel Vespa searches).
         """
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="machine learning tutorial",
             recommended_agent="search_agent",
             confidence=0.9,
@@ -555,11 +554,11 @@ class TestMultiQueryFusionIntegration:
 
         Should handle gracefully without errors.
         """
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="xyzabc123nonexistent query fusion test",
             recommended_agent="search_agent",
             confidence=0.5,
@@ -594,15 +593,13 @@ class TestMultiQueryFusionIntegration:
         self, search_agent_single_profile
     ):
         """
-        Test that RoutingOutput without query_variants falls back to single-query path.
-
-        Ensures backward compatibility — no variants means existing behavior.
+        Test that RoutingContext without query_variants routes through the single-query path.
         """
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent = search_agent_single_profile
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robot playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,
@@ -661,13 +658,13 @@ class TestSingleProfileSearchIntegration:
         """
         Test single-profile search via search_with_routing_decision.
 
-        RoutingOutput with no query_variants and no profiles list → single-query path.
+        RoutingContext with no query_variants and no profiles list → single-query path.
         """
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent = search_agent_single_profile
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robot playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,
@@ -787,458 +784,5 @@ class TestSingleProfileSearchIntegration:
         assert result.profile is not None
 
         logger.info(
-            f"✅ Single profile in list: mode={result.search_mode}, profile={result.profile}"
+            f"✅ Single profile in list still single mode: profile={result.profile}"
         )
-
-
-# TestEndToEndQueryFusionPipeline removed: tested analyze_and_route_with_relationships
-# which was deleted in the A2A refactor. The routing→search pipeline now uses
-# route_query() → A2A tasks/send, tested in test_routing_agent_real.py.
-
-
-class _RemovedTestEndToEndQueryFusionPipeline:
-    """REMOVED: tested deleted analyze_and_route_with_relationships API.
-
-    Requires real Ollama for ComposableQueryAnalysisModule to generate variants.
-    """
-
-    @pytest.fixture(autouse=True)
-    def configure_dspy_lm(self):
-        """Configure DSPy with real Ollama for variant generation."""
-        from cogniverse_foundation.config.llm_factory import create_dspy_lm
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-        lm = create_dspy_lm(
-            LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            )
-        )
-        dspy.configure(lm=lm)
-        yield lm
-        dspy.configure(lm=None)
-
-    @pytest.fixture
-    def routing_agent_parallel(self):
-        """RoutingAgent configured with query_fusion_config for multi-query fusion."""
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import (
-            BatchExportConfig,
-            TelemetryConfig,
-        )
-
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            llm_config=LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            ),
-            query_fusion_config={
-                "include_original": True,
-                "rrf_k": 60,
-            },
-        )
-        return RoutingAgent(deps=deps)
-
-    @pytest.fixture
-    def routing_agent_no_enhancement(self):
-        """RoutingAgent with query enhancement disabled (no variants produced)."""
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.telemetry.config import (
-            BatchExportConfig,
-            TelemetryConfig,
-        )
-
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            enable_query_enhancement=False,
-        )
-        return RoutingAgent(deps=deps)
-
-    @pytest.mark.asyncio
-    async def test_routing_produces_query_variants_in_parallel_mode(
-        self, routing_agent_parallel
-    ):
-        """
-        RoutingAgent populates query_variants in RoutingOutput via composable module.
-
-        Validates: entity extraction → relationship inference → variant generation.
-        """
-        agent = routing_agent_parallel
-
-        result = await agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer in a field",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
-        )
-
-        # VALIDATE: RoutingOutput has query_variants populated
-        assert isinstance(result.query_variants, list)
-        assert len(result.query_variants) >= 2, (
-            f"Expected at least 2 variants (original + strategy), "
-            f"got {len(result.query_variants)}: {result.query_variants}"
-        )
-
-        # VALIDATE: Original query is included
-        variant_names = [v["name"] for v in result.query_variants]
-        assert "original" in variant_names, (
-            f"Expected 'original' variant, got: {variant_names}"
-        )
-
-        # VALIDATE: At least one strategy variant is present
-        strategy_variants = [n for n in variant_names if n != "original"]
-        assert len(strategy_variants) >= 1, (
-            f"Expected at least one strategy variant, got: {variant_names}"
-        )
-
-        # VALIDATE: Each variant has required structure
-        for variant in result.query_variants:
-            assert "name" in variant, f"Variant missing 'name': {variant}"
-            assert "query" in variant, f"Variant missing 'query': {variant}"
-            assert len(variant["query"]) > 0, f"Variant has empty query: {variant}"
-
-        logger.info(
-            f"✅ Routing produced {len(result.query_variants)} variants: {variant_names}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_routing_no_enhancement_produces_no_variants(
-        self, routing_agent_no_enhancement
-    ):
-        """
-        RoutingAgent with enhancement disabled produces empty query_variants.
-
-        When enhancement is off, no composable module runs → no variants.
-        """
-        agent = routing_agent_no_enhancement
-
-        result = await agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=False,
-        )
-
-        # VALIDATE: No query variants when enhancement is disabled
-        assert isinstance(result.query_variants, list)
-        assert len(result.query_variants) == 0, (
-            f"Expected empty query_variants with enhancement disabled, "
-            f"got {len(result.query_variants)}: {result.query_variants}"
-        )
-
-        logger.info("✅ Enhancement-disabled routing produces no query variants")
-
-    @pytest.mark.asyncio
-    async def test_end_to_end_routing_to_search_with_fusion(
-        self, routing_agent_parallel, search_agent_single_profile
-    ):
-        """
-        End-to-end: RoutingAgent generates query_variants → SearchAgent fuses results.
-
-        Full pipeline:
-        1. RoutingAgent with parallel fusion config produces RoutingOutput with query_variants
-        2. SearchAgent.search_with_routing_decision() receives the RoutingOutput
-        3. Multi-query fusion path is triggered (variant queries searched in parallel)
-        4. Results are fused with RRF
-        """
-        routing_agent = routing_agent_parallel
-
-        # Step 1: Route with parallel fusion
-        routing_result = await routing_agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer in a field",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
-        )
-
-        # Verify variants were generated
-        assert len(routing_result.query_variants) >= 2, (
-            f"Expected at least 2 query variants, got {len(routing_result.query_variants)}"
-        )
-
-        # Step 2: Pass to SearchAgent
-        search_agent = search_agent_single_profile
-        search_result = search_agent.search_with_routing_decision(
-            routing_result, tenant_id="test_tenant", top_k=10
-        )
-
-        # VALIDATE: Multi-query fusion was used
-        assert search_result["status"] == "completed"
-        assert "query_variants_used" in search_result, (
-            "Expected multi-query fusion path (query_variants_used key), "
-            "but search used single-query path"
-        )
-
-        # VALIDATE: All variant names are reported
-        variant_names = [v["name"] for v in routing_result.query_variants]
-        for name in variant_names:
-            assert name in search_result["query_variants_used"], (
-                f"Variant '{name}' not in query_variants_used: "
-                f"{search_result['query_variants_used']}"
-            )
-
-        # VALIDATE: Results structure
-        assert isinstance(search_result["results"], list)
-
-        # VALIDATE: RRF metadata if results exist
-        if search_result["total_results"] > 0:
-            for doc in search_result["results"]:
-                assert "rrf_score" in doc, "Missing rrf_score in fused result"
-                assert doc["rrf_score"] > 0
-
-        logger.info(
-            f"✅ End-to-end: {len(routing_result.query_variants)} variants → "
-            f"{search_result['total_results']} fused results"
-        )
-
-    @pytest.mark.asyncio
-    async def test_end_to_end_no_enhancement_uses_single_query_path(
-        self, routing_agent_no_enhancement, search_agent_single_profile
-    ):
-        """
-        End-to-end: RoutingAgent (enhancement disabled) → SearchAgent uses single-query path.
-
-        Confirms that when enhancement is off, SearchAgent
-        does NOT use multi-query fusion when no variants are present.
-        """
-        routing_agent = routing_agent_no_enhancement
-
-        # Route with enhancement disabled (no variants expected)
-        routing_result = await routing_agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=False,
-        )
-
-        assert len(routing_result.query_variants) == 0
-
-        # Pass to SearchAgent
-        search_agent = search_agent_single_profile
-        search_result = search_agent.search_with_routing_decision(
-            routing_result, tenant_id="test_tenant", top_k=10
-        )
-
-        # VALIDATE: Single-query path was used (no query_variants_used key)
-        assert search_result["status"] == "completed"
-        assert "query_variants_used" not in search_result, (
-            "Expected single-query path but got multi-query fusion "
-            f"(query_variants_used={search_result.get('query_variants_used')})"
-        )
-
-        logger.info(
-            f"✅ Enhancement-disabled: {search_result['total_results']} results, "
-            f"no fusion applied"
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.ci_fast
-    async def test_rrf_k_propagates_from_config_to_routing_metadata(self):
-        """
-        Non-default rrf_k flows: query_fusion_config → enhancement_metadata → routing_metadata.
-
-        Verifies that rrf_k=30 (non-default) in query_fusion_config propagates
-        through the RoutingAgent pipeline into RoutingOutput.metadata["rrf_k"],
-        which SearchAgent reads at search time.
-        """
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import (
-            BatchExportConfig,
-            TelemetryConfig,
-        )
-
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        custom_rrf_k = 30  # Non-default (default is 60)
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            llm_config=LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            ),
-            query_fusion_config={
-                "include_original": True,
-                "rrf_k": custom_rrf_k,
-            },
-        )
-        agent = RoutingAgent(deps=deps)
-
-        result = await agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer in a field",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
-        )
-
-        # VALIDATE: rrf_k is in routing_metadata with the custom value
-        assert "rrf_k" in result.routing_metadata, (
-            f"Expected 'rrf_k' in routing_metadata, got keys: "
-            f"{list(result.routing_metadata.keys())}"
-        )
-        assert result.routing_metadata["rrf_k"] == custom_rrf_k, (
-            f"Expected rrf_k={custom_rrf_k} in routing_metadata, "
-            f"got rrf_k={result.routing_metadata['rrf_k']}"
-        )
-
-        logger.info(
-            f"✅ rrf_k={custom_rrf_k} propagated from config to routing_metadata"
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.ci_fast
-    async def test_include_original_false_excludes_original_variant(self):
-        """
-        include_original=False in query_fusion_config excludes the original query
-        from variants, so only strategy-generated variants are used.
-        """
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import (
-            BatchExportConfig,
-            TelemetryConfig,
-        )
-
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            llm_config=LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            ),
-            query_fusion_config={
-                "include_original": False,
-                "rrf_k": 60,
-            },
-        )
-        agent = RoutingAgent(deps=deps)
-
-        result = await agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="robots playing soccer in a field",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
-        )
-
-        # VALIDATE: No "original" variant present
-        variant_names = [v["name"] for v in result.query_variants]
-        assert "original" not in variant_names, (
-            f"Expected 'original' excluded with include_original=False, "
-            f"got: {variant_names}"
-        )
-
-        # Should still have strategy variants if entities were extracted
-        if len(result.query_variants) > 0:
-            assert all(v["name"] != "original" for v in result.query_variants)
-            logger.info(
-                f"✅ include_original=False: {len(result.query_variants)} strategy-only variants"
-            )
-        else:
-            logger.info(
-                "✅ include_original=False: no strategy variants produced (no diversity)"
-            )
-
-    @pytest.mark.asyncio
-    @pytest.mark.ci_fast
-    async def test_no_diversity_falls_back_to_single_query_path(
-        self, search_agent_single_profile
-    ):
-        """
-        When parallel mode is configured but all strategies produce queries identical
-        to the original (no entity diversity), SearchAgent uses the single-query path.
-
-        This verifies the guard: len(context.query_variants) > 1
-        """
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import (
-            BatchExportConfig,
-            TelemetryConfig,
-        )
-
-        telemetry_config = TelemetryConfig(
-            otlp_endpoint="http://localhost:24317",
-            provider_config={
-                "http_endpoint": "http://localhost:26006",
-                "grpc_endpoint": "http://localhost:24317",
-            },
-            batch_config=BatchExportConfig(use_sync_export=True),
-        )
-        # include_original=False, so if entity extraction produces nothing,
-        # we get empty variants → single-query fallback
-        deps = RoutingDeps(
-            telemetry_config=telemetry_config,
-            llm_config=LLMEndpointConfig(
-                model="ollama/gemma3:4b", api_base="http://localhost:11434"
-            ),
-            query_fusion_config={
-                "include_original": False,
-                "rrf_k": 60,
-            },
-        )
-        agent = RoutingAgent(deps=deps)
-
-        # Use a query with no extractable entities → strategies produce no diversity
-        result = await agent.analyze_and_route_with_relationships(
-            tenant_id="test_tenant",
-            query="hello",
-            enable_relationship_extraction=True,
-            enable_query_enhancement=True,
-        )
-
-        # With no entities, strategies produce no-ops, and include_original=False
-        # means variants should be empty or have at most 1 entry
-        if len(result.query_variants) <= 1:
-            # Feed to SearchAgent — should use single-query path
-            search_agent = search_agent_single_profile
-            search_result = search_agent.search_with_routing_decision(
-                result, tenant_id="test_tenant", top_k=10
-            )
-
-            assert search_result["status"] == "completed"
-            assert "query_variants_used" not in search_result, (
-                "Expected single-query path when variants <= 1, "
-                f"but got multi-query fusion (variants: {result.query_variants})"
-            )
-
-            logger.info(
-                "✅ No-diversity parallel mode correctly fell back to single-query path"
-            )
-        else:
-            # If the query somehow produced diversity, just validate fusion works
-            search_agent = search_agent_single_profile
-            search_result = search_agent.search_with_routing_decision(
-                result, tenant_id="test_tenant", top_k=10
-            )
-            assert search_result["status"] == "completed"
-            logger.info(
-                f"Note: 'hello' produced {len(result.query_variants)} variants "
-                f"(unexpected but valid)"
-            )

@@ -201,7 +201,7 @@ curl -X POST http://localhost:8000/wiki/save \
     "query": "how does ColPali work?",
     "response": {"answer": "ColPali uses patch-level embeddings..."},
     "entities": ["ColPali", "patch_embeddings"],
-    "agent_name": "routing_agent",
+    "agent_name": "summarizer_agent",
     "tenant_id": "default"
   }'
 

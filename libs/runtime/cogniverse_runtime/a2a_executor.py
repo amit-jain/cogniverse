@@ -241,8 +241,13 @@ class CogniverseAgentExecutor(AgentExecutor):
         await event_queue.enqueue_event(cancel_event)
 
     def _infer_agent_from_text(self, text: str) -> str:
-        """Fall back to routing_agent if no agent_name is provided."""
-        return "routing_agent"
+        """Fall back to orchestrator_agent when no agent_name is provided.
+
+        The orchestrator plans and executes against the agent registry for
+        both simple and complex queries — it is the A2A replacement for the
+        legacy monolithic routing_agent.
+        """
+        return "orchestrator_agent"
 
     def _extract_conversation_history(
         self, context: RequestContext

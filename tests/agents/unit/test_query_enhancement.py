@@ -25,7 +25,6 @@ from cogniverse_agents.routing.relationship_extraction_tools import (
     RelationshipExtractorTool,
     SpaCyDependencyAnalyzer,
 )
-from cogniverse_agents.routing_agent import RoutingAgent
 from cogniverse_agents.search_agent import SearchAgent
 from cogniverse_agents.summarizer_agent import SummarizerAgent
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -86,25 +85,6 @@ DSPyA2AAgentBase = A2AAgent
 @pytest.mark.unit
 class TestDSPyAgentIntegration:
     """Test DSPy integration with actual agent classes."""
-
-    @patch("cogniverse_agents.routing_agent.DSPyAdvancedRoutingModule")
-    def test_routing_agent_dspy_integration(
-        self, mock_routing_module, telemetry_manager_without_phoenix
-    ):
-        """Test DSPy integration in RoutingAgent."""
-        from cogniverse_agents.routing_agent import RoutingDeps
-
-        mock_routing_instance = Mock()
-        mock_routing_module.return_value = mock_routing_instance
-
-        deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        agent = RoutingAgent(deps=deps)
-
-        assert hasattr(agent, "routing_module")
-        assert agent.routing_module is not None
-        assert hasattr(agent, "route_query")
 
     @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.summarizer_agent.VLMInterface")
@@ -1089,65 +1069,6 @@ class TestDSPyComponentsIntegration:
 
 
 @pytest.mark.unit
-class TestRoutingAgent:
-    """Unit tests for Enhanced Routing Agent"""
-
-    @pytest.mark.ci_fast
-    def test_routing_agent_initialization(self, telemetry_manager_without_phoenix):
-        """Test RoutingAgent initialization (gutted — thin DSPy decision-maker)."""
-        from cogniverse_agents.routing_agent import RoutingDeps
-
-        deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-        )
-        agent = RoutingAgent(deps=deps)
-        assert agent is not None
-        assert hasattr(agent, "deps")
-        assert hasattr(agent, "routing_module")
-        assert hasattr(agent, "route_query")
-
-        custom_deps = RoutingDeps(
-            telemetry_config=telemetry_manager_without_phoenix.config,
-            confidence_threshold=0.8,
-        )
-        custom_agent = RoutingAgent(deps=custom_deps)
-        assert custom_agent.deps.confidence_threshold == 0.8
-
-    def test_routing_decision_structure(self):
-        """Test routing decision data structure"""
-
-        from cogniverse_agents.routing.base import (
-            GenerationType,
-            RoutingDecision,
-            SearchModality,
-        )
-
-        decision = RoutingDecision(
-            search_modality=SearchModality.VIDEO,
-            generation_type=GenerationType.RAW_RESULTS,
-            confidence_score=0.85,
-            routing_method="enhanced_dspy",
-            reasoning="Test routing decision",
-            entities_detected=[{"text": "test", "label": "TEST"}],
-            metadata={
-                "recommended_agent": "video_search_agent",
-                "fallback_agents": ["summarizer_agent"],
-                "enhanced_query": "enhanced test query",
-                "extracted_relationships": [
-                    {"subject": "a", "relation": "b", "object": "c"}
-                ],
-                "routing_metadata": {"test": True},
-            },
-        )
-
-        assert decision.search_modality == SearchModality.VIDEO
-        assert decision.confidence_score == 0.85
-        assert len(decision.entities_detected) == 1
-        assert decision.metadata["recommended_agent"] == "video_search_agent"
-        assert len(decision.metadata["extracted_relationships"]) == 1
-        assert decision.reasoning == "Test routing decision"
-
-
 @pytest.mark.unit
 class TestWorkflowIntelligence:
     """Unit tests for Workflow Intelligence (Phase 4.4)"""

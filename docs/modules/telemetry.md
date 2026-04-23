@@ -199,12 +199,12 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 ```mermaid
 flowchart TB
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
-        RoutingA["<span style='color:#000'>RoutingAgent<br/>Tenant A</span>"]
+        OrchestratorA["<span style='color:#000'>OrchestratorAgent<br/>Tenant A</span>"]
         VideoB["<span style='color:#000'>VideoAgent<br/>Tenant B</span>"]
         SummarizerA["<span style='color:#000'>SummarizerAgent<br/>Tenant A</span>"]
     end
 
-    RoutingA --> Manager
+    OrchestratorA --> Manager
     VideoB --> Manager
     SummarizerA --> Manager
 

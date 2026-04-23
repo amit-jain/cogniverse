@@ -17,7 +17,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Enhanced routing support
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.routing_agent import RoutingOutput
+from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -805,7 +805,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
 
     async def generate_report_with_routing_decision(
         self,
-        routing_decision: RoutingOutput,
+        routing_decision: RoutingContext,
         search_results: List[Dict[str, Any]],
         **kwargs,
     ) -> ReportResult:

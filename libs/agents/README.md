@@ -17,11 +17,11 @@ All agents build on the base classes from `cogniverse-core` and leverage multi-m
 ```
 cogniverse_agents/
 ├── __init__.py
-├── routing_agent.py         # Main routing agent with DSPy optimization
+├── gateway_agent.py         # A2A gateway entry point
+├── orchestrator_agent.py    # Central A2A orchestration
 ├── video_search_agent.py    # Multi-modal video search
 ├── image_search_agent.py    # Image search with visual embeddings
 ├── document_agent.py        # Document retrieval agent
-├── orchestrator_agent.py    # Central A2A orchestration entry point
 ├── summarizer_agent.py      # Content summarization
 ├── audio_analysis_agent.py  # Audio content analysis
 ├── text_analysis_agent.py   # Text analysis agent
@@ -37,13 +37,11 @@ cogniverse_agents/
 ├── memory_aware_mixin.py    # Memory integration
 ├── agent_registry.py        # Agent registration
 ├── a2a_gateway.py          # A2A gateway
-├── a2a_routing_agent.py    # A2A routing
 ├── routing/                # Routing module
-│   ├── base.py
+│   ├── contract.py         # RoutingContext wire type
 │   ├── router.py           # Core routing logic
 │   ├── modality_cache.py   # Query modality caching
 │   ├── parallel_executor.py    # Concurrent execution
-│   ├── optimizer.py        # Routing optimization
 │   ├── dspy_routing_signatures.py  # DSPy signatures
 │   ├── modality_optimizer.py       # Modality optimization
 │   ├── cross_modal_optimizer.py    # Cross-modal optimization
@@ -51,7 +49,7 @@ cogniverse_agents/
 │   ├── annotation_agent.py         # Annotation generation
 │   ├── llm_auto_annotator.py       # Auto-annotation
 │   ├── xgboost_meta_models.py      # XGBoost meta-models
-│   └── mlflow_integration.py       # MLflow tracking
+│   └── unified_optimizer.py        # Unified routing optimizer
 ├── search/                 # Search agents
 │   ├── base.py
 │   ├── hybrid_reranker.py  # Hybrid reranking
@@ -73,28 +71,26 @@ cogniverse_agents/
 
 ## Key Modules
 
-### Routing Agent (`cogniverse_agents.routing_agent`)
+### Gateway Agent (`cogniverse_agents.gateway_agent`)
 
-Intelligent query routing with DSPy optimization:
-
-**Core Features:**
-- Multi-modal query understanding (text, image, video, audio)
-- DSPy-powered optimization (GEPA, MIPRO, Bootstrap, SIMBA)
-- Profile selection based on query characteristics
-- Entity extraction and relationship mapping
-- Confidence scoring for routing decisions
-
-**Optimization Strategies:**
-- **GEPA**: Experience-Guided Preference Aggregation
-- **MIPRO**: Multi-Instruction Prompt Optimization
-- **Bootstrap**: Few-shot learning from examples
-- **SIMBA**: Simulation-Based Optimization
+A2A entry point that classifies incoming queries and dispatches to `orchestrator_agent`:
 
 **Key Classes:**
-- `RoutingAgent`: Main routing agent with optimization
-- `ModalityCache`: Query modality prediction caching
-- `ParallelExecutor`: Concurrent agent execution
-- `ProfilePerformanceOptimizer`: Profile optimization
+- `GatewayAgent`: Lightweight A2A gateway; parses messages and delegates
+
+### Orchestrator Agent (`cogniverse_agents.orchestrator_agent`)
+
+Central A2A orchestration entry point with DSPy-based multi-agent planning:
+
+**Key Classes:**
+- `OrchestratorAgent`: DSPy planning + multi-agent execution coordination
+
+### Routing Contract (`cogniverse_agents.routing.contract`)
+
+Wire type passed from the routing layer to execution agents:
+
+**Key Classes:**
+- `RoutingContext`: Pydantic model with `recommended_agent`, `confidence`, `reasoning`, and query enrichment fields
 
 ### Video Search Agent (`cogniverse_agents.video_search_agent`)
 
@@ -305,33 +301,25 @@ for result in results:
     print(f"Timestamps: {result.timestamps}")
 ```
 
-### Routing Agent with DSPy Optimization
+### OrchestratorAgent (Direct Use)
 
 ```python
-from cogniverse_agents import RoutingAgent
-from cogniverse_core.config import SystemConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Initialize routing agent
-config = SystemConfig(tenant_id="acme")
-routing_agent = RoutingAgent(
-    config=config,
-    optimizer="GEPA"  # Use GEPA optimizer
+# Create orchestrator with agent registry
+registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+
+# Execute multi-agent workflow — DSPy plans the pipeline automatically
+result = await orchestrator._process_impl(
+    OrchestratorInput(
+        query="show me videos about quantum computing",
+        tenant_id="acme:production",
+    )
 )
 
-# Route query to best agent
-decision = await routing_agent.route(
-    query="show me videos about quantum computing",
-    available_agents=["video_search", "document_search", "image_search"]
-)
-
-print(f"Selected agent: {decision.chosen_agent}")
-print(f"Confidence: {decision.confidence:.3f}")
-print(f"Reasoning: {decision.reasoning}")
-
-# Execute routing with the selected agent
-result = await routing_agent.execute_with_routing(
-    query="show me videos about quantum computing"
-)
+print(result["summary"])
 ```
 
 ### Image Search
@@ -404,57 +392,58 @@ result = await orchestrator.execute_workflow(
 ### A2A (Agent-to-Agent) Communication
 
 ```python
-from cogniverse_agents import A2ARoutingAgent, A2AGateway
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from pathlib import Path
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+registry = AgentRegistry(config_manager=config_manager)
 
-# Initialize A2A gateway
-gateway = A2AGateway(config=config)
-
-# Register agents
-gateway.register_agent("video_search", VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader))
-gateway.register_agent("summarizer", SummarizerAgent(config))
-
-# Use A2A routing agent
-a2a_agent = A2ARoutingAgent(config=config, gateway=gateway)
-
-# Agents can invoke each other
-result = await a2a_agent.execute(
-    query="Find and summarize videos about AI",
-    protocol="a2a"
+# Initialize orchestrator with A2A registry
+deps = OrchestratorDeps(
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model="ollama/qwen3:4b",
+        api_base="http://localhost:11434",
+    ),
 )
+orchestrator = OrchestratorAgent(deps=deps)
+
+# Orchestrator routes and delegates via A2A protocol
+result = await orchestrator.process(OrchestratorInput(
+    query="Find and summarize videos about AI",
+    tenant_id="acme:production",
+))
 ```
 
 ### DSPy Optimization
 
 ```python
-from cogniverse_agents.routing import RoutingAgent
 from cogniverse_agents import DSPyAgentOptimizer
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Initialize agent
-routing_agent = RoutingAgent(config=config)
+# Initialize orchestrator
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=AgentRegistry(tenant_id="acme:production", config_manager=config_manager),
+)
 
-# Create optimizer
+# Create optimizer targeting the orchestrator
 optimizer = DSPyAgentOptimizer(
-    agent=routing_agent,
+    agent=orchestrator,
     optimizer_type="GEPA",
-    num_iterations=100
+    num_iterations=100,
 )
 
 # Optimize on training data
 optimized_agent = await optimizer.optimize(
     training_data=golden_dataset,
     validation_data=validation_set,
-    metrics=["accuracy", "precision", "recall"]
+    metrics=["accuracy", "precision", "recall"],
 )
-
-# Use optimized agent
-result = await optimized_agent.route(query="example query")
 ```
 
 ## Multi-Modal Support
@@ -488,7 +477,8 @@ The Agents package provides first-class multi-modal capabilities:
 
 ```
 BaseAgent (from cogniverse_core)
-    ├── RoutingAgent (routing & optimization)
+    ├── GatewayAgent (A2A entry point)
+    ├── OrchestratorAgent (A2A orchestration, DSPy planning)
     ├── VideoSearchAgent (multi-modal video search)
     ├── ImageSearchAgent (visual search)
     ├── DocumentAgent (document retrieval)
@@ -539,7 +529,6 @@ uv pip install -e .
 pytest tests/agents/ tests/routing/
 
 # Run specific agent tests
-pytest tests/agents/test_routing_agent.py
 pytest tests/agents/test_video_search_agent.py
 pytest tests/agents/unit/test_orchestrator_agent.py
 ```

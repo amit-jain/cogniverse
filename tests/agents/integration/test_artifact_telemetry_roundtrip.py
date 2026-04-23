@@ -2,8 +2,8 @@
 Integration tests for DSPy artifact telemetry round-trip.
 
 Verifies the full save-then-load pipeline through ArtifactManager,
-DSPyIntegrationMixin, LLMRoutingStrategy, and AdvancedRoutingOptimizer
-against a REAL Phoenix Docker instance.
+DSPyIntegrationMixin, and AdvancedRoutingOptimizer against a REAL Phoenix
+Docker instance.
 
 Requires Docker to be running. Uses the ``phoenix_container`` and
 ``telemetry_manager_with_phoenix`` fixtures from tests/conftest.py.
@@ -448,108 +448,6 @@ class TestDSPyAgentArtifactRoundTrip:
         assert demos_after[1]["query"] == "latest NVIDIA GPU benchmarks"
         assert "NVIDIA|ORG|0.95" in demos_after[1]["entities"]
         assert demos_after[1]["entity_types"] == "ORG,TECHNOLOGY"
-
-    @pytest.mark.asyncio
-    async def test_routing_agent_loads_real_dspy_state(self, real_provider):
-        """Save routing DSPy state → RoutingAgent loads it → module state changes.
-
-        Uses real RoutingAgent with real DSPy LM (Ollama qwen3:4b) — no mocks.
-        The routing module has key 'router.predict'. Verifies demo injection
-        survives the full Phoenix round-trip.
-        """
-        import json
-
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        tenant_id = "routing-artifact-roundtrip"
-        mgr = ArtifactManager(real_provider, tenant_id)
-
-        # Create real routing agent with real DSPy LM — no mocks
-        llm_config = LLMEndpointConfig(
-            model="qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
-        agent_for_state = RoutingAgent(
-            deps=RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                llm_config=llm_config,
-            )
-        )
-
-        default_state = agent_for_state.routing_module.dump_state()
-        assert "router.predict" in default_state
-        assert default_state["router.predict"]["demos"] == []
-
-        # Inject demos that simulate real routing decisions
-        optimized_state = json.loads(json.dumps(default_state, default=str))
-        optimized_state["router.predict"]["demos"] = [
-            {
-                "query": "find basketball highlights",
-                "context": "",
-                "primary_intent": "video_search",
-                "needs_video_search": "True",
-                "recommended_agent": "search_agent",
-                "confidence": "0.9",
-            },
-            {
-                "query": "compare AI papers with lecture notes",
-                "context": "",
-                "primary_intent": "compare",
-                "needs_video_search": "True",
-                "recommended_agent": "orchestrator_agent",
-                "confidence": "0.85",
-            },
-        ]
-
-        # Save to real Phoenix
-        state_json = json.dumps(optimized_state, default=str)
-        dataset_id = await mgr.save_blob("model", "routing_decision", state_json)
-        assert dataset_id
-
-        # Verify round-trip through Phoenix preserves demo content
-        loaded_json = await mgr.load_blob("model", "routing_decision")
-        assert loaded_json is not None
-        loaded_state = json.loads(loaded_json)
-        assert len(loaded_state["router.predict"]["demos"]) == 2
-        assert (
-            loaded_state["router.predict"]["demos"][0]["recommended_agent"]
-            == "search_agent"
-        )
-        assert loaded_state["router.predict"]["demos"][1]["primary_intent"] == "compare"
-
-        # Create fresh agent with real LM and verify 0 demos
-        agent = RoutingAgent(
-            deps=RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                llm_config=llm_config,
-            )
-        )
-
-        before = agent.routing_module.dump_state()
-        assert before["router.predict"]["demos"] == []
-
-        # Load artifact from real Phoenix
-        tm = get_telemetry_manager()
-        agent.telemetry_manager = tm
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-
-        # Verify the routing module now has the 2 demos
-        after = agent.routing_module.dump_state()
-        demos_after = after["router.predict"]["demos"]
-        assert len(demos_after) == 2, (
-            f"Routing agent should have 2 demos, got {len(demos_after)}"
-        )
-        assert demos_after[0]["query"] == "find basketball highlights"
-        assert demos_after[0]["recommended_agent"] == "search_agent"
-        assert demos_after[0]["primary_intent"] == "video_search"
-        assert demos_after[1]["query"] == "compare AI papers with lecture notes"
-        assert demos_after[1]["recommended_agent"] == "orchestrator_agent"
-        assert demos_after[1]["confidence"] == "0.85"
 
     @pytest.mark.asyncio
     async def test_query_enhancement_loads_real_dspy_state(self, real_provider):
@@ -1017,99 +915,6 @@ class TestArtifactAffectsBehavior:
         # confidence should be a real value (not 0.0 default)
         assert result.confidence > 0.0, (
             f"Confidence should be > 0, got {result.confidence}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_routing_output_reflects_loaded_demos(self, real_provider):
-        """Routing agent with demos should produce a valid routing decision."""
-        import json
-
-        from cogniverse_agents.routing_agent import (
-            RoutingAgent,
-            RoutingDeps,
-            RoutingInput,
-        )
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-        tenant_id = "behavior-routing-test"
-        mgr = ArtifactManager(real_provider, tenant_id)
-
-        # Create agent to get valid module state structure
-        llm_config = LLMEndpointConfig(
-            model="qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
-        agent_for_state = RoutingAgent(
-            deps=RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                llm_config=llm_config,
-            )
-        )
-
-        # Save artifact with demos mapping video queries -> search_agent
-        state = json.loads(
-            json.dumps(agent_for_state.routing_module.dump_state(), default=str)
-        )
-        state["router.predict"]["demos"] = [
-            {
-                "query": "find basketball highlights",
-                "context": "",
-                "primary_intent": "video_search",
-                "needs_video_search": "True",
-                "recommended_agent": "search_agent",
-                "confidence": "0.9",
-            },
-            {
-                "query": "show me cooking videos",
-                "context": "",
-                "primary_intent": "video_search",
-                "needs_video_search": "True",
-                "recommended_agent": "search_agent",
-                "confidence": "0.85",
-            },
-        ]
-        await mgr.save_blob("model", "routing_decision", json.dumps(state, default=str))
-
-        # Create fresh agent, load artifact
-        agent = RoutingAgent(
-            deps=RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                llm_config=llm_config,
-            )
-        )
-        tm = get_telemetry_manager()
-        agent.telemetry_manager = tm
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-
-        # Verify demos loaded
-        loaded_demos = agent.routing_module.dump_state()["router.predict"]["demos"]
-        assert len(loaded_demos) == 2
-
-        # Process with real LLM — tenant_id is required
-        result = await agent._process_impl(
-            RoutingInput(
-                query="find basketball highlights",
-                tenant_id="behavior-routing-test",
-            )
-        )
-
-        # The demos teach: "find basketball highlights" → search_agent with confidence 0.9
-        # With few-shot demos, the LLM should follow the pattern.
-        assert result.recommended_agent == "search_agent", (
-            f"Demos teach 'find basketball highlights' → search_agent, "
-            f"but got '{result.recommended_agent}'. "
-            f"Reasoning: {result.reasoning}"
-        )
-        assert result.confidence >= 0.5, (
-            f"Demos have confidence 0.9, agent should be confident, got {result.confidence}"
-        )
-        # reasoning should explain why search_agent was chosen
-        assert result.reasoning and len(result.reasoning) > 10, (
-            f"Reasoning should be substantive, got: '{result.reasoning}'"
         )
 
     @pytest.mark.asyncio

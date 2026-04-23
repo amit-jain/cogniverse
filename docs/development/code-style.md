@@ -242,7 +242,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 - **Absolute imports** for cross-package: `from cogniverse_core.agents.base import AgentInput`
 - **Both absolute and relative imports** are acceptable within package
-- **Relative imports** are preferred for submodule imports: `from .base import RoutingStrategy`
+- **Relative imports** are preferred for submodule imports: `from .contract import RoutingContext`
 
 ```python
 # In cogniverse_agents/search_agent.py
@@ -423,7 +423,7 @@ def validate_config(config: dict) -> None:
 tests/
 ├── agents/
 │   ├── unit/
-│   │   ├── test_routing_agent.py
+│   │   ├── test_orchestrator_agent.py
 │   │   └── test_search_agent.py
 │   ├── integration/
 │   │   └── test_autonomous_agents_integration.py

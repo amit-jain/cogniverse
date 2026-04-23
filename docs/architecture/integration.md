@@ -96,9 +96,9 @@ class TestRealVespaIntegration:
     async def test_comprehensive_agentic_system_test(self, vespa_test_manager):
         # 1. Setup: Initialize all components across packages
         from cogniverse_foundation.config.utils import create_default_config_manager
-        from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+        from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+        from cogniverse_agents.agent_registry import AgentRegistry
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
 
         config_manager = create_default_config_manager()
 
@@ -111,17 +111,9 @@ class TestRealVespaIntegration:
             config_manager=config_manager
         )
 
-        # cogniverse-agents package - RoutingAgent requires RoutingDeps with all required fields
-        # Note: tenant_id is per-request, not at construction
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        routing_deps = RoutingDeps(
-            telemetry_config=TelemetryConfig(),
-            llm_config=LLMEndpointConfig(
-                model="ollama/qwen3:4b",
-                api_base="http://localhost:11434",
-            ),
-        )
-        routing_agent = RoutingAgent(deps=routing_deps)
+        # cogniverse-agents package - OrchestratorAgent is tenant-agnostic at construction
+        registry = AgentRegistry(config_manager=config_manager)
+        orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
         # SearchAgent requires SearchAgentDeps with backend connection details
         # Note: profile and tenant_id are passed per-request at search() time, not at construction
@@ -143,8 +135,10 @@ class TestRealVespaIntegration:
         # 2. Query Processing
         user_query = "Show me cooking videos"
 
-        # 3. Routing Decision
-        routing_result = await routing_agent.route_query(user_query)
+        # 3. Routing Decision via OrchestratorAgent
+        routing_result = await orchestrator._process_impl(
+            OrchestratorInput(query=user_query, tenant_id="test")
+        )
         assert routing_result.recommended_agent == "search_agent"
         assert routing_result.confidence > 0.7
 
@@ -273,8 +267,8 @@ flowchart LR
 # Example: Video search integration
 query = "pasta cooking tutorial"
 
-# Route
-route = await routing_agent.route_query(query)
+# Route via OrchestratorAgent
+route = await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id="test"))
 assert route.recommended_agent == "search_agent"
 assert route.confidence > 0.7
 
@@ -369,13 +363,12 @@ memory_manager = Mem0MemoryManager(tenant_id="user123")
 memory_manager.add_memory(
     content="User prefers video tutorials",
     tenant_id="user123",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 
 # 2. Route with memory (memory automatically loaded by MemoryAwareMixin)
-route = await routing_agent.route_query(
-    query="Show me how to cook",
-    tenant_id="user123"
+route = await orchestrator._process_impl(
+    OrchestratorInput(query="Show me how to cook", tenant_id="user123")
 )
 
 # 3. Verify routing decision
@@ -399,7 +392,7 @@ queries = generate_test_queries(100)
 # Execute queries concurrently
 async def process_single_query(query):
     start = time.time()
-    result = await routing_agent.route_query(query)
+    result = await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id="test"))
     latency = (time.time() - start) * 1000
     return {"status": "success", "latency_ms": latency, "result": result}
 
@@ -470,7 +463,7 @@ config_manager = create_default_config_manager()
 
 # AgentDeps carries infrastructure config (no tenant_id — it's per-request)
 # Concrete agents use extended Deps classes:
-# RoutingDeps(AgentDeps) adds: telemetry_config, llm_config, etc.
+# OrchestratorDeps(AgentDeps) adds orchestrator-specific config
 # SearchAgentDeps(AgentDeps) adds: backend_url, backend_port, etc.
 deps = AgentDeps()  # No tenant_id at construction
 ```
@@ -478,19 +471,12 @@ deps = AgentDeps()  # No tenant_id at construction
 ### Testing Core Layer
 ```python
 # Example: Verify core works with evaluation package
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-routing_deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-agent = RoutingAgent(deps=routing_deps)
+registry = AgentRegistry(config_manager=config_manager)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Create experiment tracker for evaluation
 # Note: ExperimentTracker has optional tenant_id (defaults to "default")
@@ -499,8 +485,8 @@ tracker = ExperimentTracker(
     tenant_id="test"
 )
 
-# Execute routing query (tracked via telemetry) - route_query is async
-result = await agent.route_query("test query")
+# Execute orchestration query (tracked via telemetry)
+result = await agent._process_impl(OrchestratorInput(query="test query", tenant_id="test"))
 assert result.recommended_agent is not None
 
 # Example: Verify Phoenix telemetry plugin integration
@@ -549,9 +535,9 @@ results = agent.search_by_text("test query", modality="video")
 assert len(results) >= 0
 
 # Example: Verify agents work with synthetic data
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_synthetic.generators.routing import RoutingGenerator
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 
 # RoutingGenerator requires OptimizerGenerationConfig as REQUIRED parameter
@@ -573,18 +559,17 @@ sampled_content = [
 ]
 synthetic_data = await generator.generate(sampled_content=sampled_content, target_count=10)
 
-# Test routing agent with synthetic queries
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-routing_deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
+# Test orchestrator with synthetic queries
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=AgentRegistry(config_manager=config_manager),
 )
-routing_agent = RoutingAgent(deps=routing_deps)
 for example in synthetic_data:
-    result = await routing_agent.route_query(example.query)
+    result = await orchestrator._process_impl(
+        OrchestratorInput(query=example.query, tenant_id="test")
+    )
     assert result is not None
     assert result.recommended_agent is not None
 ```

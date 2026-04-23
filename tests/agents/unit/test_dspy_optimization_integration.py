@@ -3,7 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -11,10 +11,8 @@ from cogniverse_agents.optimizer.dspy_agent_optimizer import (
     DSPyAgentOptimizerPipeline,
     DSPyAgentPromptOptimizer,
 )
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 
 def _make_mock_telemetry_provider():
@@ -305,43 +303,6 @@ class TestDSPyOptimizerIntegration:
         assert mock_provider.experiments.create_experiment.call_count >= len(
             mock_modules
         )
-
-
-class TestDSPyAgentIntegration:
-    """Integration tests for agents with DSPy optimization."""
-
-    @pytest.mark.ci_fast
-    def test_routing_agent_with_optimized_prompts(self, temp_optimized_prompts_dir):
-        """Test RoutingAgent with loaded optimized prompts."""
-
-        mock_prompts = {
-            "compiled_prompts": {
-                "routing": "Optimized routing decision prompt",
-                "signature": "AgentRoutingSignature with optimized logic",
-            },
-            "metadata": {"optimization_timestamp": 1234567890, "dspy_version": "3.0.2"},
-        }
-
-        with patch.object(Path, "exists") as mock_exists:
-            mock_exists.return_value = True
-
-            with patch("builtins.open", mock_open(read_data=json.dumps(mock_prompts))):
-                telemetry_config = TelemetryConfig(enabled=False)
-                from cogniverse_foundation.config.unified_config import (
-                    LLMEndpointConfig,
-                )
-
-                deps = RoutingDeps(
-                    telemetry_config=telemetry_config,
-                    llm_config=LLMEndpointConfig(model="test/mock"),
-                )
-                agent = RoutingAgent(deps=deps)
-
-                assert hasattr(agent, "dspy_module")
-                assert agent.dspy_module is not None
-
-                assert agent is not None
-                assert hasattr(agent, "route_query")
 
 
 class TestDSPyEndToEndOptimization:

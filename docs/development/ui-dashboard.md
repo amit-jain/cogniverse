@@ -262,7 +262,7 @@ def render_memory_management_tab():
     """Main entry point"""
     # Tenant and agent selection
     tenant_id = st.text_input("Tenant ID", value="default")
-    agent_name = st.text_input("Agent Name", value="routing_agent")
+    agent_name = st.text_input("Agent Name", value="orchestrator_agent")
 
     # Initialize Mem0MemoryManager with tenant_id
     from cogniverse_core.memory.manager import Mem0MemoryManager
@@ -470,15 +470,15 @@ def render_routing_evaluation_tab():
 
         # Run evaluation
         if st.button("▶️ Run Evaluation"):
-            # Note: This example assumes a routing agent is available
-            # In practice, you would initialize the routing agent like:
-            # from cogniverse_agents.routing_agent import RoutingAgent
-            # routing_agent = RoutingAgent(...)
+            # Note: This example assumes an orchestrator agent is available
+            # In practice, you would call the orchestrator agent like:
+            # from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorInput
+            # orchestrator = OrchestratorAgent(deps)
 
             results = []
             for _, row in df.iterrows():
                 # Route query (placeholder - replace with actual routing call)
-                # Example: routing_result = routing_agent.route(row["query"])
+                # Example: routing_result = await orchestrator.process(OrchestratorInput(query=row["query"], tenant_id=tenant_id))
                 routing_result = {"modality": "video"}  # Placeholder
 
                 # Compare with ground truth
@@ -980,7 +980,7 @@ for msg in st.session_state.get("chat_messages", [])[-10:]:
         history.append({"role": role, "content": content[:200]})
 
 task_data = {
-    "agent_name": "routing_agent",
+    "agent_name": "orchestrator_agent",
     "query": query,
     "context": {"tenant_id": tenant_id, ...},
     "top_k": 10,
@@ -993,13 +993,13 @@ task_data = {
 ```mermaid
 sequenceDiagram
     participant U as Chat Tab (Streamlit)
-    participant REST as POST /agents/routing_agent/process
+    participant REST as POST /agents/orchestrator_agent/process
     participant D as AgentDispatcher
     participant S as SearchService
     participant QR as ConversationalQueryRewriteModule
 
     U->>REST: query + conversation_history
-    REST->>D: dispatch(routing_agent, context)
+    REST->>D: dispatch(orchestrator_agent, context)
     D->>D: route_query → recommended_agent
     D->>D: _execute_downstream_agent(search_agent)
 
@@ -1010,7 +1010,7 @@ sequenceDiagram
 
     D->>S: search(rewritten_query)
     S-->>D: results
-    D-->>REST: routing metadata + downstream_result
+    D-->>REST: orchestration metadata + downstream_result
     REST-->>U: JSON response with rewritten_query
 ```
 
@@ -1020,7 +1020,7 @@ On turn 2+, the response JSON includes `rewritten_query` (e.g., "show me longer 
 
 - **Multi-modal input**: Text, video, image, PDF file uploads
 - **Tenant selection**: Configurable in sidebar, validates `org:tenant` format
-- **Memory status check**: Queries routing agent capabilities for Mem0 integration
+- **Memory status check**: Queries orchestrator agent capabilities for Mem0 integration
 - **Session management**: Clear conversation resets history and generates new session ID
 
 ---
@@ -1079,7 +1079,7 @@ Changes:
 # In Memory Management Tab:
 
 Tenant ID: [default]
-Agent Name: [routing_agent]
+Agent Name: [orchestrator_agent]
 
 # Navigate to "🔍 Search Memories" tab
 Search Query: [user prefers video results for cooking queries]
@@ -1095,7 +1095,7 @@ Memory 1 - Score: 0.892
 **ID:** mem_abc123
 **Metadata:**
 {
-  "agent_id": "routing_agent",
+  "agent_id": "orchestrator_agent",
   "created_at": "2025-10-07 10:15:00",
   "context": "preference_learning"
 }
@@ -1105,7 +1105,7 @@ Memory 2 - Score: 0.856
 **ID:** mem_def456
 **Metadata:**
 {
-  "agent_id": "routing_agent",
+  "agent_id": "orchestrator_agent",
   "query": "how to cook pasta",
   "modality": "video"
 }

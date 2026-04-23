@@ -323,57 +323,6 @@ class TestSummarizerAgentStreaming:
 
 @pytest.mark.integration
 @skip_if_no_llm
-class TestRoutingAgentStreaming:
-    """RoutingAgent streaming with real Ollama + real entity extraction."""
-
-    def test_stream_phases_and_output(self, config_manager, dspy_lm):
-        from cogniverse_agents.routing_agent import (
-            RoutingAgent,
-            RoutingDeps,
-            RoutingInput,
-        )
-        from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-        agent = RoutingAgent(
-            deps=RoutingDeps(telemetry_config=TelemetryConfig(enabled=False))
-        )
-
-        events = _collect_stream_events(
-            agent,
-            RoutingInput(
-                query="show me videos of robots playing soccer",
-                tenant_id="test:unit",
-            ),
-        )
-
-        _assert_no_errors(events, "RoutingAgent")
-        phases = _get_phases(events)
-        assert "context_enrichment" in phases, (
-            f"Missing context_enrichment phase: {phases}"
-        )
-        assert "routing_decision" in phases, f"Missing routing_decision phase: {phases}"
-        assert "complete" in phases, f"Missing complete phase: {phases}"
-
-        final_data = _get_final(events, "RoutingAgent")
-        recommended = final_data["recommended_agent"]
-        assert recommended, "RoutingAgent must produce a recommended_agent"
-        assert final_data.get("confidence", 0) > 0, "confidence must be positive"
-        assert isinstance(final_data["confidence"], (int, float))
-        assert final_data["confidence"] > 0.0, (
-            f"Confidence should be positive, got: {final_data['confidence']}"
-        )
-        reasoning_lower = final_data["reasoning"].lower()
-        assert any(
-            term in reasoning_lower
-            for term in ["video", "search", "visual", "content", "robot"]
-        ), f"Reasoning should explain video routing, got: '{final_data['reasoning']}'"
-        assert final_data["query"] == "show me videos of robots playing soccer"
-        assert isinstance(final_data["entities"], list)
-        assert isinstance(final_data["relationships"], list)
-
-
-@pytest.mark.integration
-@skip_if_no_llm
 class TestOrchestratorAgentStreaming:
     """OrchestratorAgent streaming with real Ollama + real DSPy planning.
 

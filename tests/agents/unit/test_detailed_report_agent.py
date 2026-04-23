@@ -645,9 +645,9 @@ class TestDetailedReportAgentCoreFunctionality:
         """Test enhanced report generation with routing decision"""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="test query",
             recommended_agent="detailed_report",
             confidence=0.9,
@@ -684,9 +684,9 @@ class TestDetailedReportAgentCoreFunctionality:
             )
 
             # Use generate_report_with_routing_decision method
-            from cogniverse_agents.routing_agent import RoutingOutput
+            from cogniverse_agents.routing.contract import RoutingContext
 
-            routing_decision = RoutingOutput(
+            routing_decision = RoutingContext(
                 query=enhanced_request.original_query,
                 enhanced_query=enhanced_request.enhanced_query,
                 recommended_agent="detailed_report_agent",

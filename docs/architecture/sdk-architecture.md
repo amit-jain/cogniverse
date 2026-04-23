@@ -733,10 +733,10 @@ cd cogniverse/
 vim libs/foundation/cogniverse_foundation/config/unified_config.py
 
 # Make changes in agents (uses core)
-vim libs/agents/cogniverse_agents/routing_agent.py
+vim libs/agents/cogniverse_agents/orchestrator_agent.py
 
 # Test both together
-uv run pytest tests/routing/  # Uses both packages
+uv run pytest tests/agents/ tests/routing/  # Uses both packages
 ```
 
 **Key Point**: Changes in `cogniverse-core` are immediately visible to `cogniverse-agents` without reinstalling.
@@ -787,7 +787,7 @@ tests/
 │   ├── unit/            # Unit tests (test_agent_config.py, test_tenant_aware_mixin.py, etc.)
 │   └── integration/     # Integration tests
 ├── agents/              # Tests for cogniverse_agents
-│   ├── unit/            # Unit tests (test_routing_agent.py, test_document_agent.py, etc.)
+│   ├── unit/            # Unit tests (test_orchestrator_agent.py, test_document_agent.py, etc.)
 │   ├── integration/     # Integration tests
 │   └── e2e/             # End-to-end tests
 ├── routing/             # Routing-specific tests
@@ -853,13 +853,13 @@ uv run pytest tests/ingestion/ -v
 
 ```bash
 # Run single test file
-uv run pytest tests/routing/unit/test_routing_agent.py -v
+uv run pytest tests/agents/unit/test_orchestrator_agent.py -v
 
 # Run single test class
 uv run pytest tests/memory/unit/test_mem0_memory_manager.py::TestMem0MemoryManager -v
 
 # Run single test method
-uv run pytest tests/routing/unit/test_routing_agent.py::TestRoutingAgent::test_route_query -v
+uv run pytest tests/agents/unit/test_orchestrator_agent.py::TestOrchestratorAgent::test_route_query -v
 ```
 
 ### Test Fixtures
@@ -896,15 +896,15 @@ def telemetry_manager_without_phoenix():
 Integration tests validate cross-package interactions:
 
 ```python
-# tests/routing/integration/test_routing_with_vespa.py
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+# tests/routing/integration/test_orchestrator_with_vespa.py
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.manager import ConfigManager
 
 @pytest.mark.integration
-async def test_routing_agent_with_vespa_backend(config_manager, tenant_id):
-    """Test routing agent with real Vespa backend"""
+async def test_orchestrator_agent_with_vespa_backend(config_manager, tenant_id):
+    """Test orchestrator agent with real Vespa backend"""
 
     # Initialize Vespa backend (config_manager required)
     vespa_client = VespaVideoSearchClient(
@@ -914,21 +914,22 @@ async def test_routing_agent_with_vespa_backend(config_manager, tenant_id):
         config_manager=config_manager
     )
 
-    # Initialize routing agent
+    # Initialize orchestrator agent
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
+    deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
-    agent = RoutingAgent(deps=deps)
+    agent = OrchestratorAgent(deps=deps)
 
     # Execute query through full stack
-    result = await agent.route_query(
-        query="cooking videos"
-    )
+    result = await agent.process(OrchestratorInput(
+        query="cooking videos",
+        tenant_id=tenant_id,
+    ))
 
     assert result.recommended_agent
     assert result.confidence >= 0.0
@@ -1050,7 +1051,7 @@ from cogniverse_vespa.ingestion_client import VespaPyClient
 
 ```python
 # Agents (all at package root)
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.document_agent import DocumentAgent
 from cogniverse_agents.audio_analysis_agent import AudioAnalysisAgent
@@ -1097,15 +1098,15 @@ from cogniverse_dashboard.utils.phoenix_data_manager import PhoenixDataManager
 **Agents using Core and Vespa**:
 
 ```python
-# In cogniverse_agents/routing_agent.py (located at package root)
+# In cogniverse_agents/orchestrator_agent.py (located at package root)
 
 from cogniverse_core.agents.base import AgentBase
 from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
-class RoutingAgent(AgentBase, MemoryAwareMixin):
+class OrchestratorAgent(AgentBase, MemoryAwareMixin):
     """
-    Routing agent using core base classes and telemetry.
+    Orchestrator agent using core base classes and telemetry.
 
     Vespa backend injected at runtime (not imported directly).
     """
@@ -1125,7 +1126,7 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 # Optional imports (only if extras installed)
 try:
-    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent
     AGENTS_AVAILABLE = True
 except ImportError:
     AGENTS_AVAILABLE = False

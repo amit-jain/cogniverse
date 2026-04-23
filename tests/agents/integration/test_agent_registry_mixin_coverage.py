@@ -113,12 +113,10 @@ class TestAgentRegistryMixinCoverage:
         audit fix has regressed."""
         from cogniverse_agents.coding_agent import CodingAgent
         from cogniverse_agents.detailed_report_agent import DetailedReportAgent
-        from cogniverse_agents.routing_agent import RoutingAgent
         from cogniverse_agents.search_agent import SearchAgent
         from cogniverse_agents.summarizer_agent import SummarizerAgent
 
         for agent_cls in (
-            RoutingAgent,
             SearchAgent,
             CodingAgent,
             SummarizerAgent,

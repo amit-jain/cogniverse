@@ -78,7 +78,7 @@ cogniverse/
 │   │   ├── README.md
 │   │   └── cogniverse_agents/
 │   │       ├── __init__.py
-│   │       ├── routing_agent.py       # Routing agent
+│   │       ├── orchestrator_agent.py   # A2A orchestrator
 │   │       ├── orchestrator_agent.py  # A2A orchestration entry point
 │   │       ├── search_agent.py            # Search agent
 │   │       ├── approval/       # Approval workflow
@@ -340,7 +340,7 @@ cd libs/agents
 uv add litellm
 
 # Since agents depends on core and synthetic, changes to those are immediately available
-# Edit code in cogniverse_agents/routing_agent.py
+# Edit code in cogniverse_agents/orchestrator_agent.py
 from cogniverse_foundation.config.unified_config import SystemConfig  # Uses editable foundation
 from cogniverse_core.registries.backend_registry import BackendRegistry  # Uses editable core
 
@@ -386,7 +386,7 @@ cd ../core
 
 # 4. Update agents package (implementation layer) to use new config
 cd ../agents
-# Edit cogniverse_agents/routing_agent.py
+# Edit cogniverse_agents/orchestrator_agent.py
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_core.registries.backend_registry import BackendRegistry
 # Use new tenant memory config
@@ -812,7 +812,7 @@ JAX_PLATFORM_NAME=cpu timeout 7200 uv run pytest \
 tests/
 ├── agents/              # cogniverse_agents tests
 │   ├── unit/
-│   │   ├── test_routing_agent.py
+│   │   ├── test_orchestrator_agent.py
 │   │   └── test_video_agent.py
 │   └── integration/
 │       └── test_agent_pipeline.py
@@ -874,44 +874,24 @@ def vespa_backend(config_manager, schema_loader):
 
 **2. Isolate Package Tests:**
 ```python
-# tests/agents/unit/test_routing_agent.py
-from cogniverse_agents.routing_agent import RoutingAgent
-from cogniverse_foundation.config.unified_config import SystemConfig
+# tests/agents/unit/test_orchestrator_agent.py
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-def test_routing_agent_initialization():
+def test_orchestrator_initialization(config_manager):
     """Test agent initialization (no external dependencies)"""
-    from cogniverse_agents.routing_agent import RoutingDeps
-    from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-    )
-    agent = RoutingAgent(deps)
-
+    registry = AgentRegistry(config_manager=config_manager)
+    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
     assert agent.deps is not None
 
-async def test_routing_agent_decision(mocker):
-    """Test routing agent decision with mocked LLM"""
-    from cogniverse_agents.routing_agent import RoutingDeps
-    from cogniverse_foundation.telemetry.config import TelemetryConfig
+async def test_orchestrator_decision(config_manager):
+    """Test orchestrator routing decision"""
+    registry = AgentRegistry(config_manager=config_manager)
+    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
+    result = await agent._process_impl(
+        OrchestratorInput(query="test query", tenant_id="test:unit")
     )
-    agent = RoutingAgent(deps)
-
-    # route_query is async and returns RoutingOutput with recommended_agent field
-    result = await agent.route_query("test query")
     assert result.recommended_agent is not None
     assert result.confidence >= 0.0
 ```
@@ -1059,17 +1039,17 @@ pip install libs/agents/dist/cogniverse_agents-0.2.0-py3-none-any.whl
 # Run smoke tests
 python -c "
 from cogniverse_foundation.telemetry.config import TelemetryConfig
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model='ollama/qwen3:4b',
         api_base='http://localhost:11434',
     ),
 )
-agent = RoutingAgent(deps)
+agent = OrchestratorAgent(deps)
 print('Release smoke test passed')
 "
 ```
@@ -1126,7 +1106,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 # cogniverse_agents - agent implementations only
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_agents.search_agent import SearchAgent
 
 # ❌ BAD: Mixing concerns
@@ -1138,10 +1118,10 @@ from cogniverse_agents.search_agent import SearchAgent
 ```python
 # ❌ BAD: Circular dependency
 # libs/core/cogniverse_core/config.py
-from cogniverse_agents.routing_agent import RoutingAgent  # ❌ core depends on agents
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent  # ❌ core depends on agents
 
 # ✅ GOOD: One-way dependency
-# libs/agents/cogniverse_agents/routing_agent.py
+# libs/agents/cogniverse_agents/orchestrator_agent.py
 from cogniverse_foundation.config.unified_config import SystemConfig  # ✅ agents depends on core
 ```
 
@@ -1152,11 +1132,11 @@ from cogniverse_foundation.config.unified_config import SystemConfig  # ✅ agen
 # ✅ GOOD: Absolute imports from package root
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 
 # ❌ BAD: Relative imports across packages
 from ...core.config import SystemConfig  # ❌ Hard to read
-from ..agents.routing_agent import RoutingAgent  # ❌ Fragile
+from ..agents.orchestrator_agent import OrchestratorAgent  # ❌ Fragile
 ```
 
 **Package-Level Exports:**
@@ -1221,7 +1201,7 @@ all = [
 uv run pytest tests/agents/ --cov=cogniverse_agents --cov-fail-under=80
 
 # ✅ Coverage report:
-# cogniverse_agents/routing_agent.py              95%
+# cogniverse_agents/orchestrator_agent.py              95%
 # cogniverse_agents/search_agent.py                87%
 # cogniverse_agents/gateway_agent.py              82%
 # TOTAL                                            88%
@@ -1254,20 +1234,23 @@ pip install cogniverse-agents
 
 ```python
 import asyncio
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 async def main():
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
+    deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
-    agent = RoutingAgent(deps)
-    result = await agent.route_query("Show me machine learning videos")
+    agent = OrchestratorAgent(deps)
+    result = await agent.process(OrchestratorInput(
+        query="Show me machine learning videos",
+        tenant_id="acme"
+    ))
     print(f"Route to: {result.recommended_agent}")
 
 asyncio.run(main())

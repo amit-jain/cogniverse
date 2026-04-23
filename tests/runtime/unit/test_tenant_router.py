@@ -697,8 +697,8 @@ class TestDeleteJob:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestJobExecutor:
-    def test_calls_routing_agent_with_query(self):
-        """job_executor._call_agent sends the right payload to routing_agent."""
+    def test_calls_orchestrator_agent_with_query(self):
+        """job_executor._call_agent sends the right payload to orchestrator_agent."""
         import asyncio
 
         from cogniverse_runtime.job_executor import _call_agent
@@ -718,7 +718,7 @@ class TestJobExecutor:
 
         mock_client.post.assert_awaited_once()
         call_args = mock_client.post.call_args
-        assert "/agents/routing_agent/process" in call_args[0][0]
+        assert "/agents/orchestrator_agent/process" in call_args[0][0]
         payload = call_args[1]["json"]
         assert payload["query"] == "latest AI papers"
         assert payload["tenant_id"] == "acme"

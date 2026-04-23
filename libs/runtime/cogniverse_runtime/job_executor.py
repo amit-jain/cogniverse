@@ -2,15 +2,16 @@
 
 This module is the entrypoint that Argo CronWorkflows invoke. It:
 1. Reads job config from ConfigStore (query, post_actions)
-2. Calls routing_agent with the query to get a result
-3. For each post_action, routes through routing_agent to process the action,
-   then delivers the result to any detected destination (wiki, Telegram)
+2. Calls orchestrator_agent with the query to get a result
+3. For each post_action, routes through orchestrator_agent to process the
+   action, then delivers the result to any detected destination (wiki,
+   Telegram)
 
 Post_action examples:
   - "save to wiki" → save main result to wiki
-  - "send me a summary on Telegram" → routing_agent summarizes → send to Telegram
-  - "create a detailed report" → routing_agent creates report (no delivery)
-  - "summarize and save to wiki" → routing_agent summarizes → save to wiki
+  - "send me a summary on Telegram" → orchestrator summarizes → send to Telegram
+  - "create a detailed report" → orchestrator creates report (no delivery)
+  - "summarize and save to wiki" → orchestrator summarizes → save to wiki
 
 CLI usage:
     python -m cogniverse_runtime.job_executor \
@@ -123,12 +124,12 @@ async def _call_agent(
     query: str,
     context: str = "",
 ) -> str:
-    """POST to routing_agent/process and return the response text."""
+    """POST to orchestrator_agent/process and return the response text."""
     payload: dict = {"query": query, "tenant_id": tenant_id}
     if context:
         payload["context"] = context
 
-    url = f"{runtime_url}/agents/routing_agent/process"
+    url = f"{runtime_url}/agents/orchestrator_agent/process"
     try:
         response = await client.post(url, json=payload, timeout=120.0)
         response.raise_for_status()
@@ -206,7 +207,8 @@ async def _execute_action(
 
     Pure delivery actions (e.g. "save to wiki") skip the agent call and
     deliver the existing context directly. Actions with processing intent
-    (e.g. "summarize and send on Telegram") go through routing_agent first.
+    (e.g. "summarize and send on Telegram") go through orchestrator_agent
+    first.
     """
     deliveries = _detect_deliveries(action, ollama_url)
 

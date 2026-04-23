@@ -325,7 +325,7 @@ print(f"Memory manager initialized: {manager.memory is not None}")
 manager.add_memory(
     content="User prefers video results for cooking queries",
     tenant_id="your_org:production",
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     metadata={"context": "preference_learning"}
 )
 
@@ -338,7 +338,7 @@ print("Memory added successfully")
 results = manager.search_memory(
     query="cooking preferences",
     tenant_id="your_org:production",
-    agent_name="routing_agent",
+    agent_name="orchestrator_agent",
     top_k=5
 )
 
@@ -364,7 +364,7 @@ for i, result in enumerate(results, 1):
 # Get all memories for agent
 all_memories = manager.get_all_memories(
     tenant_id="your_org:production",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 
 print(f"Total memories: {len(all_memories)}")
@@ -379,7 +379,7 @@ if memory_id:
     manager.delete_memory(
         memory_id=memory_id,
         tenant_id="your_org:production",
-        agent_name="routing_agent"
+        agent_name="orchestrator_agent"
     )
     print(f"Deleted memory: {memory_id}")
 ```
@@ -796,24 +796,24 @@ print(f"  Videos found: {len(result)}")
 print(f"  Profile used: video_colpali_smol500_mv_frame")
 ```
 
-**Test routing agents:**
+**Test orchestrator agents:**
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# RoutingAgent requires RoutingDeps (typed dependencies)
+# OrchestratorAgent requires OrchestratorDeps (typed dependencies)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-router = RoutingAgent(deps=deps)  # deps is REQUIRED parameter
+router = OrchestratorAgent(deps=deps)  # deps is REQUIRED parameter
 
-# route_query is async method
-decision = await router.route_query(query="Find videos about Python")
+# process is async method
+decision = await router.process(OrchestratorInput(query="Find videos about Python", tenant_id="your_org:production"))
 
 print(f"Routing decision: {decision}")
 ```
@@ -826,27 +826,27 @@ print(f"Routing decision: {decision}")
 
 - Tenant-aware by default
 
-### 7.2 Routing Agent
+### 7.2 Orchestrator Agent
 
-**Test RoutingAgent:**
+**Test OrchestratorAgent:**
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# Initialize routing agent with typed dependencies (RoutingDeps is REQUIRED)
+# Initialize orchestrator agent with typed dependencies (OrchestratorDeps is REQUIRED)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-router = RoutingAgent(deps=deps)  # deps parameter is REQUIRED
+router = OrchestratorAgent(deps=deps)  # deps parameter is REQUIRED
 
 # Test routing decision (async method)
-routing_result = await router.route_query(
-    query="Show me videos about Python programming"
+routing_result = await router.process(
+    OrchestratorInput(query="Show me videos about Python programming", tenant_id="your_org:production")
 )
 
 print(f"Routing decision:")
@@ -858,13 +858,13 @@ print(f"  Reasoning: {routing_result.reasoning}")
 **Test routing with different query types:**
 ```python
 # Video search query
-video_routing = await router.route_query("Find cooking videos")
+video_routing = await router.process(OrchestratorInput(query="Find cooking videos", tenant_id="your_org:production"))
 
 # Report query
-report_routing = await router.route_query("Create a detailed analysis of climate change")
+report_routing = await router.process(OrchestratorInput(query="Create a detailed analysis of climate change", tenant_id="your_org:production"))
 
 # Comparison queries
-compare_routing = await router.route_query("Compare Python and Java for web development")
+compare_routing = await router.process(OrchestratorInput(query="Compare Python and Java for web development", tenant_id="your_org:production"))
 
 print(f"Video query → {video_routing.recommended_agent}")
 print(f"Report query → {report_routing.recommended_agent}")
@@ -873,11 +873,11 @@ print(f"Compare query → {compare_routing.recommended_agent}")
 
 **Learning Points:**
 
-- RoutingAgent decides which agent to use
+- OrchestratorAgent decides which agent to use
 
-- Uses tiered routing: keyword → GLiNER → LLM
+- Uses tiered routing: GatewayAgent (GLiNER) → OrchestratorAgent (DSPy/LLM)
 
-- Returns workflow + confidence + reasoning
+- Returns RoutingContext with recommended_agent + confidence + reasoning
 
 ### 7.3 Modality Optimizer
 
@@ -1063,23 +1063,23 @@ curl -X POST http://localhost:8000/search/ \
 
 **Test routing via agent:**
 ```python
-# Routing is handled by RoutingAgent, typically not exposed as direct REST endpoint
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+# Routing is handled by OrchestratorAgent via POST /agents/orchestrator_agent/process
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# Initialize routing agent with typed dependencies
+# Initialize orchestrator agent with typed dependencies
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-router = RoutingAgent(deps=deps)  # deps is REQUIRED
+router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
 
 # Route query (async method)
-decision = await router.route_query("Show me cooking videos")
+decision = await router.process(OrchestratorInput(query="Show me cooking videos", tenant_id="your_org:production"))
 
 print(f"Routing decision:")
 print(f"  Recommended agent: {decision.recommended_agent}")
@@ -1089,9 +1089,9 @@ print(f"  Reasoning: {decision.reasoning}")
 
 **Learning Points:**
 
-- Routing is typically done programmatically via RoutingAgent
+- Routing is handled by OrchestratorAgent via the A2A endpoint
 
-- Returns recommended agent with confidence and reasoning
+- Returns RoutingContext with recommended agent, confidence, and reasoning
 
 - Includes enhanced query and extracted entities/relationships
 
@@ -1310,7 +1310,7 @@ open http://localhost:8501
 
 1. Navigate to "🧠 Memory Management" tab
 
-2. Enter tenant: "default", agent: "routing_agent"
+2. Enter tenant: "default", agent: "orchestrator_agent"
 
 3. Click "📈 Refresh Stats"
 
@@ -1434,7 +1434,7 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 **Test routing to search:**
 ```python
 # Complete routing + search workflow
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -1443,15 +1443,15 @@ from pathlib import Path
 
 # 1. Route the query (async method)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = RoutingDeps(
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-router = RoutingAgent(deps=deps)  # deps is REQUIRED
-decision = await router.route_query("Find videos about machine learning")
+router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
+decision = await router.process(OrchestratorInput(query="Find videos about machine learning", tenant_id="your_org:production"))
 
 print(f"Routing: {decision.recommended_agent}")
 

@@ -368,27 +368,6 @@ class AgentDispatcher:
             )
             return agent, typed_input
 
-        if capabilities & {"routing", "intelligent_routing"}:
-            from cogniverse_agents.routing_agent import (
-                RoutingAgent,
-                RoutingDeps,
-                RoutingInput,
-            )
-            from cogniverse_foundation.config.utils import get_config
-            from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-            config = get_config(
-                tenant_id=tenant_id, config_manager=self._config_manager
-            )
-            llm_config = config.get_llm_config().resolve("routing_agent")
-            deps = RoutingDeps(
-                telemetry_config=TelemetryConfig(enabled=False),
-                llm_config=llm_config,
-            )
-            agent = RoutingAgent(deps=deps, registry=self._registry)
-            typed_input = RoutingInput(query=query, tenant_id=tenant_id)
-            return agent, typed_input
-
         if capabilities & {"detailed_report"}:
             from cogniverse_agents.detailed_report_agent import (
                 DetailedReportAgent,

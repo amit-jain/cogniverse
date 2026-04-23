@@ -37,8 +37,8 @@ libs/agents/cogniverse_agents/
 ├── gateway_agent.py                    # GLiNER-based query classification (<100ms)
 ├── orchestrator_agent.py               # A2A orchestrator (DSPy planner + HTTP dispatch)
 ├── query_enhancement_agent.py          # Query enhancement A2A agent
-├── routing_agent.py                    # Thin DSPy routing decision agent
 ├── routing/
+│   ├── contract.py                     # RoutingContext wire type
 │   ├── advanced_optimizer.py           # GRPO optimization (batch jobs)
 │   ├── config.py                       # Configuration system
 │   ├── cross_modal_optimizer.py        # Multi-modal fusion
@@ -275,35 +275,28 @@ async def _process_impl(
 
 ---
 
-### 3. RoutingAgent (routing_agent.py)
+### 3. RoutingContext (routing/contract.py)
 
-**Purpose**: Thin DSPy-based routing decision agent — receives enriched query from orchestration pipeline and outputs agent recommendation
+**Purpose**: Wire type passed from the routing layer (gateway + orchestrator) to execution agents
 
-**Key Features**:
-
-- Accepts enriched query with entities, relationships, and enhancement context
-- Uses DSPy `ChainOfThought` for structured routing decisions
-- Outputs recommended agent, confidence, and reasoning
-
-**Key Method**:
+**Key Fields**:
 ```python
-async def route_query(
-    self,
-    query: str,
-    tenant_id: str | None = None,
-) -> RoutingOutput:
-    """
-    Produce routing decision for an (optionally enriched) query
-
-    Returns:
-        RoutingOutput with recommended_agent, confidence, reasoning
-    """
+class RoutingContext(AgentOutput):
+    query: str                          # Original query
+    recommended_agent: str             # Selected execution agent
+    confidence: float                  # Routing confidence (0–1)
+    reasoning: str                     # Reasoning for the decision
+    fallback_agents: List[str]         # Fallback agents if primary fails
+    enhanced_query: str                # Enriched query (from QueryEnhancementAgent)
+    entities: List[Dict]               # Extracted entities (from EntityExtractionAgent)
+    relationships: List[Dict]          # Extracted relationships
+    query_variants: List[Dict]         # Query variants
 ```
 
 **Performance**:
 
-- Latency: 500-1000ms (LLM-based)
-- Success rate: ~92% on medium complexity queries
+- Produced by OrchestratorAgent after DSPy planning
+- Consumed by search/summarizer/detailed_report execution agents
 
 ---
 

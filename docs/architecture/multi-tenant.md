@@ -78,19 +78,14 @@ vespa_client.query(
 **Example**:
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
 # Agent constructed WITHOUT tenant_id — serves all tenants
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=AgentRegistry(config_manager=config_manager),
 )
-routing_agent = RoutingAgent(deps=deps)
 
 # tenant_id flows per-request via A2A tasks:
 # POST /tasks/send { "tenant_id": "acme", "query": "..." }
@@ -405,7 +400,8 @@ search_client = VespaVideoSearchClient(
 **Agent Initialization**:
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 
@@ -417,14 +413,15 @@ schema_manager = VespaSchemaManager(
 memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 
 # Initialize agent with deps — tenant-agnostic at construction
-deps = RoutingDeps(
+# OrchestratorDeps does not require telemetry_config/llm_config separately
+deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-routing_agent = RoutingAgent(deps=deps)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
 # Agent automatically uses tenant-specific resources per-request:
 # - Memory: agent_memories_acme (via Mem0MemoryManager singleton)
 # - Telemetry: cogniverse-acme project
@@ -455,8 +452,8 @@ sequenceDiagram
     SchemaManager-->>Middleware: "video_frames_acme"
     Middleware->>API: request.state.tenant_id = "acme"
 
-    API->>Agent: route_query(query, tenant_id="acme")
-    Agent->>Memory: search_memory(query, tenant_id="acme", agent_name="routing_agent")
+    API->>Agent: _process_impl(OrchestratorInput(query, tenant_id="acme"))
+    Agent->>Memory: search_memory(query, tenant_id="acme", agent_name="orchestrator_agent")
     Memory-->>Agent: Relevant memories
     Agent->>Vespa: search(query, schema="video_frames_acme")
     Vespa-->>Agent: Results (only from acme's schema)
@@ -549,27 +546,31 @@ Throughout the request lifecycle, tenant_id is available from `request.state`:
 
 ```python
 from fastapi import Request
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Agent is constructed once — tenant-agnostic
-deps = RoutingDeps(
+# OrchestratorDeps does not require telemetry_config/llm_config separately
+deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-routing_agent = RoutingAgent(deps=deps)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
 
 @app.post("/search")
 async def search(request: Request, query: str):
     # Access tenant_id from request state
     tenant_id = request.state.tenant_id
 
-    # tenant_id flows per-request into route_query
-    results = await routing_agent.route_query(query, tenant_id=tenant_id)
+    # tenant_id flows per-request into OrchestratorAgent
+    results = await orchestrator._process_impl(
+        OrchestratorInput(query=query, tenant_id=tenant_id)
+    )
 
     return results
 ```
@@ -635,14 +636,14 @@ memory_mgr.initialize(
 memory_id = memory_mgr.add_memory(
     content="User prefers cooking videos",
     tenant_id="acme",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 
 # Search memory (only searches agent_memories_acme)
 memories = memory_mgr.search_memory(
     query="user preferences",
     tenant_id="acme",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 ```
 
@@ -696,7 +697,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig, TelemetryManager
 telemetry = TelemetryManager(config=TelemetryConfig())
 
 # Record spans with tenant context
-with telemetry.span("route_query", tenant_id="acme") as span:
+with telemetry.span("process_query", tenant_id="acme") as span:
     span.set_attribute("tenant_id", "acme")
     span.set_attribute("query", "cooking videos")
     # Execute routing logic
@@ -710,7 +711,7 @@ with telemetry.span("route_query", tenant_id="acme") as span:
 
 | Tenant | Component | Phoenix Project |
 |--------|-----------|-----------------|
-| acme | routing_agent | cogniverse-acme-routing_agent |
+| acme | orchestrator_agent | cogniverse-acme-orchestrator_agent |
 | startup | video_search | cogniverse-startup-video_search |
 | acme:production | ingestion | cogniverse-acme:production-ingestion |
 
@@ -723,13 +724,13 @@ sequenceDiagram
     participant OTLP as OTLP Exporter
     participant Phoenix as Phoenix Server
 
-    Agent->>TelemetryMgr: trace("route_query", tenant_id="acme")
-    TelemetryMgr->>TelemetryMgr: Create span in project "cogniverse-acme-routing_agent"
+    Agent->>TelemetryMgr: trace("process_query", tenant_id="acme")
+    TelemetryMgr->>TelemetryMgr: Create span in project "cogniverse-acme-orchestrator_agent"
     TelemetryMgr->>Agent: Span context
     Agent->>Agent: Execute logic
     Agent->>TelemetryMgr: End span
     TelemetryMgr->>OTLP: Export span
-    OTLP->>Phoenix: Send to project "cogniverse-acme-routing_agent"
+    OTLP->>Phoenix: Send to project "cogniverse-acme-orchestrator_agent"
     Phoenix->>Phoenix: Store in isolated project
 ```
 
@@ -739,7 +740,7 @@ Each tenant's traces are isolated in Phoenix:
 
 ```bash
 # Phoenix dashboard automatically filters by project
-# Visit: http://localhost:6006/projects/cogniverse-acme-routing_agent
+# Visit: http://localhost:6006/projects/cogniverse-acme-orchestrator_agent
 ```
 
 **Isolation Benefits**:
@@ -1094,7 +1095,7 @@ results = vespa_client.query(
 |----------|------------------|---------|
 | Vespa Schemas | Schema-per-tenant | `video_frames_acme` |
 | Memory | Per-tenant Mem0MemoryManager | `Mem0MemoryManager(tenant_id="acme")` |
-| Telemetry | Per-tenant Phoenix project | `cogniverse-acme-routing_agent` |
+| Telemetry | Per-tenant Phoenix project | `cogniverse-acme-orchestrator_agent` |
 | Optimization Models | Tenant-specific directories | `data/optimization/acme/` |
 
 ### Tenant ID Validation
@@ -1272,7 +1273,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    ```python
    memory_mgr = Mem0MemoryManager(tenant_id="acme")
    health = memory_mgr.health_check()
-   stats = memory_mgr.get_memory_stats("acme", "routing_agent")
+   stats = memory_mgr.get_memory_stats("acme", "orchestrator_agent")
    # {"total_memories": 42, "enabled": True}
    ```
 
@@ -1281,7 +1282,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    telemetry = TelemetryManager(config=TelemetryConfig())
    # Use spans with tenant_id for tenant-scoped tracing
    with telemetry.span("health_check", tenant_id="acme") as span:
-       span.set_attribute("agent", "routing_agent")
+       span.set_attribute("agent", "orchestrator_agent")
    ```
 
 4. **Tenant Schema Lookup**:
@@ -1392,7 +1393,8 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 ```python
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 def test_tenant_isolation():
@@ -1400,14 +1402,15 @@ def test_tenant_isolation():
 
     # ONE agent serves all tenants (tenant-agnostic at construction)
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
+    # OrchestratorDeps does not require telemetry_config/llm_config separately
+deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
-    agent = RoutingAgent(deps=deps)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
 
     # Tenant isolation happens at request time:
     # - Each A2A task carries tenant_id in payload
@@ -1476,21 +1479,20 @@ async def test_end_to_end_tenant_flow():
     )
     video_schema = schema_manager.get_tenant_schema_name(tenant_id, "video_frames")
 
-    # 2. Initialize agent — tenant-agnostic at construction
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
+    # 2. Initialize orchestrator — tenant-agnostic at construction
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+    from cogniverse_agents.agent_registry import AgentRegistry
+    orchestrator = OrchestratorAgent(
+        deps=OrchestratorDeps(),
+        registry=AgentRegistry(config_manager=config_manager),
     )
-    agent = RoutingAgent(deps=deps)
 
     # 3. Execute query — tenant_id flows per-request
-    result = await agent.route_query("cooking videos", tenant_id=tenant_id)
+    result = await orchestrator._process_impl(
+        OrchestratorInput(query="cooking videos", tenant_id=tenant_id)
+    )
 
-    # 4. Verify result (RoutingOutput Pydantic model)
+    # 4. Verify result (RoutingContext Pydantic model)
     assert result.recommended_agent is not None
     assert result.confidence > 0.0
 ```
@@ -1532,28 +1534,19 @@ def cleanup_tenant_schemas(schema_manager):
 ### Pattern 1: Tenant-Aware Agent Initialization
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-def create_routing_agent() -> RoutingAgent:
-    """Create routing agent — tenant-agnostic at construction.
-    tenant_id flows per-request via route_query(query, tenant_id=...).
+def create_orchestrator() -> OrchestratorAgent:
+    """Create orchestrator agent — tenant-agnostic at construction.
+    tenant_id flows per-request via _process_impl(OrchestratorInput(..., tenant_id=...)).
     """
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-    # Create agent with deps — no tenant_id at construction
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-    )
-    agent = RoutingAgent(deps=deps)
-
-    return agent
+    config_manager = create_default_config_manager()
+    registry = AgentRegistry(config_manager=config_manager)
+    return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 ```
 
 ### Pattern 2: Tenant-Scoped API Endpoint
@@ -1579,17 +1572,20 @@ async def search(
 
     # Agent is tenant-agnostic — initialized once, tenant flows per-request
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
+    # OrchestratorDeps does not require telemetry_config/llm_config separately
+deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
-    agent = RoutingAgent(deps=deps)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
 
     # Execute query — tenant_id scopes resources at request time
-    results = await agent.route_query(query, tenant_id=tenant_id)
+    results = await orchestrator._process_impl(
+        OrchestratorInput(query=query, tenant_id=tenant_id)
+    )
 
     return results
 ```
@@ -1787,39 +1783,32 @@ memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories
 ### 3. Pass Tenant Context Explicitly
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# ✅ Good: Tenant-agnostic deps — tenant_id flows per-request
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
+# ✅ Good: Tenant-agnostic at construction — tenant_id flows per-request
+orchestrator = OrchestratorAgent(
+    deps=OrchestratorDeps(),
+    registry=AgentRegistry(config_manager=config_manager),
 )
-agent = RoutingAgent(deps=deps)
-# Pass tenant_id per-request: await agent.route_query(query, tenant_id=tenant_id)
+# Pass tenant_id per-request:
+# await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id=tenant_id))
 
 # ❌ Bad: Missing deps
-agent = RoutingAgent()  # TypeError: missing required argument 'deps'
+agent = OrchestratorAgent()  # TypeError: missing required argument 'deps'
 ```
 
 ### 4. Test Tenant Isolation
 
 ```python
 # Always test that tenants can't access each other's data
-def test_tenant_isolation():
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
+def test_tenant_isolation(config_manager):
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+    from cogniverse_agents.agent_registry import AgentRegistry
+    orchestrator = OrchestratorAgent(
+        deps=OrchestratorDeps(),
+        registry=AgentRegistry(config_manager=config_manager),
     )
-    agent = RoutingAgent(deps=deps)
     # One agent serves all tenants — tenant isolation at request time
 
     # Verify separate memory manager instances per tenant

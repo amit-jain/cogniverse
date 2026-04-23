@@ -90,7 +90,7 @@ The `agents` section in `config.json` defines agent URLs for A2A discovery via `
 ```json
 {
   "agents": {
-    "routing_agent": {"url": "http://localhost:8001", "enabled": true},
+    "orchestrator_agent": {"url": "http://localhost:8001", "enabled": true},
     "search_agent": {"url": "http://localhost:8002", "enabled": true},
     "text_analysis_agent": {"url": "http://localhost:8003", "enabled": true},
     "summarizer_agent": {"url": "http://localhost:8004", "enabled": true},
@@ -103,7 +103,7 @@ The `agents` section in `config.json` defines agent URLs for A2A discovery via `
 ```
 
 **Key Points:**
-- Agent keys must match `AGENT_CLASSES` in `config_loader.py` (e.g., `routing_agent`, `search_agent`)
+- Agent keys must match `AGENT_CLASSES` in `config_loader.py` (e.g., `orchestrator_agent`, `search_agent`)
 - `ConfigLoader.load_agents()` validates each agent class is importable and registers metadata (capabilities, URL) in the `AgentRegistry`
 - Set `"enabled": false` to disable an agent without removing its config
 - In unified runtime mode, all agents share the same runtime URL; per-request `tenant_id`, `profile`, and `session_id` arrive in the task payload

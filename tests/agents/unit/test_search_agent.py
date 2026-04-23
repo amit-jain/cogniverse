@@ -917,8 +917,8 @@ class TestSearchAgentAdvancedFeatures:
     def test_routing_decision_compatibility(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
-        """Test that RoutingDecision structure is compatible with SearchAgent"""
-        from cogniverse_agents.routing_agent import RoutingOutput
+        """Test that RoutingContext is compatible with SearchAgent."""
+        from cogniverse_agents.routing.contract import RoutingContext
 
         # Mock config and dependencies
         mock_config = {
@@ -942,7 +942,7 @@ class TestSearchAgentAdvancedFeatures:
         )
 
         # Mock routing decision with relationships
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robots playing soccer in competitions",
             enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
             recommended_agent="search_agent",
@@ -1551,8 +1551,8 @@ class TestMultiQueryFusion:
     def test_routing_decision_flows_to_multi_query_fusion(
         self, agent_with_mock_backend
     ):
-        """Test RoutingOutput with query_variants flows through search_with_routing_decision."""
-        from cogniverse_agents.routing_agent import RoutingOutput
+        """Test RoutingContext with query_variants flows through search_with_routing_decision."""
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent = agent_with_mock_backend
 
@@ -1571,7 +1571,7 @@ class TestMultiQueryFusion:
         mock_backend.search = mock_search
         agent._shared_backend = mock_backend
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robots playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,
@@ -1609,7 +1609,7 @@ class TestMultiQueryFusion:
     @pytest.mark.ci_fast
     def test_custom_rrf_k_propagates_to_fusion(self, agent_with_mock_backend):
         """Test non-default rrf_k in routing_metadata flows to _fuse_results_rrf."""
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent = agent_with_mock_backend
 
@@ -1635,7 +1635,7 @@ class TestMultiQueryFusion:
         agent._fuse_results_rrf = spy_fuse
 
         custom_rrf_k = 30  # Non-default
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robots playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,
@@ -1671,8 +1671,8 @@ class TestEnsembleVsFusionPaths:
 
     - Ensemble: _process_impl(SearchInput) → _search_ensemble()
       Triggered by SearchInput.profiles with len > 1
-    - Multi-query fusion: search_with_routing_decision(RoutingDecision) → _search_multi_query_fusion()
-      Triggered by RoutingDecision.query_variants with len > 1
+    - Multi-query fusion: search_with_routing_decision(RoutingContext) → _search_multi_query_fusion()
+      Triggered by RoutingContext.query_variants with len > 1
     """
 
     @pytest.fixture
@@ -1766,7 +1766,7 @@ class TestEnsembleVsFusionPaths:
     @pytest.mark.ci_fast
     def test_fusion_path_uses_single_profile(self, agent_with_mock_backend):
         """search_with_routing_decision with query_variants uses fusion, not ensemble."""
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
         agent = agent_with_mock_backend
 
@@ -1790,7 +1790,7 @@ class TestEnsembleVsFusionPaths:
         mock_backend.search = mock_search
         agent._shared_backend = mock_backend
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="robots playing soccer",
             recommended_agent="search_agent",
             confidence=0.85,

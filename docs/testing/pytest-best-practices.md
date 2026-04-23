@@ -258,11 +258,11 @@ uv run pytest tests/agents/
 # ✅ Good: Absolute imports from workspace packages
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_vespa.backend import VespaBackend
 
 # ❌ Bad: Old src-style imports (deprecated)
-from src.agents.routing_agent import RoutingAgent  # ❌ Will fail
+from src.agents.orchestrator_agent import OrchestratorAgent  # ❌ Will fail
 ```
 
 ---
@@ -302,10 +302,10 @@ def test_core_package_imports():
 
 def test_agents_package_imports():
     """Verify cogniverse_agents package imports work"""
-    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent
     from cogniverse_agents.search_agent import SearchAgent
 
-    assert RoutingAgent is not None
+    assert OrchestratorAgent is not None
     assert SearchAgent is not None
 
 def test_retrieval_package_imports():
@@ -342,17 +342,17 @@ def test_evaluation_package_imports():
 import pytest
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 
 def test_agents_depends_on_foundation_and_core():
     """Verify agents package can use foundation and core packages"""
-    from cogniverse_agents.routing_agent import RoutingDeps
+    from cogniverse_agents.orchestrator_agent import OrchestratorDeps
     from cogniverse_foundation.telemetry.config import TelemetryConfig
 
     # Create dependencies with tenant-specific configuration
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
     telemetry_config = TelemetryConfig()
-    deps = RoutingDeps(
+    deps = OrchestratorDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
@@ -360,8 +360,8 @@ def test_agents_depends_on_foundation_and_core():
         ),
     )
 
-    # RoutingAgent from agents package should accept RoutingDeps
-    agent = RoutingAgent(deps=deps)
+    # OrchestratorAgent from agents package should accept OrchestratorDeps
+    agent = OrchestratorAgent(deps=deps)
 
     assert agent.deps is not None
     assert agent.deps == deps
@@ -369,11 +369,11 @@ def test_agents_depends_on_foundation_and_core():
 def test_runtime_depends_on_all():
     """Verify runtime package can use all dependencies"""
     from cogniverse_foundation.config.unified_config import SystemConfig
-    from cogniverse_agents.routing_agent import RoutingAgent
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent
     from cogniverse_vespa.backend import VespaBackend
 
     # Runtime should be able to import all packages
-    assert RoutingAgent is not None
+    assert OrchestratorAgent is not None
     assert VespaBackend is not None
     assert SystemConfig is not None
 
@@ -551,7 +551,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
 ```python
 import pytest
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 
 @pytest.fixture
 def tenant_a_config():
@@ -582,19 +582,17 @@ def multi_tenant_configs():
 
 @pytest.fixture
 def tenant_agent(tenant_a_config):
-    """Create routing agent for tenant A"""
-    from cogniverse_agents.routing_agent import RoutingDeps
+    """Create orchestrator agent for tenant A"""
     from cogniverse_foundation.telemetry.config import TelemetryConfig
-
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = RoutingDeps(
+    deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="ollama/qwen3:4b",
             api_base="http://localhost:11434",
         ),
     )
-    return RoutingAgent(deps=deps)
+    return OrchestratorAgent(deps=deps)
 
 # Use in tests:
 def test_with_tenant_fixtures(tenant_a_config, tenant_agent):

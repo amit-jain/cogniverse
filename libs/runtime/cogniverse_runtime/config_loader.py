@@ -31,7 +31,6 @@ class ConfigLoader:
 
     # Mapping of agent types to classes (for import validation)
     AGENT_CLASSES = {
-        "routing_agent": "cogniverse_agents.routing_agent:RoutingAgent",
         "search_agent": "cogniverse_agents.search_agent:SearchAgent",
         "text_analysis_agent": "cogniverse_agents.text_analysis_agent:TextAnalysisAgent",
         "summarizer_agent": "cogniverse_agents.summarizer_agent:SummarizerAgent",

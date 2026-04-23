@@ -1,21 +1,20 @@
-# src/routing/__init__.py
-"""
-Routing subsystem — base types, config, and optimization.
+"""Routing subsystem.
 
-ComprehensiveRouter/TieredRouter/strategies have been replaced by
-GatewayAgent (fast GLiNER triage) + OrchestratorAgent (LLM-planned pipeline).
+The live routing path is served by:
+  - ``cogniverse_agents.gateway_agent.GatewayAgent``     — fast GLiNER triage
+  - ``cogniverse_agents.orchestrator_agent.OrchestratorAgent`` — LLM-planned pipeline
+
+This package still holds:
+  - ``cogniverse_agents.routing.contract`` — ``RoutingContext`` wire type
+  - ``cogniverse_agents.routing.config`` — runtime config loaders
+  - offline optimisation/analytics modules (``modality_*``, ``xgboost_meta_models``,
+    ``advanced_optimizer``, ``annotation_*``) used by Argo CronWorkflows and the
+    Phoenix dashboard.
 """
 
-from .base import RoutingDecision, RoutingMetrics, RoutingStrategy
 from .config import AutomationRulesConfig, RoutingConfig, load_config
-from .optimizer import AutoTuningOptimizer, RoutingOptimizer
 
 __all__ = [
-    "RoutingStrategy",
-    "RoutingDecision",
-    "RoutingMetrics",
-    "RoutingOptimizer",
-    "AutoTuningOptimizer",
     "AutomationRulesConfig",
     "RoutingConfig",
     "load_config",

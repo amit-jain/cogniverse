@@ -143,7 +143,8 @@ cogniverse/
 │   ├── agents/                   # cogniverse_agents
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_agents/
-│   │       ├── routing_agent.py  # DSPy routing & optimization
+│   │       ├── orchestrator_agent.py  # DSPy orchestration & planning
+│   │       ├── gateway_agent.py       # GLiNER-based triage
 │   │       ├── search_agent.py            # Multi-modal search & reranking
 │   │       └── tools/            # Agent tools
 │   ├── vespa/                    # cogniverse_vespa
@@ -497,7 +498,7 @@ from cogniverse_evaluation.providers import get_evaluation_provider
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 # Implementation Layer
-from cogniverse_agents.routing_agent import RoutingAgent
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_synthetic.service import SyntheticDataService
 
@@ -594,8 +595,8 @@ from cogniverse_evaluation.providers.registry import EvaluationRegistry
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
 # ===== IMPLEMENTATION LAYER =====
-# Agents - Routing and Search
-from cogniverse_agents.routing_agent import RoutingAgent
+# Agents - Orchestration and Search
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.agent_registry import AgentRegistry

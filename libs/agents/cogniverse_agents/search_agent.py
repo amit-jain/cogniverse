@@ -30,9 +30,7 @@ from pydantic import BaseModel, Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-
-# Enhanced query support from DSPy routing system
-from cogniverse_agents.routing_agent import RoutingOutput
+from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -1274,7 +1272,7 @@ class SearchAgent(
 
     def search_with_routing_decision(
         self,
-        routing_decision: RoutingOutput,
+        routing_decision: RoutingContext,
         *,
         tenant_id: str,
         top_k: int = 10,
@@ -1703,7 +1701,7 @@ class SearchAgent(
             }
 
     def process_routing_decision_task(
-        self, routing_decision: RoutingOutput, *, tenant_id: str, task_id: str = None
+        self, routing_decision: RoutingContext, *, tenant_id: str, task_id: str = None
     ) -> Dict[str, Any]:
         """
         Process a routing decision as a task for A2A compatibility.
@@ -2104,15 +2102,13 @@ async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        from cogniverse_agents.routing_agent import RoutingOutput
-
         tenant_id = routing_decision.get("tenant_id")
         if not tenant_id:
             raise HTTPException(
                 status_code=400, detail="tenant_id is required in routing_decision"
             )
 
-        decision = RoutingOutput(
+        decision = RoutingContext(
             recommended_agent=routing_decision.get("recommended_agent", "search_agent"),
             confidence=routing_decision.get("confidence", 0.0),
             reasoning=routing_decision.get("reasoning", ""),
@@ -2151,9 +2147,7 @@ async def handle_enhanced_a2a_task(task: dict):
 
             routing_data = task["routing_decision"]
 
-            from cogniverse_agents.routing_agent import RoutingOutput
-
-            routing_decision = RoutingOutput(
+            routing_decision = RoutingContext(
                 recommended_agent=routing_data.get("recommended_agent", "search_agent"),
                 confidence=routing_data.get("confidence", 0.0),
                 reasoning=routing_data.get("reasoning", ""),

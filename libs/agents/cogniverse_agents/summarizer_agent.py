@@ -15,9 +15,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-
-# Enhanced routing support
-from cogniverse_agents.routing_agent import RoutingOutput
+from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -746,7 +744,7 @@ and structure summary based on identified themes and content categories.
 
     async def summarize_with_routing_decision(
         self,
-        routing_decision: RoutingOutput,
+        routing_decision: RoutingContext,
         search_results: List[Dict[str, Any]],
         **kwargs,
     ) -> SummaryResult:

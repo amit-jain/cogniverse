@@ -168,20 +168,20 @@ class TestA2AMessageSend:
         assert call_kwargs.kwargs["context"]["tenant_id"] == "test_tenant"
 
     @pytest.mark.ci_fast
-    def test_message_send_without_agent_name_defaults_to_routing(
+    def test_message_send_without_agent_name_defaults_to_orchestrator(
         self, client, mock_dispatcher
     ):
-        """When no agent_name in metadata, defaults to routing_agent."""
+        """When no agent_name in metadata, defaults to orchestrator_agent."""
         mock_dispatcher.dispatch = AsyncMock(
             return_value={
                 "status": "success",
-                "agent": "routing_agent",
+                "agent": "orchestrator_agent",
                 "recommended_agent": "search_agent",
             }
         )
 
         agent_ep = MagicMock()
-        agent_ep.capabilities = ["routing"]
+        agent_ep.capabilities = ["orchestration"]
         mock_dispatcher._registry.get_agent.return_value = agent_ep
 
         payload = {
@@ -195,7 +195,6 @@ class TestA2AMessageSend:
                     "parts": [{"kind": "text", "text": "find videos about dogs"}],
                 },
                 "metadata": {
-                    # No agent_name → routing_agent default; tenant_id required.
                     "tenant_id": "test_tenant",
                 },
             },
@@ -205,7 +204,7 @@ class TestA2AMessageSend:
         assert response.status_code == 200
 
         call_kwargs = mock_dispatcher.dispatch.call_args
-        assert call_kwargs.kwargs["agent_name"] == "routing_agent"
+        assert call_kwargs.kwargs["agent_name"] == "orchestrator_agent"
 
     @pytest.mark.ci_fast
     def test_message_send_error_returns_error_text(self, client, mock_dispatcher):

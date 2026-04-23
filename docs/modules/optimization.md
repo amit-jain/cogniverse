@@ -66,8 +66,8 @@ from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimize
 from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
 from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
-from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_agents.routing.advanced_optimizer import AdvancedRoutingOptimizer
+from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 
 # Synthetic Data Generation (exported at package level)
 from cogniverse_synthetic import SyntheticDataService, SyntheticDataRequest, SyntheticDataResponse
@@ -655,15 +655,12 @@ def _calculate_current_metrics(self) -> OptimizationMetrics:
     """
 ```
 
-**AutoTuningOptimizer Subclass:**
+**AdvancedRoutingOptimizer** (`cogniverse_agents.routing.advanced_optimizer`):
 ```python
-class AutoTuningOptimizer(RoutingOptimizer):
+class AdvancedRoutingOptimizer:
     """
-    Auto-tuning for specific routing strategies:
-    - GLiNER: Optimize threshold and labels
-    - LLM: Optimize temperature, DSPy compilation
-    - Keyword: Optimize keyword effectiveness
-    - Composite: Optimize ensemble weights, confidence thresholds
+    Multi-stage GRPO optimization with DSPy 3.0 advanced optimizers.
+    Handles Bootstrap → SIMBA → MIPROv2 → GEPA progression.
     """
 
     async def _optimize_gliner(self):
@@ -956,13 +953,10 @@ print(f"Integration: {optimization_results['integration']}")
 
 ---
 
-### Example 5: Optimizer Coordinator (Facade Pattern)
+### Example 5: Unified Optimizer
 
 ```python
-from cogniverse_agents.routing.optimizer_coordinator import (
-    OptimizerCoordinator,
-    OptimizationType
-)
+from cogniverse_agents.routing.unified_optimizer import UnifiedOptimizer
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Initialize coordinator
@@ -2269,7 +2263,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 ## Related Documentation
 
 - **Routing Module Study Guide**: `docs/modules/routing.md` - Tiered routing strategies
-- **Agents Module Study Guide**: `docs/modules/agents.md` - RoutingAgent integration
+- **Agents Module Study Guide**: `docs/modules/agents.md` - OrchestratorAgent integration
 - **Telemetry Module Study Guide**: `docs/modules/telemetry.md` - Phoenix span collection
 - **Evaluation Module Study Guide**: `docs/modules/evaluation.md` - RoutingEvaluator
 - **Modal Deployment Guide**: `docs/modal/deployment_guide.md` - Modal infrastructure setup

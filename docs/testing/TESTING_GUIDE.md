@@ -43,7 +43,7 @@ Comprehensive guide to testing practices in Cogniverse.
 tests/
 ├── agents/
 │   ├── unit/
-│   │   ├── test_routing_agent.py
+│   │   ├── test_orchestrator_agent.py
 │   │   ├── test_search_agent.py
 │   │   └── ...
 │   ├── integration/

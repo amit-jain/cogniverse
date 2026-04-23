@@ -475,12 +475,12 @@ class VideoSearchAgent:
             return results
 ```
 
-### 2. Routing Agent with Phoenix Projects
+### 2. Orchestrator Agent with Phoenix Projects
 
 ```python
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
-class RoutingAgent:
+class OrchestratorAgent:
     def __init__(self, config):
         self.telemetry = get_telemetry_manager()
 

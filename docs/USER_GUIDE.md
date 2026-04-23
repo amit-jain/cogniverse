@@ -224,34 +224,25 @@ results = agent.search_by_text(
 
 ### 2. Intelligent Query Routing
 
-Cogniverse automatically routes queries to the optimal execution agent:
+Cogniverse automatically routes queries to the optimal execution agent via the GatewayAgent → OrchestratorAgent pipeline. The orchestrator produces a `RoutingContext` that execution agents consume:
 
 ```python
 import asyncio
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-# Initialize routing agent with deps
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-routing_agent = RoutingAgent(deps=deps)
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
 async def main():
-    # Route query (async — decides which agent should handle this)
-    decision = await routing_agent.route_query(
-        query="cooking recipes with pasta",
-        tenant_id="your_org:production",
+    registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+
+    result = await orchestrator._process_impl(
+        OrchestratorInput(
+            query="cooking recipes with pasta",
+            tenant_id="your_org:production",
+        )
     )
 
-    print(f"Recommended Agent: {decision.recommended_agent}")
-    print(f"Confidence: {decision.confidence}")
-    print(f"Reasoning: {decision.reasoning}")
+    print(result["summary"])
 
 asyncio.run(main())
 ```
@@ -810,7 +801,7 @@ curl -X POST http://localhost:8000/admin/messaging/invite \
 | `/wiki topic <name>` | — | Look up a topic page by name |
 | `/wiki index` | — | Show the full wiki index |
 | `/wiki lint` | — | Check wiki for orphan, stale, or empty pages |
-| Plain text | routing_agent | `what videos do you have on transformers?` |
+| Plain text | orchestrator_agent | `what videos do you have on transformers?` |
 | Photo/video | search_agent | Send a frame to search for similar content |
 | `/help` | — | Show all available commands |
 
@@ -888,10 +879,10 @@ sequenceDiagram
 
     USR->>BOT: what else do you have on this topic?
     BOT->>GW: Update (plain text)
-    GW->>GW: parse_message() → routing_agent
+    GW->>GW: parse_message() → orchestrator_agent
     GW->>MEM: ConversationManager.get_history(chat_id)
     MEM-->>GW: prior turns (multi-turn context)
-    GW->>RT: POST /agents/routing_agent/process<br/>(with conversation_history)
+    GW->>RT: POST /agents/orchestrator_agent/process<br/>(with conversation_history)
     RT-->>GW: {message: "..."}
     GW-->>USR: routed response
     GW->>MEM: ConversationManager.store_turn()
@@ -984,7 +975,7 @@ curl -X POST http://localhost:8000/wiki/save \
     "query": "machine learning basics",
     "response": {"answer": "ML is..."},
     "entities": ["machine_learning"],
-    "agent_name": "routing_agent",
+    "agent_name": "summarizer_agent",
     "tenant_id": "acme_corp"
   }'
 
@@ -1154,33 +1145,27 @@ results = agent.search_by_text(
 )
 ```
 
-#### RoutingAgent
+#### OrchestratorAgent and RoutingContext
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.routing.contract import RoutingContext
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Create dependencies (telemetry_config is required)
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
+registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+
+# The orchestrator returns a RoutingContext to execution agents
+result = await orchestrator._process_impl(
+    OrchestratorInput(query="machine learning tutorial", tenant_id="your_org:production")
 )
 
-agent = RoutingAgent(deps=deps)
-
-# Route query (async method - must be called within async function)
-decision = await agent.route_query(query="machine learning tutorial")
-
-# Access routing decision properties
-decision.recommended_agent # Recommended agent name
-decision.confidence        # Routing confidence score
-decision.entities          # Extracted entities
-decision.relationships     # Entity relationships
-decision.enhanced_query    # Enhanced query string
+# RoutingContext fields (used by execution agents):
+# result.recommended_agent  — agent selected to execute
+# result.confidence         — routing confidence score
+# result.entities           — extracted entities (forwarded from EntityExtractionAgent)
+# result.relationships      — entity relationships
+# result.enhanced_query     — enriched query (forwarded from QueryEnhancementAgent)
 ```
 
 #### Mem0MemoryManager

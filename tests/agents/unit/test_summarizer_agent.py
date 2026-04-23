@@ -476,9 +476,9 @@ class TestSummarizerAgentCoreFunctionality:
         """Test summarization with routing decision context"""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing_agent import RoutingOutput
+        from cogniverse_agents.routing.contract import RoutingContext
 
-        routing_decision = RoutingOutput(
+        routing_decision = RoutingContext(
             query="AI overview",
             recommended_agent="summarizer",
             confidence=0.85,

@@ -674,20 +674,20 @@ agent = SearchAgent(
     schema_loader=schema_loader,
 )
 
-# Routing Agent (implementation layer)
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+# Orchestrator Agent (implementation layer)
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
-# RoutingDeps is tenant-agnostic — no tenant_id at construction
-deps = RoutingDeps(
+# OrchestratorDeps is tenant-agnostic — no tenant_id at construction
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="ollama/qwen3:4b",
         api_base="http://localhost:11434",
     ),
 )
-router = RoutingAgent(deps=deps)
+router = OrchestratorAgent(deps=deps)
 ```
 
 **Caching**: Agents are cached per tenant_id to avoid re-initialization overhead.

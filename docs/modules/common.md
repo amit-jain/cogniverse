@@ -81,7 +81,7 @@ libs/vespa/cogniverse_vespa/config/
 ```mermaid
 flowchart TB
     subgraph "cogniverse_agents Package"
-        AgentLayer["<span style='color:#000'>Agent Layer<br/>RoutingAgent, VideoSearchAgent, etc.</span>"]
+        AgentLayer["<span style='color:#000'>Agent Layer<br/>OrchestratorAgent, VideoSearchAgent, etc.</span>"]
     end
 
     subgraph "cogniverse_foundation Package"
@@ -467,7 +467,7 @@ def add_memory(
     Args:
         content: Memory content (natural language)
         tenant_id: Tenant identifier
-        agent_name: Agent name (e.g., "routing_agent")
+        agent_name: Agent name (e.g., "orchestrator_agent")
         metadata: Optional metadata dict
 
     Returns:
@@ -477,7 +477,7 @@ def add_memory(
         memory_id = manager.add_memory(
             content="User prefers detailed technical explanations",
             tenant_id="acme",
-            agent_name="routing_agent",
+            agent_name="orchestrator_agent",
             metadata={"source": "user_feedback"}
         )
     """
@@ -522,7 +522,7 @@ def search_memory(
         memories = manager.search_memory(
             query="What are user's preferences?",
             tenant_id="acme",
-            agent_name="routing_agent",
+            agent_name="orchestrator_agent",
             top_k=5
         )
 
@@ -565,7 +565,7 @@ def clear_agent_memory(
 {
   "id": "mem_abc123",
   "user_id": "acme",
-  "agent_id": "routing_agent",
+  "agent_id": "orchestrator_agent",
   "memory": "User prefers detailed technical explanations with code examples",
   "embedding": [0.23, -0.15, 0.87, ...],  // 768-dim vector
   "metadata": {
@@ -580,7 +580,7 @@ def clear_agent_memory(
 
 ```mermaid
 sequenceDiagram
-    participant Agent as RoutingAgent<br/>cogniverse_agents
+    participant Agent as OrchestratorAgent<br/>cogniverse_agents
     participant MemMgr as Mem0MemoryManager<br/>cogniverse_core
     participant Backend as VespaBackend<br/>cogniverse_vespa
     participant Vespa as Vespa<br/>agent_memories_acme
@@ -599,12 +599,12 @@ sequenceDiagram
     Note over MemMgr: Configure Mem0 with backend storage
     MemMgr-->>Agent: Initialized
 
-    Agent->>MemMgr: add_memory("User prefers videos", "acme", "routing_agent")
+    Agent->>MemMgr: add_memory("User prefers videos", "acme", "orchestrator_agent")
     MemMgr->>Vespa: Store in agent_memories_acme
     Vespa-->>MemMgr: memory_id
     MemMgr-->>Agent: memory_id
 
-    Agent->>MemMgr: search_memory("preferences?", "acme", "routing_agent")
+    Agent->>MemMgr: search_memory("preferences?", "acme", "orchestrator_agent")
     MemMgr->>Vespa: Search agent_memories_acme
     Vespa-->>MemMgr: [{"memory": "...", "score": 0.92}]
     MemMgr-->>Agent: memories
@@ -1011,7 +1011,7 @@ memory.initialize(
     schema_loader=schema_loader,
 )
 
-agent_name = "routing_agent"
+agent_name = "orchestrator_agent"
 
 # Add memories from user interactions
 memory.add_memory(
@@ -1211,7 +1211,7 @@ if policy.should_store(content):
     memory.add_memory(
         content=content,
         tenant_id="acme",
-        agent_name="routing_agent"
+        agent_name="orchestrator_agent"
     )
 ```
 
@@ -1240,7 +1240,7 @@ async def cleanup_old_memories(tenant_id: str, agent_name: str, days: int = 90):
 
 # Run cleanup for all tenants
 for tenant_id in get_active_tenants():
-    await cleanup_old_memories(tenant_id, "routing_agent", days=90)
+    await cleanup_old_memories(tenant_id, "orchestrator_agent", days=90)
 ```
 
 ### Tenant Isolation Verification
@@ -1279,7 +1279,7 @@ memory1.initialize()
 memory1.add_memory(
     content="Secret information for ACME",
     tenant_id="acme",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 
 # Try to search from tenant 2
@@ -1288,7 +1288,7 @@ memory2.initialize()
 results = memory2.search_memory(
     query="secret information",
     tenant_id="globex",
-    agent_name="routing_agent"
+    agent_name="orchestrator_agent"
 )
 
 # Should NOT find tenant 1's memory

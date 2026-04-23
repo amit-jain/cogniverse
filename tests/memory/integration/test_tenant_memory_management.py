@@ -240,6 +240,7 @@ class TestTenantMemoryTypeFilter:
             content="For temporal queries use chunk-level video retrieval with 30s windows",
             tenant_id="test_tenant",
             agent_name="_strategy_store",
+            infer=False,
         )
 
         wait_for_vespa_indexing(

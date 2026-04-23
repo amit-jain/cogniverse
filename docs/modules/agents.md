@@ -10,7 +10,7 @@
 1. [Module Overview](#module-overview)
 2. [Package Structure](#package-structure)
 3. [Core Agents](#core-agents)
-   - [RoutingAgent](#1-routingagent)
+   - [RoutingContext](#1-routingcontext)
    - [VideoSearchAgent](#2-videosearchagent)
    - [GatewayAgent](#gateway-gatewayagent)
    - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
@@ -51,8 +51,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 ### Key Agents
 
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
-2. **RoutingAgent** - Thin DSPy routing agent for pre-enriched queries (receives entities/relationships from upstream agents)
-3. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
+2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
 4. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
 5. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 6. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
@@ -108,8 +107,8 @@ graph TD
     Root["<span style='color:#000'><b>cogniverse_agents/</b></span>"]
 
     Root --> Init["<span style='color:#000'>__init__.py</span>"]
-    Root --> RoutingAgent["<span style='color:#000'><b>routing_agent.py</b><br/>1667 lines - TOP LEVEL</span>"]
-    Root --> OrchestratorAgent["<span style='color:#000'><b>orchestrator_agent.py</b><br/>A2A Entry Point</span>"]
+    Root --> GatewayAgent["<span style='color:#000'><b>gateway_agent.py</b><br/>A2A Entry Point</span>"]
+    Root --> OrchestratorAgent["<span style='color:#000'><b>orchestrator_agent.py</b><br/>A2A Orchestrator</span>"]
     Root --> AudioAgent["<span style='color:#000'>audio_analysis_agent.py</span>"]
     Root --> DocAgent["<span style='color:#000'>document_agent.py</span>"]
     Root --> ImageAgent["<span style='color:#000'>image_search_agent.py</span>"]
@@ -151,7 +150,7 @@ graph TD
     Root --> WorkflowDir["<span style='color:#000'><b>workflow/</b></span>"]
 
     style Root fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style RoutingAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style GatewayAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style VideoAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style OrchestratorAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style RoutingDir fill:#81d4fa,stroke:#0288d1,color:#000
@@ -168,240 +167,44 @@ graph TD
 
 **Key Agent Files** (all at top level):
 
-- `routing_agent.py`: 1667 lines
-
-
-- `orchestrator_agent.py`: A2A entry point with DSPy planning
+- `gateway_agent.py`: A2A entry point with GLiNER classification
+- `orchestrator_agent.py`: A2A orchestrator with DSPy planning
 
 
 ## Core Agents
 
-### 1. RoutingAgent
+### 1. RoutingContext
 
-**Location**: `libs/agents/cogniverse_agents/routing_agent.py` (top level)
-**Purpose**: Intelligent query routing with relationship extraction and DSPy 3.0 optimization
-**Base Classes**: `A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin`
-
-#### Architecture
-
-```mermaid
-flowchart TB
-    Query["<span style='color:#000'>User Query</span>"] --> RoutingAgent["<span style='color:#000'>RoutingAgent<br/>tenant_id: acme</span>"]
-
-    RoutingAgent --> Memory["<span style='color:#000'>Get Memory Context<br/>Mem0MemoryManager</span>"]
-    Memory --> RoutingAgent
-
-    RoutingAgent --> EntityExtract["<span style='color:#000'>Extract Entities<br/>GLiNER / LangExtract</span>"]
-    EntityExtract --> RelExtract["<span style='color:#000'>Extract Relationships<br/>Pattern matching + LLM</span>"]
-    RelExtract --> QueryEnhance["<span style='color:#000'>Enhance Query<br/>Relationship context</span>"]
-    QueryEnhance --> DSPyOptimize["<span style='color:#000'>Agent Selection<br/>DSPy Module</span>"]
-    DSPyOptimize --> Decision["<span style='color:#000'>RoutingDecision<br/>+ selected agents<br/>+ enhanced query<br/>+ confidence</span>"]
-
-    Decision --> Telemetry["<span style='color:#000'>Record Span<br/>Phoenix project: acme_routing_agent</span>"]
-
-    style Query fill:#90caf9,stroke:#1565c0,color:#000
-    style RoutingAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Memory fill:#90caf9,stroke:#1565c0,color:#000
-    style EntityExtract fill:#ffcc80,stroke:#ef6c00,color:#000
-    style RelExtract fill:#ffcc80,stroke:#ef6c00,color:#000
-    style QueryEnhance fill:#ffcc80,stroke:#ef6c00,color:#000
-    style DSPyOptimize fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Decision fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
-```
+**Location**: `libs/agents/cogniverse_agents/routing/contract.py`
+**Purpose**: Wire type passed from the routing layer (GatewayAgent + OrchestratorAgent) to execution agents
+**Base Class**: `AgentOutput` (from `cogniverse_core.agents.base`)
 
 #### Class Definition
 
 ```python
-# libs/agents/cogniverse_agents/routing_agent.py
+# libs/agents/cogniverse_agents/routing/contract.py
 
-from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
-from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-from pydantic import Field
-from typing import Any, Dict, List, Optional
-import dspy
+from cogniverse_core.agents.base import AgentOutput
+from pydantic import ConfigDict, Field
+from typing import Any, Dict, List
 
-# Type-safe input/output definitions
-class RoutingInput(AgentInput):
-    """Input for routing agent."""
-    query: str = Field(..., description="User query to route")
-    context: Optional[str] = Field(None, description="Optional context information")
-    require_orchestration: Optional[bool] = Field(None, description="Force orchestration decision")
+class RoutingContext(AgentOutput):
+    """Routing decision plus query enrichment passed to execution agents."""
 
-class RoutingOutput(AgentOutput):
-    """Output from routing agent."""
     query: str = Field(..., description="Original query")
-    recommended_agent: str = Field(..., description="Agent to route to")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Routing confidence")
-    reasoning: str = Field(..., description="Reasoning for the decision")
-    fallback_agents: List[str] = Field(default_factory=list, description="Fallback agents if primary fails")
-    enhanced_query: str = Field("", description="Enhanced query with context")
-    entities: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted entities")
-    relationships: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted relationships")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    query_variants: List[Dict[str, str]] = Field(default_factory=list, description="Query variants for parallel fusion search")
-    timestamp: datetime = Field(default_factory=datetime.now, description="Decision timestamp")
+    recommended_agent: str = Field(..., description="Selected execution agent")
+    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Routing confidence")
+    reasoning: str = Field("", description="Reasoning for the decision")
+    fallback_agents: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    # Convenience properties
-    @property
-    def extracted_entities(self) -> List[Dict[str, Any]]:
-        return self.entities
+    # Enrichment fields forwarded from preprocessing agents
+    enhanced_query: str = Field("", description="From QueryEnhancementAgent")
+    entities: List[Dict[str, Any]] = Field(default_factory=list, description="From EntityExtractionAgent")
+    relationships: List[Dict[str, Any]] = Field(default_factory=list)
+    query_variants: List[Dict[str, str]] = Field(default_factory=list)
 
-    @property
-    def extracted_relationships(self) -> List[Dict[str, Any]]:
-        return self.relationships
-
-    @property
-    def routing_metadata(self) -> Dict[str, Any]:
-        return self.metadata
-
-class RoutingDeps(AgentDeps):
-    """Dependencies for routing agent. Tenant-agnostic at startup — tenant_id arrives per-request."""
-    telemetry_config: Any = Field(..., description="Telemetry configuration")
-    llm_config: LLMEndpointConfig = Field(
-        default_factory=lambda: LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-        description="LLM endpoint configuration for DSPy routing",
-    )
-    confidence_threshold: float = Field(0.7, description="Min confidence threshold")
-    enable_relationship_extraction: bool = Field(True, description="Enable relationship extraction")
-    enable_query_enhancement: bool = Field(True, description="Enable query enhancement")
-    enable_caching: bool = Field(True, description="Enable result caching")
-    enable_advanced_optimization: bool = Field(True, description="Enable GRPO optimization")
-    enable_memory: bool = Field(False, description="Enable memory (requires Mem0)")
-
-class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin):
-    """
-    Intelligent query routing with relationship extraction.
-
-    Multi-tenant aware - each tenant gets isolated routing context.
-    Type-safe with generic input/output/deps types.
-    """
-
-    def __init__(self, deps: RoutingDeps, port: int = 8001):
-        """
-        Initialize routing agent (tenant-agnostic).
-
-        Args:
-            deps: RoutingDeps with infrastructure config (no tenant_id)
-            port: A2A HTTP server port
-        """
-        config = A2AAgentConfig(
-            agent_name="routing_agent",
-            agent_description="Intelligent query routing with DSPy optimization",
-            capabilities=self._get_routing_capabilities(deps),
-            port=port,
-        )
-        super().__init__(deps=deps, config=config, dspy_module=None)
-
-        # Initialize telemetry (initialized with deps.telemetry_config)
-        self._initialize_telemetry_manager()
-        # tenant_id arrives per-request in A2A task payload, not at construction
-
-        # Memory initialized lazily per-tenant on first request
-        # via _ensure_memory_for_tenant(tenant_id) in _process_impl
-        self._memory_initialized_tenants: set = set()
-
-        # DSPy modules (shared across all tenants)
-        self._init_dspy_modules()
-
-    async def _process_impl(self, input: RoutingInput) -> RoutingOutput:
-        """Type-safe processing with IDE autocomplete support."""
-        # Implementation handles routing logic
-        ...
-```
-
-#### Key Methods
-
-**`route_query(query: str, context: Optional[str] = None, tenant_id: Optional[str] = None, require_orchestration: Optional[bool] = None) -> RoutingOutput`**
-
-Main routing entry point. Returns a `RoutingOutput` Pydantic model.
-
-**Note**: `RoutingDecision` is a SEPARATE dataclass in `cogniverse_agents/routing/base.py` used by the lower-level routing strategies. It has different fields (`search_modality`, `generation_type`, `confidence_score`, `primary_agent`). Do not confuse it with `RoutingOutput` which is the typed output of the `RoutingAgent` itself.
-
-```python
-async def route_query(
-    self,
-    query: str,
-    context: Optional[str] = None,
-    tenant_id: Optional[str] = None,
-    require_orchestration: Optional[bool] = None,
-) -> RoutingOutput:
-    """
-    Route query with entity/relationship extraction.
-
-    Args:
-        query: User query string
-        context: Optional context string for additional query context
-        tenant_id: Tenant ID (defaults to self.tenant_id, REQUIRED for telemetry)
-        require_orchestration: Force multi-agent orchestration if True
-
-    Returns:
-        RoutingOutput with selected agents and enhanced query
-    """
-    with self.telemetry.trace("route_query") as span:
-        span.set_attribute("tenant_id", self.tenant_id)
-        span.set_attribute("query", query)
-
-        # 1. Get memory context
-        memory_context = self.get_relevant_context(query, top_k=5)
-
-        # 2. Analyze and enhance query (composable module: entity extraction + relationship inference + query reformulation)
-        entities, relationships, enhanced_query, enhancement_metadata = await self._analyze_and_enhance_query(query)
-
-        # 3. Select agents (DSPy)
-        decision = await self._make_routing_decision(query, enhanced_query, entities, relationships, context)
-
-        # 5. Record decision
-        span.set_attribute("recommended_agent", decision.recommended_agent)
-        span.set_attribute("confidence", decision.confidence)
-
-        return decision
-```
-
-**`_analyze_and_enhance_query(query: str) -> Tuple[List[Dict], List[Dict], str, Dict]`**
-
-Unified analysis and enhancement using `ComposableQueryAnalysisModule`. The module has two paths:
-- **Path A (GLiNER fast path):** GLiNER extracts high-confidence entities → heuristic relationship inference → LLM reformulates and generates variants
-- **Path B (LLM unified path):** Single LLM call does entity extraction, relationship extraction, query reformulation, and variant generation
-
-Path selection is automatic based on GLiNER entity confidence (threshold: `entity_confidence_threshold`, default 0.6).
-
-```python
-async def _analyze_and_enhance_query(
-    self,
-    query: str,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str, Dict[str, Any]]:
-    """
-    Analyze and enhance query using composable module.
-
-    Returns:
-        Tuple of (entities, relationships, enhanced_query, enhancement_metadata):
-        - entities: [{"text": "Einstein", "type": "PERSON", "confidence": 0.85}, ...]
-        - relationships: [{"subject": "Einstein", "relation": "discusses", "object": "physics"}, ...]
-        - enhanced_query: "Einstein's contributions to theoretical physics"
-        - enhancement_metadata: {"path_used": "A", "query_variants": [...], "confidence": 0.9}
-    """
-```
-
-#### Configuration
-
-```python
-# Routing agent configuration
-routing_agent_config = {
-    "dspy_enabled": True,
-    "grpo_enabled": True,
-    "confidence_threshold": 0.7,
-    "memory_enabled": True,
-    "entity_extraction_method": "gliner",  # or "langextract", "llm"
-    "relationship_extraction_enabled": True,
-    "cache_ttl_seconds": 300
-}
+    model_config = ConfigDict(extra="allow")
 ```
 
 ---
@@ -2860,7 +2663,7 @@ class TenantAwareAgentMixin:
                 "search_completed",
                 {"query": "machine learning", "results": 10}
             )
-            # Logs: [customer_a] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
+            # Logs: [customer_a] [OrchestratorAgent] search_completed: {'query': 'machine learning', 'results': 10}
         """
         log_func = getattr(logger, level, logger.info)
 
@@ -2880,42 +2683,35 @@ class TenantAwareAgentMixin:
 **With Type-Safe A2AAgent (Recommended)**:
 
 ```python
-# libs/agents/cogniverse_agents/routing_agent.py
+# libs/agents/cogniverse_agents/orchestrator_agent.py
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-class RoutingDeps(AgentDeps):
-    """Infrastructure dependencies — no tenant_id (it's per-request)"""
-    enable_caching: bool = True
-class RoutingAgent(A2AAgent[RoutingInput, RoutingOutput, RoutingDeps], MemoryAwareMixin, TenantAwareAgentMixin):
-    """Routing agent with type-safe deps and memory support"""
 
-    def __init__(self, deps: RoutingDeps, port: int = 8001):
-        # Initialize A2AAgent with deps (infrastructure only)
-        config = A2AAgentConfig(agent_name="routing_agent", ...)
+class OrchestratorDeps(AgentDeps):
+    """Infrastructure dependencies — no tenant_id (it's per-request)"""
+    ...
+
+class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps], MemoryAwareMixin):
+    """Orchestrator agent with type-safe deps and memory support"""
+
+    def __init__(self, deps: OrchestratorDeps, registry: AgentRegistry, ...):
+        config = A2AAgentConfig(agent_name="orchestrator_agent", ...)
         super().__init__(deps=deps, config=config, dspy_module=None)
 
-        # Memory initialized per-request when tenant_id is known
-        logger.info("RoutingAgent initialized (tenant-agnostic)")
+        logger.info("OrchestratorAgent initialized (tenant-agnostic)")
 ```
 
 #### Key Methods
 
 **Note**: All examples below assume agent is initialized with deps (tenant-agnostic):
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.telemetry import TelemetryConfig
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-agent = RoutingAgent(deps=deps)
+registry = AgentRegistry(config_manager=config_manager)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 # tenant_id arrives per-request in A2A task payload
 ```
 
@@ -2927,8 +2723,8 @@ Returns tenant context for logging, telemetry, and debugging:
 context = agent.get_tenant_context()
 # {
 #     "tenant_id": "acme",
-#     "agent_type": "RoutingAgent",
-#     "agent_name": "routing_agent"
+#     "agent_type": "OrchestratorAgent",
+#     "agent_name": "orchestrator_agent"
 # }
 ```
 
@@ -2963,41 +2759,40 @@ agent.log_tenant_operation(
     {"query": "machine learning", "results": 10},
     level="info"
 )
-# Logs: [acme] [RoutingAgent] search_completed: {'query': 'machine learning', 'results': 10}
+# Logs: [acme] [OrchestratorAgent] search_completed: {'query': 'machine learning', 'results': 10}
 ```
 
 ---
 
 ## Routing Execution Paths
 
-`_execute_routing_task` in `AgentDispatcher` processes routing decisions through two paths:
+`AgentDispatcher` processes queries through two paths based on complexity classification:
 
 ### Non-Orchestration Path (Single Agent)
 
-When the query maps to a single agent (`needs_orchestration=False`):
+When `GatewayAgent` classifies the query as `simple`:
 
-1. **RoutingAgent** analyzes the query (entity extraction, relationship inference, DSPy routing decision)
-2. `_execute_downstream_agent` dispatches to the recommended agent based on its registered capabilities (search, summarization, text analysis, etc.)
-3. `conversation_history` is threaded through to the downstream agent, enabling query rewrite on multi-turn conversations
-4. Response includes routing metadata (`recommended_agent`, `confidence`, `reasoning`) and the `downstream_result` from the executed agent
+1. **GatewayAgent** detects clear entities/modality via GLiNER (<100ms, no LLM)
+2. `_execute_downstream_agent` dispatches directly to the execution agent
+3. `conversation_history` is threaded through, enabling query rewrite on multi-turn conversations
+4. Response includes a `RoutingContext` (from `cogniverse_agents.routing.contract`) with `recommended_agent`, `confidence`, and `reasoning`
 
 ### Orchestration Path (Multi-Agent)
 
-Query complexity triage is handled by `GatewayAgent` at the dispatcher entry point:
+When `GatewayAgent` classifies the query as `complex`:
 
 1. **GatewayAgent** classifies the query using GLiNER entity detection (no LLM, <100ms)
-2. If entities are clear and single-modality with high confidence → `complexity="simple"`, dispatch directly to execution agent
-3. If no entities, low confidence, or multi-modal → `complexity="complex"`, forward to OrchestratorAgent
-4. **OrchestratorAgent** plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
-5. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
+2. If no entities, low confidence, or multi-modal → `complexity="complex"`, forward to OrchestratorAgent
+3. **OrchestratorAgent** plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
+4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
 
 ### Key orchestration-related components
 
 | Component | Role | Location |
 |---|---|---|
 | **GatewayAgent** | Entry point, classifies queries as simple/complex via GLiNER | `cogniverse_agents/gateway_agent.py` |
-| **RoutingAgent** | Thin DSPy routing for pre-enriched queries | `cogniverse_agents/routing_agent.py` |
 | **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion, checkpointing | `cogniverse_agents/orchestrator_agent.py` |
+| **RoutingContext** | Wire type from routing layer to execution agents | `cogniverse_agents/routing/contract.py` |
 
 ---
 
@@ -3009,7 +2804,7 @@ Query complexity triage is handled by `GatewayAgent` at the dispatcher entry poi
 sequenceDiagram
     participant API as FastAPI Server
     participant Middleware as Tenant Middleware
-    participant Agent as RoutingAgent
+    participant Agent as OrchestratorAgent
     participant SchemaManager as VespaSchemaManager
     participant Memory as Mem0MemoryManager
     participant Vespa as Vespa Backend
@@ -3021,16 +2816,16 @@ sequenceDiagram
     Middleware->>API: request.state.tenant_id = "acme"
 
     API->>Agent: A2A task with tenant_id="acme" in payload
-    Agent->>Memory: initialize_memory("routing_agent", "acme", ...config)
+    Agent->>Memory: initialize_memory("orchestrator_agent", "acme", ...config)
     Memory-->>Agent: Memory ready (agent_memories_acme)
 
-    API->>Agent: route_query("cooking videos")
+    API->>Agent: _process_impl(OrchestratorInput("cooking videos"))
     Agent->>Memory: get_relevant_context("cooking videos")
     Memory->>Vespa: search(schema="agent_memories_acme")
     Vespa-->>Memory: Relevant memories
     Memory-->>Agent: Context
     Agent->>Agent: Process query
-    Agent-->>API: RoutingDecision
+    Agent-->>API: RoutingContext
 ```
 
 ### Tenant Isolation
@@ -3040,67 +2835,48 @@ sequenceDiagram
 - Each agent instance is tenant-scoped
 - Vespa schemas are tenant-specific (`video_frames_acme`)
 - Memory managers are per-tenant singletons
-- Telemetry projects are per-tenant (`acme_routing_agent`)
+- Telemetry projects are per-tenant (`acme_orchestrator_agent`)
 
 **Example**:
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.telemetry import TelemetryConfig
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# ONE agent serves ALL tenants — tenant_id arrives per-request
-
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-agent = RoutingAgent(deps=deps)
+# ONE orchestrator serves ALL tenants — tenant_id arrives per-request
+registry = AgentRegistry(config_manager=config_manager)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Memory is initialized lazily per-tenant on first request via MemoryAwareMixin:
 # - Tenant "acme" → agent_memories_acme schema (first request initializes)
 # - Tenant "startup" → agent_memories_startup schema (first request initializes)
 # Memory namespaced by (tenant_id, agent_name) — no cross-tenant leakage
-
-# Completely isolated - no shared memory or data
-assert agent_a.memory_manager is not agent_b.memory_manager
 ```
 
 ---
 
 ## Usage Examples
 
-### Example 1: Basic Routing
+### Example 1: Basic Routing via Orchestrator
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-# Initialize agent for tenant using deps
-# telemetry_config is required (can be empty dict for defaults)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)  # No tenant_id at construction
-agent = RoutingAgent(deps=deps)
+registry = AgentRegistry(config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-# Route query — context is Optional[str], tenant_id flows per-request
-decision = await agent.route_query(
-    query="Show me videos about machine learning",
-    context="User prefers educational content",
-    tenant_id="acme",
+# The orchestrator produces a RoutingContext consumed by execution agents
+result = await orchestrator._process_impl(
+    OrchestratorInput(
+        query="Show me videos about machine learning",
+        tenant_id="acme",
+    )
 )
 
-print(f"Recommended agent: {decision.recommended_agent}")
-print(f"Enhanced query: {decision.enhanced_query}")
-print(f"Confidence: {decision.confidence}")
+print(f"Recommended agent: {result.recommended_agent}")
+print(f"Enhanced query: {result.enhanced_query}")
+print(f"Confidence: {result.confidence}")
 ```
 
 ### Example 2: Video Search
@@ -3546,63 +3322,40 @@ result = rlm.process(query="Summarize", context=large_context)
 **Location**: `tests/agents/unit/`
 
 ```python
-# tests/agents/unit/test_routing_agent.py
+# tests/agents/unit/test_orchestrator_agent.py
 
 import pytest
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
 
-class TestRoutingAgent:
-    def test_initialization(self):
+class TestOrchestratorAgent:
+    def test_initialization(self, config_manager):
         """Test agent initialization with deps (no tenant_id)"""
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry import TelemetryConfig
-        deps = RoutingDeps(
-            telemetry_config=TelemetryConfig(),
-            llm_config=LLMEndpointConfig(
-                model="ollama/qwen3:4b",
-                api_base="http://localhost:11434",
-            ),
-        )
-        agent = RoutingAgent(deps=deps)
+        registry = AgentRegistry(config_manager=config_manager)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-        assert agent.telemetry is not None
+        assert agent.deps is not None
 
-    async def test_route_query(self):
-        """Test query routing — tenant_id in request"""
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry import TelemetryConfig
-        deps = RoutingDeps(
-            telemetry_config=TelemetryConfig(),
-            llm_config=LLMEndpointConfig(
-                model="ollama/qwen3:4b",
-                api_base="http://localhost:11434",
-            ),
-        )
-        agent = RoutingAgent(deps=deps)
+    async def test_process_query(self, config_manager):
+        """Test query processing — tenant_id in request"""
+        registry = AgentRegistry(config_manager=config_manager)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-        decision = await agent.route_query(
-            query="machine learning videos",
-            tenant_id="test_tenant",  # Per-request
+        result = await agent._process_impl(
+            OrchestratorInput(
+                query="machine learning videos",
+                tenant_id="test:unit",
+            )
         )
 
-        assert decision.recommended_agent
-        assert decision.enhanced_query
-        assert 0.0 <= decision.confidence <= 1.0
+        assert result is not None
 
-    def test_tenant_agnostic_construction(self):
+    def test_tenant_agnostic_construction(self, config_manager):
         """Agent serves all tenants — one instance, per-request tenant_id"""
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from cogniverse_foundation.telemetry import TelemetryConfig
-        deps = RoutingDeps(
-            telemetry_config=TelemetryConfig(),
-            llm_config=LLMEndpointConfig(
-                model="ollama/qwen3:4b",
-                api_base="http://localhost:11434",
-            ),
-        )
-        agent = RoutingAgent(deps=deps)
+        registry = AgentRegistry(config_manager=config_manager)
+        agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-        # Same agent handles different tenants at search time
+        # Same agent handles different tenants at request time
         # Memory is namespaced by (tenant_id, agent_name) at request time
 ```
 
@@ -3680,22 +3433,15 @@ def cleanup_tenant_schemas(test_tenant_id):
 ### 1. Always Use Deps with Tenant ID
 
 ```python
-from cogniverse_agents.routing_agent import RoutingAgent, RoutingDeps
-from cogniverse_foundation.telemetry import TelemetryConfig
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_agents.agent_registry import AgentRegistry
 
 # ✅ Good: Explicit deps (no tenant_id — it arrives per-request)
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)
-agent = RoutingAgent(deps=deps)
+registry = AgentRegistry(config_manager=config_manager)
+agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-# ❌ Bad: No deps
-agent = RoutingAgent()  # TypeError: missing deps
+# ❌ Bad: No deps or registry
+agent = OrchestratorAgent()  # TypeError: missing deps
 ```
 
 ### 2. Initialize Config Manager for VideoSearchAgent
@@ -3714,41 +3460,33 @@ results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant
 ### 3. Use Telemetry for Observability
 
 ```python
-# Telemetry automatically initialized (telemetry_config required)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from cogniverse_foundation.telemetry import TelemetryConfig
-deps = RoutingDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
-        api_base="http://localhost:11434",
-    ),
-)  # No tenant_id at construction
-agent = RoutingAgent(deps=deps)
+# OrchestratorAgent automatically initializes telemetry per-request
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.agent_registry import AgentRegistry
+
+registry = AgentRegistry(config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Operations traced per-request with tenant_id from A2A payload
-decision = await agent.route_query("query", tenant_id="acme")
+result = await orchestrator._process_impl(
+    OrchestratorInput(query="query", tenant_id="acme")
+)
 ```
 
 ### 4. Test Tenant Isolation
 
 ```python
 # Always verify tenants are isolated
-def test_tenant_isolation():
-    # ONE agent serves all tenants — tenant_id is per-request
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    from cogniverse_foundation.telemetry import TelemetryConfig
-    deps = RoutingDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
-            api_base="http://localhost:11434",
-        ),
-    )
-    agent = RoutingAgent(deps=deps)
+def test_tenant_isolation(config_manager):
+    # ONE orchestrator serves all tenants — tenant_id is per-request
+    from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+    from cogniverse_agents.agent_registry import AgentRegistry
+
+    registry = AgentRegistry(config_manager=config_manager)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
     # Tenant isolation verified at request time, not construction
-    # Telemetry projects isolated: cogniverse-{tenant_id}-routing
+    # Telemetry projects isolated: cogniverse-{tenant_id}-orchestrator
 ```
 
 ---

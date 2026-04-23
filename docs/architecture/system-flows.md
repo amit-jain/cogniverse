@@ -24,8 +24,8 @@ flowchart LR
     end
 
     subgraph AgentsPkg[<span style='color:#000'>cogniverse_agents</span>]
+        GW[<span style='color:#000'>GatewayAgent</span>]
         ORC[<span style='color:#000'>OrchestratorAgent</span>]
-        RT[<span style='color:#000'>RoutingAgent</span>]
         SA[<span style='color:#000'>SearchAgent</span>]
         SUM[<span style='color:#000'>SummarizerAgent</span>]
     end
@@ -136,7 +136,7 @@ sequenceDiagram
 
     Runtime->>Orchestrator: POST /tasks/send<br/>{query, tenant_id="startup"}
 
-    Note over Orchestrator: Planning Phase: DSPy planner<br/>analyzes query and creates<br/>execution plan (no separate RoutingAgent call)
+    Note over Orchestrator: Planning Phase: DSPy planner<br/>analyzes query and creates<br/>execution plan via OrchestratorAgent
 
     par Parallel Execution (A2A HTTP)
         Orchestrator->>SearchAgent: POST /tasks/send<br/>{query, tenant_id="startup"}

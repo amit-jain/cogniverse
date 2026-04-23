@@ -449,14 +449,14 @@ Multi-query fusion is a complementary technique to ensemble search. While **ense
 | | Ensemble (Multi-Profile) | Multi-Query Fusion |
 |---|---|---|
 | **What varies** | Profile (embedding model) | Query (rewritten variants) |
-| **Entry path** | `_process_impl()` → `_search_ensemble()` | `search_with_routing_decision()` → `_search_multi_query_fusion()` |
-| **Input** | `SearchInput.profiles` | `RoutingOutput.query_variants` |
+| **Entry path** | `_process_impl()` → `_search_ensemble()` | `search_with_routing_context()` → `_search_multi_query_fusion()` |
+| **Input** | `SearchInput.profiles` | `RoutingContext.query_variants` |
 | **Fusion** | RRF across profiles | RRF across query variants |
 | **Config** | `SearchInput.profiles` list | `RoutingConfig.query_fusion_config` |
 
 ### How It Works
 
-1. `RoutingAgent` calls `ComposableQueryAnalysisModule.forward(query)` which extracts entities, infers relationships, enhances the query, and generates query variants in a single composable step
+1. `OrchestratorAgent` calls `ComposableQueryAnalysisModule.forward(query)` which extracts entities, infers relationships, enhances the query, and generates query variants in a single composable step
 2. Each variant is encoded and searched in parallel against the same profile
 3. Results are fused with `_fuse_results_rrf()` (same algorithm as ensemble)
 
@@ -477,7 +477,7 @@ Additional routing config fields control the composable module's path selection:
 
 ### Mutual Exclusivity
 
-Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingOutput` (from RoutingAgent) does not trigger ensemble. They cannot overlap in a single request.
+Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingContext` (from OrchestratorAgent) does not trigger ensemble. They cannot overlap in a single request.
 
 ---
 
