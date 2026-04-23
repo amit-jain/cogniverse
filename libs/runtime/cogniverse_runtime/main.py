@@ -404,12 +404,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # startup; otherwise it logs a warning so operators can decide.
     _probe_phoenix_reachability()
 
-    if os.environ.get("COLPALI_INFERENCE_URL"):
-        system_config.colpali_inference_url = os.environ["COLPALI_INFERENCE_URL"]
-        updated = True
-    if updated:
-        config_manager.set_system_config(system_config)
-
     # 7d. Validate each inference service actually serves the model the
     # profiles expect. Closes the silent-wrong-embedding failure mode.
     # Disabled with SKIP_INFERENCE_VALIDATION=1 (e.g., when running the

@@ -56,7 +56,7 @@ class TestAudioEmbeddingStrategy:
         assert processors["embedding"]["type"] == "audio"
         assert processors["embedding"]["clap_model"] == "laion/clap-htsat-unfused"
         assert (
-            processors["embedding"]["colbert_model"] == "lightonai/Reason-ModernColBERT"
+            processors["embedding"]["colbert_model"] == "lightonai/LateOn"
         )
 
     def test_custom_models(self):

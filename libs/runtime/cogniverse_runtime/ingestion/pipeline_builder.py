@@ -329,7 +329,3 @@ def build_test_pipeline(
         .with_debug(True)
         .build()
     )
-
-
-# Backward compatibility alias
-PipelineBuilder = VideoIngestionPipelineBuilder

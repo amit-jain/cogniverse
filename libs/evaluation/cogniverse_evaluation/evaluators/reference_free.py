@@ -260,9 +260,6 @@ class CompositeEvaluator(Evaluator):
             for result, weight in zip(results, self.weights, strict=False)
         )
 
-        # Collect all labels
-        _ = [result.label for result in results]  # noqa: F841
-
         # Create detailed explanation
         explanations = []
         for evaluator, result in zip(self.evaluators, results, strict=False):

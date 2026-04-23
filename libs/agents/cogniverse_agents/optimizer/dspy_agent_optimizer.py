@@ -509,7 +509,7 @@ class DSPyAgentOptimizerPipeline:
                 actual_conf = float(pred.routing_confidence)
                 conf_diff = abs(expected_conf - actual_conf)
                 score += max(0, 0.2 - conf_diff)  # Up to 0.2 points for confidence
-            except Exception:  # noqa: E722
+            except Exception:
                 pass
 
             return min(1.0, score)
@@ -532,7 +532,7 @@ class DSPyAgentOptimizerPipeline:
                 )
                 score = points_found / len(expected_points) if expected_points else 0.5
 
-            except Exception:  # noqa: E722
+            except Exception:
                 # Fallback to simple length check
                 expected_len = len(example.summary)
                 actual_len = len(pred.summary)
