@@ -25,11 +25,10 @@ logger = logging.getLogger(__name__)
 def _build_phoenix_provider(tenant_id: str, http_endpoint: str) -> Optional[object]:
     """Construct a PhoenixProvider for the QualityMonitor's XGBoost gate.
 
-    Audit fix #15 — without injecting a real provider, the
-    XGBoost training-decision block in
-    ``QualityMonitor._apply_training_decision_model`` is unreachable
-    (gated on ``self._telemetry_provider is None``). This helper
-    constructs a provider from the HTTP endpoint and an env-var-overridable
+    The XGBoost training-decision block in
+    ``QualityMonitor._apply_training_decision_model`` is gated on
+    ``self._telemetry_provider is not None``; this helper provides it.
+    Constructs a provider from the HTTP endpoint and an env-var-overridable
     gRPC endpoint, then initializes it. On failure it logs a warning and
     returns ``None`` so the monitor degrades to naive verdicts rather
     than crashing the sidecar.
@@ -130,9 +129,9 @@ def main():
         "--once",
         action="store_true",
         help=(
-            "Run a single forced optimization cycle and exit (audit fix #7). "
-            "Used by Argo CronWorkflows for scheduled distillation. Bypasses "
-            "the threshold check so distillation runs even when quality is stable."
+            "Run a single forced optimization cycle and exit. Used by Argo "
+            "CronWorkflows for scheduled distillation. Bypasses the threshold "
+            "check so distillation runs even when quality is stable."
         ),
     )
     args = parser.parse_args()
@@ -144,12 +143,10 @@ def main():
 
     from cogniverse_evaluation.quality_monitor import QualityMonitor
 
-    # Audit fix #15 — construct a real PhoenixProvider so the XGBoost
-    # training-decision gating block in QualityMonitor.check_thresholds is
-    # actually reachable. Without injecting a provider the gate is dead
-    # code 100% of the time. The grpc endpoint defaults to port 4317 on
-    # the same host as the HTTP endpoint, matching the standard Phoenix
-    # deployment in the Helm chart.
+    # Inject a PhoenixProvider so the XGBoost training-decision gating
+    # block in QualityMonitor.check_thresholds is reachable. The grpc
+    # endpoint defaults to port 4317 on the same host as the HTTP endpoint,
+    # matching the standard Phoenix deployment in the Helm chart.
     telemetry_provider = _build_phoenix_provider(
         tenant_id=args.tenant_id,
         http_endpoint=args.phoenix_url,
@@ -171,10 +168,9 @@ def main():
     )
 
     if args.once:
-        # Audit fix #7 — one-shot scheduled distillation. Used by Argo
-        # CronWorkflows. Force-builds a trigger from the current eval and
-        # submits it regardless of thresholds, then exits cleanly so the
-        # CronWorkflow run completes.
+        # One-shot scheduled distillation for Argo CronWorkflows: force-build
+        # a trigger from the current eval and submit it regardless of
+        # thresholds, then exit cleanly so the CronWorkflow run completes.
         logger.info(
             f"Running forced optimization cycle for tenant={args.tenant_id}"
         )

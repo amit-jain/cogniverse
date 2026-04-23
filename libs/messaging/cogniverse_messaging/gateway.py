@@ -154,10 +154,9 @@ class MessagingGateway:
             await update.message.reply_text(format_help())
             return
 
-        # Audit fix #4 — dispatch the four custom command families that
-        # were previously parsed but silently dropped. Each handler talks
-        # to the corresponding /wiki/* or /admin/tenant/* endpoint via
-        # runtime_client and replies with a formatted result.
+        # Dispatch the four custom command families. Each handler calls the
+        # matching /wiki/* or /admin/tenant/* endpoint via runtime_client
+        # and replies with a formatted result.
         if parsed.is_wiki:
             await self._handle_wiki_command(update, parsed, tenant_id)
             return
@@ -213,9 +212,8 @@ class MessagingGateway:
     ) -> None:
         """Handle ``/wiki <subcommand> [args]`` — search/topic/index/lint/save/delete.
 
-        Audit fix #4 — previously this whole command family was parsed but
-        silently dropped. The handler dispatches to the matching
-        runtime_client method and replies with a short formatted result.
+        Dispatches to the matching runtime_client method and replies with a
+        short formatted result.
         """
         subcmd = (parsed.wiki_subcommand or "").lower()
         if subcmd == "search":

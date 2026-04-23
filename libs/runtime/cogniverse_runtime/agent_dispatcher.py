@@ -51,16 +51,11 @@ class AgentDispatcher:
     ) -> None:
         """Auto-initialize MemoryAwareMixin for any agent that supports it.
 
-        Audit fix #14 — the dispatcher previously constructed agents without
-        ever calling ``initialize_memory()``, so even agents that inherited
-        MemoryAwareMixin had ``is_memory_enabled() == False`` and silently
-        skipped strategy/memory injection.
-
-        This helper checks at runtime whether the constructed agent inherits
-        the mixin and, if so, runs ``initialize_memory`` with the dispatcher's
-        own config_manager and schema_loader. Silently no-ops for agents that
-        don't inherit the mixin (e.g. ImageSearchAgent). Errors during init
-        are logged but never raised — memory is best-effort enrichment, not a
+        Checks at runtime whether the constructed agent inherits the mixin
+        and, if so, runs ``initialize_memory`` with the dispatcher's own
+        config_manager and schema_loader. No-ops for agents that don't
+        inherit the mixin (e.g. ImageSearchAgent). Errors during init are
+        logged but never raised — memory is best-effort enrichment, not a
         hard dependency.
         """
         from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -201,9 +196,8 @@ class AgentDispatcher:
     ) -> None:
         """Fire-and-forget wiki auto-filing. Non-fatal: logs and returns on any error.
 
-        Audit fix #12 — resolves the per-tenant WikiManager via the factory
-        rather than the deleted ``_wiki_manager`` singleton, so each tenant's
-        auto-filed pages land in their own wiki.
+        Resolves the per-tenant WikiManager via the router factory so each
+        tenant's auto-filed pages land in their own wiki.
         """
         try:
             from cogniverse_runtime.routers import wiki as wiki_router
@@ -993,8 +987,8 @@ class AgentDispatcher:
             search_fn=search_fn,
             sandbox_manager=self._sandbox_manager,
         )
-        # Audit fix #14 — auto-init memory so the coding agent receives
-        # learned strategies and tenant memories in inject_context_into_prompt.
+        # Auto-init memory so the coding agent receives learned strategies
+        # and tenant memories in inject_context_into_prompt.
         await asyncio.to_thread(self._init_agent_memory, agent, "coding_agent", tenant_id)
 
         ctx = context or {}

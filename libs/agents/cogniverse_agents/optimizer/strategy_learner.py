@@ -490,11 +490,9 @@ class StrategyLearner:
 
         Two-level retrieval: user strategies + org strategies. Strategies
         are stored in a single shared namespace (``STRATEGY_AGENT_NAME``)
-        and tagged with ``metadata.agent`` at write time. Audit fix #6 —
-        the previous version accepted ``agent_name`` but never used it,
-        so every agent received every strategy regardless of which agent
-        the strategy was learned for. Now retrieval filters by the
-        ``agent`` metadata tag so each agent only sees its own strategies.
+        and tagged with ``metadata.agent`` at write time. Retrieval filters
+        by the ``agent`` metadata tag so each agent only sees strategies
+        learned for it.
 
         Args:
             query: Free-text query to find relevant strategies for.

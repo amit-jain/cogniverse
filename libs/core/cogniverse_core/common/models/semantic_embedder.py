@@ -1,23 +1,16 @@
 """Pluggable semantic text embedder: local SentenceTransformer or remote Ollama.
 
-The runtime used to instantiate `SentenceTransformer` per agent
-(`AudioEmbeddingGenerator`, `DocumentAgent`, ...), loading a ~400MB
-all-mpnet-base-v2 copy into process memory for each instance. Across
-a multi-tenant suite that exhausts the container's memory limit.
-
-This module exposes a single `get_semantic_embedder()` that:
+`get_semantic_embedder()`:
 
 * Delegates to Ollama (or any OpenAI-compatible `/v1/embeddings`
   endpoint) when `COGNIVERSE_SEMANTIC_EMBED_URL` is set. Inference
-  happens out of process; the runtime only holds a lightweight HTTP
+  runs out of process; the runtime only holds a lightweight HTTP
   wrapper.
-* Falls back to an in-process SentenceTransformer otherwise,
-  preserving the existing default for single-box dev.
+* Falls back to an in-process SentenceTransformer otherwise.
 
-Instances are cached module-level — concurrent agents share one
-embedder per (backend, model) pair instead of loading independent
-copies. This mirrors the existing `get_or_load_model` / `get_or_load_gliner`
-pattern elsewhere in this package.
+Instances are cached module-level so concurrent agents share one
+embedder per (backend, model) pair, mirroring `get_or_load_model`
+and `get_or_load_gliner` elsewhere in this package.
 """
 
 from __future__ import annotations

@@ -121,11 +121,10 @@ class RuntimeClient:
         return None
 
     # ------------------------------------------------------------------
-    # Audit fix #5 — wiki / instructions / memories / jobs CRUD methods
+    # wiki / instructions / memories / jobs CRUD methods
     # ------------------------------------------------------------------
-    # Before this fix the gateway parsed /wiki, /instructions, /memories,
-    # /jobs commands but had no client to call. Each method below maps
-    # one-to-one to an existing /wiki/* or /admin/tenant/* endpoint.
+    # Each method below maps one-to-one to a /wiki/* or /admin/tenant/*
+    # runtime endpoint and is invoked by the gateway's command handlers.
 
     async def save_wiki_session(
         self,

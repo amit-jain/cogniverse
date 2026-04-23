@@ -43,11 +43,10 @@ logger = logging.getLogger(__name__)
 def _probe_phoenix_reachability() -> None:
     """Verify the TelemetryManager can actually emit a span at startup.
 
-    Audit fix #11 — TelemetryManager silently falls back to ``NoOpSpan``
-    when Phoenix is unreachable, so observability dashboards can be
-    completely empty without anything in the runtime logs hinting why.
-    This probe runs once at startup, attempts to emit a real span via the
-    global manager, and surfaces the result.
+    TelemetryManager falls back to ``NoOpSpan`` when Phoenix is unreachable,
+    which would leave observability dashboards empty with no signal in the
+    runtime logs. This probe emits a real span via the global manager once
+    at startup and surfaces the result.
 
     Behaviour:
     - If the probe succeeds: log INFO with the configured endpoint.
@@ -101,10 +100,9 @@ def _probe_phoenix_reachability() -> None:
 def _wire_argo_from_environment() -> None:
     """Wire the tenant router's Argo config from environment variables.
 
-    Audit fix #3 — without this, ``tenant._argo_api_url`` stays ``None`` and
-    ``POST /{tenant}/jobs`` silently drops the CronWorkflow submission step.
-    Extracted into a helper so it can be unit-tested without spinning up
-    the whole FastAPI lifespan.
+    Populates ``tenant._argo_api_url`` so ``POST /{tenant}/jobs`` submits
+    the CronWorkflow step. Extracted into a helper so it can be unit-tested
+    without spinning up the whole FastAPI lifespan.
     """
     argo_api_url = os.environ.get("ARGO_API_URL") or None
     argo_namespace = os.environ.get("ARGO_NAMESPACE", "cogniverse")
@@ -385,10 +383,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"TelemetryManager otlp_endpoint set to {system_config.telemetry_collector_endpoint}"
         )
 
-    # 7c. Audit fix #11 — probe Phoenix reachability at startup so silent
-    # NoOpSpan fallbacks become visible immediately. If TELEMETRY_REQUIRED is
-    # set, missing telemetry fails startup; otherwise it logs a warning so
-    # operators can decide.
+    # 7c. Probe Phoenix reachability so a silent NoOpSpan fallback surfaces
+    # at startup. If TELEMETRY_REQUIRED is set, missing telemetry fails
+    # startup; otherwise it logs a warning so operators can decide.
     _probe_phoenix_reachability()
 
     if os.environ.get("COLPALI_INFERENCE_URL"):

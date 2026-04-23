@@ -542,10 +542,10 @@ class VespaSearchBackend(SearchBackend):
 
     # Retry only for transient failures (network blips, Vespa hiccups).
     # ValueErrors are permanent config problems — wrong content_type,
-    # missing profile, malformed inputs — and retrying them just
-    # multiplies the wasted latency. Previously every "No profiles found
-    # for type 'wiki'" from an empty wiki cache tripped 3 retries plus
-    # backoff (~5s each) through the orchestrator's LLM chain.
+    # missing profile, malformed inputs — and retrying them just multiplies
+    # the wasted latency (e.g. "No profiles found for type 'wiki'" from an
+    # empty wiki cache would burn 3×~5s backoffs through the orchestrator
+    # LLM chain).
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,

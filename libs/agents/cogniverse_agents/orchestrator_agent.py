@@ -898,10 +898,9 @@ class OrchestratorAgent(
                     )
                     return agent_name, result
                 except Exception as e:
-                    # Always report the exception TYPE — httpx.ReadTimeout
-                    # and friends have empty str() and used to show as
-                    # "failed: " with no context, making every failure look
-                    # identical in the logs.
+                    # Include the exception type — httpx.ReadTimeout and
+                    # friends have empty str() and render as bare "failed: "
+                    # without it, flattening every failure in the logs.
                     err_detail = f"{type(e).__name__}: {e}" if str(e) else repr(e)
                     logger.error(
                         f"Agent {agent_name} at {agent_endpoint.url} failed: "

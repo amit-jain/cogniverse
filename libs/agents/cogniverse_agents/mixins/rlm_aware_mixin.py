@@ -64,8 +64,8 @@ class RLMAwareMixin:
           1. An explicit ``tenant_id`` argument passed by the caller.
           2. ``self.tenant_id`` set by the dispatcher on the agent instance.
 
-        Anything else is a bug — the old code silently substituted
-        ``"default"`` and that hid every missing-tenant plumbing error.
+        Missing tenant is a plumbing bug and raises — silent substitution
+        would hide the misconfiguration.
         """
         tid = explicit or getattr(self, "tenant_id", None)
         if not tid:

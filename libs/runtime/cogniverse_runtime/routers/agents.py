@@ -332,9 +332,3 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         elif "no supported execution path" in detail:
             raise HTTPException(status_code=501, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
-
-
-# Audit fix #13 — POST /agents/{name}/upload was a 501 stub that had no
-# implementation path and tested only its own 501 response. File uploads
-# already have a real home at POST /ingestion/upload, so the stub has been
-# removed entirely. Tests that targeted /agents/upload now expect 404.

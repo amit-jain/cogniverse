@@ -126,12 +126,10 @@ class OnlineEvaluationConfig(BaseModel):
 
 
 class AutomationRulesConfig(BaseModel):
-    """
-    Declarative automation rules for the optimization pipeline.
+    """Declarative automation rules for the optimization pipeline.
 
-    Centralizes all thresholds, intervals, and trigger conditions
-    that were previously hardcoded across OptimizationOrchestrator,
-    AnnotationAgent, and AnnotationFeedbackLoop.
+    Centralizes the thresholds, intervals, and trigger conditions consumed
+    by OptimizationOrchestrator, AnnotationAgent, and AnnotationFeedbackLoop.
     """
 
     annotation_thresholds: AnnotationThresholdsConfig = Field(

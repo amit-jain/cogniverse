@@ -67,16 +67,14 @@ class SearchService:
     def _get_profile_config(self, profile: str, tenant_id: str) -> Dict[str, Any]:
         """Get profile configuration from backend config.
 
-        Reads from ConfigManager at query time first so profiles added
-        via `POST /admin/profiles` or `ConfigManager.add_backend_profile`
-        after SearchService was constructed are visible. Falls back to
-        the startup snapshot in ``self.config`` if ConfigManager lookup
-        fails (keeps behavior for tests that don't wire one up fully).
+        Reads from ConfigManager at query time so profiles added via
+        ``POST /admin/profiles`` or ``ConfigManager.add_backend_profile``
+        after SearchService was constructed are visible. Falls back to the
+        startup snapshot in ``self.config`` if ConfigManager lookup fails
+        (supports tests that don't fully wire one up).
 
-        The ``tenant_id`` is the caller's request tenant — profiles are
-        per-tenant, so scoping the lookup by the incoming tenant is the
-        correct read. Previously this method hard-coded ``"default"``,
-        silently serving profiles from the wrong tenant on every query.
+        Profiles are per-tenant, so the lookup is scoped by the caller's
+        request tenant.
         """
         try:
             live = self.config_manager.get_backend_config(

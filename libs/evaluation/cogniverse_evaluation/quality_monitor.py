@@ -41,11 +41,8 @@ class Verdict(int, Enum):
 
 # Span names match the convention emitted by AgentBase._process_span():
 #   f"{ClassName}.process"
-# Audit fix #2 — the previous values (search_service.search, etc.) never
-# matched what the runtime actually emits, so live-traffic eval queries
-# returned zero spans for every agent. After audit fix #10 wraps every
-# AgentBase subclass in a span, these names are stable and discoverable
-# from the agent class name alone.
+# Every AgentBase subclass is wrapped in a span with this name, so these
+# values are discoverable from the agent class name alone.
 SPAN_NAME_BY_AGENT = {
     AgentType.SEARCH: "SearchAgent.process",
     AgentType.SUMMARY: "SummarizerAgent.process",
@@ -218,12 +215,11 @@ class QualityMonitor:
     async def force_optimization_cycle(self) -> Dict[str, Any]:
         """Run one full eval + trigger + submit cycle, regardless of thresholds.
 
-        Audit fix #7 — provides a scheduled distillation path independent of
-        the quality-drop threshold check. Argo CronWorkflows call this via
-        ``quality_monitor_cli --once`` so the system continues learning from
-        live traces even when quality is stable. The continuous ``run()``
-        loop only triggers on degradation, which left long stable periods
-        with no learning happening at all.
+        Scheduled distillation path independent of the quality-drop threshold
+        check. Argo CronWorkflows call this via ``quality_monitor_cli --once``
+        so the system keeps learning from live traces during stable periods,
+        when the continuous ``run()`` loop (which only triggers on
+        degradation) would never fire.
 
         Returns a dict with the cycle outcome so cron jobs can log/alert.
         """

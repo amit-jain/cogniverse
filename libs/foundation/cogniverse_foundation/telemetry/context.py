@@ -1,9 +1,4 @@
-"""
-Telemetry context for tenant-aware instrumentation.
-
-Provides exact-format spans matching the old instrumentation system
-with multi-tenant capability.
-"""
+"""Telemetry context for tenant-aware instrumentation."""
 
 import json
 import logging

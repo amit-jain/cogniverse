@@ -161,10 +161,9 @@ class QueryEnhancementModule(dspy.Module):
             synonyms.append("guide")
 
         # Guarantee enhanced_query differs from input: append the first
-        # expansion (or synonym) so the heuristic can never produce an
-        # identity mapping.  Small LMs poison SIMBA trainsets when they
-        # echo the input, and the previous implementation did exactly
-        # that by setting ``enhanced_query=query``.
+        # expansion (or synonym) so the heuristic never produces an identity
+        # mapping. Identity enhancements poison SIMBA trainsets because small
+        # LMs learn to echo the input.
         if expansions:
             enhanced_query = f"{query} {expansions[0]}".strip()
         elif synonyms:

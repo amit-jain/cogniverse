@@ -134,10 +134,9 @@ class CodingAgent(
     """
     Iterative coding agent with semantic code search and sandboxed execution.
 
-    Inherits MemoryAwareMixin (audit fix #9) so coding tasks receive learned
-    strategies, tenant memories, and tenant instructions via
-    inject_context_into_prompt() — same pattern as SearchAgent and
-    SummarizerAgent.
+    Inherits MemoryAwareMixin so coding tasks receive learned strategies,
+    tenant memories, and tenant instructions via inject_context_into_prompt()
+    — same pattern as SearchAgent and SummarizerAgent.
 
     Flow:
     1. Search code context via SearchService (code_lateon_mv profile)
@@ -177,11 +176,10 @@ class CodingAgent(
         self._evaluator = dspy.ChainOfThought(OutputEvaluationSignature)
 
     async def _process_impl(self, input: CodingInput) -> CodingOutput:
-        # Audit fix #9 — set tenant for memory/instructions injection and
-        # enrich the task with the FULL context stack (instructions +
-        # learned strategies + tenant memories) before planning. Matches the
-        # SearchAgent / SummarizerAgent pattern. Gracefully no-ops when
-        # memory isn't initialized.
+        # Set tenant for memory/instructions injection and enrich the task
+        # with the full context stack (instructions + learned strategies +
+        # tenant memories) before planning. No-ops when memory isn't
+        # initialized.
         self.set_tenant_for_context(input.tenant_id)
         enriched_task = self.inject_context_into_prompt(input.task, input.task)
 
