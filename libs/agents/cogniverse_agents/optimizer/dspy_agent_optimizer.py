@@ -6,6 +6,7 @@ This module provides DSPy-based optimization for agent prompts across the routin
 It optimizes prompts for RoutingAgent, SummarizerAgent, DetailedReportAgent, and QueryAnalysisToolV3.
 """
 
+import ast
 import asyncio
 import logging
 import time
@@ -521,7 +522,7 @@ class DSPyAgentOptimizerPipeline:
             # Check if key points are mentioned
             try:
                 expected_points = (
-                    eval(example.key_points)
+                    ast.literal_eval(example.key_points)
                     if isinstance(example.key_points, str)
                     else example.key_points
                 )
