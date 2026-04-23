@@ -30,7 +30,6 @@ from pydantic import BaseModel, Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -96,9 +95,34 @@ class SearchInput(AgentInput):
     )
     top_k: int = Field(10, description="Number of results to return")
     profiles: Optional[List[str]] = Field(
-        None, description="List of profiles for ensemble search"
+        None,
+        description=(
+            "Profiles to search. None → tenant default (active_profile). "
+            "Single-element list → that profile. Multi-element list → "
+            "ensemble search with RRF fusion."
+        ),
     )
     rrf_k: int = Field(60, description="RRF constant for fusion")
+
+    # Enrichment fields forwarded by the orchestrator from preprocessing
+    # agents. When present, SearchAgent skips its internal DSPy rewrite and
+    # uses the enhanced_query / entities / query_variants directly.
+    enhanced_query: Optional[str] = Field(
+        None,
+        description="Rewritten query from QueryEnhancementAgent",
+    )
+    entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Entities from EntityExtractionAgent",
+    )
+    relationships: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Relationships from EntityExtractionAgent",
+    )
+    query_variants: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Query variants from QueryEnhancementAgent",
+    )
     video_data: Optional[bytes] = Field(
         None, description="Video data for video-based search"
     )
@@ -1270,47 +1294,6 @@ class SearchAgent(
             "total_results": len(results),
         }
 
-    def search_with_routing_decision(
-        self,
-        routing_decision: RoutingContext,
-        *,
-        tenant_id: str,
-        top_k: int = 10,
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """
-        Search with enhanced query and relationship context from DSPy routing.
-
-        Args:
-            routing_decision: Decision from RoutingAgent with relationship context
-            top_k: Number of results to return
-            **kwargs: Additional search parameters
-
-        Returns:
-            Enhanced search results with relationship context
-        """
-        logger.info(
-            f"Relationship-aware search with confidence: {routing_decision.confidence:.3f}"
-        )
-
-        # Create enhanced search context
-        search_context = SearchContext(
-            original_query=routing_decision.routing_metadata.get(
-                "original_query", routing_decision.query
-            ),
-            enhanced_query=routing_decision.enhanced_query,
-            entities=routing_decision.extracted_entities,
-            relationships=routing_decision.extracted_relationships,
-            routing_metadata=routing_decision.routing_metadata,
-            confidence=routing_decision.confidence,
-            query_variants=routing_decision.query_variants,
-        )
-
-        # Perform relationship-aware search
-        return self.search_with_relationship_context(
-            search_context, tenant_id=tenant_id, top_k=top_k, **kwargs
-        )
-
     def search_with_relationship_context(
         self, context: SearchContext, *, tenant_id: str, top_k: int = 10, **kwargs
     ) -> Dict[str, Any]:
@@ -1700,37 +1683,6 @@ class SearchAgent(
                 "total_results": 0,
             }
 
-    def process_routing_decision_task(
-        self, routing_decision: RoutingContext, *, tenant_id: str, task_id: str = None
-    ) -> Dict[str, Any]:
-        """
-        Process a routing decision as a task for A2A compatibility.
-
-        Args:
-            routing_decision: Enhanced routing decision from DSPy system
-            tenant_id: Tenant identifier (required, per-request)
-            task_id: Optional task ID
-
-        Returns:
-            A2A-compatible task result
-        """
-
-        result = self.search_with_routing_decision(
-            routing_decision, tenant_id=tenant_id
-        )
-
-        # Add A2A task compatibility
-        result["task_id"] = task_id or "routing_decision_search"
-        result["agent"] = "search_agent"
-        result["routing_decision_metadata"] = {
-            "recommended_agent": routing_decision.recommended_agent,
-            "confidence": routing_decision.confidence,
-            "reasoning": routing_decision.reasoning,
-            "fallback_agents": routing_decision.fallback_agents,
-        }
-
-        return result
-
     async def _process_impl(
         self, input: Union[SearchInput, Dict[str, Any]]
     ) -> SearchOutput:
@@ -1751,14 +1703,37 @@ class SearchAgent(
         self.set_tenant_for_context(tenant_id)
 
         search_mode = "single_profile"
-        profile = self.active_profile
+        # Respect an explicit single-profile override from `profiles`; fall
+        # back to the tenant's active_profile when no profiles are provided.
+        profile = (
+            input.profiles[0]
+            if input.profiles and len(input.profiles) == 1
+            else self.active_profile
+        )
         profiles_used = None
         rrf_k_used = None
-        enhanced_query = None
+        enhanced_query = input.enhanced_query
 
         # Check for ensemble mode (multiple profiles)
         self.emit_progress("retrieval", "Preparing search...")
-        if input.profiles and len(input.profiles) > 1:
+        if input.query_variants and len(input.query_variants) > 1:
+            # Multi-query fusion: search each variant in parallel, fuse
+            # with RRF. Triggered when the orchestrator forwards multiple
+            # query variants from QueryEnhancementAgent.
+            self.emit_progress("retrieval", "Running multi-query fusion...")
+            logger.info(f"Multi-query fusion: {len(input.query_variants)} variants")
+            search_mode = "multi_query_fusion"
+            results = self._search_multi_query_fusion(
+                query_variants=input.query_variants,
+                tenant_id=tenant_id,
+                modality=modality,
+                top_k=top_k,
+                rrf_k=input.rrf_k,
+                ranking_strategy="binary_binary",
+            )
+            rrf_k_used = input.rrf_k
+            enhanced_query = input.enhanced_query or query
+        elif input.profiles and len(input.profiles) > 1:
             self.emit_progress("retrieval", "Running ensemble search...")
             logger.info(f"Ensemble mode detected: {len(input.profiles)} profiles")
             search_mode = "ensemble"
@@ -1767,7 +1742,7 @@ class SearchAgent(
             rrf_k_used = input.rrf_k
 
             results = await self._search_ensemble(
-                query=query,
+                query=input.enhanced_query or query,
                 tenant_id=tenant_id,
                 profiles=input.profiles,
                 modality=modality,
@@ -1795,28 +1770,42 @@ class SearchAgent(
                 top_k=top_k,
             )
         else:
-            # Text-based search with optional DSPy optimization
-            self.emit_progress("query_optimization", "Optimizing query with DSPy...")
-            search_query = query
-            enriched_query = self.inject_context_into_prompt(query, query)
-            try:
-                dspy_result = await self.call_dspy(
-                    self.search_module,
-                    output_field="enhanced_query",
-                    query=enriched_query,
-                    modality=modality,
-                    top_k=top_k,
+            # Text-based search. SearchAgent's internal DSPy
+            # (SearchOptimizationSignature) is a query rewriter used as a
+            # fallback on the simple path (gateway → search direct). On the
+            # complex path the orchestrator invokes QueryEnhancementAgent
+            # first, which does the same rewrite with more context
+            # (entities + relationships). When that has populated
+            # `input.enhanced_query`, re-running the internal DSPy on an
+            # already-rewritten query adds an LLM hop without information
+            # gain, so skip it.
+            if input.enhanced_query:
+                search_query = input.enhanced_query
+            else:
+                self.emit_progress(
+                    "query_optimization", "Optimizing query with DSPy..."
                 )
-                # Use enhanced query from DSPy if confidence is high
-                if hasattr(dspy_result, "enhanced_query") and hasattr(
-                    dspy_result, "confidence"
-                ):
-                    if dspy_result.confidence > 0.7:
-                        search_query = dspy_result.enhanced_query
-                        enhanced_query = search_query
-                        logger.info(f"Using DSPy-enhanced query: {search_query}")
-            except Exception as e:
-                logger.warning(f"DSPy optimization failed: {e}, using original query")
+                search_query = query
+                enriched_query = self.inject_context_into_prompt(query, query)
+                try:
+                    dspy_result = await self.call_dspy(
+                        self.search_module,
+                        output_field="enhanced_query",
+                        query=enriched_query,
+                        modality=modality,
+                        top_k=top_k,
+                    )
+                    if hasattr(dspy_result, "enhanced_query") and hasattr(
+                        dspy_result, "confidence"
+                    ):
+                        if dspy_result.confidence > 0.7:
+                            search_query = dspy_result.enhanced_query
+                            enhanced_query = search_query
+                            logger.info(f"Using DSPy-enhanced query: {search_query}")
+                except Exception as e:
+                    logger.warning(
+                        f"DSPy optimization failed: {e}, using original query"
+                    )
 
             self.emit_progress("retrieval", "Searching by text...")
             results = self._search_by_text(
@@ -2092,89 +2081,6 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
 
     except Exception as e:
         logger.error(f"Enhanced search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/search/routing-decision")
-async def search_with_routing_decision(routing_decision: dict, top_k: int = 10):
-    """Search using a routing decision from RoutingAgent"""
-    if not search_agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        tenant_id = routing_decision.get("tenant_id")
-        if not tenant_id:
-            raise HTTPException(
-                status_code=400, detail="tenant_id is required in routing_decision"
-            )
-
-        decision = RoutingContext(
-            recommended_agent=routing_decision.get("recommended_agent", "search_agent"),
-            confidence=routing_decision.get("confidence", 0.0),
-            reasoning=routing_decision.get("reasoning", ""),
-            fallback_agents=routing_decision.get("fallback_agents", []),
-            enhanced_query=routing_decision.get("enhanced_query", ""),
-            extracted_entities=routing_decision.get("extracted_entities", []),
-            extracted_relationships=routing_decision.get("extracted_relationships", []),
-            routing_metadata=routing_decision.get("routing_metadata", {}),
-        )
-
-        result = search_agent.process_routing_decision_task(
-            decision, tenant_id=tenant_id
-        )
-
-        return result
-
-    except Exception as e:
-        logger.error(f"Routing decision search failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/tasks/send")
-async def handle_enhanced_a2a_task(task: dict):
-    """Enhanced A2A task handler with routing decision support"""
-    if not search_agent:
-        raise HTTPException(status_code=503, detail="Agent not initialized")
-
-    try:
-        # Check if this is a routing decision task
-        if "routing_decision" in task:
-            tenant_id = task.get("tenant_id")
-            if not tenant_id:
-                raise HTTPException(
-                    status_code=400, detail="tenant_id is required in task"
-                )
-
-            routing_data = task["routing_decision"]
-
-            routing_decision = RoutingContext(
-                recommended_agent=routing_data.get("recommended_agent", "search_agent"),
-                confidence=routing_data.get("confidence", 0.0),
-                reasoning=routing_data.get("reasoning", ""),
-                fallback_agents=routing_data.get("fallback_agents", []),
-                enhanced_query=routing_data.get("enhanced_query", ""),
-                extracted_entities=routing_data.get("extracted_entities", []),
-                extracted_relationships=routing_data.get("extracted_relationships", []),
-                routing_metadata=routing_data.get("routing_metadata", {}),
-            )
-
-            return search_agent.process_routing_decision_task(
-                routing_decision,
-                tenant_id=tenant_id,
-                task_id=task.get("id", "enhanced_a2a_task"),
-            )
-
-        # Handle standard enhanced A2A task
-        else:
-            tenant_id = task.get("tenant_id")
-            if not tenant_id:
-                raise HTTPException(
-                    status_code=400, detail="tenant_id is required in task"
-                )
-            return search_agent.process_enhanced_task(task)
-
-    except Exception as e:
-        logger.error(f"Enhanced A2A task processing failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

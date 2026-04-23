@@ -100,6 +100,79 @@ def _get_orchestration_semaphore() -> asyncio.Semaphore:
     return sem
 
 
+# Preprocessing agent outputs → execution agent input fields. Maps the
+# source field name on the producer's result to the target field name on
+# the consumer's typed input schema.
+_ENRICHMENT_FIELD_MAP: Dict[str, Dict[str, str]] = {
+    "entity_extraction_agent": {
+        "entities": "entities",
+        "relationships": "relationships",
+    },
+    "query_enhancement_agent": {
+        "enhanced_query": "enhanced_query",
+        "query_variants": "query_variants",
+    },
+}
+
+
+def _normalize_query_variants(
+    variants: List[Any],
+) -> List[Dict[str, str]]:
+    """Normalise query variants to the dict form consumers expect.
+
+    QueryEnhancementAgent emits variants as raw strings; SearchInput
+    declares them as ``List[Dict[str, str]]`` with ``name``/``query`` keys.
+    """
+    normalized: List[Dict[str, str]] = []
+    for i, variant in enumerate(variants):
+        if isinstance(variant, dict):
+            normalized.append(
+                {
+                    "name": str(variant.get("name", f"variant_{i}")),
+                    "query": str(variant.get("query", "")),
+                }
+            )
+        elif isinstance(variant, str):
+            normalized.append(
+                {"name": f"variant_{i}" if i > 0 else "original", "query": variant}
+            )
+    return normalized
+
+
+def _merge_enrichment(
+    agent_input: Dict[str, Any],
+    dep_agent: str,
+    dep_result: Dict[str, Any],
+) -> None:
+    """Copy named enrichment fields from a preprocessing result onto the
+    next step's agent input. No-op for dependencies not in the field map.
+
+    Agent name lookup is suffix-tolerant: the registry may expose agents
+    with or without the ``_agent`` suffix, and both forms map to the same
+    field rules.
+
+    ``profile_selection`` wraps ``selected_profile`` as ``profiles=[selected]``
+    because ``SearchInput.profiles`` is a list (single-element = single-profile
+    override; multi-element = ensemble).
+    """
+    canonical = dep_agent if dep_agent.endswith("_agent") else f"{dep_agent}_agent"
+    field_map = _ENRICHMENT_FIELD_MAP.get(canonical)
+    if field_map:
+        for src_field, dst_field in field_map.items():
+            value = dep_result.get(src_field)
+            if not value:
+                continue
+            if dst_field == "query_variants":
+                value = _normalize_query_variants(value)
+            agent_input[dst_field] = value
+        return
+
+    if canonical == "profile_selection_agent":
+        selected = dep_result.get("selected_profile")
+        if selected:
+            agent_input["profiles"] = [selected]
+
+
 class OrchestratorInput(AgentInput):
     """Type-safe input for orchestration"""
 
@@ -110,6 +183,21 @@ class OrchestratorInput(AgentInput):
     )
     conversation_history: Optional[List[Dict[str, Any]]] = Field(
         default=None, description="Previous conversation turns for multi-turn context"
+    )
+    modality: Optional[str] = Field(
+        default=None,
+        description=(
+            "Content modality hint from GatewayAgent GLiNER classification "
+            "(video/image/audio/document/text). Fed to the DSPy planner "
+            "as a prior."
+        ),
+    )
+    generation_type: Optional[str] = Field(
+        default=None,
+        description=(
+            "Output type hint from GatewayAgent classification "
+            "(raw_results/summary/detailed_report)."
+        ),
     )
 
 
@@ -192,7 +280,28 @@ class OrchestrationResult(BaseModel):
 
 
 class OrchestrationSignature(dspy.Signature):
-    """Create execution plan for query processing"""
+    """Plan a multi-agent workflow for a user query.
+
+    Rules the plan MUST follow:
+      1. Include preprocessing agents BEFORE the execution agent when they
+         are available and useful:
+           - `entity_extraction_agent` for queries naming specific entities,
+             topics, or relationships.
+           - `query_enhancement_agent` for vague, short, or ambiguous queries
+             that benefit from expansion or rewriting.
+           - `profile_selection_agent` when multiple search profiles are
+             available and the query's modality/domain should pick one.
+         These preprocessing agents can run in parallel with each other; the
+         execution agent depends on them.
+      2. End with exactly one execution agent (`search_agent`,
+         `summarizer_agent`, `detailed_report_agent`, `image_search_agent`,
+         `audio_analysis_agent`, `document_agent`, `coding_agent`,
+         `deep_research_agent`) matching the query's modality and
+         generation_type.
+      3. Only include agents from `available_agents`. Never hallucinate.
+      4. For trivial queries where preprocessing adds no value, a single
+         execution agent is acceptable.
+    """
 
     query: str = dspy.InputField(desc="User query to process")
     available_agents: str = dspy.InputField(
@@ -202,11 +311,19 @@ class OrchestrationSignature(dspy.Signature):
         desc="Summary of previous conversation turns. Empty string if first turn."
     )
     gateway_context: str = dspy.InputField(
-        desc="Classification context from gateway (intent, entities, modality). Empty string if not available."
+        desc=(
+            "Classification hints from the gateway: modality, generation_type, "
+            "matched workflow template. Use these as priors when choosing "
+            "preprocessing and execution agents. Empty string if not available."
+        )
     )
 
     agent_sequence: str = dspy.OutputField(
-        desc="Comma-separated sequence of agents to invoke (e.g., 'entity_extraction_agent,profile_selection_agent,search_agent')"
+        desc=(
+            "Comma-separated sequence of agents to invoke. Preprocessing "
+            "first, then execution, e.g. "
+            "'entity_extraction_agent,query_enhancement_agent,search_agent'."
+        )
     )
     parallel_steps: str = dspy.OutputField(
         desc="Indices of steps that can run in parallel (e.g., '0,1|2,3' means 0&1 parallel, then 2&3 parallel)"
@@ -524,17 +641,23 @@ class OrchestratorAgent(
             input.conversation_history
         )
 
-        # Phase 1: Planning (with workflow intelligence template matching)
+        # Phase 1: Planning — fold gateway classification + workflow template
+        # matches into a single hints string for the DSPy planner.
         self.emit_progress("planning", "Creating execution plan...")
-        gateway_context = ""
+        gateway_hints: List[str] = []
+        if input.modality:
+            gateway_hints.append(f"modality={input.modality}")
+        if input.generation_type:
+            gateway_hints.append(f"generation_type={input.generation_type}")
         if self.workflow_intelligence:
             template = self.workflow_intelligence._find_matching_template(query)
             if template:
-                gateway_context = (
-                    f"Matched template: {template.name}. "
-                    f"Suggested sequence: {json.dumps(template.task_sequence)}"
+                gateway_hints.append(
+                    f"matched_template={template.name} "
+                    f"suggested_sequence={json.dumps(template.task_sequence)}"
                 )
                 logger.info(f"Workflow intelligence matched template: {template.name}")
+        gateway_context = "; ".join(gateway_hints)
 
         plan = await self._create_plan(query, conversation_context, gateway_context)
 
@@ -859,13 +982,17 @@ class OrchestratorAgent(
                 if session_id:
                     context["session_id"] = session_id
 
-                for dep_idx in step.depends_on:
-                    if dep_idx < len(plan.steps):
-                        dep_agent = plan.steps[dep_idx].agent_name
-                        if dep_agent in agent_results:
-                            agent_input[f"{dep_agent}_result"] = agent_results[
-                                dep_agent
-                            ]
+                # Merge enrichment from every preprocessing agent that has
+                # completed so far, not just direct dependencies. The DSPy
+                # planner often wires search to depend on
+                # [query_enhancement, profile_selection] only, which would
+                # otherwise drop entity_extraction's entities. Walking all
+                # completed results keeps enrichment additive.
+                for dep_agent, dep_result in agent_results.items():
+                    if dep_agent == agent_name:
+                        continue
+                    if dep_result:
+                        _merge_enrichment(agent_input, dep_agent, dep_result)
 
                 # Call agent via HTTP — payload must satisfy AgentTask schema:
                 # agent_name + query required, tenant_id goes inside context.

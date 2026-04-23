@@ -914,13 +914,13 @@ class TestSearchAgentAdvancedFeatures:
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     @patch("cogniverse_core.config.utils.get_config")
     @pytest.mark.ci_fast
-    def test_routing_decision_compatibility(
+    def test_search_input_accepts_enrichment_fields(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
-        """Test that RoutingContext is compatible with SearchAgent."""
-        from cogniverse_agents.routing.contract import RoutingContext
+        """SearchInput accepts the enrichment fields the orchestrator threads
+        from preprocessing agents, and they round-trip as the typed contract."""
+        from cogniverse_agents.search_agent import SearchInput
 
-        # Mock config and dependencies
         mock_config = {
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
@@ -931,23 +931,14 @@ class TestSearchAgentAdvancedFeatures:
             },
         }
         mock_get_config.return_value = mock_config
-        mock_search_backend = Mock()
-        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
-        mock_encoder_factory.create_encoder.return_value = Mock()
 
-        # Create search agent (just testing structure compatibility)
-        search_agent = SearchAgent(
-            deps=SearchAgentDeps(),
-            schema_loader=mock_schema_loader,
-        )
-
-        # Mock routing decision with relationships
-        routing_decision = RoutingContext(
+        enriched = SearchInput(
             query="robots playing soccer in competitions",
-            enhanced_query="autonomous robots demonstrating advanced soccer skills in competitive tournaments",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Query contains technology and sports entities with competitive context, requiring enhanced video search",
+            tenant_id="test_tenant",
+            enhanced_query=(
+                "autonomous robots demonstrating advanced soccer skills in "
+                "competitive tournaments"
+            ),
             entities=[
                 {"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9},
                 {"text": "soccer", "label": "SPORT", "confidence": 0.8},
@@ -957,36 +948,11 @@ class TestSearchAgentAdvancedFeatures:
                 {"subject": "robots", "relation": "playing", "object": "soccer"},
                 {"subject": "soccer", "relation": "in", "object": "competitions"},
             ],
-            metadata={
-                "complexity_score": 0.7,
-                "needs_enhancement": True,
-                "relationship_extraction_applied": True,
-            },
         )
 
-        # Test that routing decision can be used for enhanced search
-        assert routing_decision.enhanced_query != routing_decision.query
-        assert len(routing_decision.entities) == 3
-        assert len(routing_decision.relationships) == 2
-        assert routing_decision.metadata["relationship_extraction_applied"] is True
-
-        # Verify search agent can process routing decision (mock if method doesn't exist)
-        if hasattr(search_agent, "_create_search_params_from_routing_decision"):
-            search_params = search_agent._create_search_params_from_routing_decision(
-                routing_decision
-            )
-            assert search_params.query == routing_decision.enhanced_query
-            assert len(search_params.entities) == len(routing_decision.entities)
-            assert len(search_params.relationships) == len(
-                routing_decision.relationships
-            )
-            assert search_params.routing_confidence == routing_decision.confidence
-        else:
-            # Verify the search agent has the necessary attributes to handle routing decisions
-            assert hasattr(search_agent, "_search_by_text")
-            assert routing_decision.enhanced_query is not None
-            assert len(routing_decision.entities) == 3
-            assert len(routing_decision.relationships) == 2
+        assert enriched.enhanced_query != enriched.query
+        assert len(enriched.entities) == 3
+        assert len(enriched.relationships) == 2
 
 
 @pytest.mark.unit
@@ -1551,8 +1517,10 @@ class TestMultiQueryFusion:
     def test_routing_decision_flows_to_multi_query_fusion(
         self, agent_with_mock_backend
     ):
-        """Test RoutingContext with query_variants flows through search_with_routing_decision."""
-        from cogniverse_agents.routing.contract import RoutingContext
+        """SearchInput.query_variants with len>1 triggers multi-query fusion."""
+        import asyncio
+
+        from cogniverse_agents.search_agent import SearchInput
 
         agent = agent_with_mock_backend
 
@@ -1571,22 +1539,12 @@ class TestMultiQueryFusion:
         mock_backend.search = mock_search
         agent._shared_backend = mock_backend
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="robots playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Video search with multi-query fusion",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="robots playing soccer (robots playing soccer)",
             entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
-            relationships=[
-                {
-                    "subject": "robots",
-                    "relation": "playing",
-                    "object": "soccer",
-                    "confidence": 0.85,
-                }
-            ],
-            metadata={"rrf_k": 60},
             query_variants=[
                 {"name": "original", "query": "robots playing soccer"},
                 {
@@ -1596,20 +1554,17 @@ class TestMultiQueryFusion:
             ],
         )
 
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = asyncio.run(agent._process_impl(input_data))
 
-        assert result["status"] == "completed"
-        assert result["total_results"] > 0
-        assert "query_variants_used" in result
-        assert "original" in result["query_variants_used"]
-        assert "relationship_expansion" in result["query_variants_used"]
+        assert result.search_mode == "multi_query_fusion"
+        assert result.total_results > 0
 
     @pytest.mark.ci_fast
     def test_custom_rrf_k_propagates_to_fusion(self, agent_with_mock_backend):
-        """Test non-default rrf_k in routing_metadata flows to _fuse_results_rrf."""
-        from cogniverse_agents.routing.contract import RoutingContext
+        """Non-default rrf_k in SearchInput flows to _fuse_results_rrf."""
+        import asyncio
+
+        from cogniverse_agents.search_agent import SearchInput
 
         agent = agent_with_mock_backend
 
@@ -1624,7 +1579,6 @@ class TestMultiQueryFusion:
         mock_backend.search = mock_search
         agent._shared_backend = mock_backend
 
-        # Capture the k parameter passed to _fuse_results_rrf
         captured_k = []
         original_fuse = agent._fuse_results_rrf
 
@@ -1634,25 +1588,20 @@ class TestMultiQueryFusion:
 
         agent._fuse_results_rrf = spy_fuse
 
-        custom_rrf_k = 30  # Non-default
-        routing_decision = RoutingContext(
+        custom_rrf_k = 30
+        input_data = SearchInput(
             query="robots playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Video search",
+            tenant_id="test_tenant",
+            top_k=10,
+            rrf_k=custom_rrf_k,
             enhanced_query="robots playing soccer",
-            entities=[{"text": "robots", "label": "TECHNOLOGY", "confidence": 0.9}],
-            relationships=[],
-            metadata={"rrf_k": custom_rrf_k},
             query_variants=[
                 {"name": "original", "query": "robots playing soccer"},
                 {"name": "boolean_optimization", "query": "robots AND soccer"},
             ],
         )
 
-        agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        asyncio.run(agent._process_impl(input_data))
 
         assert len(captured_k) == 1, (
             f"Expected _fuse_results_rrf called once, got {len(captured_k)}"
@@ -1671,8 +1620,8 @@ class TestEnsembleVsFusionPaths:
 
     - Ensemble: _process_impl(SearchInput) → _search_ensemble()
       Triggered by SearchInput.profiles with len > 1
-    - Multi-query fusion: search_with_routing_decision(RoutingContext) → _search_multi_query_fusion()
-      Triggered by RoutingContext.query_variants with len > 1
+    - Multi-query fusion: _process_impl(SearchInput) → _search_multi_query_fusion()
+      Triggered by SearchInput.query_variants with len > 1
     """
 
     @pytest.fixture
@@ -1720,16 +1669,17 @@ class TestEnsembleVsFusionPaths:
             return agent
 
     @pytest.mark.ci_fast
-    def test_search_input_has_no_query_variants_field(self):
-        """SearchInput model does not expose query_variants — structural guarantee."""
+    def test_search_input_carries_preprocessing_enrichment(self):
+        """SearchInput exposes enrichment fields the orchestrator threads
+        from EntityExtractionAgent and QueryEnhancementAgent."""
         from cogniverse_agents.search_agent import SearchInput
 
         input_fields = set(SearchInput.model_fields.keys())
-        assert "query_variants" not in input_fields, (
-            "SearchInput should NOT have query_variants field. "
-            "Multi-query fusion is only reachable via search_with_routing_decision(), "
-            f"not _process_impl(). Fields: {input_fields}"
-        )
+        for field in ("enhanced_query", "entities", "relationships", "query_variants"):
+            assert field in input_fields, (
+                f"SearchInput is missing enrichment field {field!r}; "
+                f"orchestrator relies on it. Fields: {input_fields}"
+            )
 
     @pytest.mark.ci_fast
     def test_ensemble_path_does_not_trigger_fusion(self, agent_with_mock_backend):
@@ -1765,8 +1715,10 @@ class TestEnsembleVsFusionPaths:
 
     @pytest.mark.ci_fast
     def test_fusion_path_uses_single_profile(self, agent_with_mock_backend):
-        """search_with_routing_decision with query_variants uses fusion, not ensemble."""
-        from cogniverse_agents.routing.contract import RoutingContext
+        """SearchInput with query_variants uses fusion, not ensemble."""
+        import asyncio
+
+        from cogniverse_agents.search_agent import SearchInput
 
         agent = agent_with_mock_backend
 
@@ -1790,28 +1742,22 @@ class TestEnsembleVsFusionPaths:
         mock_backend.search = mock_search
         agent._shared_backend = mock_backend
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="robots playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Test",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="robots playing soccer",
-            entities=[],
-            relationships=[],
-            metadata={"rrf_k": 60},
             query_variants=[
                 {"name": "original", "query": "robots playing soccer"},
                 {"name": "boolean", "query": "robots AND soccer"},
             ],
         )
 
-        agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        asyncio.run(agent._process_impl(input_data))
 
         assert len(ensemble_called) == 0, (
-            "Expected _search_ensemble NOT called when using search_with_routing_decision "
-            "with query_variants (should use _search_multi_query_fusion instead)"
+            "Expected _search_ensemble NOT called when query_variants is set "
+            "(should use _search_multi_query_fusion instead)"
         )
 
 

@@ -90,6 +90,12 @@ class AgentTask(BaseModel):
 
     Multi-turn support: Pass context_id and conversation_history for
     multi-turn conversations via REST (mirrors A2A contextId semantics).
+
+    Enrichment fields (``enhanced_query``, ``entities``, ``relationships``,
+    ``query_variants``, ``profiles``) are populated by the orchestrator
+    from preprocessing agent outputs (QueryEnhancementAgent,
+    EntityExtractionAgent, ProfileSelectionAgent) and forwarded to the
+    execution agent so it can skip redundant preprocessing.
     """
 
     agent_name: str
@@ -98,6 +104,12 @@ class AgentTask(BaseModel):
     top_k: int = 10
     context_id: Optional[str] = None
     conversation_history: Optional[List[Dict[str, str]]] = None
+
+    enhanced_query: Optional[str] = None
+    entities: List[Dict[str, Any]] = []
+    relationships: List[Dict[str, Any]] = []
+    query_variants: List[Dict[str, str]] = []
+    profiles: Optional[List[str]] = None
 
 
 class AgentRegistrationData(BaseModel):
@@ -311,12 +323,22 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
     """
     dispatcher = _ensure_dispatcher()
 
-    # Merge multi-turn fields into context dict for dispatcher
+    # Merge multi-turn + enrichment fields into context dict for dispatcher.
     dispatch_context = dict(task.context)
     if task.context_id is not None:
         dispatch_context["context_id"] = task.context_id
     if task.conversation_history is not None:
         dispatch_context["conversation_history"] = task.conversation_history
+    if task.enhanced_query is not None:
+        dispatch_context["enhanced_query"] = task.enhanced_query
+    if task.entities:
+        dispatch_context["entities"] = task.entities
+    if task.relationships:
+        dispatch_context["relationships"] = task.relationships
+    if task.query_variants:
+        dispatch_context["query_variants"] = task.query_variants
+    if task.profiles is not None:
+        dispatch_context["profiles"] = task.profiles
 
     try:
         return await dispatcher.dispatch(

@@ -303,7 +303,7 @@ class TestAgentDispatcherCapabilityRouting:
             )
 
         mock_search.assert_called_once_with(
-            "find cats", "t1", 10, conversation_history=[]
+            "find cats", "t1", 10, conversation_history=[], enrichment=None
         )
         assert result["status"] == "success"
 

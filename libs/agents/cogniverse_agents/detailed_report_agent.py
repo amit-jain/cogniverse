@@ -17,7 +17,6 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Enhanced routing support
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
-from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
@@ -48,6 +47,25 @@ class DetailedReportInput(AgentInput):
     rlm: Optional[RLMOptions] = Field(
         None,
         description="RLM configuration. None=disabled, set RLMOptions to enable RLM inference for A/B testing",
+    )
+
+    # Enrichment fields forwarded by the orchestrator from preprocessing
+    # agents. Optional — report generation works on raw query without them.
+    enhanced_query: Optional[str] = Field(
+        None,
+        description="Rewritten query from QueryEnhancementAgent",
+    )
+    entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Entities from EntityExtractionAgent",
+    )
+    relationships: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Relationships from EntityExtractionAgent",
+    )
+    query_variants: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Query variants from QueryEnhancementAgent",
     )
 
 
@@ -803,48 +821,6 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             "technical_analysis": technical_confidence,
         }
 
-    async def generate_report_with_routing_decision(
-        self,
-        routing_decision: RoutingContext,
-        search_results: List[Dict[str, Any]],
-        **kwargs,
-    ) -> ReportResult:
-        """Generate report with enhanced relationship context from DSPy routing"""
-        logger.info(
-            f"Relationship-aware report generation with confidence: {routing_decision.confidence:.3f}"
-        )
-
-        # Use enhanced query for basic report generation
-        basic_request = ReportRequest(
-            query=routing_decision.enhanced_query
-            or routing_decision.routing_metadata.get("original_query", ""),
-            search_results=search_results,
-            report_type=kwargs.get("report_type", "comprehensive"),
-            include_visual_analysis=kwargs.get("include_visual_analysis", True),
-            include_technical_details=kwargs.get("include_technical_details", True),
-            include_recommendations=kwargs.get("include_recommendations", True),
-            max_results_to_analyze=kwargs.get("max_results_to_analyze", 20),
-        )
-
-        # Generate basic report
-        result = await self._generate_report(basic_request)
-
-        # Add relationship metadata
-        result.enhancement_applied = True
-        result.metadata.update(
-            {
-                "original_query": routing_decision.routing_metadata.get(
-                    "original_query", ""
-                ),
-                "enhanced_query": routing_decision.enhanced_query,
-                "entities_found": len(routing_decision.extracted_entities),
-                "relationships_found": len(routing_decision.extracted_relationships),
-                "routing_confidence": routing_decision.confidence,
-            }
-        )
-
-        return result
-
     async def _process_impl(self, input: DetailedReportInput) -> DetailedReportOutput:
         """
         Process report generation request with typed input/output.
@@ -858,14 +834,26 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         self.emit_progress("preparation", "Preparing report request...")
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            enriched_query = self.inject_context_into_prompt(input.query, input.query)
+
+        # Prefer the upstream-enhanced query when the orchestrator forwards
+        # one; otherwise apply per-tenant memory context to the raw query.
+        if input.enhanced_query:
+            report_query = input.enhanced_query
+        elif input.tenant_id is not None:
+            report_query = self.inject_context_into_prompt(input.query, input.query)
         else:
-            enriched_query = input.query
+            report_query = input.query
+
+        merged_context: Dict[str, Any] = dict(input.context or {})
+        if input.entities:
+            merged_context["entities"] = input.entities
+        if input.relationships:
+            merged_context["relationships"] = input.relationships
 
         request = ReportRequest(
-            query=enriched_query,
+            query=report_query,
             search_results=input.search_results,
-            context=input.context or {},
+            context=merged_context,
             report_type=input.report_type,
             include_visual_analysis=input.include_visual_analysis,
             include_technical_details=input.include_technical_details,

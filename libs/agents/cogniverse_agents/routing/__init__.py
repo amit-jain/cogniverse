@@ -1,11 +1,16 @@
 """Routing subsystem.
 
-The live routing path is served by:
-  - ``cogniverse_agents.gateway_agent.GatewayAgent``     — fast GLiNER triage
-  - ``cogniverse_agents.orchestrator_agent.OrchestratorAgent`` — LLM-planned pipeline
+Live routing entry points:
+  - ``cogniverse_agents.gateway_agent.GatewayAgent``     — GLiNER triage
+  - ``cogniverse_agents.orchestrator_agent.OrchestratorAgent`` — DSPy planner
 
-This package still holds:
-  - ``cogniverse_agents.routing.contract`` — ``RoutingContext`` wire type
+Preprocessing agents (``entity_extraction_agent``, ``query_enhancement_agent``,
+``profile_selection_agent``) produce enrichment that the orchestrator threads
+onto each execution agent's typed input fields (``enhanced_query``,
+``entities``, ``relationships``, ``query_variants``, ``profiles``) via
+``OrchestratorAgent._merge_enrichment``.
+
+This package also holds:
   - ``cogniverse_agents.routing.config`` — runtime config loaders
   - offline optimisation/analytics modules (``modality_*``, ``xgboost_meta_models``,
     ``advanced_optimizer``, ``annotation_*``) used by Argo CronWorkflows and the

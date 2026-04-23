@@ -38,7 +38,7 @@ libs/agents/cogniverse_agents/
 ├── orchestrator_agent.py               # A2A orchestrator (DSPy planner + HTTP dispatch)
 ├── query_enhancement_agent.py          # Query enhancement A2A agent
 ├── routing/
-│   ├── contract.py                     # RoutingContext wire type
+│   ├── dspy_routing_signatures.py      # DSPy routing signatures
 │   ├── advanced_optimizer.py           # GRPO optimization (batch jobs)
 │   ├── config.py                       # Configuration system
 │   ├── cross_modal_optimizer.py        # Multi-modal fusion
@@ -275,32 +275,7 @@ async def _process_impl(
 
 ---
 
-### 3. RoutingContext (routing/contract.py)
-
-**Purpose**: Wire type passed from the routing layer (gateway + orchestrator) to execution agents
-
-**Key Fields**:
-```python
-class RoutingContext(AgentOutput):
-    query: str                          # Original query
-    recommended_agent: str             # Selected execution agent
-    confidence: float                  # Routing confidence (0–1)
-    reasoning: str                     # Reasoning for the decision
-    fallback_agents: List[str]         # Fallback agents if primary fails
-    enhanced_query: str                # Enriched query (from QueryEnhancementAgent)
-    entities: List[Dict]               # Extracted entities (from EntityExtractionAgent)
-    relationships: List[Dict]          # Extracted relationships
-    query_variants: List[Dict]         # Query variants
-```
-
-**Performance**:
-
-- Produced by OrchestratorAgent after DSPy planning
-- Consumed by search/summarizer/detailed_report execution agents
-
----
-
-### 4. AdvancedRoutingOptimizer (advanced_optimizer.py:137-1358)
+### 3. AdvancedRoutingOptimizer (advanced_optimizer.py:137-1358)
 
 **Purpose**: GRPO optimization with DSPy 3.0 advanced optimizers
 

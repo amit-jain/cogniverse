@@ -470,46 +470,38 @@ class TestSummarizerAgentCoreFunctionality:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_summarize_with_routing_decision_functionality(
-        self, agent_with_mocks
-    ):
-        """Test summarization with routing decision context"""
+    async def test_process_impl_uses_enrichment_from_input(self, agent_with_mocks):
+        """_process_impl consumes enrichment (entities/relationships/enhanced_query)
+        directly from SummarizerInput as threaded by the orchestrator."""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing.contract import RoutingContext
+        from cogniverse_agents.summarizer_agent import SummarizerInput
 
-        routing_decision = RoutingContext(
+        input_data = SummarizerInput(
+            tenant_id="test_tenant",
             query="AI overview",
-            recommended_agent="summarizer",
-            confidence=0.85,
-            reasoning="Comprehensive summarization needed",
+            search_results=[
+                {"title": "AI Demo", "content_type": "video", "relevance": 0.9}
+            ],
+            enhanced_query="comprehensive overview of AI and its applications",
             entities=[{"text": "AI", "type": "technology"}],
             relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
         )
-
-        search_results = [
-            {"title": "AI Demo", "content_type": "video", "relevance": 0.9}
-        ]
 
         with patch("dspy.ChainOfThought") as mock_cot:
             mock_prediction = Mock()
             mock_prediction.summary = "Enhanced summary with routing context"
             mock_prediction.key_insights = "AI technology, Enhanced context"
-
             mock_cot_instance = Mock()
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            result = await agent.summarize_with_routing_decision(
-                routing_decision, search_results
-            )
+            result = await agent._process_impl(input_data)
 
-            assert isinstance(result, SummaryResult)
-            assert result.summary is not None
-            assert len(result.summary) > 0
-            # Verify enhancement was applied via metadata
-            assert result.enhancement_applied is True
-            assert result.metadata.get("enhanced_query") is not None
+            assert result.summary
+            assert result.metadata.get("enhanced_query") == input_data.enhanced_query
+            assert result.metadata.get("entities_found") == 1
+            assert result.metadata.get("relationships_found") == 1
 
 
 @pytest.mark.unit

@@ -510,6 +510,202 @@ class TestOrchestratorWithRealAgents:
         assert result.agent_results == {}
         assert "Empty query" in str(result.final_output)
 
+    @pytest.mark.asyncio
+    async def test_preprocessing_enrichment_wires_deterministically(
+        self, orchestrator_with_agents, agent_instances, dspy_lm
+    ):
+        """Wire-threading contract: when the orchestrator runs a plan that
+        includes entity_extraction + query_enhancement + profile_selection
+        before search, each preprocessing agent's output must land on
+        SearchAgent's typed SearchInput.
+
+        Bypasses the DSPy planner (non-deterministic on small local LLMs)
+        by constructing an OrchestrationPlan explicitly and calling
+        _execute_plan. This test catches threading regressions at a stable
+        cadence — the planner-variance-tolerant test below covers the
+        "did the LLM pick good preprocessing?" side separately.
+        """
+        from cogniverse_agents.orchestrator_agent import (
+            AgentStep,
+            OrchestrationPlan,
+        )
+
+        captured_inputs: list[SearchInput] = []
+        original_process = SearchAgent._process_impl
+
+        async def capturing_process(self_agent, input):
+            captured_inputs.append(input)
+            return await original_process(self_agent, input)
+
+        query = (
+            "Compare how TensorFlow and PyTorch frameworks handle training "
+            "Google Vision Transformer models for image classification"
+        )
+        tenant_id = "test_tenant"
+
+        plan = OrchestrationPlan(
+            query=query,
+            steps=[
+                AgentStep(
+                    agent_name="entity_extraction",
+                    input_data={"query": query},
+                    depends_on=[],
+                    reasoning="Extract TensorFlow/PyTorch/Google entities",
+                ),
+                AgentStep(
+                    agent_name="query_enhancement",
+                    input_data={"query": query},
+                    depends_on=[0],
+                    reasoning="Enhance query with entity context",
+                ),
+                AgentStep(
+                    agent_name="profile_selection",
+                    input_data={"query": query},
+                    depends_on=[0],
+                    reasoning="Pick a video search profile",
+                ),
+                AgentStep(
+                    agent_name="search",
+                    input_data={"query": query},
+                    depends_on=[1, 2],
+                    reasoning="Search with enriched context",
+                ),
+            ],
+            parallel_groups=[[1, 2]],
+            reasoning="Deterministic test plan",
+            unavailable_agents=[],
+        )
+
+        with (
+            patch.object(
+                SearchAgent,
+                "_process_impl",
+                autospec=True,
+                side_effect=capturing_process,
+            ),
+            dspy.context(lm=dspy_lm),
+        ):
+            agent_results = await orchestrator_with_agents._execute_plan(
+                plan, tenant_id=tenant_id, workflow_id="test-wire"
+            )
+
+        assert captured_inputs, (
+            "SearchAgent._process_impl was never called despite an explicit "
+            "plan containing the search step. Threading is broken between "
+            "the orchestrator and the execution agent."
+        )
+        search_input = captured_inputs[-1]
+
+        qe_result = agent_results["query_enhancement"]
+        assert search_input.enhanced_query == qe_result["enhanced_query"], (
+            f"enhanced_query mismatch: producer={qe_result['enhanced_query']!r}, "
+            f"consumer={search_input.enhanced_query!r}"
+        )
+        assert search_input.enhanced_query != search_input.query
+
+        ee_result = agent_results["entity_extraction"]
+        ee_entities = ee_result.get("entities", [])
+        assert ee_entities, (
+            f"entity_extraction produced no entities. Result: {ee_result!r}"
+        )
+        assert len(search_input.entities) == len(ee_entities), (
+            f"Entity count mismatch: producer={len(ee_entities)}, "
+            f"consumer={len(search_input.entities)}"
+        )
+
+        ps_result = agent_results["profile_selection"]
+        selected = ps_result.get("selected_profile")
+        assert selected, (
+            f"profile_selection produced no selected_profile. Result: {ps_result!r}"
+        )
+        assert search_input.profiles == [selected], (
+            f"profile_selection.selected_profile={selected!r} should thread "
+            f"as SearchInput.profiles=[{selected!r}], got "
+            f"profiles={search_input.profiles!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_llm_planner_includes_preprocessing_for_complex_query(
+        self, orchestrator_with_agents, agent_instances, dspy_lm
+    ):
+        """OrchestrationSignature contract: for a complex query the LLM
+        planner should include at least ONE preprocessing agent alongside
+        search, and whatever it does include must thread through to
+        SearchInput correctly.
+
+        Loosened assertions tolerate LLM planner variance on small local
+        models (gemma3:4b may pick different preprocessing combos per run).
+        Combined with the deterministic wire test above, together they
+        separate "did the LLM plan well?" from "does the wire work?" —
+        failures are categorised.
+        """
+        captured_inputs: list[SearchInput] = []
+        original_process = SearchAgent._process_impl
+
+        async def capturing_process(self_agent, input):
+            captured_inputs.append(input)
+            return await original_process(self_agent, input)
+
+        query = (
+            "Compare how TensorFlow and PyTorch frameworks handle training "
+            "Google Vision Transformer models for image classification"
+        )
+
+        with (
+            patch.object(
+                SearchAgent,
+                "_process_impl",
+                autospec=True,
+                side_effect=capturing_process,
+            ),
+            dspy.context(lm=dspy_lm),
+        ):
+            result = await orchestrator_with_agents._process_impl(
+                OrchestratorInput(query=query, tenant_id="test_tenant")
+            )
+
+        def _norm(name):
+            return name.removesuffix("_agent") if name.endswith("_agent") else name
+
+        planned = {_norm(s["agent_name"]) for s in result.plan_steps}
+        preprocessing = {
+            "entity_extraction",
+            "query_enhancement",
+            "profile_selection",
+        }
+        picked_preprocessing = planned & preprocessing
+
+        assert "search" in planned, f"Plan missing search: {planned}"
+        assert picked_preprocessing, (
+            f"Planner picked no preprocessing for a complex query. "
+            f"Planned: {planned}. OrchestrationSignature may have drifted."
+        )
+        assert captured_inputs, (
+            f"SearchAgent._process_impl was never called. Planned: {planned}."
+        )
+        search_input = captured_inputs[-1]
+
+        # Whatever the planner picked must flow through.
+        if "query_enhancement" in picked_preprocessing:
+            qe = result.agent_results["query_enhancement"]
+            assert search_input.enhanced_query == qe["enhanced_query"], (
+                f"enhanced_query not threaded: producer={qe['enhanced_query']!r}, "
+                f"consumer={search_input.enhanced_query!r}"
+            )
+        if "entity_extraction" in picked_preprocessing:
+            ee = result.agent_results["entity_extraction"].get("entities", [])
+            assert len(search_input.entities) == len(ee), (
+                f"entities not threaded: producer={len(ee)}, "
+                f"consumer={len(search_input.entities)}"
+            )
+        if "profile_selection" in picked_preprocessing:
+            selected = result.agent_results["profile_selection"].get("selected_profile")
+            if selected:
+                assert search_input.profiles == [selected], (
+                    f"profile not threaded: producer={selected!r}, "
+                    f"consumer={search_input.profiles!r}"
+                )
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

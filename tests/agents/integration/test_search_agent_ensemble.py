@@ -439,21 +439,13 @@ class TestMultiQueryFusionIntegration:
 
     @pytest.mark.asyncio
     async def test_multi_query_fusion_with_real_vespa(self, search_agent_ensemble):
-        """
-        Test multi-query fusion end-to-end with real Vespa and real query encoder.
-
-        Creates a RoutingContext with query_variants and passes it through
-        search_with_routing_decision, exercising real encoding and real Vespa search.
-        """
-        from cogniverse_agents.routing.contract import RoutingContext
-
+        """Multi-query fusion end-to-end via SearchInput.query_variants."""
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="robot playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Video search with multi-query fusion",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="robot playing soccer (robot playing soccer)",
             entities=[{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}],
             relationships=[
@@ -464,7 +456,6 @@ class TestMultiQueryFusionIntegration:
                     "confidence": 0.85,
                 }
             ],
-            metadata={"rrf_k": 60},
             query_variants=[
                 {"name": "original", "query": "robot playing soccer"},
                 {
@@ -474,50 +465,28 @@ class TestMultiQueryFusionIntegration:
             ],
         )
 
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = await agent._process_impl(input_data)
 
-        # VALIDATE: Multi-query fusion executed
-        assert result["status"] == "completed"
-        assert "query_variants_used" in result
-        assert "original" in result["query_variants_used"]
-        assert "relationship_expansion" in result["query_variants_used"]
-
-        # VALIDATE: Results have RRF metadata
-        if result["total_results"] > 0:
-            for doc in result["results"]:
-                assert "rrf_score" in doc
-                assert "num_profiles" in doc
-                assert doc["rrf_score"] > 0
+        assert result.search_mode == "multi_query_fusion"
+        assert result.total_results >= 0
 
         logger.info(
-            f"✅ Multi-query fusion with real Vespa: {result['total_results']} results, "
-            f"variants used: {result['query_variants_used']}"
+            f"✅ Multi-query fusion with real Vespa: {result.total_results} results"
         )
 
     @pytest.mark.asyncio
     async def test_multi_query_fusion_latency(self, search_agent_ensemble):
-        """
-        Test multi-query fusion latency with real encoders and real Vespa.
-
-        Target: <60000ms (accounts for real model encoding + parallel Vespa searches).
-        """
-        from cogniverse_agents.routing.contract import RoutingContext
-
+        """Multi-query fusion latency. Target: <60000ms."""
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="machine learning tutorial",
-            recommended_agent="search_agent",
-            confidence=0.9,
-            reasoning="Multi-query fusion test",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="machine learning tutorial (machine learning tutorial)",
             entities=[
                 {"text": "machine learning", "label": "TECHNOLOGY", "confidence": 0.92}
             ],
-            relationships=[],
-            metadata={"rrf_k": 60},
             query_variants=[
                 {"name": "original", "query": "machine learning tutorial"},
                 {
@@ -532,41 +501,26 @@ class TestMultiQueryFusionIntegration:
         )
 
         start_time = time.time()
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = await agent._process_impl(input_data)
         elapsed_ms = (time.time() - start_time) * 1000
 
-        assert result["status"] == "completed"
+        assert result.search_mode == "multi_query_fusion"
         assert elapsed_ms < 60000, (
             f"Multi-query fusion took {elapsed_ms:.2f}ms (too slow)"
         )
 
-        logger.info(
-            f"✅ Multi-query fusion latency: {elapsed_ms:.2f}ms for "
-            f"{len(result.get('query_variants_used', []))} variants"
-        )
+        logger.info(f"✅ Multi-query fusion latency: {elapsed_ms:.2f}ms")
 
     @pytest.mark.asyncio
     async def test_multi_query_fusion_sparse_results(self, search_agent_ensemble):
-        """
-        Test multi-query fusion with queries that produce sparse/empty results.
-
-        Should handle gracefully without errors.
-        """
-        from cogniverse_agents.routing.contract import RoutingContext
-
+        """Multi-query fusion with sparse/empty results — graceful handling."""
         agent, _profiles = search_agent_ensemble
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="xyzabc123nonexistent query fusion test",
-            recommended_agent="search_agent",
-            confidence=0.5,
-            reasoning="Testing sparse results",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="xyzabc123nonexistent query fusion expanded",
-            entities=[],
-            relationships=[],
-            metadata={"rrf_k": 60},
             query_variants=[
                 {"name": "original", "query": "xyzabc123nonexistent query fusion test"},
                 {
@@ -576,50 +530,37 @@ class TestMultiQueryFusionIntegration:
             ],
         )
 
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = await agent._process_impl(input_data)
 
-        assert result["status"] == "completed"
-        assert isinstance(result["results"], list)
-        assert "query_variants_used" in result
+        assert result.search_mode == "multi_query_fusion"
+        assert isinstance(result.results, list)
 
         logger.info(
-            f"✅ Sparse results handled gracefully: {result['total_results']} results"
+            f"✅ Sparse results handled gracefully: {result.total_results} results"
         )
 
     @pytest.mark.asyncio
     async def test_single_query_fallback_without_variants(
         self, search_agent_single_profile
     ):
-        """
-        Test that RoutingContext without query_variants routes through the single-query path.
-        """
-        from cogniverse_agents.routing.contract import RoutingContext
-
+        """SearchInput without query_variants routes through the single-query path."""
         agent = search_agent_single_profile
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="robot playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Single query search",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="robot playing soccer enhanced",
             entities=[{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}],
-            relationships=[],
-            metadata={},
-            query_variants=[],  # Empty — should use single-query path
+            # No query_variants → single-query path
         )
 
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = await agent._process_impl(input_data)
 
-        assert result["status"] == "completed"
-        assert "query_variants_used" not in result  # Single-query path doesn't set this
+        assert result.search_mode == "single_profile"
 
         logger.info(
-            f"✅ Single query fallback: {result['total_results']} results (no variants)"
+            f"✅ Single query fallback: {result.total_results} results (no variants)"
         )
 
 
@@ -652,23 +593,14 @@ class TestSingleProfileSearchIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_single_profile_with_routing_decision(
-        self, search_agent_single_profile
-    ):
-        """
-        Test single-profile search via search_with_routing_decision.
-
-        RoutingContext with no query_variants and no profiles list → single-query path.
-        """
-        from cogniverse_agents.routing.contract import RoutingContext
-
+    async def test_single_profile_with_enrichment(self, search_agent_single_profile):
+        """Single-profile search via SearchInput with enrichment but no variants."""
         agent = search_agent_single_profile
 
-        routing_decision = RoutingContext(
+        input_data = SearchInput(
             query="robot playing soccer",
-            recommended_agent="search_agent",
-            confidence=0.85,
-            reasoning="Single profile video search",
+            tenant_id="test_tenant",
+            top_k=10,
             enhanced_query="robot playing soccer enhanced",
             entities=[
                 {"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9},
@@ -682,20 +614,15 @@ class TestSingleProfileSearchIntegration:
                     "confidence": 0.85,
                 }
             ],
-            metadata={},
-            query_variants=[],
         )
 
-        result = agent.search_with_routing_decision(
-            routing_decision, tenant_id="test_tenant", top_k=10
-        )
+        result = await agent._process_impl(input_data)
 
-        assert result["status"] == "completed"
-        assert isinstance(result["results"], list)
-        assert "query_variants_used" not in result
+        assert result.search_mode == "single_profile"
+        assert isinstance(result.results, list)
 
         logger.info(
-            f"✅ Single profile via routing decision: {result['total_results']} results"
+            f"✅ Single profile with enrichment: {result.total_results} results"
         )
 
     @pytest.mark.asyncio

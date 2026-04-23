@@ -114,8 +114,8 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "config")
         assert hasattr(agent, "process")
 
-        # Should have summarization capabilities
-        assert hasattr(agent, "summarize_with_routing_decision")
+        # Enrichment fields (enhanced_query, entities, relationships,
+        # query_variants) arrive on SummarizerInput itself.
         assert hasattr(agent, "summarize_with_relationships")
         assert callable(agent.summarize_with_relationships)
 
@@ -147,9 +147,9 @@ class TestDSPyAgentIntegration:
         assert hasattr(agent, "config")
         assert hasattr(agent, "process")
 
-        # Should have report generation capabilities
-        assert hasattr(agent, "generate_report_with_routing_decision")
-        assert callable(agent.generate_report_with_routing_decision)
+        # Enrichment fields arrive on DetailedReportInput.
+        assert callable(agent._process_impl)
+        assert callable(agent._generate_report)
 
 
 @pytest.mark.unit

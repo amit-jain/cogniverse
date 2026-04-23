@@ -10,8 +10,7 @@
 1. [Module Overview](#module-overview)
 2. [Package Structure](#package-structure)
 3. [Core Agents](#core-agents)
-   - [RoutingContext](#1-routingcontext)
-   - [VideoSearchAgent](#2-videosearchagent)
+   - [VideoSearchAgent](#1-videosearchagent)
    - [GatewayAgent](#gateway-gatewayagent)
    - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
    - [ProfileSelectionAgent](#4-profileselectionagent)
@@ -173,43 +172,7 @@ graph TD
 
 ## Core Agents
 
-### 1. RoutingContext
-
-**Location**: `libs/agents/cogniverse_agents/routing/contract.py`
-**Purpose**: Wire type passed from the routing layer (GatewayAgent + OrchestratorAgent) to execution agents
-**Base Class**: `AgentOutput` (from `cogniverse_core.agents.base`)
-
-#### Class Definition
-
-```python
-# libs/agents/cogniverse_agents/routing/contract.py
-
-from cogniverse_core.agents.base import AgentOutput
-from pydantic import ConfigDict, Field
-from typing import Any, Dict, List
-
-class RoutingContext(AgentOutput):
-    """Routing decision plus query enrichment passed to execution agents."""
-
-    query: str = Field(..., description="Original query")
-    recommended_agent: str = Field(..., description="Selected execution agent")
-    confidence: float = Field(0.0, ge=0.0, le=1.0, description="Routing confidence")
-    reasoning: str = Field("", description="Reasoning for the decision")
-    fallback_agents: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    # Enrichment fields forwarded from preprocessing agents
-    enhanced_query: str = Field("", description="From QueryEnhancementAgent")
-    entities: List[Dict[str, Any]] = Field(default_factory=list, description="From EntityExtractionAgent")
-    relationships: List[Dict[str, Any]] = Field(default_factory=list)
-    query_variants: List[Dict[str, str]] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="allow")
-```
-
----
-
-### 2. VideoSearchAgent
+### 1. VideoSearchAgent
 
 **Purpose**: Text-to-video search with ColPali and VideoPrism embeddings
 **Constructor**: `VideoSearchAgent(config_manager: ConfigManager = None, schema_loader=None)`
@@ -2775,7 +2738,7 @@ When `GatewayAgent` classifies the query as `simple`:
 1. **GatewayAgent** detects clear entities/modality via GLiNER (<100ms, no LLM)
 2. `_execute_downstream_agent` dispatches directly to the execution agent
 3. `conversation_history` is threaded through, enabling query rewrite on multi-turn conversations
-4. Response includes a `RoutingContext` (from `cogniverse_agents.routing.contract`) with `recommended_agent`, `confidence`, and `reasoning`
+4. Response includes the agent output with `recommended_agent`, `confidence`, and `reasoning` from `OrchestratorOutput`
 
 ### Orchestration Path (Multi-Agent)
 
@@ -2792,7 +2755,7 @@ When `GatewayAgent` classifies the query as `complex`:
 |---|---|---|
 | **GatewayAgent** | Entry point, classifies queries as simple/complex via GLiNER | `cogniverse_agents/gateway_agent.py` |
 | **OrchestratorAgent** | Autonomous A2A orchestrator: planning, execution, fusion, checkpointing | `cogniverse_agents/orchestrator_agent.py` |
-| **RoutingContext** | Wire type from routing layer to execution agents | `cogniverse_agents/routing/contract.py` |
+| **AgentTask** | HTTP wire schema carrying enrichment fields to execution agents | `cogniverse_runtime/routers/agents.py` |
 
 ---
 
@@ -2825,7 +2788,7 @@ sequenceDiagram
     Vespa-->>Memory: Relevant memories
     Memory-->>Agent: Context
     Agent->>Agent: Process query
-    Agent-->>API: RoutingContext
+    Agent-->>API: OrchestratorOutput
 ```
 
 ### Tenant Isolation
@@ -2866,7 +2829,6 @@ from cogniverse_agents.agent_registry import AgentRegistry
 registry = AgentRegistry(config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-# The orchestrator produces a RoutingContext consumed by execution agents
 result = await orchestrator._process_impl(
     OrchestratorInput(
         query="Show me videos about machine learning",

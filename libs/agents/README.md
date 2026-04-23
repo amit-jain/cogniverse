@@ -38,7 +38,7 @@ cogniverse_agents/
 ├── agent_registry.py        # Agent registration
 ├── a2a_gateway.py          # A2A gateway
 ├── routing/                # Routing module
-│   ├── contract.py         # RoutingContext wire type
+│   ├── dspy_routing_signatures.py  # DSPy routing signatures
 │   ├── router.py           # Core routing logic
 │   ├── modality_cache.py   # Query modality caching
 │   ├── parallel_executor.py    # Concurrent execution
@@ -84,13 +84,6 @@ Central A2A orchestration entry point with DSPy-based multi-agent planning:
 
 **Key Classes:**
 - `OrchestratorAgent`: DSPy planning + multi-agent execution coordination
-
-### Routing Contract (`cogniverse_agents.routing.contract`)
-
-Wire type passed from the routing layer to execution agents:
-
-**Key Classes:**
-- `RoutingContext`: Pydantic model with `recommended_agent`, `confidence`, `reasoning`, and query enrichment fields
 
 ### Video Search Agent (`cogniverse_agents.video_search_agent`)
 

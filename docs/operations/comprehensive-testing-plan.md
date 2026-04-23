@@ -877,7 +877,7 @@ print(f"Compare query → {compare_routing.recommended_agent}")
 
 - Uses tiered routing: GatewayAgent (GLiNER) → OrchestratorAgent (DSPy/LLM)
 
-- Returns RoutingContext with recommended_agent + confidence + reasoning
+- Returns OrchestratorOutput with recommended_agent + confidence + reasoning
 
 ### 7.3 Modality Optimizer
 
@@ -1091,7 +1091,7 @@ print(f"  Reasoning: {decision.reasoning}")
 
 - Routing is handled by OrchestratorAgent via the A2A endpoint
 
-- Returns RoutingContext with recommended agent, confidence, and reasoning
+- Returns OrchestratorOutput with recommended agent, confidence, and reasoning
 
 - Includes enhanced query and extracted entities/relationships
 

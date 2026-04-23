@@ -15,7 +15,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
-from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -38,6 +37,25 @@ class SummarizerInput(AgentInput):
     include_visual_analysis: bool = Field(True, description="Include visual analysis")
     max_results_to_analyze: int = Field(10, description="Maximum results to analyze")
     context: Optional[Dict[str, Any]] = Field(None, description="Additional context")
+
+    # Enrichment fields forwarded by the orchestrator from preprocessing
+    # agents. Optional — summarization works on raw query without them.
+    enhanced_query: Optional[str] = Field(
+        None,
+        description="Rewritten query from QueryEnhancementAgent",
+    )
+    entities: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Entities from EntityExtractionAgent",
+    )
+    relationships: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Relationships from EntityExtractionAgent",
+    )
+    query_variants: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Query variants from QueryEnhancementAgent",
+    )
 
 
 class SummarizerOutput(AgentOutput):
@@ -742,45 +760,6 @@ and structure summary based on identified themes and content categories.
 
         return sum(factors) / len(factors)
 
-    async def summarize_with_routing_decision(
-        self,
-        routing_decision: RoutingContext,
-        search_results: List[Dict[str, Any]],
-        **kwargs,
-    ) -> SummaryResult:
-        """
-        Generate summary with enhanced relationship context from DSPy routing.
-
-        Args:
-            routing_decision: Enhanced routing decision with relationship context
-            search_results: Search results to summarize
-            **kwargs: Additional summarization parameters
-
-        Returns:
-            Enhanced summary with relationship context
-        """
-        logger.info(
-            f"Relationship-aware summarization with confidence: {routing_decision.confidence:.3f}"
-        )
-
-        # Create enhanced summary request
-        enhanced_request = EnhancedSummaryRequest(
-            original_query=routing_decision.routing_metadata.get("original_query", ""),
-            enhanced_query=routing_decision.enhanced_query,
-            search_results=search_results,
-            entities=routing_decision.extracted_entities,
-            relationships=routing_decision.extracted_relationships,
-            routing_metadata=routing_decision.routing_metadata,
-            routing_confidence=routing_decision.confidence,
-            summary_type=kwargs.get("summary_type", "comprehensive"),
-            include_visual_analysis=kwargs.get("include_visual_analysis", True),
-            max_results_to_analyze=kwargs.get("max_results_to_analyze", 10),
-            focus_on_relationships=kwargs.get("focus_on_relationships", True),
-        )
-
-        # Perform relationship-aware summarization
-        return await self.summarize_with_relationships(enhanced_request)
-
     async def summarize_with_relationships(
         self, request: EnhancedSummaryRequest
     ) -> SummaryResult:
@@ -815,30 +794,46 @@ and structure summary based on identified themes and content categories.
         """
         Process summarization request with typed input/output.
 
-        Args:
-            input: Typed input with query, search_results, summary_type, etc.
-
-        Returns:
-            SummarizerOutput with summary, key_points, visual_insights, etc.
+        When the orchestrator forwards enrichment (`enhanced_query`, `entities`,
+        `relationships` from preprocessing agents), the summarizer uses them
+        as authoritative context and skips the memory-based prompt injection.
         """
-        # Create summary request from typed input
         if input.tenant_id is not None:
             self.set_tenant_for_context(input.tenant_id)
-            enriched_query = self.inject_context_into_prompt(input.query, input.query)
+
+        # Prefer the upstream-enhanced query when the orchestrator forwards
+        # one; otherwise apply per-tenant memory context to the raw query.
+        if input.enhanced_query:
+            summary_query = input.enhanced_query
+        elif input.tenant_id is not None:
+            summary_query = self.inject_context_into_prompt(input.query, input.query)
         else:
-            enriched_query = input.query
+            summary_query = input.query
 
-        request = SummaryRequest(
-            query=enriched_query,
-            search_results=input.search_results,
-            context=input.context or {},
-            summary_type=input.summary_type,
-            include_visual_analysis=input.include_visual_analysis,
-            max_results_to_analyze=input.max_results_to_analyze,
-        )
-
-        # Perform summarization
-        result = await self._summarize(request)
+        if input.entities or input.relationships:
+            enhanced_request = EnhancedSummaryRequest(
+                original_query=input.query,
+                enhanced_query=input.enhanced_query,
+                search_results=input.search_results,
+                entities=input.entities,
+                relationships=input.relationships,
+                routing_metadata=input.context or {},
+                routing_confidence=0.0,
+                summary_type=input.summary_type,
+                include_visual_analysis=input.include_visual_analysis,
+                max_results_to_analyze=input.max_results_to_analyze,
+            )
+            result = await self.summarize_with_relationships(enhanced_request)
+        else:
+            request = SummaryRequest(
+                query=summary_query,
+                search_results=input.search_results,
+                context=input.context or {},
+                summary_type=input.summary_type,
+                include_visual_analysis=input.include_visual_analysis,
+                max_results_to_analyze=input.max_results_to_analyze,
+            )
+            result = await self._summarize(request)
 
         return SummarizerOutput(
             summary=result.summary,

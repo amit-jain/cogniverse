@@ -641,22 +641,13 @@ class TestDetailedReportAgentCoreFunctionality:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
-    async def test_enhanced_report_generation(self, agent_with_mocks):
-        """Test enhanced report generation with routing decision"""
+    async def test_process_impl_uses_enrichment_from_input(self, agent_with_mocks):
+        """_process_impl consumes enrichment (entities, relationships,
+        enhanced_query) directly from DetailedReportInput — the orchestrator
+        threads preprocessing outputs onto the input."""
         agent = agent_with_mocks
 
-        from cogniverse_agents.routing.contract import RoutingContext
-
-        routing_decision = RoutingContext(
-            query="test query",
-            recommended_agent="detailed_report",
-            confidence=0.9,
-            reasoning="comprehensive analysis needed",
-            entities=[{"text": "AI", "type": "topic"}],
-            relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
-        )
-
-        search_results = [{"title": "AI video", "content_type": "video"}]
+        from cogniverse_agents.detailed_report_agent import DetailedReportInput
 
         with patch("dspy.ChainOfThought") as mock_cot:
             mock_prediction = Mock()
@@ -664,52 +655,24 @@ class TestDetailedReportAgentCoreFunctionality:
             mock_prediction.contextual_insights = ["AI technology focus"]
             mock_prediction.enhanced_recommendations = ["explore related topics"]
             mock_prediction.reasoning = "enhanced analysis complete"
-
             mock_cot_instance = Mock()
             mock_cot_instance.forward = Mock(return_value=mock_prediction)
             mock_cot.return_value = mock_cot_instance
 
-            from cogniverse_agents.detailed_report_agent import EnhancedReportRequest
-
-            enhanced_request = EnhancedReportRequest(
-                original_query="test query",
+            input_data = DetailedReportInput(
+                tenant_id="test_tenant",
+                query="test query",
+                search_results=[{"title": "AI video", "content_type": "video"}],
                 enhanced_query="test query enhanced",
-                search_results=search_results,
                 entities=[{"text": "AI", "type": "topic"}],
                 relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
-                routing_metadata={"confidence": 0.9},
-                routing_confidence=0.9,
-                include_visual_analysis=False,  # Skip VLM for this test
+                include_visual_analysis=False,
                 report_type="comprehensive",
             )
 
-            # Use generate_report_with_routing_decision method
-            from cogniverse_agents.routing.contract import RoutingContext
+            result = await agent._process_impl(input_data)
 
-            routing_decision = RoutingContext(
-                query=enhanced_request.original_query,
-                enhanced_query=enhanced_request.enhanced_query,
-                recommended_agent="detailed_report_agent",
-                confidence=enhanced_request.routing_confidence,
-                reasoning="Enhanced with relationships",
-                entities=enhanced_request.entities,
-                relationships=enhanced_request.relationships,
-            )
-
-            result = await agent.generate_report_with_routing_decision(
-                routing_decision,
-                enhanced_request.search_results,
-                report_type=enhanced_request.report_type,
-                include_visual_analysis=enhanced_request.include_visual_analysis,
-            )
-
-            assert isinstance(result, ReportResult)
-            assert result.executive_summary is not None
-            assert result.thinking_phase is not None
-
-            # Validate the routing decision was used properly
-            assert routing_decision.confidence == 0.9
-            assert routing_decision.recommended_agent == "detailed_report_agent"
+            assert result.executive_summary
 
 
 if __name__ == "__main__":

@@ -224,7 +224,7 @@ results = agent.search_by_text(
 
 ### 2. Intelligent Query Routing
 
-Cogniverse automatically routes queries to the optimal execution agent via the GatewayAgent → OrchestratorAgent pipeline. The orchestrator produces a `RoutingContext` that execution agents consume:
+Cogniverse automatically routes queries to the optimal execution agent via the GatewayAgent → OrchestratorAgent pipeline. The orchestrator plans and executes preprocessing agents (QueryEnhancementAgent, EntityExtractionAgent, ProfileSelectionAgent) and threads their enrichment outputs — `enhanced_query`, `entities`, `relationships`, `query_variants` — directly onto the execution agent's typed input via `AgentTask`:
 
 ```python
 import asyncio
@@ -1145,27 +1145,24 @@ results = agent.search_by_text(
 )
 ```
 
-#### OrchestratorAgent and RoutingContext
+#### OrchestratorAgent
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.routing.contract import RoutingContext
 from cogniverse_agents.agent_registry import AgentRegistry
 
 registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-# The orchestrator returns a RoutingContext to execution agents
+# Orchestrator plans preprocessing + execution agents and returns OrchestratorOutput
 result = await orchestrator._process_impl(
     OrchestratorInput(query="machine learning tutorial", tenant_id="your_org:production")
 )
 
-# RoutingContext fields (used by execution agents):
-# result.recommended_agent  — agent selected to execute
-# result.confidence         — routing confidence score
-# result.entities           — extracted entities (forwarded from EntityExtractionAgent)
-# result.relationships      — entity relationships
-# result.enhanced_query     — enriched query (forwarded from QueryEnhancementAgent)
+# OrchestratorOutput.final_output contains the aggregated execution result.
+# Enrichment (enhanced_query, entities, relationships, query_variants) is threaded
+# from preprocessing agent outputs onto execution agent inputs via AgentTask fields
+# by OrchestratorAgent._merge_enrichment — not returned as a top-level field.
 ```
 
 #### Mem0MemoryManager

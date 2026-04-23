@@ -1492,7 +1492,7 @@ async def test_end_to_end_tenant_flow():
         OrchestratorInput(query="cooking videos", tenant_id=tenant_id)
     )
 
-    # 4. Verify result (RoutingContext Pydantic model)
+    # 4. Verify result (OrchestratorOutput Pydantic model)
     assert result.recommended_agent is not None
     assert result.confidence > 0.0
 ```

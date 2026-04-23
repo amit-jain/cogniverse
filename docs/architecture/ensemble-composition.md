@@ -449,8 +449,8 @@ Multi-query fusion is a complementary technique to ensemble search. While **ense
 | | Ensemble (Multi-Profile) | Multi-Query Fusion |
 |---|---|---|
 | **What varies** | Profile (embedding model) | Query (rewritten variants) |
-| **Entry path** | `_process_impl()` → `_search_ensemble()` | `search_with_routing_context()` → `_search_multi_query_fusion()` |
-| **Input** | `SearchInput.profiles` | `RoutingContext.query_variants` |
+| **Entry path** | `_process_impl()` → `_search_ensemble()` | `_process_impl()` → `_search_multi_query_fusion()` |
+| **Input** | `SearchInput.profiles` | `SearchInput.query_variants` (enrichment field) |
 | **Fusion** | RRF across profiles | RRF across query variants |
 | **Config** | `SearchInput.profiles` list | `RoutingConfig.query_fusion_config` |
 
@@ -477,7 +477,7 @@ Additional routing config fields control the composable module's path selection:
 
 ### Mutual Exclusivity
 
-Ensemble and multi-query fusion use **structurally disjoint entry paths** — `SearchInput` has no `query_variants` field, and `RoutingContext` (from OrchestratorAgent) does not trigger ensemble. They cannot overlap in a single request.
+Ensemble and multi-query fusion use **disjoint activation conditions** — ensemble activates when `SearchInput.profiles` has multiple entries; multi-query fusion activates when `SearchInput.query_variants` has more than one entry (populated by the orchestrator's `_merge_enrichment` from `QueryEnhancementAgent`). Both fields are present on `SearchInput` but only one drives execution per request.
 
 ---
 

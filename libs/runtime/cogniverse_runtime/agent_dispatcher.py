@@ -140,13 +140,29 @@ class AgentDispatcher:
                 action, query, context, tenant_id
             )
 
+        enrichment = {
+            k: context[k]
+            for k in (
+                "enhanced_query",
+                "entities",
+                "relationships",
+                "query_variants",
+                "profiles",
+            )
+            if k in context
+        }
+
         if capabilities & {"gateway", "routing", "intelligent_routing"}:
             result = await self._execute_gateway_task(query, context, tenant_id)
         elif "orchestration" in capabilities:
             result = await self._execute_orchestration_task(query, context, tenant_id)
         elif capabilities & {"search", "video_search", "retrieval"}:
             result = await self._execute_search_task(
-                query, tenant_id, top_k, conversation_history=conversation_history
+                query,
+                tenant_id,
+                top_k,
+                conversation_history=conversation_history,
+                enrichment=enrichment or None,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
             result = await self._execute_image_search_task(query, tenant_id, top_k)
@@ -465,8 +481,11 @@ class AgentDispatcher:
         tenant_id: str,
         top_k: int,
         conversation_history: Optional[List[Dict[str, str]]] = None,
+        enrichment: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        from cogniverse_agents.search.service import SearchService
+        from cogniverse_agents.search_agent import (
+            SearchInput,
+        )
         from cogniverse_foundation.config.utils import get_config
 
         # Rewrite query using conversation history to resolve anaphoric references.
@@ -481,29 +500,32 @@ class AgentDispatcher:
                 logger.info(f"Query rewritten: '{query}' -> '{resolved_query}'")
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        search_service = SearchService(
-            config=config,
-            config_manager=self._config_manager,
-            schema_loader=self._schema_loader,
-        )
-
         profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
 
-        results = search_service.search(
+        search_agent = self._get_search_agent(profile)
+
+        enrichment = enrichment or {}
+        input_data = SearchInput(
             query=resolved_query,
-            profile=profile,
             tenant_id=tenant_id,
             top_k=top_k,
-            ranking_strategy="float_float",
+            enhanced_query=enrichment.get("enhanced_query"),
+            entities=enrichment.get("entities") or [],
+            relationships=enrichment.get("relationships") or [],
+            query_variants=enrichment.get("query_variants") or [],
+            profiles=enrichment.get("profiles"),
         )
 
-        result_list = [r.to_dict() for r in results]
+        output = await search_agent._process_impl(input_data)
+
+        result_list = output.results
         result_count = len(result_list)
+        effective_query = output.enhanced_query or resolved_query
 
         if result_count > 0:
-            message = f"Found {result_count} results for '{resolved_query}'"
+            message = f"Found {result_count} results for '{effective_query}'"
         else:
-            message = f"No results found for '{resolved_query}'"
+            message = f"No results found for '{effective_query}'"
 
         response: Dict[str, Any] = {
             "status": "success",
@@ -511,7 +533,8 @@ class AgentDispatcher:
             "message": message,
             "results_count": result_count,
             "results": result_list,
-            "profile": profile,
+            "profile": output.profile or profile,
+            "search_mode": output.search_mode,
         }
 
         # Multi-turn contract: whenever conversation_history was supplied we
@@ -523,6 +546,26 @@ class AgentDispatcher:
             response["rewritten_query"] = resolved_query
 
         return response
+
+    def _get_search_agent(self, profile: str):
+        """Return a per-profile cached SearchAgent instance. SearchAgent is
+        heavyweight (query encoder, schema loader, backend) so we avoid
+        re-instantiating on every dispatch."""
+        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+
+        cache = getattr(self, "_search_agent_cache", None)
+        if cache is None:
+            cache = {}
+            self._search_agent_cache = cache
+        agent = cache.get(profile)
+        if agent is None:
+            agent = SearchAgent(
+                deps=SearchAgentDeps(profile=profile),
+                schema_loader=self._schema_loader,
+                config_manager=self._config_manager,
+            )
+            cache[profile] = agent
+        return agent
 
     async def _rewrite_query_with_history(
         self, query: str, conversation_history: List[Dict[str, str]]
@@ -663,11 +706,14 @@ class AgentDispatcher:
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
 
+        gateway_ctx = gateway_context or {}
         input_data = OrchestratorInput(
             query=query,
             tenant_id=tenant_id,
             session_id=context.get("session_id"),
             conversation_history=context.get("conversation_history"),
+            modality=gateway_ctx.get("modality"),
+            generation_type=gateway_ctx.get("generation_type"),
         )
 
         result = await agent._process_impl(input_data)
@@ -710,6 +756,7 @@ class AgentDispatcher:
                 tenant_id,
                 top_k,
                 conversation_history=conversation_history,
+                enrichment=None,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
             return await self._execute_image_search_task(query, tenant_id, top_k)
