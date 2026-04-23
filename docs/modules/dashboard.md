@@ -13,16 +13,12 @@
 4. [Dashboard Tabs](#dashboard-tabs)
    - [Analytics Tab](#analytics-tab)
    - [Evaluation Tab](#evaluation-tab)
-   - [Embedding Atlas Tab](#embedding-atlas-tab)
    - [Routing Evaluation Tab](#routing-evaluation-tab)
-   - [Interactive Search Tab](#interactive-search-tab)
    - [Orchestration Annotation Tab](#orchestration-annotation-tab)
    - [Approval Queue Tab](#approval-queue-tab)
    - [Configuration Management Tab](#configuration-management-tab)
    - [Memory Management Tab](#memory-management-tab)
    - [Backend Profile Tab](#backend-profile-tab)
-   - [Ingestion Testing Tab](#ingestion-testing-tab)
-   - [Multi-Modal Chat Tab](#multi-modal-chat-tab)
    - [Enhanced Optimization Tab](#enhanced-optimization-tab)
 5. [Phoenix Data Manager](#phoenix-data-manager)
 6. [Configuration](#configuration)
@@ -37,66 +33,52 @@ The Dashboard module provides a **Streamlit-based UI** for:
 
 - **Phoenix Analytics**: Visualize OpenTelemetry traces, spans, and experiments
 - **Evaluation Management**: Track experiments, compare results, view metrics
-- **Embedding Visualization**: Atlas visualization of embeddings and clusters
-- **Interactive Search**: Live search testing with per-result annotation
 - **HITL Workflows**: Human approval queues and orchestration annotation
-- **System Monitoring**: Configuration, memory, and ingestion management
+- **System Monitoring**: Configuration, memory, and backend profile management
 
 The dashboard communicates with the **unified Runtime** (`http://localhost:8000`) via REST API. Search queries go through `POST /search/`, agent status is checked via `GET /agents/`, and configuration is managed through `/admin/` endpoints. The Runtime handles routing, agent dispatch, and telemetry internally. The dashboard never instantiates agents directly.
 
-**Main Entry Point:** The primary dashboard application is `scripts/phoenix_dashboard_standalone.py`, which aggregates all dashboard tabs and provides the complete UI. The `libs/dashboard/cogniverse_dashboard/` package contains utility modules (PhoenixDataManager, PhoenixLauncher) that support dashboard operations.
+**Main Entry Point:** `libs/dashboard/cogniverse_dashboard/app.py` — the primary Streamlit application. All tabs are in the `cogniverse_dashboard.tabs` package.
 
 ---
 
 ## Package Structure
 
-**Dashboard Package** (`libs/dashboard/cogniverse_dashboard/`):
 ```text
-cogniverse_dashboard/
+libs/dashboard/cogniverse_dashboard/
   __init__.py
-  app.py (legacy dashboard, use phoenix_dashboard_standalone.py instead)
-  tabs/ (empty directory)
+  app.py                        # Main Streamlit entry point
+  tabs/
+    __init__.py
+    approval_queue.py
+    backend_profile.py
+    config_management.py
+    evaluation.py
+    memory_management.py
+    optimization.py
+    orchestration_annotation.py
+    routing_evaluation.py
+    tenant_management.py
   utils/
     __init__.py
     phoenix_launcher.py
     phoenix_data_manager.py
 ```
 
-**Dashboard Application and Tabs** (`scripts/`):
-```text
-scripts/
-  phoenix_dashboard_standalone.py (main entry point)
-  phoenix_dashboard_evaluation_tab_tabbed.py
-  embedding_atlas_tab.py
-  routing_evaluation_tab.py
-  interactive_search_tab.py
-  orchestration_annotation_tab.py
-  approval_queue_tab.py
-  config_management_tab.py
-  memory_management_tab.py
-  backend_profile_tab.py
-  ingestion_testing_tab.py
-  multi_modal_chat_tab.py
-  enhanced_optimization_tab.py
-```
-
-**Key Notes:**
-- Dashboard utilities (PhoenixDataManager, PhoenixLauncher) are in the `cogniverse_dashboard` package
-- All dashboard tabs are standalone scripts in the `scripts/` directory
-- The main application is `scripts/phoenix_dashboard_standalone.py`
+**Embedding Atlas**: replaced by `scripts/atlas_viewer.py`, launched as a separate Streamlit process (not a tab inside `app.py`).
 
 ---
 
 ## Main Application
 
-The main application (`phoenix_dashboard_standalone.py`) orchestrates all dashboard tabs:
+The main application (`libs/dashboard/cogniverse_dashboard/app.py`) orchestrates all dashboard tabs:
 
 ```python
 # Start the dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
 # With custom port
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 ```
 
 **Key Components:**
@@ -161,8 +143,8 @@ if 'auto_refresh' not in st.session_state:
 - Export traces to CSV/JSON
 
 ```python
-# Dashboard is a Streamlit app - analytics are rendered via phoenix_dashboard_standalone.py
-# Run with: uv run streamlit run scripts/phoenix_dashboard_standalone.py
+# Dashboard is a Streamlit app - run with:
+# uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
 # For programmatic access to Phoenix traces, import from the telemetry-phoenix package:
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
@@ -178,7 +160,7 @@ traces = analytics.get_traces(
 
 ### Evaluation Tab
 
-**File:** `scripts/phoenix_dashboard_evaluation_tab_tabbed.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/evaluation.py`
 
 **Purpose:** Experiment tracking and comparison
 
@@ -195,43 +177,14 @@ traces = analytics.get_traces(
 - Export experiment data
 
 ```python
-# Tab files are standalone scripts in scripts/ directory
-# Import directly when scripts/ is in sys.path
-from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
+from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab
 
-# Render in dashboard
 render_evaluation_tab()
-```
-
-### Embedding Atlas Tab
-
-**File:** `scripts/embedding_atlas_tab.py`
-
-**Purpose:** Embedding space visualization
-
-**Features:**
-
-- UMAP/t-SNE dimensionality reduction
-
-- Interactive embedding plots
-
-- Cluster visualization
-
-- Similarity search from embeddings
-
-- Per-profile embedding analysis
-
-```python
-# Import from scripts/ directory (ensure scripts/ is in sys.path)
-from embedding_atlas_tab import render_embedding_atlas_tab
-
-# Render embedding visualization
-render_embedding_atlas_tab()
 ```
 
 ### Routing Evaluation Tab
 
-**File:** `scripts/routing_evaluation_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/routing_evaluation.py`
 
 **Purpose:** Modality routing performance analysis
 
@@ -248,40 +201,14 @@ render_embedding_atlas_tab()
 - Routing latency metrics
 
 ```python
-from routing_evaluation_tab import render_routing_evaluation_tab
+from cogniverse_dashboard.tabs.routing_evaluation import render_routing_evaluation_tab
 
-# Render routing metrics
 render_routing_evaluation_tab()
-```
-
-### Interactive Search Tab
-
-**File:** `scripts/interactive_search_tab.py`
-
-**Purpose:** Live search testing with relevance annotation
-
-**Features:**
-
-- Execute search queries in real-time
-
-- View results with thumbnails
-
-- Annotate relevance per result
-
-- Session-aware search tracking
-
-- Export search sessions for evaluation
-
-```python
-from interactive_search_tab import render_interactive_search_tab
-
-# Render search tab (calls Runtime POST /search/ directly)
-render_interactive_search_tab(agent_status=agent_status)
 ```
 
 ### Orchestration Annotation Tab
 
-**File:** `scripts/orchestration_annotation_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/orchestration_annotation.py`
 
 **Purpose:** Workflow quality scoring and annotation
 
@@ -298,14 +225,14 @@ render_interactive_search_tab(agent_status=agent_status)
 - Feed annotations to optimizer
 
 ```python
-from orchestration_annotation_tab import render_orchestration_annotation_tab
+from cogniverse_dashboard.tabs.orchestration_annotation import render_orchestration_annotation_tab
 
 render_orchestration_annotation_tab()
 ```
 
 ### Approval Queue Tab
 
-**File:** `scripts/approval_queue_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py`
 
 **Purpose:** Human-in-the-loop approval workflows
 
@@ -322,15 +249,14 @@ render_orchestration_annotation_tab()
 - Approval history
 
 ```python
-from approval_queue_tab import render_approval_queue_tab
+from cogniverse_dashboard.tabs.approval_queue import render_approval_queue_tab
 
-# Render approval queue
 render_approval_queue_tab()
 ```
 
 ### Configuration Management Tab
 
-**File:** `scripts/config_management_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/config_management.py`
 
 **Purpose:** System configuration editor
 
@@ -347,14 +273,14 @@ render_approval_queue_tab()
 - Export/import configs
 
 ```python
-from config_management_tab import render_config_management_tab
+from cogniverse_dashboard.tabs.config_management import render_config_management_tab
 
 render_config_management_tab()
 ```
 
 ### Memory Management Tab
 
-**File:** `scripts/memory_management_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/memory_management.py`
 
 **Purpose:** Memory system inspection
 
@@ -371,14 +297,14 @@ render_config_management_tab()
 - Memory export
 
 ```python
-from memory_management_tab import render_memory_management_tab
+from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
 
 render_memory_management_tab()
 ```
 
 ### Backend Profile Tab
 
-**File:** `scripts/backend_profile_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`
 
 **Purpose:** CRUD interface for backend profiles via ConfigManager
 
@@ -395,9 +321,8 @@ render_memory_management_tab()
 - JSON configuration editing
 
 ```python
-from backend_profile_tab import render_backend_profile_tab
+from cogniverse_dashboard.tabs.backend_profile import render_backend_profile_tab
 
-# Render profile management UI
 render_backend_profile_tab()
 ```
 
@@ -409,84 +334,9 @@ render_backend_profile_tab()
 | `/admin/profiles/{name}` | GET | Check schema deployment status |
 | `/admin/profiles/{name}` | DELETE | Delete profile and optionally schema |
 
-### Ingestion Testing Tab
-
-**File:** `scripts/ingestion_testing_tab.py`
-
-**Purpose:** Interactive testing of video ingestion pipelines
-
-**Features:**
-
-- Video upload (MP4, MOV, AVI)
-
-- Multi-profile processing selection
-
-- Pipeline configuration (max frames, chunk duration, keyframe method)
-
-- Audio transcription toggle
-
-- Frame description generation toggle
-
-- Real-time processing progress
-
-- Processing metrics display
-
-```python
-from ingestion_testing_tab import render_ingestion_testing_tab
-
-# Render with agent status for availability checking
-render_ingestion_testing_tab(agent_status=agent_status)
-```
-
-**Configuration Options:**
-
-| Option | Range | Description |
-|--------|-------|-------------|
-| Max Frames | 1-50 | Maximum frames extracted per video |
-| Chunk Duration | 5-60s | Duration per processing chunk |
-| Keyframe Method | fps, scene_detection, uniform | Extraction strategy |
-| Embedding Precision | float32, binary | Vespa storage format |
-
-### Multi-Modal Chat Tab
-
-**File:** `scripts/multi_modal_chat_tab.py`
-
-**Purpose:** Conversational interface with multi-modal input support
-
-**Features:**
-
-- Text, video, image, PDF input support
-
-- Tenant selection and validation (org:tenant format)
-
-- Memory integration via Mem0
-
-- Routing agent integration for intelligent agent selection
-
-- Chat message history with bubbles
-
-- File upload and preprocessing
-
-- Async operation handling
-
-```python
-from multi_modal_chat_tab import render_multi_modal_chat_tab
-
-# Render chat interface (uses runtime_url from get_agent_config())
-render_multi_modal_chat_tab(agent_config=get_agent_config())
-```
-
-**Memory Integration:**
-
-The chat tab integrates with Mem0 for memory management:
-- Context retention across conversations
-- Semantic memory search for relevant context
-- Automatic interaction storage
-- Memory initialized with backend and LLM configuration from the Runtime
-
 ### Enhanced Optimization Tab
 
-**File:** `scripts/enhanced_optimization_tab.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`
 
 **Purpose:** Comprehensive optimization framework with 8 sub-tabs
 
@@ -509,9 +359,8 @@ The chat tab integrates with Mem0 for memory management:
 - Unified metrics dashboard
 
 ```python
-from enhanced_optimization_tab import render_enhanced_optimization_tab
+from cogniverse_dashboard.tabs.optimization import render_enhanced_optimization_tab
 
-# Render full optimization framework
 render_enhanced_optimization_tab()
 ```
 
@@ -726,7 +575,7 @@ flowchart TB
 uv sync
 
 # Run with auto-reload
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.runOnSave true
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.runOnSave true
 
 # Access dashboard
 open http://localhost:8501
@@ -736,7 +585,7 @@ open http://localhost:8501
 
 ```bash
 # Run in production mode
-uv run streamlit run scripts/phoenix_dashboard_standalone.py \
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py \
     --server.port 8501 \
     --server.address 0.0.0.0 \
     --server.headless true
@@ -754,7 +603,7 @@ RUN uv sync
 
 EXPOSE 8501
 CMD ["uv", "run", "streamlit", "run", \
-     "scripts/phoenix_dashboard_standalone.py", \
+     "libs/dashboard/cogniverse_dashboard/app.py", \
      "--server.port", "8501", \
      "--server.address", "0.0.0.0"]
 ```
@@ -816,4 +665,4 @@ uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
 
 ---
 
-**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, embedding visualization, interactive search, and HITL workflows. The `PhoenixDataManager` provides utilities for data backup/restore. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.
+**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. The `PhoenixDataManager` provides utilities for data backup/restore. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.

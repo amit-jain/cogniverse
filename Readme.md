@@ -108,7 +108,7 @@ uv run python scripts/run_experiments_with_visualization.py \
     --quality-evaluators
 
 # Launch Phoenix dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 # Open http://localhost:8501
 ```
 

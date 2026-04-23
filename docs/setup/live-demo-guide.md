@@ -463,7 +463,7 @@ uv run python scripts/run_experiments_with_visualization.py \
 ```bash
 # Via Docker (already running if you did cogniverse up)
 # Or locally:
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 ```
 
 Open `http://localhost:8501` — the dashboard has 3 top-level tabs with nested functionality:

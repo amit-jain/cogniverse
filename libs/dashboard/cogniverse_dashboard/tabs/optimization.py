@@ -1621,8 +1621,8 @@ def _render_metrics_dashboard_tab():
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
         # Get telemetry provider for the currently-selected tenant.
-        # The dashboard gate at the top of phoenix_dashboard_standalone
-        # guarantees `current_tenant` is set before this tab can render.
+        # The dashboard tenant gate guarantees ``current_tenant`` is set
+        # before any tab can render.
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(
             tenant_id=st.session_state["current_tenant"]

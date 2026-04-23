@@ -304,7 +304,7 @@ class ProfileValidator:
 
 ### 5. Dashboard UI Layer
 
-**Location:** `scripts/backend_profile_tab.py`
+**Location:** `libs/dashboard/cogniverse_dashboard/tabs/backend_profile.py`
 
 **Streamlit-based UI for profile management:**
 

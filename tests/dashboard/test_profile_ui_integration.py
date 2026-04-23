@@ -175,7 +175,7 @@ class TestDashboardProfileIntegration:
 
     def test_deploy_schema_via_api_success(self, running_api):
         """Test deploy_schema_via_api function with successful deployment"""
-        from scripts.backend_profile_tab import deploy_schema_via_api
+        from cogniverse_dashboard.tabs.backend_profile import deploy_schema_via_api
 
         # Create a profile first
         running_api.post(
@@ -192,11 +192,13 @@ class TestDashboardProfileIntegration:
 
         # Mock the API URL to use TestClient
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://testserver",
         ):
             # Mock httpx.Client to use TestClient
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -223,7 +225,7 @@ class TestDashboardProfileIntegration:
 
     def test_delete_profile_via_api_success(self, running_api):
         """Test delete_profile_via_api function"""
-        from scripts.backend_profile_tab import delete_profile_via_api
+        from cogniverse_dashboard.tabs.backend_profile import delete_profile_via_api
 
         # Create a profile first
         running_api.post(
@@ -240,10 +242,12 @@ class TestDashboardProfileIntegration:
 
         # Mock the API URL and httpx.Client
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://testserver",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -266,7 +270,7 @@ class TestDashboardProfileIntegration:
 
     def test_get_profile_schema_status_success(self, running_api):
         """Test get_profile_schema_status function"""
-        from scripts.backend_profile_tab import get_profile_schema_status
+        from cogniverse_dashboard.tabs.backend_profile import get_profile_schema_status
 
         # Create a profile first
         running_api.post(
@@ -283,10 +287,12 @@ class TestDashboardProfileIntegration:
 
         # Mock the API URL and httpx.Client
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://testserver",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -307,7 +313,7 @@ class TestDashboardProfileIntegration:
 
     def test_end_to_end_workflow_via_dashboard_functions(self, running_api):
         """Test complete workflow using dashboard API functions"""
-        from scripts.backend_profile_tab import (
+        from cogniverse_dashboard.tabs.backend_profile import (
             delete_profile_via_api,
             get_profile_schema_status,
         )
@@ -332,10 +338,12 @@ class TestDashboardProfileIntegration:
 
         # Step 2: Check schema status via dashboard function
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://testserver",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -358,10 +366,12 @@ class TestDashboardProfileIntegration:
 
         # Step 4: Delete via dashboard function
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://testserver",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -386,13 +396,15 @@ class TestDashboardProfileIntegration:
 
     def test_api_timeout_handling(self):
         """Test that API functions handle timeouts gracefully"""
-        from scripts.backend_profile_tab import deploy_schema_via_api
+        from cogniverse_dashboard.tabs.backend_profile import deploy_schema_via_api
 
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://localhost:9999",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -410,13 +422,15 @@ class TestDashboardProfileIntegration:
 
     def test_api_connection_error_handling(self):
         """Test that API functions handle connection errors gracefully"""
-        from scripts.backend_profile_tab import get_profile_schema_status
+        from cogniverse_dashboard.tabs.backend_profile import get_profile_schema_status
 
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://nonexistent:9999",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 
@@ -430,13 +444,15 @@ class TestDashboardProfileIntegration:
 
     def test_api_http_error_handling(self):
         """Test that API functions handle HTTP errors gracefully"""
-        from scripts.backend_profile_tab import delete_profile_via_api
+        from cogniverse_dashboard.tabs.backend_profile import delete_profile_via_api
 
         with patch(
-            "scripts.backend_profile_tab.get_runtime_api_url",
+            "cogniverse_dashboard.tabs.backend_profile.get_runtime_api_url",
             return_value="http://localhost:9999",
         ):
-            with patch("scripts.backend_profile_tab.httpx.Client") as mock_client:
+            with patch(
+                "cogniverse_dashboard.tabs.backend_profile.httpx.Client"
+            ) as mock_client:
                 mock_client_instance = Mock()
                 mock_client.return_value.__enter__.return_value = mock_client_instance
 

@@ -27,9 +27,11 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Import config and memory management tabs
-from config_management_tab import render_config_management_tab
-from memory_management_tab import render_memory_management_tab
-from tenant_management_tab import render_tenant_management_tab
+from cogniverse_dashboard.tabs.config_management import (
+    render_config_management_tab,
+)
+from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
+from cogniverse_dashboard.tabs.tenant_management import render_tenant_management_tab
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -199,22 +201,16 @@ def run_async_in_streamlit(coro):
 
 # Import tab modules early
 try:
-    from phoenix_dashboard_evaluation_tab_tabbed import render_evaluation_tab
+    from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab
 
     evaluation_tab_available = True
 except ImportError:
     evaluation_tab_available = False
 
 try:
-    from embedding_atlas_tab import render_embedding_atlas_tab
-
-    embedding_atlas_available = True
-except ImportError as e:
-    embedding_atlas_available = False
-    embedding_atlas_error = str(e)
-
-try:
-    from routing_evaluation_tab import render_routing_evaluation_tab
+    from cogniverse_dashboard.tabs.routing_evaluation import (
+        render_routing_evaluation_tab,
+    )
 
     routing_evaluation_tab_available = True
 except ImportError as e:
@@ -222,7 +218,9 @@ except ImportError as e:
     routing_evaluation_tab_error = str(e)
 
 try:
-    from orchestration_annotation_tab import render_orchestration_annotation_tab
+    from cogniverse_dashboard.tabs.orchestration_annotation import (
+        render_orchestration_annotation_tab,
+    )
 
     orchestration_annotation_tab_available = True
 except ImportError as e:
@@ -230,7 +228,7 @@ except ImportError as e:
     orchestration_annotation_tab_error = str(e)
 
 try:
-    from enhanced_optimization_tab import render_enhanced_optimization_tab
+    from cogniverse_dashboard.tabs.optimization import render_enhanced_optimization_tab
 
     enhanced_optimization_tab_available = True
 except ImportError as e:
@@ -238,7 +236,7 @@ except ImportError as e:
     enhanced_optimization_tab_error = str(e)
 
 try:
-    from approval_queue_tab import render_approval_queue_tab
+    from cogniverse_dashboard.tabs.approval_queue import render_approval_queue_tab
 
     approval_queue_tab_available = True
 except ImportError as e:
@@ -1958,21 +1956,13 @@ with main_tabs[1]:
     else:
         st.error("Evaluation tab module not found")
 
-# Embedding Atlas Tab
+# Embedding Atlas Tab — launched separately via scripts/atlas_viewer.py so
+# the UMAP/pyarrow/sklearn dependencies don't bloat the main dashboard image.
 with main_tabs[2]:
-    if embedding_atlas_available:
-        try:
-            render_embedding_atlas_tab()
-        except Exception as e:
-            st.error(f"Error loading Embedding Atlas tab: {e}")
-            import traceback
-
-            st.code(traceback.format_exc())
-    else:
-        st.error(f"Failed to import embedding atlas tab: {embedding_atlas_error}")
-        st.info(
-            "Please ensure all dependencies are installed: uv pip install umap-learn pyarrow scikit-learn"
-        )
+    st.info(
+        "Launch the embedding atlas in its own Streamlit process:\n\n"
+        "```\nuv run streamlit run scripts/atlas_viewer.py --server.port 8502\n```"
+    )
 
 # Routing Evaluation Tab
 with main_tabs[3]:
@@ -2929,10 +2919,9 @@ with main_tabs[10]:
                                 st.write(f"**Score:** {score:.3f}")
 
                             with col2:
-                                # Relevance annotation (radio + explicit
-                                # Save button — mirrors the scripts/
-                                # interactive_search_tab.py pattern and
-                                # is what the e2e tests look for.)
+                                # Relevance annotation: radio input + explicit
+                                # Save button. The e2e tests look for the
+                                # Save button by its label.
                                 relevance = st.radio(
                                     f"Relevance (Result {i + 1})",
                                     [

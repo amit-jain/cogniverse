@@ -1196,11 +1196,7 @@ curl -X POST http://localhost:9000/admin/tenants \
 
 **Start dashboard:**
 ```bash
-# Dashboard from application layer package
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
-
-# Or use the standalone script
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
 
 # Open browser
 open http://localhost:8501

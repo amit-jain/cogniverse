@@ -310,11 +310,11 @@ for batch in batches:
 
 #### Streamlit Dashboard
 
-Located at `scripts/approval_queue_tab.py`:
+Located at `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py`:
 
 ```python
 # Run dashboard
-uv run streamlit run scripts/approval_queue_tab.py --server.port 8502
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501  # approval queue is a tab inside the main dashboard
 ```
 
 **Features**:

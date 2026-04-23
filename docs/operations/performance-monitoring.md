@@ -426,7 +426,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/ -v -k "search" --d
 
 ```bash
 # Real-time dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 ```
 
 ---

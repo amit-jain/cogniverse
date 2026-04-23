@@ -1,6 +1,6 @@
 # Cogniverse Study Guide: UI/Dashboard Module
 
-**Module Path:** `scripts/*_tab.py`
+**Module Path:** `libs/dashboard/cogniverse_dashboard/tabs/`
 **SDK Packages:** Uses dashboard (application layer) + agents, telemetry-phoenix (implementation layer) + core, evaluation (core layer) + foundation (foundation layer)
 
 ---
@@ -27,15 +27,11 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 
 - **Memory Management**: Mem0 conversation memory inspection and management
 
-- **Embedding Visualization**: 2D/3D embedding atlas with clustering
-
 - **Routing Evaluation**: Routing decision analysis with golden datasets
 
 - **Orchestration Annotation**: Multi-agent workflow visualization
 
 - **Quick Setup**: Fast tenant creation and video ingestion from sidebar
-
-- **Interactive Search**: Live search testing with multiple ranking strategies
 
 ### Technology Stack
 - **Framework**: Streamlit (dashboard package - application layer)
@@ -51,19 +47,18 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 ### Dashboard Structure
 
 ```text
-scripts/
-├── phoenix_dashboard_standalone.py  # Main dashboard entry point
-├── enhanced_optimization_tab.py     # Optimization framework
-├── config_management_tab.py         # Configuration CRUD UI
-├── memory_management_tab.py         # Memory inspection UI
-├── embedding_atlas_tab.py           # Embedding visualization
-├── routing_evaluation_tab.py        # Routing analysis UI
-├── orchestration_annotation_tab.py  # Multi-agent workflow UI
-├── interactive_search_tab.py        # Interactive search interface
-├── ingestion_testing_tab.py         # Ingestion testing UI
-├── multi_modal_chat_tab.py          # Multi-modal chat interface
-├── approval_queue_tab.py            # Approval queue management
-└── backend_profile_tab.py           # Backend profile configuration
+libs/dashboard/cogniverse_dashboard/
+├── app.py                        # Main dashboard entry point
+└── tabs/
+    ├── approval_queue.py         # Approval queue management
+    ├── backend_profile.py        # Backend profile configuration
+    ├── config_management.py      # Configuration CRUD UI
+    ├── evaluation.py             # Experiment evaluation
+    ├── memory_management.py      # Memory inspection UI
+    ├── optimization.py           # Optimization framework
+    ├── orchestration_annotation.py  # Multi-agent workflow UI
+    ├── routing_evaluation.py     # Routing analysis UI
+    └── tenant_management.py      # Tenant management UI
 ```
 
 ---
@@ -74,7 +69,7 @@ scripts/
 
 ```mermaid
 flowchart TB
-    Dashboard["<span style='color:#000'>phoenix_dashboard_standalone.py</span>"]
+    Dashboard["<span style='color:#000'>cogniverse_dashboard/app.py</span>"]
 
     Sidebar["<span style='color:#000'>Sidebar Controls<br/>• Time Range Selection 1h 24h 7d 30d<br/>• Auto-refresh Toggle 30s interval<br/>• Tenant/Project Selector<br/>• Data Export Options</span>"]
 
@@ -170,7 +165,7 @@ flowchart TB
 
 **Purpose**: Full CRUD interface for multi-tenant system configuration
 
-**Location**: `scripts/config_management_tab.py`
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/config_management.py`
 
 **Features**:
 
@@ -244,7 +239,7 @@ def render_system_config_ui(manager, tenant_id):
 
 **Purpose**: Inspect and manage Mem0 agent memories
 
-**Location**: `scripts/memory_management_tab.py`
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/memory_management.py`
 
 **Features**:
 
@@ -326,121 +321,11 @@ def render_memory_management_tab():
 
 ---
 
-### 3. Embedding Atlas Tab
-
-**Purpose**: Visualize high-dimensional embeddings in 2D/3D space
-
-**Location**: `scripts/embedding_atlas_tab.py`
-
-**Features**:
-
-- Export embeddings from Vespa
-- Dimensionality reduction (UMAP, t-SNE, PCA)
-- 2D/3D scatter plots with Plotly
-- Clustering analysis (K-means, DBSCAN)
-- Similarity search visualization
-- Metadata overlay (titles, timestamps, strategies)
-
-**Key Functions**:
-```python
-@st.cache_data(ttl=300)
-def get_available_videos():
-    """Query Vespa for available videos"""
-    from cogniverse_vespa.search_backend import VespaSearchBackend
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-    config_manager = create_default_config_manager()
-    config = get_config(tenant_id="your_org:production", config_manager=config_manager)
-    backend = VespaSearchBackend(
-        backend_url=config.get("backend_url", "http://localhost"),
-        backend_port=config.get("backend_port", 8080)
-        # Note: schema_name is optional - can be determined at query time if not provided
-    )
-
-    # Query for video metadata
-    yql = """
-    select video_id, video_title, timestamp, frame_number
-    from video_frame where true limit 1000
-    """
-    response = backend.vespa.query(yql=yql)
-
-    # Process response to extract unique videos
-    videos = {}
-    for hit in response.hits:
-        vid = hit["fields"]["video_id"]
-        if vid not in videos:
-            videos[vid] = {
-                "frame_count": 1,
-                "duration": hit["fields"]["timestamp"],
-                "title": hit["fields"]["video_title"]
-            }
-    return videos
-
-def render_embedding_atlas_tab():
-    """Main entry point"""
-    # Get available videos
-    videos = get_available_videos()
-
-    # Video/strategy selection
-    selected_video = st.selectbox("Select Video", list(videos.keys()))
-
-    # Export embeddings
-    if st.button("📥 Export Embeddings"):
-        # Run export script (must be run from project root directory)
-        import subprocess
-        from pathlib import Path
-        try:
-            project_root = Path(__file__).parent.parent
-            subprocess.run([
-                "python", str(project_root / "scripts/export_backend_embeddings.py"),
-                "--video_id", selected_video,
-                "--output", "embeddings.npz"
-            ], check=True, cwd=str(project_root))
-            st.success("✅ Embeddings exported!")
-        except subprocess.CalledProcessError as e:
-            st.error(f"❌ Export failed: {e}")
-
-    # Load and visualize
-    if os.path.exists("embeddings.npz"):
-        import numpy as np
-        import plotly.express as px
-        data = np.load("embeddings.npz")
-        embeddings = data["embeddings"]
-        metadata = data["metadata"]
-
-        # Dimensionality reduction
-        # Note: Requires sklearn to be installed - add to dependencies if using this feature
-        try:
-            from sklearn.manifold import TSNE
-            reduced = TSNE(n_components=2).fit_transform(embeddings)
-
-            # Plot with Plotly
-            fig = px.scatter(
-                x=reduced[:, 0],
-                y=reduced[:, 1],
-                hover_data=metadata,
-                title="Embedding Atlas Visualization"
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        except ImportError:
-            st.error("sklearn not installed. Add to dependencies for dimensionality reduction.")
-```
-
-**UI Elements**:
-
-- Selectboxes for video/strategy selection
-- Radio buttons for dimensionality reduction method
-- Sliders for clustering parameters
-- Plotly scatter plots (interactive)
-- Download buttons for exports
-
----
-
-### 4. Routing Evaluation Tab
+### 3. Routing Evaluation Tab
 
 **Purpose**: Analyze routing decisions and compare against golden datasets
 
-**Location**: `scripts/routing_evaluation_tab.py`
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/routing_evaluation.py`
 
 **Features**:
 
@@ -528,11 +413,11 @@ def render_routing_evaluation_tab():
 
 ---
 
-### 5. Optimization Framework Tab (NEW)
+### 4. Optimization Framework Tab
 
 **Purpose**: Comprehensive optimization framework for improving system performance
 
-**Location**: `scripts/enhanced_optimization_tab.py`
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`
 
 **Features**:
 The Optimization tab provides 8 sub-tabs covering the complete optimization lifecycle:
@@ -907,11 +792,11 @@ Unified view of optimization improvements:
 
 ---
 
-### 6. Quick Setup Sidebar Widget (NEW)
+### 5. Quick Setup Sidebar Widget
 
 **Purpose**: Streamlined tenant creation and video ingestion
 
-**Location**: `phoenix_dashboard_standalone.py` sidebar
+**Location**: `cogniverse_dashboard/app.py` sidebar
 
 **Features**:
 
@@ -959,69 +844,6 @@ GET /ingestion/status/{job_id}
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
 6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
 
-### 7. Multi-Modal Chat Tab
-
-**File**: `scripts/multi_modal_chat_tab.py`
-
-The Chat tab provides a conversational interface that supports multi-turn conversations with query rewrite. It sends messages to the routing agent, which dispatches to the appropriate downstream agent.
-
-#### Multi-Turn Conversation Support
-
-The Chat tab builds `conversation_history` from the Streamlit session state and includes it in each REST request:
-
-```python
-# Last 10 messages from session state, truncated to 200 chars each
-history = []
-for msg in st.session_state.get("chat_messages", [])[-10:]:
-    role = "user" if msg["role"] == "user" else "agent"
-    content = msg.get("content", "")
-    if content:
-        history.append({"role": role, "content": content[:200]})
-
-task_data = {
-    "agent_name": "orchestrator_agent",
-    "query": query,
-    "context": {"tenant_id": tenant_id, ...},
-    "top_k": 10,
-    "conversation_history": history if history else None,
-}
-```
-
-#### Data Flow
-
-```mermaid
-sequenceDiagram
-    participant U as Chat Tab (Streamlit)
-    participant REST as POST /agents/orchestrator_agent/process
-    participant D as AgentDispatcher
-    participant S as SearchService
-    participant QR as ConversationalQueryRewriteModule
-
-    U->>REST: query + conversation_history
-    REST->>D: dispatch(orchestrator_agent, context)
-    D->>D: route_query → recommended_agent
-    D->>D: _execute_downstream_agent(search_agent)
-
-    alt conversation_history present
-        D->>QR: rewrite(query, history)
-        QR-->>D: rewritten query
-    end
-
-    D->>S: search(rewritten_query)
-    S-->>D: results
-    D-->>REST: orchestration metadata + downstream_result
-    REST-->>U: JSON response with rewritten_query
-```
-
-On turn 2+, the response JSON includes `rewritten_query` (e.g., "show me longer ones" → "show me longer basketball videos") visible in the "View Details" expander.
-
-#### Features
-
-- **Multi-modal input**: Text, video, image, PDF file uploads
-- **Tenant selection**: Configurable in sidebar, validates `org:tenant` format
-- **Memory status check**: Queries orchestrator agent capabilities for Mem0 integration
-- **Session management**: Clear conversation resets history and generates new session ID
-
 ---
 
 ## Usage Examples
@@ -1030,7 +852,7 @@ On turn 2+, the response JSON includes `rewritten_query` (e.g., "show me longer 
 
 ```bash
 # Start Phoenix dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py \
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py \
   --server.port 8501
 
 # Output:
@@ -1110,44 +932,7 @@ Memory 2 - Score: 0.856
 }
 ```
 
-### Example 4: Visualizing Embeddings
-
-```bash
-# In Embedding Atlas Tab:
-
-# 1. Select video
-Select Video: [cooking_tutorial_pasta.mp4]
-Strategy: [binary_binary]
-
-# 2. Export embeddings
-[📥 Export Embeddings]
-# Output: ✅ Embeddings exported! (1024 frames, 128-dim)
-
-# 3. Configure visualization
-Dimensionality Reduction: (•) t-SNE  ( ) UMAP  ( ) PCA
-Perplexity: [30]
-Number of Clusters: [5]
-
-# 4. Generate visualization
-[🎨 Generate Visualization]
-
-# Output: Interactive Plotly scatter plot displays
-# - Each point = frame embedding
-# - Color = cluster assignment
-# - Hover = frame number, timestamp, description
-# - Click = show similar frames
-
-Cluster Analysis:
-Cluster 0: 214 frames (Pasta boiling scenes)
-Cluster 1: 156 frames (Chopping vegetables)
-Cluster 2: 98 frames (Plating and presentation)
-Cluster 3: 178 frames (Cooking actions)
-Cluster 4: 378 frames (Person talking to camera)
-
-[💾 Download Visualization] [💾 Export Clusters]
-```
-
-### Example 5: Evaluating Routing
+### Example 4: Evaluating Routing
 
 ```python
 # In Routing Evaluation Tab:
@@ -1459,13 +1244,11 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 
 3. **Memory**: Mem0 agent memory inspection and management (core)
 
-4. **Embeddings**: High-dimensional embedding visualization in 2D/3D (vespa + evaluation)
+4. **Routing**: Routing decision analysis and evaluation (agents + evaluation)
 
-5. **Routing**: Routing decision analysis and evaluation (agents + evaluation)
+5. **Orchestration**: Multi-agent workflow visualization (agents)
 
-6. **Orchestration**: Multi-agent workflow visualization (agents)
-
-7. **Optimization**: Comprehensive optimization framework (agents + evaluation + synthetic)
+6. **Optimization**: Comprehensive optimization framework (agents + evaluation + synthetic)
 
 **Key Features**:
 
@@ -1504,8 +1287,8 @@ from cogniverse_agents.gateway_agent import GatewayAgent
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Application layer
-# Dashboard tabs are implemented as standalone scripts in scripts/ directory
-# No cogniverse_dashboard.ui.components module exists
+from cogniverse_dashboard.tabs.config_management import render_config_management_tab
+from cogniverse_dashboard.tabs.optimization import render_enhanced_optimization_tab
 ```
 
 This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the layered architecture.

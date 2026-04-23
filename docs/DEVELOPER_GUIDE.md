@@ -368,7 +368,7 @@ flowchart TB
             script_ingestion["<span style='color:#000'>run_ingestion.py</span>"]
             script_schema["<span style='color:#000'>deploy_json_schema.py</span>"]
             script_experiments["<span style='color:#000'>run_experiments_with_visualization.py</span>"]
-            script_phoenix["<span style='color:#000'>phoenix_dashboard_standalone.py</span>"]
+            script_phoenix["<span style='color:#000'>cogniverse_dashboard/app.py</span>"]
             script_other["<span style='color:#000'>...and more</span>"]
         end
 

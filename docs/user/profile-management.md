@@ -18,7 +18,7 @@ Profiles are **tenant-scoped**, allowing each tenant to have isolated configurat
 
 1. Launch the dashboard:
    ```bash
-   uv run streamlit run scripts/config_management_tab.py --server.port 8501
+   uv run streamlit run libs/dashboard/cogniverse_dashboard/tabs/config_management.py --server.port 8501
    ```
 
 2. Navigate to the **Backend Profiles** tab (5th tab)

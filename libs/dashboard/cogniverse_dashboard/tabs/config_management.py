@@ -10,8 +10,8 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
-from backend_profile_tab import render_backend_profile_tab
 
+from cogniverse_dashboard.tabs.backend_profile import render_backend_profile_tab
 from cogniverse_foundation.config.agent_config import (
     AgentConfig,
     DSPyModuleType,

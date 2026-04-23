@@ -425,7 +425,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --tenant-id acme_corp
 
 # Run dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 
 # Run experiments
 uv run python scripts/run_experiments_with_visualization.py \

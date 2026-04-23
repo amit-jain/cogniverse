@@ -81,12 +81,7 @@ scripts/
 │   └── interactive_dataset_builder.py  # Interactive builder UI
 │
 ├── Dashboard & UI
-│   ├── phoenix_dashboard_standalone.py  # Main analytics dashboard
-│   ├── config_management_tab.py      # Config management UI
-│   ├── memory_management_tab.py      # Memory management UI
-│   ├── embedding_atlas_tab.py        # Embedding visualization
-│   ├── routing_evaluation_tab.py     # Routing evaluation UI
-│   └── orchestration_annotation_tab.py  # Orchestration annotation
+│   └── atlas_viewer.py               # Standalone embedding atlas viewer
 │
 └── Utilities & Analysis
     ├── analyze_traces.py             # Phoenix trace analysis
@@ -768,11 +763,11 @@ def main():
 
 ---
 
-### 8. phoenix_dashboard_standalone.py
+### 8. cogniverse_dashboard/app.py
 
 **Purpose:** Interactive Streamlit dashboard for analytics, configuration, and system management
 
-**Location:** `scripts/phoenix_dashboard_standalone.py` (3054 lines, multi-tab)
+**Location:** `libs/dashboard/cogniverse_dashboard/app.py` (3054 lines, multi-tab)
 
 **Dashboard Tabs:**
 
@@ -796,9 +791,9 @@ st.plotly_chart(
 )
 ```
 
-**2. Evaluation Tab** (from phoenix_dashboard_evaluation_tab_tabbed):
+**2. Evaluation Tab** (`cogniverse_dashboard.tabs.evaluation`):
 ```python
-# Experiment comparison
+from cogniverse_dashboard.tabs.evaluation import render_evaluation_tab
 render_evaluation_tab()
 # - Experiment list
 # - Side-by-side comparison
@@ -806,9 +801,9 @@ render_evaluation_tab()
 # - Dataset management
 ```
 
-**3. Config Management Tab** (from config_management_tab):
+**3. Config Management Tab** (`cogniverse_dashboard.tabs.config_management`):
 ```python
-# Tenant configuration
+from cogniverse_dashboard.tabs.config_management import render_config_management_tab
 render_config_management_tab()
 # - Create/update/delete configs
 # - Profile selection
@@ -816,9 +811,9 @@ render_config_management_tab()
 # - Schema management
 ```
 
-**4. Memory Management Tab** (from memory_management_tab):
+**4. Memory Management Tab** (`cogniverse_dashboard.tabs.memory_management`):
 ```python
-# Conversation memory
+from cogniverse_dashboard.tabs.memory_management import render_memory_management_tab
 render_memory_management_tab()
 # - View memories by tenant
 # - Search conversations
@@ -826,19 +821,9 @@ render_memory_management_tab()
 # - Cache statistics
 ```
 
-**5. Embedding Atlas Tab** (from embedding_atlas_tab):
+**5. Routing Evaluation Tab** (`cogniverse_dashboard.tabs.routing_evaluation`):
 ```python
-# Embedding visualization
-render_embedding_atlas_tab()
-# - 2D/3D embedding plots
-# - Cluster analysis
-# - Similarity search
-# - Export embeddings
-```
-
-**6. Routing Evaluation Tab** (from routing_evaluation_tab):
-```python
-# Routing decision analysis
+from cogniverse_dashboard.tabs.routing_evaluation import render_routing_evaluation_tab
 render_routing_evaluation_tab()
 # - Routing accuracy metrics
 # - Confusion matrix
@@ -846,9 +831,9 @@ render_routing_evaluation_tab()
 # - Per-query analysis
 ```
 
-**7. Orchestration Annotation Tab** (from orchestration_annotation_tab):
+**6. Orchestration Annotation Tab** (`cogniverse_dashboard.tabs.orchestration_annotation`):
 ```python
-# Multi-agent orchestration
+from cogniverse_dashboard.tabs.orchestration_annotation import render_orchestration_annotation_tab
 render_orchestration_annotation_tab()
 # - Workflow visualization
 # - Agent communication logs
@@ -870,7 +855,7 @@ render_orchestration_annotation_tab()
 
 **Startup:**
 ```bash
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 
 # Then open: http://localhost:8501
 ```
@@ -1338,7 +1323,7 @@ python scripts/manage_datasets.py --info golden_eval_v1
 
 ```bash
 # Start Phoenix dashboard
-uv run streamlit run scripts/phoenix_dashboard_standalone.py --server.port 8501
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 
 # Output:
 # You can now view your Streamlit app in your browser.
