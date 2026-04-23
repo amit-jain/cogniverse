@@ -1090,7 +1090,9 @@ class VespaBackend(Backend):
                     # on name prefixes (e.g., lateon_mv in code_lateon_mv).
                     deployed: set[str] = set()
                     for err in errors:
-                        match = re.search(r"Valid source refs are (.+)$", err.get("message", ""))
+                        match = re.search(
+                            r"Valid source refs are (.+)$", err.get("message", "")
+                        )
                         if not match:
                             continue
                         raw = match.group(1).rstrip().rstrip(".")
