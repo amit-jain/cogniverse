@@ -3031,221 +3031,221 @@ with main_tabs[10]:
             st.error(f"❌ Search failed: {str(e)}")
             st.error(f"🔧 Check runtime is running at {RUNTIME_URL}")
 
-        # Display results from session state
-        if (
-            hasattr(st.session_state, "current_search_results")
-            and st.session_state.current_search_results
-        ):
-            results = st.session_state.current_search_results["results"]
+    # Display results from session state
+    if (
+        hasattr(st.session_state, "current_search_results")
+        and st.session_state.current_search_results
+    ):
+        results = st.session_state.current_search_results["results"]
 
-            # Summary metrics — Results count, Latency, Profile. The e2e
-            # tests look for exactly three stMetric widgets here.
-            _total_count = sum(
-                len(results.get(s, [])) for s in ranking_strategies
+        # Summary metrics — Results count, Latency, Profile. The e2e
+        # tests look for exactly three stMetric widgets here.
+        _total_count = sum(
+            len(results.get(s, [])) for s in ranking_strategies
+        )
+        _m1, _m2, _m3 = st.columns(3)
+        with _m1:
+            st.metric("Results", _total_count)
+        with _m2:
+            _ts = st.session_state.current_search_results.get("timestamp")
+            _lat_ms = (
+                (datetime.now() - _ts).total_seconds() * 1000 if _ts else 0
             )
-            _m1, _m2, _m3 = st.columns(3)
-            with _m1:
-                st.metric("Results", _total_count)
-            with _m2:
-                _ts = st.session_state.current_search_results.get("timestamp")
-                _lat_ms = (
-                    (datetime.now() - _ts).total_seconds() * 1000 if _ts else 0
-                )
-                st.metric("Latency", f"{_lat_ms:.0f}ms")
-            with _m3:
-                st.metric(
-                    "Profile",
-                    st.session_state.current_search_results.get("profile", "auto"),
-                )
-
-            for strategy in ranking_strategies:
-                if strategy in results:
-                    st.markdown(f"### 📊 Results: {strategy}")
-
-                    for i, result in enumerate(results[strategy]):
-                        # SearchResult.to_dict() returns "score" (not "confidence"),
-                        # "document_id" (not "frame_id"), and places video/time
-                        # under "metadata" and "temporal_info".
-                        metadata = result.get("metadata", {})
-                        temporal = result.get("temporal_info", {})
-                        score = result.get("score", 0.0)
-                        video_id = metadata.get(
-                            "video_id", result.get("source_id", "unknown")
-                        )
-                        if score >= confidence_threshold:
-                            with st.expander(
-                                f"Result {i + 1}: {video_id} (Score: {score:.3f})"
-                            ):
-                                col1, col2 = st.columns([2, 1])
-                                with col1:
-                                    st.write(f"**Video ID:** {video_id}")
-                                    st.write(
-                                        f"**Document ID:** {result.get('document_id', '—')}"
-                                    )
-                                    if temporal:
-                                        st.write(
-                                            f"**Time:** {temporal.get('start_time', 0):.2f}s"
-                                            f" — {temporal.get('end_time', 0):.2f}s"
-                                        )
-                                    description = metadata.get(
-                                        "description", metadata.get("segment_id", "")
-                                    )
-                                    if description:
-                                        st.write(f"**Description:** {description}")
-                                    st.write(f"**Score:** {score:.3f}")
-
-                                with col2:
-                                    # Relevance annotation (radio + explicit
-                                    # Save button — mirrors the scripts/
-                                    # interactive_search_tab.py pattern and
-                                    # is what the e2e tests look for.)
-                                    relevance = st.radio(
-                                        f"Relevance (Result {i + 1})",
-                                        [
-                                            "Highly Relevant",
-                                            "Somewhat Relevant",
-                                            "Not Relevant",
-                                        ],
-                                        key=f"relevance_{strategy}_{i}",
-                                        horizontal=True,
-                                    )
-
-                                    # The Save button lives inside the
-                                    # `if search_button:` branch, so clicking
-                                    # it triggers a rerun where the branch
-                                    # doesn't re-enter and the handler doesn't
-                                    # run. This is a known Streamlit
-                                    # limitation; the test only asserts the
-                                    # button is rendered, not that clicking
-                                    # persists state.
-                                    if st.button(
-                                        "💾 Save Annotation",
-                                        key=f"save_{strategy}_{i}",
-                                    ):
-                                        st.success(f"✅ Rated: {relevance}")
-
-                                        # Store annotation in session state
-                                        if "search_annotations" not in st.session_state:
-                                            st.session_state.search_annotations = []
-
-                                        annotation = {
-                                            "query": search_query,
-                                            "strategy": strategy,
-                                            "result_id": i,
-                                            "video_id": video_id,
-                                            "relevance": relevance,
-                                            "timestamp": datetime.now().isoformat(),
-                                        }
-                                        # Update or add annotation
-                                        existing = next(
-                                            (
-                                                a
-                                                for a in st.session_state.search_annotations
-                                                if a["query"] == search_query
-                                                and a["strategy"] == strategy
-                                                and a["result_id"] == i
-                                            ),
-                                            None,
-                                        )
-                                        if existing:
-                                            existing.update(annotation)
-                                        else:
-                                            st.session_state.search_annotations.append(
-                                                annotation
-                                            )
-
-                                        # Also persist to Phoenix via runtime
-                                        try:
-                                            httpx.post(
-                                                f"{RUNTIME_URL}/agents/routing_agent/process",
-                                                json={
-                                                    "agent_name": "routing_agent",
-                                                    "query": search_query,
-                                                    "context": {
-                                                        "tenant_id": st.session_state["current_tenant"],
-                                                        "action": "optimize_routing",
-                                                        "examples": [
-                                                            {
-                                                                "query": search_query,
-                                                                "chosen_agent": "search_agent",
-                                                                "confidence": score,
-                                                                "search_quality": (
-                                                                    0.9
-                                                                    if relevance
-                                                                    == "Highly Relevant"
-                                                                    else 0.5
-                                                                    if relevance
-                                                                    == "Somewhat Relevant"
-                                                                    else 0.1
-                                                                ),
-                                                                "agent_success": relevance
-                                                                != "Not Relevant",
-                                                            }
-                                                        ],
-                                                    },
-                                                },
-                                                timeout=10.0,
-                                            )
-                                        except Exception:
-                                            pass  # Non-blocking — don't break UI for telemetry
-
-        # Show annotation count
-        if (
-            hasattr(st.session_state, "search_annotations")
-            and st.session_state.search_annotations
-        ):
-            st.info(
-                f"📊 {len(st.session_state.search_annotations)} annotation(s) saved this session"
+            st.metric("Latency", f"{_lat_ms:.0f}ms")
+        with _m3:
+            st.metric(
+                "Profile",
+                st.session_state.current_search_results.get("profile", "auto"),
             )
 
-        # Export annotations
-        if st.button("📥 Export Annotations") and hasattr(
-            st.session_state, "search_annotations"
-        ):
-            annotations = {
-                "search_session": {
-                    "query": search_query,
-                    "profile": selected_profile,
-                    "strategies": ranking_strategies,
-                    "timestamp": datetime.now().isoformat(),
-                },
-                "annotations": st.session_state.search_annotations,
-            }
-            st.download_button(
-                label="Download Annotations",
-                data=json.dumps(annotations, indent=2),
-                file_name=f"search_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-            )
+        for strategy in ranking_strategies:
+            if strategy in results:
+                st.markdown(f"### 📊 Results: {strategy}")
 
-        # Streaming summarization of search results
-        st.markdown("---")
-        if st.button("📝 Summarize Results (Streaming)"):
-            results_data = st.session_state.current_search_results
-            result_descriptions = []
-            for strategy, items in results_data.get("results", {}).items():
-                for item in items[:5]:
-                    result_descriptions.append(
-                        f"{item.get('video_id', 'unknown')}: {item.get('description', 'no description')}"
+                for i, result in enumerate(results[strategy]):
+                    # SearchResult.to_dict() returns "score" (not "confidence"),
+                    # "document_id" (not "frame_id"), and places video/time
+                    # under "metadata" and "temporal_info".
+                    metadata = result.get("metadata", {})
+                    temporal = result.get("temporal_info", {})
+                    score = result.get("score", 0.0)
+                    video_id = metadata.get(
+                        "video_id", result.get("source_id", "unknown")
                     )
+                    if score >= confidence_threshold:
+                        with st.expander(
+                            f"Result {i + 1}: {video_id} (Score: {score:.3f})"
+                        ):
+                            col1, col2 = st.columns([2, 1])
+                            with col1:
+                                st.write(f"**Video ID:** {video_id}")
+                                st.write(
+                                    f"**Document ID:** {result.get('document_id', '—')}"
+                                )
+                                if temporal:
+                                    st.write(
+                                        f"**Time:** {temporal.get('start_time', 0):.2f}s"
+                                        f" — {temporal.get('end_time', 0):.2f}s"
+                                    )
+                                description = metadata.get(
+                                    "description", metadata.get("segment_id", "")
+                                )
+                                if description:
+                                    st.write(f"**Description:** {description}")
+                                st.write(f"**Score:** {score:.3f}")
 
-            summary_query = (
-                f"Summarize the search results for '{results_data['query']}': "
-                + "; ".join(result_descriptions[:10])
-            )
+                            with col2:
+                                # Relevance annotation (radio + explicit
+                                # Save button — mirrors the scripts/
+                                # interactive_search_tab.py pattern and
+                                # is what the e2e tests look for.)
+                                relevance = st.radio(
+                                    f"Relevance (Result {i + 1})",
+                                    [
+                                        "Highly Relevant",
+                                        "Somewhat Relevant",
+                                        "Not Relevant",
+                                    ],
+                                    key=f"relevance_{strategy}_{i}",
+                                    horizontal=True,
+                                )
 
-            st.subheader("📄 Summary")
-            final = display_streaming_result(
-                agent_name="summarizer_agent",
-                query=summary_query,
-                tenant_id=st.session_state["current_tenant"],
-            )
-            if final and "summary" in final:
-                st.markdown("### Key Points")
-                for point in final.get("key_points", []):
-                    st.markdown(f"- {point}")
+                                # The Save button lives inside the
+                                # `if search_button:` branch, so clicking
+                                # it triggers a rerun where the branch
+                                # doesn't re-enter and the handler doesn't
+                                # run. This is a known Streamlit
+                                # limitation; the test only asserts the
+                                # button is rendered, not that clicking
+                                # persists state.
+                                if st.button(
+                                    "💾 Save Annotation",
+                                    key=f"save_{strategy}_{i}",
+                                ):
+                                    st.success(f"✅ Rated: {relevance}")
 
-    else:
+                                    # Store annotation in session state
+                                    if "search_annotations" not in st.session_state:
+                                        st.session_state.search_annotations = []
+
+                                    annotation = {
+                                        "query": search_query,
+                                        "strategy": strategy,
+                                        "result_id": i,
+                                        "video_id": video_id,
+                                        "relevance": relevance,
+                                        "timestamp": datetime.now().isoformat(),
+                                    }
+                                    # Update or add annotation
+                                    existing = next(
+                                        (
+                                            a
+                                            for a in st.session_state.search_annotations
+                                            if a["query"] == search_query
+                                            and a["strategy"] == strategy
+                                            and a["result_id"] == i
+                                        ),
+                                        None,
+                                    )
+                                    if existing:
+                                        existing.update(annotation)
+                                    else:
+                                        st.session_state.search_annotations.append(
+                                            annotation
+                                        )
+
+                                    # Also persist to Phoenix via runtime
+                                    try:
+                                        httpx.post(
+                                            f"{RUNTIME_URL}/agents/routing_agent/process",
+                                            json={
+                                                "agent_name": "routing_agent",
+                                                "query": search_query,
+                                                "context": {
+                                                    "tenant_id": st.session_state["current_tenant"],
+                                                    "action": "optimize_routing",
+                                                    "examples": [
+                                                        {
+                                                            "query": search_query,
+                                                            "chosen_agent": "search_agent",
+                                                            "confidence": score,
+                                                            "search_quality": (
+                                                                0.9
+                                                                if relevance
+                                                                == "Highly Relevant"
+                                                                else 0.5
+                                                                if relevance
+                                                                == "Somewhat Relevant"
+                                                                else 0.1
+                                                            ),
+                                                            "agent_success": relevance
+                                                            != "Not Relevant",
+                                                        }
+                                                    ],
+                                                },
+                                            },
+                                            timeout=10.0,
+                                        )
+                                    except Exception:
+                                        pass  # Non-blocking — don't break UI for telemetry
+
+    # Show annotation count
+    if (
+        hasattr(st.session_state, "search_annotations")
+        and st.session_state.search_annotations
+    ):
+        st.info(
+            f"📊 {len(st.session_state.search_annotations)} annotation(s) saved this session"
+        )
+
+    # Export annotations
+    if st.button("📥 Export Annotations") and hasattr(
+        st.session_state, "search_annotations"
+    ):
+        annotations = {
+            "search_session": {
+                "query": search_query,
+                "profile": selected_profile,
+                "strategies": ranking_strategies,
+                "timestamp": datetime.now().isoformat(),
+            },
+            "annotations": st.session_state.search_annotations,
+        }
+        st.download_button(
+            label="Download Annotations",
+            data=json.dumps(annotations, indent=2),
+            file_name=f"search_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+        )
+
+    # Streaming summarization of search results
+    st.markdown("---")
+    if st.button("📝 Summarize Results (Streaming)"):
+        results_data = st.session_state.current_search_results
+        result_descriptions = []
+        for strategy, items in results_data.get("results", {}).items():
+            for item in items[:5]:
+                result_descriptions.append(
+                    f"{item.get('video_id', 'unknown')}: {item.get('description', 'no description')}"
+                )
+
+        summary_query = (
+            f"Summarize the search results for '{results_data['query']}': "
+            + "; ".join(result_descriptions[:10])
+        )
+
+        st.subheader("📄 Summary")
+        final = display_streaming_result(
+            agent_name="summarizer_agent",
+            query=summary_query,
+            tenant_id=st.session_state["current_tenant"],
+        )
+        if final and "summary" in final:
+            st.markdown("### Key Points")
+            for point in final.get("key_points", []):
+                st.markdown(f"- {point}")
+
+    if not (hasattr(st.session_state, "current_search_results") and st.session_state.current_search_results):
         st.info("👆 Enter a search query and click Search to see results")
 
     # Session Evaluation (unified for single and multi-turn)
