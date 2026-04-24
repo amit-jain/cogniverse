@@ -27,8 +27,14 @@ devMode:
 inference:
   # ColPali image multi-vector embeddings via Infinity. Required for any
   # ingest / query on video_colpali_* / image_colpali_* profiles.
+  # TEMPORARILY DISABLED: michaelf34/infinity:0.0.75 crashes loading
+  # vidore/colsmol-500m due to a peft/LoraConfig.eva_config mismatch.
+  # Re-enable once 0.0.77+ is pulled through the mirror, or a custom
+  # deploy/colpali FastAPI sidecar replaces the Infinity container.
+  # Ingestion/search for ColPali profiles will fail at request time
+  # until this is resolved (loud ValueError from the factory).
   colpali_infinity:
-    enabled: true
+    enabled: false
     resources:
       limits:
         cpu: "4"

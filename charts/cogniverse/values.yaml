@@ -528,7 +528,9 @@ inference:
     type: multi_vector
     image:
       repository: michaelf34/infinity
-      tag: "latest"
+      # Pinned: 0.0.75 was verified to serve vidore/colsmol-500m via /v1/embeddings
+      # with multimodal input. Avoid :latest — tag drift will break ingestion silently.
+      tag: "0.0.75"
       pullPolicy: IfNotPresent
     extraArgs: []
     replicaCount: 1
@@ -543,6 +545,51 @@ inference:
       requests:
         cpu: "1"
         memory: "2Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 7997
+      initialDelaySeconds: 180
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 7997
+      initialDelaySeconds: 60
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+
+  # ColQwen multimodal multi-vector embeddings via Infinity. Same serving
+  # contract as colpali_infinity (OpenAI /v1/embeddings multimodal) but a
+  # SEPARATE pod because one Infinity instance serves a single model. Used
+  # by profiles with ``inference_service: "colqwen_infinity"``
+  # (video_colqwen_omni_mv_chunk_30s). Off by default — enable explicitly
+  # if that profile is active.
+  colqwen_infinity:
+    enabled: false
+    engine: infinity
+    model: vidore/colqwen-omni-v0.1
+    type: multi_vector
+    image:
+      repository: michaelf34/infinity
+      tag: "0.0.75"
+      pullPolicy: IfNotPresent
+    extraArgs: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 7997
+      nodePort: 29004
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "3Gi"
     livenessProbe:
       httpGet:
         path: /health

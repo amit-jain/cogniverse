@@ -823,7 +823,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colqwen",
-        "inference_service": "colpali_infinity",
+        "inference_service": "colqwen_infinity",
         "model_specific": {
           "max_patches": 1024,
           "segment_duration": 30.0,
