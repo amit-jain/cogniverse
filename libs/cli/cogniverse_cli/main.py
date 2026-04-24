@@ -286,21 +286,18 @@ def up(
     console.print("[cyan]Syncing cluster secrets...[/cyan]")
     sync_hf_token_to_cluster(required=False)
 
-    console.print("[cyan]Deploying Helm release...[/cyan]")
-    try:
-        helm_install(chart_path, values_file, set_values=set_values or None)
-        console.print("[green]Helm release deployed[/green]")
-    except RuntimeError as exc:
-        console.print(f"[yellow]Helm install warning: {exc}[/yellow]")
-        console.print("[yellow]Continuing — pods may still come up[/yellow]")
-
-    # 7. Install Argo controller (before waiting, so pods can start in parallel)
+    # 6. Install Argo controller FIRST so its CRDs exist before the main chart
+    # renders CronWorkflow/WorkflowTemplate manifests. The main chart then opts
+    # out of sub-chart CRD install to avoid ownership conflicts.
     console.print("[cyan]Installing Argo Workflows controller...[/cyan]")
-    try:
-        install_argo_controller()
-        console.print("[green]Argo Workflows installed[/green]")
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        console.print(f"[yellow]Argo install failed: {exc}[/yellow]")
+    install_argo_controller()
+    console.print("[green]Argo Workflows installed[/green]")
+
+    # 7. Deploy the main Helm release with sub-chart CRD install disabled
+    set_values["argo-workflows.crds.install"] = "false"
+    console.print("[cyan]Deploying Helm release...[/cyan]")
+    helm_install(chart_path, values_file, set_values=set_values or None)
+    console.print("[green]Helm release deployed[/green]")
 
     # 8. Deploy workflow templates
     try:

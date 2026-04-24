@@ -97,8 +97,20 @@ def k3d_cluster():
     if _cluster_exists():
         _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
-    # Create cluster with offset port mappings
-    cmd = ["k3d", "cluster", "create", CLUSTER_NAME]
+    # Create cluster with offset port mappings. The main chart declares
+    # NodePort services with fixed ports in the 26xxx range (see
+    # ``values.k3s.yaml``), but Kubernetes' default NodePort range is
+    # 30000-32767 — so Helm install fails with "provided port is not in
+    # the valid range" unless we widen the range via k3s-arg. This
+    # matches ``cogniverse_cli.cluster.create_cluster``.
+    cmd = [
+        "k3d",
+        "cluster",
+        "create",
+        CLUSTER_NAME,
+        "--k3s-arg",
+        "--service-node-port-range=1-65535@server:0",
+    ]
     for port in PORTS.values():
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
 

@@ -123,9 +123,13 @@ class TestUpCommand:
         mock_prereq.assert_called_once_with(require_k3d=True)
         mock_values.assert_called_once_with(prod=False)
         mock_helm.assert_called_once()
-        # No LLM overrides when builtin
+        # Builtin LLM passes no LLM overrides, but always sets the Argo
+        # sub-chart CRD opt-out so the pre-installed Argo CRDs aren't
+        # re-owned by the cogniverse release.
         call_kwargs = mock_helm.call_args
-        assert call_kwargs[1].get("set_values") is None
+        assert call_kwargs[1].get("set_values") == {
+            "argo-workflows.crds.install": "false"
+        }
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
