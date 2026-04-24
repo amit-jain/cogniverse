@@ -11,19 +11,22 @@ devMode:
   enabled: true
   hostPath: /cogniverse-src
 
-# Enable the dedicated vLLM embedding service — offloads semantic text
-# embedding (nomic-embed-text) from Ollama so the shared LLM endpoint
-# stays responsive under concurrent load.
 # Consolidated inference overrides. YAML won't merge two same-named
 # top-level keys in the same file — a second ``inference:`` block
 # silently clobbers the first — so everything inference-related stays
 # in one block below.
+#
+# Policy: only enable pods whose key is referenced by at least one
+# profile's ``inference_service`` in configs/config.json. Empty pods
+# burn memory the laptop doesn't have. Current references:
+#   - colbert_pylate   (document_text_semantic, lateon_mv, audio_clap_semantic)
+#   - colpali_infinity (video_colpali_smol500_mv_frame, image_colpali_mv,
+#                       video_colqwen_omni_mv_chunk_30s)
+#   - code_colbert_pylate (code_lateon_mv — keep off unless code search is wanted)
+#   - dense_vllm       (currently referenced by NO profile — keep off)
 inference:
-  dense_vllm:
-    enabled: true
-  # Bring up the Infinity-backed ColPali image-embedding pod on the k3d
-  # laptop so video/image ingestion via colsmol-500m works. CPU-only
-  # limits below target the 49Gi node; bump if adding ColQwen alongside.
+  # ColPali image multi-vector embeddings via Infinity. Required for any
+  # ingest / query on video_colpali_* / image_colpali_* profiles.
   colpali_infinity:
     enabled: true
     resources:
