@@ -1956,13 +1956,13 @@ with main_tabs[1]:
     else:
         st.error("Evaluation tab module not found")
 
-# Embedding Atlas Tab — launched separately via scripts/atlas_viewer.py so
-# the UMAP/pyarrow/sklearn dependencies don't bloat the main dashboard image.
+# Embedding Atlas Tab — lazy-imports umap + embedding-atlas inside the
+# tab module so the main dashboard image stays lean when the optional
+# libraries aren't installed.
 with main_tabs[2]:
-    st.info(
-        "Launch the embedding atlas in its own Streamlit process:\n\n"
-        "```\nuv run streamlit run scripts/atlas_viewer.py --server.port 8502\n```"
-    )
+    from cogniverse_dashboard.tabs.embedding_atlas import render_embedding_atlas_tab
+
+    render_embedding_atlas_tab()
 
 # Routing Evaluation Tab
 with main_tabs[3]:
@@ -2368,7 +2368,42 @@ with main_tabs[6]:
         st.markdown(
             f"**Last run:** `{last_run['workflow_name']}` (mode: {last_run['mode']})"
         )
-        if st.button("🔄 Refresh status"):
+        status_col, cancel_col, retry_col = st.columns(3)
+        refresh_clicked = status_col.button("🔄 Refresh status")
+        cancel_clicked = cancel_col.button(
+            "⛔ Cancel",
+            help="Terminate the Workflow's main container immediately",
+        )
+        retry_clicked = retry_col.button(
+            "↻ Retry",
+            help="Restart failed nodes (reuses successful ones)",
+        )
+
+        def _post_workflow_action(verb: str) -> None:
+            """Call the cancel/retry endpoint and render the new phase
+            inline — no extra refresh click needed."""
+            try:
+                resp = httpx.post(
+                    f"{RUNTIME_URL}{last_run['status_url']}/{verb}",
+                    timeout=15.0,
+                )
+                if resp.status_code == 200:
+                    status = resp.json()
+                    phase = status.get("phase") or "Pending"
+                    st.info(
+                        f"{verb.title()} requested. Phase: **{phase}** "
+                        f"| finished={status.get('finished_at') or '—'}"
+                    )
+                elif resp.status_code == 404:
+                    st.warning("Workflow no longer exists (TTL expired).")
+                else:
+                    st.error(
+                        f"{verb.title()} failed ({resp.status_code}): {resp.text[:300]}"
+                    )
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"Could not {verb}: {e}")
+
+        if refresh_clicked:
             try:
                 resp = httpx.get(
                     f"{RUNTIME_URL}{last_run['status_url']}",
@@ -2385,8 +2420,12 @@ with main_tabs[6]:
                         st.caption(status["message"])
                 else:
                     st.warning(f"Status unavailable ({resp.status_code})")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 st.warning(f"Could not fetch status: {e}")
+        if cancel_clicked:
+            _post_workflow_action("cancel")
+        if retry_clicked:
+            _post_workflow_action("retry")
 
     st.markdown("---")
 

@@ -134,26 +134,17 @@ class TestManualOptimizationE2E:
         assert ttl["secondsAfterSuccess"] == 3600
         assert ttl["secondsAfterFailure"] == 3600
 
-        container = wf["spec"]["templates"][0]["container"]
-        # Image must match RUNTIME_IMAGE env on the live runtime pod.
-        assert ":" in container["image"], (
-            f"Container image looks malformed: {container['image']!r}"
+        # Workflow delegates the container spec to the chart-installed
+        # WorkflowTemplate; the Workflow resource itself only carries the
+        # templateRef + arguments. Container image / env / command live
+        # under the WorkflowTemplate resource.
+        assert wf["spec"]["workflowTemplateRef"]["name"] == (
+            "cogniverse-optimization-runner"
         )
-        assert container["command"] == [
-            "python",
-            "-m",
-            "cogniverse_runtime.optimization_cli",
-        ]
-        assert container["args"][0] == "--mode"
-        assert container["args"][1] == "gateway-thresholds"
-        assert container["args"][2] == "--tenant-id"
-        assert container["args"][3] == TENANT_ID
-
-        env_names = {e["name"] for e in container["env"]}
-        # Chart wires these on the runtime deployment; they must land on
-        # the Workflow pod so the optimizer can reach Vespa/Phoenix/LLM.
-        assert "BACKEND_URL" in env_names
-        assert "TELEMETRY_HTTP_ENDPOINT" in env_names
+        params = {p["name"]: p["value"] for p in wf["spec"]["arguments"]["parameters"]}
+        assert params["mode"] == "gateway-thresholds"
+        assert params["tenant-id"] == TENANT_ID
+        assert params["lookback-hours"] == "48"
 
     def test_status_endpoint_reflects_argo_phase(self):
         """After submit, GET status returns a real phase from Argo within

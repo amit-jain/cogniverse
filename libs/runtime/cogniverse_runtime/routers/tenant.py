@@ -32,11 +32,6 @@ _config_manager: Optional[ConfigManager] = None
 _argo_api_url: Optional[str] = None
 _argo_namespace: str = "cogniverse"
 
-# Runtime-pod environment snapshot used when building Argo Workflow manifests
-# for manual optimization runs. Populated at startup from env vars read by
-# main.py so the spawned Workflow pods inherit the deployment's service DNS.
-_runtime_pod_env: Dict[str, str] = {}
-_runtime_image: str = "cogniverse-runtime:latest"
 # ServiceAccount the spawned Workflow pod runs as. Must have RBAC for
 # ``workflowtaskresults.argoproj.io`` (Argo Emissary writes results after the
 # main container exits). Falls back to ``default`` only for local/unit tests;
@@ -53,37 +48,20 @@ def set_config_manager(config_manager: ConfigManager) -> None:
 def set_argo_config(
     api_url: Optional[str],
     namespace: str = "cogniverse",
-    runtime_image: Optional[str] = None,
-    pod_env: Optional[Dict[str, str]] = None,
     service_account: Optional[str] = None,
 ) -> None:
-    """Inject Argo API URL + pod-env snapshot (called from main.py lifespan).
+    """Inject Argo API URL + runtime SA name (called from main.py lifespan).
 
-    ``runtime_image`` is the OCI image reference for cogniverse-runtime; the
-    manual-optimize endpoint spawns Workflow pods from the same image so
-    their Python environment matches the live runtime.
-
-    ``pod_env`` is a snapshot of service-DNS env vars (BACKEND_URL,
-    TELEMETRY_HTTP_ENDPOINT, etc.) taken from the runtime pod; propagated
-    into the Workflow pod spec so the optimizer can reach Vespa/Phoenix/LLM.
-
-    ``service_account`` is the SA name the Workflow pods run as — must be
-    RBAC-bound to write ``workflowtaskresults`` (the Emissary posts results
-    after the main container exits, otherwise Argo marks the Workflow
-    ``Error`` even though the real work succeeded).
+    ``service_account`` is the SA the submitted Workflow pods run as —
+    must be RBAC-bound to write ``workflowtaskresults`` (the Emissary
+    posts results after the main container exits, otherwise Argo marks
+    the Workflow ``Error`` even though the real work succeeded). The
+    container image and env var wiring live in the chart-installed
+    ``WorkflowTemplate`` and don't need to be snapshotted here.
     """
-    global \
-        _argo_api_url, \
-        _argo_namespace, \
-        _runtime_image, \
-        _runtime_pod_env, \
-        _runtime_service_account
+    global _argo_api_url, _argo_namespace, _runtime_service_account
     _argo_api_url = api_url
     _argo_namespace = namespace
-    if runtime_image:
-        _runtime_image = runtime_image
-    if pod_env:
-        _runtime_pod_env = dict(pod_env)
     if service_account:
         _runtime_service_account = service_account
 
@@ -539,16 +517,19 @@ def _sanitize_label_value(value: str) -> str:
     return cleaned or "unknown"
 
 
+_OPTIMIZATION_WORKFLOW_TEMPLATE_NAME = "cogniverse-optimization-runner"
+
+
 def _build_optimization_workflow_manifest(
     tenant_id: str, mode: str, namespace: str
 ) -> dict:
     """Build a one-off Argo Workflow that runs ``optimization_cli --mode``.
 
-    Uses the same container image and service-DNS env vars as the live
-    runtime pod, so the spawned optimizer can reach Vespa/Phoenix/LLM
-    exactly like the CronWorkflow-driven weekly optimization does.
+    References the cluster-installed ``WorkflowTemplate`` so the container
+    spec, env var wiring and per-tenant mutex live in one chart file; the
+    scheduled CronWorkflows reference the same template. This prevents
+    the runtime-built and chart-built manifests from drifting.
     """
-    env = [{"name": k, "value": v} for k, v in _runtime_pod_env.items() if v]
     return {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Workflow",
@@ -575,33 +556,16 @@ def _build_optimization_workflow_manifest(
                 "secondsAfterSuccess": 3600,
                 "secondsAfterFailure": 3600,
             },
-            "entrypoint": "run",
-            "templates": [
-                {
-                    "name": "run",
-                    "container": {
-                        "image": _runtime_image,
-                        "command": [
-                            "python",
-                            "-m",
-                            "cogniverse_runtime.optimization_cli",
-                        ],
-                        "args": [
-                            "--mode",
-                            mode,
-                            "--tenant-id",
-                            tenant_id,
-                            "--lookback-hours",
-                            "48",
-                        ],
-                        "env": env,
-                        "resources": {
-                            "requests": {"cpu": "2", "memory": "4Gi"},
-                            "limits": {"cpu": "4", "memory": "8Gi"},
-                        },
-                    },
-                }
-            ],
+            "workflowTemplateRef": {
+                "name": _OPTIMIZATION_WORKFLOW_TEMPLATE_NAME,
+            },
+            "arguments": {
+                "parameters": [
+                    {"name": "mode", "value": mode},
+                    {"name": "tenant-id", "value": tenant_id},
+                    {"name": "lookback-hours", "value": "48"},
+                ],
+            },
         },
     }
 
@@ -719,6 +683,88 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
             detail=f"Argo API error ({response.status_code}): {response.text[:500]}",
         )
     data = response.json()
+    status_block = data.get("status", {}) or {}
+    return OptimizeRunStatus(
+        workflow_name=workflow_name,
+        phase=status_block.get("phase"),
+        started_at=status_block.get("startedAt"),
+        finished_at=status_block.get("finishedAt"),
+        message=status_block.get("message"),
+    )
+
+
+async def _argo_workflow_action(
+    verb: str, workflow_name: str, action_path: str
+) -> dict:
+    """Proxy an Argo ``/<action>`` request (``terminate`` / ``retry``) and
+    unwrap the response body. Centralised so cancel and retry share the
+    same error-handling shape: 404 if the Workflow doesn't exist, 502 on
+    any other Argo error, raw JSON on success."""
+    if _argo_api_url is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Argo is not configured on this deployment.",
+        )
+    url = (
+        f"{_argo_api_url}/api/v1/workflows/"
+        f"{_argo_namespace}/{workflow_name}/{action_path}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.put(url, json={"name": workflow_name})
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Argo API unreachable during {verb}: {exc}",
+        ) from exc
+    if response.status_code == 404:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    if response.status_code not in (200, 201):
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Argo {verb} failed ({response.status_code}): {response.text[:500]}"
+            ),
+        )
+    return response.json()
+
+
+@router.post(
+    "/{tenant_id}/optimize/runs/{workflow_name}/cancel",
+    response_model=OptimizeRunStatus,
+)
+async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
+    """Terminate an in-flight optimize Workflow.
+
+    Argo's ``terminate`` verb stops the main container immediately; TTL
+    still applies so the Workflow resource auto-deletes after the
+    configured grace window. Returns the post-terminate status block so
+    the dashboard can surface the ``Failed`` phase without polling again.
+    """
+    data = await _argo_workflow_action("cancel", workflow_name, "terminate")
+    status_block = data.get("status", {}) or {}
+    return OptimizeRunStatus(
+        workflow_name=workflow_name,
+        phase=status_block.get("phase"),
+        started_at=status_block.get("startedAt"),
+        finished_at=status_block.get("finishedAt"),
+        message=status_block.get("message"),
+    )
+
+
+@router.post(
+    "/{tenant_id}/optimize/runs/{workflow_name}/retry",
+    response_model=OptimizeRunStatus,
+)
+async def retry_manual_optimization(tenant_id: str, workflow_name: str):
+    """Retry a ``Failed``/``Error`` optimize Workflow.
+
+    Argo's ``retry`` verb restarts only the failed nodes, reusing the
+    successful ones — cheaper than resubmitting. The per-tenant mutex
+    on the WorkflowTemplate still applies, so a retry that lands while
+    another Workflow holds the mutex will queue behind it.
+    """
+    data = await _argo_workflow_action("retry", workflow_name, "retry")
     status_block = data.get("status", {}) or {}
     return OptimizeRunStatus(
         workflow_name=workflow_name,

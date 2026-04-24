@@ -23,7 +23,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 # Import schemas from the new location
-from .schemas import AgenticRouter, RoutingDecision
+from .schemas import AgenticRouter, AgenticRoutingDecision
 
 
 class RouterModule(dspy.Module):
@@ -33,7 +33,9 @@ class RouterModule(dspy.Module):
         super().__init__()
         self.route = dspy.Predict(AgenticRouter)
 
-    def forward(self, conversation_history: str, user_query: str) -> RoutingDecision:
+    def forward(
+        self, conversation_history: str, user_query: str
+    ) -> AgenticRoutingDecision:
         """Execute the routing decision."""
         print(f"\n🔍 RouterModule.forward called with query: {user_query[:100]}...")
 
@@ -190,14 +192,14 @@ def generate_training_examples() -> List[dspy.Example]:
         ]
     )
 
-    # Convert to DSPy Examples with proper RoutingDecision objects
+    # Convert to DSPy Examples with proper AgenticRoutingDecision objects
     dspy_examples = []
     for ex in examples:
         dspy_examples.append(
             dspy.Example(
                 conversation_history=ex["conversation_history"],
                 user_query=ex["user_query"],
-                routing_decision=RoutingDecision(**ex["routing_decision"]),
+                routing_decision=AgenticRoutingDecision(**ex["routing_decision"]),
             ).with_inputs("conversation_history", "user_query")
         )
 
@@ -446,12 +448,14 @@ def optimize_router(
     print(f"Train set: {len(train_set)}, Validation set: {len(val_set)}")
 
     # Define the metric for optimization
-    def routing_metric(example: dspy.Example, prediction: RoutingDecision) -> float:
+    def routing_metric(
+        example: dspy.Example, prediction: AgenticRoutingDecision
+    ) -> float:
         """Metric for MIPROv2 optimization."""
         score = 0.0
 
         # Check if prediction is valid
-        if not isinstance(prediction, RoutingDecision):
+        if not isinstance(prediction, AgenticRoutingDecision):
             return 0.0
 
         # Check modality (50% weight)
@@ -622,7 +626,9 @@ class OptimizedRouter:
         if demos:
             self.examples = demos
 
-    def route(self, user_query: str, conversation_history: str = "") -> RoutingDecision:
+    def route(
+        self, user_query: str, conversation_history: str = ""
+    ) -> AgenticRoutingDecision:
         """
         Make a routing decision using the optimized prompt.
 
@@ -631,7 +637,7 @@ class OptimizedRouter:
             conversation_history: Recent conversation context
 
         Returns:
-            RoutingDecision object
+            AgenticRoutingDecision object
         """
         import re
 
@@ -658,7 +664,7 @@ class OptimizedRouter:
             json_match = re.search(r"\{.*\}", response, re.DOTALL)
             if json_match:
                 decision_dict = json.loads(json_match.group())
-                return RoutingDecision(**decision_dict)
+                return AgenticRoutingDecision(**decision_dict)
             raise ValueError("No JSON found in response")
         except Exception as e:
             raise RuntimeError(f"Failed to parse routing response: {e}") from e

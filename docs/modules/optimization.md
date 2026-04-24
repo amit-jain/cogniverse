@@ -469,7 +469,27 @@ curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize \
 # Check status:
 curl http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-...
 # Returns: {"phase": "Succeeded", "started_at": "...", "finished_at": "...", "message": ""}
+
+# Terminate a running Workflow:
+curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../cancel
+# Returns: {"phase": "Failed", "message": "Terminated by user", ...}
+
+# Retry a failed Workflow (restarts only the failed nodes, reuses successful ones):
+curl -X POST http://localhost:8000/admin/tenant/acme:production/optimize/runs/opt-gateway-acme-.../retry
+# Returns: {"phase": "Running", ...}
 ```
+
+The runtime does not inline the container spec into each submitted
+Workflow. Instead it references a chart-installed ``WorkflowTemplate``
+(``cogniverse-optimization-runner``) via ``spec.workflowTemplateRef``:
+the scheduled CronWorkflows (``agent-optimization`` weekly,
+``daily-gateway`` daily) use the same template, so the image/env/
+resource/mutex spec lives in one place
+(``charts/cogniverse/templates/optimization-workflow-template.yaml``).
+
+The WorkflowTemplate declares a **per-tenant mutex** so multiple submits
+for the same tenant serialise (prevents the dashboard Run button from
+stacking pods); different tenants optimize independently.
 
 ```python
 # The Argo Workflow runs optimization_cli internally:

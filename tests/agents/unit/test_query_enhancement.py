@@ -412,8 +412,8 @@ class TestDSPy30RoutingSignatures:
         """Test Pydantic models for DSPy 3.0 structured outputs"""
         from cogniverse_agents.routing.dspy_routing_signatures import (
             EntityInfo,
+            RelationshipRoutingDecision,
             RelationshipTuple,
-            RoutingDecision,
         )
 
         # Test EntityInfo model
@@ -441,8 +441,8 @@ class TestDSPy30RoutingSignatures:
         assert relation.relation == "develops"
         assert relation.object == "iPhone"
 
-        # Test RoutingDecision model
-        decision = RoutingDecision(
+        # Test RelationshipRoutingDecision model
+        decision = RelationshipRoutingDecision(
             search_modality="multimodal",
             generation_type="detailed_report",
             primary_agent="video_search",

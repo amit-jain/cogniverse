@@ -1,0 +1,91 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.argo.enabled }}
+---
+# Shared Argo WorkflowTemplate for running ``optimization_cli --mode <mode>``
+# in a runtime-image pod. Referenced via workflowTemplateRef / templateRef by:
+#
+#   * CronWorkflows (agent-optimization, daily-gateway) — scheduled paths
+#   * POST /admin/tenant/{id}/optimize in the runtime — on-demand path
+#
+# Single source of truth for the container spec, env var wiring and
+# per-tenant mutex; previously each CronWorkflow and the runtime's Python
+# manifest builder duplicated this spec and drifted.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ $fullName }}-optimization-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: optimization
+spec:
+  serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+  entrypoint: run-optimizer
+  # Per-tenant mutex — Argo serialises Workflows that hold the same mutex
+  # name, so two concurrent optimize submits for the same tenant queue
+  # rather than stack pods. Different tenants optimize independently.
+  synchronization:
+    mutex:
+      name: "optimize-{{`{{workflow.parameters.tenant-id}}`}}"
+  arguments:
+    parameters:
+    - name: mode
+    - name: tenant-id
+    - name: lookback-hours
+      value: "48"
+  volumes:
+  - name: config
+    configMap:
+      name: {{ $fullName }}-config
+  templates:
+  - name: run-optimizer
+    inputs:
+      parameters:
+      - name: mode
+      - name: tenant-id
+      - name: lookback-hours
+    container:
+      image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+      imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+      command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+      args:
+        - "--mode"
+        - "{{`{{inputs.parameters.mode}}`}}"
+        - "--tenant-id"
+        - "{{`{{inputs.parameters.tenant-id}}`}}"
+        - "--lookback-hours"
+        - "{{`{{inputs.parameters.lookback-hours}}`}}"
+      env:
+      - name: BACKEND_URL
+        value: "http://{{ $fullName }}-vespa"
+      - name: BACKEND_PORT
+        value: "{{ .Values.vespa.service.ports.query }}"
+      - name: TELEMETRY_HTTP_ENDPOINT
+        value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+      - name: TELEMETRY_OTLP_ENDPOINT
+        value: "{{ $fullName }}-phoenix:4317"
+      - name: LLM_ENDPOINT
+        {{- if .Values.llm.external.enabled }}
+        value: {{ .Values.llm.external.url | quote }}
+        {{- else }}
+        value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+        {{- end }}
+      - name: OLLAMA_API_BASE
+        {{- if .Values.llm.external.enabled }}
+        value: {{ .Values.llm.external.url | quote }}
+        {{- else }}
+        value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+        {{- end }}
+      resources:
+        requests:
+          cpu: "2"
+          memory: "4Gi"
+        limits:
+          cpu: "4"
+          memory: "8Gi"
+      volumeMounts:
+      - name: config
+        mountPath: /app/configs/config.json
+        subPath: config.json
+        readOnly: true
+{{- end }}

@@ -43,8 +43,13 @@ class TemporalInfo(BaseModel):
     has_temporal_constraints: bool
 
 
-class RoutingDecision(BaseModel):
-    """Complete routing decision"""
+class RelationshipRoutingDecision(BaseModel):
+    """Full routing decision emitted by the relationship-aware DSPy router.
+
+    Carries modality + generation_type like the minimal ``AgenticRoutingDecision``
+    plus an agent execution plan (primary + secondaries, mode), confidence
+    and reasoning — the additional fields the relationship router needs
+    for multi-agent orchestration."""
 
     search_modality: str  # video_only, text_only, both, multimodal
     generation_type: str  # raw_results, summary, detailed_report

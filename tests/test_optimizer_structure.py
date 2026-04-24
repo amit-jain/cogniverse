@@ -27,10 +27,10 @@ def test_imports():
     try:
         from cogniverse_agents.optimizer.schemas import (  # noqa: F401
             AgenticRouter,
-            RoutingDecision,
+            AgenticRoutingDecision,
         )
 
-        print("✅ schemas: RoutingDecision, AgenticRouter")
+        print("✅ schemas: AgenticRoutingDecision, AgenticRouter")
         tests_passed += 1
     except ImportError as e:
         print(f"❌ schemas: {e}")

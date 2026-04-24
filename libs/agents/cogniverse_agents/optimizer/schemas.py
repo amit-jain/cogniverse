@@ -1,17 +1,16 @@
-"""
-Schema definitions for the Agentic Router
+"""Schema definitions for the Agentic Router.
 
-These schemas implement the NEW_PROPOSAL.md design:
-- RoutingDecision with search_modality and generation_type
-- AgenticRouter signature for DSPy
+- ``AgenticRoutingDecision`` — minimal (modality + generation_type) output
+  schema for the ``AgenticRouter`` DSPy signature.
+- ``AgenticRouter`` — DSPy signature that emits an ``AgenticRoutingDecision``.
 """
 
 import dspy
 from pydantic import BaseModel, Field
 
 
-class RoutingDecision(BaseModel):
-    """Defines the strict schema for the router's JSON output."""
+class AgenticRoutingDecision(BaseModel):
+    """Strict JSON schema for the AgenticRouter's routing output."""
 
     search_modality: str = Field(
         description="Must be either 'video' or 'text'.", pattern="^(video|text)$"
@@ -36,6 +35,6 @@ class AgenticRouter(dspy.Signature):
     )
     user_query: str = dspy.InputField(desc="The latest query from the user.")
 
-    routing_decision: RoutingDecision = dspy.OutputField(
+    routing_decision: AgenticRoutingDecision = dspy.OutputField(
         desc="A single valid JSON object containing the routing decision."
     )

@@ -281,11 +281,6 @@ spec:
           value: "http://{{ .Release.Name }}-argo-workflows-server.{{ .Release.Namespace }}.svc.cluster.local:2746"
         - name: ARGO_NAMESPACE
           value: {{ .Release.Namespace | quote }}
-        # RUNTIME_IMAGE is baked in at install time so
-        # POST /{tenant}/optimize can spawn Workflow pods from the same
-        # image as the live runtime pod.
-        - name: RUNTIME_IMAGE
-          value: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
         # Workflow pods must run under the runtime SA, which the chart RBAC
         # binds to the ``workflowtaskresults`` permission Argo Emissary needs
         # after the main container exits. Falling back to ``default`` causes

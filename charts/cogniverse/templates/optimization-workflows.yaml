@@ -89,88 +89,69 @@ spec:
       steps:
       # Step 1: Run all DSPy-based optimizers in parallel
       - - name: gateway-thresholds
-          template: run-agent-optimizer
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
           arguments:
             parameters:
             - name: mode
               value: gateway-thresholds
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "48"
         - name: entity-extraction
-          template: run-agent-optimizer
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
           arguments:
             parameters:
             - name: mode
               value: entity-extraction
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "48"
         - name: simba
-          template: run-agent-optimizer
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
           arguments:
             parameters:
             - name: mode
               value: simba
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "48"
         - name: profile
-          template: run-agent-optimizer
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
           arguments:
             parameters:
             - name: mode
               value: profile
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "48"
       # Step 2: Workflow optimization (depends on agent artifacts)
       - - name: workflow
-          template: run-agent-optimizer
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
           arguments:
             parameters:
             - name: mode
               value: workflow
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "48"
       # Step 3: Restart runtime to pick up new artifacts
       - - name: restart-runtime
           template: restart-deployment
-
-    - name: run-agent-optimizer
-      inputs:
-        parameters:
-        - name: mode
-      container:
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
-        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
-        args:
-          - "--mode"
-          - "{{`{{inputs.parameters.mode}}`}}"
-          - "--tenant-id"
-          - "{{`{{workflow.parameters.tenant-id}}`}}"
-          - "--lookback-hours"
-          - "48"
-        env:
-        - name: BACKEND_URL
-          value: "http://{{ $fullName }}-vespa"
-        - name: BACKEND_PORT
-          value: "{{ .Values.vespa.service.ports.query }}"
-        - name: TELEMETRY_HTTP_ENDPOINT
-          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: TELEMETRY_OTLP_ENDPOINT
-          value: "{{ $fullName }}-phoenix:4317"
-        - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
-        - name: OLLAMA_API_BASE
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
-        resources:
-          requests:
-            cpu: "2"
-            memory: "4Gi"
-          limits:
-            cpu: "4"
-            memory: "8Gi"
-        volumeMounts:
-        - name: config
-          mountPath: /app/configs/config.json
-          subPath: config.json
-          readOnly: true
 
     - name: restart-deployment
       # bitnami/kubectl stopped publishing versioned tags on Docker Hub
@@ -206,52 +187,30 @@ spec:
   failedJobsHistoryLimit: 3
   workflowSpec:
     entrypoint: daily-gateway-pipeline
+    arguments:
+      parameters:
+      - name: tenant-id
+        value: "__system__"
     serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
     templates:
     - name: daily-gateway-pipeline
       steps:
       - - name: optimize-gateway
-          template: run-gateway
+          templateRef:
+            name: {{ $fullName }}-optimization-runner
+            template: run-optimizer
+          arguments:
+            parameters:
+            - name: mode
+              value: gateway-thresholds
+            - name: tenant-id
+              value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            - name: lookback-hours
+              value: "24"
       - - name: restart-runtime
           template: restart-deployment
 
-    - name: run-gateway
-      container:
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
-        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
-        args:
-          - "--mode"
-          - "gateway-thresholds"
-          - "--tenant-id"
-          - "default"
-        env:
-        - name: BACKEND_URL
-          value: "http://{{ $fullName }}-vespa"
-        - name: BACKEND_PORT
-          value: "{{ .Values.vespa.service.ports.query }}"
-        - name: TELEMETRY_HTTP_ENDPOINT
-          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
-        - name: TELEMETRY_OTLP_ENDPOINT
-          value: "{{ $fullName }}-phoenix:4317"
-        resources:
-          requests:
-            cpu: "1"
-            memory: "2Gi"
-          limits:
-            cpu: "2"
-            memory: "4Gi"
-        volumeMounts:
-        - name: config
-          mountPath: /app/configs/config.json
-          subPath: config.json
-          readOnly: true
-
     - name: restart-deployment
-      # bitnami/kubectl stopped publishing versioned tags on Docker Hub
-      # (only :latest + manifest signatures remain), so the previous
-      # :1.33 image never pulled. rancher/kubectl publishes stable
-      # v1.33.x tags — keep us on the same kubectl minor as the cluster.
       container:
         image: rancher/kubectl:v1.33.9
         command: ["kubectl"]
@@ -261,11 +220,6 @@ spec:
           - "deployment/{{ $fullName }}-runtime"
           - "-n"
           - "{{ .Release.Namespace }}"
-
-      volumes:
-      - name: config
-        configMap:
-          name: {{ $fullName }}-config
 {{- end }}
 {{- if .Values.argo.optimization.syntheticGeneration.enabled }}
 ---
