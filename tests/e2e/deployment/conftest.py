@@ -19,6 +19,23 @@ import time
 import pytest
 
 
+def _runtime_already_up() -> bool:
+    """Return True if a cogniverse runtime is already reachable.
+
+    Probes the default ``cogniverse up`` NodePort (localhost:28000). If the
+    developer has a stack running, the deployment-lifecycle tests have
+    nothing to prove — they'd either collide with the existing cluster or
+    duplicate coverage the regular e2e suite already provides.
+    """
+    import httpx
+
+    try:
+        r = httpx.get("http://localhost:28000/health/live", timeout=2.0)
+        return r.status_code == 200
+    except (httpx.ConnectError, httpx.ReadTimeout, OSError):
+        return False
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
     """Override the parent ``tests/e2e/conftest.py`` autouse ``e2e_stack``.
@@ -26,8 +43,23 @@ def e2e_stack():
     The parent fixture assumes a running ``cogniverse up`` stack. Tests in
     this directory create their own k3d cluster via ``deployed_stack``
     below, so the parent check would either skip them incorrectly or
-    collide with the self-managed cluster. Yielding a no-op disables the
-    parent's check for this subsuite only."""
+    collide with the self-managed cluster.
+
+    Behaviour:
+      * If ``cogniverse up`` is already running (runtime reachable at
+        localhost:28000), skip this whole subsuite — the deployment
+        lifecycle is what ``cogniverse up`` just did, and the regular
+        e2e suite covers the running-stack path.
+      * Otherwise yield so ``k3d_cluster`` / ``deployed_stack`` can
+        bring up their own isolated test cluster.
+    """
+    if _runtime_already_up():
+        pytest.skip(
+            "cogniverse runtime already reachable at localhost:28000 — "
+            "deployment-lifecycle tests are a no-op when a stack is up. "
+            "Run 'cogniverse down' first if you want to exercise the "
+            "fresh-install path."
+        )
     yield
 
 
