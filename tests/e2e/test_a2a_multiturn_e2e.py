@@ -161,6 +161,7 @@ class TestA2AProtocol:
                         "configuration": {
                             "acceptedOutputModes": ["text"],
                         },
+                        "metadata": {"tenant_id": TENANT_ID},
                     },
                 },
             )
@@ -198,6 +199,7 @@ class TestA2AProtocol:
                             "messageId": msg_id_1,
                         },
                         "configuration": {"acceptedOutputModes": ["text"]},
+                        "metadata": {"tenant_id": TENANT_ID},
                     },
                 },
             )
@@ -222,6 +224,7 @@ class TestA2AProtocol:
                             "contextId": context_id,
                         },
                         "configuration": {"acceptedOutputModes": ["text"]},
+                        "metadata": {"tenant_id": TENANT_ID},
                     },
                 },
             )
@@ -248,6 +251,7 @@ class TestA2AProtocol:
                             "messageId": str(uuid.uuid4()),
                         },
                         "configuration": {"acceptedOutputModes": ["text"]},
+                        "metadata": {"tenant_id": TENANT_ID},
                     },
                 },
             )
@@ -266,6 +270,7 @@ class TestA2AProtocol:
                             "messageId": str(uuid.uuid4()),
                         },
                         "configuration": {"acceptedOutputModes": ["text"]},
+                        "metadata": {"tenant_id": TENANT_ID},
                     },
                 },
             )

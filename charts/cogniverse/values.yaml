@@ -528,9 +528,12 @@ inference:
     type: multi_vector
     image:
       repository: michaelf34/infinity
-      # Pinned: 0.0.75 was verified to serve vidore/colsmol-500m via /v1/embeddings
-      # with multimodal input. Avoid :latest — tag drift will break ingestion silently.
-      tag: "0.0.75"
+      # 0.0.77 passes the peft/eva_config check that 0.0.75 fails, but
+      # still can't load vidore/colsmol-500m — the LoRA adapter's target
+      # modules (model.text_model.*) don't match the base model's state
+      # dict. This block stays disabled in values.k3s.yaml until a
+      # deploy/colpali/ FastAPI sidecar replaces Infinity for ColPali.
+      tag: "0.0.77"
       pullPolicy: IfNotPresent
     extraArgs: []
     replicaCount: 1

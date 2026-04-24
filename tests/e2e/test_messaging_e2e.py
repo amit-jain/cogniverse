@@ -244,6 +244,11 @@ class TestMessagingDeployment:
 
         # If messaging not deployed, verify it's intentionally disabled
         if not messaging:
+            helm_env = None
+            if _KUBECONFIG:
+                import os
+
+                helm_env = {**os.environ, "KUBECONFIG": _KUBECONFIG}
             helm_output = subprocess.run(
                 [
                     "helm",
@@ -258,6 +263,7 @@ class TestMessagingDeployment:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=helm_env,
             )
             if helm_output.stdout:
                 import json
