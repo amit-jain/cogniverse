@@ -36,6 +36,88 @@ def _runtime_already_up() -> bool:
         return False
 
 
+def refresh_workload_pods_if_devmode(
+    namespace: str = "cogniverse", timeout_s: int = 180
+) -> bool:
+    """Restart runtime + dashboard pods so devMode bind-mounted code is reloaded.
+
+    k3d + devMode mounts the laptop's ``libs/`` into the pod at ``/app/libs``,
+    so file edits are immediately visible on disk — but the pod's Python
+    interpreter imported the old modules at startup and won't pick up edits
+    without a process restart. A test suite that runs against a long-lived
+    ``cogniverse up`` stack therefore gets stale behaviour unless we force
+    a reload here.
+
+    Uses ``kubectl delete pod`` rather than ``kubectl rollout restart``
+    because rolling updates require the node to fit two pods simultaneously,
+    and the single-node k3d laptop setup is memory-constrained.
+
+    No-op (returns True) if:
+      * ``kubectl`` is unavailable or the k3d-cogniverse context isn't set;
+      * no pods have a ``src-libs`` hostPath volume (production mode —
+        code is baked into the image and a restart wouldn't change anything).
+
+    Returns True on success, False if the runtime didn't come back healthy
+    within ``timeout_s`` seconds.
+    """
+    import time as _time
+
+    import httpx
+
+    def _kc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["kubectl", "--context=k3d-cogniverse", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
+    probe = _kc("get", "ns", namespace, "-o", "name", timeout=10)
+    if probe.returncode != 0:
+        return (
+            True  # no k3d context → production k8s or no cluster → nothing to refresh
+        )
+
+    components_json = _kc(
+        "get",
+        "pods",
+        "-n",
+        namespace,
+        "-l",
+        "app.kubernetes.io/instance=cogniverse",
+        "-o",
+        'jsonpath={range .items[*]}{.metadata.name}|{.spec.volumes[?(@.hostPath.path=="/cogniverse-src/libs")].name}\n{end}',
+        timeout=15,
+    )
+    if components_json.returncode != 0:
+        return True
+
+    devmode_pods = [
+        line.split("|", 1)[0]
+        for line in components_json.stdout.strip().splitlines()
+        if "|" in line and line.split("|", 1)[1].strip()
+    ]
+    if not devmode_pods:
+        return True  # production mode — no bind-mounts, no stale-code risk
+
+    print(f"Refreshing {len(devmode_pods)} devMode pod(s) to pick up latest code...")
+    for pod in devmode_pods:
+        _kc("delete", "pod", pod, "-n", namespace, "--grace-period=5", timeout=30)
+
+    # Wait for runtime to come back healthy on its NodePort. The deployment
+    # controller recreates the pods; we only need runtime specifically for
+    # test dispatch, so that's what we probe.
+    for _ in range(timeout_s):
+        _time.sleep(1)
+        try:
+            r = httpx.get("http://localhost:28000/health/live", timeout=5.0)
+            if r.status_code == 200:
+                return True
+        except (httpx.ConnectError, httpx.ReadTimeout, OSError):
+            pass
+    return False
+
+
 @pytest.fixture(scope="session", autouse=True)
 def e2e_stack():
     """Override the parent ``tests/e2e/conftest.py`` autouse ``e2e_stack``.

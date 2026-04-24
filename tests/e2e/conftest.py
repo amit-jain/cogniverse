@@ -270,6 +270,18 @@ def e2e_stack():
     if not _ensure_stack_running():
         pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
 
+    # Force the devMode-mounted code to reload. ``cogniverse up`` leaves
+    # runtime/dashboard pods running with whatever Python modules were
+    # imported at pod-start time, so later ``git pull``s or local edits
+    # aren't picked up by the running process. Tests against a stale
+    # interpreter produce misleading failures (we just hit this with a
+    # cached SearchAgent holding the pre-fix localhost backend URL).
+    # No-op in production mode (no bind-mount, no staleness risk).
+    from tests.e2e.deployment.conftest import refresh_workload_pods_if_devmode
+
+    if not refresh_workload_pods_if_devmode():
+        pytest.fail("Runtime pod did not come back healthy after refresh")
+
     _bootstrap_tenant_and_schemas()
     _ingest_sample_video()
     _ensure_llm_model()

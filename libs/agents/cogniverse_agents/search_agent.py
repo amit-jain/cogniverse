@@ -141,6 +141,46 @@ class SearchInput(AgentInput):
     )
 
 
+_PUBLIC_RESULT_IDENTITY_KEYS = {"id", "documentid", "score", "start_time", "end_time"}
+
+
+def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Reshape a backend result into the public gateway API shape.
+
+    Search backends return Vespa-native flat fields (``video_id``,
+    ``segment_id``, ``documentid``, ``start_time``, ``end_time``, …).
+    The gateway-visible contract separates identity, ranking, payload,
+    and temporal info so clients don't depend on Vespa field names.
+
+    If the result already carries a ``metadata`` key (e.g. a different
+    code path pre-shaped it), it's passed through untouched.
+    """
+    if "metadata" in result:
+        return result
+
+    start = result.get("start_time")
+    end = result.get("end_time")
+    temporal = (
+        {"start_time": start, "end_time": end}
+        if start is not None and end is not None
+        else None
+    )
+
+    metadata = {
+        k: v for k, v in result.items() if k not in _PUBLIC_RESULT_IDENTITY_KEYS
+    }
+
+    shaped: Dict[str, Any] = {
+        "id": result.get("id"),
+        "document_id": result.get("documentid") or result.get("id", ""),
+        "score": result.get("score"),
+        "metadata": metadata,
+    }
+    if temporal is not None:
+        shaped["temporal_info"] = temporal
+    return shaped
+
+
 class SearchOutput(AgentOutput):
     """Type-safe output from search operations"""
 
@@ -1860,7 +1900,7 @@ class SearchAgent(
             profile=profile,
             profiles=profiles_used,
             rrf_k=rrf_k_used,
-            results=results,
+            results=[_format_public_result(r) for r in results],
             total_results=len(results),
             rlm_synthesis=rlm_synthesis,
             rlm_telemetry=rlm_telemetry,
