@@ -2416,7 +2416,13 @@ with main_tabs[6]:
                         f"Phase: **{phase}** | started={status.get('started_at') or '—'} "
                         f"| finished={status.get('finished_at') or '—'}"
                     )
-                    if status.get("message"):
+                    blocked = status.get("blocked_reason")
+                    if blocked:
+                        st.warning(
+                            "⏳ Waiting for another optimization to complete for "
+                            f"this tenant.\n\n_{blocked}_"
+                        )
+                    elif status.get("message"):
                         st.caption(status["message"])
                 else:
                     st.warning(f"Status unavailable ({resp.status_code})")

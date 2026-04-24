@@ -1278,6 +1278,122 @@ class TestGetManualOptimizeStatus:
             resp = client.get("/acme/optimize/runs/wf1")
         assert resp.status_code == 502
 
+    def test_pending_due_to_mutex_wait_surfaces_reason(self, argo_configured_client):
+        """When Argo records a mutex wait under ``synchronization.mutex.waiting``,
+        the status endpoint must propagate it as ``blocked_reason`` so the
+        dashboard can distinguish mutex-pending from ordinary scheduler-pending."""
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "status": {
+                        "phase": "Pending",
+                        "synchronization": {
+                            "mutex": {
+                                "waiting": [
+                                    {
+                                        "mutex": "cogniverse/optimize-acme",
+                                        "holder": "cogniverse/manual-optimize-gateway-abc",
+                                    }
+                                ]
+                            }
+                        },
+                    }
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-queued")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["phase"] == "Pending"
+        assert data["blocked_reason"] is not None
+        assert "cogniverse/optimize-acme" in data["blocked_reason"]
+        assert "Waiting for another optimization" in data["blocked_reason"]
+
+    def test_pending_without_mutex_wait_returns_no_blocked_reason(
+        self, argo_configured_client
+    ):
+        """Ordinary scheduler-pending (no mutex wait) must NOT produce a
+        blocked_reason — the dashboard would mis-label a cold-start pod
+        pull as a concurrency wait."""
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(return_value={"status": {"phase": "Pending"}})
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-cold")
+
+        assert resp.status_code == 200
+        assert resp.json()["blocked_reason"] is None
+
+    def test_running_phase_never_returns_blocked_reason(self, argo_configured_client):
+        """A Running Workflow cannot be mutex-blocked (it already acquired).
+        Even if Argo's older versions accidentally leave synchronization
+        metadata around, we must not surface it once the phase flipped."""
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "status": {
+                        "phase": "Running",
+                        "synchronization": {
+                            "mutex": {
+                                "waiting": [
+                                    {"mutex": "cogniverse/optimize-acme", "holder": "x"}
+                                ]
+                            }
+                        },
+                    }
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-running")
+
+        assert resp.status_code == 200
+        assert resp.json()["blocked_reason"] is None
+
+    def test_pending_with_message_hint_falls_back_to_message_text(
+        self, argo_configured_client
+    ):
+        """Older Argo versions put the wait hint in ``status.message`` instead
+        of the structured ``synchronization`` block. The extractor must
+        still surface it so users on those versions aren't stuck guessing."""
+        client = argo_configured_client
+
+        async def fake_get(self, url, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json = MagicMock(
+                return_value={
+                    "status": {
+                        "phase": "Pending",
+                        "message": "Waiting for cogniverse/optimize-acme lock",
+                    }
+                }
+            )
+            return resp
+
+        with patch("httpx.AsyncClient.get", new=fake_get):
+            resp = client.get("/acme/optimize/runs/wf-old-argo")
+
+        data = resp.json()
+        assert data["blocked_reason"] == "Waiting for cogniverse/optimize-acme lock"
+
 
 @pytest.mark.unit
 @pytest.mark.ci_fast

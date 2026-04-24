@@ -611,6 +611,39 @@ class OptimizeRunStatus(BaseModel):
     started_at: Optional[str]
     finished_at: Optional[str]
     message: Optional[str]
+    # ``blocked_reason`` is populated when phase is ``Pending`` specifically
+    # because the per-tenant optimization mutex is held by another Workflow.
+    # The dashboard surfaces this so users don't confuse mutex-wait with
+    # ordinary scheduler pending.
+    blocked_reason: Optional[str] = None
+
+
+def _extract_blocked_reason(status_block: Dict[str, Any]) -> Optional[str]:
+    """Return a user-readable reason if the Workflow is Pending because
+    the per-tenant optimization mutex is held by another Workflow,
+    otherwise ``None``.
+
+    Argo 3.x records mutex waits under ``status.synchronization.mutex.waiting``
+    as ``[{mutex: "<ns>/<name>", holder: "<ns>/<workflow>"}, ...]``. Older
+    versions just put the hint in ``status.message``, so we also scan
+    that as a fallback."""
+    if status_block.get("phase") != "Pending":
+        return None
+    sync = status_block.get("synchronization") or {}
+    mutex = sync.get("mutex") or {}
+    waiting = mutex.get("waiting") or []
+    mutex_names = sorted(
+        {entry.get("mutex", "") for entry in waiting if isinstance(entry, dict)}
+    )
+    mutex_names = [n for n in mutex_names if n]
+    if mutex_names:
+        return "Waiting for another optimization to release the mutex: " + ", ".join(
+            mutex_names
+        )
+    message = (status_block.get("message") or "").lower()
+    if "waiting for" in message and ("lock" in message or "mutex" in message):
+        return status_block.get("message")
+    return None
 
 
 @router.post("/{tenant_id}/optimize", response_model=ManualOptimizeResponse)
@@ -690,6 +723,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
+        blocked_reason=_extract_blocked_reason(status_block),
     )
 
 
@@ -749,6 +783,7 @@ async def cancel_manual_optimization(tenant_id: str, workflow_name: str):
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
+        blocked_reason=_extract_blocked_reason(status_block),
     )
 
 
@@ -772,6 +807,7 @@ async def retry_manual_optimization(tenant_id: str, workflow_name: str):
         started_at=status_block.get("startedAt"),
         finished_at=status_block.get("finishedAt"),
         message=status_block.get("message"),
+        blocked_reason=_extract_blocked_reason(status_block),
     )
 
 
