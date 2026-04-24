@@ -37,7 +37,7 @@ def _runtime_already_up() -> bool:
 
 
 def refresh_workload_pods_if_devmode(
-    namespace: str = "cogniverse", timeout_s: int = 180
+    namespace: str = "cogniverse", timeout_s: int = 240
 ) -> bool:
     """Restart runtime + dashboard pods so devMode bind-mounted code is reloaded.
 
@@ -53,6 +53,8 @@ def refresh_workload_pods_if_devmode(
     and the single-node k3d laptop setup is memory-constrained.
 
     No-op (returns True) if:
+      * ``COGNIVERSE_SKIP_POD_REFRESH`` env var is set truthy (debug / fast
+        dev cycles where you know code hasn't changed);
       * ``kubectl`` is unavailable or the k3d-cogniverse context isn't set;
       * no pods have a ``src-libs`` hostPath volume (production mode —
         code is baked into the image and a restart wouldn't change anything).
@@ -60,9 +62,17 @@ def refresh_workload_pods_if_devmode(
     Returns True on success, False if the runtime didn't come back healthy
     within ``timeout_s`` seconds.
     """
+    import os as _os
     import time as _time
 
     import httpx
+
+    if _os.environ.get("COGNIVERSE_SKIP_POD_REFRESH", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return True
 
     def _kc(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -104,13 +114,14 @@ def refresh_workload_pods_if_devmode(
     for pod in devmode_pods:
         _kc("delete", "pod", pod, "-n", namespace, "--grace-period=5", timeout=30)
 
-    # Wait for runtime to come back healthy on its NodePort. The deployment
-    # controller recreates the pods; we only need runtime specifically for
-    # test dispatch, so that's what we probe.
+    # Wait for runtime to be fully ready. /health/live returns 200 as soon as
+    # uvicorn binds (before routers / agents finish loading), so probe the
+    # richer /health endpoint — it resolves the agent registry, dispatches
+    # a backend ping, and only returns 200 once POST traffic is safe.
     for _ in range(timeout_s):
         _time.sleep(1)
         try:
-            r = httpx.get("http://localhost:28000/health/live", timeout=5.0)
+            r = httpx.get("http://localhost:28000/health", timeout=10.0)
             if r.status_code == 200:
                 return True
         except (httpx.ConnectError, httpx.ReadTimeout, OSError):
