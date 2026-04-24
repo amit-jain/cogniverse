@@ -1,0 +1,116 @@
+name: Chart Validation
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - '.github/workflows/chart-validation.yml'
+
+jobs:
+  chart-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.33.9
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - name: Add chart repositories
+        # The cogniverse chart declares argo-workflows as a sub-chart
+        # from the official argoproj repo. Register it before
+        # ``helm dependency build`` so the sub-chart can be fetched.
+        run: |
+          helm repo add argo https://argoproj.github.io/argo-helm
+          helm repo update
+
+      - name: helm lint
+        run: helm lint charts/cogniverse
+
+      - name: helm dependency build
+        run: helm dependency build charts/cogniverse
+
+      # Render the full chart (k3s values profile — same manifests the
+      # deployment-lifecycle flow would apply) and validate each manifest
+      # against the published Kubernetes schemas. Catches missing fields,
+      # wrong types, invalid enums, unknown kinds, etc.
+      - name: helm template + kubeconform
+        run: |
+          helm template cogniverse charts/cogniverse \
+            -f charts/cogniverse/values.k3s.yaml \
+            --set argo-workflows.crds.install=false \
+            > /tmp/rendered.yaml
+
+          # --strict flags unknown / deprecated fields
+          # --ignore-missing-schemas skips CRDs (CronWorkflow, WorkflowTemplate)
+          #   whose schemas aren't in the default registry; the dry-run step
+          #   below catches those.
+          kubeconform \
+            --strict \
+            --ignore-missing-schemas \
+            --summary \
+            /tmp/rendered.yaml
+
+      # Server-side dry-run catches things kubeconform can't: NodePort
+      # range validation, webhook conflicts, CRD-backed resources
+      # (CronWorkflow / WorkflowTemplate), namespace/RBAC conflicts.
+      # Runs against a bare kind cluster with Argo CRDs pre-installed —
+      # same install ordering as the real deploy, just no actual pods.
+      - name: Write kind cluster config
+        # The chart declares NodePorts in the 26xxx range, outside the
+        # default 30000-32767. Widen the range via kubeadm config patch
+        # so dry-run=server accepts them. Mirrors what
+        # cogniverse_cli.cluster.create_cluster does for k3d.
+        run: |
+          cat > /tmp/kind-config.yaml <<'EOF'
+          kind: Cluster
+          apiVersion: kind.x-k8s.io/v1alpha4
+          kubeadmConfigPatches:
+            - |
+              kind: ClusterConfiguration
+              apiServer:
+                extraArgs:
+                  service-node-port-range: "1-65535"
+          EOF
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: chart-validation
+          config: /tmp/kind-config.yaml
+          wait: 60s
+
+      - name: Install Argo CRDs
+        run: |
+          kubectl create namespace argo
+          kubectl apply -n argo \
+            -f https://github.com/argoproj/argo-workflows/releases/download/v3.5.8/install.yaml
+          # Wait for CRDs to register
+          kubectl wait --for=condition=established crd/cronworkflows.argoproj.io --timeout=60s
+          kubectl wait --for=condition=established crd/workflowtemplates.argoproj.io --timeout=60s
+
+      - name: helm install --dry-run=server
+        run: |
+          helm install cogniverse charts/cogniverse \
+            -f charts/cogniverse/values.k3s.yaml \
+            --set argo-workflows.crds.install=false \
+            --namespace cogniverse \
+            --create-namespace \
+            --dry-run=server
