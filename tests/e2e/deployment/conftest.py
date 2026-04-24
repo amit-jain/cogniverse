@@ -51,11 +51,14 @@ def _cmd(
 ) -> subprocess.CompletedProcess:
     """Run a command with captured output.
 
-    When ``check=True`` and the command fails, re-raise ``CalledProcessError``
-    with the stderr tail embedded in the message — Python's default
-    ``CalledProcessError`` hides stderr, which makes Helm/k3d fixture
-    failures opaque ("exit status 1" with no context).
+    On failure, prints the captured stdout+stderr tails directly to
+    stdout so pytest's captured-output buffer (and thus the CI log)
+    surfaces the real reason — ``CalledProcessError.stderr`` kwargs
+    don't make it into ``--tb=long`` tracebacks, so without printing
+    we'd only see "returned non-zero exit status 1".
     """
+    import sys
+
     try:
         return subprocess.run(
             args,
@@ -65,18 +68,21 @@ def _cmd(
             check=check,
         )
     except subprocess.CalledProcessError as exc:
-        stderr_tail = (exc.stderr or "").strip()[-1500:]
-        stdout_tail = (exc.stdout or "").strip()[-500:]
-        raise subprocess.CalledProcessError(
-            exc.returncode,
-            exc.cmd,
-            output=exc.stdout,
-            stderr=(
-                f"{stderr_tail}\n--- stdout tail ---\n{stdout_tail}"
-                if stderr_tail or stdout_tail
-                else exc.stderr
-            ),
-        ) from exc
+        stderr_tail = (exc.stderr or "").strip()
+        stdout_tail = (exc.stdout or "").strip()
+        # Separator so the tail stands out in pytest's "Captured stdout"
+        # section next to the usual docstring/traceback noise.
+        print(
+            f"\n========== FAILED: {' '.join(args[:5])}... "
+            f"(exit {exc.returncode}) ==========",
+            file=sys.stdout,
+        )
+        if stderr_tail:
+            print(f"--- stderr (last 3000 chars) ---\n{stderr_tail[-3000:]}")
+        if stdout_tail:
+            print(f"--- stdout (last 1500 chars) ---\n{stdout_tail[-1500:]}")
+        print("=" * 60)
+        raise
 
 
 def _cluster_exists() -> bool:
