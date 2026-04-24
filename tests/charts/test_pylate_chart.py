@@ -1,8 +1,9 @@
 """Chart tests for the generic inference services.
 
 The chart supports N parallel inference services under ``inference`` — each
-entry deploys one pod. Keys are logical tags the deployer chooses
-(``general``, ``code``, ``image``, ``embed``...). Each service has an
+entry deploys one pod. Keys follow ``<family>_<engine>`` so the deployed
+pod's protocol is readable from the key (e.g. ``colbert_pylate`` is a
+pylate FastAPI serving a ColBERT-family model). Each service has an
 ``engine`` (``vllm`` or ``pylate``) and a ``type`` (``multi_vector`` or
 ``single_vector``).
 
@@ -76,84 +77,91 @@ def _service_urls(docs: list[dict]) -> dict[str, str]:
     return json.loads(raw)
 
 
-def test_default_runs_only_general_service():
+def test_default_runs_only_colbert_pylate_service():
     deps = _inference_deployments(_render())
-    assert set(deps.keys()) == {"general"}
-    assert deps["general"]["metadata"]["name"] == "cogniverse-general"
+    assert set(deps.keys()) == {"colbert_pylate"}
+    assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
 
 
-def test_default_general_uses_pylate_with_lateon():
-    """Default general service serves LateOn via pylate; vllm+ModernColBERT is not the default."""
+def test_default_colbert_pylate_uses_pylate_with_lateon():
+    """Default colbert_pylate service serves LateOn via pylate."""
     deps = _inference_deployments(_render())
-    container = deps["general"]["spec"]["template"]["spec"]["containers"][0]
+    container = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
     assert container["image"].startswith("cogniverse/pylate")
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["MODEL_NAME"] == "lightonai/LateOn"
 
 
-def test_default_inference_service_urls_contains_general_only():
+def test_default_inference_service_urls_contains_colbert_pylate_only():
     urls = _service_urls(_render())
-    assert urls == {"general": "http://cogniverse-general:8000"}
+    assert urls == {"colbert_pylate": "http://cogniverse-colbert-pylate:8000"}
 
 
 def test_enabling_code_runs_two_parallel_services():
-    """code and general coexist as independent pods."""
-    docs = _render("inference.code.enabled=true")
+    """code_colbert_pylate and colbert_pylate coexist as independent pods."""
+    docs = _render("inference.code_colbert_pylate.enabled=true")
     deps = _inference_deployments(docs)
-    assert set(deps.keys()) == {"general", "code"}
-    assert deps["general"]["metadata"]["name"] == "cogniverse-general"
-    assert deps["code"]["metadata"]["name"] == "cogniverse-code"
+    assert set(deps.keys()) == {"colbert_pylate", "code_colbert_pylate"}
+    assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
+    assert (
+        deps["code_colbert_pylate"]["metadata"]["name"]
+        == "cogniverse-code-colbert-pylate"
+    )
 
 
 def test_enabling_code_adds_to_url_map():
-    urls = _service_urls(_render("inference.code.enabled=true"))
+    urls = _service_urls(_render("inference.code_colbert_pylate.enabled=true"))
     assert urls == {
-        "general": "http://cogniverse-general:8000",
-        "code": "http://cogniverse-code:8000",
+        "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
+        "code_colbert_pylate": "http://cogniverse-code-colbert-pylate:8000",
     }
 
 
-def test_switching_general_to_vllm_does_not_affect_code():
+def test_switching_colbert_pylate_to_vllm_does_not_affect_code():
     """Flipping one service's engine must not affect another."""
     docs = _render(
-        "inference.code.enabled=true",
-        "inference.general.engine=vllm",
-        "inference.general.model=lightonai/Reason-ModernColBERT",
+        "inference.code_colbert_pylate.enabled=true",
+        "inference.colbert_pylate.engine=vllm",
+        "inference.colbert_pylate.model=lightonai/Reason-ModernColBERT",
     )
     deps = _inference_deployments(docs)
-    general_image = deps["general"]["spec"]["template"]["spec"]["containers"][0][
+    colbert_image = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0][
         "image"
     ]
-    code_image = deps["code"]["spec"]["template"]["spec"]["containers"][0]["image"]
-    assert general_image.startswith("vllm/vllm-openai-cpu")
+    code_image = deps["code_colbert_pylate"]["spec"]["template"]["spec"]["containers"][
+        0
+    ]["image"]
+    assert colbert_image.startswith("vllm/vllm-openai-cpu")
     assert code_image.startswith("cogniverse/pylate")
 
 
 def test_pylate_container_env_pins_model_and_device():
-    docs = _render("inference.general.model=lightonai/LateOn-Code-edge")
+    docs = _render("inference.colbert_pylate.model=lightonai/LateOn-Code-edge")
     deps = _inference_deployments(docs)
-    container = deps["general"]["spec"]["template"]["spec"]["containers"][0]
+    container = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e["value"] for e in container["env"]}
     assert env["MODEL_NAME"] == "lightonai/LateOn-Code-edge"
     assert env["DEVICE"] == "cpu"
     assert env["PORT"] == "8000"
 
 
-def test_disabling_general_drops_service_and_url():
-    docs = _render("inference.general.enabled=false")
+def test_disabling_colbert_pylate_drops_service_and_url():
+    docs = _render("inference.colbert_pylate.enabled=false")
     deps = _inference_deployments(docs)
-    assert "general" not in deps
-    assert "general" not in _service_urls(docs)
+    assert "colbert_pylate" not in deps
+    assert "colbert_pylate" not in _service_urls(docs)
 
 
 def test_service_keys_in_url_map_match_deployment_names():
     """Every deployed service has a matching URL entry."""
     docs = _render(
-        "inference.code.enabled=true",
-        "inference.image.enabled=true",
+        "inference.code_colbert_pylate.enabled=true",
+        "inference.colpali_infinity.enabled=true",
     )
     deps = _inference_deployments(docs)
     urls = _service_urls(docs)
     assert set(deps.keys()) == set(urls.keys())
     for key in deps:
-        assert urls[key].startswith(f"http://cogniverse-{key}")
+        # cogniverse-<key-kebabcased>
+        kebab = key.replace("_", "-")
+        assert urls[key].startswith(f"http://cogniverse-{kebab}")

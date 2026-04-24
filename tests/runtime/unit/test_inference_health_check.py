@@ -65,26 +65,26 @@ def test_collect_profile_bindings_includes_only_remote_profiles():
             "embedding_model": "lightonai/LateOn",
             # no inference_service → local loading, not validated
         },
-        "remote_general": {
+        "remote_colbert_pylate": {
             "embedding_model": "lightonai/Reason-ModernColBERT",
-            "inference_service": "general",
+            "inference_service": "colbert_pylate",
         },
         "remote_code": {
             "embedding_model": "lightonai/LateOn-Code-edge",
-            "inference_service": "code",
+            "inference_service": "code_colbert_pylate",
         },
     }
     bindings = collect_profile_bindings(profiles)
     assert len(bindings) == 2
     names = {b.profile_name for b in bindings}
-    assert names == {"remote_general", "remote_code"}
+    assert names == {"remote_colbert_pylate", "remote_code"}
 
 
 def test_validate_passes_when_served_model_matches():
     bindings = [
-        ProfileBinding("lateon_mv", "general", "lightonai/LateOn"),
+        ProfileBinding("lateon_mv", "colbert_pylate", "lightonai/LateOn"),
     ]
-    urls = {"general": "http://general:8000"}
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
     probes: list[str] = []
 
     def probe(url: str) -> str:
@@ -93,14 +93,14 @@ def test_validate_passes_when_served_model_matches():
 
     # Must not raise.
     validate_inference_services(bindings, urls, probe=probe, sleep=_StubSleep())
-    assert probes == ["http://general:8000"]
+    assert probes == ["http://colbert-pylate:8000"]
 
 
 def test_validate_raises_on_model_mismatch():
     bindings = [
-        ProfileBinding("lateon_mv", "general", "lightonai/LateOn"),
+        ProfileBinding("lateon_mv", "colbert_pylate", "lightonai/LateOn"),
     ]
-    urls = {"general": "http://general:8000"}
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
 
     with pytest.raises(
         InferenceServiceMismatch,
@@ -119,10 +119,12 @@ def test_validate_skips_undeployed_services_with_warning(caplog):
     import logging
 
     bindings = [
-        ProfileBinding("lateon_mv", "general", "lightonai/LateOn"),
-        ProfileBinding("code_lateon_mv", "code", "lightonai/LateOn-Code-edge"),
+        ProfileBinding("lateon_mv", "colbert_pylate", "lightonai/LateOn"),
+        ProfileBinding(
+            "code_lateon_mv", "code_colbert_pylate", "lightonai/LateOn-Code-edge"
+        ),
     ]
-    urls = {"general": "http://general:8000"}
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
 
     with caplog.at_level(logging.WARNING):
         validate_inference_services(
@@ -137,12 +139,14 @@ def test_validate_skips_undeployed_services_with_warning(caplog):
 def test_validate_raises_when_profiles_disagree_on_same_service():
     """Two profiles routing to the same service must agree on the model."""
     bindings = [
-        ProfileBinding("a", "general", "lightonai/LateOn"),
-        ProfileBinding("b", "general", "lightonai/Reason-ModernColBERT"),
+        ProfileBinding("a", "colbert_pylate", "lightonai/LateOn"),
+        ProfileBinding("b", "colbert_pylate", "lightonai/Reason-ModernColBERT"),
     ]
-    urls = {"general": "http://general:8000"}
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
 
-    with pytest.raises(InferenceServiceMismatch, match="disagree on service 'general'"):
+    with pytest.raises(
+        InferenceServiceMismatch, match="disagree on service 'colbert_pylate'"
+    ):
         validate_inference_services(
             bindings, urls, probe=lambda _: "x", sleep=_StubSleep()
         )
@@ -173,8 +177,8 @@ def test_validate_ignores_conflict_on_undeployed_service():
 
 
 def test_validate_retries_when_service_not_ready_then_succeeds():
-    bindings = [ProfileBinding("lateon_mv", "general", "lightonai/LateOn")]
-    urls = {"general": "http://general:8000"}
+    bindings = [ProfileBinding("lateon_mv", "colbert_pylate", "lightonai/LateOn")]
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
     clock = _StubClock()
     sleep = _StubSleep()
 
@@ -198,8 +202,8 @@ def test_validate_retries_when_service_not_ready_then_succeeds():
 
 
 def test_validate_raises_after_boot_deadline():
-    bindings = [ProfileBinding("lateon_mv", "general", "lightonai/LateOn")]
-    urls = {"general": "http://general:8000"}
+    bindings = [ProfileBinding("lateon_mv", "colbert_pylate", "lightonai/LateOn")]
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
     clock = _StubClock()
     sleep = _StubSleep()
 
@@ -225,18 +229,18 @@ def test_validate_raises_after_boot_deadline():
 def test_validate_skipped_when_no_bindings():
     """Profiles without inference_service mean no validation work."""
     validate_inference_services(
-        [], {"general": "http://x"}, probe=lambda _: None, sleep=_StubSleep()
+        [], {"colbert_pylate": "http://x"}, probe=lambda _: None, sleep=_StubSleep()
     )
 
 
 def test_validate_dedupes_shared_service():
     """Many profiles share one service; only probe it once."""
     bindings = [
-        ProfileBinding("a", "general", "lightonai/LateOn"),
-        ProfileBinding("b", "general", "lightonai/LateOn"),
-        ProfileBinding("c", "general", "lightonai/LateOn"),
+        ProfileBinding("a", "colbert_pylate", "lightonai/LateOn"),
+        ProfileBinding("b", "colbert_pylate", "lightonai/LateOn"),
+        ProfileBinding("c", "colbert_pylate", "lightonai/LateOn"),
     ]
-    urls = {"general": "http://general:8000"}
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
     probes: list[str] = []
 
     def probe(url: str) -> str:

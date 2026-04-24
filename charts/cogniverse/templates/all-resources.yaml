@@ -237,15 +237,15 @@ spec:
           {{- else }}
           value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
           {{- end }}
-        # Route semantic text embeddings to the dedicated vLLM embed pod
+        # Route semantic text embeddings to the dedicated vLLM dense pod
         # when enabled (continuous batching, ~10 rps under load). Falls
         # back to the shared Ollama endpoint when the dedicated pod is
         # disabled.
-        {{- if .Values.inference.embed.enabled }}
+        {{- if .Values.inference.dense_vllm.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
-          value: "http://{{ $fullName }}-vllm-embed:{{ .Values.inference.embed.service.port }}"
+          value: "http://{{ $fullName }}-dense-vllm:{{ .Values.inference.dense_vllm.service.port }}"
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
-          value: {{ .Values.inference.embed.model | quote }}
+          value: {{ .Values.inference.dense_vllm.model | quote }}
         {{- else }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
           {{- if .Values.llm.external.enabled }}

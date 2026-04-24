@@ -15,7 +15,7 @@ devMode:
 # embedding (nomic-embed-text) from Ollama so the shared LLM endpoint
 # stays responsive under concurrent load.
 inference:
-  embed:
+  dense_vllm:
     enabled: true
 
 vespa:
@@ -129,12 +129,12 @@ dashboard:
 # Dev overrides: use locally-built images for pylate containers. Applies
 # to any inference service whose engine=pylate.
 inference:
-  general:
+  colbert_pylate:
     pylate:
       image:
         tag: "dev"
         pullPolicy: Never
-  code:
+  code_colbert_pylate:
     pylate:
       image:
         tag: "dev"

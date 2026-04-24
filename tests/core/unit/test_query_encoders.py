@@ -123,19 +123,24 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
     profile_body = {
         "embedding_model": "lightonai/LateOn",
         "model_loader": "colbert",
-        "inference_service": "general",
+        "inference_service": "colbert_pylate",
         "schema_config": {"embedding_dim": 128},
     }
     config = _build_system_config(
         "lateon_mv",
         profile_body,
-        inference_service_urls={"general": "http://cogniverse-general:8000"},
+        inference_service_urls={
+            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
+        },
     )
 
     QueryEncoderFactory.create_encoder(profile="lateon_mv", config=config)
 
     passed_config = mock_get_model.call_args[0][1]
-    assert passed_config["remote_inference_url"] == "http://cogniverse-general:8000"
+    assert (
+        passed_config["remote_inference_url"]
+        == "http://cogniverse-colbert-pylate:8000"
+    )
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
@@ -145,22 +150,25 @@ def test_factory_routes_code_profile_to_code_service(mock_get_model):
     profile_body = {
         "embedding_model": "lightonai/LateOn-Code-edge",
         "model_loader": "colbert",
-        "inference_service": "code",
+        "inference_service": "code_colbert_pylate",
         "schema_config": {"embedding_dim": 48},
     }
     config = _build_system_config(
         "code_lateon_mv",
         profile_body,
         inference_service_urls={
-            "general": "http://cogniverse-general:8000",
-            "code": "http://cogniverse-code:8000",
+            "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
+            "code_colbert_pylate": "http://cogniverse-code-colbert-pylate:8000",
         },
     )
 
     QueryEncoderFactory.create_encoder(profile="code_lateon_mv", config=config)
 
     passed_config = mock_get_model.call_args[0][1]
-    assert passed_config["remote_inference_url"] == "http://cogniverse-code:8000"
+    assert (
+        passed_config["remote_inference_url"]
+        == "http://cogniverse-code-colbert-pylate:8000"
+    )
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
@@ -170,16 +178,18 @@ def test_factory_raises_when_inference_service_not_deployed(mock_get_model):
     profile_body = {
         "embedding_model": "lightonai/LateOn-Code-edge",
         "model_loader": "colbert",
-        "inference_service": "code",
+        "inference_service": "code_colbert_pylate",
         "schema_config": {"embedding_dim": 48},
     }
     config = _build_system_config(
         "code_lateon_mv",
         profile_body,
-        inference_service_urls={"general": "http://cogniverse-general:8000"},
+        inference_service_urls={
+            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
+        },
     )
 
-    with pytest.raises(ValueError, match="inference_service='code'"):
+    with pytest.raises(ValueError, match="inference_service='code_colbert_pylate'"):
         QueryEncoderFactory.create_encoder(profile="code_lateon_mv", config=config)
 
 
@@ -195,7 +205,9 @@ def test_factory_leaves_remote_url_unset_when_inference_service_absent(mock_get_
     config = _build_system_config(
         "document_text_semantic",
         profile_body,
-        inference_service_urls={"general": "http://cogniverse-general:8000"},
+        inference_service_urls={
+            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
+        },
     )
 
     QueryEncoderFactory.create_encoder(profile="document_text_semantic", config=config)
@@ -215,18 +227,20 @@ def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get
             "profile_128": {
                 "embedding_model": "lightonai/LateOn",
                 "model_loader": "colbert",
-                "inference_service": "general",
+                "inference_service": "colbert_pylate",
                 "schema_config": {"embedding_dim": 128},
             },
             "profile_64": {
                 "embedding_model": "lightonai/LateOn",
                 "model_loader": "colbert",
-                "inference_service": "general",
+                "inference_service": "colbert_pylate",
                 "schema_config": {"embedding_dim": 64},
             },
         }
     }
-    sys_config.inference_service_urls = {"general": "http://cogniverse-general:8000"}
+    sys_config.inference_service_urls = {
+        "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
+    }
 
     encoder_a = QueryEncoderFactory.create_encoder(
         profile="profile_128", config=sys_config

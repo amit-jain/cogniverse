@@ -70,7 +70,7 @@ def sync_hf_token_to_cluster(required: bool = False) -> bool:
     Required for deployments that pull gated HuggingFace models
     (EmbeddingGemma, Gemma chat weights, etc.). Safe no-op when the
     token isn't available *unless* ``required=True`` — callers set that
-    when the chart definitely needs the token (e.g. ``inference.embed``
+    when the chart definitely needs the token (e.g. ``inference.dense_vllm``
     enabled with a gated model).
     """
     token = _read_hf_token()

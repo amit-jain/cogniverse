@@ -279,7 +279,7 @@ def up(
             skip_llm=llm_is_external,
         )
     # 5c. Bootstrap secrets the chart references by name. Must happen
-    # BEFORE helm install so gated-model pods (e.g. inference.embed with
+    # BEFORE helm install so gated-model pods (e.g. inference.dense_vllm with
     # google/embeddinggemma-300m) find hf-token at startup.
     from cogniverse_cli.secrets import sync_hf_token_to_cluster
 

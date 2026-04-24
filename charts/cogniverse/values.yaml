@@ -514,7 +514,14 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  image:
+  # ColPali / ColQwen image patch embeddings. Used by profiles with
+  # ``inference_service: "colpali_infinity"`` (video_colpali_smol500_mv_frame,
+  # image_colpali_mv).
+  # DISABLED — the vLLM engine below does NOT load ColIdefics3-arch models
+  # (e.g. vidore/colsmol-500m); follow-up work will switch this block to
+  # ``engine: infinity`` (or ``custom`` via deploy/colpali) before enabling.
+  # See plans memory: project_colpali_vllm_incompat.
+  colpali_infinity:
     enabled: false
     engine: vllm
     model: vidore/colsmol-500m
@@ -554,11 +561,13 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
-  # General-purpose multi-vector text retrieval. Default target for profiles
-  # with ``inference_service: "general"`` (e.g., document_text_semantic,
-  # lateon_mv). Swap between vLLM + Reason-ModernColBERT and pylate + LateOn
-  # by flipping engine + model.
-  general:
+  # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
+  # sidecar (deploy/pylate). Used by profiles with
+  # ``inference_service: "colbert_pylate"`` (e.g., document_text_semantic,
+  # lateon_mv). Swap model via ``model:`` — same pylate pod serves any
+  # ColBERT-family checkpoint. If you want a second ColBERT pod (e.g. for
+  # a different model in parallel), add another entry with a distinct key.
+  colbert_pylate:
     enabled: true
     engine: pylate
     model: lightonai/LateOn
@@ -609,10 +618,11 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
-  # Code-search multi-vector text retrieval. Deployed in parallel with
-  # ``general`` when enabled — independent pods, different models.
-  # Profiles route here via ``inference_service: "code"``.
-  code:
+  # Code-search ColBERT-family multi-vector retrieval (LateOn-Code-edge).
+  # Deployed in parallel with ``colbert_pylate`` when enabled — independent
+  # pods, independent models, same pylate contract. Profiles route here
+  # via ``inference_service: "code_colbert_pylate"``.
+  code_colbert_pylate:
     enabled: false
     engine: pylate
     model: lightonai/LateOn-Code-edge
@@ -661,10 +671,12 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
-  # Dedicated single-vector dense-embedding service. Splits embedding traffic
-  # off the shared Ollama pod (Ollama serializes requests per model, so
-  # embedding calls queue behind LLM token streams).
-  embed:
+  # Dedicated single-vector dense-embedding service (vLLM + EmbeddingGemma
+  # or similar). Splits embedding traffic off the shared Ollama pod
+  # (Ollama serializes requests per model, so embedding calls queue
+  # behind LLM token streams). Profiles route here via
+  # ``inference_service: "dense_vllm"``.
+  dense_vllm:
     enabled: false
     engine: vllm
     type: single_vector
