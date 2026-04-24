@@ -275,7 +275,7 @@ class TestConfigPersistence:
 
         # SystemConfig is global (stored under _system), not per-tenant
         assert len(all_configs) == 2
-        assert "routing:routing_agent:routing_config" in all_configs
+        assert "routing:gateway_agent:routing_config" in all_configs
         assert "telemetry:telemetry:telemetry_config" in all_configs
 
     def test_config_stats(self, config_manager):

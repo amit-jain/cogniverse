@@ -140,9 +140,9 @@ jobs:
     - name: Test agent modules
       run: |
         # Test agent module imports
-        uv run python -c "from cogniverse_agents.routing_agent import RoutingAgent; print('RoutingAgent import successful')"
-
         uv run python -c "from cogniverse_agents.gateway_agent import GatewayAgent; print('GatewayAgent import successful')"
+
+        uv run python -c "from cogniverse_agents.orchestrator_agent import OrchestratorAgent; print('OrchestratorAgent import successful')"
 
         uv run python -c "from cogniverse_agents.entity_extraction_agent import EntityExtractionAgent; print('EntityExtractionAgent import successful')"
 
