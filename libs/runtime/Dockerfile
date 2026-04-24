@@ -73,7 +73,12 @@ RUN if [ "$CPU_ONLY" = "true" ]; then \
 # to get a slim ~7 GB image instead of ~9 GB.
 ARG PREDOWNLOAD_MODELS=true
 ENV HF_HOME=/app/.cache/huggingface
-RUN if [ "$PREDOWNLOAD_MODELS" = "true" ]; then \
+# Ensure /app/.cache exists so the runtime-stage ``COPY --from=builder
+# /app/.cache`` line works even when PREDOWNLOAD_MODELS=false (otherwise
+# BuildKit fails with "calculate checksum of ref ...: /app/.cache: not
+# found" because no step created the directory).
+RUN mkdir -p /app/.cache && \
+    if [ "$PREDOWNLOAD_MODELS" = "true" ]; then \
         .venv/bin/python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
         uv pip install "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"; \
     else \
