@@ -122,14 +122,26 @@ def deployed_stack(k3d_cluster):
     assert chart_path.exists(), f"Chart not found: {chart_path}"
     assert values_file.exists(), f"Values not found: {values_file}"
 
-    # Build and import images
+    # Build and import images. Tests only verify deployment lifecycle
+    # (pod health, helm release) — no agent queries — so CI runs with
+    # CPU-only torch (no CUDA libs) and skip model pre-download to fit
+    # in GHA's 14 GB disk. A developer running this locally can override
+    # by unsetting these env vars.
+    import os as _os
+
+    build_args: list[str] = []
+    if _os.environ.get("CPU_ONLY", "false").lower() in ("1", "true", "yes"):
+        build_args += ["--build-arg", "CPU_ONLY=true"]
+    if _os.environ.get("PREDOWNLOAD_MODELS", "true").lower() in ("0", "false", "no"):
+        build_args += ["--build-arg", "PREDOWNLOAD_MODELS=false"]
+
     for dockerfile, tag in [
         ("libs/runtime/Dockerfile", "cogniverse/runtime:dev"),
         ("libs/dashboard/Dockerfile", "cogniverse/dashboard:dev"),
     ]:
         _cmd(
-            ["docker", "build", "-f", dockerfile, "-t", tag, "."],
-            timeout=600,
+            ["docker", "build", "-f", dockerfile, *build_args, "-t", tag, "."],
+            timeout=900,
         )
     _cmd(
         [

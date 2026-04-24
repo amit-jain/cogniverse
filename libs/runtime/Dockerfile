@@ -45,11 +45,40 @@ RUN uv pip install pylate --no-deps && \
 RUN uv pip install "arize-phoenix-evals<3" && \
     uv pip install -e ./libs/telemetry-phoenix
 
+# Strip CUDA libraries when building for CPU-only deployments. The default
+# torch 2.8.0 wheel bundles ~700 MB of NVIDIA runtime (cudnn, cublas, etc.)
+# in site-packages/nvidia/ plus CUDA-linked libs inside torch/lib. GPU-capable
+# production images keep these; CPU-only images (laptop k3d, deployment
+# lifecycle CI) can drop them for a ~700 MB saving.
+#
+#   docker build --build-arg CPU_ONLY=true ...
+#
+# Default false — preserves GPU path for production deployments that
+# actually schedule pods on GPU nodes.
+ARG CPU_ONLY=false
+RUN if [ "$CPU_ONLY" = "true" ]; then \
+        echo "Installing CPU-only torch (CPU_ONLY=true)" && \
+        uv pip install --reinstall --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 && \
+        rm -rf /app/.venv/lib/python3.12/site-packages/nvidia && \
+        rm -rf /root/.cache/uv /root/.cache/pip ; \
+    fi
+
 # Pre-download ML models so they don't need downloading at runtime.
-# This eliminates startup delays and liveness probe timeouts.
+# This eliminates startup delays and liveness probe timeouts in production
+# and in tests that exercise the agent pipeline.
+#
+# Adds ~1.8 GB (GLiNER + spaCy) to the image. CI paths that only verify
+# health/lifecycle (no agent queries) can skip this with
+#   docker build --build-arg PREDOWNLOAD_MODELS=false
+# to get a slim ~7 GB image instead of ~9 GB.
+ARG PREDOWNLOAD_MODELS=true
 ENV HF_HOME=/app/.cache/huggingface
-RUN .venv/bin/python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
-    uv pip install en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+RUN if [ "$PREDOWNLOAD_MODELS" = "true" ]; then \
+        .venv/bin/python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
+        uv pip install "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"; \
+    else \
+        echo "Skipping model pre-download (PREDOWNLOAD_MODELS=false); models will fetch on first use"; \
+    fi
 
 # Runtime stage
 FROM python:3.12-slim
