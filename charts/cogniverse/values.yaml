@@ -514,48 +514,47 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  # ColPali / ColQwen image patch embeddings. Used by profiles with
+  # ColPali / ColQwen image multi-vector embeddings via Infinity
+  # (michaelfeil/infinity). Used by profiles with
   # ``inference_service: "colpali_infinity"`` (video_colpali_smol500_mv_frame,
-  # image_colpali_mv).
-  # DISABLED — the vLLM engine below does NOT load ColIdefics3-arch models
-  # (e.g. vidore/colsmol-500m); follow-up work will switch this block to
-  # ``engine: infinity`` (or ``custom`` via deploy/colpali) before enabling.
-  # See plans memory: project_colpali_vllm_incompat.
+  # image_colpali_mv). Infinity exposes OpenAI-compatible /v1/embeddings
+  # with multimodal input, which is what RemoteColPaliLoader already
+  # targets. vLLM can't register ColIdefics3 (see memory
+  # project_colpali_vllm_incompat); Infinity is the workaround.
   colpali_infinity:
     enabled: false
-    engine: vllm
+    engine: infinity
     model: vidore/colsmol-500m
     type: multi_vector
     image:
-      repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      repository: michaelf34/infinity
+      tag: "latest"
       pullPolicy: IfNotPresent
-    dtype: float32
     extraArgs: []
     replicaCount: 1
     service:
       type: ClusterIP
-      port: 8000
+      port: 7997
       nodePort: 29001
     resources:
       limits:
         cpu: "4"
-        memory: "4Gi"
+        memory: "6Gi"
       requests:
         cpu: "1"
         memory: "2Gi"
     livenessProbe:
       httpGet:
         path: /health
-        port: 8000
-      initialDelaySeconds: 120
+        port: 7997
+      initialDelaySeconds: 180
       periodSeconds: 30
       timeoutSeconds: 10
       failureThreshold: 5
     readinessProbe:
       httpGet:
         path: /health
-        port: 8000
+        port: 7997
       initialDelaySeconds: 60
       periodSeconds: 15
       timeoutSeconds: 10

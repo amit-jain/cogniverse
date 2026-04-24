@@ -14,9 +14,37 @@ devMode:
 # Enable the dedicated vLLM embedding service — offloads semantic text
 # embedding (nomic-embed-text) from Ollama so the shared LLM endpoint
 # stays responsive under concurrent load.
+# Consolidated inference overrides. YAML won't merge two same-named
+# top-level keys in the same file — a second ``inference:`` block
+# silently clobbers the first — so everything inference-related stays
+# in one block below.
 inference:
   dense_vllm:
     enabled: true
+  # Bring up the Infinity-backed ColPali image-embedding pod on the k3d
+  # laptop so video/image ingestion via colsmol-500m works. CPU-only
+  # limits below target the 49Gi node; bump if adding ColQwen alongside.
+  colpali_infinity:
+    enabled: true
+    resources:
+      limits:
+        cpu: "4"
+        memory: "6Gi"
+      requests:
+        cpu: "2"
+        memory: "3Gi"
+  # Dev override: use locally-built pylate image for the default text pod.
+  colbert_pylate:
+    pylate:
+      image:
+        tag: "dev"
+        pullPolicy: Never
+  # Dev override for the code-search pylate pod (disabled by default).
+  code_colbert_pylate:
+    pylate:
+      image:
+        tag: "dev"
+        pullPolicy: Never
 
 vespa:
   replicaCount: 1
@@ -125,20 +153,6 @@ dashboard:
     limits:
       cpu: "2"
       memory: "4Gi"
-
-# Dev overrides: use locally-built images for pylate containers. Applies
-# to any inference service whose engine=pylate.
-inference:
-  colbert_pylate:
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
-  code_colbert_pylate:
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
 
 phoenix:
   replicaCount: 1

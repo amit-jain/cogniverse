@@ -982,6 +982,37 @@ spec:
           value: {{ $cfg.pylate.containerPort | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+      {{- else if eq $engine "infinity" }}
+      # Infinity (michaelfeil/infinity) — OpenAI-compatible /v1/embeddings
+      # with multimodal input support. Used for ColPali / ColQwen image
+      # multi-vector embeddings where vLLM can't register the arch.
+      - name: infinity
+        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
+        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ default 7997 $cfg.service.port }}
+        env:
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
+        args:
+          - "v2"
+          - "--model-id"
+          - {{ $cfg.model | quote }}
+          - "--port"
+          - {{ default 7997 $cfg.service.port | quote }}
+          - "--host"
+          - "0.0.0.0"
+          {{- range $cfg.extraArgs }}
+          - {{ . | quote }}
+          {{- end }}
       {{- else }}
       - name: vllm
         image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
