@@ -162,13 +162,12 @@ def deployed_stack(k3d_cluster):
         timeout=300,
     )
 
-    # Install Argo CRDs (chart references CronWorkflow resources)
-    from cogniverse_cli.argo import install_argo_controller
-
-    try:
-        install_argo_controller(namespace="argo")
-    except Exception as e:
-        pytest.fail(f"Argo controller install failed: {e}")
+    # Argo CRDs come from the ``argo-workflows`` sub-chart bundled in the
+    # cogniverse chart — installing them separately via install_argo_controller
+    # first creates them without Helm's ownership metadata, which then causes
+    # ``helm install`` to fail with "CustomResourceDefinition exists and
+    # cannot be imported into the current release". Letting the chart's
+    # sub-chart install them is the single source of truth.
 
     # Helm install
     _cmd(
