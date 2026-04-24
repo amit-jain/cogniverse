@@ -38,7 +38,6 @@ skip_if_no_runtime = pytest.mark.skipif(
 class TestRuntimeClientIntegration:
     """Test RuntimeClient against real runtime API."""
 
-    @pytest.mark.asyncio
     async def test_health_check(self):
         client = RuntimeClient(RUNTIME_URL)
         try:
@@ -47,7 +46,6 @@ class TestRuntimeClientIntegration:
         finally:
             await client.close()
 
-    @pytest.mark.asyncio
     async def test_dispatch_gateway_agent(self):
         """Dispatch a query to gateway_agent via real runtime."""
         client = RuntimeClient(RUNTIME_URL)
@@ -66,7 +64,6 @@ class TestRuntimeClientIntegration:
         finally:
             await client.close()
 
-    @pytest.mark.asyncio
     async def test_dispatch_search_agent(self):
         """Dispatch a search query via real runtime."""
         client = RuntimeClient(RUNTIME_URL)
@@ -89,7 +86,6 @@ class TestRuntimeClientIntegration:
 class TestInviteTokenIntegration:
     """Test invite token creation via real admin API."""
 
-    @pytest.mark.asyncio
     async def test_create_invite_token_via_api(self):
         """Create invite token through the admin endpoint."""
         client = RuntimeClient(RUNTIME_URL)
@@ -109,7 +105,6 @@ class TestInviteTokenIntegration:
 class TestMessageHandlingIntegration:
     """Test message handling flow with real runtime."""
 
-    @pytest.mark.asyncio
     async def test_full_message_flow(self):
         """Parse command → dispatch to runtime → format response."""
         parsed = parse_message(text="/search videos of cats playing")
@@ -131,7 +126,6 @@ class TestMessageHandlingIntegration:
         finally:
             await client.close()
 
-    @pytest.mark.asyncio
     async def test_plain_text_routes_through_gateway_agent(self):
         """Plain text → gateway_agent → response formatted."""
         parsed = parse_message(text="What videos do you have about cooking?")

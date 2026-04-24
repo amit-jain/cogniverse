@@ -23,6 +23,37 @@ from pathlib import Path
 import httpx
 import pytest
 
+
+def pytest_collection_modifyitems(items):
+    """Run pytest-asyncio tests before pytest-playwright tests.
+
+    pytest-playwright drives the browser synchronously on top of the async
+    Playwright API, and on teardown leaves an asyncio event loop registered.
+    The next async test (typically in test_messaging_gateway_e2e.py) then
+    fails inside pytest-asyncio's ``Runner.run()`` with ``cannot be called
+    from a running event loop``. Ordering pure-async tests first avoids the
+    collision at session-scope without needing nest_asyncio (which doesn't
+    patch asyncio.Runner) or a separate pytest invocation.
+    """
+
+    def _priority(item):
+        path = str(item.fspath)
+        if "test_dashboard_e2e" in path:  # playwright lives here
+            return 2
+        # Pure async tests that would trip over the playwright loop:
+        if any(
+            mark in path
+            for mark in (
+                "test_messaging_gateway_e2e",
+                "test_tenant_extensibility_e2e",
+                "test_wiki_e2e",
+            )
+        ):
+            return 0
+        return 1
+
+    items.sort(key=_priority)
+
 # k3d NodePort URLs — defined in charts/cogniverse/values.yaml
 RUNTIME = "http://localhost:28000"  # runtime.service.nodePort
 DASHBOARD = "http://localhost:28501"  # dashboard.service.nodePort
