@@ -162,20 +162,34 @@ def deployed_stack(k3d_cluster):
         timeout=300,
     )
 
-    # Argo CRDs come from the ``argo-workflows`` sub-chart bundled in the
-    # cogniverse chart — installing them separately via install_argo_controller
-    # first creates them without Helm's ownership metadata, which then causes
-    # ``helm install`` to fail with "CustomResourceDefinition exists and
-    # cannot be imported into the current release". Letting the chart's
-    # sub-chart install them is the single source of truth.
+    # Argo CRD chicken-and-egg: the main cogniverse chart references
+    # CronWorkflow / WorkflowTemplate (argoproj.io/v1alpha1) resources.
+    # Helm validates ALL manifests before any install step, so the
+    # bundled argo-workflows sub-chart's CRDs aren't "live" when Helm
+    # checks the main chart's CronWorkflow templates. Result:
+    #   Error: resource mapping not found for kind "CronWorkflow"
+    #   in version "argoproj.io/v1alpha1" — ensure CRDs are installed first.
+    #
+    # Solution: install the Argo CRDs before ``helm install``, and tell
+    # the sub-chart not to install them itself (which would otherwise
+    # fail with a release-ownership conflict).
+    from cogniverse_cli.argo import install_argo_controller
 
-    # Helm install
+    try:
+        install_argo_controller(namespace="argo")
+    except Exception as e:
+        pytest.fail(f"Argo controller install failed: {e}")
+
+    # Helm install (with argo-workflows.crds.install=false so the
+    # sub-chart doesn't reinstall the CRDs we just laid down)
     _cmd(
         [
             "helm",
             "install",
             "cogniverse",
             str(chart_path),
+            "--set",
+            "argo-workflows.crds.install=false",
             "--namespace",
             NAMESPACE,
             "--create-namespace",
