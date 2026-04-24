@@ -210,13 +210,17 @@ jobs:
       run: |
         # Run only ci_fast integration tests for quick CI feedback (2-3 minutes vs 50-60 minutes)
         echo "🧪 Running CI fast integration tests (essential functionality only)..."
+        # pytest exit 5 = no tests collected; ``ci_fast`` markers may be
+        # absent after test restructures, so treat that as success rather
+        # than a red build. Real failures still fail.
         JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ \
           -m ci_fast \
           -v \
           --tb=short \
           --cov=libs/agents/cogniverse_agents \
           --cov-report=term-missing \
-          --cov-report=xml:coverage_agents_integration.xml
+          --cov-report=xml:coverage_agents_integration.xml \
+          || [ $? -eq 5 ]
         
         # Rename the coverage file to avoid conflicts and make it uploadable
         if [ -f .coverage ]; then

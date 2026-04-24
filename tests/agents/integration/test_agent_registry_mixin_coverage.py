@@ -60,6 +60,7 @@ _AGENTS_WITHOUT_MEMORY = {
 
 
 @pytest.mark.integration
+@pytest.mark.ci_fast
 class TestAgentRegistryMixinCoverage:
     def test_at_least_some_agents_discovered(self):
         """Sanity check the discovery itself: there must be at least
