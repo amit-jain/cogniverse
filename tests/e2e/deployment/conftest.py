@@ -1,7 +1,14 @@
-"""Session-scoped fixtures for CLI integration tests.
+"""Session-scoped fixtures for deployment-lifecycle e2e tests.
 
-Creates a real k3d cluster once per test session with isolated ports.
-Teardown deletes the cluster after all tests complete.
+Creates its own isolated k3d cluster with offset ports (51xxx) so the
+tests stand up a real deployment and verify it end-to-end, independent
+of any ``cogniverse up`` cluster the developer may already have
+running.
+
+The parent ``tests/e2e/conftest.py`` has a session-scoped autouse
+``e2e_stack`` fixture that expects a pre-existing cluster — we override
+it here with a no-op so this subsuite can manage its own lifecycle
+without being short-circuited.
 
 Requires: docker, k3d, kubectl, helm installed.
 """
@@ -10,6 +17,19 @@ import subprocess
 import time
 
 import pytest
+
+
+@pytest.fixture(scope="session", autouse=True)
+def e2e_stack():
+    """Override the parent ``tests/e2e/conftest.py`` autouse ``e2e_stack``.
+
+    The parent fixture assumes a running ``cogniverse up`` stack. Tests in
+    this directory create their own k3d cluster via ``deployed_stack``
+    below, so the parent check would either skip them incorrectly or
+    collide with the self-managed cluster. Yielding a no-op disables the
+    parent's check for this subsuite only."""
+    yield
+
 
 CLUSTER_NAME = "cogniverse-test"
 NAMESPACE = "cogniverse-test"
@@ -29,9 +49,34 @@ PORTS = {
 def _cmd(
     args: list[str], *, timeout: int = 120, check: bool = True
 ) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args, capture_output=True, text=True, timeout=timeout, check=check
-    )
+    """Run a command with captured output.
+
+    When ``check=True`` and the command fails, re-raise ``CalledProcessError``
+    with the stderr tail embedded in the message — Python's default
+    ``CalledProcessError`` hides stderr, which makes Helm/k3d fixture
+    failures opaque ("exit status 1" with no context).
+    """
+    try:
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=check,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = (exc.stderr or "").strip()[-1500:]
+        stdout_tail = (exc.stdout or "").strip()[-500:]
+        raise subprocess.CalledProcessError(
+            exc.returncode,
+            exc.cmd,
+            output=exc.stdout,
+            stderr=(
+                f"{stderr_tail}\n--- stdout tail ---\n{stdout_tail}"
+                if stderr_tail or stdout_tail
+                else exc.stderr
+            ),
+        ) from exc
 
 
 def _cluster_exists() -> bool:

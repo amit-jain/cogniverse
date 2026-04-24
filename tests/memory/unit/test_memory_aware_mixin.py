@@ -167,6 +167,7 @@ class TestMemoryAwareMixin:
             tenant_id="test_tenant",
             agent_name="test_agent",
             metadata=None,
+            infer=True,
         )
 
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")

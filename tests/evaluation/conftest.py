@@ -661,6 +661,10 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
             backend_port=eval_vespa_instance["http_port"],
         )
     )
+    # The evaluation e2e tests issue requests with tenant_id="test:unit".
+    # Profiles are namespaced by tenant, so register the test profile under
+    # that same tenant — otherwise the search request would look up the
+    # profile under "test:unit" and find nothing.
     cm.add_backend_profile(
         BackendProfileConfig(
             profile_name="test_colpali",
@@ -668,6 +672,7 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model=EVAL_COLPALI_MODEL,
         ),
+        tenant_id="test:unit",
     )
 
     schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)

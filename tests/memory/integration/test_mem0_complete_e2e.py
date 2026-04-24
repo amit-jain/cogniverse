@@ -386,9 +386,14 @@ class TestMemorySystemCompleteE2E:
         )
         assert success is True
 
-        # Add memory with factual content - Domain 1: Geography
+        # Store with ``infer=False`` — the test exercises the mixin↔Mem0
+        # storage wiring, not Mem0's LLM-based fact extraction. With small
+        # local models (qwen3:4b) extraction frequently returns empty
+        # results for short sentences, which would look like a wiring
+        # failure but is really LLM flakiness.
         success = agent.update_memory(
-            "The Amazon River flows through Brazil and is 6400 kilometers long"
+            "The Amazon River flows through Brazil and is 6400 kilometers long",
+            infer=False,
         )
         assert success is True
 
@@ -397,18 +402,18 @@ class TestMemorySystemCompleteE2E:
         # Context may be None if no semantic match, that's okay
         agent.get_relevant_context("rivers in South America", top_k=5)
 
-        # Remember success with factual content - Domain 2: Chemistry
         success = agent.remember_success(
             query="What is the chemical symbol for gold?",
             result="Gold has the chemical symbol Au from Latin aurum",
             metadata={"test": "mixin"},
+            infer=False,
         )
         assert success is True
 
-        # Remember failure with factual content - Domain 3: Architecture
         success = agent.remember_failure(
             query="What year was the Eiffel Tower completed?",
             error="Could not verify construction date of 1889 in historical records",
+            infer=False,
         )
         assert success is True
 

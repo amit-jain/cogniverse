@@ -548,8 +548,17 @@ class AgentDispatcher:
             self._search_agent_cache = cache
         agent = cache.get(profile)
         if agent is None:
+            # SearchAgentDeps.backend_url defaults to "http://localhost" if
+            # not set — that's the pod itself, never Vespa. Read the real
+            # backend URL from system config, same as the capability-based
+            # dispatch path above.
+            system_config = self._config_manager.get_system_config()
             agent = SearchAgent(
-                deps=SearchAgentDeps(profile=profile),
+                deps=SearchAgentDeps(
+                    profile=profile,
+                    backend_url=system_config.backend_url,
+                    backend_port=system_config.backend_port,
+                ),
                 schema_loader=self._schema_loader,
                 config_manager=self._config_manager,
             )

@@ -465,12 +465,18 @@ class StrategyLearner:
         except Exception as e:
             logger.debug(f"Dedup search failed (non-fatal): {e}")
 
-        # Store the strategy under the agent-specific namespace
+        # Store the strategy under the agent-specific namespace. Strategies
+        # are pre-curated fact text (output of the distillation step), so
+        # store them verbatim — no LLM re-extraction. With ``infer=True``
+        # small local models frequently refuse to extract facts from short
+        # structured text and Mem0 returns empty results, which would look
+        # like a storage failure to the caller.
         self.memory_manager.add_memory(
             content=strategy.to_memory_content(),
             tenant_id=strategy.tenant_id,
             agent_name=agent_namespace,
             metadata=strategy.to_metadata(),
+            infer=False,
         )
         logger.info(
             f"Stored {strategy.level}-level {strategy.source} strategy "

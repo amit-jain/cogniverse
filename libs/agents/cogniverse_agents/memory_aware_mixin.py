@@ -190,7 +190,10 @@ class MemoryAwareMixin:
             return None
 
     def update_memory(
-        self, content: str, metadata: Optional[Dict[str, Any]] = None
+        self,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
     ) -> bool:
         """
         Add content to agent's memory
@@ -198,6 +201,11 @@ class MemoryAwareMixin:
         Args:
             content: Content to store
             metadata: Optional metadata
+            infer: If True (default), Mem0 runs an LLM extraction pass
+                before storing. Pass ``infer=False`` to store verbatim
+                when content is already a curated factual statement —
+                this avoids empty results from small local LLMs that
+                can't reliably extract facts from short sentences.
 
         Returns:
             Success status
@@ -214,6 +222,7 @@ class MemoryAwareMixin:
                 tenant_id=self._memory_tenant_id,
                 agent_name=self._memory_agent_name,
                 metadata=metadata,
+                infer=infer,
             )
 
             if memory_id:
@@ -378,7 +387,11 @@ class MemoryAwareMixin:
         return "\n\n".join(parts)
 
     def remember_success(
-        self, query: str, result: Any, metadata: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        result: Any,
+        metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
     ) -> bool:
         """
         Remember a successful interaction
@@ -387,6 +400,8 @@ class MemoryAwareMixin:
             query: The query that was successful
             result: The result that was produced
             metadata: Optional metadata about the success
+            infer: Passed through to ``update_memory``. Default True
+                preserves LLM-based fact extraction.
 
         Returns:
             Success status
@@ -399,10 +414,14 @@ class MemoryAwareMixin:
             f"SUCCESS - Successfully answered: {query}. The answer was: {result}"
         )
 
-        return self.update_memory(success_content, metadata)
+        return self.update_memory(success_content, metadata, infer=infer)
 
     def remember_failure(
-        self, query: str, error: str, metadata: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        error: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        infer: bool = True,
     ) -> bool:
         """
         Remember a failed interaction to avoid repeating mistakes
@@ -411,6 +430,8 @@ class MemoryAwareMixin:
             query: The query that failed
             error: Error message or description
             metadata: Optional metadata about the failure
+            infer: Passed through to ``update_memory``. Default True
+                preserves LLM-based fact extraction.
 
         Returns:
             Success status
@@ -423,7 +444,7 @@ class MemoryAwareMixin:
             f"FAILURE - Failed attempt: {query}. Error encountered: {error}"
         )
 
-        return self.update_memory(failure_content, metadata)
+        return self.update_memory(failure_content, metadata, infer=infer)
 
     def get_memory_summary(self) -> Dict[str, Any]:
         """

@@ -147,6 +147,10 @@ def vespa_instance():
                 backend_port=container_info["http_port"],
             )
         )
+        # Register profile under "test:unit" to match the other fixtures in
+        # this file (``test_generator_config``, ``backend_config``) which
+        # share that tenant. Tests that need a different tenant register
+        # their own profile at runtime.
         cm.add_backend_profile(
             BackendProfileConfig(
                 profile_name="video_colpali_smol500_mv_frame",
@@ -154,6 +158,7 @@ def vespa_instance():
                 schema_name="video_colpali_smol500_mv_frame",
                 embedding_model="vidore/colsmol-500m",
             ),
+            tenant_id="test:unit",
         )
 
         logger.info("Routing Vespa ready for integration tests")

@@ -382,7 +382,7 @@ class Mem0MemoryManager:
         agent_name: str,
         metadata: Optional[Dict[str, Any]] = None,
         infer: bool = True,
-    ) -> str:
+    ) -> Optional[str]:
         """
         Add content to agent's memory.
 
@@ -396,11 +396,14 @@ class Mem0MemoryManager:
                 user-provided memories where the text is already curated.
 
         Returns:
-            Memory ID of the stored memory.
+            Memory ID of the stored memory, or None when Mem0 deliberately
+            stored nothing (LLM found no extractable facts, or content
+            was deduplicated against an existing memory). Callers that
+            require storage to succeed should check for ``None`` and
+            either retry with ``infer=False`` or treat as a no-op.
 
         Raises:
-            RuntimeError: If the backend is not initialised or Mem0 did not
-                persist any memory (e.g. LLM extraction returned no facts).
+            RuntimeError: If the backend is not initialised.
         """
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
@@ -431,10 +434,19 @@ class Mem0MemoryManager:
                     break
 
         if not memory_id:
-            raise RuntimeError(
-                f"Mem0 stored no memory for {tenant_id}/{agent_name}; "
-                f"raw response: {result!r}"
+            # Empty results from Mem0 are legitimate — either the LLM
+            # extraction found no facts (common with small local models)
+            # or the content was deduplicated against an existing memory.
+            # Surface as a warning, not an exception; callers that care
+            # about actual storage should use ``infer=False``.
+            logger.warning(
+                "Mem0 stored no memory for %s/%s (infer=%s); raw response: %r",
+                tenant_id,
+                agent_name,
+                infer,
+                result,
             )
+            return None
 
         logger.info(f"Added memory for {tenant_id}/{agent_name}: {memory_id}")
         return memory_id

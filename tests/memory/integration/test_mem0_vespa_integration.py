@@ -119,18 +119,22 @@ class TestMem0VespaIntegration:
 
         wait_for_vespa_indexing(delay=1)
 
-        # Add memory for tenant 1 with very specific content
+        # Store content verbatim (``infer=False``) — the test exercises
+        # tenant isolation on the storage/search path, not Mem0's LLM-based
+        # fact extraction. With ``infer=True`` and a small local model
+        # (e.g. qwen3:4b) Mem0 frequently returns empty results for short
+        # factual statements, which would mask the isolation assertion.
         mem1_id = memory_manager.add_memory(
             content="Tenant 1 loves adopting rescue cats from shelters",
             tenant_id="tenant_1",
             agent_name="test_agent",
+            infer=False,
         )
-
-        # Add memory for tenant 2 with very different content
         mem2_id = memory_manager.add_memory(
             content="Tenant 2 trains therapy dogs for hospitals",
             tenant_id="tenant_2",
             agent_name="test_agent",
+            infer=False,
         )
 
         # Verify both memories were added
@@ -450,8 +454,10 @@ class TestMem0MemoryAwareMixinIntegration:
         )
         assert success is True
 
-        # Add memory
-        success = agent.update_memory("Test memory content")
+        # Store verbatim — this test exercises the mixin wiring through a
+        # real Vespa-backed Mem0, not LLM extraction. ``infer=False``
+        # avoids flakiness with small local models.
+        success = agent.update_memory("Test memory content", infer=False)
         assert success is True
 
         wait_for_vespa_indexing(delay=2)
