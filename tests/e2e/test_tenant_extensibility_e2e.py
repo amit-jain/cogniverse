@@ -502,11 +502,20 @@ class TestJobExecution:
 
         urls_called = [c["url"] for c in call_log]
 
+        # The runtime's job executor classifies the query and dispatches to
+        # whichever agent the gateway picks. Complex queries (research,
+        # comparison) hand off directly to orchestrator_agent; simpler
+        # queries route through gateway_agent. Either path is correct so
+        # long as exactly one main-query dispatch happened.
         agent_calls = [
-            c for c in call_log if "/agents/gateway_agent/process" in c["url"]
+            c
+            for c in call_log
+            if "/agents/gateway_agent/process" in c["url"]
+            or "/agents/orchestrator_agent/process" in c["url"]
         ]
         assert len(agent_calls) == 1, (
-            f"Expected 1 gateway_agent call (main query only), got {len(agent_calls)}: {urls_called}"
+            f"Expected 1 gateway/orchestrator call (main query only), "
+            f"got {len(agent_calls)}: {urls_called}"
         )
         assert (
             agent_calls[0]["payload"]["query"]
@@ -589,11 +598,19 @@ class TestJobExecution:
 
         urls_called = [c["url"] for c in call_log]
 
+        # Both the main query and the post-action ``summarize`` go through
+        # the runtime's agent dispatch — gateway_agent for simple queries,
+        # orchestrator_agent for complex / multi-step ones. Either is a
+        # valid agent-dispatch call as long as both happen.
         agent_calls = [
-            c for c in call_log if "/agents/gateway_agent/process" in c["url"]
+            c
+            for c in call_log
+            if "/agents/gateway_agent/process" in c["url"]
+            or "/agents/orchestrator_agent/process" in c["url"]
         ]
         assert len(agent_calls) == 2, (
-            f"Expected 2 agent calls (main query + summarize), got {len(agent_calls)}: {urls_called}"
+            f"Expected 2 gateway/orchestrator calls (main query + summarize), "
+            f"got {len(agent_calls)}: {urls_called}"
         )
 
         telegram_calls = [c for c in call_log if "/messaging/send" in c["url"]]
