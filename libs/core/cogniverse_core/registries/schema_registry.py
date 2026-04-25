@@ -493,7 +493,13 @@ class SchemaRegistry:
             # Now deployment won't wipe existing schemas
             deploy_package(app_package)
         """
-        # Return schemas from in-memory registry
+        try:
+            self._load_schemas_from_storage()
+        except Exception as exc:
+            logger.warning(
+                f"get_tenant_schemas: refresh from storage failed, "
+                f"falling back to in-memory cache: {exc}"
+            )
         return [
             schema_info
             for (tid, _), schema_info in self._schemas.items()
