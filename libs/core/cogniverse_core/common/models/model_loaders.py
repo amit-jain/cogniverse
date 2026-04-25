@@ -142,11 +142,16 @@ class RemoteInferenceClient:
                 **kwargs,
             }
 
-            # Send request
+            # Send request. CPU-only ColPali on a single keyframe sequence
+            # routinely runs 5-15 min on a laptop (no GPU); 300s wasn't
+            # enough to clear even a small image batch and the retry loop
+            # would burn 15 min before giving up. 1800s (30 min) covers
+            # batched video keyframes; tighter budgets manifest as silent
+            # data loss (0 documents fed) under load.
             response = self.session.post(
                 f"{self.endpoint_url}/v1/embeddings",
                 json=payload,
-                timeout=300,  # 5 minutes for large batches
+                timeout=1800,
             )
             response.raise_for_status()
 
