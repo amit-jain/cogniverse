@@ -956,12 +956,16 @@ class TestConfigManagement:
         click_sub_tab(page, "Import/Export")
         page.wait_for_load_state("networkidle")
 
-        # Verify Export button and click it to trigger export
-        export_btn = page.locator('button:has-text("Export")')
+        # The full text of the Import/Export sub-tab's button is
+        # "📥 Export Configurations". A bare 'has-text("Export")' selector
+        # matches sibling sub-tab panels too (Streamlit renders all sub-tabs
+        # in the DOM and only hides inactive ones), so the JS click in
+        # click_button() can target a hidden button whose React handler
+        # doesn't fire. Use the precise text + a Playwright native click so
+        # Streamlit picks up the rerun.
+        export_btn = page.get_by_role("button", name="📥 Export Configurations")
         assert export_btn.count() > 0, "Export Configurations button should be present"
-
-        # Click Export and verify outcome
-        click_button(page, "Export")
+        export_btn.first.click()
         page.wait_for_timeout(INTERACTION_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
