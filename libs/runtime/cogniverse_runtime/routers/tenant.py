@@ -72,6 +72,28 @@ def _require_config_manager() -> ConfigManager:
     return _config_manager
 
 
+# Path k8s injects the runtime pod's ServiceAccount token at. argo-server
+# in ``--auth-mode=server`` validates the bearer token via the TokenReview
+# API, so the runtime forwards its own SA token; no separate Argo client
+# secret is needed.
+_K8S_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+
+def _argo_auth_headers() -> Dict[str, str]:
+    """Bearer-auth headers for Argo API calls.
+
+    Reads the runtime pod's ServiceAccount token at request time so a token
+    rotation by kubelet doesn't strand a long-lived header. Returns an empty
+    dict outside the cluster (no token file → tests / local dev).
+    """
+    try:
+        with open(_K8S_SA_TOKEN_PATH, "r", encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError:
+        return {}
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 class InstructionsRequest(BaseModel):
     text: str
 
@@ -477,6 +499,7 @@ async def _submit_cron_workflow(manifest: dict) -> None:
             response = await client.post(
                 f"{_argo_api_url}/api/v1/cronworkflows/{namespace}",
                 json=manifest,
+                headers=_argo_auth_headers(),
             )
             if response.status_code in (200, 201):
                 name = manifest["metadata"]["name"]
@@ -578,6 +601,7 @@ async def _submit_workflow(manifest: dict) -> dict:
             response = await client.post(
                 f"{_argo_api_url}/api/v1/workflows/{namespace}",
                 json={"workflow": manifest},
+                headers=_argo_auth_headers(),
             )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -703,6 +727,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 f"{_argo_api_url}/api/v1/workflows/{_argo_namespace}/{workflow_name}",
+                headers=_argo_auth_headers(),
             )
     except httpx.HTTPError as exc:
         raise HTTPException(
@@ -745,7 +770,11 @@ async def _argo_workflow_action(
     )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.put(url, json={"name": workflow_name})
+            response = await client.put(
+                url,
+                json={"name": workflow_name},
+                headers=_argo_auth_headers(),
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502,

@@ -14,6 +14,38 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+---
+# RBAC so the runtime can submit workflows + cronworkflows to argo-server
+# (auth-mode=server forwards the bearer token through TokenReview, then
+# delegates k8s API calls back to the caller's SA, so the SA itself needs
+# argoproj permissions).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cogniverse.serviceAccountName" . }}-argo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows", "workflowtemplates", "cronworkflows"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cogniverse.serviceAccountName" . }}-argo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cogniverse.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "cogniverse.serviceAccountName" . }}-argo
+  apiGroup: rbac.authorization.k8s.io
 {{- end }}
 ---
 # Vespa StatefulSet
