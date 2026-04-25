@@ -14,10 +14,11 @@
 3. [Configuration System](#configuration-system)
 4. [Memory Management](#memory-management)
 5. [Tenant Utilities](#tenant-utilities)
-6. [Dynamic DSPy Integration](#dynamic-dspy-integration)
-7. [Usage Examples](#usage-examples)
-8. [Production Considerations](#production-considerations)
-9. [Testing](#testing)
+6. [Media Access](#media-access)
+7. [Dynamic DSPy Integration](#dynamic-dspy-integration)
+8. [Usage Examples](#usage-examples)
+9. [Production Considerations](#production-considerations)
+10. [Testing](#testing)
 
 ---
 
@@ -46,6 +47,7 @@ libs/core/cogniverse_core/
 │   ├── agent_models.py              # Agent data models
 │   ├── document.py                  # Document models
 │   ├── cache/                       # Caching infrastructure
+│   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
 │   ├── models/                      # Model loaders (VideoPrism, etc.)
 │   └── utils/                       # Utility functions
 ├── memory/                           # Memory management
@@ -772,6 +774,120 @@ try:
 except ValueError as e:
     print(f"Error: {e}")
 ```
+
+---
+
+## Media Access
+
+**Location:** `libs/core/cogniverse_core/common/media/`
+
+`MediaLocator` is the single abstraction for video file access used by both the
+ingestion pipeline (write side, populating Vespa `source_url`) and the
+evaluation read path (visual judge fetching frames). It dispatches by URI
+scheme and returns a real local `Path` — cv2, ffmpeg, and whisper all need a
+filesystem path, not a file-like object, so the locator handles fetch-to-disk
+when the source is remote.
+
+### Supported URI schemes
+
+| Scheme | Behavior | Use case |
+| --- | --- | --- |
+| `file://<path>` (or bare path) | Identity — returns the path; no copy, no cache. | Local development. |
+| `pvc://<volume>/<rest>` | Translates to `<config.pvc_mount_root>/<volume>/<rest>`; no copy. | Kubernetes deployments with a PersistentVolume mounted at `/mnt`. |
+| `s3://<bucket>/<key>` | Fetched via fsspec + s3fs; cached in the tenant-scoped local cache. | AWS S3 and S3-compatible object stores (MinIO, R2, B2). |
+| `http://...`, `https://...` | Fetched via fsspec + aiohttp; cached. | Test fixtures, public mirrors. |
+
+### Configuration
+
+The locator reads its config from the `media` section of the application
+config (or accepts a `MediaConfig` directly):
+
+```jsonc
+"media": {
+  "default_uri_scheme": "file",        // file | s3 | pvc
+  "uri_prefix": "",                    // e.g., "s3://corpus/" or "pvc://media/"
+  "pvc_mount_root": "/mnt",
+  "cache": {
+    "base_dir": null,                  // null → tenant-scoped tempdir
+    "max_bytes_gb": 50,
+    "ttl_days": 7
+  },
+  "backends": {
+    "s3": {
+      "endpoint_url": null,            // set to a MinIO endpoint for self-hosted
+      "region": "us-east-1",
+      "anon": false
+    },
+    "http": { "timeout_s": 60 }
+  }
+}
+```
+
+`MediaLocator.to_canonical_uri(raw)` produces the URI string written into the
+Vespa `source_url` field at ingest time:
+
+- If `raw` already contains `://`, it is returned unchanged.
+- If `uri_prefix` is set, the prefix is joined with `raw` (absolute paths are
+  reduced to their basename).
+- Otherwise: `file://<absolute>` when `default_uri_scheme` is `"file"`, or
+  `<default_uri_scheme>://<basename>` for any other scheme.
+
+### Cache layout
+
+The cache is content-addressed by `sha256(uri || etag)`, tenant-scoped via
+`get_tenant_storage_path`, and laid out as
+`<base>/<tenant>/media/<key[:2]>/<key>/<basename>`. The original basename is
+preserved so cv2 / ffmpeg can sniff codec by extension. Writes go through
+`<base>/.staging/<uuid>` and are promoted via `os.replace` for atomicity. LRU
+eviction by `atime` triggers when total bytes exceed `max_bytes_gb`.
+
+### Local development
+
+The default `MediaConfig()` produces `file://`-only behavior — no caching, no
+network access, identical to the pre-locator workflow. Existing
+`data/testset/...` setups are unchanged.
+
+### MinIO / S3-compatible setup
+
+To point the locator at a self-hosted MinIO instance:
+
+```python
+from cogniverse_core.common.media import (
+    MediaConfig,
+    MediaCacheConfig,
+    S3BackendConfig,
+    MediaLocator,
+)
+
+config = MediaConfig(
+    default_uri_scheme="s3",
+    uri_prefix="s3://corpus/",
+    s3=S3BackendConfig(endpoint_url="http://minio:9000", anon=False),
+    cache=MediaCacheConfig(max_bytes_gb=20),
+)
+locator = MediaLocator(tenant_id="acme:prod", config=config)
+local_path = locator.localize("s3://corpus/v_abc.mp4")  # cached locally
+```
+
+S3 credentials are picked up from the standard AWS environment variables
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) or IRSA when the pod is on EKS.
+
+### Adding a new backend
+
+fsspec supports `gs://` (via `gcsfs`) and `az://` (via `adlfs`) out of the
+box — adding them is a matter of installing the optional dependency and
+configuring credentials, no code change in the locator.
+
+### Tests
+
+| File | Coverage |
+| --- | --- |
+| `tests/core/unit/test_media_cache.py` | Content-addressed keys, atomic put, LRU eviction, atime bumping. |
+| `tests/core/unit/test_media_locator.py` | URI canonicalization, file:// / pvc:// dispatch, list enumeration, tenant isolation. |
+| `tests/core/unit/test_media_http.py` | http:// fetch + cache hit on second access (real `http.server` fixture). |
+
+Integration tests against a real MinIO instance arrive in phase 5 of the
+[unified MediaLocator rollout](#).
 
 ---
 
