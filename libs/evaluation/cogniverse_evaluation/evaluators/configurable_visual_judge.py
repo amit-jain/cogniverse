@@ -179,6 +179,7 @@ class ConfigurableVisualJudge(Evaluator):
             if video_id:
                 possible_paths = [
                     f"data/testset/evaluation/sample_videos/{video_id}.mp4",
+                    f"data/testset/evaluation/sample_videos/{video_id}.mkv",
                     f"data/testset/evaluation/sample_videos/{video_id}.avi",
                     f"data/testset/evaluation/sample_videos/{video_id}.mov",
                     f"data/videos/{video_id}.mp4",

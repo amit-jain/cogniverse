@@ -136,3 +136,35 @@ class TestVisualEvaluatorPlugin:
             score = await scorer(state, None)
             assert score.value == 0.75
             assert "visual_evaluator" in score.metadata["plugin"]
+
+
+class TestConfigurableVisualJudgeGetVideoPath:
+    """Regression tests for ConfigurableVisualJudge._get_video_path extension lookup."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("ext", ["mp4", "mkv", "avi", "mov"])
+    def test_finds_video_with_extension(self, tmp_path, monkeypatch, ext):
+        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+            ConfigurableVisualJudge,
+        )
+
+        sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
+        sample_dir.mkdir(parents=True)
+        video_id = "v_-HpCLXdtcas"
+        (sample_dir / f"{video_id}.{ext}").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        judge = ConfigurableVisualJudge.__new__(ConfigurableVisualJudge)
+        result = judge._get_video_path({"video_id": video_id})
+
+        assert result == f"data/testset/evaluation/sample_videos/{video_id}.{ext}"
+
+    @pytest.mark.unit
+    def test_returns_none_when_missing(self, tmp_path, monkeypatch):
+        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+            ConfigurableVisualJudge,
+        )
+
+        monkeypatch.chdir(tmp_path)
+        judge = ConfigurableVisualJudge.__new__(ConfigurableVisualJudge)
+        assert judge._get_video_path({"video_id": "does_not_exist"}) is None
