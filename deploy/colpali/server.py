@@ -93,7 +93,12 @@ def _load_model(model_name: str, device: str):
         device,
     )
 
-    dtype = torch.bfloat16 if device == "cpu" else torch.float16
+    # bfloat16 on x86 CPU is software-emulated unless the chip has
+    # AVX512_BF16 (Sapphire Rapids and later); on Apple Silicon ARM the
+    # bf16 path is also slower than fp32. Default to float32 on CPU,
+    # float16 on GPU. This drops a ColSmol-500m image inference from
+    # 10+ min to ~30s on a laptop CPU.
+    dtype = torch.float32 if device == "cpu" else torch.float16
     model = cls.from_pretrained(
         model_name,
         torch_dtype=dtype,
@@ -101,6 +106,13 @@ def _load_model(model_name: str, device: str):
     )
     model.eval()
     processor = proc_cls.from_pretrained(model_name)
+
+    # Cap intra-op threads to the pod's CPU limit (4) so the model
+    # doesn't oversubscribe on systems with many host cores. Without
+    # this PyTorch grabs all detected cores and thrashes the cgroup.
+    if device == "cpu":
+        torch.set_num_threads(min(4, torch.get_num_threads()))
+
     return model, processor
 
 

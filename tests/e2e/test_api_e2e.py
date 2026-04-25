@@ -1326,14 +1326,8 @@ class TestImageIngestionAndSearch:
         return resp.status_code in (200, 400, 409)
 
     def test_upload_image_and_search(self, real_image_path):
-        """Upload a real keyframe, ingest through ColPali, then verify search.
-
-        CPU-only colsmol-500m takes ~5-15 minutes per image at full CPU
-        saturation; 900s was enough for warm-cache batches but truncated
-        cold-path runs as 500/EOF. 1800s matches the runtime client
-        timeout from f8ac3ec0.
-        """
-        with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
+        """Upload real 1280x720 keyframe → ColPali embedding → search."""
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             self._deploy_schema_if_needed(client, "image_colpali_mv")
 
             with open(real_image_path, "rb") as f:
