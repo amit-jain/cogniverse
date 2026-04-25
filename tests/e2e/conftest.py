@@ -260,6 +260,30 @@ def _ingest_sample_video() -> None:
         "active_video_profile", "video_colpali_smol500_mv_frame"
     )
 
+    # Skip if a previous run already ingested this video. CPU-only ColPali
+    # takes 30+ min on a single keyframe sequence, and it serialises
+    # behind any other inference request — the bootstrap blocking the
+    # colpali pod queue is the dominant cause of test_upload_image_and_search
+    # spuriously timing out under cumulative session load.
+    try:
+        probe = httpx.post(
+            f"{RUNTIME}/search/",
+            json={
+                "query": video_path.stem,
+                "profile": active_profile,
+                "top_k": 1,
+                "tenant_id": TENANT_ID,
+            },
+            timeout=20,
+        )
+        if probe.status_code == 200 and probe.json().get("results_count", 0) > 0:
+            print(
+                f"Sample video already in Vespa for tenant {TENANT_ID}; skipping ingest"
+            )
+            return
+    except (httpx.HTTPError, OSError):
+        pass
+
     try:
         with open(video_path, "rb") as f:
             resp = httpx.post(
@@ -270,7 +294,7 @@ def _ingest_sample_video() -> None:
                     "backend": "vespa",
                     "tenant_id": TENANT_ID,
                 },
-                timeout=600,
+                timeout=1800,
             )
         if resp.status_code == 200:
             data = resp.json()
