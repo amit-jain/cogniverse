@@ -20,8 +20,18 @@ def install_argo_controller(namespace: str = "argo") -> None:
     """Install Argo Workflows controller.
 
     Creates the namespace if it does not already exist, applies the
-    upstream install manifest, and waits for the ``argo-server``
-    deployment to become available.
+    upstream install manifest, switches argo-server to ``--auth-mode=server``
+    so in-cluster callers (cogniverse-runtime) hit the REST API without
+    presenting a bearer token, and waits for ``argo-server`` to become
+    available.
+
+    The default upstream manifest ships ``--auth-mode=client`` which
+    requires every request to carry a Kubernetes ServiceAccount token —
+    in-cluster Python clients that POST workflows would need to mount and
+    forward the token. ``--auth-mode=server`` lets argo-server use its
+    own ServiceAccount, which is what the chart's ``argo-workflows``
+    sub-chart values declare anyway (``argo.argo.authModes: [server]``);
+    this just enforces the same on the upstream-manifest install path.
     """
     subprocess.run(
         ["kubectl", "create", "namespace", namespace],
@@ -30,6 +40,29 @@ def install_argo_controller(namespace: str = "argo") -> None:
     )
     subprocess.run(
         ["kubectl", "apply", "-n", namespace, "-f", ARGO_INSTALL_URL],
+        check=True,
+    )
+    # Patch argo-server to drop the default --auth-mode=client. JSON-patch
+    # against args[0] is brittle (the manifest's args list shape can shift
+    # between releases), so use the strategic-merge form: replace the whole
+    # ``args`` list. Idempotent — re-running on an already-patched
+    # deployment is a no-op.
+    subprocess.run(
+        [
+            "kubectl",
+            "patch",
+            "deployment",
+            "argo-server",
+            "-n",
+            namespace,
+            "--type=json",
+            "-p",
+            (
+                '[{"op":"replace",'
+                '"path":"/spec/template/spec/containers/0/args",'
+                '"value":["server","--auth-mode=server"]}]'
+            ),
+        ],
         check=True,
     )
     subprocess.run(
