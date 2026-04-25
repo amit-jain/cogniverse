@@ -287,11 +287,14 @@ class TestManualOptimizationDeepE2E:
         assert submit.status_code == 200, submit.text
         workflow_name = submit.json()["workflow_name"]
 
-        # 10 minutes — cold pull + Phoenix connect + real computation.
+        # On CPU Ollama (laptop), the optimizer makes 80+ DSPy LM calls
+        # while computing thresholds — each ~30-60s. 1800s covers the
+        # worst case; 600s consistently saw the workflow still Running
+        # at the deadline.
         wf = _wait_for_workflow_phase(
             workflow_name,
             target_phases={"Succeeded", "Failed", "Error"},
-            deadline_seconds=600.0,
+            deadline_seconds=1800.0,
         )
         phase = wf["status"]["phase"]
         assert phase == "Succeeded", (
@@ -403,7 +406,7 @@ class TestManualOptimizationDeepE2E:
         wf = _wait_for_workflow_phase(
             workflow_name,
             target_phases={"Succeeded", "Failed", "Error"},
-            deadline_seconds=600.0,
+            deadline_seconds=1800.0,
         )
         phase = wf["status"]["phase"]
         log = _kubectl_main_container_log(workflow_name)
