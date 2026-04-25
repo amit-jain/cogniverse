@@ -8,16 +8,15 @@ where the source videos / pre-extracted frames did not happen to live under
 
 These helpers centralize the resolution path through :class:`MediaLocator`:
 
-- ``source_url`` (canonical URI written by Phase 3 ingestion) is the primary
-  source of truth.
-- For pre-extracted frames a ``frame_path`` field is consulted first.
-- A legacy local-path probe is kept as a warning-logged fallback so already
-  ingested corpora without ``source_url`` keep working.
+- ``source_url`` (canonical URI written by ingestion) is the primary source
+  of truth.
+- For pre-extracted frames a ``frame_path`` field is consulted first; if
+  absent, a single frame is extracted on the fly from ``source_url`` at
+  ``result.get("frame_id", 0)``.
 
-Frame extraction (cv2.VideoCapture → JPEGs) was previously inlined inside
-``ConfigurableVisualJudge`` only. ``extract_frames`` is the single shared
-implementation; the two other judges now also extract on demand instead of
-relying on someone else having pre-decoded.
+Frame extraction (cv2.VideoCapture → JPEGs) lives in :func:`extract_frames` so
+all three judges share one implementation and none of them assume someone
+else pre-decoded.
 """
 
 from __future__ import annotations
@@ -32,19 +31,6 @@ from cogniverse_core.common.media import MediaLocator
 logger = logging.getLogger(__name__)
 
 
-_LEGACY_VIDEO_DIRS: tuple[str, ...] = (
-    "data/testset/evaluation/sample_videos",
-    "data/videos",
-    "outputs/videos",
-)
-_LEGACY_VIDEO_EXTENSIONS: tuple[str, ...] = (".mp4", ".mkv", ".avi", ".mov")
-_LEGACY_FRAME_DIRS: tuple[str, ...] = (
-    "data/frames",
-    "outputs/frames",
-)
-_LEGACY_FRAME_EXTENSIONS: tuple[str, ...] = (".jpg", ".png")
-
-
 def resolve_video_from_result(
     result: dict[str, Any], locator: MediaLocator
 ) -> Optional[Path]:
@@ -54,11 +40,8 @@ def resolve_video_from_result(
       1. ``result["source_url"]`` via :meth:`MediaLocator.localize`.
       2. ``result["video_path"]`` (treat as URI if it has a scheme, else as a
          local path that the locator canonicalizes to ``file://``).
-      3. Legacy probe of ``data/testset/...``, ``data/videos/``,
-         ``outputs/videos/`` keyed on ``video_id`` / ``source_id`` (logs a
-         WARNING — these paths only exist in dev).
 
-    Returns ``None`` when none of the above succeed.
+    Returns ``None`` when neither succeeds.
     """
     if not isinstance(result, dict):
         return None
@@ -77,7 +60,7 @@ def resolve_video_from_result(
         except (FileNotFoundError, ValueError, OSError) as exc:
             logger.warning("Failed to localize video_path %s: %s", raw_path, exc)
 
-    return _legacy_video_probe(result)
+    return None
 
 
 def resolve_frame_from_result(
@@ -91,7 +74,8 @@ def resolve_frame_from_result(
          if it is a URI).
       2. Extract a frame on the fly from ``result["source_url"]`` at
          ``result.get("frame_id", 0)``.
-      3. Legacy probe of ``data/frames/<video_id>/frame_<id>.jpg`` etc.
+
+    Returns ``None`` when neither succeeds.
     """
     if not isinstance(result, dict):
         return None
@@ -110,7 +94,7 @@ def resolve_frame_from_result(
         if frames:
             return frames[0]
 
-    return _legacy_frame_probe(result)
+    return None
 
 
 def extract_frames(
@@ -177,41 +161,3 @@ def extract_frames(
             cap.release()
 
     return frames
-
-
-def _legacy_video_probe(result: dict[str, Any]) -> Optional[Path]:
-    video_id = result.get("video_id") or result.get("source_id")
-    if not video_id:
-        return None
-
-    for directory in _LEGACY_VIDEO_DIRS:
-        for ext in _LEGACY_VIDEO_EXTENSIONS:
-            candidate = Path(directory) / f"{video_id}{ext}"
-            if candidate.exists():
-                logger.warning(
-                    "Falling back to legacy local-path probe for %s; "
-                    "ingest source_url to remove this warning.",
-                    video_id,
-                )
-                return candidate
-    return None
-
-
-def _legacy_frame_probe(result: dict[str, Any]) -> Optional[Path]:
-    video_id = result.get("video_id") or result.get("source_id")
-    frame_id = result.get("frame_id", 0)
-    if not video_id:
-        return None
-
-    for directory in _LEGACY_FRAME_DIRS:
-        for ext in _LEGACY_FRAME_EXTENSIONS:
-            candidate = Path(directory) / str(video_id) / f"frame_{frame_id}{ext}"
-            if candidate.exists():
-                logger.warning(
-                    "Falling back to legacy local-frame probe for %s frame %s; "
-                    "ingest source_url and pre-extracted frames to remove this warning.",
-                    video_id,
-                    frame_id,
-                )
-                return candidate
-    return None

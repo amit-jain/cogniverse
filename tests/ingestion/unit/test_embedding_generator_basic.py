@@ -843,7 +843,13 @@ class TestEmbeddingGenerator:
         generator.document_builder.build_document.return_value = expected_doc
 
         result = generator._process_video_segment(
-            Path("/test/video.mp4"), "test_video", 0, 0.0, 30.0, 1
+            Path("/test/video.mp4"),
+            "test_video",
+            0,
+            0.0,
+            30.0,
+            1,
+            source_url="file:///test/video.mp4",
         )
 
         assert result == expected_doc
@@ -893,7 +899,13 @@ class TestEmbeddingGenerator:
         generator.document_builder.build_document.return_value = expected_doc
 
         result = generator._process_video_segment(
-            Path("/test/video.mp4"), "test_video", 0, 0.0, 30.0, 1
+            Path("/test/video.mp4"),
+            "test_video",
+            0,
+            0.0,
+            30.0,
+            1,
+            source_url="file:///test/video.mp4",
         )
 
         assert result == expected_doc

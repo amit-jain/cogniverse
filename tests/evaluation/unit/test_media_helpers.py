@@ -53,25 +53,19 @@ class TestResolveVideoFromResult:
         result = resolve_video_from_result({"video_path": str(clip)}, locator)
         assert result == clip
 
-    def test_legacy_probe_when_neither_set(
-        self, locator, tmp_path, monkeypatch, caplog
-    ):
-        sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
-        sample_dir.mkdir(parents=True)
-        clip = sample_dir / "v_legacy.mp4"
-        clip.write_bytes(b"")
-        monkeypatch.chdir(tmp_path)
-
-        with caplog.at_level("WARNING"):
-            result = resolve_video_from_result({"video_id": "v_legacy"}, locator)
-
-        assert result == Path("data/testset/evaluation/sample_videos/v_legacy.mp4")
-        assert any("legacy" in m.lower() for m in caplog.messages)
-
     def test_returns_none_when_nothing_resolves(self, locator):
         assert (
             resolve_video_from_result({"video_id": "does_not_exist"}, locator) is None
         )
+
+    def test_video_id_alone_no_longer_resolves(self, locator, tmp_path, monkeypatch):
+        """Phase 6 removed the legacy data/testset/... probe; video_id alone is insufficient."""
+        sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
+        sample_dir.mkdir(parents=True)
+        (sample_dir / "v_legacy.mp4").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        assert resolve_video_from_result({"video_id": "v_legacy"}, locator) is None
 
     def test_non_dict_returns_none(self, locator):
         assert resolve_video_from_result("not a dict", locator) is None
@@ -93,22 +87,6 @@ class TestResolveFrameFromResult:
         assert result is not None
         assert result.exists()
         assert result.suffix == ".jpg"
-
-    def test_legacy_probe_for_pre_extracted_frame(
-        self, locator, tmp_path, monkeypatch, caplog
-    ):
-        frames_dir = tmp_path / "data" / "frames" / "v_legacy"
-        frames_dir.mkdir(parents=True)
-        (frames_dir / "frame_3.jpg").write_bytes(b"")
-        monkeypatch.chdir(tmp_path)
-
-        with caplog.at_level("WARNING"):
-            result = resolve_frame_from_result(
-                {"video_id": "v_legacy", "frame_id": 3}, locator
-            )
-
-        assert result == Path("data/frames/v_legacy/frame_3.jpg")
-        assert any("legacy" in m.lower() for m in caplog.messages)
 
     def test_returns_none_when_nothing_resolves(self, locator):
         assert resolve_frame_from_result({"video_id": "missing"}, locator) is None

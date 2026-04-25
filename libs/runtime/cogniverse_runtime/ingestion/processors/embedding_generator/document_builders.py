@@ -10,17 +10,28 @@ from typing import Any
 
 @dataclass
 class DocumentMetadata:
-    """Metadata for a document"""
+    """Metadata for a document.
+
+    ``source_url`` is required: every document must carry the canonical URI of
+    its source video so downstream consumers (visual evaluators, frame
+    extractors, audit) can locate the bytes regardless of the runtime
+    environment. Use :meth:`MediaLocator.to_canonical_uri` at the call site.
+    """
 
     video_id: str
     video_title: str
     segment_idx: int
     start_time: float
     end_time: float
-    source_url: str | None = None
+    source_url: str
     creation_timestamp: int = None
 
     def __post_init__(self):
+        if not self.source_url:
+            raise ValueError(
+                "DocumentMetadata.source_url is required; pass the canonical "
+                "URI from MediaLocator.to_canonical_uri(video_path)."
+            )
         if self.creation_timestamp is None:
             self.creation_timestamp = int(time.time())
 
@@ -54,10 +65,8 @@ class DocumentBuilder:
             "segment_id": metadata.segment_idx,  # All schemas now use segment_id
             "start_time": metadata.start_time,
             "end_time": metadata.end_time,
+            "source_url": metadata.source_url,
         }
-
-        if metadata.source_url:
-            fields["source_url"] = metadata.source_url
 
         # Add embeddings using field names from strategy
         if "float_embeddings" in embeddings:

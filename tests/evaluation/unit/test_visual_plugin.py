@@ -155,18 +155,26 @@ class TestConfigurableVisualJudgeGetVideoPath:
         return judge
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("ext", ["mp4", "mkv", "avi", "mov"])
-    def test_finds_video_via_legacy_probe(self, tmp_path, monkeypatch, ext):
+    def test_video_id_alone_no_longer_resolves(self, tmp_path, monkeypatch):
+        """Legacy probe removed: source_url is now required."""
         sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
         sample_dir.mkdir(parents=True)
-        video_id = "v_-HpCLXdtcas"
-        (sample_dir / f"{video_id}.{ext}").write_bytes(b"")
+        (sample_dir / "v_-HpCLXdtcas.mp4").write_bytes(b"")
         monkeypatch.chdir(tmp_path)
 
         judge = self._bare_judge(tmp_path / "cache")
-        result = judge._get_video_path({"video_id": video_id})
+        assert judge._get_video_path({"video_id": "v_-HpCLXdtcas"}) is None
 
-        assert result == f"data/testset/evaluation/sample_videos/{video_id}.{ext}"
+    @pytest.mark.unit
+    @pytest.mark.parametrize("ext", ["mp4", "mkv", "avi", "mov"])
+    def test_finds_video_via_source_url_for_each_extension(self, tmp_path, ext):
+        clip = tmp_path / f"v.{ext}"
+        clip.write_bytes(b"video")
+        judge = self._bare_judge(tmp_path / "cache")
+
+        result = judge._get_video_path({"source_url": f"file://{clip}"})
+
+        assert result == str(clip)
 
     @pytest.mark.unit
     def test_finds_video_via_source_url(self, tmp_path):
