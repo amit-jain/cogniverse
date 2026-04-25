@@ -575,6 +575,39 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 self.logger.error("Model or processor not loaded")
                 return None
 
+            # Remote ColPali path: RemoteColPaliLoader returns the same
+            # RemoteInferenceClient as both ``model`` and ``processor``.
+            # ``process_images`` ships base64 PNGs to the remote pod and
+            # returns a dict of {"embeddings": np.ndarray}. The local
+            # PyTorch path below would crash on it (``dict`` has no
+            # ``.to()`` and the client has no ``.device``).
+            from cogniverse_core.common.models.model_loaders import (
+                RemoteInferenceClient,
+            )
+
+            if isinstance(self.processor, RemoteInferenceClient):
+                with Image.open(frame_path) as image:
+                    image = image.convert("RGB")
+                    result = self.processor.process_images(
+                        [image], model_name=self.model_name
+                    )
+                embeddings_arr = np.asarray(result.get("embeddings", []))
+                if embeddings_arr.ndim == 0 or embeddings_arr.size == 0:
+                    self.logger.error(
+                        f"Remote inference returned empty embeddings for {frame_path.name}"
+                    )
+                    return None
+                # Server returns one multi-vector per image: shape [B, T, D].
+                # The local path below feeds a single image and returns
+                # shape [T, D], so unwrap the batch dim to match.
+                if embeddings_arr.ndim == 3 and embeddings_arr.shape[0] == 1:
+                    embeddings_arr = embeddings_arr[0]
+                self.logger.info(
+                    f"    🖼️ Generated embeddings for frame {frame_path.name} "
+                    f"(remote): shape={embeddings_arr.shape}"
+                )
+                return embeddings_arr.astype(np.float32, copy=False)
+
             # Context manager releases the decoded PIL buffer (~6 MB at 1080p)
             # as soon as process_images copies pixel_values into a tensor.
             # Without this, the PIL Image refcount keeps the decoded RGB bytes
@@ -642,6 +675,34 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 if not frames:
                     self.logger.error("No frames extracted from chunk")
                     return None
+
+                # Remote ColPali/ColQwen path — see _generate_frame_embeddings
+                # for the rationale (RemoteInferenceClient.process_images
+                # returns a dict, not a tensor container).
+                from cogniverse_core.common.models.model_loaders import (
+                    RemoteInferenceClient,
+                )
+
+                if isinstance(self.processor, RemoteInferenceClient):
+                    result = self.processor.process_images(
+                        frames, model_name=self.model_name
+                    )
+                    frames.clear()
+                    embeddings_arr = np.asarray(result.get("embeddings", []))
+                    if embeddings_arr.size == 0:
+                        self.logger.error(
+                            "Remote inference returned empty chunk embeddings"
+                        )
+                        return None
+                    # Remote returns shape [N_frames, T, D]; collapse to a
+                    # chunk-level vector by mean-pooling over the frame dim,
+                    # matching the local path (which does
+                    # ``embeddings_np.mean(axis=0)``).
+                    return (
+                        embeddings_arr.mean(axis=0)
+                        if embeddings_arr.ndim >= 2
+                        else embeddings_arr
+                    ).astype(np.float32, copy=False)
 
                 batch_inputs = self.processor.process_images(frames).to(
                     self.model.device
@@ -757,6 +818,23 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
                 if not frames:
                     return None
+
+                # Remote ColPali/ColQwen path — same dict-vs-tensor split as
+                # _generate_frame_embeddings.
+                from cogniverse_core.common.models.model_loaders import (
+                    RemoteInferenceClient,
+                )
+
+                if isinstance(self.processor, RemoteInferenceClient):
+                    result = self.processor.process_images(
+                        frames, model_name=self.model_name
+                    )
+                    embeddings_arr = np.asarray(result.get("embeddings", []))
+                    if embeddings_arr.size == 0:
+                        return None
+                    if len(frames) > 1 and embeddings_arr.ndim >= 2:
+                        embeddings_arr = embeddings_arr.mean(axis=0)
+                    return embeddings_arr.astype(np.float32, copy=False)
 
                 # Process frames
                 batch_inputs = self.processor.process_images(frames).to(
