@@ -42,10 +42,10 @@ inference:
     resources:
       limits:
         cpu: "4"
-        memory: "12Gi"
+        memory: "10Gi"
       requests:
-        cpu: "2"
-        memory: "12Gi"
+        cpu: "4"
+        memory: "10Gi"
   # Dev override: use locally-built pylate image for the default text pod.
   colbert_pylate:
     pylate:

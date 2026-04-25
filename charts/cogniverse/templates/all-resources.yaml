@@ -984,6 +984,15 @@ metadata:
     app.kubernetes.io/component: inference-{{ $name }}
 spec:
   replicas: {{ $cfg.replicaCount }}
+  # Inference sidecars hold multi-Gi model weights and run as a single
+  # replica on memory-constrained k3d nodes (typically 49Gi total). A
+  # rolling update needs both old and new pods up at once, which can't
+  # fit — so the rollout deadlocks waiting for the new pod to schedule.
+  # ``Recreate`` evicts the old pod first, then creates the new one; the
+  # tradeoff is a brief gap in inference availability, which is fine for
+  # k3d laptop dev and acceptable for the production single-replica use.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "cogniverse.selectorLabels" $ | nindent 6 }}
