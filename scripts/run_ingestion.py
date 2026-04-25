@@ -70,6 +70,16 @@ async def main_async():
         help="Directory containing content files (alias for --video_dir)",
     )
     parser.add_argument(
+        "--media-root-uri",
+        type=str,
+        default=None,
+        help=(
+            "Media root URI (e.g. s3://corpus/, pvc://media/) for "
+            "non-filesystem ingestion sources. When set, overrides "
+            "--video_dir / --content-dir."
+        ),
+    )
+    parser.add_argument(
         "--output_dir", type=Path, help="Output directory for processed data"
     )
     parser.add_argument(
@@ -130,7 +140,25 @@ async def main_async():
         default_dir = Path("data/testset/evaluation/sample_videos")
         input_dir = content_dir or default_dir
 
-        if args.test_mode:
+        if args.media_root_uri:
+            config_builder = create_config().backend(args.backend)
+            config_builder = config_builder.media_root_uri(args.media_root_uri)
+            if args.output_dir:
+                config_builder = config_builder.output_dir(args.output_dir)
+            if args.max_frames:
+                config_builder = config_builder.max_frames_per_video(args.max_frames)
+            config = config_builder.build()
+
+            pipeline = (
+                create_pipeline()
+                .with_tenant_id(args.tenant_id)
+                .with_config(config)
+                .with_schema(profile)
+                .with_debug(args.debug)
+                .with_concurrency(args.max_concurrent)
+                .build()
+            )
+        elif args.test_mode:
             pipeline = build_test_pipeline(
                 tenant_id=args.tenant_id,
                 video_dir=input_dir,
@@ -164,14 +192,18 @@ async def main_async():
             )
 
         print(f"Content type: {args.content_type}")
-        print(f"Input directory: {input_dir}")
+        print(f"Input source: {args.media_root_uri or input_dir}")
         print(f"Output directory: {pipeline.config.output_dir}")
         print(f"Backend: {pipeline.config.search_backend}")
         print(f"Profile: {profile}")
 
-        content_files = discover_content_files(input_dir, args.content_type)
+        if args.media_root_uri:
+            content_files = pipeline.get_video_files()
+        else:
+            content_files = discover_content_files(input_dir, args.content_type)
         if not content_files:
-            print(f"No {args.content_type} files found in {input_dir}")
+            source = args.media_root_uri or input_dir
+            print(f"No {args.content_type} files found in {source}")
             continue
 
         print(f"Found {len(content_files)} {args.content_type} item(s) to process")

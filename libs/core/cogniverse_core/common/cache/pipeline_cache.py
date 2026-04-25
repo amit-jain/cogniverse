@@ -2,6 +2,7 @@
 Pipeline artifact caching system for video processing results
 """
 
+import hashlib
 import json
 import logging
 import time
@@ -71,14 +72,22 @@ class PipelineArtifactCache:
     def _generate_video_key(
         self, video_path: str, video_hash: Optional[str] = None
     ) -> str:
-        """Generate cache key for a video"""
-        # Use the video filename as the key for human readability
-        path = Path(video_path)
-        video_name = path.stem  # Get filename without extension
+        """Generate cache key for a video.
 
-        base_key = f"video:{video_name}"
+        Keys on the SHA-256 of the canonical URI rather than the filename stem
+        so that videos with the same basename in different roots (or on
+        different mounts) do not collide. Accepts either a URI (``file://...``,
+        ``s3://...``, etc.) or a bare path; bare paths are canonicalized to
+        ``file://<absolute>`` before hashing.
+        """
+        canonical = (
+            video_path
+            if "://" in video_path
+            else f"file://{Path(video_path).resolve()}"
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        base_key = f"video:{digest}"
 
-        # Add profile namespace if specified
         if self.profile:
             return f"{self.profile}:{base_key}"
         return base_key

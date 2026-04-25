@@ -33,6 +33,7 @@ from typing import Any, Optional
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
+from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.events import (
     EventQueue,
@@ -82,6 +83,11 @@ class PipelineConfig:
     video_dir: Path = Path("data/videos")
     output_dir: Path = None  # Will be set from OutputManager
 
+    # Media root URI for non-filesystem ingestion sources (s3://, pvc://, etc.).
+    # When set, the pipeline enumerates videos via MediaLocator.list instead of
+    # globbing video_dir. None preserves the legacy local-directory behavior.
+    media_root_uri: Optional[str] = None
+
     # Backend selection
     search_backend: str = "byaldi"  # "byaldi" or "vespa"
 
@@ -106,6 +112,7 @@ class PipelineConfig:
             vlm_batch_size=pipeline_config.get("vlm_batch_size", 500),
             search_backend=config.get("search_backend", "byaldi"),
             output_dir=output_manager.get_processing_dir(),
+            media_root_uri=pipeline_config.get("media_root_uri"),
         )
 
     @classmethod
@@ -140,6 +147,7 @@ class PipelineConfig:
             vlm_batch_size=pipeline_config.get("vlm_batch_size", 500),
             search_backend=config.get("search_backend", "byaldi"),
             output_dir=output_manager.get_processing_dir(),
+            media_root_uri=pipeline_config.get("media_root_uri"),
         )
 
 
@@ -238,6 +246,7 @@ class VideoIngestionPipeline:
         self.logger.info(f"Pipeline config: {self.config}")
 
         self._init_cache()
+        self._init_locator()
         self._resolve_strategy()
         self.processor_manager = ProcessorManager(self.logger)
         self.strategy_set = self._create_strategy_set_from_config()
@@ -319,6 +328,31 @@ class VideoIngestionPipeline:
             profile=self.schema_name,
         )
         self.logger.info(f"Initialized pipeline cache for profile: {self.schema_name}")
+
+    def _init_locator(self):
+        """Initialize the MediaLocator from app config."""
+        media_section = self.app_config.get("media", {})
+        media_config = (
+            MediaConfig.from_dict(media_section) if media_section else MediaConfig()
+        )
+        self.locator = MediaLocator(tenant_id=self.tenant_id, config=media_config)
+        self.logger.info(
+            "Initialized MediaLocator (default_scheme=%s, uri_prefix=%r)",
+            media_config.default_uri_scheme,
+            media_config.uri_prefix,
+        )
+
+    def _canonical_uri(self, video_path_or_uri: Path | str) -> str:
+        """Return the canonical URI for a path-or-URI input."""
+        raw = str(video_path_or_uri)
+        return raw if "://" in raw else f"file://{Path(raw).resolve()}"
+
+    def _display_name(self, video_path_or_uri: Path | str) -> str:
+        """Human-readable name for logging, works for both Paths and URIs."""
+        raw = str(video_path_or_uri)
+        if "://" in raw:
+            return Path(raw.split("://", 1)[1]).name or raw
+        return Path(raw).name
 
     def _resolve_strategy(self):
         self.strategy = None
@@ -684,21 +718,33 @@ class VideoIngestionPipeline:
         return self.event_queue.cancellation_token.is_cancelled
 
     async def process_video_async_with_strategies(
-        self, video_path: Path
+        self, video_path: Path | str
     ) -> dict[str, Any]:
         """
         Process video using the strategy pattern - strategies orchestrate everything
+
+        Accepts either a local ``Path`` or a URI string (``file://``, ``s3://``,
+        ``pvc://``, ``http(s)://``). URIs are resolved to a local path via the
+        :class:`MediaLocator` once at this entry point; processors downstream
+        continue to receive a ``Path``.
         """
+        if isinstance(video_path, str):
+            video_uri = self._canonical_uri(video_path)
+            video_path = self.locator.localize(video_path)
+        else:
+            video_uri = self._canonical_uri(video_path)
+
         video_id = video_path.stem
 
         self.logger.info(f"Starting async video processing with strategies: {video_id}")
         self.logger.info(f"Video path: {video_path}")
+        self.logger.info(f"Source URI: {video_uri}")
 
         print(f"\n🎬 Processing video (async): {video_path.name}")
         print("=" * 60)
 
-        # Store video_path for strategies to use
         self.video_path = video_path
+        self.video_uri = video_uri
 
         # Prepare base results
         results = self._prepare_base_results(video_path)
@@ -823,6 +869,7 @@ class VideoIngestionPipeline:
         return {
             "video_id": video_path.stem,
             "video_path": str(video_path),
+            "source_url": getattr(self, "video_uri", self._canonical_uri(video_path)),
             "duration": self._get_video_duration(video_path),
             "pipeline_config": config_dict,
             "results": {},
@@ -911,14 +958,16 @@ class VideoIngestionPipeline:
 
         return results
 
-    async def process_video_async(self, video_path: Path) -> dict[str, Any]:
+    async def process_video_async(self, video_path: Path | str) -> dict[str, Any]:
         """
         Process video using the strategy pattern
         """
         return await self.process_video_async_with_strategies(video_path)
 
     async def process_videos_concurrent(
-        self, video_files: list[Path], max_concurrent: int = 3
+        self,
+        video_files: list[Path] | list[str] | list[Path | str],
+        max_concurrent: int = 3,
     ) -> dict[str, Any]:
         """
         Process multiple videos concurrently with resource control
@@ -953,9 +1002,10 @@ class VideoIngestionPipeline:
         semaphore = asyncio.Semaphore(max_concurrent)
         completed_count = 0
 
-        async def process_with_limit(video_path: Path, index: int, total: int):
+        async def process_with_limit(video_path: Path | str, index: int, total: int):
             """Process a video with concurrency limit and progress tracking"""
             nonlocal completed_count
+            display = self._display_name(video_path)
 
             # Check for cancellation
             if self._is_cancelled():
@@ -968,9 +1018,9 @@ class VideoIngestionPipeline:
             async with semaphore:
                 try:
                     self.logger.info(
-                        f"[{index}/{total}] Starting concurrent processing: {video_path.name}"
+                        f"[{index}/{total}] Starting concurrent processing: {display}"
                     )
-                    print(f"\n🎯 [{index}/{total}] Processing: {video_path.name}")
+                    print(f"\n🎯 [{index}/{total}] Processing: {display}")
 
                     # Emit progress event before processing
                     await self._emit_event(
@@ -980,7 +1030,7 @@ class VideoIngestionPipeline:
                             current=completed_count,
                             total=total,
                             step=f"processing_video_{index}",
-                            details={"video": video_path.name},
+                            details={"video": display},
                         )
                     )
 
@@ -989,22 +1039,22 @@ class VideoIngestionPipeline:
                     if result["status"] == "completed":
                         completed_count += 1
                         self.logger.info(
-                            f"[{index}/{total}] Completed: {video_path.name} in {result['total_processing_time']:.1f}s"
+                            f"[{index}/{total}] Completed: {display} in {result['total_processing_time']:.1f}s"
                         )
                         print(
-                            f"✅ [{index}/{total}] Completed: {video_path.name} ({result['total_processing_time']:.1f}s)"
+                            f"✅ [{index}/{total}] Completed: {display} ({result['total_processing_time']:.1f}s)"
                         )
                     else:
                         self.logger.error(
-                            f"[{index}/{total}] Failed: {video_path.name} - {result.get('error')}"
+                            f"[{index}/{total}] Failed: {display} - {result.get('error')}"
                         )
-                        print(f"❌ [{index}/{total}] Failed: {video_path.name}")
+                        print(f"❌ [{index}/{total}] Failed: {display}")
 
                     return result
 
                 except PipelineException as e:
                     self.logger.error(
-                        f"[{index}/{total}] Pipeline exception processing {video_path.name}: {e}"
+                        f"[{index}/{total}] Pipeline exception processing {display}: {e}"
                     )
                     return {
                         "video_path": str(video_path),
@@ -1018,7 +1068,7 @@ class VideoIngestionPipeline:
                         video_path, "concurrent_processing", self.schema_name, e
                     )
                     self.logger.error(
-                        f"[{index}/{total}] Unexpected exception processing {video_path.name}: {wrapped_error}"
+                        f"[{index}/{total}] Unexpected exception processing {display}: {wrapped_error}"
                     )
                     return {
                         "video_path": str(video_path),
@@ -1118,10 +1168,21 @@ class VideoIngestionPipeline:
             "results": results,
         }
 
-    def get_video_files(self, video_dir: Path) -> list[Path]:
-        """Get list of video files from directory"""
+    def get_video_files(self, video_dir: Path | None = None) -> list[Path] | list[str]:
+        """Get list of videos to process.
+
+        When ``self.config.media_root_uri`` is set, enumerates via
+        :meth:`MediaLocator.list` and returns canonical URI strings.
+        Otherwise globs ``video_dir`` and returns local ``Path`` objects.
+        """
+        if self.config.media_root_uri:
+            return list(self.locator.list(self.config.media_root_uri))
+
+        if video_dir is None:
+            video_dir = self.config.video_dir
+
         video_extensions = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
-        video_files = []
+        video_files: list[Path] = []
         for ext in video_extensions:
             video_files.extend(video_dir.glob(f"*{ext}"))
         return sorted(video_files)
@@ -1133,19 +1194,25 @@ class VideoIngestionPipeline:
         Process all videos in a directory with concurrent processing
 
         Args:
-            video_dir: Directory containing videos
+            video_dir: Directory containing videos. Ignored when
+                ``self.config.media_root_uri`` is set.
             max_concurrent: Maximum number of videos to process simultaneously
         """
-        video_dir = video_dir or self.config.video_dir
-        video_files = self.get_video_files(video_dir)
+        if self.config.media_root_uri:
+            source_label = self.config.media_root_uri
+            video_files = self.get_video_files()
+        else:
+            video_dir = video_dir or self.config.video_dir
+            source_label = str(video_dir)
+            video_files = self.get_video_files(video_dir)
 
         if not video_files:
-            self.logger.error(f"No video files found in {video_dir}")
-            print(f"❌ No video files found in {video_dir}")
+            self.logger.error(f"No video files found in {source_label}")
+            print(f"❌ No video files found in {source_label}")
             return {"error": "No video files found"}
 
         self.logger.info(
-            f"Starting concurrent batch processing: {len(video_files)} videos from {video_dir}"
+            f"Starting concurrent batch processing: {len(video_files)} videos from {source_label}"
         )
 
         print(f"🎬 Found {len(video_files)} videos to process")

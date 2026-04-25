@@ -27,6 +27,7 @@ class VideoIngestionPipelineBuilder:
         self._schema_name: str | None = None
         self._debug_mode: bool = False
         self._video_dir: Path | None = None
+        self._media_root_uri: str | None = None
         self._output_dir: Path | None = None
         self._backend: str | None = None
         self._max_frames: int | None = None
@@ -74,6 +75,17 @@ class VideoIngestionPipelineBuilder:
         self._video_dir = Path(video_dir)
         return self
 
+    def with_media_root_uri(
+        self, media_root_uri: str
+    ) -> "VideoIngestionPipelineBuilder":
+        """Set the media root URI (e.g. ``s3://corpus/`` or ``pvc://media/``).
+
+        When set, ingestion enumerates videos via :class:`MediaLocator` instead
+        of globbing a local ``video_dir``.
+        """
+        self._media_root_uri = media_root_uri
+        return self
+
     def with_output_dir(self, output_dir: Path) -> "VideoIngestionPipelineBuilder":
         """Set output directory."""
         self._output_dir = Path(output_dir)
@@ -119,6 +131,8 @@ class VideoIngestionPipelineBuilder:
 
             if self._video_dir:
                 config_dict["video_dir"] = self._video_dir
+            if self._media_root_uri:
+                config_dict["media_root_uri"] = self._media_root_uri
             if self._output_dir:
                 config_dict["output_dir"] = self._output_dir
             if self._backend:
@@ -149,9 +163,10 @@ class VideoIngestionPipelineBuilder:
 
     def build_pipeline(self, config_dict: dict[str, Any]) -> VideoIngestionPipeline:
         """Build pipeline from configuration dictionary (backward compatibility)."""
-        # Apply config from dict to builder
         if "video_dir" in config_dict:
             self.with_video_dir(config_dict["video_dir"])
+        if "media_root_uri" in config_dict:
+            self.with_media_root_uri(config_dict["media_root_uri"])
         if "backend" in config_dict:
             self.with_backend(config_dict["backend"])
         if "max_frames_per_video" in config_dict:
@@ -173,6 +188,7 @@ class PipelineConfigBuilder:
         self._max_frames_per_video = 3000
         self._vlm_batch_size = 500
         self._video_dir = Path("data/videos")
+        self._media_root_uri: str | None = None
         self._output_dir = Path("outputs/processing")
         self._search_backend = "vespa"
 
@@ -216,6 +232,11 @@ class PipelineConfigBuilder:
         self._video_dir = Path(directory)
         return self
 
+    def media_root_uri(self, uri: str) -> "PipelineConfigBuilder":
+        """Set the media root URI for non-filesystem ingestion sources."""
+        self._media_root_uri = uri
+        return self
+
     def output_dir(self, directory: Path) -> "PipelineConfigBuilder":
         """Set output directory."""
         self._output_dir = Path(directory)
@@ -237,6 +258,7 @@ class PipelineConfigBuilder:
             max_frames_per_video=self._max_frames_per_video,
             vlm_batch_size=self._vlm_batch_size,
             video_dir=self._video_dir,
+            media_root_uri=self._media_root_uri,
             output_dir=self._output_dir,
             search_backend=self._search_backend,
         )
