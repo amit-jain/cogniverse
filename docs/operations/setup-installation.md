@@ -30,8 +30,10 @@ cd cogniverse
 ### 2. Install Python Dependencies
 
 ```bash
-# Install uv if not already installed
-pip install uv
+# Install uv (use the standalone installer; `pip install uv` is blocked
+# on Ubuntu 24.04+ / Debian 12+ / Fedora 38+ by PEP 668)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 
 # Sync all workspace packages (installs 11 packages)
 uv sync
@@ -366,17 +368,21 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py \
 ### 3. Download Test Dataset
 
 Sample videos, QA pairs, and captions for the evaluation suite live under
-`data/testset/`, which is in `.gitignore` (files are not tracked). Fetch them
-with the bundled script:
+`data/testset/`, which is in `.gitignore` (files are not tracked). The
+script needs `curl`, `unzip`, `python3`, and `uv` (already installed in step 2); it
+pulls QA from HuggingFace and uses range-based extraction to fetch only
+the test videos it needs from a 11 GB benchmark zip.
+
+Fetch the data with the bundled script:
 
 ```bash
-# Minimal: 13 test videos (~500 MB) — enough for e2e / ingestion tests
+# Minimal: 13 test videos + QA + captions (~210 MB) — enough for e2e / ingestion tests
 ./scripts/download_test_data.sh --test-only
 
-# Full Video-ChatGPT benchmark (~50 GB)
+# Full Video-ChatGPT benchmark from HuggingFace (~11 GB)
 ./scripts/download_test_data.sh
 
-# QA/captions only, no videos
+# QA + captions only, no videos
 ./scripts/download_test_data.sh --no-videos
 ```
 
