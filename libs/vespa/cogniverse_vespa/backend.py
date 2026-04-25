@@ -823,16 +823,36 @@ class VespaBackend(Backend):
             # peer-tenant schema is never acceptable. Discovery uses the
             # HTTP query port (self._port), not the config port the
             # schema_manager was initialised with.
-            try:
-                vespa_deployed = self.schema_manager.list_deployed_document_types(
-                    query_port=self._port
-                )
-            except Exception as probe_exc:
-                logger.warning(
-                    f"Vespa schema discovery failed, relying on registry alone: "
-                    f"{probe_exc}"
-                )
-                vespa_deployed = []
+            #
+            # Retry briefly: a peer schema deployed seconds earlier may not
+            # be visible in /search/ source-refs immediately if the content
+            # distributors haven't republished the routing tables. Without
+            # this retry, the docs-then-graph flow races (document_text
+            # deployed by ingestion → graph deploy probes too quickly →
+            # probe returns empty → graph package excludes document_text →
+            # Vespa rejects deploy as "schema removal").
+            import time as _time
+
+            vespa_deployed: List[str] = []
+            for probe_attempt in range(5):
+                try:
+                    vespa_deployed = self.schema_manager.list_deployed_document_types(
+                        query_port=self._port
+                    )
+                except Exception as probe_exc:
+                    logger.warning(
+                        f"Vespa schema discovery failed (attempt "
+                        f"{probe_attempt + 1}/5): {probe_exc}"
+                    )
+                    vespa_deployed = []
+                if vespa_deployed:
+                    break
+                _time.sleep(2)
+            logger.info(
+                f"Vespa-discovered schemas: {sorted(vespa_deployed)} "
+                f"(registry merge added "
+                f"{len(merged_schemas) - len(schemas_to_deploy)} schemas)"
+            )
 
             # Skip Vespa-managed metadata schemas — they're re-added below via
             # add_metadata_schemas_to_package and shouldn't round-trip through

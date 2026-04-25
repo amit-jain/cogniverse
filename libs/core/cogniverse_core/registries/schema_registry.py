@@ -508,6 +508,14 @@ class SchemaRegistry:
         This method provides cross-tenant schema access for backends that require
         all schemas to be redeployed together.
 
+        Reloads from persistent storage on every call so peer SchemaRegistry
+        instances (e.g., the graph backend's registry vs. the ingestion
+        backend's registry) see schemas registered by the other since their
+        last refresh. Without this, the docs-then-graph flow races: ingestion
+        registers ``document_text_<tenant>`` in DB, graph deploy reads its
+        own stale in-memory dict, the deploy package omits document_text,
+        and Vespa rejects the deploy as "schema removal".
+
         Returns:
             List of all SchemaInfo objects across all tenants
 
@@ -515,6 +523,13 @@ class SchemaRegistry:
             This is a private method. External code should NOT call this directly.
             Use deploy_schema() for orchestrated deployment instead.
         """
+        try:
+            self._load_schemas_from_storage()
+        except Exception as exc:
+            logger.warning(
+                f"_get_all_schemas: refresh from storage failed, "
+                f"falling back to in-memory cache: {exc}"
+            )
         return list(self._schemas.values())
 
     def schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:

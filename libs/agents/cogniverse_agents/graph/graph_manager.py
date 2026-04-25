@@ -190,6 +190,52 @@ class GraphManager:
                 merged[key] = node
         return list(merged.values())
 
+    def _feed_with_retry(
+        self, feed_url: str, payload: dict, doc_id: str, kind: str
+    ) -> bool:
+        """POST a graph node/edge to Vespa, retrying on schema-convergence races.
+
+        Vespa's content-distributor convergence trails the config server by a
+        few seconds after a fresh schema deploy. A feed during that window
+        surfaces in two shapes depending on which layer rejects it:
+
+        * 400 ``Document type ... does not exist`` — config layer hasn't
+          accepted the schema yet.
+        * 500 ``APP_FATAL_ERROR ... No handler for document type`` — config
+          accepted it, but the content distributor at port 19115 hasn't
+          loaded the new bucket handler yet.
+
+        Both are transient post-deploy. Retry up to ~30s so the first
+        request after a fresh tenant schema deploy doesn't fail the caller.
+        """
+        import time as _time
+
+        backoff = 2.0
+        for attempt in range(8):
+            try:
+                resp = requests.post(feed_url, json=payload, timeout=10)
+            except Exception:
+                logger.exception("Failed to feed graph %s %s", kind, doc_id)
+                return False
+            if resp.ok:
+                return True
+            body = resp.text
+            transient = (resp.status_code == 400 and "does not exist" in body) or (
+                resp.status_code == 500 and "No handler for document type" in body
+            )
+            if not transient or attempt == 7:
+                logger.warning(
+                    "Feed for %s %s returned %s: %s",
+                    kind,
+                    doc_id,
+                    resp.status_code,
+                    body[:2000],
+                )
+                return False
+            _time.sleep(backoff)
+            backoff = min(backoff * 1.5, 8.0)
+        return False
+
     def _feed_node(self, node: Node, embedding: List[float]) -> bool:
         url = f"{self._backend._url}:{self._backend._port}"
         feed_url = (
@@ -197,20 +243,7 @@ class GraphManager:
         )
         payload = node.to_vespa_document()
         payload["fields"]["embedding"] = embedding
-        try:
-            resp = requests.post(feed_url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "Feed for node %s returned %s: %s",
-                    node.doc_id,
-                    resp.status_code,
-                    resp.text[:200],
-                )
-                return False
-            return True
-        except Exception:
-            logger.exception("Failed to feed graph node %s", node.doc_id)
-            return False
+        return self._feed_with_retry(feed_url, payload, node.doc_id, "node")
 
     def _feed_edge(self, edge: Edge) -> bool:
         url = f"{self._backend._url}:{self._backend._port}"
@@ -219,20 +252,7 @@ class GraphManager:
         )
         payload = edge.to_vespa_document()
         payload["fields"]["embedding"] = [0.0] * 768
-        try:
-            resp = requests.post(feed_url, json=payload, timeout=10)
-            if not resp.ok:
-                logger.warning(
-                    "Feed for edge %s returned %s: %s",
-                    edge.doc_id,
-                    resp.status_code,
-                    resp.text[:200],
-                )
-                return False
-            return True
-        except Exception:
-            logger.exception("Failed to feed graph edge %s", edge.doc_id)
-            return False
+        return self._feed_with_retry(feed_url, payload, edge.doc_id, "edge")
 
     def _visit(
         self,
