@@ -4,14 +4,15 @@ Configurable Visual Judge that uses config to determine provider (Ollama, Modal,
 
 import base64
 import logging
-from pathlib import Path
 from typing import Any
 
 import requests
 
+from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.utils import get_config
 
+from ._media_helpers import extract_frames, resolve_video_from_result
 from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
@@ -22,12 +23,18 @@ class ConfigurableVisualJudge(Evaluator):
     Visual judge that uses configured provider (Ollama, Modal, etc.)
     """
 
-    def __init__(self, evaluator_name: str = "visual_judge"):
+    def __init__(
+        self,
+        evaluator_name: str = "visual_judge",
+        locator: MediaLocator | None = None,
+    ):
         """
         Initialize visual judge from config
 
         Args:
             evaluator_name: Name of evaluator config to use
+            locator: Optional pre-constructed MediaLocator. When None, one is
+                built from the system-tenant ``media`` config section.
         """
         from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -54,6 +61,15 @@ class ConfigurableVisualJudge(Evaluator):
         self.model = evaluator_config.get("model", "llava:7b")
         self.base_url = evaluator_config.get("base_url", "http://localhost:11434")
         self.api_key = evaluator_config.get("api_key")
+
+        if locator is not None:
+            self.locator = locator
+        else:
+            media_section = config.get("media", {})
+            media_config = (
+                MediaConfig.from_dict(media_section) if media_section else MediaConfig()
+            )
+            self.locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=media_config)
 
         logger.info(
             f"Initialized {self.provider} visual judge with model {self.model} at {self.base_url}"
@@ -171,30 +187,14 @@ class ConfigurableVisualJudge(Evaluator):
             )
 
     def _get_video_path(self, result: dict) -> str | None:
-        """Extract video path from result"""
-        if isinstance(result, dict):
-            video_id = result.get("video_id", result.get("source_id"))
+        """Resolve a result's video to a local path via the MediaLocator.
 
-            # Common video storage locations
-            if video_id:
-                possible_paths = [
-                    f"data/testset/evaluation/sample_videos/{video_id}.mp4",
-                    f"data/testset/evaluation/sample_videos/{video_id}.mkv",
-                    f"data/testset/evaluation/sample_videos/{video_id}.avi",
-                    f"data/testset/evaluation/sample_videos/{video_id}.mov",
-                    f"data/videos/{video_id}.mp4",
-                    f"outputs/videos/{video_id}.mp4",
-                ]
-
-                for path in possible_paths:
-                    if Path(path).exists():
-                        return path
-
-                # Try without extension (video_id might already include it)
-                if Path(f"data/testset/evaluation/sample_videos/{video_id}").exists():
-                    return f"data/testset/evaluation/sample_videos/{video_id}"
-
-        return None
+        Prefers ``source_url`` (the canonical URI written at ingest time);
+        falls back to a legacy local-directory probe with a WARNING log so
+        already-ingested corpora without ``source_url`` keep working.
+        """
+        path = resolve_video_from_result(result, self.locator)
+        return str(path) if path is not None else None
 
     def _extract_frames_from_video(
         self,
@@ -203,79 +203,31 @@ class ConfigurableVisualJudge(Evaluator):
         timestamp: float = 0,
         sample_all: bool = False,
     ) -> list[str]:
-        """Extract multiple frames from video
+        """Extract frames from a local video; thin wrapper over the shared helper."""
+        from pathlib import Path as _Path
 
-        Args:
-            video_path: Path to video file
-            num_frames: Number of frames to extract (evenly spaced)
-            timestamp: Starting timestamp
-            sample_all: If True, extract all frames (up to max_total_frames limit)
+        max_total_frames = 60
+        if sample_all:
+            from cogniverse_foundation.config.utils import (
+                create_default_config_manager,
+            )
 
-        Returns:
-            List of paths to extracted frame images
-        """
-        import tempfile
+            sample_config_manager = create_default_config_manager()
+            config = get_config(
+                tenant_id=SYSTEM_TENANT_ID, config_manager=sample_config_manager
+            )
+            evaluator_config = config.get("evaluators", {}).get(self.evaluator_name, {})
+            max_total_frames = evaluator_config.get("max_total_frames", 60)
 
-        import cv2
-
-        frames = []
-        try:
-            cap = cv2.VideoCapture(video_path)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            fps = cap.get(cv2.CAP_PROP_FPS)
-
-            if timestamp > 0:
-                start_frame = int(timestamp * fps)
-            else:
-                start_frame = 0
-
-            # If sample_all, extract every frame (with limit)
-            if sample_all:
-                # Get max_total_frames from config
-                from cogniverse_foundation.config.utils import (
-                    create_default_config_manager,
-                )
-
-                # Initialize ConfigManager for dependency injection
-                sample_config_manager = create_default_config_manager()
-                config = get_config(
-                    tenant_id=SYSTEM_TENANT_ID, config_manager=sample_config_manager
-                )
-                evaluator_config = config.get("evaluators", {}).get(
-                    self.evaluator_name, {}
-                )
-                max_total = evaluator_config.get("max_total_frames", 60)
-
-                # Extract frames at regular intervals to stay within limit
-                num_frames = min(total_frames - start_frame, max_total)
-                interval = max(1, (total_frames - start_frame) // num_frames)
-            else:
-                # Calculate frame interval for evenly spaced frames
-                interval = max(1, (total_frames - start_frame) // num_frames)
-
-            for i in range(num_frames):
-                frame_number = start_frame + (i * interval)
-                if frame_number >= total_frames:
-                    break
-
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-                ret, frame = cap.read()
-
-                if ret:
-                    # Save frame to temp file
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".jpg", delete=False
-                    ) as tmp:
-                        cv2.imwrite(tmp.name, frame)
-                        frames.append(tmp.name)
-
-            cap.release()
-            logger.info(f"Extracted {len(frames)} frames from video {video_path}")
-
-        except Exception as e:
-            logger.error(f"Could not extract frames from video: {e}")
-
-        return frames
+        paths = extract_frames(
+            _Path(video_path),
+            num_frames=num_frames,
+            timestamp=timestamp,
+            sample_all=sample_all,
+            max_total_frames=max_total_frames,
+        )
+        logger.info("Extracted %d frames from video %s", len(paths), video_path)
+        return [str(p) for p in paths]
 
     def _encode_image(self, image_path: str) -> str:
         """Encode image to base64"""

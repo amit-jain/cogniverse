@@ -7,7 +7,6 @@ query and retrieved video frames.
 """
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -15,9 +14,12 @@ import torch
 from PIL import Image
 
 # Use existing model infrastructure
+from cogniverse_core.common.media import MediaConfig, MediaLocator
 from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.query.encoders import ColPaliQueryEncoder
 
+from ._media_helpers import resolve_frame_from_result
 from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
@@ -34,14 +36,25 @@ class VisualRelevanceEvaluator(Evaluator):
     4. Returns evaluation based on visual similarity
     """
 
-    def __init__(self, model_name: str = "vidore/colsmol-500m"):
+    def __init__(
+        self,
+        model_name: str = "vidore/colsmol-500m",
+        locator: MediaLocator | None = None,
+    ):
         """
         Initialize visual evaluator with ColPali model
 
         Args:
             model_name: ColPali model to use for visual evaluation
+            locator: Optional pre-constructed MediaLocator. When None, a
+                default file://-only locator under the system tenant is built.
         """
         self.model_name = model_name
+        self.locator = (
+            locator
+            if locator is not None
+            else MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+        )
         self.query_encoder = ColPaliQueryEncoder(model_name)
 
         # Get the same model and processor for image encoding
@@ -156,33 +169,12 @@ class VisualRelevanceEvaluator(Evaluator):
         Returns:
             Visual similarity score or None if frame not available
         """
-        # Try to get frame path
-        frame_path = None
-
-        if isinstance(result, dict):
-            video_id = result.get("video_id", result.get("source_id"))
-            frame_id = result.get("frame_id", 0)
-
-            # Check if frame_path is provided
-            frame_path = result.get("frame_path")
-
-            # If not, try to construct it
-            if not frame_path and video_id:
-                # Standard frame path pattern
-                possible_paths = [
-                    f"data/frames/{video_id}/frame_{frame_id}.jpg",
-                    f"data/frames/{video_id}/frame_{frame_id}.png",
-                    f"outputs/frames/{video_id}/frame_{frame_id}.jpg",
-                ]
-
-                for path in possible_paths:
-                    if Path(path).exists():
-                        frame_path = path
-                        break
-
-        if not frame_path or not Path(frame_path).exists():
-            logger.debug(f"Frame not found: {frame_path}")
+        # Resolve frame via the shared MediaLocator path
+        frame_path_obj = resolve_frame_from_result(result, self.locator)
+        if frame_path_obj is None:
+            logger.debug("Frame not found for result %s", result)
             return None
+        frame_path = str(frame_path_obj)
 
         try:
             # Load and encode the frame

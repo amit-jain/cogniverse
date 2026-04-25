@@ -141,30 +141,45 @@ class TestVisualEvaluatorPlugin:
 class TestConfigurableVisualJudgeGetVideoPath:
     """Regression tests for ConfigurableVisualJudge._get_video_path extension lookup."""
 
-    @pytest.mark.unit
-    @pytest.mark.parametrize("ext", ["mp4", "mkv", "avi", "mov"])
-    def test_finds_video_with_extension(self, tmp_path, monkeypatch, ext):
+    @staticmethod
+    def _bare_judge(cache_root):
+        from cogniverse_core.common.media import MediaConfig, MediaLocator
         from cogniverse_evaluation.evaluators.configurable_visual_judge import (
             ConfigurableVisualJudge,
         )
 
+        judge = ConfigurableVisualJudge.__new__(ConfigurableVisualJudge)
+        judge.locator = MediaLocator(
+            tenant_id="test", config=MediaConfig(), cache_root=cache_root
+        )
+        return judge
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("ext", ["mp4", "mkv", "avi", "mov"])
+    def test_finds_video_via_legacy_probe(self, tmp_path, monkeypatch, ext):
         sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
         sample_dir.mkdir(parents=True)
         video_id = "v_-HpCLXdtcas"
         (sample_dir / f"{video_id}.{ext}").write_bytes(b"")
         monkeypatch.chdir(tmp_path)
 
-        judge = ConfigurableVisualJudge.__new__(ConfigurableVisualJudge)
+        judge = self._bare_judge(tmp_path / "cache")
         result = judge._get_video_path({"video_id": video_id})
 
         assert result == f"data/testset/evaluation/sample_videos/{video_id}.{ext}"
 
     @pytest.mark.unit
-    def test_returns_none_when_missing(self, tmp_path, monkeypatch):
-        from cogniverse_evaluation.evaluators.configurable_visual_judge import (
-            ConfigurableVisualJudge,
-        )
+    def test_finds_video_via_source_url(self, tmp_path):
+        clip = tmp_path / "v.mp4"
+        clip.write_bytes(b"video")
 
+        judge = self._bare_judge(tmp_path / "cache")
+        result = judge._get_video_path({"source_url": f"file://{clip}"})
+
+        assert result == str(clip)
+
+    @pytest.mark.unit
+    def test_returns_none_when_missing(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        judge = ConfigurableVisualJudge.__new__(ConfigurableVisualJudge)
+        judge = self._bare_judge(tmp_path / "cache")
         assert judge._get_video_path({"video_id": "does_not_exist"}) is None

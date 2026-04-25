@@ -6,13 +6,16 @@ by understanding the visual content, not just computing embeddings.
 """
 
 import logging
-from pathlib import Path
 from typing import Any
 
 import torch
 from PIL import Image
 from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+from ._media_helpers import resolve_frame_from_result
 from .base import Evaluator, create_evaluation_result
 
 logger = logging.getLogger(__name__)
@@ -30,7 +33,10 @@ class Qwen2VLVisualJudge(Evaluator):
     """
 
     def __init__(
-        self, model_name: str = "Qwen/Qwen2-VL-7B-Instruct", device: str = None
+        self,
+        model_name: str = "Qwen/Qwen2-VL-7B-Instruct",
+        device: str = None,
+        locator: MediaLocator | None = None,
     ):
         """
         Initialize Qwen2-VL visual judge
@@ -38,8 +44,15 @@ class Qwen2VLVisualJudge(Evaluator):
         Args:
             model_name: Qwen2-VL model to use
             device: Device to run on (auto-detect if None)
+            locator: Optional pre-constructed MediaLocator. When None, a
+                default file://-only locator under the system tenant is built.
         """
         self.model_name = model_name
+        self.locator = (
+            locator
+            if locator is not None
+            else MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+        )
 
         # Auto-detect device
         if device is None:
@@ -102,7 +115,7 @@ class Qwen2VLVisualJudge(Evaluator):
         frame_paths = []
         for _i, result in enumerate(results[:3], 1):  # Top 3 for evaluation
             frame_path = self._get_frame_path(result)
-            if frame_path and Path(frame_path).exists():
+            if frame_path:
                 frame_paths.append(frame_path)
 
         if not frame_paths:
@@ -145,29 +158,9 @@ class Qwen2VLVisualJudge(Evaluator):
             )
 
     def _get_frame_path(self, result: dict) -> str | None:
-        """Extract frame path from result"""
-        if isinstance(result, dict):
-            video_id = result.get("video_id", result.get("source_id"))
-            frame_id = result.get("frame_id", 0)
-
-            # Check if frame_path is provided
-            frame_path = result.get("frame_path")
-
-            # If not, try to construct it
-            if not frame_path and video_id:
-                possible_paths = [
-                    f"data/frames/{video_id}/frame_{frame_id}.jpg",
-                    f"data/frames/{video_id}/frame_{frame_id}.png",
-                    f"outputs/frames/{video_id}/frame_{frame_id}.jpg",
-                ]
-
-                for path in possible_paths:
-                    if Path(path).exists():
-                        return path
-
-            return frame_path
-
-        return None
+        """Resolve a result's frame to a local path via the MediaLocator."""
+        path = resolve_frame_from_result(result, self.locator)
+        return str(path) if path is not None else None
 
     def _evaluate_with_qwen(
         self, query: str, frame_paths: list[str]

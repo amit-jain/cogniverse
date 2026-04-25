@@ -51,14 +51,7 @@ class VisualEvaluatorPlugin:
                     explanation=f"Visual evaluator '{evaluator_name}' not configured",
                 )
 
-            visual_judge = ConfigurableVisualJudge(
-                provider=evaluator_config.get("provider", "ollama"),
-                model=evaluator_config.get("model"),
-                base_url=evaluator_config.get("base_url"),
-                api_key=evaluator_config.get("api_key"),
-                temperature=evaluator_config.get("temperature", 0.1),
-                frames_to_extract=evaluator_config.get("frames_to_extract", 3),
-            )
+            visual_judge = ConfigurableVisualJudge(evaluator_name=evaluator_name)
 
             query = (
                 state.input.get("query", "")
