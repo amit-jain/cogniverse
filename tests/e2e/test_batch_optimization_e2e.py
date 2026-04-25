@@ -951,42 +951,90 @@ class TestArtifactLoadingRoundTrip:
             f"!= batch job gliner {optimized_gliner}"
         )
 
-        # 3. Restart runtime pod to trigger artifact loading
+        # 3. Restart runtime pod to trigger artifact loading.
+        #
+        # Don't use ``kubectl rollout restart``: that stamps the
+        # PodTemplate, and with the deployment's default RollingUpdate
+        # strategy (maxSurge=25%, maxUnavailable=25%) it tries to bring
+        # up a second 8Gi runtime pod alongside the current one before
+        # killing the old. On a memory-pinned k3d laptop (node ~98% of
+        # 48Gi allocated by colpali+llm+vespa+runtime) the surge pod
+        # never schedules and the rollout times out.
+        #
+        # ``kubectl delete pod`` replaces 1:1 — the existing pod is
+        # killed, the deployment controller spins up its replacement,
+        # and the same memory slot is reused. No surge, no rollout
+        # status to wait on.
+        pod_name = subprocess.run(
+            [
+                "kubectl",
+                "--context",
+                KUBECTL_CONTEXT,
+                "get",
+                "pods",
+                "-n",
+                NAMESPACE,
+                "-l",
+                "app.kubernetes.io/component=runtime",
+                "--field-selector=status.phase=Running",
+                "-o",
+                "jsonpath={.items[0].metadata.name}",
+            ],
+            check=True,
+            timeout=15,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
         subprocess.run(
             [
                 "kubectl",
                 "--context",
                 KUBECTL_CONTEXT,
-                "rollout",
-                "restart",
-                "deployment/cogniverse-runtime",
+                "delete",
+                "pod",
+                pod_name,
                 "-n",
                 NAMESPACE,
+                "--grace-period=10",
             ],
             check=True,
             timeout=30,
         )
-        subprocess.run(
-            [
-                "kubectl",
-                "--context",
-                KUBECTL_CONTEXT,
-                "rollout",
-                "status",
-                DEPLOYMENT,
-                "-n",
-                NAMESPACE,
-                "--timeout=120s",
-            ],
-            check=True,
-            timeout=150,
-        )
-        time.sleep(20)  # Wait for agent initialization + artifact loading
+        # Wait for the replacement pod to be Ready. The deployment
+        # controller schedules a new pod almost immediately after the
+        # delete; the 60s readiness initialDelaySeconds + schema reload
+        # + colpali probe means /health/live takes ~2 min to respond.
+        # While the new pod is starting uvicorn can briefly accept a TCP
+        # connection through the k3d nginx proxy and then close it before
+        # any HTTP response — that surfaces as RemoteProtocolError, not
+        # ConnectError. Catch the full HTTPError tree so the poll keeps
+        # retrying through the startup window instead of crashing once.
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            try:
+                r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
+                if r.status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(5)
+        else:
+            raise AssertionError(
+                "Runtime did not return /health/live=200 within 240s of pod delete"
+            )
+        # One more pause so the agent registry, schema convergence and
+        # artifact loading all settle before the gateway dispatch in
+        # step 4.
+        time.sleep(20)
 
         # 4. Query the gateway and verify it works after restart with artifact loaded.
         #    The optimized threshold may classify this as simple or complex depending
         #    on the threshold value. Either path proves the agent started correctly.
         #    What we're testing: artifact loading didn't crash the agent.
+        # Cold-started runtime: first gateway call walks the full
+        # GLiNER load + DSPy module compile + Ollama inference path,
+        # 60-180s on CPU. 120s timeout was too tight after the pod
+        # delete; 600s gives margin without masking real hangs.
         resp = httpx.post(
             f"{RUNTIME}/agents/gateway_agent/process",
             json={
@@ -994,7 +1042,7 @@ class TestArtifactLoadingRoundTrip:
                 "query": "find cooking videos",
                 "context": {"tenant_id": TENANT_ID},
             },
-            timeout=120.0,
+            timeout=600.0,
         )
         assert resp.status_code == 200, (
             f"Agent failed after restart: {resp.status_code} {resp.text[:200]}"

@@ -694,20 +694,45 @@ async def run_workflow_optimization(
 
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
-    # Drop executions whose agent_sequence references an agent no longer
-    # registered. Phoenix retains historical spans across schema changes
-    # (e.g. ``routing_agent`` was retired in favour of gateway+orchestrator),
-    # and the workflow optimizer would otherwise persist demos that point
-    # at deleted agents — those demos can't be replayed and trip
-    # downstream consumers asserting ``agent in known_agents``.
+    # Drop executions whose agent_sequence references an agent that no
+    # longer exists in the current configuration. Phoenix retains
+    # historical spans across schema changes (e.g. an old agent that was
+    # renamed or split into multiple agents), and the workflow optimizer
+    # would otherwise persist demos that point at deleted agents —
+    # those demos can't be replayed and trip downstream consumers
+    # asserting ``agent in known_agents``.
+    #
+    # Read the live set from ``configs/config.json``'s ``agents`` block.
+    # That file is the canonical source of which agents the runtime
+    # routes to today. AgentRegistry would be the obvious alternative,
+    # but it's populated by HTTP self-registration and starts empty in
+    # this process (the optimization CLI runs in its own pod with no
+    # agents registered against it), so an AgentRegistry-backed filter
+    # would drop *every* demo, not just the stale ones.
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-    from cogniverse_core.registries.agent_registry import AgentRegistry
-    from cogniverse_foundation.config.utils import create_default_config_manager
-
-    _registry = AgentRegistry(
-        tenant_id=SYSTEM_TENANT_ID, config_manager=create_default_config_manager()
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
     )
-    _live_agents = set(_registry.list_agents())
+
+    _cfg = get_config(
+        tenant_id=SYSTEM_TENANT_ID,
+        config_manager=create_default_config_manager(),
+    )
+    _agents_section = (_cfg or {}).get("agents", {})
+    _live_agents = {
+        name
+        for name, body in _agents_section.items()
+        if isinstance(body, dict) and body.get("enabled", True)
+    }
+    if not _live_agents:
+        raise RuntimeError(
+            "configs/config.json 'agents' block is empty or unreachable; "
+            "cannot filter stale workflow demos. Refusing to save "
+            "execution_demos because every demo would be flagged stale "
+            "(or every demo would slip through unchecked, depending on "
+            "the filter's defensive default) — both are wrong."
+        )
 
     def _agents_live(seq) -> bool:
         if isinstance(seq, str):
