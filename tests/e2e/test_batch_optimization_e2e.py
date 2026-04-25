@@ -605,7 +605,6 @@ class TestWorkflowOptimization:
             "coding_agent",
             "text_analysis_agent",
             "orchestrator_agent",
-            "gateway_agent",
         }
         for demo in valid_demos:
             agents = demo["agent_sequence"]

@@ -694,9 +694,35 @@ async def run_workflow_optimization(
 
     artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
 
+    # Drop executions whose agent_sequence references an agent no longer
+    # registered. Phoenix retains historical spans across schema changes
+    # (e.g. ``routing_agent`` was retired in favour of gateway+orchestrator),
+    # and the workflow optimizer would otherwise persist demos that point
+    # at deleted agents — those demos can't be replayed and trip
+    # downstream consumers asserting ``agent in known_agents``.
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.utils import create_default_config_manager
+
+    _registry = AgentRegistry(
+        tenant_id=SYSTEM_TENANT_ID, config_manager=create_default_config_manager()
+    )
+    _live_agents = set(_registry.list_agents())
+
+    def _agents_live(seq) -> bool:
+        if isinstance(seq, str):
+            seq = [a.strip() for a in seq.split(",") if a.strip()]
+        return bool(seq) and all(a in _live_agents for a in seq)
+
     # Save workflow executions as demonstrations
     execution_demos = []
     for execution in intelligence.workflow_history:
+        if not _agents_live(execution.agent_sequence):
+            logger.debug(
+                "Skipping stale workflow demo (agents %r not all in registry)",
+                execution.agent_sequence,
+            )
+            continue
         execution_demos.append(
             {
                 "input": _json.dumps(
