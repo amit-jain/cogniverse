@@ -33,13 +33,19 @@ inference:
     image:
       tag: "dev"
       pullPolicy: Never
+    # 6Gi was triggering OOMKills under e2e load (model RSS ~4Gi + activations
+    # for batched keyframes). Bumping to 12Gi removes the OOM budget pressure
+    # without crowding the 49Gi node — runtime keeps 40Gi limit, llm 20Gi.
+    # requests.memory MUST equal limits.memory so the pod gets Guaranteed
+    # QoS — Burstable pods are first-evicted under node pressure and
+    # this sidecar would crash before the runtime does.
     resources:
       limits:
         cpu: "4"
-        memory: "6Gi"
+        memory: "12Gi"
       requests:
         cpu: "2"
-        memory: "3Gi"
+        memory: "12Gi"
   # Dev override: use locally-built pylate image for the default text pod.
   colbert_pylate:
     pylate:
