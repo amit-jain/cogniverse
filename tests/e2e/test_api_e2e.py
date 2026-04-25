@@ -1266,8 +1266,14 @@ class TestVideoIngestionAndSearch:
     """Upload real ActivityNet video, verify ingestion, then search."""
 
     def test_upload_video_and_search(self, real_video_path):
-        """Upload v_-nl4G-00PtA.mp4 (874KB) → ColPali embedding → search."""
-        with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+        """Upload a sample video, ingest it through the ColPali pipeline,
+        then verify it surfaces in search.
+
+        CPU-only ColPali inference is slow: each keyframe takes ~30-60s
+        through colsmol-500m. The 1800s timeout reflects the real
+        pipeline cost; tighter budgets just mask successes as timeouts.
+        """
+        with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
             with open(real_video_path, "rb") as f:
                 resp = client.post(
                     "/ingestion/upload",

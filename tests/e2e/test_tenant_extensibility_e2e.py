@@ -434,7 +434,7 @@ class TestJobExecution:
             slug = data["slug"]
             assert slug
 
-    def test_job_execute_with_wiki_delivery(self):
+    async def test_job_execute_with_wiki_delivery(self):
         """Create job → execute → verify wiki save actually happened.
 
         The job executor reads config from real Vespa, calls gateway_agent
@@ -442,7 +442,6 @@ class TestJobExecution:
         should call POST /wiki/save (not gateway_agent). We intercept HTTP
         calls to verify the wiki endpoint was called with the right content.
         """
-        import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
@@ -499,7 +498,7 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.run(run_job(job_id, TENANT_ID, RUNTIME))
+            await run_job(job_id, TENANT_ID, RUNTIME)
 
         urls_called = [c["url"] for c in call_log]
 
@@ -528,14 +527,13 @@ class TestJobExecution:
         with httpx.Client(base_url=RUNTIME, timeout=10.0) as client:
             client.delete(f"/admin/tenant/{TENANT_ID}/jobs/{job_id}")
 
-    def test_job_execute_with_summarize_and_telegram(self):
+    async def test_job_execute_with_summarize_and_telegram(self):
         """Post_action "summarize and send on Telegram" should process then deliver.
 
         "summarize and send on Telegram" has processing intent (summarize) +
         delivery (Telegram). The executor should call gateway_agent to summarize,
         then POST /messaging/send with the summary.
         """
-        import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
         with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
@@ -587,7 +585,7 @@ class TestJobExecution:
                 return_value=mock_client,
             ),
         ):
-            asyncio.run(run_job(job_id, TENANT_ID, RUNTIME))
+            await run_job(job_id, TENANT_ID, RUNTIME)
 
         urls_called = [c["url"] for c in call_log]
 

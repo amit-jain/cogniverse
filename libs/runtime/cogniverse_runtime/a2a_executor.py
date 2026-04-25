@@ -48,6 +48,13 @@ _STREAMING_CAPABILITIES = frozenset(
         "document_analysis",
         "pdf_processing",
         "coding",
+        # GatewayAgent's capabilities are ``gateway`` + ``classification``.
+        # Without these in the streaming set the executor falls through to
+        # the single-event path; clients subscribed to /a2a/ message/stream
+        # then never see emit_progress() events from the GLiNER classifier
+        # or downstream dispatch.
+        "gateway",
+        "classification",
     }
 )
 
