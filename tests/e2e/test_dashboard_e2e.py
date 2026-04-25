@@ -52,6 +52,10 @@ class TestSidebarAndNavigation:
 
     def test_dashboard_loads_with_expected_structure(self, page):
         _nav(page)
+        # Dashboard `st.stop()`s before rendering main_tabs when no tenant is
+        # selected (libs/dashboard/cogniverse_dashboard/app.py:664-698), so
+        # tabs only appear after a tenant is committed to session state.
+        set_tenant(page, TENANT_ID)
         sidebar = page.locator('[data-testid="stSidebar"]')
         expect(sidebar).to_be_visible(timeout=INTERACTION_TIMEOUT)
         app = page.locator('[data-testid="stAppViewContainer"]')
@@ -91,6 +95,9 @@ class TestSidebarAndNavigation:
 
     def test_top_level_tabs_present(self, page):
         _nav(page)
+        # Tabs only render after tenant validation passes (see
+        # test_dashboard_loads_with_expected_structure for context).
+        set_tenant(page, TENANT_ID)
         tabs = page.locator('button[role="tab"]')
         tab_texts = [tabs.nth(i).inner_text().lower() for i in range(tabs.count())]
         assert any("analytics" in t for t in tab_texts), (
@@ -105,6 +112,10 @@ class TestSidebarAndNavigation:
 
     def test_agent_status_in_sidebar(self, page):
         _nav(page)
+        # Agent-status block lives in the sidebar after tenant validation;
+        # without a tenant the dashboard shows only a warning and st.stop()s
+        # before the show_agent_status() call (app.py:722).
+        set_tenant(page, TENANT_ID)
         sidebar = page.locator('[data-testid="stSidebar"]')
         sidebar_text = sidebar.inner_text().lower()
         assert "agent" in sidebar_text or "status" in sidebar_text, (
