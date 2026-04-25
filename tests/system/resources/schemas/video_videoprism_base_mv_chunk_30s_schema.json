@@ -24,6 +24,14 @@
         "index": "enable-bm25"
       },
       {
+        "name": "source_url",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
         "name": "creation_timestamp",
         "type": "long",
         "indexing": [

@@ -878,6 +878,15 @@ fsspec supports `gs://` (via `gcsfs`) and `az://` (via `adlfs`) out of the
 box — adding them is a matter of installing the optional dependency and
 configuring credentials, no code change in the locator.
 
+### Required at ingest time
+
+`DocumentMetadata.source_url` is **required** (not optional). Every Vespa
+document carries the canonical URI of its source video; build_document raises
+``ValueError`` when the field is missing. Visual evaluators rely on this
+field to localize bytes regardless of where the consumer runs (pod, CI,
+local dev). Pre-existing corpora can be backfilled with
+`scripts/backfill_source_url.py`.
+
 ### Tests
 
 | File | Coverage |
@@ -885,9 +894,10 @@ configuring credentials, no code change in the locator.
 | `tests/core/unit/test_media_cache.py` | Content-addressed keys, atomic put, LRU eviction, atime bumping. |
 | `tests/core/unit/test_media_locator.py` | URI canonicalization, file:// / pvc:// dispatch, list enumeration, tenant isolation. |
 | `tests/core/unit/test_media_http.py` | http:// fetch + cache hit on second access (real `http.server` fixture). |
-
-Integration tests against a real MinIO instance arrive in phase 5 of the
-[unified MediaLocator rollout](#).
+| `tests/core/integration/test_media_minio.py` | Real MinIO container: fetch + cache, etag-aware refetch, list, stat. Requires Docker. |
+| `tests/ingestion/integration/test_source_url_round_trip.py` | End-to-end source_url round-trip through a real Vespa instance. Requires Vespa. |
+| `tests/agents/unit/test_audio_agent_locator.py` | AudioAnalysisAgent._get_audio_path delegates to MediaLocator. |
+| `tests/evaluation/unit/test_media_helpers.py` | resolve_video_from_result / resolve_frame_from_result / extract_frames. |
 
 ---
 
