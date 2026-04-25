@@ -17,6 +17,7 @@ class DocumentMetadata:
     segment_idx: int
     start_time: float
     end_time: float
+    source_url: str | None = None
     creation_timestamp: int = None
 
     def __post_init__(self):
@@ -54,6 +55,9 @@ class DocumentBuilder:
             "start_time": metadata.start_time,
             "end_time": metadata.end_time,
         }
+
+        if metadata.source_url:
+            fields["source_url"] = metadata.source_url
 
         # Add embeddings using field names from strategy
         if "float_embeddings" in embeddings:

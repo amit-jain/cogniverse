@@ -196,6 +196,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
         start_time: float,
         end_time: float,
         num_segments: int,
+        source_url: str | None = None,
     ) -> dict[str, Any] | None:
         """Process a video segment - returns raw embeddings"""
         self.logger.info(
@@ -234,6 +235,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
             segment_idx=segment_idx,
             start_time=start_time,
             end_time=end_time,
+            source_url=source_url,
         )
 
         additional_fields = {
@@ -302,6 +304,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
                     start_time,
                     end_time,
                     num_segments,
+                    source_url=video_data.get("source_url"),
                 )
 
                 if doc:
@@ -558,6 +561,7 @@ class EmbeddingGenerator(BaseEmbeddingGenerator):
                 segment_idx=segment_idx,
                 start_time=segment["start_time"],
                 end_time=segment["end_time"],
+                source_url=video_data.get("source_url"),
             )
 
             # Prepare additional fields

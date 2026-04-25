@@ -79,6 +79,11 @@ def video_search_tool():
                     # Use rank-based score if no score available
                     score = 1.0 / (i + 1)
 
+                metadata = result_dict.get("metadata", {})
+                source_url = result_dict.get("source_url") or metadata.get(
+                    "source_url", ""
+                )
+
                 search_results.append(
                     {
                         "video_id": video_id,
@@ -87,7 +92,8 @@ def video_search_tool():
                         "document_id": result_dict.get("document_id", ""),
                         "content": result_dict.get("content", ""),
                         "temporal_info": result_dict.get("temporal_info", {}),
-                        "metadata": result_dict.get("metadata", {}),
+                        "source_url": source_url,
+                        "metadata": metadata,
                     }
                 )
 

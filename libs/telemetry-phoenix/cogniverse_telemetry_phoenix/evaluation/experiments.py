@@ -88,6 +88,11 @@ class PhoenixExperimentPlugin:
                                 else:
                                     video_id = doc_id
 
+                            metadata = result_dict.get("metadata", {})
+                            source_url = result_dict.get("source_url") or metadata.get(
+                                "source_url", ""
+                            )
+
                             formatted_results.append(
                                 {
                                     "video_id": video_id,
@@ -96,6 +101,7 @@ class PhoenixExperimentPlugin:
                                     ),
                                     "rank": i + 1,
                                     "content": result_dict.get("content", ""),
+                                    "source_url": source_url,
                                 }
                             )
 
