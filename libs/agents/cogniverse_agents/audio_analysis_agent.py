@@ -182,6 +182,10 @@ class AudioAnalysisAgent(
         self._audio_transcriber = None
         self._embedding_generator = None
 
+        from cogniverse_core.common.media import MediaConfig, MediaLocator
+
+        self._locator = MediaLocator(tenant_id=deps.tenant_id, config=MediaConfig())
+
         logger.info(
             f"Initialized AudioAnalysisAgent for tenant: {deps.tenant_id}, "
             f"whisper: {deps.whisper_model_size}"
@@ -547,31 +551,12 @@ class AudioAnalysisAgent(
             return []
 
     def _get_audio_path(self, audio_url: str) -> str:
+        """Resolve an audio URL or path to a local file via the MediaLocator.
+
+        ``file://``, bare paths, and ``pvc://`` short-circuit to identity;
+        ``http(s)://``, ``s3://``, etc. are fetched and cached locally.
         """
-        Get audio file path (download if URL, or return path directly)
-
-        Args:
-            audio_url: URL or local path
-
-        Returns:
-            Local file path
-        """
-        if audio_url.startswith("http://") or audio_url.startswith("https://"):
-            # Download audio
-            import os
-            import tempfile
-
-            import requests
-
-            response = requests.get(audio_url)
-            suffix = os.path.splitext(audio_url)[1] or ".mp3"
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-                f.write(response.content)
-                return f.name
-        else:
-            # Local path
-            return audio_url
+        return str(self._locator.localize(self._locator.to_canonical_uri(audio_url)))
 
     # ==========================================================================
     # Type-safe process method (required by AgentBase)
