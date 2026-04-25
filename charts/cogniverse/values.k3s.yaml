@@ -25,16 +25,14 @@ devMode:
 #   - code_colbert_pylate (code_lateon_mv — keep off unless code search is wanted)
 #   - dense_vllm       (currently referenced by NO profile — keep off)
 inference:
-  # ColPali image multi-vector embeddings. Temporarily DISABLED.
-  # Infinity (both 0.0.75 and 0.0.77) can't load vidore/colsmol-500m:
-  #   - 0.0.75: peft/LoraConfig.eva_config mismatch
-  #   - 0.0.77: past eva_config, fails on adapter target_modules mismatch
-  # Plan: add deploy/colpali/ FastAPI sidecar with colpali-engine lib
-  # (mirrors deploy/pylate/). Re-enable this block pointing at that
-  # image once it's built. Until then, ColPali ingest/search tests stay
-  # failing (documented known gap).
+  # ColPali image multi-vector embeddings via the deploy/colpali FastAPI
+  # sidecar (cogniverse/colpali:dev). Required for any ingest / query on
+  # video_colpali_* / image_colpali_* profiles.
   colpali_infinity:
-    enabled: false
+    enabled: true
+    image:
+      tag: "dev"
+      pullPolicy: Never
     resources:
       limits:
         cpu: "4"

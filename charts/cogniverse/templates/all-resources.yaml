@@ -982,10 +982,40 @@ spec:
           value: {{ $cfg.pylate.containerPort | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
+      {{- else if eq $engine "colpali_native" }}
+      # Custom FastAPI sidecar (deploy/colpali) — loads ColPali / ColIdefics3 /
+      # ColQwen via colpali-engine and serves POST /v1/embeddings. Used in
+      # place of Infinity / vLLM, neither of which can load vidore/colsmol-500m
+      # cleanly today (peft eva_config + LoRA target_modules drift).
+      - name: colpali
+        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
+        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ default 7997 $cfg.service.port }}
+        env:
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: DEVICE
+          value: {{ default "cpu" $cfg.device | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ default 7997 $cfg.service.port | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
       {{- else if eq $engine "infinity" }}
       # Infinity (michaelfeil/infinity) — OpenAI-compatible /v1/embeddings
-      # with multimodal input support. Used for ColPali / ColQwen image
-      # multi-vector embeddings where vLLM can't register the arch.
+      # with multimodal input support. Kept as an option, but does NOT load
+      # vidore/colsmol-500m cleanly today; prefer engine=colpali_native for
+      # the colpali_infinity / colqwen_infinity blocks.
       - name: infinity
         image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
         imagePullPolicy: {{ $cfg.image.pullPolicy }}

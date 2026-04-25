@@ -1,0 +1,7 @@
+fastapi==0.120.1
+uvicorn[standard]==0.44.0
+pydantic==2.13.0
+pillow
+numpy
+transformers==4.57.1
+colpali-engine>=0.3.4,<0.4

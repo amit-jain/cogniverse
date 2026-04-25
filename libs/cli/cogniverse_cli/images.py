@@ -10,6 +10,7 @@ import yaml
 RUNTIME_TAG = "cogniverse/runtime:dev"
 DASHBOARD_TAG = "cogniverse/dashboard:dev"
 PYLATE_TAG = "cogniverse/pylate:dev"
+COLPALI_TAG = "cogniverse/colpali:dev"
 
 
 def has_workspace_source(project_root: Path) -> bool:
@@ -20,14 +21,15 @@ def has_workspace_source(project_root: Path) -> bool:
 def build_images(project_root: Path) -> list[str]:
     """Build all cogniverse-owned Docker images.
 
-    Returns list of image tags that were built. The pylate inference image is
-    always built so ``--set inference.<name>.engine=pylate`` against an
-    existing k3d cluster works without a separate build step.
+    Returns list of image tags that were built. Inference sidecars (pylate,
+    colpali) are always built so ``--set inference.<name>.engine=...``
+    against an existing k3d cluster works without a separate build step.
     """
     workspace_builds = [
         (RUNTIME_TAG, "libs/runtime/Dockerfile", "."),
         (DASHBOARD_TAG, "libs/dashboard/Dockerfile", "."),
         (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate"),
+        (COLPALI_TAG, "deploy/colpali/Dockerfile", "deploy/colpali"),
     ]
     built: list[str] = []
     for tag, dockerfile, context in workspace_builds:

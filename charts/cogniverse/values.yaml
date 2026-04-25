@@ -514,26 +514,22 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  # ColPali / ColQwen image multi-vector embeddings via Infinity
-  # (michaelfeil/infinity). Used by profiles with
-  # ``inference_service: "colpali_infinity"`` (video_colpali_smol500_mv_frame,
-  # image_colpali_mv). Infinity exposes OpenAI-compatible /v1/embeddings
-  # with multimodal input, which is what RemoteColPaliLoader already
-  # targets. vLLM can't register ColIdefics3 (see memory
-  # project_colpali_vllm_incompat); Infinity is the workaround.
+  # ColPali / ColIdefics3 image multi-vector embeddings served by the
+  # custom FastAPI sidecar in deploy/colpali (cogniverse/colpali:dev).
+  # Uses colpali-engine to load vidore/colsmol-500m end-to-end (model +
+  # processor + LoRA adapter merge) — Infinity / vLLM both fail this on
+  # peft/target_modules drift. Profiles route here via
+  # ``inference_service: "colpali_infinity"`` (the key is kept for
+  # backward compatibility; engine switched to colpali_native).
   colpali_infinity:
     enabled: false
-    engine: infinity
+    engine: colpali_native
     model: vidore/colsmol-500m
     type: multi_vector
+    device: cpu
     image:
-      repository: michaelf34/infinity
-      # 0.0.77 passes the peft/eva_config check that 0.0.75 fails, but
-      # still can't load vidore/colsmol-500m — the LoRA adapter's target
-      # modules (model.text_model.*) don't match the base model's state
-      # dict. This block stays disabled in values.k3s.yaml until a
-      # deploy/colpali/ FastAPI sidecar replaces Infinity for ColPali.
-      tag: "0.0.77"
+      repository: cogniverse/colpali
+      tag: "dev"
       pullPolicy: IfNotPresent
     extraArgs: []
     replicaCount: 1
@@ -552,33 +548,35 @@ inference:
       httpGet:
         path: /health
         port: 7997
-      initialDelaySeconds: 180
+      initialDelaySeconds: 240
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 5
+      failureThreshold: 10
     readinessProbe:
       httpGet:
         path: /health
         port: 7997
-      initialDelaySeconds: 60
+      initialDelaySeconds: 120
       periodSeconds: 15
       timeoutSeconds: 10
       failureThreshold: 5
 
-  # ColQwen multimodal multi-vector embeddings via Infinity. Same serving
-  # contract as colpali_infinity (OpenAI /v1/embeddings multimodal) but a
-  # SEPARATE pod because one Infinity instance serves a single model. Used
-  # by profiles with ``inference_service: "colqwen_infinity"``
-  # (video_colqwen_omni_mv_chunk_30s). Off by default — enable explicitly
-  # if that profile is active.
+  # ColQwen multimodal multi-vector embeddings served by the same
+  # cogniverse/colpali sidecar (colpali-engine supports ColQwen2 / Omni
+  # variants alongside ColPali / ColIdefics3). Separate pod because one
+  # FastAPI instance serves a single model. Used by profiles with
+  # ``inference_service: "colqwen_infinity"`` (video_colqwen_omni_mv_chunk_30s).
+  # Off by default — ColQwen-Omni is large (~5-7Gi RSS) and the laptop
+  # cluster usually doesn't need it.
   colqwen_infinity:
     enabled: false
-    engine: infinity
+    engine: colpali_native
     model: vidore/colqwen-omni-v0.1
     type: multi_vector
+    device: cpu
     image:
-      repository: michaelf34/infinity
-      tag: "0.0.75"
+      repository: cogniverse/colpali
+      tag: "dev"
       pullPolicy: IfNotPresent
     extraArgs: []
     replicaCount: 1
@@ -597,15 +595,15 @@ inference:
       httpGet:
         path: /health
         port: 7997
-      initialDelaySeconds: 180
+      initialDelaySeconds: 240
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 5
+      failureThreshold: 10
     readinessProbe:
       httpGet:
         path: /health
         port: 7997
-      initialDelaySeconds: 60
+      initialDelaySeconds: 120
       periodSeconds: 15
       timeoutSeconds: 10
       failureThreshold: 5
