@@ -128,8 +128,24 @@ def _create_tenant(client: httpx.Client, tenant_id: str) -> dict:
 
 
 def _cleanup_tenant(client: httpx.Client, tenant_id: str):
-    """Delete tenant and org. Best-effort cleanup."""
+    """Delete the tenant. Best-effort cleanup — schemas redeploy without it.
+
+    Deliberately does NOT call DELETE /admin/organizations: the cascade
+    inside delete_organization races against Vespa's tenant_metadata
+    propagation, so list_tenants_for_org_internal can return [] while
+    the peer tenant's schema is still in Vespa, leaving an orphan that
+    blocks subsequent deploys with BackendDeploymentError. Each test's
+    finally block calls _cleanup_tenant for *every* tenant it created,
+    so the explicit per-tenant DELETE handles both cleanups; the org
+    record gets reaped by garbage-collection rather than the test
+    pulling it. If the test wants to drop the org explicitly, use
+    _cleanup_org once after all tenants are gone.
+    """
     client.delete(f"/admin/tenants/{tenant_id}")
+
+
+def _cleanup_org(client: httpx.Client, tenant_id: str):
+    """Drop the org record. Call after all tenants in it are deleted."""
     org_id = tenant_id.split(":")[0] if ":" in tenant_id else tenant_id
     client.delete(f"/admin/organizations/{org_id}")
 
@@ -812,10 +828,12 @@ class TestLoadTesting:
         n_requests = len(queries)
 
         def _route(query: str) -> dict:
-            # 5 concurrent routing calls × ~60-90s each on CPU Ollama
-            # serialize through the LLM. Total wait per request can hit
-            # 300-450s; 180s timeout was too tight.
-            with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
+            # 5 concurrent routing calls serialize through one CPU Ollama
+            # (the runtime queues them behind a single worker). On a laptop
+            # each call is 90-180s and the last queued request can sit for
+            # 5 × 180 = 15 min; 600s was still too tight under load and
+            # produced httpx.ReadTimeout. Allow a generous 1800s window.
+            with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
                 resp = client.post(
                     "/agents/gateway_agent/process",
                     json={
