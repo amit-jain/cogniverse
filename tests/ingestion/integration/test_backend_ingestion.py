@@ -382,6 +382,7 @@ class TestComprehensiveIngestion:
         assert len(results) > 0
 
     @pytest.mark.benchmark
+    @pytest.mark.requires_vespa
     @pytest.mark.asyncio
     async def test_ingestion_performance(
         self, ingestion_vespa_backend, all_test_videos, tmp_path

@@ -83,7 +83,7 @@ class ChunkProcessor(BaseProcessor):
         duration = self._get_video_duration(video_path)
         if duration <= 0:
             self.logger.error("   ❌ Could not determine video duration")
-            return {"chunks": [], "metadata": {}}
+            return {"chunks": [], "metadata": {}, "video_id": video_id}
 
         # Calculate chunk positions
         chunks = []

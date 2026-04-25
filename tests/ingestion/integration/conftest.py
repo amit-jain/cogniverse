@@ -11,6 +11,25 @@ import pytest
 
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.markers import is_ffmpeg_available, is_vespa_running
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-skip tests marked requires_ffmpeg or requires_vespa when services absent."""
+    ffmpeg_ok = is_ffmpeg_available()
+    vespa_ok = is_vespa_running()
+    for item in items:
+        if "requires_ffmpeg" in item.keywords and not ffmpeg_ok:
+            item.add_marker(
+                pytest.mark.skip(
+                    reason="FFmpeg/ffprobe not available in this environment"
+                )
+            )
+        if "requires_vespa" in item.keywords and not vespa_ok:
+            item.add_marker(
+                pytest.mark.skip(reason="Vespa not running in this environment")
+            )
+
 
 # Generate unique ports based on this module name
 INGESTION_VESPA_PORT, INGESTION_VESPA_CONFIG_PORT = generate_unique_ports(__name__)
