@@ -158,15 +158,11 @@ docker run -d --name ollama \
 to a sidecar pod (`deploy/whisper`). The sidecar is the production path —
 keeps the agent engine-agnostic and lets the cluster swap engines per
 host. Engine selection happens at chart-render time (one image per
-engine, no runtime branch):
+engine, no runtime branch). The faster-whisper variant
+(`cogniverse/whisper-fw`, `deploy/whisper/Dockerfile`) covers CPU and
+NVIDIA CUDA hosts.
 
-| Engine | Backend | Image | Status |
-|--------|---------|-------|--------|
-| `faster-whisper` | CTranslate2 (CPU + NVIDIA CUDA) | `cogniverse/whisper-fw` | Implemented (`deploy/whisper/Dockerfile`). |
-| `whisperx` | PyTorch (incl. ROCm) | `cogniverse/whisper-wx` | Not authored yet — selecting this engine fails at image pull. |
-| `whisper-cpp` | whisper.cpp | `cogniverse/whisper-cpp` | Not authored yet. |
-
-Build and run the faster-whisper variant locally:
+Build and run locally:
 
 ```bash
 # Build the canonical image. Each engine has its own Dockerfile —
