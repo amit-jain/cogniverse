@@ -37,9 +37,18 @@ WHISPER_TAG = "cogniverse/whisper-fw:dev"
 def detect_torch_backend() -> str:
     """Return the torch backend matching the local host.
 
-    Same detection ladder as ``scripts/install_with_gpu.sh`` so the CLI
-    builds the same wheels that ``install_with_gpu.sh`` would install
-    locally. Override with ``COGNIVERSE_TORCH_BACKEND``.
+    Detection ladder (same shape as ``scripts/install_with_gpu.sh``):
+
+    1. ``COGNIVERSE_TORCH_BACKEND`` env override.
+    2. ``nvidia-smi`` reachable → cuda.
+    3. ``rocminfo`` reports a ``gfx`` agent → rocm. Requires the calling
+       user to have ``/dev/kfd`` access (render group); without that
+       rocminfo falls through to (4).
+    4. ``/sys/module/amdgpu`` loaded → rocm. The kernel module is
+       enough evidence to install rocm wheels at build time — runtime
+       GPU access is a separate concern and not all build paths need
+       it. Catches the ROCm-host-but-no-render-group case.
+    5. fallback → cpu.
     """
     explicit = os.environ.get("COGNIVERSE_TORCH_BACKEND")
     if explicit:
@@ -69,6 +78,9 @@ def detect_torch_backend() -> str:
                 return "rocm"
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             pass
+
+    if Path("/sys/module/amdgpu").exists():
+        return "rocm"
 
     return "cpu"
 
