@@ -355,6 +355,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("LLM_ENDPOINT"):
         system_config.base_url = os.environ["LLM_ENDPOINT"]
         updated = True
+    # LLM_ENGINE / LLM_MODEL come from the chart's llm.engine / llm.model
+    # values. The runtime's DSPy LM construction sites read these via
+    # ``cogniverse_foundation.dspy.format_dspy_model`` so the right
+    # litellm prefix (ollama_chat / hosted_vllm / openai) is applied.
+    if os.environ.get("LLM_ENGINE"):
+        system_config.llm_engine = os.environ["LLM_ENGINE"]
+        updated = True
+    if os.environ.get("LLM_MODEL"):
+        system_config.llm_model = os.environ["LLM_MODEL"]
+        updated = True
     if os.environ.get("TELEMETRY_HTTP_ENDPOINT"):
         system_config.telemetry_url = os.environ["TELEMETRY_HTTP_ENDPOINT"]
         updated = True

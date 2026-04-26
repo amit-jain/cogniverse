@@ -160,7 +160,12 @@ class SystemConfig:
     application_name: str = "cogniverse"  # Vespa application package name
 
     # LLM configuration
-    llm_model: str = "ollama/gemma3:4b"
+    # ``llm_model`` is the bare model id (e.g. "gemma3:4b" or
+    # "Qwen/Qwen2.5-7B-Instruct"); ``llm_engine`` picks the DSPy/litellm
+    # prefix at call time via ``cogniverse_foundation.llm.dspy_format``.
+    # Both are populated from chart env (LLM_MODEL / LLM_ENGINE).
+    llm_model: str = "gemma3:4b"
+    llm_engine: str = "ollama"
     base_url: str = "http://localhost:11434"
     llm_api_key: Optional[str] = None
 
@@ -203,6 +208,7 @@ class SystemConfig:
             "backend_port": self.backend_port,
             "application_name": self.application_name,
             "llm_model": self.llm_model,
+            "llm_engine": self.llm_engine,
             "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
             "telemetry_url": self.telemetry_url,
@@ -228,7 +234,8 @@ class SystemConfig:
             search_backend=data.get("search_backend", "vespa"),
             backend_url=data.get("backend_url", "http://localhost"),
             backend_port=data.get("backend_port", 8080),
-            llm_model=data.get("llm_model", "gpt-4"),
+            llm_model=data.get("llm_model", "gemma3:4b"),
+            llm_engine=data.get("llm_engine", "ollama"),
             base_url=data.get("base_url", "http://localhost:11434"),
             llm_api_key=data.get("llm_api_key"),
             telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
