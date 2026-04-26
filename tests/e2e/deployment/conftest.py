@@ -290,67 +290,22 @@ def deployed_stack(k3d_cluster):
     # ``runtime.imagesByBackend[backend]``. PREDOWNLOAD_MODELS is on by
     # default so the agent pipeline starts fast; flip the env var off to
     # save image build time when the tests don't exercise inference.
-    import os as _os
-
     from cogniverse_cli.images import (
-        DASHBOARD_TAGS_BY_BACKEND,
-        RUNTIME_TAGS_BY_BACKEND,
+        build_images,
         detect_torch_backend,
+        import_images,
     )
 
     backend = detect_torch_backend()
-    runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
-    dashboard_tag = DASHBOARD_TAGS_BY_BACKEND[backend]
 
-    build_args: list[str] = ["--build-arg", f"TORCH_BACKEND={backend}"]
-    if _os.environ.get("PREDOWNLOAD_MODELS", "true").lower() in ("0", "false", "no"):
-        build_args += ["--build-arg", "PREDOWNLOAD_MODELS=false"]
-
-    for dockerfile, tag in [
-        ("libs/runtime/Dockerfile", runtime_tag),
-        ("libs/dashboard/Dockerfile", dashboard_tag),
-    ]:
-        # Cold build runs the full workspace install (uv sync —
-        # transformers, dspy, ColPali, VideoPrism, etc.), then the
-        # backend-specific torch reinstall, then GLiNER predownload
-        # (1.5 GB). Easily 15-25 min on the first run; cached
-        # subsequent runs finish in seconds via docker layer cache.
-        _cmd(
-            ["docker", "build", "-f", dockerfile, *build_args, "-t", tag, "."],
-            timeout=1800,
-        )
-
-    # Inference sidecars deployed by the chart when their `enabled` flag
-    # flips to true. The whisper sidecar is gated behind ``whisper.enabled``
-    # in values.k3s.yaml; build the image unconditionally so a deploy with
-    # the flag on doesn't fail with ImagePullBackOff. The whisper Dockerfile
-    # doesn't consume TORCH_BACKEND.
-    _cmd(
-        [
-            "docker",
-            "build",
-            "-f",
-            "deploy/whisper/Dockerfile",
-            "-t",
-            "cogniverse/whisper-fw:dev",
-            "deploy/whisper",
-        ],
-        timeout=600,
-    )
-
-    _cmd(
-        [
-            "k3d",
-            "image",
-            "import",
-            runtime_tag,
-            dashboard_tag,
-            "cogniverse/whisper-fw:dev",
-            "-c",
-            CLUSTER_NAME,
-        ],
-        timeout=300,
-    )
+    # Build the canonical image set the chart's k3s values enable —
+    # runtime + dashboard for the host's torch backend, plus the
+    # always-on inference sidecars (pylate / colpali / whisper).
+    # build_images() owns the docker-build invocations + the matching
+    # --build-arg TORCH_BACKEND wiring; import_images() lifts them into
+    # the k3d cluster so pods with pullPolicy=Never can find them.
+    built_tags = build_images(project_root, torch_backend=backend)
+    import_images(CLUSTER_NAME, built_tags)
 
     # No AMD device plugin install — runtime mounts /dev/kfd and
     # /dev/dri via hostPath when backend=rocm (chart's

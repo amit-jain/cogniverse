@@ -58,6 +58,12 @@ inference:
       image:
         tag: "dev"
         pullPolicy: Never
+  # Dev override for the dense-mode pylate pod (denseon).
+  denseon:
+    pylate:
+      image:
+        tag: "dev"
+        pullPolicy: Never
 
 vespa:
   replicaCount: 1

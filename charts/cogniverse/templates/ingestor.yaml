@@ -1,5 +1,14 @@
 {{- if .Values.ingestor.enabled }}
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- /* Ingestor reuses the runtime image — same Dockerfile, different
+       entry point. Resolve via runtime's imagesByBackend so the worker
+       always matches the runtime's torch wheel variant. Falls back to
+       the ingestor.image block for back-compat / standalone overrides. */}}
+{{- $ingestorBackend := default "cuda" .Values.runtime.backend }}
+{{- $ingestorImage := .Values.ingestor.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $ingestorImage = (index .Values.runtime.imagesByBackend $ingestorBackend) | default .Values.ingestor.image }}
+{{- end }}
 ---
 # Ingestor workers — claim jobs from the redis queue, run the ingestion
 # pipeline, publish status events. Same image as the runtime, different
@@ -31,8 +40,8 @@ spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
       containers:
       - name: ingestor
-        image: "{{ .Values.ingestor.image.repository }}:{{ .Values.ingestor.image.tag }}"
-        imagePullPolicy: {{ .Values.ingestor.image.pullPolicy }}
+        image: "{{ $ingestorImage.repository }}:{{ $ingestorImage.tag }}"
+        imagePullPolicy: {{ $ingestorImage.pullPolicy }}
         command:
           - python
           - -m
