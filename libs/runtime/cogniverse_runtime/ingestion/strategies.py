@@ -131,19 +131,36 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
 
 
 class AudioTranscriptionStrategy(BaseStrategy):
-    """Transcribe audio from video."""
+    """Transcribe audio from video.
 
-    def __init__(self, model: str = "base", language: str = "auto"):
+    When ``inference_service`` is set (e.g. ``"whisper"``), the
+    AudioProcessor runs in remote mode: it POSTs the audio bytes to the
+    sidecar pod's ``/v1/transcribe`` endpoint instead of loading a local
+    Whisper model. The processor stays env-agnostic — ProcessorManager
+    resolves the service name to a URL and substitutes ``endpoint`` into
+    the processor config before construction.
+    """
+
+    def __init__(
+        self,
+        model: str = "base",
+        language: str = "auto",
+        inference_service: str | None = None,
+    ):
         # Default to the "base" Whisper model (~150MB) to keep the ingestion
         # pod's memory footprint bounded. Profiles that genuinely need larger
         # accuracy should set "model": "large-v3" (3GB) or another tier
         # explicitly in the profile's strategy params.
         self.model = model
         self.language = language
+        self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Audio transcription requires audio processor."""
-        return {"audio": {"model": self.model, "language": self.language}}
+        config: dict[str, Any] = {"model": self.model, "language": self.language}
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"audio": config}
 
 
 class VLMDescriptionStrategy(BaseStrategy):

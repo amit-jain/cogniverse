@@ -151,7 +151,7 @@ class TestProcessorManager:
         ]
         strategy_set = MockStrategySet(strategies)
 
-        manager.initialize_from_strategies(strategy_set)
+        manager.initialize_from_strategies(strategy_set, service_urls={})
 
         # Check processors were created
         assert manager.has_processor("processor_a")
@@ -175,7 +175,7 @@ class TestProcessorManager:
 
         # Should raise ValueError for unknown processor type
         with pytest.raises(ValueError, match="Unknown processor type: nonexistent"):
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
     def test_list_processors(self, manager):
         """Test listing initialized processors."""
@@ -188,7 +188,7 @@ class TestProcessorManager:
             MockStrategy({"processor_b": {}}),
         ]
         strategy_set = MockStrategySet(strategies)
-        manager.initialize_from_strategies(strategy_set)
+        manager.initialize_from_strategies(strategy_set, service_urls={})
 
         # Should list initialized processors
         processors = manager.list_processors()
@@ -204,7 +204,7 @@ class TestProcessorManager:
             MockStrategy({"processor_b": {}}),
         ]
         strategy_set = MockStrategySet(strategies)
-        manager.initialize_from_strategies(strategy_set)
+        manager.initialize_from_strategies(strategy_set, service_urls={})
 
         # Add cleanup method to mock processors
         for proc in manager._processors.values():
@@ -283,7 +283,7 @@ class TestProcessorManagerIntegration:
             # Initialize processor
             strategies = [MockStrategy({"test_proc": {"param_a": "lifecycle_test"}})]
             strategy_set = MockStrategySet(strategies)
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Use processor
             processor = manager.get_processor("test_proc")
@@ -316,7 +316,7 @@ class TestProcessorManagerIntegration:
                 MockStrategy({"type_b": {"param_b": 100}}),
             ]
             strategy_set = MockStrategySet(strategies)
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Verify all processors exist
             assert len(manager.list_processors()) == 2

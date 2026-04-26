@@ -80,7 +80,9 @@ class TestEndToEndVideoProcessing:
         self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
         """Test complete frame-based pipeline with real processors."""
-        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor_manager.initialize_from_strategies(
+            frame_strategy_set, service_urls={}
+        )
 
         keyframe_proc = processor_manager.get_processor("keyframe")
         assert keyframe_proc is not None, (
@@ -110,7 +112,9 @@ class TestEndToEndVideoProcessing:
         self, processor_manager, chunk_strategy_set, real_video_path, tmp_path
     ):
         """Test complete chunk-based pipeline with real processors."""
-        processor_manager.initialize_from_strategies(chunk_strategy_set)
+        processor_manager.initialize_from_strategies(
+            chunk_strategy_set, service_urls={}
+        )
 
         chunk_proc = processor_manager.get_processor("chunk")
         assert chunk_proc is not None, "Real ChunkProcessor should be auto-discovered"
@@ -155,7 +159,9 @@ class TestEndToEndVideoProcessing:
 
         # Override just the keyframe processor; audio and embedding remain real
         processor_manager._processor_classes["keyframe"] = FailingKeyframeProcessor
-        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor_manager.initialize_from_strategies(
+            frame_strategy_set, service_urls={}
+        )
 
         keyframe_proc = processor_manager.get_processor("keyframe")
 
@@ -185,7 +191,9 @@ class TestEndToEndVideoProcessing:
                 raise RuntimeError("Audio processing failed")
 
         processor_manager._processor_classes["audio"] = FailingAudioProcessor
-        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor_manager.initialize_from_strategies(
+            frame_strategy_set, service_urls={}
+        )
 
         # Real keyframe processing succeeds
         keyframe_proc = processor_manager.get_processor("keyframe")
@@ -205,7 +213,9 @@ class TestEndToEndVideoProcessing:
         self, processor_manager, frame_strategy_set, real_video_path, tmp_path
     ):
         """Test data flows correctly between real pipeline stages."""
-        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor_manager.initialize_from_strategies(
+            frame_strategy_set, service_urls={}
+        )
 
         keyframe_proc = processor_manager.get_processor("keyframe")
         output_dir = tmp_path / "data_flow"
@@ -230,7 +240,7 @@ class TestEndToEndVideoProcessing:
 
         strategy = FrameSegmentationStrategy(max_frames=15, fps=2.0, threshold=0.95)
         strategy_set = ProcessingStrategySet(segmentation=strategy)
-        manager.initialize_from_strategies(strategy_set)
+        manager.initialize_from_strategies(strategy_set, service_urls={})
 
         processor = manager.get_processor("keyframe")
         assert processor is not None
@@ -246,7 +256,9 @@ class TestEndToEndVideoProcessing:
         """Test concurrent real keyframe extraction is thread-safe."""
         import threading
 
-        processor_manager.initialize_from_strategies(frame_strategy_set)
+        processor_manager.initialize_from_strategies(
+            frame_strategy_set, service_urls={}
+        )
         processor = processor_manager.get_processor("keyframe")
 
         results = []

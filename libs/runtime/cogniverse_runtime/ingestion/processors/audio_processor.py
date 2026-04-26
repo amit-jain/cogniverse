@@ -2,9 +2,17 @@
 """
 Audio Processor - Pluggable audio transcription.
 
-Transcribes audio from videos using Whisper.
+Transcribes audio from videos using Whisper. Two modes:
+
+- Local: loads ``openai-whisper`` in-process (default).
+- Remote: when ``endpoint`` is set, POSTs the audio bytes to the
+  Whisper sidecar pod's ``/v1/transcribe`` endpoint. The pod
+  (``deploy/whisper``) decides which engine (faster-whisper / whisperx /
+  whisper-cpp) to use based on its own ``WHISPER_ENGINE`` env, so the
+  processor stays engine-agnostic.
 """
 
+import base64
 import json
 import logging
 import time
@@ -12,6 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from ..processor_base import BaseProcessor
+
+REMOTE_TRANSCRIBE_TIMEOUT_SECONDS = 600.0
 
 
 class AudioProcessor(BaseProcessor):
@@ -24,18 +34,24 @@ class AudioProcessor(BaseProcessor):
         logger: logging.Logger,
         model: str = "base",
         language: str = "auto",
+        endpoint: str | None = None,
     ):
         """
         Initialize audio processor.
 
         Args:
             logger: Logger instance
-            model: Whisper model to use
+            model: Whisper model to use (local mode only; remote pod owns its
+                model selection via the ``MODEL_NAME`` env var)
             language: Language for transcription (auto for detection)
+            endpoint: When set, the processor runs in remote mode and POSTs
+                audio to ``{endpoint}/v1/transcribe`` instead of loading
+                Whisper locally.
         """
         super().__init__(logger)
         self.model = model
         self.language = language
+        self.endpoint = endpoint
         self._whisper = None
 
     @classmethod
@@ -47,6 +63,7 @@ class AudioProcessor(BaseProcessor):
             logger=logger,
             model=config.get("model", "base"),
             language=config.get("language", "auto"),
+            endpoint=config.get("endpoint"),
         )
 
     def _load_whisper(self):
@@ -106,44 +123,18 @@ class AudioProcessor(BaseProcessor):
 
         transcript_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # Load Whisper model
-        self._load_whisper()
-
         start_time = time.time()
 
         try:
-            # Transcribe using Whisper
-            options = {
-                "language": None if self.language == "auto" else self.language,
-                "task": "transcribe",
-            }
-
-            result = self._whisper.transcribe(str(video_path), **options)
+            if self.endpoint:
+                transcript_data = self._transcribe_remote(video_path, video_id)
+            else:
+                self._load_whisper()
+                transcript_data = self._transcribe_local(video_path, video_id)
 
             transcription_time = time.time() - start_time
-
-            # Extract segments
-            segments = []
-            for segment in result.get("segments", []):
-                segments.append(
-                    {
-                        "start": segment.get("start", 0.0),
-                        "end": segment.get("end", 0.0),
-                        "text": segment.get("text", "").strip(),
-                    }
-                )
-
-            # Create transcript data
-            transcript_data = {
-                "video_id": video_id,
-                "video_path": str(video_path),
-                "model": self.model,
-                "language": result.get("language", "unknown"),
-                "duration": result.get("duration", 0.0),
-                "transcription_time": transcription_time,
-                "full_text": result.get("text", "").strip(),
-                "segments": segments,
-            }
+            transcript_data["transcription_time"] = transcription_time
+            segments = transcript_data.get("segments", [])
 
             # Save transcript to file
             with open(transcript_file, "w", encoding="utf-8") as f:
@@ -168,6 +159,74 @@ class AudioProcessor(BaseProcessor):
                 "full_text": "",
                 "segments": [],
             }
+
+    def _transcribe_local(self, video_path: Path, video_id: str) -> dict[str, Any]:
+        """Run transcription via the in-process openai-whisper model."""
+        options = {
+            "language": None if self.language == "auto" else self.language,
+            "task": "transcribe",
+        }
+        result = self._whisper.transcribe(str(video_path), **options)
+
+        segments = [
+            {
+                "start": segment.get("start", 0.0),
+                "end": segment.get("end", 0.0),
+                "text": segment.get("text", "").strip(),
+            }
+            for segment in result.get("segments", [])
+        ]
+
+        return {
+            "video_id": video_id,
+            "video_path": str(video_path),
+            "model": self.model,
+            "language": result.get("language", "unknown"),
+            "duration": result.get("duration", 0.0),
+            "full_text": result.get("text", "").strip(),
+            "segments": segments,
+        }
+
+    def _transcribe_remote(self, video_path: Path, video_id: str) -> dict[str, Any]:
+        """Run transcription via the deploy/whisper sidecar pod.
+
+        The pod owns engine selection (faster-whisper / whisperx /
+        whisper-cpp) and the loaded model — the processor only ships the
+        bytes and a language hint.
+        """
+        import requests
+
+        audio_bytes = video_path.read_bytes()
+        payload: dict[str, Any] = {
+            "audio_b64": base64.b64encode(audio_bytes).decode("ascii"),
+        }
+        if self.language and self.language != "auto":
+            payload["language"] = self.language
+
+        url = f"{self.endpoint.rstrip('/')}/v1/transcribe"
+        self.logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
+        resp = requests.post(
+            url, json=payload, timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS
+        )
+        resp.raise_for_status()
+        body = resp.json()
+
+        return {
+            "video_id": video_id,
+            "video_path": str(video_path),
+            "model": body.get("model", self.model),
+            "language": body.get("language", "unknown"),
+            "duration": body.get("duration_seconds", 0.0),
+            "full_text": body.get("text", "").strip(),
+            "segments": [
+                {
+                    "start": float(seg.get("start", 0.0)),
+                    "end": float(seg.get("end", 0.0)),
+                    "text": (seg.get("text") or "").strip(),
+                }
+                for seg in body.get("segments", [])
+            ],
+        }
 
     def process(
         self, video_path: Path, output_dir: Path = None, **kwargs

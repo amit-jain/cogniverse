@@ -18,6 +18,39 @@ from tests.utils.markers import (
 )
 
 
+def _service_configured(service_name: str) -> bool:
+    """True iff ``service_name`` is wired in the ``INFERENCE_SERVICE_URLS`` env.
+
+    Profiles that declare ``inference_service: <name>`` route their
+    embedding generation to a pod URL. When that URL isn't configured the
+    pipeline fails loud at init (``ValueError: Profile ... specifies
+    inference_service=...``) — so tests that exercise such profiles must
+    skip cleanly when the pod isn't deployed. Reads env directly to keep
+    skip-evaluation cheap and free of bootstrap dependencies.
+    """
+    import json
+    import os
+
+    raw = os.environ.get("INFERENCE_SERVICE_URLS", "")
+    if not raw:
+        return False
+    try:
+        urls = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(urls, dict) and bool(urls.get(service_name))
+
+
+requires_colpali_infinity = pytest.mark.skipif(
+    not _service_configured("colpali_infinity"),
+    reason="colpali_infinity inference pod not configured (set INFERENCE_SERVICE_URLS)",
+)
+requires_colqwen_infinity = pytest.mark.skipif(
+    not _service_configured("colqwen_infinity"),
+    reason="colqwen_infinity inference pod not configured (set INFERENCE_SERVICE_URLS)",
+)
+
+
 @pytest.mark.integration
 @pytest.mark.requires_cv2
 class TestRealProcessorExtraction:
@@ -165,6 +198,7 @@ class TestVespaBackendIngestion:
             )
 
     @pytest.mark.slow
+    @requires_colpali_infinity
     @pytest.mark.asyncio
     async def test_lightweight_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -206,6 +240,7 @@ class TestVespaBackendIngestion:
     @pytest.mark.local_only
     @pytest.mark.requires_colpali
     @skip_heavy_models_in_ci
+    @requires_colpali_infinity
     @pytest.mark.asyncio
     async def test_colpali_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -279,6 +314,7 @@ class TestVespaBackendIngestion:
     @pytest.mark.local_only
     @pytest.mark.requires_colqwen
     @skip_heavy_models_in_ci
+    @requires_colqwen_infinity
     @pytest.mark.asyncio
     async def test_colqwen_vespa_ingestion(
         self, vespa_backend, vespa_test_videos, tmp_path
@@ -490,6 +526,7 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.benchmark
     @pytest.mark.requires_vespa
+    @requires_colpali_infinity
     @pytest.mark.asyncio
     async def test_ingestion_performance(
         self, ingestion_vespa_backend, all_test_videos, tmp_path

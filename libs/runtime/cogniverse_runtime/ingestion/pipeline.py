@@ -250,7 +250,22 @@ class VideoIngestionPipeline:
         self._resolve_strategy()
         self.processor_manager = ProcessorManager(self.logger)
         self.strategy_set = self._create_strategy_set_from_config()
-        self.processor_manager.initialize_from_strategies(self.strategy_set)
+        # Resolve inference-service names to URLs from system_config so
+        # processors that need a remote sidecar (e.g. AudioProcessor →
+        # whisper) receive a concrete endpoint without reading env vars.
+        # Tests that pass ``config`` + ``app_config`` directly (no
+        # config_manager) get an empty map; any strategy that requests an
+        # inference_service in that scenario will fail loud at processor
+        # init, which is the right behaviour.
+        if self.config_manager is None:
+            service_urls: dict[str, str] = {}
+        else:
+            service_urls = (
+                self.config_manager.get_system_config().inference_service_urls
+            )
+        self.processor_manager.initialize_from_strategies(
+            self.strategy_set, service_urls=service_urls
+        )
         self._init_backend()
         self.logger.info("Using system event loop for async operations")
 

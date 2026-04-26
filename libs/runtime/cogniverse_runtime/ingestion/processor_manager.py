@@ -71,8 +71,21 @@ class ProcessorManager:
                 except Exception as e:
                     self.logger.error(f"Failed to load module {full_module_name}: {e}")
 
-    def initialize_from_strategies(self, strategy_set):
-        """Initialize processors dynamically from strategy set."""
+    def initialize_from_strategies(
+        self,
+        strategy_set,
+        service_urls: dict[str, str],
+    ):
+        """Initialize processors dynamically from strategy set.
+
+        ``service_urls`` is the ``{service_name: url}`` map of deployed
+        inference services (from ``SystemConfig.inference_service_urls``).
+        Any processor whose strategy declares ``inference_service`` has
+        that key replaced with a concrete ``endpoint`` URL before the
+        processor is constructed; the processor never sees a service name.
+        Pass ``{}`` when no remote services are deployed — strategies that
+        request one will then raise at init.
+        """
         all_requirements = {}
 
         # Get all strategies from the strategy set
@@ -89,7 +102,33 @@ class ProcessorManager:
                     f"🔧 {strategy_name} requires: {list(requirements.keys())}"
                 )
 
+        self._resolve_service_urls(all_requirements, service_urls)
         self._init_from_requirements(all_requirements)
+
+    def _resolve_service_urls(
+        self,
+        requirements: dict[str, dict[str, Any]],
+        service_urls: dict[str, str],
+    ) -> None:
+        """Substitute ``inference_service`` keys with concrete ``endpoint`` URLs.
+
+        Processors stay env-agnostic and receive a literal URL. A profile
+        that requests a service which is not deployed fails loud here so
+        the mismatch surfaces at pipeline init, not at first ingest.
+        """
+        for processor_name, processor_config in requirements.items():
+            service_name = processor_config.pop("inference_service", None)
+            if not service_name:
+                continue
+            url = service_urls.get(service_name)
+            if not url:
+                available = sorted(service_urls)
+                raise ValueError(
+                    f"Processor {processor_name!r} requests "
+                    f"inference_service={service_name!r} but no URL is "
+                    f"configured. Deployed services: {available}."
+                )
+            processor_config["endpoint"] = url
 
     # Processor types handled directly by ProcessingStrategySet._process_segmentation()
     # — they do not require a processor plugin, so skip them gracefully.

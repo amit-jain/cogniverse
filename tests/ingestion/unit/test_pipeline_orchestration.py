@@ -57,7 +57,7 @@ class TestPipelineOrchestration:
             manager._processor_classes["chunk"] = MockProcessor
 
             # Initialize from strategies
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Should have created processors based on strategy requirements
             required_processors = strategy_set.get_all_required_processors()
@@ -148,7 +148,7 @@ class TestPipelineOrchestration:
             # Create manager and initialize from strategies
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = mock_keyframe_class
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Get the configured processor
             keyframe_processor = manager.get_processor("keyframe")
@@ -197,7 +197,7 @@ class TestPipelineOrchestration:
             # Create manager and initialize from strategies
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["chunk"] = mock_chunk_class
-            manager.initialize_from_strategies(chunk_strategy_set)
+            manager.initialize_from_strategies(chunk_strategy_set, service_urls={})
 
             # Get the configured processor
             chunk_processor = manager.get_processor("chunk")
@@ -254,7 +254,7 @@ class TestPipelineOrchestration:
 
             manager = ProcessorManager(mock_logger)
             manager._processor_classes["keyframe"] = FailingProcessor
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Get processor and test error propagation
             keyframe_processor = manager.get_processor("keyframe")
@@ -278,7 +278,7 @@ class TestPipelineOrchestration:
 
             manager._processor_classes["keyframe"] = MockProcessor
 
-            manager.initialize_from_strategies(strategy_set)
+            manager.initialize_from_strategies(strategy_set, service_urls={})
 
             # Get same processor multiple times
             processor1 = manager.get_processor("keyframe")
