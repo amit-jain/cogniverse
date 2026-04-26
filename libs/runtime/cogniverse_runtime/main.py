@@ -743,6 +743,18 @@ app.include_router(graph.router, prefix="/graph", tags=["graph"])
 app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
 app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 
+# Queue-driven ingestion (Step 5). POST /ingest enqueues a job onto
+# Redis; ingestor pods consume it. GET /ingest/{id}/events streams
+# status as Server-Sent-Events. Skipped when REDIS_URL isn't set so
+# legacy deployments without redis stay functional through the old
+# blocking /ingestion/* endpoints.
+if os.environ.get("REDIS_URL"):
+    from cogniverse_runtime.ingestion_v2 import status_api as ingest_v2_status
+    from cogniverse_runtime.ingestion_v2 import submit_api as ingest_v2_submit
+
+    app.include_router(ingest_v2_submit.router, tags=["ingestion-v2"])
+    app.include_router(ingest_v2_status.router, tags=["ingestion-v2"])
+
 
 @app.get("/")
 async def root():
