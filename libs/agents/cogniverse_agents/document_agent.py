@@ -78,6 +78,9 @@ class DocumentAgentDeps(AgentDeps):
     memory_llm_base_url: Optional[str] = Field(
         None, description="LLM API base URL for memory"
     )
+    memory_embedder_base_url: Optional[str] = Field(
+        None, description="OAI /v1/embeddings URL of the denseon sidecar"
+    )
     memory_config_manager: Any = Field(None, description="ConfigManager for memory")
     memory_schema_loader: Any = Field(None, description="SchemaLoader for memory")
 
@@ -154,6 +157,7 @@ class DocumentAgent(
                 "memory_llm_model",
                 "memory_embedding_model",
                 "memory_llm_base_url",
+                "memory_embedder_base_url",
                 "memory_config_manager",
                 "memory_schema_loader",
             ):
@@ -170,6 +174,7 @@ class DocumentAgent(
                 llm_model=deps.memory_llm_model,
                 embedding_model=deps.memory_embedding_model,
                 llm_base_url=deps.memory_llm_base_url,
+                embedder_base_url=deps.memory_embedder_base_url,
                 config_manager=deps.memory_config_manager,
                 schema_loader=deps.memory_schema_loader,
             )

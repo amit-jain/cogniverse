@@ -483,9 +483,10 @@ llm:
       OLLAMA_KEEP_ALIVE: "-1"
     # Models pulled by the post-install init job (only when engine=ollama).
     # vLLM downloads on first request via HF cache instead.
+    # Embedding model intentionally absent: DenseOn is served by the
+    # ``denseon`` sidecar pod (deploy/pylate in mode=dense), not Ollama.
     models:
       - "gemma3:4b"
-      - "nomic-embed-text"
     resources:
       limits:
         cpu: "8"
@@ -827,14 +828,13 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
-  # Dense single-vector embedding service via the SAME deploy/pylate sidecar
-  # image, run in ``mode: dense`` so it loads via SentenceTransformer
-  # and exposes POST /v1/embeddings (OpenAI-compatible). DenseOn is
-  # ModernBERT-based and can't be served by vLLM today, so the dense_vllm
-  # block (below) is kept for vLLM-supported dense models like
-  # EmbeddingGemma. This block is the path Mem0 + SemanticEmbedder use
-  # to drop the Ollama nomic-embed-text dependency entirely. Profiles
-  # and code route here via ``inference_service: "denseon"``.
+  # Dense single-vector embedding service: the SAME deploy/pylate
+  # sidecar image, run in ``mode: dense`` so it loads via
+  # SentenceTransformer and exposes POST /v1/embeddings
+  # (OpenAI-compatible). Used by Mem0 + SemanticEmbedder + the
+  # job-executor delivery router. Profiles route here via
+  # ``inference_service: "denseon"``. dense_vllm (below) is the path
+  # for vLLM-supported dense models like EmbeddingGemma.
   denseon:
     enabled: true
     engine: pylate
@@ -923,9 +923,6 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29003
-    # nomic-embed-text-v1.5 (137M) uses ~1.5-2 GiB under load; a bump to
-    # embedding-gemma-300m pushed peak to 4.1 GiB in our benchmark, so
-    # keep 6 GiB headroom by default so the pod doesn't OOM when swapped.
     # requests == limits gives Guaranteed QoS so the scheduler reserves
     # headroom and the pod isn't evicted under node memory pressure.
     resources:

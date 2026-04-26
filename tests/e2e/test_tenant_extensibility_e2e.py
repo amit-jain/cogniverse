@@ -13,17 +13,19 @@ import pytest
 
 from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
 
-OLLAMA_URL = "http://localhost:11434"
+# DenseOn (768-dim, ModernBERT) served by deploy/pylate in mode=dense.
+# k3s NodePort wired in chart values: inference.denseon.service.nodePort.
+DENSEON_URL = "http://localhost:29006"
 
 
 def _embed(text: str) -> list:
-    """Get embedding from host Ollama for semantic similarity checks."""
+    """Get a 768-dim DenseOn embedding for semantic similarity checks."""
     r = httpx.post(
-        f"{OLLAMA_URL}/api/embed",
-        json={"model": "nomic-embed-text", "input": text},
+        f"{DENSEON_URL}/v1/embeddings",
+        json={"model": "lightonai/DenseOn", "input": text},
         timeout=30,
     )
-    return r.json()["embeddings"][0]
+    return r.json()["data"][0]["embedding"]
 
 
 def _cosine_sim(a: list, b: list) -> float:
@@ -205,7 +207,7 @@ class TestTenantMemories:
             pytest.skip("Memory backend not initialized on runtime")
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
-        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
@@ -267,7 +269,7 @@ class TestTenantMemories:
             pytest.skip("Memory backend not initialized on runtime")
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
-        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             # Seed a strategy so we're not testing against empty state
@@ -293,7 +295,7 @@ class TestTenantMemories:
             pytest.skip("Memory backend not initialized on runtime")
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
-        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             client.post(
@@ -338,7 +340,7 @@ class TestAdminMemoryManagement:
             pytest.skip("Memory backend not initialized on runtime")
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
-        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
@@ -359,7 +361,7 @@ class TestAdminMemoryManagement:
             pytest.skip("Memory backend not initialized on runtime")
 
         # Memory add makes an LLM extraction call per text (gemma4:e2b on
-        # CPU takes ~60-90s) plus embedding via nomic-embed-text, so a 60s
+        # CPU takes ~60-90s) plus embedding via DenseOn, so a 60s
         # client timeout was tight.
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             client.post(

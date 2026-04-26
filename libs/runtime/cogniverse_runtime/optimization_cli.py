@@ -137,6 +137,13 @@ async def run_triggered_optimization(
             raise ValueError(
                 "LLMEndpointConfig.api_base is required for strategy distillation"
             )
+        denseon_url = system_config.inference_service_urls.get("denseon")
+        if not denseon_url:
+            raise ValueError(
+                "Mem0 strategy distillation requires the denseon inference "
+                "service. Available: "
+                f"{sorted(system_config.inference_service_urls)}"
+            )
 
         mem_manager = Mem0MemoryManager(tenant_id=tenant_id)
         if mem_manager.memory is None:
@@ -144,8 +151,9 @@ async def run_triggered_optimization(
                 backend_host=system_config.backend_url,
                 backend_port=system_config.backend_port,
                 llm_model=llm_endpoint.model,
-                embedding_model="nomic-embed-text",
+                embedding_model="lightonai/DenseOn",
                 llm_base_url=llm_endpoint.api_base,
+                embedder_base_url=denseon_url,
                 config_manager=config_manager,
                 schema_loader=None,
             )

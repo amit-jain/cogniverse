@@ -263,22 +263,21 @@ spec:
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
           value: {{ .Values.llm.model | quote }}
-        - name: OLLAMA_API_BASE
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
-        # Route semantic text embeddings to the dedicated vLLM dense pod
-        # when enabled (continuous batching, ~10 rps under load). Falls
-        # back to the shared LLM endpoint when the dedicated pod is
-        # disabled.
+        # Route semantic text embeddings to the denseon sidecar (DenseOn
+        # via deploy/pylate in mode=dense). dense_vllm remains for
+        # vLLM-supported dense models like EmbeddingGemma; if it's
+        # enabled it wins over denseon (continuous batching beats the
+        # ST-based sidecar under sustained load).
         {{- if .Values.inference.dense_vllm.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
           value: "http://{{ $fullName }}-dense-vllm:{{ .Values.inference.dense_vllm.service.port }}"
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
           value: {{ .Values.inference.dense_vllm.model | quote }}
-        {{- else }}
+        {{- else if .Values.inference.denseon.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+          value: "http://{{ $fullName }}-denseon:{{ .Values.inference.denseon.service.port }}"
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
-          value: "nomic-embed-text"
+          value: {{ .Values.inference.denseon.model | quote }}
         {{- end }}
         {{- if .Values.runtime.sandbox.enabled }}
         - name: COGNIVERSE_SANDBOX_ENABLED
@@ -624,10 +623,6 @@ spec:
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
           value: {{ .Values.llm.model | quote }}
-        - name: OLLAMA_API_BASE
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
-        - name: OLLAMA_HOST
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         {{- range $key, $value := .Values.dashboard.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

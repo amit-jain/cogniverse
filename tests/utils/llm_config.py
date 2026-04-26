@@ -50,7 +50,9 @@ def get_memory_embedding_model() -> str:
     """Return the embedding model used by Mem0 for memory storage.
 
     Mem0 needs a model that produces 768-dim vectors to match the
-    agent_memories Vespa schema. Defaults to nomic-embed-text.
+    agent_memories Vespa schema. DenseOn (ModernBERT-based,
+    768-dim, CLS pooling) served by the deploy/pylate sidecar in
+    mode=dense.
     """
     memory_section = _load_config().get("memory", {})
-    return memory_section.get("embedding_model", "nomic-embed-text")
+    return memory_section.get("embedding_model", "lightonai/DenseOn")

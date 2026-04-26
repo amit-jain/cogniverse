@@ -537,7 +537,15 @@ class OrchestratorAgent(
             )
             llm_model = resolved.model
             llm_base_url = resolved.api_base or "http://localhost:11434"
-            embedding_model = config.get("embedding_model", "nomic-embed-text")
+
+            sys_cfg = self._config_manager.get_system_config()
+            denseon_url = sys_cfg.inference_service_urls.get("denseon")
+            if not denseon_url:
+                raise RuntimeError(
+                    "orchestrator_agent memory init requires the denseon "
+                    "inference service. Available: "
+                    f"{sorted(sys_cfg.inference_service_urls)}"
+                )
 
             from pathlib import Path
 
@@ -554,8 +562,9 @@ class OrchestratorAgent(
                 backend_port=backend_port,
                 backend_config_port=calculate_config_port(backend_port),
                 llm_model=llm_model,
-                embedding_model=embedding_model,
+                embedding_model="lightonai/DenseOn",
                 llm_base_url=llm_base_url,
+                embedder_base_url=denseon_url,
                 config_manager=self._config_manager,
                 schema_loader=schema_loader,
                 provider=provider,

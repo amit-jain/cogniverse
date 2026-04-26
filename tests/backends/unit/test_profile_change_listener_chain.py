@@ -79,7 +79,7 @@ def test_add_backend_profile_propagates_to_cached_search_backend(
         profile_name="agent_memories",
         type="memory",
         schema_name="agent_memories",
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         embedding_type="dense",
         schema_config={"embedding_dims": 768},
     )

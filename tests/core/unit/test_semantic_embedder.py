@@ -70,7 +70,7 @@ def _openai_embed_response(vectors: list[list[float]]):
 
 
 def test_remote_encode_hits_v1_embeddings():
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000/", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000/", "lightonai/DenseOn")
 
     mock_response = _openai_embed_response([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
     with patch.object(
@@ -83,7 +83,7 @@ def test_remote_encode_hits_v1_embeddings():
     assert called_url == "http://fake.invalid:8000/v1/embeddings"
 
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["model"] == "nomic-embed-text"
+    assert payload["model"] == "lightonai/DenseOn"
     assert payload["input"] == ["hello", "world"]
 
     assert result.shape == (2, 3)
@@ -92,7 +92,7 @@ def test_remote_encode_hits_v1_embeddings():
 
 def test_remote_encode_preserves_order_when_backend_reorders():
     """Some backends return out-of-order rows; we sort by index."""
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = MagicMock()
     mock_response.json.return_value = {
         "data": [
@@ -110,7 +110,7 @@ def test_remote_encode_preserves_order_when_backend_reorders():
 
 
 def test_remote_encode_empty_input_returns_empty_array():
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     with patch.object(embedder._session, "post") as mock_post:
         result = embedder.encode([])
     mock_post.assert_not_called()
@@ -119,7 +119,7 @@ def test_remote_encode_empty_input_returns_empty_array():
 
 def test_remote_encode_returns_1d_for_single_string_input():
     """Match SentenceTransformer: str input -> (D,), list input -> (N, D)."""
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = _openai_embed_response([[0.6, 0.8]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         single = embedder.encode("hello")
@@ -130,7 +130,7 @@ def test_remote_encode_returns_1d_for_single_string_input():
 
 
 def test_remote_encode_normalizes_when_requested():
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         norm = embedder.encode("hello", normalize_embeddings=True)
@@ -140,7 +140,7 @@ def test_remote_encode_normalizes_when_requested():
 
 
 def test_remote_encode_skips_normalize_when_not_requested():
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         raw = embedder.encode("hello")
@@ -148,7 +148,7 @@ def test_remote_encode_skips_normalize_when_not_requested():
 
 
 def test_remote_encode_raises_when_backend_returns_no_embeddings():
-    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "nomic-embed-text")
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = MagicMock()
     mock_response.json.return_value = {"error": "model not found"}
     mock_response.raise_for_status.return_value = None
@@ -174,4 +174,4 @@ def test_model_name_resolution_prefers_explicit_then_env_then_default(monkeypatc
     reset_semantic_embedder_cache()
     monkeypatch.delenv("COGNIVERSE_SEMANTIC_EMBED_MODEL")
     e3 = get_semantic_embedder()
-    assert e3._model == "nomic-embed-text"  # type: ignore[attr-defined]
+    assert e3._model == "lightonai/DenseOn"  # type: ignore[attr-defined]

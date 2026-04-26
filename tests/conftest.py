@@ -1,16 +1,74 @@
 """Global pytest configuration for test isolation"""
 
 import gc
+import importlib.util
 import os
 import shutil
+import socket
 import tempfile
 import threading
 import time
 from pathlib import Path
 
 import pytest
+import requests
 
 from tests.utils.async_polling import simulate_processing_delay
+
+
+def _shared_denseon_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session")
+def shared_denseon():
+    """Run the real deploy/pylate/server.py in mode=dense for any tests
+    that need a DenseOn embedding endpoint (Mem0, semantic_embedder, etc).
+
+    Loads ``lightonai/DenseOn`` via SentenceTransformer (~150MB
+    ModernBERT-base download on first run, cached thereafter) and
+    serves the OpenAI-compatible ``/v1/embeddings`` contract Mem0's
+    openai provider expects. Session-scoped so the model loads once
+    per test run regardless of how many test files request it.
+    """
+    import uvicorn
+
+    spec = importlib.util.spec_from_file_location(
+        "denseon_server_under_test", "deploy/pylate/server.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    app = mod.build_app(model_name="lightonai/DenseOn", device="cpu", mode="dense")
+    port = _shared_denseon_free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 240
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{base_url}/health", timeout=2)
+            if resp.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        pytest.fail("denseon /health did not come up within 240s")
+
+    try:
+        yield base_url
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
 
 # Configure torch and tokenizers to avoid threading issues in pytest
 os.environ["TOKENIZERS_PARALLELISM"] = "false"

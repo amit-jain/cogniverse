@@ -361,12 +361,13 @@ def _set_test_backend_env(vespa_instance):
 
 
 @pytest.fixture(scope="module")
-def memory_manager(vespa_instance, config_manager, schema_loader):
-    """Real Mem0MemoryManager backed by test Vespa Docker.
+def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon):
+    """Real Mem0MemoryManager backed by test Vespa Docker + denseon.
 
     Follows the same pattern as tests/memory/conftest.py shared_memory_vespa.
     Uses the same Vespa instance as search tests. Requires Ollama
-    for Mem0's LLM-based memory extraction.
+    for Mem0's LLM-based memory extraction; embeddings go through the
+    denseon sidecar (DenseOn / 768-dim) at shared_denseon.
     """
     from cogniverse_core.memory.manager import Mem0MemoryManager
 
@@ -379,8 +380,9 @@ def memory_manager(vespa_instance, config_manager, schema_loader):
         backend_port=vespa_instance["http_port"],
         backend_config_port=vespa_instance["config_port"],
         llm_model=get_llm_model(),
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434",
+        embedder_base_url=shared_denseon,
         config_manager=config_manager,
         schema_loader=schema_loader,
         auto_create_schema=False,

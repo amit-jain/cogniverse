@@ -90,17 +90,10 @@ def _wait_for_schema_ready(
     http_port: int, schema_name: str, timeout: int = 120
 ) -> bool:
     """Feed a minimal probe document to confirm the schema is accepting writes."""
-    try:
-        resp = requests.post(
-            "http://localhost:11434/api/embed",
-            json={"model": "nomic-embed-text", "input": "readiness"},
-            timeout=10,
-        )
-        embedding = (
-            resp.json()["embeddings"][0] if resp.status_code == 200 else [0.01] * 768
-        )
-    except Exception:
-        embedding = [0.01] * 768
+    # Schema-readiness writes only need a 768-dim vector that Vespa
+    # accepts; the content is irrelevant since the probe doc is
+    # immediately deleted. Constant vector avoids a live embedding call.
+    embedding = [0.01] * 768
 
     probe = {
         "fields": {
@@ -258,9 +251,8 @@ def wiki_manager(wiki_vespa):
     _rebuild_index gracefully skips index population (full-text search over
     wiki_content is not the focus of these tests).
 
-    _generate_embedding uses the real Ollama nomic-embed-text model when
-    available, or the built-in zero-vector fallback otherwise — no mock
-    needed.
+    _generate_embedding falls through to the built-in zero-vector
+    fallback when no embedding service is reachable — no mock needed.
     """
     http_port = wiki_vespa["http_port"]
 

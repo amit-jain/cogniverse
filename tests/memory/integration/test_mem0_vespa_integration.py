@@ -15,8 +15,8 @@ from tests.utils.llm_config import get_llm_model
 
 
 @pytest.fixture(scope="module")
-def memory_manager(shared_memory_vespa):
-    """Create and initialize Mem0 memory manager with shared Vespa"""
+def memory_manager(shared_memory_vespa, shared_denseon):
+    """Create and initialize Mem0 memory manager with shared Vespa + denseon"""
     # Clear Mem0 singleton to ensure fresh state
     Mem0MemoryManager._instances.clear()
 
@@ -38,11 +38,12 @@ def memory_manager(shared_memory_vespa):
         SystemConfig(
             backend_url="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
+            inference_service_urls={"denseon": shared_denseon},
         )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # Initialize with shared Vespa backend using Ollama
+    # Initialize with shared Vespa backend (LLM via Ollama, embeddings via denseon).
     # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
     manager.initialize(
         backend_host="http://localhost",  # Must include protocol
@@ -50,8 +51,9 @@ def memory_manager(shared_memory_vespa):
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434/v1",
+        embedder_base_url=shared_denseon,
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
         schema_loader=schema_loader,
@@ -408,7 +410,7 @@ class TestMem0VespaIntegration:
 class TestMem0MemoryAwareMixinIntegration:
     """Integration tests for MemoryAwareMixin with real Mem0"""
 
-    def test_mixin_with_real_memory(self, shared_memory_vespa):
+    def test_mixin_with_real_memory(self, shared_memory_vespa, shared_denseon):
         """Test MemoryAwareMixin with real Mem0 backend"""
         from pathlib import Path
 
@@ -435,11 +437,12 @@ class TestMem0MemoryAwareMixinIntegration:
             SystemConfig(
                 backend_url="http://localhost",
                 backend_port=shared_memory_vespa["http_port"],
+                inference_service_urls={"denseon": shared_denseon},
             )
         )
         schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-        # Initialize memory with shared Vespa ports
+        # Initialize memory with shared Vespa ports + denseon
         success = agent.initialize_memory(
             agent_name="mixin_test_agent",
             tenant_id="test_tenant",
@@ -447,8 +450,9 @@ class TestMem0MemoryAwareMixinIntegration:
             backend_port=shared_memory_vespa["http_port"],
             backend_config_port=shared_memory_vespa["config_port"],
             llm_model=get_llm_model(),
-            embedding_model="nomic-embed-text",
+            embedding_model="lightonai/DenseOn",
             llm_base_url="http://localhost:11434/v1",
+            embedder_base_url=shared_denseon,
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
@@ -490,7 +494,7 @@ class TestMem0ProfileRegistrationIntegration:
     """
 
     def test_mem0_add_then_search_returns_the_memory_via_shared_backend(
-        self, shared_memory_vespa
+        self, shared_memory_vespa, shared_denseon
     ):
         """Real round-trip: on a fresh tenant (no agent_memories profile
         in the cached search backend), Mem0.initialize must register the
@@ -524,6 +528,7 @@ class TestMem0ProfileRegistrationIntegration:
             SystemConfig(
                 backend_url="http://localhost",
                 backend_port=shared_memory_vespa["http_port"],
+                inference_service_urls={"denseon": shared_denseon},
             )
         )
 
@@ -572,8 +577,9 @@ class TestMem0ProfileRegistrationIntegration:
             backend_config_port=shared_memory_vespa["config_port"],
             base_schema_name="agent_memories",
             llm_model=get_llm_model(),
-            embedding_model="nomic-embed-text",
+            embedding_model="lightonai/DenseOn",
             llm_base_url="http://localhost:11434/v1",
+            embedder_base_url=shared_denseon,
             auto_create_schema=False,  # fixture pre-deployed the schema
             config_manager=config_manager,
             schema_loader=schema_loader,

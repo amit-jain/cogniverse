@@ -130,7 +130,7 @@ def test_register_profile_then_ingest_and_search_returns_the_document(
         profile_name=profile_name,
         type="document",
         schema_name="agent_memories",
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         embedding_type="single_vector",
         schema_config={"embedding_dims": 768},
     )
@@ -305,7 +305,7 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
         profile_name=target_profile,
         type="document",
         schema_name="document_text",
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         embedding_type="single_vector",
         schema_config={"embedding_dims": 768},
     )
@@ -321,7 +321,7 @@ def test_profile_registered_via_config_manager_appears_in_live_backend(
         "chain is broken."
     )
     assert live["schema_name"] == "document_text"
-    assert live["embedding_model"] == "nomic-embed-text"
+    assert live["embedding_model"] == "lightonai/DenseOn"
     assert live["embedding_type"] == "single_vector"
     assert live["schema_config"] == {"embedding_dims": 768}
     assert live["type"] == "document"

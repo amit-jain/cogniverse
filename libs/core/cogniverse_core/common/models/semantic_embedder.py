@@ -28,7 +28,7 @@ TextsT = Union[str, List[str]]
 
 
 _DEFAULT_LOCAL_MODEL = "sentence-transformers/all-mpnet-base-v2"
-_DEFAULT_REMOTE_MODEL = "nomic-embed-text"
+_DEFAULT_REMOTE_MODEL = "lightonai/DenseOn"
 
 
 class SemanticEmbedder:

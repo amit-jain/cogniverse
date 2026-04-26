@@ -243,6 +243,12 @@ def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
             "LLM_ENDPOINT",
             llm_cfg.get("api_base") or "http://localhost:11434",
         )
+        denseon_url = sc.inference_service_urls.get("denseon")
+        if not denseon_url:
+            raise RuntimeError(
+                "Mem0 lazy-init requires the denseon inference service. "
+                f"Available: {sorted(sc.inference_service_urls)}"
+            )
 
         mgr.initialize(
             backend_host=sc.backend_url,
@@ -250,8 +256,9 @@ def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
             backend_config_port=int(os.environ.get("VESPA_CONFIG_PORT", "19071")),
             base_schema_name="agent_memories",
             llm_model=model,
-            embedding_model="nomic-embed-text",
+            embedding_model="lightonai/DenseOn",
             llm_base_url=llm_base_url,
+            embedder_base_url=denseon_url,
             auto_create_schema=True,
             config_manager=cm,
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),

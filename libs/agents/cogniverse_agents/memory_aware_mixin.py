@@ -58,10 +58,11 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
+        embedder_base_url: str,
         backend_host: str = "localhost",
         backend_port: int = 8080,
         llm_model: str = "qwen3:4b",
-        embedding_model: str = "nomic-embed-text",
+        embedding_model: str = "lightonai/DenseOn",
         llm_base_url: str = "http://localhost:11434",
         config_manager=None,
         schema_loader=None,
@@ -75,6 +76,8 @@ class MemoryAwareMixin:
         Args:
             agent_name: Name of the agent
             tenant_id: Tenant identifier (REQUIRED - no default)
+            embedder_base_url: OpenAI-compatible /v1/embeddings endpoint of
+                the denseon sidecar (separate from the LLM endpoint).
             backend_host: Backend endpoint host
             backend_port: Backend endpoint port
             llm_model: LLM model name for memory extraction
@@ -82,7 +85,9 @@ class MemoryAwareMixin:
             llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
-            provider: LLM/embedder provider for Mem0 (e.g. "ollama", "openai")
+            provider: LLM provider for Mem0 (e.g. "ollama", "openai"). The
+                embedder always uses Mem0's openai provider against
+                ``embedder_base_url`` regardless.
             backend_config_port: Backend config endpoint port (default: 19071)
             auto_create_schema: Auto-deploy tenant schema if not exists
 
@@ -108,6 +113,7 @@ class MemoryAwareMixin:
                     llm_model=llm_model,
                     embedding_model=embedding_model,
                     llm_base_url=llm_base_url,
+                    embedder_base_url=embedder_base_url,
                     base_schema_name="agent_memories",
                     auto_create_schema=auto_create_schema,
                     config_manager=config_manager,

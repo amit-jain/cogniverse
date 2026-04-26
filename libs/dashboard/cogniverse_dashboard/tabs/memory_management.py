@@ -82,12 +82,20 @@ def render_memory_management_tab():
             llm_model = bare_model_name(llm_primary.get("model", "qwen3:4b"))
 
             llm_base_url = llm_primary.get("api_base") or system_config.base_url
+            denseon_url = system_config.inference_service_urls.get("denseon")
+            if not denseon_url:
+                st.error(
+                    "❌ Memory init requires the denseon inference service. "
+                    f"Available: {sorted(system_config.inference_service_urls)}"
+                )
+                return
             manager.initialize(
                 backend_host=system_config.backend_url,
                 backend_port=system_config.backend_port,
                 llm_model=llm_model,
-                embedding_model="nomic-embed-text",
+                embedding_model="lightonai/DenseOn",
                 llm_base_url=llm_base_url,
+                embedder_base_url=denseon_url,
                 config_manager=config_manager,
                 schema_loader=schema_loader,
             )

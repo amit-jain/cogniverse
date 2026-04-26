@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="module")
-def tenant_api_client(shared_memory_vespa):
-    """FastAPI TestClient wired to real Vespa + Ollama for memory tests."""
+def tenant_api_client(shared_memory_vespa, shared_denseon):
+    """FastAPI TestClient wired to real Vespa + Ollama + denseon for memory tests."""
     Mem0MemoryManager._instances.clear()
 
     config_store = VespaConfigStore(
@@ -40,6 +40,7 @@ def tenant_api_client(shared_memory_vespa):
         SystemConfig(
             backend_url="http://localhost",
             backend_port=shared_memory_vespa["http_port"],
+            inference_service_urls={"denseon": shared_denseon},
         )
     )
 
@@ -50,8 +51,9 @@ def tenant_api_client(shared_memory_vespa):
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
-        embedding_model="nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434",
+        embedder_base_url=shared_denseon,
         auto_create_schema=False,
         config_manager=cm,
         schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),

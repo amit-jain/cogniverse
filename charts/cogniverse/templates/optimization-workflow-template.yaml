@@ -70,8 +70,6 @@ spec:
         value: {{ .Values.llm.engine | quote }}
       - name: LLM_MODEL
         value: {{ .Values.llm.model | quote }}
-      - name: OLLAMA_API_BASE
-        value: {{ include "cogniverse.llmEndpoint" . | quote }}
       resources:
         requests:
           cpu: "2"

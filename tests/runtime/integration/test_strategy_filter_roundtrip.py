@@ -209,14 +209,18 @@ class TestGatewayAgentStrategyInjection:
         )
 
     def test_gateway_agent_memory_init_sets_agent_name(
-        self, memory_manager, vespa_instance, config_manager, schema_loader
+        self,
+        memory_manager,
+        vespa_instance,
+        config_manager,
+        schema_loader,
+        shared_denseon,
     ):
         """initialize_memory() must set _memory_agent_name = 'gateway_agent'
         so that get_strategies() retrieves gateway_agent-tagged strategies only."""
         from tests.utils.llm_config import (
             get_llm_base_url,
             get_llm_model,
-            get_memory_embedding_model,
         )
 
         proxy = _MemoryProxy()
@@ -227,8 +231,9 @@ class TestGatewayAgentStrategyInjection:
             backend_port=vespa_instance["http_port"],
             backend_config_port=vespa_instance["config_port"],
             llm_model=get_llm_model(),
-            embedding_model=get_memory_embedding_model(),
+            embedding_model="lightonai/DenseOn",
             llm_base_url=get_llm_base_url(),
+            embedder_base_url=shared_denseon,
             config_manager=config_manager,
             schema_loader=schema_loader,
             auto_create_schema=False,

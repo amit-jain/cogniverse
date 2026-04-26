@@ -34,7 +34,7 @@ class AudioEmbeddingGenerator:
             clap_model: CLAP model for acoustic embeddings (512-dim)
             semantic_model: Override name for the semantic embedder. When
                 None, the shared ``get_semantic_embedder()`` factory picks
-                a default — remote Ollama (``nomic-embed-text``) when
+                a default — DenseOn served by the denseon sidecar when
                 ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
                 in-process ``all-mpnet-base-v2``.
         """

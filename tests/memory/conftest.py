@@ -119,18 +119,13 @@ def deploy_memory_schema_for_tests(
 
 
 def _get_real_embedding(text: str = "readiness check") -> list:
-    """Get a real embedding from Ollama nomic-embed-text for schema probes."""
-    try:
-        resp = requests.post(
-            "http://localhost:11434/api/embed",
-            json={"model": "nomic-embed-text", "input": text},
-            timeout=30,
-        )
-        if resp.status_code == 200:
-            return resp.json()["embeddings"][0]
-    except Exception:
-        pass
-    # Fallback only for readiness probes — tests themselves must never use this
+    """Return a 768-dim probe vector for schema-readiness writes.
+
+    The schema-readiness probe just needs Vespa to accept a valid write
+    against the deployed schema; the embedding content doesn't matter
+    (the document is deleted right after). A constant-valued vector
+    avoids pulling a live embedding service into the readiness path.
+    """
     return [0.01] * 768
 
 

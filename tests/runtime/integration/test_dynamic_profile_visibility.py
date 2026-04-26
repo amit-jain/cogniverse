@@ -9,7 +9,7 @@ backend search layer.
 We bypass the /search/ HTTP endpoint because it routes through
 `QueryEncoderFactory` which only knows ColPali/ColQwen/ColBERT/
 VideoPrism encoders — not generic text embedders like
-nomic-embed-text. The backend search layer accepts pre-computed
+DenseOn. The backend search layer accepts pre-computed
 query_embeddings directly, so we call it that way and assert the
 ingested document is returned by id.
 
@@ -139,7 +139,7 @@ def test_admin_profile_post_makes_backend_search_return_ingested_doc(
             "tenant_id": tenant_id,
             "type": "document",
             "schema_name": "agent_memories",
-            "embedding_model": "nomic-embed-text",
+            "embedding_model": "lightonai/DenseOn",
             "pipeline_config": {},
             "strategies": {},
             "embedding_type": "single_vector",

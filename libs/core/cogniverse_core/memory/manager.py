@@ -171,6 +171,7 @@ class Mem0MemoryManager:
         llm_model: str,
         embedding_model: str,
         llm_base_url: str,
+        embedder_base_url: str,
         config_manager,
         schema_loader,
         provider: str = "ollama",
@@ -186,10 +187,17 @@ class Mem0MemoryManager:
             backend_port: Backend data endpoint port
             llm_model: LLM model name for memory extraction
             embedding_model: Embedding model name for memory search
+                (DenseOn served by the colbert_pylate sidecar in dense mode)
             llm_base_url: OpenAI-compatible LLM API endpoint
+            embedder_base_url: OpenAI-compatible /v1/embeddings endpoint —
+                separate from the LLM endpoint because the embedder always
+                runs DenseOn on the dedicated denseon sidecar pod, while
+                the LLM runs Ollama / vLLM / external per llm.engine.
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
-            provider: LLM/embedder provider for Mem0 (e.g. "ollama", "openai")
+            provider: LLM provider for Mem0 (e.g. "ollama", "openai"). Does
+                not affect the embedder, which always uses Mem0's openai
+                provider against ``embedder_base_url``.
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             auto_create_schema: Auto-deploy tenant schema if not exists
@@ -230,10 +238,10 @@ class Mem0MemoryManager:
             # it survives round-trip through ConfigStore unchanged.
             memory_profile = {
                 "type": "memory",
-                "model": "nomic-embed-text",
-                "embedding_model": "nomic-embed-text",
+                "model": "lightonai/DenseOn",
+                "embedding_model": "lightonai/DenseOn",
                 "embedding_dims": 768,
-                "encoder": "ollama",
+                "encoder": "denseon",
                 "strategy": "semantic_search",
                 "schema_name": base_schema_name,
                 "embedding_type": "dense",
@@ -327,8 +335,17 @@ class Mem0MemoryManager:
             "model": bare_model_name(llm_model),
             "temperature": 0.1,
         }
+
+        # The embedder always speaks Mem0's openai provider against the
+        # denseon sidecar's /v1/embeddings endpoint. Independent of the
+        # LLM provider — they're different pods serving different models.
+        embedder_url = embedder_base_url.rstrip("/")
+        if not embedder_url.endswith("/v1"):
+            embedder_url = f"{embedder_url}/v1"
         embedder_provider_config = {
             "model": bare_model_name(embedding_model),
+            "openai_base_url": embedder_url,
+            "api_key": "denseon",
         }
 
         # Ollama exposes an OpenAI-compatible API at /v1. Using Mem0's
@@ -341,11 +358,8 @@ class Mem0MemoryManager:
                 base_url = f"{base_url}/v1"
             llm_provider_config["openai_base_url"] = base_url
             llm_provider_config["api_key"] = "ollama"
-            embedder_provider_config["openai_base_url"] = base_url
-            embedder_provider_config["api_key"] = "ollama"
         else:
             llm_provider_config["api_base"] = llm_base_url
-            embedder_provider_config["api_base"] = llm_base_url
 
         self.config = {
             "llm": {
@@ -353,7 +367,7 @@ class Mem0MemoryManager:
                 "config": llm_provider_config,
             },
             "embedder": {
-                "provider": provider,
+                "provider": "openai",
                 "config": embedder_provider_config,
             },
             "vector_store": {
@@ -361,7 +375,7 @@ class Mem0MemoryManager:
                 "config": {
                     "collection_name": tenant_schema_name,  # Tenant-specific schema
                     "backend_client": backend,  # Pre-configured backend instance
-                    "embedding_model_dims": 768,  # nomic-embed-text dimensions
+                    "embedding_model_dims": 768,  # DenseOn output dimension
                     "tenant_id": self.tenant_id,  # Pass tenant_id directly
                     "profile": base_schema_name,  # Pass base schema/profile name
                 },

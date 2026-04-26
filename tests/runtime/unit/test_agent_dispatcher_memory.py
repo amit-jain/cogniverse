@@ -28,7 +28,7 @@ def mock_dispatcher():
     sys_cfg.backend_url = "http://localhost"
     sys_cfg.backend_port = 8080
     sys_cfg.llm_model = "qwen3:4b"
-    sys_cfg.embedding_model = "nomic-embed-text"
+    sys_cfg.embedding_model = "lightonai/DenseOn"
     sys_cfg.base_url = "http://localhost:11434"
 
     config_manager = MagicMock()

@@ -82,6 +82,16 @@ class AgentDispatcher:
         if "/" in model_name:
             model_name = model_name.split("/", 1)[1]
 
+        denseon_url = sys_cfg.inference_service_urls.get("denseon")
+        if not denseon_url:
+            logger.warning(
+                "Memory init for %s skipped: denseon inference service not "
+                "deployed (available: %s)",
+                agent_name,
+                sorted(sys_cfg.inference_service_urls),
+            )
+            return
+
         try:
             agent.initialize_memory(
                 agent_name=agent_name,
@@ -89,9 +99,10 @@ class AgentDispatcher:
                 backend_host=sys_cfg.backend_url,
                 backend_port=sys_cfg.backend_port,
                 llm_model=model_name,
-                embedding_model=getattr(sys_cfg, "embedding_model", "nomic-embed-text"),
+                embedding_model="lightonai/DenseOn",
                 llm_base_url=llm_primary.api_base
                 or getattr(sys_cfg, "base_url", "http://localhost:11434"),
+                embedder_base_url=denseon_url,
                 config_manager=self._config_manager,
                 schema_loader=self._schema_loader,
             )

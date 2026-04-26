@@ -16,12 +16,11 @@ from tests.utils.llm_config import (
     get_backend_host,
     get_llm_base_url,
     get_llm_model,
-    get_memory_embedding_model,
 )
 
 
 @pytest.fixture(scope="module")
-def memory_manager(shared_memory_vespa):
+def memory_manager(shared_memory_vespa, shared_denseon):
     """Initialize and return memory manager for all tests."""
     Mem0MemoryManager._instances.clear()
 
@@ -33,8 +32,9 @@ def memory_manager(shared_memory_vespa):
         backend_config_port=shared_memory_vespa["config_port"],
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
-        embedding_model=get_memory_embedding_model(),
+        embedding_model="lightonai/DenseOn",
         llm_base_url=get_llm_base_url(),
+        embedder_base_url=shared_denseon,
         auto_create_schema=False,
         config_manager=shared_memory_vespa["config_manager"],
         schema_loader=shared_memory_vespa["schema_loader"],
@@ -74,23 +74,26 @@ class TestMemorySystemCompleteE2E:
         )
         assert response.status_code == 200
 
-    def test_02_schema_deployed(self, memory_manager, shared_memory_vespa):
+    def test_02_schema_deployed(
+        self, memory_manager, shared_memory_vespa, shared_denseon
+    ):
         """Test schema is deployed and accessible with real embeddings"""
         import requests
 
-        # Generate a real embedding via Ollama nomic-embed-text (same model Mem0 uses)
+        # Generate a real embedding via the denseon sidecar (DenseOn,
+        # 768-dim CLS-pooled, OAI /v1/embeddings).
         embed_resp = requests.post(
-            "http://localhost:11434/api/embed",
+            f"{shared_denseon}/v1/embeddings",
             json={
-                "model": "nomic-embed-text",
+                "model": "lightonai/DenseOn",
                 "input": "test content for schema verification",
             },
             timeout=30,
         )
         assert embed_resp.status_code == 200, (
-            f"Ollama embedding failed: {embed_resp.status_code}: {embed_resp.text[:200]}"
+            f"DenseOn embedding failed: {embed_resp.status_code}: {embed_resp.text[:200]}"
         )
-        real_embedding = embed_resp.json()["embeddings"][0]
+        real_embedding = embed_resp.json()["data"][0]["embedding"]
         assert len(real_embedding) == 768, (
             f"Expected 768-dim, got {len(real_embedding)}"
         )
@@ -362,8 +365,10 @@ class TestMemorySystemCompleteE2E:
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
 
-    def test_10_memory_aware_mixin(self, memory_manager, shared_memory_vespa):
-        """Test MemoryAwareMixin with real backend"""
+    def test_10_memory_aware_mixin(
+        self, memory_manager, shared_memory_vespa, shared_denseon
+    ):
+        """Test MemoryAwareMixin with real backend + denseon"""
 
         class TestAgent(MemoryAwareMixin):
             def __init__(self):
@@ -377,8 +382,9 @@ class TestMemorySystemCompleteE2E:
             backend_host=get_backend_host(),
             backend_port=shared_memory_vespa["http_port"],
             llm_model=get_llm_model(),
-            embedding_model=get_memory_embedding_model(),
+            embedding_model="lightonai/DenseOn",
             llm_base_url=get_llm_base_url(),
+            embedder_base_url=shared_denseon,
             config_manager=shared_memory_vespa["config_manager"],
             schema_loader=shared_memory_vespa["schema_loader"],
             backend_config_port=shared_memory_vespa["config_port"],

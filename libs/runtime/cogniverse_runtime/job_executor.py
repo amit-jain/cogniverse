@@ -24,7 +24,6 @@ import argparse
 import asyncio
 import logging
 import math
-import os
 import sys
 
 import httpx
@@ -40,15 +39,15 @@ _DELIVERY_THRESHOLD = 0.5
 _delivery_embeddings: dict = {}
 
 
-def _embed_text(text: str, ollama_url: str) -> list:
-    """Get embedding from Ollama for semantic classification."""
+def _embed_text(text: str, denseon_url: str) -> list:
+    """Get a 768-dim DenseOn embedding via the OAI-compatible /v1/embeddings."""
     resp = httpx.post(
-        f"{ollama_url}/api/embed",
-        json={"model": "nomic-embed-text", "input": text},
+        f"{denseon_url.rstrip('/')}/v1/embeddings",
+        json={"model": "lightonai/DenseOn", "input": text},
         timeout=30,
     )
     resp.raise_for_status()
-    return resp.json()["embeddings"][0]
+    return resp.json()["data"][0]["embedding"]
 
 
 def _cosine_sim(a: list, b: list) -> float:
@@ -58,25 +57,25 @@ def _cosine_sim(a: list, b: list) -> float:
     return dot / (na * nb) if na and nb else 0.0
 
 
-def _ensure_delivery_embeddings(ollama_url: str) -> None:
+def _ensure_delivery_embeddings(denseon_url: str) -> None:
     """Lazily compute embeddings for known delivery destinations."""
     if _delivery_embeddings:
         return
     for dest, desc in _DELIVERY_DESCRIPTIONS.items():
-        _delivery_embeddings[dest] = _embed_text(desc, ollama_url)
+        _delivery_embeddings[dest] = _embed_text(desc, denseon_url)
     logger.info(
         "Computed delivery embeddings for %d destinations", len(_delivery_embeddings)
     )
 
 
-def _detect_deliveries(action: str, ollama_url: str) -> list:
+def _detect_deliveries(action: str, denseon_url: str) -> list:
     """Detect delivery destinations in a post_action via semantic similarity.
 
     Returns a list of matched destinations (e.g. ["wiki"], ["telegram"],
     ["wiki", "telegram"], or [] for agent-only actions).
     """
-    _ensure_delivery_embeddings(ollama_url)
-    action_emb = _embed_text(action, ollama_url)
+    _ensure_delivery_embeddings(denseon_url)
+    action_emb = _embed_text(action, denseon_url)
 
     matched = []
     for dest, ref_emb in _delivery_embeddings.items():
@@ -201,7 +200,7 @@ async def _execute_action(
     action: str,
     query: str,
     context: str,
-    ollama_url: str,
+    denseon_url: str,
 ) -> str:
     """Execute a post_action: process through agent if needed, then deliver.
 
@@ -210,7 +209,7 @@ async def _execute_action(
     (e.g. "summarize and send on Telegram") go through orchestrator_agent
     first.
     """
-    deliveries = _detect_deliveries(action, ollama_url)
+    deliveries = _detect_deliveries(action, denseon_url)
 
     if _is_pure_delivery(action) and deliveries:
         result = context
@@ -249,7 +248,14 @@ async def run_job(job_id: str, tenant_id: str, runtime_url: str) -> None:
     query: str = job["query"]
     post_actions: list = job.get("post_actions", [])
 
-    ollama_url = os.environ.get("LLM_ENDPOINT", "http://localhost:11434")
+    sys_cfg = cm.get_system_config()
+    denseon_url = sys_cfg.inference_service_urls.get("denseon")
+    if not denseon_url:
+        raise RuntimeError(
+            "Job executor delivery routing requires the denseon inference "
+            "service. Available: "
+            f"{sorted(sys_cfg.inference_service_urls)}"
+        )
 
     logger.info("Starting job %s for tenant %s — query=%r", job_id, tenant_id, query)
 
@@ -266,7 +272,7 @@ async def run_job(job_id: str, tenant_id: str, runtime_url: str) -> None:
                 action,
                 query,
                 result,
-                ollama_url,
+                denseon_url,
             )
 
     logger.info("Job %s completed", job_id)
