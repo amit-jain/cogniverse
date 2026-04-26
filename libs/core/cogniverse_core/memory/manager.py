@@ -318,16 +318,17 @@ class Mem0MemoryManager:
         # Strip any litellm-style "provider/" prefix from model names — the
         # OpenAI-compatible endpoint (Ollama, vLLM, etc.) expects the bare
         # model name. Leaving "ollama/qwen3:4b" would make Ollama reply with
-        # "model 'ollama/qwen3:4b' not found".
-        def _bare_model_name(name: str) -> str:
-            return name.split("/", 1)[1] if "/" in name else name
+        # "model 'ollama/qwen3:4b' not found". Use the foundation helper so
+        # HuggingFace ``Org/Name`` ids (e.g. Qwen/Qwen2.5-7B-Instruct) keep
+        # their org segment — only known DSPy provider prefixes are stripped.
+        from cogniverse_foundation.dspy import bare_model_name
 
         llm_provider_config = {
-            "model": _bare_model_name(llm_model),
+            "model": bare_model_name(llm_model),
             "temperature": 0.1,
         }
         embedder_provider_config = {
-            "model": _bare_model_name(embedding_model),
+            "model": bare_model_name(embedding_model),
         }
 
         # Ollama exposes an OpenAI-compatible API at /v1. Using Mem0's

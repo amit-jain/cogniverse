@@ -73,11 +73,13 @@ def render_memory_management_tab():
                 raw_config = json.load(f)
             llm_primary = raw_config.get("llm_config", {}).get("primary", {})
 
-            # Strip provider prefix (e.g. "ollama/qwen3:4b" -> "qwen3:4b")
-            # Mem0 with provider="ollama" expects bare model names
-            llm_model = llm_primary.get("model", "qwen3:4b")
-            if "/" in llm_model:
-                llm_model = llm_model.split("/", 1)[1]
+            # Strip a litellm "provider/" prefix if present so Mem0's OAI
+            # provider sees the bare model name. HuggingFace ``Org/Name``
+            # ids (e.g. Qwen/Qwen2.5-7B-Instruct) keep their org because
+            # only known DSPy prefixes are stripped.
+            from cogniverse_foundation.dspy import bare_model_name
+
+            llm_model = bare_model_name(llm_primary.get("model", "qwen3:4b"))
 
             llm_base_url = llm_primary.get("api_base") or system_config.base_url
             manager.initialize(
