@@ -29,7 +29,8 @@ COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 
-# Install dependencies with uv using the lockfile
+# Install dependencies with uv using the lockfile (default torch wheel
+# is the cu128 build on Linux, replaced below per TORCH_BACKEND).
 RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen
 
 # Install pylate for ColBERT model loading without pulling its full dep tree
@@ -45,23 +46,37 @@ RUN uv pip install pylate --no-deps && \
 RUN uv pip install "arize-phoenix-evals<3" && \
     uv pip install -e ./libs/telemetry-phoenix
 
-# Strip CUDA libraries when building for CPU-only deployments. The default
-# torch 2.8.0 wheel bundles ~700 MB of NVIDIA runtime (cudnn, cublas, etc.)
-# in site-packages/nvidia/ plus CUDA-linked libs inside torch/lib. GPU-capable
-# production images keep these; CPU-only images (laptop k3d, deployment
-# lifecycle CI) can drop them for a ~700 MB saving.
+# Pick the torch wheel variant that matches the deployment target. Each
+# backend produces a separate image (cogniverse/runtime-cpu /-cuda /-rocm)
+# so callers don't ship NVIDIA runtime to a CPU pod or vice versa.
+# Mirrors the whisper engine-per-image pattern (whisper-fw / -wx / -cpp).
 #
-#   docker build --build-arg CPU_ONLY=true ...
+#   docker build --build-arg TORCH_BACKEND=cpu  ...   →  torch+cpu
+#   docker build --build-arg TORCH_BACKEND=cuda ...   →  torch+cu128 (default)
+#   docker build --build-arg TORCH_BACKEND=rocm ...   →  torch+rocm6.4 + pytorch-triton-rocm
 #
-# Default false — preserves GPU path for production deployments that
-# actually schedule pods on GPU nodes.
-ARG CPU_ONLY=false
-RUN if [ "$CPU_ONLY" = "true" ]; then \
-        echo "Installing CPU-only torch (CPU_ONLY=true)" && \
-        uv pip install --reinstall --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 && \
-        rm -rf /app/.venv/lib/python3.12/site-packages/nvidia && \
-        rm -rf /root/.cache/uv /root/.cache/pip ; \
-    fi
+# Default cuda keeps the historical wheel choice for unspecified builds;
+# the CLI (libs/cli/cogniverse_cli/images.py) detects the host backend
+# and builds the matching tag.
+ARG TORCH_BACKEND=cuda
+RUN case "$TORCH_BACKEND" in \
+        cpu) \
+            uv pip install --reinstall \
+                --index-url https://download.pytorch.org/whl/cpu \
+                torch==2.8.0 torchvision==0.23.0 && \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+        rocm) \
+            uv pip install --reinstall \
+                --index-url https://download.pytorch.org/whl/rocm6.4 \
+                torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
+                pytorch-triton-rocm==3.4.0 && \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+        cuda) \
+            : ;; \
+        *) \
+            echo "Unknown TORCH_BACKEND=$TORCH_BACKEND" >&2 && exit 1 ;; \
+    esac && \
+    rm -rf /root/.cache/uv /root/.cache/pip
 
 # Pre-download ML models so they don't need downloading at runtime.
 # This eliminates startup delays and liveness probe timeouts in production

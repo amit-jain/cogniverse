@@ -36,9 +36,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIDECAR_DIR = REPO_ROOT / "deploy" / "whisper"
-# Same tag the chart + CLI build list uses (cogniverse/whisper-fw:dev) —
-# avoids carrying two near-identical images locally just because the
-# integration test wanted its own tag.
 IMAGE_TAG = "cogniverse/whisper-fw:dev"
 CONTAINER_NAME = "cogniverse-whisper-agent-inttest"
 HF_VOLUME = "cogniverse-whisper-inttest-hf-cache"

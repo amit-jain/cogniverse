@@ -203,6 +203,11 @@ spec:
 ---
 # Runtime Deployment
 {{- if .Values.runtime.enabled }}
+{{- $runtimeBackend := default "cuda" .Values.runtime.backend }}
+{{- $runtimeImage := .Values.runtime.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $runtimeImage = (index .Values.runtime.imagesByBackend $runtimeBackend) | default .Values.runtime.image }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -233,8 +238,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: runtime
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
         ports:
         - name: http
           containerPort: 8000
@@ -405,8 +410,8 @@ spec:
         {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       - name: quality-monitor
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
         command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
         args:
         - "--tenant-id"
@@ -571,6 +576,11 @@ spec:
 ---
 # Dashboard Deployment
 {{- if .Values.dashboard.enabled }}
+{{- $dashboardBackend := default "cuda" .Values.dashboard.backend }}
+{{- $dashboardImage := .Values.dashboard.image }}
+{{- if .Values.dashboard.imagesByBackend }}
+{{- $dashboardImage = (index .Values.dashboard.imagesByBackend $dashboardBackend) | default .Values.dashboard.image }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -601,8 +611,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: dashboard
-        image: "{{ .Values.dashboard.image.repository }}:{{ .Values.dashboard.image.tag }}"
-        imagePullPolicy: {{ .Values.dashboard.image.pullPolicy }}
+        image: "{{ $dashboardImage.repository }}:{{ $dashboardImage.tag }}"
+        imagePullPolicy: {{ $dashboardImage.pullPolicy }}
         ports:
         - name: http
           containerPort: 8501

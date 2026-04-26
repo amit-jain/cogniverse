@@ -30,8 +30,36 @@ COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 COPY libs/dashboard ./libs/dashboard
 
-# Install dependencies with uv using the lockfile
+# Install dependencies with uv using the lockfile (default torch wheel
+# is the cu128 build on Linux, replaced below per TORCH_BACKEND).
 RUN uv sync --package cogniverse-dashboard --no-dev --frozen
+
+# Pick the torch wheel variant that matches the deployment target.
+# Dashboard transitively pulls torch through cogniverse_agents and
+# cogniverse_evaluation, so the variant matters even though the
+# dashboard process never runs inference itself. Same per-backend
+# pattern as libs/runtime/Dockerfile (cogniverse/dashboard-cpu /
+# -cuda / -rocm). Default cuda keeps the historical wheel choice;
+# the CLI builds the matching tag based on host detection.
+ARG TORCH_BACKEND=cuda
+RUN case "$TORCH_BACKEND" in \
+        cpu) \
+            uv pip install --reinstall \
+                --index-url https://download.pytorch.org/whl/cpu \
+                torch==2.8.0 torchvision==0.23.0 && \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+        rocm) \
+            uv pip install --reinstall \
+                --index-url https://download.pytorch.org/whl/rocm6.4 \
+                torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
+                pytorch-triton-rocm==3.4.0 && \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+        cuda) \
+            : ;; \
+        *) \
+            echo "Unknown TORCH_BACKEND=$TORCH_BACKEND" >&2 && exit 1 ;; \
+    esac && \
+    rm -rf /root/.cache/uv /root/.cache/pip
 
 # Runtime stage
 FROM python:3.12-slim

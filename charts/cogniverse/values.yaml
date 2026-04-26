@@ -166,10 +166,30 @@ vespa:
 # ===========================================
 runtime:
   enabled: true
+  # Backend selects the image at chart-render time — each torch backend
+  # ships its own image (cogniverse/runtime-cpu / -cuda / -rocm) so a
+  # CPU-only deployment doesn't pull NVIDIA libraries. Mirrors the
+  # whisper engine-per-image pattern. Set ``backend`` to one of
+  # ``cpu``/``cuda``/``rocm`` and the template picks the matching entry
+  # from ``imagesByBackend``; falls back to ``image`` for back-compat.
+  backend: cuda
   image:
-    repository: cogniverse/runtime
+    repository: cogniverse/runtime-cuda
     tag: "2.0.0"
     pullPolicy: IfNotPresent
+  imagesByBackend:
+    cpu:
+      repository: cogniverse/runtime-cpu
+      tag: dev
+      pullPolicy: IfNotPresent
+    cuda:
+      repository: cogniverse/runtime-cuda
+      tag: dev
+      pullPolicy: IfNotPresent
+    rocm:
+      repository: cogniverse/runtime-rocm
+      tag: dev
+      pullPolicy: IfNotPresent
 
   replicaCount: 2
 
@@ -320,10 +340,29 @@ openshell:
 # ===========================================
 dashboard:
   enabled: true
+  # Same backend → image selection as runtime (one image per torch
+  # variant). Dashboard is Streamlit and never runs inference itself,
+  # but the venv transitively imports torch via cogniverse_agents /
+  # cogniverse_evaluation, so the wheel choice still matters for image
+  # size and ABI compatibility.
+  backend: cuda
   image:
-    repository: cogniverse/dashboard
+    repository: cogniverse/dashboard-cuda
     tag: "2.0.0"
     pullPolicy: IfNotPresent
+  imagesByBackend:
+    cpu:
+      repository: cogniverse/dashboard-cpu
+      tag: dev
+      pullPolicy: IfNotPresent
+    cuda:
+      repository: cogniverse/dashboard-cuda
+      tag: dev
+      pullPolicy: IfNotPresent
+    rocm:
+      repository: cogniverse/dashboard-rocm
+      tag: dev
+      pullPolicy: IfNotPresent
 
   replicaCount: 1
 

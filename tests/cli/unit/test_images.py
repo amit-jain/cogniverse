@@ -28,17 +28,18 @@ class TestBuildImages:
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(self, mock_run: object) -> None:
-        """One docker build command per image: runtime, dashboard, then the
-        inference sidecars (pylate, colpali, whisper)."""
+        """One docker build per image: backend-specific runtime + dashboard
+        first (TORCH_BACKEND build-arg), then inference sidecars."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
 
-        tags = build_images(Path("/fake/root"))
+        # Pin backend so the test doesn't depend on the host's GPU detection.
+        tags = build_images(Path("/fake/root"), torch_backend="cpu")
 
         assert tags == [
-            "cogniverse/runtime:dev",
-            "cogniverse/dashboard:dev",
+            "cogniverse/runtime-cpu:dev",
+            "cogniverse/dashboard-cpu:dev",
             "cogniverse/pylate:dev",
             "cogniverse/colpali:dev",
             "cogniverse/whisper-fw:dev",
@@ -51,13 +52,33 @@ class TestBuildImages:
             assert cmd[1] == "build"
 
     @patch("cogniverse_cli.images.subprocess.run")
+    def test_build_images_runtime_passes_torch_backend_arg(
+        self, mock_run: object
+    ) -> None:
+        """Runtime + dashboard builds get the matching --build-arg
+        TORCH_BACKEND=<name> so the Dockerfile picks the right wheel."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+
+        build_images(Path("/fake/root"), torch_backend="rocm")
+
+        runtime_cmd = mock_run.call_args_list[0][0][0]  # type: ignore[attr-defined]
+        dashboard_cmd = mock_run.call_args_list[1][0][0]  # type: ignore[attr-defined]
+        assert "--build-arg" in runtime_cmd
+        assert "TORCH_BACKEND=rocm" in runtime_cmd
+        assert "cogniverse/runtime-rocm:dev" in runtime_cmd
+        assert "TORCH_BACKEND=rocm" in dashboard_cmd
+        assert "cogniverse/dashboard-rocm:dev" in dashboard_cmd
+
+    @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_pylate_uses_its_own_context(self, mock_run: object) -> None:
         """pylate builds from deploy/pylate (self-contained), not repo root."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
 
-        build_images(Path("/fake/root"))
+        build_images(Path("/fake/root"), torch_backend="cpu")
 
         pylate_call = mock_run.call_args_list[2]  # type: ignore[attr-defined]
         cmd = pylate_call[0][0]

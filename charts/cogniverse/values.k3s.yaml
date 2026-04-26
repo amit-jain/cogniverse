@@ -103,9 +103,23 @@ vespa:
 
 runtime:
   replicaCount: 1
-  image:
-    tag: "dev"
-    pullPolicy: Never
+  # Backend is detected by the e2e conftest at build time (re-uses the
+  # install_with_gpu.sh ladder via cogniverse_cli.images.detect_torch_backend).
+  # Override here to force a specific variant for repeated local runs.
+  backend: cpu
+  imagesByBackend:
+    cpu:
+      repository: cogniverse/runtime-cpu
+      tag: "dev"
+      pullPolicy: Never
+    cuda:
+      repository: cogniverse/runtime-cuda
+      tag: "dev"
+      pullPolicy: Never
+    rocm:
+      repository: cogniverse/runtime-rocm
+      tag: "dev"
+      pullPolicy: Never
   service:
     type: NodePort
   autoscaling:
@@ -154,9 +168,20 @@ runtime:
 
 dashboard:
   replicaCount: 1
-  image:
-    tag: "dev"
-    pullPolicy: Never
+  backend: cpu
+  imagesByBackend:
+    cpu:
+      repository: cogniverse/dashboard-cpu
+      tag: "dev"
+      pullPolicy: Never
+    cuda:
+      repository: cogniverse/dashboard-cuda
+      tag: "dev"
+      pullPolicy: Never
+    rocm:
+      repository: cogniverse/dashboard-rocm
+      tag: "dev"
+      pullPolicy: Never
   service:
     type: NodePort
   resources:

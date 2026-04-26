@@ -266,22 +266,31 @@ def deployed_stack(k3d_cluster):
     assert chart_path.exists(), f"Chart not found: {chart_path}"
     assert values_file.exists(), f"Values not found: {values_file}"
 
-    # Build and import images. Tests only verify deployment lifecycle
-    # (pod health, helm release) — no agent queries — so CI runs with
-    # CPU-only torch (no CUDA libs) and skip model pre-download to fit
-    # in GHA's 14 GB disk. A developer running this locally can override
-    # by unsetting these env vars.
+    # Build and import images matching the host's torch backend. Each
+    # backend ships its own image (cogniverse/runtime-cpu / -cuda / -rocm,
+    # same for dashboard); the chart picks the matching tag via
+    # ``runtime.imagesByBackend[backend]``. PREDOWNLOAD_MODELS is on by
+    # default so the agent pipeline starts fast; flip the env var off to
+    # save image build time when the tests don't exercise inference.
     import os as _os
 
-    build_args: list[str] = []
-    if _os.environ.get("CPU_ONLY", "false").lower() in ("1", "true", "yes"):
-        build_args += ["--build-arg", "CPU_ONLY=true"]
+    from cogniverse_cli.images import (
+        DASHBOARD_TAGS_BY_BACKEND,
+        RUNTIME_TAGS_BY_BACKEND,
+        detect_torch_backend,
+    )
+
+    backend = detect_torch_backend()
+    runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
+    dashboard_tag = DASHBOARD_TAGS_BY_BACKEND[backend]
+
+    build_args: list[str] = ["--build-arg", f"TORCH_BACKEND={backend}"]
     if _os.environ.get("PREDOWNLOAD_MODELS", "true").lower() in ("0", "false", "no"):
         build_args += ["--build-arg", "PREDOWNLOAD_MODELS=false"]
 
     for dockerfile, tag in [
-        ("libs/runtime/Dockerfile", "cogniverse/runtime:dev"),
-        ("libs/dashboard/Dockerfile", "cogniverse/dashboard:dev"),
+        ("libs/runtime/Dockerfile", runtime_tag),
+        ("libs/dashboard/Dockerfile", dashboard_tag),
     ]:
         _cmd(
             ["docker", "build", "-f", dockerfile, *build_args, "-t", tag, "."],
@@ -291,9 +300,8 @@ def deployed_stack(k3d_cluster):
     # Inference sidecars deployed by the chart when their `enabled` flag
     # flips to true. The whisper sidecar is gated behind ``whisper.enabled``
     # in values.k3s.yaml; build the image unconditionally so a deploy with
-    # the flag on doesn't fail with ImagePullBackOff. CPU_ONLY/PREDOWNLOAD
-    # build args are runtime/dashboard-specific and not consumed by
-    # deploy/whisper/Dockerfile.
+    # the flag on doesn't fail with ImagePullBackOff. The whisper Dockerfile
+    # doesn't consume TORCH_BACKEND.
     _cmd(
         [
             "docker",
@@ -312,8 +320,8 @@ def deployed_stack(k3d_cluster):
             "k3d",
             "image",
             "import",
-            "cogniverse/runtime:dev",
-            "cogniverse/dashboard:dev",
+            runtime_tag,
+            dashboard_tag,
             "cogniverse/whisper-fw:dev",
             "-c",
             CLUSTER_NAME,
@@ -339,8 +347,10 @@ def deployed_stack(k3d_cluster):
     except Exception as e:
         pytest.fail(f"Argo controller install failed: {e}")
 
-    # Helm install (with argo-workflows.crds.install=false so the
-    # sub-chart doesn't reinstall the CRDs we just laid down)
+    # Helm install. argo-workflows.crds.install=false so the sub-chart
+    # doesn't reinstall the CRDs we just laid down. runtime.backend /
+    # dashboard.backend pin the chart's image-by-backend selection to
+    # the variant we just built (matches host's torch wheel).
     _cmd(
         [
             "helm",
@@ -349,6 +359,10 @@ def deployed_stack(k3d_cluster):
             str(chart_path),
             "--set",
             "argo-workflows.crds.install=false",
+            "--set",
+            f"runtime.backend={backend}",
+            "--set",
+            f"dashboard.backend={backend}",
             "--namespace",
             NAMESPACE,
             "--create-namespace",

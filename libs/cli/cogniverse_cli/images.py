@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import yaml
 
-RUNTIME_TAG = "cogniverse/runtime:dev"
-DASHBOARD_TAG = "cogniverse/dashboard:dev"
+# Runtime + dashboard ship one image per torch backend. Each variant
+# bakes in the matching torch wheel — cogniverse/runtime-cpu carries
+# torch+cpu, -cuda carries torch+cu128, -rocm carries torch+rocm6.4.
+# Mirrors the whisper engine-per-image pattern (whisper-fw / -wx / -cpp).
+RUNTIME_TAGS_BY_BACKEND = {
+    "cpu":  "cogniverse/runtime-cpu:dev",
+    "cuda": "cogniverse/runtime-cuda:dev",
+    "rocm": "cogniverse/runtime-rocm:dev",
+}
+DASHBOARD_TAGS_BY_BACKEND = {
+    "cpu":  "cogniverse/dashboard-cpu:dev",
+    "cuda": "cogniverse/dashboard-cuda:dev",
+    "rocm": "cogniverse/dashboard-rocm:dev",
+}
 PYLATE_TAG = "cogniverse/pylate:dev"
 COLPALI_TAG = "cogniverse/colpali:dev"
 # faster-whisper variant — chart's default whisper.image.repository is
@@ -20,30 +34,78 @@ COLPALI_TAG = "cogniverse/colpali:dev"
 WHISPER_TAG = "cogniverse/whisper-fw:dev"
 
 
+def detect_torch_backend() -> str:
+    """Return the torch backend matching the local host.
+
+    Same detection ladder as ``scripts/install_with_gpu.sh`` so the CLI
+    builds the same wheels that ``install_with_gpu.sh`` would install
+    locally. Override with ``COGNIVERSE_TORCH_BACKEND``.
+    """
+    explicit = os.environ.get("COGNIVERSE_TORCH_BACKEND")
+    if explicit:
+        return explicit
+
+    if shutil.which("nvidia-smi"):
+        try:
+            subprocess.run(
+                ["nvidia-smi"],
+                capture_output=True,
+                check=True,
+                timeout=5,
+            )
+            return "cuda"
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+
+    if shutil.which("rocminfo"):
+        try:
+            result = subprocess.run(
+                ["rocminfo"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if "Name:" in result.stdout and "gfx" in result.stdout:
+                return "rocm"
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            pass
+
+    return "cpu"
+
+
 def has_workspace_source(project_root: Path) -> bool:
     """Check if workspace source is available for building images."""
     return (project_root / "libs" / "runtime").is_dir()
 
 
-def build_images(project_root: Path) -> list[str]:
+def build_images(
+    project_root: Path,
+    torch_backend: str | None = None,
+) -> list[str]:
     """Build all cogniverse-owned Docker images.
 
-    Returns list of image tags that were built. Inference sidecars
-    (pylate, colpali, whisper) are always built so
+    Builds the runtime + dashboard variants matching ``torch_backend``
+    (auto-detected via ``detect_torch_backend()`` when None). Inference
+    sidecars (pylate, colpali, whisper) are always built so
     ``--set inference.<name>.engine=...`` against an existing k3d cluster
     works without a separate build step.
     """
+    backend = torch_backend or detect_torch_backend()
+    runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
+    dashboard_tag = DASHBOARD_TAGS_BY_BACKEND[backend]
+
+    backend_arg = ["--build-arg", f"TORCH_BACKEND={backend}"]
     workspace_builds = [
-        (RUNTIME_TAG, "libs/runtime/Dockerfile", "."),
-        (DASHBOARD_TAG, "libs/dashboard/Dockerfile", "."),
-        (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate"),
-        (COLPALI_TAG, "deploy/colpali/Dockerfile", "deploy/colpali"),
-        (WHISPER_TAG, "deploy/whisper/Dockerfile", "deploy/whisper"),
+        (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
+        (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
+        (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate", []),
+        (COLPALI_TAG, "deploy/colpali/Dockerfile", "deploy/colpali", []),
+        (WHISPER_TAG, "deploy/whisper/Dockerfile", "deploy/whisper", []),
     ]
     built: list[str] = []
-    for tag, dockerfile, context in workspace_builds:
+    for tag, dockerfile, context, extra_args in workspace_builds:
         subprocess.run(
-            ["docker", "build", "-f", dockerfile, "-t", tag, context],
+            ["docker", "build", "-f", dockerfile, *extra_args, "-t", tag, context],
             cwd=str(project_root),
             check=True,
             timeout=3600,
