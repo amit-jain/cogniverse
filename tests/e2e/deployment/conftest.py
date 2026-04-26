@@ -389,28 +389,63 @@ def deployed_stack(k3d_cluster):
     # --timeout=10m doesn't leave enough headroom — bumping to 20m so
     # the hook chain reliably completes. The outer subprocess timeout
     # tracks helm's window plus a small buffer for argo etc.
-    _cmd(
-        [
-            "helm",
-            "install",
-            "cogniverse",
-            str(chart_path),
-            "--set",
-            "argo-workflows.crds.install=false",
-            "--set",
-            f"runtime.backend={backend}",
-            "--set",
-            f"dashboard.backend={backend}",
-            "--namespace",
-            NAMESPACE,
-            "--create-namespace",
-            "-f",
-            str(values_file),
-            "--timeout",
-            "20m",
-        ],
-        timeout=1320,
-    )
+    helm_install_cmd = [
+        "helm",
+        "install",
+        "cogniverse",
+        str(chart_path),
+        "--set",
+        "argo-workflows.crds.install=false",
+        "--set",
+        f"runtime.backend={backend}",
+        "--set",
+        f"dashboard.backend={backend}",
+        "--namespace",
+        NAMESPACE,
+        "--create-namespace",
+        "-f",
+        str(values_file),
+        "--timeout",
+        "20m",
+    ]
+    try:
+        _cmd(helm_install_cmd, timeout=1320)
+    except subprocess.CalledProcessError as helm_err:
+        # Pod-state dump on failure: 20m hook timeouts don't tell us
+        # WHICH pod was Pending/CrashLooping. Capture the cluster's
+        # view (events + describe + recent logs) before the fixture
+        # teardown deletes the cluster on the way out of the test
+        # session. Output goes to pytest's captured stdout.
+        import sys
+
+        print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
+        for diag in [
+            ["kubectl", "get", "pods", "-n", NAMESPACE, "-o", "wide"],
+            ["kubectl", "get", "events", "-n", NAMESPACE,
+             "--sort-by=.lastTimestamp"],
+            ["kubectl", "describe", "pods", "-n", NAMESPACE],
+        ]:
+            print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
+            sys.stdout.flush()
+            subprocess.run(diag, check=False, timeout=60)
+        # Logs for non-Running pods
+        result = subprocess.run(
+            ["kubectl", "get", "pods", "-n", NAMESPACE,
+             "-o", "jsonpath={range .items[?(@.status.phase!='Running')]}"
+             "{.metadata.name}{'\\n'}{end}"],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        for pod in (result.stdout or "").split():
+            if not pod:
+                continue
+            print(f"\n--- kubectl logs {pod} (last 100 lines) ---", file=sys.stdout)
+            sys.stdout.flush()
+            subprocess.run(
+                ["kubectl", "logs", "-n", NAMESPACE, pod, "--tail=100"],
+                check=False, timeout=30,
+            )
+        print("================================================\n", file=sys.stdout)
+        raise helm_err
 
     # Wait for pods
     _cmd(
