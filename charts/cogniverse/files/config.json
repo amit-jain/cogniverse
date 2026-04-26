@@ -685,7 +685,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
