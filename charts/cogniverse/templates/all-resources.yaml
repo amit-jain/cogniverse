@@ -245,7 +245,7 @@ spec:
         # via runtime.rocm.supplementalGroups for distros with different
         # gids (Fedora render = 109, etc.).
         supplementalGroups:
-          {{- toYaml (.Values.runtime.rocm.supplementalGroups | default (list 992 44)) | nindent 8 }}
+          {{- toYaml (dig "rocm" "supplementalGroups" (list 992 44) .Values.runtime) | nindent 8 }}
         {{- end }}
       containers:
       - name: runtime
