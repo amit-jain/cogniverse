@@ -351,6 +351,14 @@ def deployed_stack(k3d_cluster):
     # doesn't reinstall the CRDs we just laid down. runtime.backend /
     # dashboard.backend pin the chart's image-by-backend selection to
     # the variant we just built (matches host's torch wheel).
+    # Helm post-install hook (the schema-deployment Job in
+    # templates/init-jobs.yaml) curl-waits for runtime /health, which
+    # itself blocks on Vespa's config-server. Vespa's bundle-load + ZK
+    # replay alone is ~5 min cold; runtime startup adds 1-2 min;
+    # schema deploy itself another 1-2 min. The default helm
+    # --timeout=10m doesn't leave enough headroom — bumping to 20m so
+    # the hook chain reliably completes. The outer subprocess timeout
+    # tracks helm's window plus a small buffer for argo etc.
     _cmd(
         [
             "helm",
@@ -369,9 +377,9 @@ def deployed_stack(k3d_cluster):
             "-f",
             str(values_file),
             "--timeout",
-            "10m",
+            "20m",
         ],
-        timeout=660,
+        timeout=1320,
     )
 
     # Wait for pods
