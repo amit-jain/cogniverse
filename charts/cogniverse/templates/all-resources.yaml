@@ -371,7 +371,17 @@ spec:
         readinessProbe:
           {{- toYaml .Values.runtime.readinessProbe | nindent 10 }}
         resources:
-          {{- toYaml .Values.runtime.resources | nindent 10 }}
+          {{- $runtimeBaseResources := .Values.runtime.resources | default dict }}
+          {{- $runtimeBaseLimits := dig "limits" dict $runtimeBaseResources }}
+          {{- $runtimeGpuLimits := dict }}
+          {{- if eq $runtimeBackend "cuda" }}
+          {{- $runtimeGpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.runtime.gpuCount)) }}
+          {{- else if eq $runtimeBackend "rocm" }}
+          {{- $runtimeGpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.runtime.gpuCount)) }}
+          {{- end }}
+          {{- $runtimeMergedLimits := merge $runtimeGpuLimits $runtimeBaseLimits }}
+          {{- $runtimeMergedResources := merge (dict "limits" $runtimeMergedLimits) $runtimeBaseResources }}
+          {{- toYaml $runtimeMergedResources | nindent 10 }}
         volumeMounts:
         - name: config
           mountPath: /app/configs/config.json
@@ -558,16 +568,46 @@ spec:
           path: {{ .Values.devMode.hostPath }}/data
           type: DirectoryOrCreate
       {{- end }}
-      {{- with .Values.runtime.nodeSelector }}
+      {{- $runtimeUserNodeSelector := .Values.runtime.nodeSelector | default dict }}
+      {{- $runtimeUserTolerations := .Values.runtime.tolerations | default list }}
+      {{- if eq $runtimeBackend "cuda" }}
       nodeSelector:
-        {{- toYaml . | nindent 8 }}
+        nvidia.com/gpu.present: "true"
+        {{- range $k, $v := $runtimeUserNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $runtimeUserTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else if eq $runtimeBackend "rocm" }}
+      nodeSelector:
+        amd.com/gpu.present: "true"
+        {{- range $k, $v := $runtimeUserNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $runtimeUserTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else }}
+      {{- if $runtimeUserNodeSelector }}
+      nodeSelector:
+        {{- toYaml $runtimeUserNodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $runtimeUserTolerations }}
+      tolerations:
+        {{- toYaml $runtimeUserTolerations | nindent 8 }}
+      {{- end }}
       {{- end }}
       {{- with .Values.runtime.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.runtime.tolerations }}
-      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
@@ -668,7 +708,17 @@ spec:
         readinessProbe:
           {{- toYaml .Values.dashboard.readinessProbe | nindent 10 }}
         resources:
-          {{- toYaml .Values.dashboard.resources | nindent 10 }}
+          {{- $dashboardBaseResources := .Values.dashboard.resources | default dict }}
+          {{- $dashboardBaseLimits := dig "limits" dict $dashboardBaseResources }}
+          {{- $dashboardGpuLimits := dict }}
+          {{- if eq $dashboardBackend "cuda" }}
+          {{- $dashboardGpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.dashboard.gpuCount)) }}
+          {{- else if eq $dashboardBackend "rocm" }}
+          {{- $dashboardGpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.dashboard.gpuCount)) }}
+          {{- end }}
+          {{- $dashboardMergedLimits := merge $dashboardGpuLimits $dashboardBaseLimits }}
+          {{- $dashboardMergedResources := merge (dict "limits" $dashboardMergedLimits) $dashboardBaseResources }}
+          {{- toYaml $dashboardMergedResources | nindent 10 }}
         volumeMounts:
         - name: config
           mountPath: /app/configs/config.json
@@ -694,16 +744,46 @@ spec:
           path: {{ .Values.devMode.hostPath }}/scripts
           type: Directory
       {{- end }}
-      {{- with .Values.dashboard.nodeSelector }}
+      {{- $dashboardUserNodeSelector := .Values.dashboard.nodeSelector | default dict }}
+      {{- $dashboardUserTolerations := .Values.dashboard.tolerations | default list }}
+      {{- if eq $dashboardBackend "cuda" }}
       nodeSelector:
-        {{- toYaml . | nindent 8 }}
+        nvidia.com/gpu.present: "true"
+        {{- range $k, $v := $dashboardUserNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $dashboardUserTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else if eq $dashboardBackend "rocm" }}
+      nodeSelector:
+        amd.com/gpu.present: "true"
+        {{- range $k, $v := $dashboardUserNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $dashboardUserTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else }}
+      {{- if $dashboardUserNodeSelector }}
+      nodeSelector:
+        {{- toYaml $dashboardUserNodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $dashboardUserTolerations }}
+      tolerations:
+        {{- toYaml $dashboardUserTolerations | nindent 8 }}
+      {{- end }}
       {{- end }}
       {{- with .Values.dashboard.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.dashboard.tolerations }}
-      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}

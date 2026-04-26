@@ -240,6 +240,24 @@ def k3d_cluster():
     for port in PORTS.values():
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
 
+    # GPU passthrough — k3d nodes are docker containers, so the host's
+    # GPU device files have to be mounted in for any in-cluster device
+    # plugin to find them. NVIDIA has --gpus=all; AMD has no equivalent
+    # so we mount /dev/kfd + /dev/dri explicitly when the build host
+    # detected rocm. CPU build host: no mounts.
+    from cogniverse_cli.images import detect_torch_backend
+
+    host_backend = detect_torch_backend()
+    if host_backend == "cuda":
+        cmd.append("--gpus=all")
+    elif host_backend == "rocm":
+        cmd += [
+            "--volume",
+            "/dev/kfd:/dev/kfd",
+            "--volume",
+            "/dev/dri:/dev/dri",
+        ]
+
     result = _cmd(cmd, timeout=120, check=False)
     if result.returncode != 0:
         pytest.fail(f"k3d cluster creation failed: {result.stderr.strip()[:300]}")
@@ -333,6 +351,22 @@ def deployed_stack(k3d_cluster):
         ],
         timeout=300,
     )
+
+    # GPU device plugin: advertises ``amd.com/gpu`` / ``nvidia.com/gpu``
+    # node resources so the scheduler can place GPU-requesting pods.
+    # k3s ships with NVIDIA support out of the box (matched by
+    # ``--gpus=all`` at cluster create); AMD needs an explicit DaemonSet
+    # since ROCm has no built-in k3d/k3s integration.
+    if backend == "rocm":
+        amd_plugin_url = (
+            "https://raw.githubusercontent.com/ROCm/"
+            "k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml"
+        )
+        _cmd(
+            ["kubectl", "apply", "-f", amd_plugin_url],
+            timeout=60,
+            check=False,
+        )
 
     # Argo CRD chicken-and-egg: the main cogniverse chart references
     # CronWorkflow / WorkflowTemplate (argoproj.io/v1alpha1) resources.
