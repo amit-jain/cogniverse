@@ -1,14 +1,16 @@
 """
 Ingestion integration test configuration and fixtures.
 
-Provides module-scoped Vespa instance for ingestion tests.
+Provides module-scoped Vespa + MinIO instances for ingestion tests.
 Sets up BACKEND_URL environment variable required by BootstrapConfig.
 """
 
 import os
+from pathlib import Path
 
 import pytest
 
+from tests.system.minio_test_manager import MinIOTestManager
 from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.markers import (
@@ -16,6 +18,11 @@ from tests.utils.markers import (
     is_ffmpeg_available,
     is_vespa_running,
 )
+
+TEST_VIDEO_RESOURCE_DIR = (
+    Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
+)
+TEST_BUCKET = "cogniverse-ingestion-corpus"
 
 
 def pytest_collection_modifyitems(items):
@@ -98,3 +105,61 @@ def ingestion_vespa_backend():
 
         # Cleanup container
         manager.cleanup()
+
+
+@pytest.fixture(scope="module")
+def minio_instance():
+    """Module-scoped MinIO container for ingestion integration tests."""
+    manager = MinIOTestManager()
+    instance = manager.start(name_prefix="minio-ingestion-test")
+
+    saved_access = os.environ.get("AWS_ACCESS_KEY_ID")
+    saved_secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    saved_region = os.environ.get("AWS_DEFAULT_REGION")
+    os.environ["AWS_ACCESS_KEY_ID"] = instance.access_key
+    os.environ["AWS_SECRET_ACCESS_KEY"] = instance.secret_key
+    os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
+
+    try:
+        yield instance
+    finally:
+        manager.stop()
+        for key, prev in (
+            ("AWS_ACCESS_KEY_ID", saved_access),
+            ("AWS_SECRET_ACCESS_KEY", saved_secret),
+            ("AWS_DEFAULT_REGION", saved_region),
+        ):
+            if prev is not None:
+                os.environ[key] = prev
+            elif key in os.environ:
+                del os.environ[key]
+
+
+@pytest.fixture(scope="module")
+def populated_minio_corpus(minio_instance):
+    """Upload the on-disk test videos into a fresh MinIO bucket.
+
+    Returns a dict with the bucket name, the canonical media root URI for the
+    pipeline, the s3 endpoint URL, and a list of (video_id, key) tuples for
+    each uploaded object.
+    """
+    client = minio_instance.boto3_client()
+    client.create_bucket(Bucket=TEST_BUCKET)
+
+    uploaded: list[tuple[str, str]] = []
+    for video_path in sorted(TEST_VIDEO_RESOURCE_DIR.glob("*.mp4")):
+        key = f"videos/{video_path.name}"
+        client.upload_file(str(video_path), TEST_BUCKET, key)
+        uploaded.append((video_path.stem, key))
+
+    if not uploaded:
+        pytest.skip(
+            f"No test videos under {TEST_VIDEO_RESOURCE_DIR}; nothing to upload"
+        )
+
+    return {
+        "bucket": TEST_BUCKET,
+        "media_root_uri": f"s3://{TEST_BUCKET}/videos",
+        "endpoint_url": minio_instance.endpoint,
+        "uploaded": uploaded,
+    }

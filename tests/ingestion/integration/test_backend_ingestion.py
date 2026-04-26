@@ -314,6 +314,113 @@ class TestVespaBackendIngestion:
 
 
 @pytest.mark.integration
+@pytest.mark.requires_docker
+class TestVespaIngestionViaMinio:
+    """Pipeline-level ingestion test that reads from MinIO instead of a local
+    directory. Verifies that the unified-MediaLocator wiring works through
+    ``VideoIngestionPipeline.process_video_async`` end-to-end against real
+    Vespa + real MinIO containers.
+
+    Heavy model invocation (ColPali / VideoPrism / ColQwen) is disabled so
+    the test is runnable without GPU/large model weights — the focus is the
+    URI → locator → orchestrator → DocumentBuilder → Vespa chain, not the
+    embedding model itself.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pipeline_ingests_from_minio_uri(
+        self,
+        ingestion_vespa_backend,
+        populated_minio_corpus,
+        minio_instance,
+        tmp_path,
+    ):
+        from cogniverse_runtime.ingestion.pipeline import (
+            PipelineConfig,
+            VideoIngestionPipeline,
+        )
+
+        app_config = {
+            "media": {
+                "default_uri_scheme": "s3",
+                "uri_prefix": f"{populated_minio_corpus['media_root_uri']}/",
+                "cache": {
+                    "base_dir": str(tmp_path / "media-cache"),
+                    "max_bytes_gb": 1,
+                },
+                "backends": {
+                    "s3": {
+                        "endpoint_url": minio_instance.endpoint,
+                        "region": "us-east-1",
+                        "anon": False,
+                    },
+                },
+            },
+            "pipeline_cache": {"enabled": False},
+            "backend": {
+                "profiles": {
+                    "video_colpali_smol500_mv_frame": {
+                        "strategies": {
+                            "segmentation": {
+                                "class": "FrameSegmentationStrategy",
+                                "params": {"fps": 1.0},
+                            },
+                            "transcription": {
+                                "class": "AudioTranscriptionStrategy",
+                                "params": {},
+                            },
+                            "description": {
+                                "class": "NoDescriptionStrategy",
+                                "params": {},
+                            },
+                            "embedding": {
+                                "class": "MultiVectorEmbeddingStrategy",
+                                "params": {},
+                            },
+                        }
+                    }
+                }
+            },
+        }
+
+        config = PipelineConfig(
+            extract_keyframes=False,
+            transcribe_audio=False,
+            generate_descriptions=False,
+            generate_embeddings=False,
+            search_backend="vespa",
+            media_root_uri=populated_minio_corpus["media_root_uri"],
+            output_dir=tmp_path / "output",
+        )
+
+        pipeline = VideoIngestionPipeline(
+            tenant_id="test:minio",
+            config=config,
+            app_config=app_config,
+        )
+
+        # Real locator.list against MinIO returns canonical s3:// URIs.
+        files = pipeline.get_video_files()
+        assert files, "pipeline.get_video_files() returned nothing from MinIO"
+        assert all(isinstance(f, str) and f.startswith("s3://") for f in files)
+
+        # Real locator.localize fetches the bytes from MinIO into the cache;
+        # the orchestrator stamps source_url onto the results dict.
+        first_uri = files[0]
+        results = await pipeline.process_video_async(first_uri)
+
+        assert results is not None
+        assert results["source_url"] == first_uri, (
+            f"orchestrator should stamp source_url with the canonical s3:// URI; "
+            f"got {results.get('source_url')!r}"
+        )
+        # The localized path must exist on disk (locator fetched from MinIO).
+        local_path = Path(results["video_path"])
+        assert local_path.exists()
+        assert pipeline.locator.cache.base_dir in local_path.parents
+
+
+@pytest.mark.integration
 @pytest.mark.local_only
 @skip_if_ci
 class TestComprehensiveIngestion:

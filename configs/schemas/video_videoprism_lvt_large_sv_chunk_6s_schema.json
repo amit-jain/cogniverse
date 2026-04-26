@@ -20,6 +20,14 @@
         "index": "enable-bm25"
       },
       {
+        "name": "source_url",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
+      },
+      {
         "name": "creation_timestamp",
         "type": "long",
         "indexing": [
@@ -58,7 +66,9 @@
           "attribute",
           "index"
         ],
-        "attribute": ["distance-metric: angular"]
+        "attribute": [
+          "distance-metric: angular"
+        ]
       },
       {
         "name": "embedding_binary",
@@ -66,7 +76,9 @@
         "indexing": [
           "attribute"
         ],
-        "attribute": ["distance-metric: hamming"]
+        "attribute": [
+          "distance-metric: hamming"
+        ]
       },
       {
         "name": "audio_transcript",
@@ -114,7 +126,9 @@
         }
       ],
       "first_phase": "closeness(field, embedding_binary)",
-      "match_features": ["distance(field, embedding_binary)"],
+      "match_features": [
+        "distance(field, embedding_binary)"
+      ],
       "timeout": 2.0
     },
     {
@@ -172,7 +186,9 @@
         "expression": "sum(query(qt) * unpack_binary_representation, v)",
         "rerank_count": 100
       },
-      "match_features": ["distance(field, embedding_binary)"],
+      "match_features": [
+        "distance(field, embedding_binary)"
+      ],
       "timeout": 5.0
     },
     {

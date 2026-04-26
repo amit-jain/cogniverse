@@ -1,17 +1,15 @@
 """Integration test for MediaLocator against a real MinIO instance.
 
-Spins up a single-node MinIO container, writes an object, and exercises the
-full locator path: ``s3://`` URI → fsspec/s3fs fetch → tenant-scoped local
-cache → second call serves from cache without re-downloading.
+Spins up a single-node MinIO container via :class:`MinIOTestManager` and
+exercises the full locator path: ``s3://`` URI → fsspec/s3fs fetch →
+tenant-scoped local cache → second call serves from cache without
+re-downloading.
 
 Requires Docker. Skips cleanly when Docker is unavailable.
 """
 
 from __future__ import annotations
 
-import socket
-import subprocess
-import time
 import uuid
 
 import pytest
@@ -22,81 +20,28 @@ from cogniverse_core.common.media import (
     MediaLocator,
     S3BackendConfig,
 )
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _wait_for_port(host: str, port: int, timeout: float = 30.0) -> None:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=1):
-                return
-        except OSError:
-            time.sleep(0.5)
-    raise RuntimeError(f"MinIO never came up on {host}:{port}")
+from tests.system.minio_test_manager import MinIOTestManager
 
 
 @pytest.fixture(scope="module")
 def minio_container():
-    name = f"minio-cogniverse-test-{uuid.uuid4().hex[:8]}"
-    api_port = _free_port()
-    console_port = _free_port()
-    access_key = "minioadmin"
-    secret_key = "minioadmin"
-
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--rm",
-            "--name",
-            name,
-            "-p",
-            f"{api_port}:9000",
-            "-p",
-            f"{console_port}:9001",
-            "-e",
-            f"MINIO_ROOT_USER={access_key}",
-            "-e",
-            f"MINIO_ROOT_PASSWORD={secret_key}",
-            "minio/minio:latest",
-            "server",
-            "/data",
-            "--console-address",
-            ":9001",
-        ],
-        check=True,
-        capture_output=True,
-    )
-
+    manager = MinIOTestManager()
+    instance = manager.start()
     try:
-        _wait_for_port("127.0.0.1", api_port)
-        time.sleep(1.0)  # MinIO needs an extra moment after the port opens
         yield {
-            "endpoint": f"http://127.0.0.1:{api_port}",
-            "access_key": access_key,
-            "secret_key": secret_key,
+            "endpoint": instance.endpoint,
+            "access_key": instance.access_key,
+            "secret_key": instance.secret_key,
+            "instance": instance,
         }
     finally:
-        subprocess.run(["docker", "stop", name], check=False, capture_output=True)
+        manager.stop()
 
 
 @pytest.fixture
 def minio_s3_client(minio_container):
-    boto3 = pytest.importorskip("boto3")
-    return boto3.client(
-        "s3",
-        endpoint_url=minio_container["endpoint"],
-        aws_access_key_id=minio_container["access_key"],
-        aws_secret_access_key=minio_container["secret_key"],
-        region_name="us-east-1",
-    )
+    pytest.importorskip("boto3")
+    return minio_container["instance"].boto3_client()
 
 
 @pytest.fixture

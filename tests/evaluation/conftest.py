@@ -560,8 +560,30 @@ def eval_colpali_model():
 
 @pytest.fixture(scope="module")
 def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
-    """Feed real ColPali-embedded documents into Vespa for evaluation tests."""
+    """Feed real ColPali-embedded documents into Vespa for evaluation tests.
+
+    Documents are assembled via :class:`DocumentBuilder` with a populated
+    ``source_url`` pointing at the on-disk test videos so visual evaluators
+    can resolve frames through the unified MediaLocator path. The schema name
+    used (``EVAL_TENANT_SCHEMA``) is tenant-namespaced; the builder's default
+    ``video_*`` schema layout (used by production ingestion) is identical at
+    the field level.
+    """
+    from cogniverse_runtime.ingestion.processors.embedding_generator.document_builders import (
+        DocumentBuilder,
+        DocumentMetadata,
+    )
+
     model, processor, device = eval_colpali_model
+    test_videos_dir = (
+        Path(__file__).resolve().parents[1] / "system" / "resources" / "videos"
+    )
+    available_videos = sorted(test_videos_dir.glob("*.mp4"))
+    if not available_videos:
+        pytest.skip(
+            f"No test videos under {test_videos_dir}; eval seed fixture needs at "
+            "least one video so source_url resolves to real bytes for evaluators."
+        )
 
     test_docs = [
         {
@@ -582,6 +604,7 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
     ]
 
     http_port = eval_vespa_instance["http_port"]
+    builder = DocumentBuilder(EVAL_TENANT_SCHEMA)
 
     for i, doc_info in enumerate(test_docs):
         img = Image.new("RGB", (224, 224), color=doc_info["color"])
@@ -592,24 +615,37 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
 
         float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
 
-        doc_id = f"eval_test_doc_{i}"
-        vespa_doc = {
-            "fields": {
-                "video_id": doc_info["video_id"],
-                "video_title": doc_info["title"],
-                "segment_id": 0,
-                "start_time": 0.0,
-                "end_time": 5.0,
+        # Cycle through the available test videos so each seeded doc has a
+        # real, locator-resolvable source_url.
+        video_path = available_videos[i % len(available_videos)]
+        source_url = f"file://{video_path.resolve()}"
+        doc_info["source_url"] = source_url
+
+        metadata = DocumentMetadata(
+            video_id=doc_info["video_id"],
+            video_title=doc_info["title"],
+            segment_idx=0,
+            start_time=0.0,
+            end_time=5.0,
+            source_url=source_url,
+        )
+        doc = builder.build_document(
+            metadata,
+            embeddings={},  # Embeddings are added below in float/binary form.
+            additional_fields={
                 "segment_description": doc_info["title"],
                 "audio_transcript": "",
-                "embedding": float_dict,
-                "embedding_binary": binary_dict,
-            }
-        }
+            },
+        )
+        # The colsmol-500m schema uses tensor fields the helper doesn't
+        # populate by default; inject the prebuilt float/binary tensors here.
+        doc["fields"]["embedding"] = float_dict
+        doc["fields"]["embedding_binary"] = binary_dict
 
+        doc_id = f"eval_test_doc_{i}"
         resp = requests.post(
             f"http://localhost:{http_port}/document/v1/video/{EVAL_TENANT_SCHEMA}/docid/{doc_id}",
-            json=vespa_doc,
+            json={"fields": doc["fields"]},
             timeout=10,
         )
         assert resp.status_code in [200, 201], (
