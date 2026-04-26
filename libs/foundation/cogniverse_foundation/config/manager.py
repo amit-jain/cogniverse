@@ -78,6 +78,16 @@ class ConfigManager:
         self.cache_size = cache_size
         self._backend_lock = threading.Lock()
         self._profile_change_listener = profile_change_listener
+        # System config doesn't change after the runtime applies its env
+        # overrides at startup, but `get_system_config` is hot — every
+        # `create_dspy_lm` calls it. Without a cache each call hits the
+        # backend (Vespa query timeout in tests where Vespa isn't
+        # reachable burns ~20s per test). The cache is busted by
+        # `set_system_config` so live updates still propagate.
+        # Per-tenant configs (routing/telemetry/backend) aren't cached
+        # here — they're rarely re-fetched in production, and unit tests
+        # avoid the round-trip entirely via the conftest singleton mock.
+        self._system_config_cache: Optional[SystemConfig] = None
 
         logger.info(
             "ConfigManager initialized with %s, cache size: %d, "
@@ -126,9 +136,15 @@ class ConfigManager:
     def get_system_config(self) -> SystemConfig:
         """Get system-wide infrastructure configuration.
 
+        Cached on the instance after the first call — `set_system_config`
+        is the only path that writes, and it invalidates the cache.
+
         Returns:
             SystemConfig instance
         """
+        if self._system_config_cache is not None:
+            return self._system_config_cache
+
         entry = self.store.get_config(
             tenant_id=self._SYSTEM_TENANT_ID,
             scope=ConfigScope.SYSTEM,
@@ -138,9 +154,12 @@ class ConfigManager:
 
         if entry is None:
             logger.warning("No system config found, using defaults")
-            return SystemConfig()
+            cfg = SystemConfig()
+        else:
+            cfg = SystemConfig.from_dict(entry.config_value)
 
-        return SystemConfig.from_dict(entry.config_value)
+        self._system_config_cache = cfg
+        return cfg
 
     def set_system_config(self, system_config: SystemConfig) -> SystemConfig:
         """Set system-wide infrastructure configuration.
@@ -158,6 +177,9 @@ class ConfigManager:
             config_key="system_config",
             config_value=system_config.to_dict(),
         )
+        # Bust the get_system_config cache so the new write is visible
+        # on the next read in this process.
+        self._system_config_cache = system_config
 
         logger.info("System config updated")
         return system_config

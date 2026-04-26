@@ -104,13 +104,19 @@ class TenantAwareAgentMixin:
 
         # Initialize or get config manager
         # Use provided config_manager if available (for dependency injection)
-        # Otherwise create a new one
+        # Otherwise reuse the process singleton — every agent constructed
+        # without an explicit override would otherwise re-bootstrap the
+        # backend store. In CI unit tests where the backend isn't
+        # reachable that bootstrap costs ~20s per call (Vespa query
+        # timeout). Singleton keeps it to one-per-process.
         if config_manager is not None:
             self.config_manager = config_manager
         else:
-            from cogniverse_foundation.config.utils import create_default_config_manager
+            from cogniverse_foundation.config.utils import (
+                get_config_manager_singleton,
+            )
 
-            self.config_manager = create_default_config_manager()
+            self.config_manager = get_config_manager_singleton()
 
         # Store or load configuration
         self.config = config

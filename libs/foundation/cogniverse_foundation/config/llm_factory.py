@@ -52,9 +52,15 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
 
     # Lazy import to avoid a circular import at module load
     # (config.utils imports back into config.*).
-    from cogniverse_foundation.config.utils import create_default_config_manager
+    # Use the process-level singleton — every dspy.LM() goes through this
+    # factory, so a fresh ConfigManager per call would re-do the backend
+    # bootstrap (~20s Vespa timeout when the backend isn't reachable, e.g.
+    # in CI unit tests). The singleton's get_system_config result is also
+    # cached at the ConfigManager instance level, so this is one network
+    # call per process instead of one per LLM instantiation.
+    from cogniverse_foundation.config.utils import get_config_manager_singleton
 
-    engine = create_default_config_manager().get_system_config().llm_engine
+    engine = get_config_manager_singleton().get_system_config().llm_engine
     model_id = format_dspy_model(config.model, engine)
 
     kwargs: dict = {
