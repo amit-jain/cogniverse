@@ -827,6 +827,70 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
+  # Dense single-vector embedding service via the SAME deploy/pylate sidecar
+  # image, run in ``mode: dense`` so it loads via SentenceTransformer
+  # and exposes POST /v1/embeddings (OpenAI-compatible). DenseOn is
+  # ModernBERT-based and can't be served by vLLM today, so the dense_vllm
+  # block (below) is kept for vLLM-supported dense models like
+  # EmbeddingGemma. This block is the path Mem0 + SemanticEmbedder use
+  # to drop the Ollama nomic-embed-text dependency entirely. Profiles
+  # and code route here via ``inference_service: "denseon"``.
+  denseon:
+    enabled: true
+    engine: pylate
+    mode: dense                    # colbert | dense — picks /pooling vs /v1/embeddings
+    model: lightonai/DenseOn       # ModernBERT-base, 768-dim, CLS pooling, 512 ctx
+    type: single_vector
+    device: cpu                    # cpu | cuda | rocm | mps
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29006
+    # vLLM-specific (unused — engine is pylate)
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest-arm64
+      pullPolicy: IfNotPresent
+    imagesByDevice: {}
+    dtype: float32
+    extraArgs: []
+    # pylate-specific (the actual engine path)
+    pylate:
+      image:
+        repository: cogniverse/pylate
+        tag: "0.1.0"
+        pullPolicy: IfNotPresent
+      imagesByDevice: {}
+      device: cpu                  # synced with top-level device by template
+      containerPort: 8000
+    resources:
+      limits:
+        cpu: "2"
+        memory: "3Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 90
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 45
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 5
+
   # Dedicated single-vector dense-embedding service (vLLM + EmbeddingGemma
   # or similar). Splits embedding traffic off the shared Ollama pod
   # (Ollama serializes requests per model, so embedding calls queue

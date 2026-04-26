@@ -1213,6 +1213,8 @@ spec:
         env:
         - name: MODEL_NAME
           value: {{ $cfg.model | quote }}
+        - name: MODEL_MODE
+          value: {{ default "colbert" $cfg.mode | quote }}
         - name: DEVICE
           value: {{ $device | quote }}
         - name: HOST
