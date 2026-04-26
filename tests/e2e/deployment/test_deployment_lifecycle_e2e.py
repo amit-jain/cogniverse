@@ -89,7 +89,7 @@ class TestDeployedServices:
         The chart populates that env from a ``whisper.enabled``-gated
         template at ``charts/cogniverse/templates/all-resources.yaml:330``.
         Profiles whose transcription strategy sets
-        ``inference_service: whisper`` route through the sidecar via this
+        ``inference_services.transcription: "whisper"`` route through the sidecar via this
         map. This assertion locks the wiring: the runtime container must
         receive ``whisper`` in the env, not a stale missing value, so the
         agent and ingestion-side AudioProcessor remote paths both find

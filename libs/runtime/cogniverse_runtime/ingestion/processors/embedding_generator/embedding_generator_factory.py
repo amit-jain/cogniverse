@@ -103,13 +103,15 @@ def create_embedding_generator(
 
     # Inject remote inference URL from SystemConfig if available. All model
     # loaders route via ``inference_service_urls`` keyed by the profile's
-    # ``inference_service`` name; fall back to the legacy
+    # ``inference_services["embedding"]`` name; fall back to the legacy
     # ``colpali_inference_url`` field when a ColPali/ColQwen profile has no
-    # ``inference_service`` set.
+    # embedding service configured.
     if "remote_inference_url" not in profile_config and config_manager is not None:
         system_config = config_manager.get_system_config()
         loader = profile_config.get("model_loader", "")
-        service_name = profile_config.get("inference_service")
+        service_name = (profile_config.get("inference_services") or {}).get(
+            "embedding"
+        )
         service_urls = getattr(system_config, "inference_service_urls", {}) or {}
 
         if service_name:
@@ -118,8 +120,8 @@ def create_embedding_generator(
                 available = sorted(service_urls)
                 raise ValueError(
                     f"Profile {schema_name!r} specifies "
-                    f"inference_service={service_name!r} but no URL is "
-                    f"configured. Deployed services: {available}."
+                    f"inference_services.embedding={service_name!r} but no URL "
+                    f"is configured. Deployed services: {available}."
                 )
             profile_config["remote_inference_url"] = url
         elif loader in ("colpali", "colqwen") and system_config.colpali_inference_url:

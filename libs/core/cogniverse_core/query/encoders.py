@@ -217,7 +217,7 @@ def _build_colbert_encoder(
             f"schema_config.embedding_dim. Add it to configs/config.json."
         )
 
-    service_name = profile_config.get("inference_service")
+    service_name = (profile_config.get("inference_services") or {}).get("embedding")
     inference_url: Optional[str] = None
     if service_name:
         service_urls = getattr(system_config, "inference_service_urls", {}) or {}
@@ -225,10 +225,11 @@ def _build_colbert_encoder(
         if not inference_url:
             available = sorted(service_urls)
             raise ValueError(
-                f"Profile {profile!r} specifies inference_service={service_name!r} "
-                f"but no URL is configured. Deployed services: {available}. "
-                f"Enable inference.{service_name} in the Helm values or remove "
-                f"the inference_service field to fall back to local loading."
+                f"Profile {profile!r} specifies inference_services.embedding="
+                f"{service_name!r} but no URL is configured. Deployed services: "
+                f"{available}. Enable inference.{service_name} in the Helm values "
+                f"or remove the inference_services.embedding field to fall back "
+                f"to local loading."
             )
     return ColBERTQueryEncoder(
         model_name,
@@ -292,7 +293,7 @@ class QueryEncoderFactory:
         schema_config = profile_config.get("schema_config", {}) or {}
         cache_key = (
             model_name,
-            profile_config.get("inference_service"),
+            (profile_config.get("inference_services") or {}).get("embedding"),
             schema_config.get("embedding_dim"),
         )
 

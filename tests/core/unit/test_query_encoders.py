@@ -118,12 +118,12 @@ def test_colbert_encoder_requires_embedding_dim_kwarg():
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_wires_remote_url_from_inference_service(mock_get_model):
-    """Profile.inference_service -> system_config.inference_service_urls -> loader."""
+    """Profile.inference_services.embedding -> system_config.inference_service_urls -> loader."""
     mock_get_model.return_value = (MagicMock(), None)
     profile_body = {
         "embedding_model": "lightonai/LateOn",
         "model_loader": "colbert",
-        "inference_service": "colbert_pylate",
+        "inference_services": {"embedding": "colbert_pylate"},
         "schema_config": {"embedding_dim": 128},
     }
     config = _build_system_config(
@@ -145,12 +145,12 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_routes_code_profile_to_code_service(mock_get_model):
-    """Code profile's inference_service=code must hit the code service URL."""
+    """Code profile's inference_services.embedding=code must hit the code service URL."""
     mock_get_model.return_value = (MagicMock(), None)
     profile_body = {
         "embedding_model": "lightonai/LateOn-Code-edge",
         "model_loader": "colbert",
-        "inference_service": "code_colbert_pylate",
+        "inference_services": {"embedding": "code_colbert_pylate"},
         "schema_config": {"embedding_dim": 48},
     }
     config = _build_system_config(
@@ -178,7 +178,7 @@ def test_factory_raises_when_inference_service_not_deployed(mock_get_model):
     profile_body = {
         "embedding_model": "lightonai/LateOn-Code-edge",
         "model_loader": "colbert",
-        "inference_service": "code_colbert_pylate",
+        "inference_services": {"embedding": "code_colbert_pylate"},
         "schema_config": {"embedding_dim": 48},
     }
     config = _build_system_config(
@@ -189,13 +189,15 @@ def test_factory_raises_when_inference_service_not_deployed(mock_get_model):
         },
     )
 
-    with pytest.raises(ValueError, match="inference_service='code_colbert_pylate'"):
+    with pytest.raises(
+        ValueError, match="inference_services.embedding='code_colbert_pylate'"
+    ):
         QueryEncoderFactory.create_encoder(profile="code_lateon_mv", config=config)
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_leaves_remote_url_unset_when_inference_service_absent(mock_get_model):
-    """Profiles without inference_service fall back to local loading."""
+    """Profiles without inference_services.embedding fall back to local loading."""
     mock_get_model.return_value = (MagicMock(), None)
     profile_body = {
         "embedding_model": "lightonai/Reason-ModernColBERT",
@@ -218,7 +220,7 @@ def test_factory_leaves_remote_url_unset_when_inference_service_absent(mock_get_
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get_model):
-    """Profiles sharing a model but differing on inference_service or
+    """Profiles sharing a model but differing on inference_services or
     embedding_dim must not collapse onto one cached encoder."""
     mock_get_model.return_value = (MagicMock(), None)
     sys_config = MagicMock()
@@ -227,13 +229,13 @@ def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get
             "profile_128": {
                 "embedding_model": "lightonai/LateOn",
                 "model_loader": "colbert",
-                "inference_service": "colbert_pylate",
+                "inference_services": {"embedding": "colbert_pylate"},
                 "schema_config": {"embedding_dim": 128},
             },
             "profile_64": {
                 "embedding_model": "lightonai/LateOn",
                 "model_loader": "colbert",
-                "inference_service": "colbert_pylate",
+                "inference_services": {"embedding": "colbert_pylate"},
                 "schema_config": {"embedding_dim": 64},
             },
         }

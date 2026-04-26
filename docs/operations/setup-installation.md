@@ -195,9 +195,12 @@ includes `cogniverse/whisper-fw:dev` so a `cogniverse up` flow against
 k3d picks it up automatically.
 
 For the deploy/ingestion side, profiles pick the sidecar by setting
-`inference_service: whisper` on their `AudioTranscriptionStrategy`.
-`AudioProcessor` (ingestion) and `AudioAnalysisAgent` (runtime) both
-honor the same `INFERENCE_SERVICE_URLS` lookup.
+`inference_services.transcription: "whisper"` at profile level.
+`StrategyFactory` injects the service name into
+`AudioTranscriptionStrategy`'s params; the same profile-level map drives
+embedding routing via `inference_services.embedding`. `AudioProcessor`
+(ingestion) and `AudioAnalysisAgent` (runtime) both honor the same
+`INFERENCE_SERVICE_URLS` lookup.
 
 ### 4. Pull Required Models
 

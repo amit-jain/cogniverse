@@ -187,10 +187,13 @@ class SystemConfig:
     colpali_inference_url: str = ""
 
     # Map of inference-service logical name -> URL. Keys match the Helm
-    # ``inference.*`` block names (e.g., "general", "code"). Profiles pick a
-    # service via the ``inference_service`` field; the runtime resolves the
-    # URL from this map. Populated from the JSON in the
-    # ``INFERENCE_SERVICE_URLS`` env var at startup.
+    # ``inference.*`` block names (e.g., "colpali_infinity", "colbert_pylate")
+    # plus the modality-adapter sidecars (whisper, llm, messaging) registered
+    # alongside. Profiles pick services via the per-role
+    # ``inference_services`` map (``{"embedding": "...", "transcription":
+    # "..."}``); the runtime resolves each role's URL from this flat map.
+    # Populated from the JSON in the ``INFERENCE_SERVICE_URLS`` env var at
+    # startup.
     inference_service_urls: Dict[str, str] = field(default_factory=dict)
 
     # Metadata

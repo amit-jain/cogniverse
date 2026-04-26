@@ -24,6 +24,10 @@ class StrategyFactory:
 
         Expects config format:
         {
+          "inference_services": {                # optional, profile-level
+            "embedding": "colpali_infinity",
+            "transcription": "whisper"
+          },
           "strategies": {
             "segmentation": {
               "class": "FrameSegmentationStrategy",
@@ -36,6 +40,12 @@ class StrategyFactory:
           }
         }
 
+        When ``inference_services[<strategy_type>]`` is set, the matching
+        strategy receives an injected ``inference_service`` param so the
+        strategy → processor → URL substitution chain in ProcessorManager
+        can route remote without the JSON repeating the service name in
+        each strategy's params block.
+
         Args:
             profile_config: Profile configuration dict
 
@@ -43,11 +53,20 @@ class StrategyFactory:
             ProcessingStrategySet with configured strategies
         """
         strategies_config = profile_config.get("strategies", {})
+        inference_services = profile_config.get("inference_services") or {}
         strategies = {}
 
         for strategy_type, strategy_config in strategies_config.items():
             class_name = strategy_config.get("class")
-            params = strategy_config.get("params", {})
+            params = dict(strategy_config.get("params", {}))
+
+            # Profile-level inference_services map drives remote routing for
+            # strategies that don't carry the field in their own params.
+            # Existing strategy params win — tests and tooling that pass the
+            # field directly stay backwards compatible.
+            service_name = inference_services.get(strategy_type)
+            if service_name and "inference_service" not in params:
+                params["inference_service"] = service_name
 
             if class_name:
                 strategy_instance = cls._create_strategy_instance(class_name, params)

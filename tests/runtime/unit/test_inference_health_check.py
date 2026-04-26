@@ -63,15 +63,15 @@ def test_collect_profile_bindings_includes_only_remote_profiles():
     profiles = {
         "local_only": {
             "embedding_model": "lightonai/LateOn",
-            # no inference_service → local loading, not validated
+            # no inference_services.embedding → local loading, not validated
         },
         "remote_colbert_pylate": {
             "embedding_model": "lightonai/Reason-ModernColBERT",
-            "inference_service": "colbert_pylate",
+            "inference_services": {"embedding": "colbert_pylate"},
         },
         "remote_code": {
             "embedding_model": "lightonai/LateOn-Code-edge",
-            "inference_service": "code_colbert_pylate",
+            "inference_services": {"embedding": "code_colbert_pylate"},
         },
     }
     bindings = collect_profile_bindings(profiles)

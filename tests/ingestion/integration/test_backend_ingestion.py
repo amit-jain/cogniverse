@@ -21,10 +21,10 @@ from tests.utils.markers import (
 def _service_configured(service_name: str) -> bool:
     """True iff ``service_name`` is wired in the ``INFERENCE_SERVICE_URLS`` env.
 
-    Profiles that declare ``inference_service: <name>`` route their
+    Profiles that declare ``inference_services.embedding: <name>`` route their
     embedding generation to a pod URL. When that URL isn't configured the
     pipeline fails loud at init (``ValueError: Profile ... specifies
-    inference_service=...``) — so tests that exercise such profiles must
+    inference_services.embedding=...``) — so tests that exercise such profiles must
     skip cleanly when the pod isn't deployed. Reads env directly to keep
     skip-evaluation cheap and free of bootstrap dependencies.
     """
