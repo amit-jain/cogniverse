@@ -44,7 +44,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov torch dspy-ai
     
     - name: Run unit tests (CI Fast subset)
@@ -102,7 +102,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov torch dspy-ai
     
     - name: Run linting
@@ -134,7 +134,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov torch dspy-ai
     
     - name: Test agent modules
@@ -182,7 +182,7 @@ jobs:
     
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov torch dspy-ai
 
     - name: Free up disk space

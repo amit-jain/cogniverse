@@ -42,7 +42,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov
 
     - name: Run unit tests
@@ -80,7 +80,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
     - name: Run linting
       run: |
@@ -107,7 +107,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
 
     - name: Test module imports
       run: |
@@ -134,7 +134,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        uv sync --all-packages --all-extras
+        uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
         uv pip install pytest-cov
 
     - name: Free up disk space
