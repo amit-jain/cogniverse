@@ -92,6 +92,12 @@ async def _process_job(
 
     ``processor`` is injectable for tests that don't need the full
     Vespa+ColPali stack — production uses ``_default_processor``.
+
+    Event ordering matters: cleanup (clear_inflight, mark_done,
+    decrement_active, ack) runs BEFORE the terminal event publishes,
+    so when an SSE watcher observes ``state=complete|failed`` all
+    invariants (active counter accurate, idempotency record settled,
+    queue PEL drained) are guaranteed consistent.
     """
     await queue.publish_status(
         redis,
@@ -103,39 +109,43 @@ async def _process_job(
         },
     )
 
+    success = False
+    terminal_event: dict
     try:
         result = await processor(job)
-        await queue.publish_status(
-            redis,
-            job.ingest_id,
-            {
-                "state": "complete",
-                "ingest_id": job.ingest_id,
-                "result": _summarise(result),
-            },
-        )
-        await idempotency.mark_done(
-            redis, job.sha, job.ingest_id, ttl_seconds=config.idempotency_ttl
-        )
-
+        success = True
+        terminal_event = {
+            "state": "complete",
+            "ingest_id": job.ingest_id,
+            "result": _summarise(result),
+        }
     except Exception as exc:
         logger.exception("Ingest job %s failed", job.ingest_id)
-        await queue.publish_status(
-            redis,
-            job.ingest_id,
-            {
-                "state": "failed",
-                "ingest_id": job.ingest_id,
-                "error": str(exc),
-                "error_type": type(exc).__name__,
-            },
-        )
-    finally:
-        # Always run terminal cleanup so a crashing worker doesn't
-        # leak the active counter or block re-submitters forever.
+        terminal_event = {
+            "state": "failed",
+            "ingest_id": job.ingest_id,
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+        }
+
+    try:
+        if success:
+            await idempotency.mark_done(
+                redis, job.sha, job.ingest_id, ttl_seconds=config.idempotency_ttl
+            )
         await idempotency.clear_inflight(redis, job.sha)
         await queue.decrement_active(redis, job.tenant_id)
         await queue.ack(redis, config.consumer_group, job.message_id)
+    except Exception as cleanup_exc:
+        # Cleanup failures are themselves observable. Don't let them
+        # crash the worker loop — log, attach to the terminal event,
+        # and continue. The next claim still fires.
+        logger.exception(
+            "Cleanup failed for %s; terminal event will still publish", job.ingest_id
+        )
+        terminal_event["cleanup_error"] = str(cleanup_exc)
+
+    await queue.publish_status(redis, job.ingest_id, terminal_event)
 
 
 def _summarise(pipeline_result: dict) -> dict:

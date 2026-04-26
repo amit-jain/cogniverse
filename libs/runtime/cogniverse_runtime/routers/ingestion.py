@@ -1,6 +1,7 @@
 """Ingestion endpoints - unified interface for content ingestion."""
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -11,6 +12,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     UploadFile,
 )
 from pydantic import BaseModel
@@ -162,6 +164,30 @@ async def get_ingestion_status(job_id: str) -> IngestionStatus:
     return ingestion_jobs[job_id]
 
 
+def _ingestion_v2_enabled() -> bool:
+    """The queue path is enabled when both REDIS_URL and the MinIO env
+    vars are set. Otherwise upload falls back to the legacy in-process
+    pipeline path so deployments without the new infra stay functional."""
+    return bool(os.environ.get("REDIS_URL")) and bool(os.environ.get("MINIO_ENDPOINT"))
+
+
+def _count_chunks(processing_results: Dict[str, Any]) -> int:
+    chunks = 0
+    keyframes = processing_results.get("keyframes", {})
+    if isinstance(keyframes, dict):
+        chunks += len(keyframes.get("keyframes", []) or [])
+    video_chunks = processing_results.get("video_chunks", {})
+    if isinstance(video_chunks, dict):
+        chunks += len(video_chunks.get("chunks", []) or [])
+    doc_files = processing_results.get("document_files", [])
+    if isinstance(doc_files, list):
+        chunks += len(doc_files)
+    audio_files = processing_results.get("audio_files", [])
+    if isinstance(audio_files, list):
+        chunks += len(audio_files)
+    return chunks
+
+
 @router.post("/upload")
 async def upload_video(
     file: UploadFile = File(...),
@@ -169,14 +195,140 @@ async def upload_video(
     backend: str = Form("vespa"),
     tenant_id: Optional[str] = Form(None),
     org_id: Optional[str] = Form(None),
+    wait: bool = Query(
+        default=False,
+        description=(
+            "Block until ingestion reaches a terminal state. Default is "
+            "async (returns 202 + ingest_id immediately)."
+        ),
+    ),
+    wait_timeout: int = Query(
+        default=300, ge=10, le=900, description="Max seconds to block when wait=true."
+    ),
+    force: bool = Query(
+        default=False,
+        description="Bypass idempotency and re-enqueue even on a cache hit.",
+    ),
     config_manager: ConfigManager = Depends(get_config_manager_dependency),
     schema_loader: SchemaLoader = Depends(get_schema_loader_dependency),
 ) -> Dict[str, Any]:
-    """Upload and ingest a single video file."""
-    try:
-        # Save uploaded file temporarily
-        import tempfile
+    """Upload and ingest a single file.
 
+    Two paths picked by environment:
+      - Queue (REDIS_URL + MINIO_ENDPOINT set): stream bytes to MinIO,
+        submit to redis queue, return 202 + ingest_id by default.
+        ``?wait=true`` blocks until terminal and returns a result-shaped
+        response for callers that expect synchronous behaviour.
+      - Legacy (no queue env): the original in-process pipeline path.
+    """
+    try:
+        upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if _ingestion_v2_enabled():
+        return await _upload_via_queue(
+            file=file,
+            profile=profile,
+            tenant_id=upload_tenant_id,
+            wait=wait,
+            wait_timeout=wait_timeout,
+            force=force,
+        )
+    return await _upload_legacy_in_process(
+        file=file,
+        profile=profile,
+        tenant_id=upload_tenant_id,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+
+async def _upload_via_queue(
+    *,
+    file: UploadFile,
+    profile: str,
+    tenant_id: str,
+    wait: bool,
+    wait_timeout: int,
+    force: bool,
+) -> Dict[str, Any]:
+    from cogniverse_runtime.ingestion_v2 import minio_client
+    from cogniverse_runtime.ingestion_v2.redis_client import get_redis
+    from cogniverse_runtime.ingestion_v2.submit_api import (
+        BackpressureError,
+        enqueue_ingestion,
+    )
+
+    content = await file.read()
+    source_url = minio_client.upload_bytes(
+        content,
+        tenant_id=tenant_id,
+        filename=file.filename,
+        content_type=file.content_type,
+    )
+
+    redis = await get_redis(os.environ["REDIS_URL"])
+    try:
+        result = await enqueue_ingestion(
+            redis,
+            source_url=source_url,
+            profile=profile,
+            tenant_id=tenant_id,
+            force=force,
+            wait=wait,
+            wait_timeout=wait_timeout,
+        )
+    except BackpressureError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "axis": exc.rejection.axis,
+                "current": exc.rejection.current,
+                "limit": exc.rejection.limit,
+                "message": exc.rejection.message,
+            },
+        )
+
+    response: Dict[str, Any] = {
+        "ingest_id": result.ingest_id,
+        "sha": result.sha,
+        "state": result.state,
+        "existing": result.existing,
+        "filename": file.filename,
+        "source_url": source_url,
+    }
+    if result.final_event is not None:
+        # ``wait=true`` mode: re-emit the legacy response fields so
+        # synchronous callers don't have to re-shape against the new
+        # event payload.
+        pipeline_result = result.final_event.get("result", {}) or {}
+        response["video_id"] = pipeline_result.get("video_id")
+        response["chunks_created"] = pipeline_result.get(
+            "chunks", pipeline_result.get("keyframes", 0)
+        )
+        response["status"] = "success" if result.state == "complete" else result.state
+    else:
+        response["status"] = "queued"
+    return response
+
+
+async def _upload_legacy_in_process(
+    *,
+    file: UploadFile,
+    profile: str,
+    tenant_id: str,
+    config_manager: ConfigManager,
+    schema_loader: SchemaLoader,
+) -> Dict[str, Any]:
+    """Pre-queue path: temp-file + in-process VideoIngestionPipeline.
+
+    Kept around for deployments that don't have redis + minio wired
+    up. Identical response shape to the original /upload behaviour.
+    """
+    import tempfile
+
+    try:
         with tempfile.NamedTemporaryFile(
             delete=False, suffix=Path(file.filename).suffix
         ) as tmp:
@@ -184,63 +336,27 @@ async def upload_video(
             tmp.write(content)
             tmp_path = tmp.name
 
-        # Process file through ingestion pipeline
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        try:
-            upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
         pipeline = VideoIngestionPipeline(
-            tenant_id=upload_tenant_id,
+            tenant_id=tenant_id,
             config_manager=config_manager,
             schema_loader=schema_loader,
             schema_name=profile,
         )
-
         result = await pipeline.process_video_async(Path(tmp_path))
-
-        # Clean up temp file
         Path(tmp_path).unlink(missing_ok=True)
 
-        # Extract meaningful counts from pipeline result
         processing_results = result.get("results", {})
-        chunks_created = 0
+        chunks_created = _count_chunks(processing_results)
 
-        # Count keyframes (frame-based profiles)
-        keyframes_data = processing_results.get("keyframes", {})
-        if isinstance(keyframes_data, dict):
-            keyframes_list = keyframes_data.get("keyframes", [])
-            if isinstance(keyframes_list, list):
-                chunks_created += len(keyframes_list)
-
-        # Count video chunks (chunk-based profiles)
-        chunks_data = processing_results.get("video_chunks", {})
-        if isinstance(chunks_data, dict):
-            chunks_list = chunks_data.get("chunks", [])
-            if isinstance(chunks_list, list):
-                chunks_created += len(chunks_list)
-
-        # Count document files
-        doc_files = processing_results.get("document_files", [])
-        if isinstance(doc_files, list):
-            chunks_created += len(doc_files)
-
-        # Count audio files
-        audio_files = processing_results.get("audio_files", [])
-        if isinstance(audio_files, list):
-            chunks_created += len(audio_files)
-
-        # Documents fed to backend (from embedding results)
         embeddings_data = processing_results.get("embeddings", {})
-        documents_fed = 0
-        if isinstance(embeddings_data, dict):
-            documents_fed = embeddings_data.get("documents_fed", 0)
+        documents_fed = (
+            embeddings_data.get("documents_fed", 0)
+            if isinstance(embeddings_data, dict)
+            else 0
+        )
 
-        # Multimodal graph extraction — read the text outputs the content
-        # pipeline already produced (transcripts, VLM captions, OCR) and
-        # feed them to the graph extractor. No new model calls.
         graph_nodes = 0
         graph_edges = 0
         try:
@@ -249,7 +365,7 @@ async def upload_video(
                 graph_counts = await _extract_graph_from_multimodal(
                     text=graph_text,
                     source_doc_id=result.get("video_id") or file.filename,
-                    tenant_id=upload_tenant_id,
+                    tenant_id=tenant_id,
                 )
                 graph_nodes = graph_counts.get("nodes_upserted", 0)
                 graph_edges = graph_counts.get("edges_upserted", 0)
@@ -268,7 +384,6 @@ async def upload_video(
             "graph_edges": graph_edges,
             "processing_time": result.get("total_processing_time"),
         }
-
     except Exception as e:
         logger.error(f"Video upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

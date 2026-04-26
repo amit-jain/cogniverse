@@ -48,6 +48,9 @@ dependencies = [
 
     # Redis Streams + consumer groups for the ingestion_v2 queue.
     "redis==5.2.1",
+
+    # boto3 for MinIO uploads on the /ingestion/upload multipart path.
+    "boto3==1.40.61",
 ]
 
 [project.optional-dependencies]

@@ -1,11 +1,12 @@
 """End-to-end test for the ingestion_v2 path.
 
-Real Redis 7.4 container, real FastAPI submit_api + status_api routes
-(via httpx.ASGITransport), real worker async-task in the same process.
-The pipeline itself is stubbed via the injectable ``processor``
-parameter — the existing pipeline integration tests cover that side
-already; this test is about the queue + worker + status-stream
-contract end-to-end.
+Real Redis 7.4 container, real ``status_api`` SSE + snapshot routes
+(via httpx.ASGITransport), real worker async-task in the same process
+calling ``enqueue_ingestion`` to exercise the full submit → claim →
+ack chain. The pipeline itself is stubbed via the injectable
+``processor`` argument since the existing pipeline integration tests
+cover that side; this file is about the queue + worker + status-stream
+contract.
 
 Catches the bug where any one of {idempotency, backpressure, queue,
 status stream, SSE replay, terminal cleanup} drifts away from what
@@ -29,9 +30,12 @@ from fastapi import FastAPI
 
 from cogniverse_runtime.ingestion_v2 import queue
 from cogniverse_runtime.ingestion_v2 import status_api as ingest_status
-from cogniverse_runtime.ingestion_v2 import submit_api as ingest_submit
 from cogniverse_runtime.ingestion_v2.queue import IngestJob
 from cogniverse_runtime.ingestion_v2.redis_client import close_redis, get_redis
+from cogniverse_runtime.ingestion_v2.submit_api import (
+    BackpressureError,
+    enqueue_ingestion,
+)
 from cogniverse_runtime.ingestion_v2.worker import WorkerConfig, _claim_loop
 
 CONTAINER_NAME = "redis-ingestion-v2-e2e"
@@ -105,10 +109,10 @@ async def env_redis(redis_container, monkeypatch):
 
 @pytest.fixture
 def app(env_redis):
-    """FastAPI app with just the ingestion_v2 routers wired up."""
+    """FastAPI app with the status_api router mounted at the production
+    prefix (``/ingestion``) so URLs match what main.py wires."""
     application = FastAPI()
-    application.include_router(ingest_submit.router)
-    application.include_router(ingest_status.router)
+    application.include_router(ingest_status.router, prefix="/ingestion")
     return application
 
 
@@ -165,37 +169,31 @@ async def _wait_for_state(
     )
 
 
-class TestEndToEndQueue:
+class TestEnqueueAndWorker:
+    """Full path: enqueue_ingestion → queue → worker → status events."""
+
     @pytest.mark.asyncio
     async def test_submit_runs_through_worker_to_complete(
-        self, client, env_redis, redis_container
+        self, env_redis, redis_container
     ):
         worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
         try:
-            resp = await client.post(
-                "/ingest",
-                json={
-                    "source_url": "file:///tmp/fake.mp4",
-                    "profile": "video_colpali_smol500_mv_frame",
-                    "tenant_id": "acme",
-                },
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/fake.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
             )
-            assert resp.status_code == 202, resp.text
-            body = resp.json()
-            ingest_id = body["ingest_id"]
-            assert body["status"] == "queued"
-            assert body["existing"] is False
+            assert result.state == "queued"
+            assert result.existing is False
 
-            # Worker drains it and publishes complete.
-            final = await _wait_for_state(env_redis, ingest_id, "complete")
-            assert final["result"]["video_id"] == ingest_id
+            final = await _wait_for_state(env_redis, result.ingest_id, "complete")
+            assert final["result"]["video_id"] == result.ingest_id
             assert final["result"]["keyframes"] == 2
 
-            # Idempotency state: done is set, inflight cleared, active=0.
-            sha = body["sha"]
-            done = await env_redis.get(f"ingest:done:{sha}")
-            assert done == ingest_id
-            inflight = await env_redis.get(f"ingest:by_sha:{sha}")
+            done = await env_redis.get(f"ingest:done:{result.sha}")
+            assert done == result.ingest_id
+            inflight = await env_redis.get(f"ingest:by_sha:{result.sha}")
             assert inflight is None
             assert await queue.get_active(env_redis, "acme") == 0
         finally:
@@ -204,88 +202,92 @@ class TestEndToEndQueue:
 
     @pytest.mark.asyncio
     async def test_resubmit_returns_existing_ingest_id(
-        self, client, env_redis, redis_container
+        self, env_redis, redis_container
     ):
         worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
         try:
-            payload = {
-                "source_url": "file:///tmp/idem.mp4",
-                "profile": "video_colpali_smol500_mv_frame",
-                "tenant_id": "acme",
-            }
-            first = await client.post("/ingest", json=payload)
-            assert first.status_code == 202
-            first_id = first.json()["ingest_id"]
-            sha = first.json()["sha"]
+            kwargs = dict(
+                source_url="s3://bucket/idem.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+            )
+            first = await enqueue_ingestion(env_redis, **kwargs)
+            await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            await _wait_for_state(env_redis, first_id, "complete")
+            second = await enqueue_ingestion(env_redis, **kwargs)
+            assert second.existing is True
+            assert second.ingest_id == first.ingest_id
+            assert second.sha == first.sha
 
-            # Same input: should return the existing id with existing=True.
-            second = await client.post("/ingest", json=payload)
-            assert second.status_code in (200, 202), second.text
-            second_body = second.json()
-            assert second_body["existing"] is True
-            assert second_body["ingest_id"] == first_id
-            assert second_body["sha"] == sha
-
-            # No new queue entry was added: depth still 1 from the first.
             assert await queue.queue_depth(env_redis) == 1
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=2)
 
     @pytest.mark.asyncio
-    async def test_force_bypasses_idempotency(self, client, env_redis, redis_container):
+    async def test_force_bypasses_idempotency(self, env_redis, redis_container):
         worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
         try:
-            payload = {
-                "source_url": "file:///tmp/force.mp4",
-                "profile": "video_colpali_smol500_mv_frame",
-                "tenant_id": "acme",
-            }
-            first = await client.post("/ingest", json=payload)
-            first_id = first.json()["ingest_id"]
-            await _wait_for_state(env_redis, first_id, "complete")
+            kwargs = dict(
+                source_url="s3://bucket/force.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+            )
+            first = await enqueue_ingestion(env_redis, **kwargs)
+            await _wait_for_state(env_redis, first.ingest_id, "complete")
 
-            second = await client.post("/ingest?force=true", json=payload)
-            assert second.status_code == 202
-            second_body = second.json()
-            assert second_body["existing"] is False
-            assert second_body["ingest_id"] != first_id
+            second = await enqueue_ingestion(env_redis, **kwargs, force=True)
+            assert second.existing is False
+            assert second.ingest_id != first.ingest_id
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=2)
 
     @pytest.mark.asyncio
     async def test_failing_processor_publishes_failed_and_acks(
-        self, client, env_redis, redis_container
+        self, env_redis, redis_container
     ):
         worker_task, stop = await _spawn_worker(redis_container, _failing_processor)
         try:
-            resp = await client.post(
-                "/ingest",
-                json={
-                    "source_url": "file:///tmp/bad.mp4",
-                    "profile": "video_colpali_smol500_mv_frame",
-                    "tenant_id": "acme",
-                },
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/bad.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
             )
-            assert resp.status_code == 202
-            ingest_id = resp.json()["ingest_id"]
-            sha = resp.json()["sha"]
-
-            final = await _wait_for_state(env_redis, ingest_id, "failed")
+            final = await _wait_for_state(env_redis, result.ingest_id, "failed")
             assert "intentional failure" in final["error"]
             assert final["error_type"] == "RuntimeError"
 
-            # Cleanup ran: inflight cleared, active=0, queue PEL drained.
-            assert await env_redis.get(f"ingest:by_sha:{sha}") is None
+            assert await env_redis.get(f"ingest:by_sha:{result.sha}") is None
             assert await queue.get_active(env_redis, "acme") == 0
             pending = await env_redis.xpending(queue.QUEUE_STREAM, "ingestors")
             assert pending["pending"] == 0
             # Failed jobs do NOT mark done — re-submit (without force)
             # should re-enqueue, not return existing.
-            assert await env_redis.get(f"ingest:done:{sha}") is None
+            assert await env_redis.get(f"ingest:done:{result.sha}") is None
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=2)
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_terminal_event_synchronously(
+        self, env_redis, redis_container
+    ):
+        worker_task, stop = await _spawn_worker(redis_container, _stub_processor)
+        try:
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/sync.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+                wait=True,
+                wait_timeout=10,
+            )
+            assert result.state == "complete"
+            assert result.final_event is not None
+            assert result.final_event["state"] == "complete"
+            assert result.final_event["result"]["keyframes"] == 2
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=2)
@@ -293,94 +295,72 @@ class TestEndToEndQueue:
 
 class TestBackpressure:
     @pytest.mark.asyncio
-    async def test_per_tenant_concurrency_returns_429(
-        self, client, env_redis, monkeypatch
-    ):
+    async def test_per_tenant_concurrency_raises(self, env_redis, monkeypatch):
         """No worker running — submissions accumulate against the
         per-tenant counter. The 6th submission to ``acme`` (limit=5)
-        must 429."""
+        must raise BackpressureError."""
         monkeypatch.setenv("INGEST_PER_TENANT_CONCURRENCY", "5")
 
-        # First 5 succeed
         for i in range(5):
-            r = await client.post(
-                "/ingest",
-                json={
-                    "source_url": f"file:///tmp/{i}.mp4",
-                    "profile": "video_colpali_smol500_mv_frame",
-                    "tenant_id": "acme",
-                },
+            await enqueue_ingestion(
+                env_redis,
+                source_url=f"s3://bucket/{i}.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
             )
-            assert r.status_code == 202, f"submission {i} failed: {r.text}"
 
-        # 6th rejected
-        r = await client.post(
-            "/ingest",
-            json={
-                "source_url": "file:///tmp/6.mp4",
-                "profile": "video_colpali_smol500_mv_frame",
-                "tenant_id": "acme",
-            },
-        )
-        assert r.status_code == 429
-        body = r.json()
-        assert body["detail"]["axis"] == "tenant"
-        assert body["detail"]["current"] == 5
-        assert body["detail"]["limit"] == 5
+        with pytest.raises(BackpressureError) as exc:
+            await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/over.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+            )
+        assert exc.value.rejection.axis == "tenant"
+        assert exc.value.rejection.current == 5
+        assert exc.value.rejection.limit == 5
 
         # Other tenant unaffected
-        r = await client.post(
-            "/ingest",
-            json={
-                "source_url": "file:///tmp/other.mp4",
-                "profile": "video_colpali_smol500_mv_frame",
-                "tenant_id": "other",
-            },
+        other = await enqueue_ingestion(
+            env_redis,
+            source_url="s3://bucket/other.mp4",
+            profile="video_colpali_smol500_mv_frame",
+            tenant_id="other",
         )
-        assert r.status_code == 202
+        assert other.state == "queued"
 
     @pytest.mark.asyncio
-    async def test_cluster_queue_depth_returns_429(
-        self, client, env_redis, monkeypatch
-    ):
+    async def test_cluster_queue_depth_raises(self, env_redis, monkeypatch):
         monkeypatch.setenv("INGEST_QUEUE_DEPTH_LIMIT", "3")
-        # Spread across tenants so per-tenant cap doesn't bite first.
         for i in range(3):
-            r = await client.post(
-                "/ingest",
-                json={
-                    "source_url": f"file:///tmp/{i}.mp4",
-                    "profile": "video_colpali_smol500_mv_frame",
-                    "tenant_id": f"t{i}",
-                },
+            await enqueue_ingestion(
+                env_redis,
+                source_url=f"s3://bucket/{i}.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id=f"t{i}",
             )
-            assert r.status_code == 202
 
-        r = await client.post(
-            "/ingest",
-            json={
-                "source_url": "file:///tmp/4.mp4",
-                "profile": "video_colpali_smol500_mv_frame",
-                "tenant_id": "t4",
-            },
-        )
-        assert r.status_code == 429
-        assert r.json()["detail"]["axis"] == "cluster"
+        with pytest.raises(BackpressureError) as exc:
+            await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/over.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="t4",
+            )
+        assert exc.value.rejection.axis == "cluster"
 
 
-class TestSseStream:
+class TestSseEndpoints:
+    """The SSE + snapshot endpoints mounted at /ingestion/{id}/..."""
+
     @pytest.mark.asyncio
     async def test_sse_replays_history_then_streams_to_terminal(
-        self, client, env_redis, redis_container
+        self, client, env_redis
     ):
-        # Pre-populate events before opening the SSE stream — the
-        # client must see them on first read (replay), not just live
-        # events from after the connect.
         ingest_id = f"ing_{uuid.uuid4().hex[:8]}"
         await queue.publish_status(env_redis, ingest_id, {"state": "queued"})
         await queue.publish_status(env_redis, ingest_id, {"state": "running"})
 
-        # Background task: emit a complete event after a short delay.
         async def emit_complete():
             await asyncio.sleep(0.2)
             await queue.publish_status(
@@ -391,7 +371,7 @@ class TestSseStream:
 
         async with client.stream(
             "GET",
-            f"/ingest/{ingest_id}/events?timeout_seconds=30",
+            f"/ingestion/{ingest_id}/events?timeout_seconds=30",
         ) as resp:
             assert resp.status_code == 200
             assert resp.headers["content-type"].startswith("text/event-stream")
@@ -414,7 +394,7 @@ class TestSseStream:
             env_redis, ingest_id, {"state": "complete", "result": {"x": 1}}
         )
 
-        r = await client.get(f"/ingest/{ingest_id}/status")
+        r = await client.get(f"/ingestion/{ingest_id}/status")
         assert r.status_code == 200
         body = r.json()
         assert body["state"] == "complete"
@@ -424,5 +404,5 @@ class TestSseStream:
 
     @pytest.mark.asyncio
     async def test_status_endpoint_404_for_unknown_ingest(self, client):
-        r = await client.get(f"/ingest/never_existed_{os.getpid()}/status")
+        r = await client.get(f"/ingestion/never_existed_{os.getpid()}/status")
         assert r.status_code == 404

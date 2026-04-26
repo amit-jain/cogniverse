@@ -1,89 +1,60 @@
-"""``POST /ingest`` — enqueue a submission for the worker pool.
+"""Submission helper for the ingestion queue.
 
-Defaults to async (returns 202 + ingest_id immediately). Pass
-``?wait=true`` to long-poll the status stream and return when the
-job hits a terminal event; useful for short jobs (documents, audio
-under a few minutes). Long videos should always use the async path
-+ SSE — proxies typically kill HTTP connections at 5 min.
+Single entry point ``enqueue_ingestion`` used by both
+``POST /ingestion/upload`` (after writing the multipart bytes to
+MinIO) and ``POST /ingestion/start`` (which iterates a source list
+and submits one job per item). No router defined here — the public
+URLs live in ``routers/ingestion.py``.
 
 Idempotency: same ``(source_url, profile, tenant_id)`` returns the
 existing ``ingest_id`` (whether in-flight or completed within the
-TTL window) without re-enqueuing. ``?force=true`` clears the
+TTL window) without re-enqueuing. ``force=True`` clears the
 idempotency record and forces a re-enqueue.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import uuid
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+import redis.asyncio as aioredis
 
 from cogniverse_runtime.ingestion_v2 import backpressure, idempotency, queue
-from cogniverse_runtime.ingestion_v2.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+
+class BackpressureError(Exception):
+    """Raised when a submission is rejected by either backpressure axis.
+
+    Carries the rejection reason so the HTTP layer can shape a 429
+    response with structured ``{axis, current, limit}`` detail.
+    """
+
+    def __init__(self, rejection: backpressure.BackpressureRejection):
+        super().__init__(rejection.message)
+        self.rejection = rejection
 
 
-class IngestRequest(BaseModel):
-    source_url: str = Field(
-        ...,
-        description=(
-            "URL of the source asset. Schemes: ``s3://`` (MinIO/S3), "
-            "``http(s)://``, ``file://``."
-        ),
-    )
-    profile: str = Field(
-        ...,
-        description="Ingestion profile (e.g. ``video_colpali_smol500_mv_frame``).",
-    )
-    tenant_id: str = Field(..., description="Tenant the ingestion belongs to.")
-
-
-class IngestResponse(BaseModel):
+@dataclass(frozen=True)
+class EnqueueResult:
     ingest_id: str
-    status: str  # "queued" | "in_flight" | "complete" | "failed"
-    existing: bool = Field(
-        default=False,
-        description=(
-            "True when the response references an existing ingestion "
-            "(idempotency hit). False on a fresh enqueue."
-        ),
-    )
     sha: str
-    final_event: Optional[dict] = Field(
-        default=None,
-        description=(
-            "Populated only when ``wait=true`` and the job reached a "
-            "terminal state before the deadline."
-        ),
-    )
-
-
-def _redis_url() -> str:
-    """Read the Redis URL from env at request time. The env var is set
-    once by the chart at pod startup; reading it here keeps this module
-    free of import-time env coupling."""
-    url = os.environ.get("REDIS_URL")
-    if not url:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "REDIS_URL is not set on the runtime pod — the ingestion "
-                "queue is not configured. Enable redis in chart values."
-            ),
-        )
-    return url
+    state: str  # "queued" | "in_flight" | "complete" | "failed"
+    existing: bool  # True iff this is an idempotency hit
+    final_event: Optional[dict] = None  # populated only when wait=True
 
 
 def _backpressure_limits() -> tuple[int, int]:
+    """Read the two thresholds from env (set by the chart).
+
+    Defaults are conservative for laptop-scale dev; production sets
+    them via the chart's ``ingestor.{queueDepthLimit,perTenantConcurrency}``.
+    """
     return (
         int(os.environ.get("INGEST_QUEUE_DEPTH_LIMIT", "1000")),
         int(os.environ.get("INGEST_PER_TENANT_CONCURRENCY", "4")),
@@ -91,10 +62,11 @@ def _backpressure_limits() -> tuple[int, int]:
 
 
 async def _wait_for_terminal(
-    redis: Any, ingest_id: str, deadline_seconds: float
+    redis: aioredis.Redis, ingest_id: str, deadline_seconds: float
 ) -> Optional[dict]:
-    """Poll the status stream until a terminal event is observed or
-    ``deadline_seconds`` elapses. Terminal = ``state in {complete, failed}``."""
+    """Long-poll the status stream until a terminal event is observed
+    or ``deadline_seconds`` elapses. Terminal = ``state in {complete,
+    failed}``. Returns None on timeout."""
     last_id = "0-0"
     deadline = asyncio.get_event_loop().time() + deadline_seconds
     while asyncio.get_event_loop().time() < deadline:
@@ -111,55 +83,44 @@ async def _wait_for_terminal(
     return None
 
 
-@router.post("/ingest", response_model=IngestResponse, status_code=202)
-async def submit_ingest(
-    body: IngestRequest,
-    request: Request,
-    wait: bool = Query(
-        False, description="Block until the job reaches a terminal state."
-    ),
-    wait_timeout: int = Query(
-        300, ge=10, le=900, description="Max seconds to block when wait=true."
-    ),
-    force: bool = Query(
-        False,
-        description=(
-            "Bypass the idempotency cache and re-enqueue even if a "
-            "matching submission completed within the TTL window."
-        ),
-    ),
-) -> IngestResponse:
-    """Enqueue an ingestion or return the existing run."""
-    redis = await get_redis(_redis_url())
+async def enqueue_ingestion(
+    redis: aioredis.Redis,
+    *,
+    source_url: str,
+    profile: str,
+    tenant_id: str,
+    force: bool = False,
+    wait: bool = False,
+    wait_timeout: int = 300,
+) -> EnqueueResult:
+    """Enqueue an ingestion or return the existing run.
 
-    sha = idempotency.compute_sha(body.source_url, body.profile, body.tenant_id)
+    Raises ``BackpressureError`` when either backpressure axis is
+    exceeded. Caller (the HTTP route) maps it to 429.
+    """
+    sha = idempotency.compute_sha(source_url, profile, tenant_id)
 
     if force:
         await idempotency.clear_done(redis, sha)
     else:
-        existing = await idempotency.get_existing_ingest_id(redis, sha)
-        if existing:
-            return IngestResponse(
-                ingest_id=existing, status="in_flight", existing=True, sha=sha
+        existing_id = await idempotency.get_existing_ingest_id(redis, sha)
+        if existing_id:
+            return EnqueueResult(
+                ingest_id=existing_id,
+                sha=sha,
+                state="in_flight",
+                existing=True,
             )
 
     queue_limit, tenant_limit = _backpressure_limits()
     rejection = await backpressure.check(
         redis,
-        body.tenant_id,
+        tenant_id,
         queue_depth_limit=queue_limit,
         per_tenant_concurrency=tenant_limit,
     )
     if rejection:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "axis": rejection.axis,
-                "current": rejection.current,
-                "limit": rejection.limit,
-                "message": rejection.message,
-            },
-        )
+        raise BackpressureError(rejection)
 
     ingest_id = f"ingest_{uuid.uuid4().hex}"
     await queue.ensure_consumer_group(
@@ -172,69 +133,47 @@ async def submit_ingest(
         {
             "state": "queued",
             "ingest_id": ingest_id,
-            "source_url": body.source_url,
-            "profile": body.profile,
-            "tenant_id": body.tenant_id,
+            "source_url": source_url,
+            "profile": profile,
+            "tenant_id": tenant_id,
         },
     )
     await queue.submit(
         redis,
         ingest_id=ingest_id,
-        source_url=body.source_url,
-        profile=body.profile,
-        tenant_id=body.tenant_id,
+        source_url=source_url,
+        profile=profile,
+        tenant_id=tenant_id,
         sha=sha,
     )
-    await queue.increment_active(redis, body.tenant_id)
+    await queue.increment_active(redis, tenant_id)
 
     logger.info(
-        "Ingest submitted: id=%s tenant=%s profile=%s source=%s",
+        "Ingest enqueued: id=%s tenant=%s profile=%s source=%s",
         ingest_id,
-        body.tenant_id,
-        body.profile,
-        body.source_url,
+        tenant_id,
+        profile,
+        source_url,
     )
 
     if not wait:
-        return IngestResponse(ingest_id=ingest_id, status="queued", sha=sha)
+        return EnqueueResult(
+            ingest_id=ingest_id, sha=sha, state="queued", existing=False
+        )
 
     final = await _wait_for_terminal(redis, ingest_id, wait_timeout)
     if final is None:
-        raise HTTPException(
-            status_code=504,
-            detail={
-                "ingest_id": ingest_id,
-                "message": (
-                    f"Ingestion did not reach terminal state within "
-                    f"{wait_timeout}s. Poll /ingest/{ingest_id}/events instead."
-                ),
-            },
+        return EnqueueResult(
+            ingest_id=ingest_id,
+            sha=sha,
+            state="queued",
+            existing=False,
+            final_event=None,
         )
-    return IngestResponse(
+    return EnqueueResult(
         ingest_id=ingest_id,
-        status=final.get("state", "complete"),
         sha=sha,
+        state=final.get("state", "complete"),
+        existing=False,
         final_event=final,
     )
-
-
-@router.get("/ingest/{ingest_id}/status", response_model=dict)
-async def get_status(ingest_id: str, request: Request) -> dict:
-    """Snapshot the latest event on the status stream — point-read
-    alternative to the SSE stream for callers that don't speak EventSource."""
-    redis = await get_redis(_redis_url())
-    events = await queue.read_status_since(redis, ingest_id)
-    if not events:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No status events for ingest_id={ingest_id!r}",
-        )
-    _, latest = events[-1]
-    return {
-        "ingest_id": ingest_id,
-        "state": latest.get("state", "unknown"),
-        "events_count": len(events),
-        "latest": latest,
-        # Echo the wire format for tools that prefer the raw stream:
-        "history": [json.loads(json.dumps(e)) for _, e in events],
-    }
