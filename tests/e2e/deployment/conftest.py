@@ -377,32 +377,37 @@ def deployed_stack(k3d_cluster):
         "--timeout",
         "20m",
     ]
-    try:
-        _cmd(helm_install_cmd, timeout=1320)
-    except subprocess.CalledProcessError as helm_err:
-        # Pod-state dump on failure: 20m hook timeouts don't tell us
-        # WHICH pod was Pending/CrashLooping. Capture the cluster's
-        # view (events + describe + recent logs) before the fixture
-        # teardown deletes the cluster on the way out of the test
-        # session. Output goes to pytest's captured stdout.
+
+    def _dump_pod_state() -> None:
+        """Snapshot cluster state to pytest's captured stdout — runs on
+        any helm-install failure so the next teardown doesn't take the
+        evidence with it."""
         import sys
 
         print("\n========== POD STATE ON HELM FAILURE ==========", file=sys.stdout)
         for diag in [
             ["kubectl", "get", "pods", "-n", NAMESPACE, "-o", "wide"],
-            ["kubectl", "get", "events", "-n", NAMESPACE,
-             "--sort-by=.lastTimestamp"],
+            ["kubectl", "get", "events", "-n", NAMESPACE, "--sort-by=.lastTimestamp"],
             ["kubectl", "describe", "pods", "-n", NAMESPACE],
         ]:
             print(f"\n--- {' '.join(diag)} ---", file=sys.stdout)
             sys.stdout.flush()
             subprocess.run(diag, check=False, timeout=60)
-        # Logs for non-Running pods
         result = subprocess.run(
-            ["kubectl", "get", "pods", "-n", NAMESPACE,
-             "-o", "jsonpath={range .items[?(@.status.phase!='Running')]}"
-             "{.metadata.name}{'\\n'}{end}"],
-            capture_output=True, text=True, check=False, timeout=30,
+            [
+                "kubectl",
+                "get",
+                "pods",
+                "-n",
+                NAMESPACE,
+                "-o",
+                "jsonpath={range .items[?(@.status.phase!='Running')]}"
+                "{.metadata.name}{'\\n'}{end}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
         )
         for pod in (result.stdout or "").split():
             if not pod:
@@ -411,9 +416,19 @@ def deployed_stack(k3d_cluster):
             sys.stdout.flush()
             subprocess.run(
                 ["kubectl", "logs", "-n", NAMESPACE, pod, "--tail=100"],
-                check=False, timeout=30,
+                check=False,
+                timeout=30,
             )
         print("================================================\n", file=sys.stdout)
+
+    # Outer 30m wrapper gives helm's ``--timeout=20m`` ample headroom to
+    # raise its own error and get caught by CalledProcessError below.
+    # Earlier 22m wrapper was racing helm's own deadline and hitting
+    # TimeoutExpired without surfacing pod state.
+    try:
+        _cmd(helm_install_cmd, timeout=1800)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as helm_err:
+        _dump_pod_state()
         raise helm_err
 
     # Wait for pods
