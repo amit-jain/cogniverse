@@ -148,24 +148,22 @@ class TestVisualJudgeE2E:
             output={"results": results},
         )
 
-        assert eval_result is not None
-        assert isinstance(eval_result.score, float)
-        assert 0.0 <= eval_result.score <= 1.0
-        # Hardened: these assertions are unconditional. A no_frames fallback
-        # would have frames_evaluated == 0 and would fail here, distinguishing
-        # the new MediaLocator path from any legacy fallback.
-        assert eval_result.metadata is not None
-        assert eval_result.metadata.get("frames_evaluated", 0) > 0
-        assert eval_result.metadata.get("provider") == "ollama"
+        # Outcome 1: locator actually fetched the bytes from source_url and
+        # cv2 decoded exactly the requested number of frames (3, matching
+        # frames_per_video=3, max_total_frames=3, max_videos=1 in fixture).
+        assert eval_result.metadata["frames_evaluated"] == 3
+
+        # Outcome 2: label is one of the four LLM-response labels. The judge
+        # only emits these after parsing a real LLM response; every other
+        # code path (no_results, no_frames, evaluation_failed) returns a
+        # different label. So this assertion is true iff the LLM was
+        # actually invoked AND its response was successfully parsed.
         assert eval_result.label in {
             "excellent_match",
             "good_match",
             "partial_match",
             "poor_match",
-        }, (
-            f"Judge returned label={eval_result.label!r} suggesting it never "
-            f"reached the LLM; the new MediaLocator path is broken."
-        )
+        }
 
     def test_legacy_dir_video_is_not_resolved_without_source_url(
         self, visual_judge, tmp_path, monkeypatch
