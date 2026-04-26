@@ -22,7 +22,7 @@ class TestDeployedServices:
 
     def test_vespa_config_healthy(self, deployed_stack):
         """Vespa config server responds to health check."""
-        from tests.cli.integration.conftest import PORTS
+        from tests.e2e.deployment.conftest import PORTS
 
         resp = httpx.get(
             f"http://localhost:{PORTS['vespa_config']}/state/v1/health", timeout=10
@@ -81,9 +81,7 @@ class TestDeployedServices:
         assert body["engine"] == "faster-whisper", body
         assert body["model"] == "tiny", body
 
-    def test_runtime_pod_sees_whisper_in_inference_service_urls(
-        self, deployed_stack
-    ):
+    def test_runtime_pod_sees_whisper_in_inference_service_urls(self, deployed_stack):
         """Runtime pod's ``INFERENCE_SERVICE_URLS`` env carries whisper.
 
         The chart populates that env from a ``whisper.enabled``-gated
@@ -96,7 +94,7 @@ class TestDeployedServices:
         the pod. Reads via ``kubectl exec`` so we don't need a new
         runtime API endpoint solely for testability.
         """
-        from tests.cli.integration.conftest import NAMESPACE
+        from tests.e2e.deployment.conftest import NAMESPACE
 
         # Find the runtime pod's name (single-replica deployment in tests).
         # Chart selector: app.kubernetes.io/component=runtime + name=cogniverse.
@@ -146,7 +144,7 @@ class TestDeployedServices:
 
     def test_all_pods_running(self, deployed_stack):
         """All pods in test namespace are Running."""
-        from tests.cli.integration.conftest import NAMESPACE
+        from tests.e2e.deployment.conftest import NAMESPACE
 
         result = subprocess.run(
             [
@@ -168,7 +166,7 @@ class TestDeployedServices:
 
     def test_helm_release_deployed(self, deployed_stack):
         """Helm release exists and is deployed."""
-        from tests.cli.integration.conftest import NAMESPACE
+        from tests.e2e.deployment.conftest import NAMESPACE
 
         result = subprocess.run(
             ["helm", "status", "cogniverse", "-n", NAMESPACE],

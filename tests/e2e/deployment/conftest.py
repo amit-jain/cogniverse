@@ -14,8 +14,10 @@ Requires: docker, k3d, kubectl, helm installed.
 """
 
 import subprocess
+import sys
 import time
 
+import httpx
 import pytest
 
 
@@ -448,8 +450,9 @@ def deployed_stack(k3d_cluster):
         timeout=310,
     )
 
-    # Port-forward with offset ports
-    port_forwards = []
+    # Port-forward with offset ports. Capture stderr (instead of
+    # silencing) so a dead port-forward can surface its reason later.
+    port_forwards: list[tuple[subprocess.Popen, str]] = []
     pf_specs = [
         ("svc/cogniverse-vespa", f"{PORTS['vespa_http']}:8080"),
         ("svc/cogniverse-vespa", f"{PORTS['vespa_config']}:19071"),
@@ -461,14 +464,42 @@ def deployed_stack(k3d_cluster):
         ("svc/cogniverse-whisper", f"{PORTS['whisper']}:7998"),
     ]
     for svc, ports in pf_specs:
+        pf_log = open(f"/tmp/pf_{svc.replace('/', '_')}_{ports}.log", "w")
         proc = subprocess.Popen(
             ["kubectl", "port-forward", svc, ports, "-n", NAMESPACE],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=pf_log,
+            stderr=subprocess.STDOUT,
         )
-        port_forwards.append(proc)
+        port_forwards.append((proc, pf_log.name))
 
-    time.sleep(5)  # let port-forwards establish
+    # Poll until the runtime port-forward responds, then give peers a
+    # short grace window. Replaces a 5-second sleep that wasn't enough
+    # under load — kubectl port-forward needs ~1s per endpoint and the
+    # upstream pod's first /health response can lag a few seconds more.
+    runtime_url = f"http://localhost:{PORTS['runtime']}/health"
+    for attempt in range(30):
+        try:
+            r = httpx.get(runtime_url, timeout=2)
+            if r.status_code < 500:
+                break
+        except httpx.RequestError:
+            pass
+        time.sleep(2)
+    else:
+        # Surface port-forward stderr if the runtime never became
+        # reachable. The session fixture would otherwise yield a stack
+        # of "Server disconnected" errors with no breadcrumbs.
+        print("\n========== PORT-FORWARD STATE ==========", file=sys.stdout)
+        for proc, log_path in port_forwards:
+            print(f"\n--- {log_path} (pid={proc.pid}, alive={proc.poll() is None}) ---")
+            try:
+                with open(log_path) as fh:
+                    print(fh.read()[-2000:])
+            except OSError:
+                pass
+        print("=========================================\n", file=sys.stdout)
+        sys.stdout.flush()
+    time.sleep(2)  # let other port-forwards settle
 
     yield {
         "runtime_url": f"http://localhost:{PORTS['runtime']}",
@@ -480,7 +511,7 @@ def deployed_stack(k3d_cluster):
     }
 
     # Cleanup port-forwards
-    for proc in port_forwards:
+    for proc, _log_path in port_forwards:
         proc.terminate()
         try:
             proc.wait(timeout=5)
