@@ -28,7 +28,13 @@ eval_logger = logging.getLogger(__name__)
 # Path to schema JSON files
 EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
 EVAL_COLPALI_MODEL = "vidore/colsmol-500m"
-EVAL_TENANT_SCHEMA = "video_colpali_smol500_mv_frame_default"
+# Schema name MUST match what ``VespaSearchBackend`` constructs from the
+# tenant_id used in tests. The runtime builds
+# ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` (see
+# search_backend.py:682). All eval e2e tests use ``tenant_id="test:unit"``,
+# which normalizes to ``test_unit`` — leaving the suffix ``default`` here
+# would silently 500 every search ("Could not resolve source ref ...").
+EVAL_TENANT_SCHEMA = "video_colpali_smol500_mv_frame_test_unit"
 
 
 @pytest.fixture(scope="function")
@@ -712,6 +718,52 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     )
 
     schema_loader = FilesystemSchemaLoader(EVAL_SCHEMAS_DIR)
+
+    # The search router calls ``assert_tenant_exists`` which goes through
+    # ``cogniverse_runtime.admin.tenant_manager.get_backend()``. That function
+    # reads two MODULE-LEVEL globals (``_schema_loader`` and
+    # ``_config_manager``) — they're not FastAPI dependencies, so
+    # ``app.dependency_overrides`` doesn't reach them. Without these setters,
+    # every search 404s with ``Tenant 'test:unit' not registered`` because
+    # ``get_tenant_internal`` swallows the RuntimeError and returns None.
+    from cogniverse_runtime.admin import tenant_manager
+
+    tenant_manager.set_schema_loader(schema_loader)
+    tenant_manager.set_config_manager(cm)
+    # Reset the cached backend singleton so the next get_backend() call
+    # picks up the freshly-set schema_loader + config_manager rather than
+    # whatever was cached from a previous module-scoped fixture run.
+    tenant_manager.backend = None
+
+    # Seed the tenant_metadata schema with a ``test:unit`` doc so
+    # ``assert_tenant_exists`` finds it. Without this the search router
+    # raises HTTPException(404, "Tenant 'test:unit' not registered") and
+    # every solver search fails — making the eval scores all 0.000 even
+    # though the inspect_eval chain runs. Uses the same pyvespa
+    # feed_data_point helper that production's
+    # ``VespaBackend.create_metadata_document`` uses, which keeps the
+    # namespace convention identical to runtime writes.
+    from vespa.application import Vespa as _VespaClient
+
+    http_port = eval_vespa_instance["http_port"]
+    _vespa_for_seed = _VespaClient(url=f"http://localhost:{http_port}")
+    _seed_resp = _vespa_for_seed.feed_data_point(
+        schema="tenant_metadata",
+        data_id="test:unit",
+        fields={
+            "tenant_full_id": "test:unit",
+            "org_id": "test",
+            "tenant_name": "unit",
+            "created_at": int(time.time() * 1000),
+            "created_by": "eval_search_client_fixture",
+            "status": "active",
+            "schemas_deployed": [EVAL_TENANT_SCHEMA],
+        },
+    )
+    assert _seed_resp.status_code == 200, (
+        f"Failed to seed test:unit tenant_metadata: "
+        f"{_seed_resp.status_code}: {_seed_resp.json}"
+    )
 
     app = FastAPI()
     app.include_router(search.router, prefix="/search")

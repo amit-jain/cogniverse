@@ -84,6 +84,7 @@ class TestEndToEnd:
                 f"Expected scorers {expected_scorers}, got {scorer_names}"
             )
 
+            scores_by_name = {score.name: score for score in eval_log.results.scores}
             for score in eval_log.results.scores:
                 assert score.metrics is not None, f"Scorer {score.name} has no metrics"
                 assert "mean" in score.metrics, (
@@ -96,6 +97,19 @@ class TestEndToEnd:
                 assert 0.0 <= mean_value <= 1.0, (
                     f"Scorer {score.name} mean {mean_value} not in [0, 1]"
                 )
+
+            # The solver searches against the real ColPali+Vespa fixture which
+            # has 3 seeded docs. result_count_scorer mean of 0.0 means the
+            # solver never received any results — the chain is broken (e.g.
+            # tenant lookup 404, schema_loader unset, intercept misrouted).
+            # The previous fixture left this gap silent: every search 404'd
+            # and tests still passed with all-zero scores.
+            result_count = scores_by_name["result_count_scorer"].metrics["mean"].value
+            assert result_count > 0.0, (
+                f"result_count_scorer mean is {result_count}; solver never got "
+                f"results from the search router. All scores: "
+                f"{ {n: s.metrics['mean'].value for n, s in scores_by_name.items()} }"
+            )
 
             assert eval_log.samples is not None, "No samples in eval log"
             assert len(eval_log.samples) > 0, "No samples processed"
@@ -292,7 +306,11 @@ class TestEndToEnd:
                 dataset_name="test_dataset",
                 profiles=["test_colpali"],
                 strategies=["default"],
-                config={"use_custom": True, "tenant_id": "test:unit"},
+                config={
+                    "use_custom": True,
+                    "custom_metrics": ["result_count"],
+                    "tenant_id": "test:unit",
+                },
             )
 
             results = inspect_eval(task, model=llm_endpoint["provider_uri"])
@@ -300,6 +318,18 @@ class TestEndToEnd:
             assert results is not None
             assert isinstance(results, list)
             assert len(results) > 0
+
+            eval_log = results[0]
+            assert eval_log.status == "success", (
+                f"Evaluation failed with status: {eval_log.status}"
+            )
+            scores_by_name = {score.name: score for score in eval_log.results.scores}
+            # Same retrieval-actually-happened guard as test_experiment_mode_e2e.
+            result_count = scores_by_name["result_count_scorer"].metrics["mean"].value
+            assert result_count > 0.0, (
+                f"result_count_scorer mean is {result_count}; solver returned "
+                f"no results."
+            )
 
     @pytest.mark.integration
     def test_error_handling_invalid_dataset(self, search_evaluator_provider):
