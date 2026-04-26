@@ -20,6 +20,18 @@
 - **Docker**: For Vespa, Phoenix, and Ollama containers
 - **Git**: For repository management
 - **uv**: Python package manager (required for workspace support)
+- **`rocminfo`** (AMD ROCm hosts only): used by both
+  `scripts/install_with_gpu.sh` and the CLI's
+  `detect_torch_backend()` (`libs/cli/cogniverse_cli/images.py`) to
+  confirm ROCm before picking torch+rocm wheels. The `amdgpu` kernel
+  module alone isn't enough — without `rocminfo` the detectors fall
+  back to CPU. Install via `sudo apt-get install -y rocminfo` (Debian/
+  Ubuntu) or the AMD ROCm meta-package, or override with
+  `COGNIVERSE_TORCH_BACKEND=rocm`.
+- **`nvidia-smi`** (NVIDIA hosts only): needed for CUDA auto-detection.
+  Comes with the NVIDIA driver — no separate install. Override with
+  `COGNIVERSE_TORCH_BACKEND=cuda` if you want to force CUDA wheels
+  without the smi tool reachable.
 
 ---
 
