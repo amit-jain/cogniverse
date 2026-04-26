@@ -8,7 +8,7 @@ from typing import Any
 
 import requests
 
-from cogniverse_core.common.media import MediaConfig, MediaLocator
+from cogniverse_core.common.media import MediaLocator
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.config.utils import get_config
 
@@ -25,51 +25,37 @@ class ConfigurableVisualJudge(Evaluator):
 
     def __init__(
         self,
+        locator: MediaLocator,
         evaluator_name: str = "visual_judge",
-        locator: MediaLocator | None = None,
     ):
         """
-        Initialize visual judge from config
+        Initialize visual judge from config.
 
         Args:
-            evaluator_name: Name of evaluator config to use
-            locator: Optional pre-constructed MediaLocator. When None, one is
-                built from the system-tenant ``media`` config section.
+            locator: MediaLocator used to resolve ``source_url`` for each
+                evaluated result. Required — callers must construct it from
+                the tenant's media config.
+            evaluator_name: Name of evaluator config to use.
         """
         from cogniverse_foundation.config.utils import create_default_config_manager
 
-        # Initialize ConfigManager for dependency injection
         config_manager = create_default_config_manager()
         config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
         self.evaluator_name = evaluator_name
 
-        # Get evaluator config
         evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
         if not evaluator_config:
-            # Fallback to default
-            evaluator_config = {
-                "provider": "ollama",
-                "model": "llava:7b",
-                "base_url": "http://localhost:11434",
-                "api_key": None,
-            }
-            logger.warning(
-                f"No config for evaluator '{evaluator_name}', using defaults"
+            raise ValueError(
+                f"Evaluator '{evaluator_name}' is not configured. Add it to "
+                "the system-tenant 'evaluators' config section."
             )
 
-        self.provider = evaluator_config.get("provider", "ollama")
-        self.model = evaluator_config.get("model", "llava:7b")
-        self.base_url = evaluator_config.get("base_url", "http://localhost:11434")
+        self.provider = evaluator_config["provider"]
+        self.model = evaluator_config["model"]
+        self.base_url = evaluator_config["base_url"]
         self.api_key = evaluator_config.get("api_key")
 
-        if locator is not None:
-            self.locator = locator
-        else:
-            media_section = config.get("media", {})
-            media_config = (
-                MediaConfig.from_dict(media_section) if media_section else MediaConfig()
-            )
-            self.locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=media_config)
+        self.locator = locator
 
         logger.info(
             f"Initialized {self.provider} visual judge with model {self.model} at {self.base_url}"
@@ -388,18 +374,3 @@ Format: SCORE: X/10, REASONING: explanation"""
             reasoning = reasoning_match.group(1).strip()
 
         return score, reasoning
-
-
-def create_configurable_visual_evaluators(
-    evaluator_name: str = "visual_judge",
-) -> list[Evaluator]:
-    """
-    Create visual evaluators using configured provider
-
-    Args:
-        evaluator_name: Name of evaluator config to use
-
-    Returns:
-        List of visual evaluator instances
-    """
-    return [ConfigurableVisualJudge(evaluator_name)]

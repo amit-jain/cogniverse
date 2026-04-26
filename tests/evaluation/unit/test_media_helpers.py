@@ -37,59 +37,22 @@ def fake_video(tmp_path):
 
 
 class TestResolveVideoFromResult:
-    def test_source_url_takes_precedence(self, locator, tmp_path):
+    def test_source_url_resolves_to_local_path(self, locator, tmp_path):
         clip = tmp_path / "v.mp4"
         clip.write_bytes(b"video")
 
-        result = resolve_video_from_result(
-            {"source_url": f"file://{clip}", "video_id": "v"}, locator
-        )
+        result = resolve_video_from_result({"source_url": f"file://{clip}"}, locator)
         assert result == clip
-
-    def test_video_path_used_when_no_source_url(self, locator, tmp_path):
-        clip = tmp_path / "v.mp4"
-        clip.write_bytes(b"video")
-
-        result = resolve_video_from_result({"video_path": str(clip)}, locator)
-        assert result == clip
-
-    def test_returns_none_when_nothing_resolves(self, locator):
-        assert (
-            resolve_video_from_result({"video_id": "does_not_exist"}, locator) is None
-        )
-
-    def test_video_id_alone_no_longer_resolves(self, locator, tmp_path, monkeypatch):
-        """Phase 6 removed the legacy data/testset/... probe; video_id alone is insufficient."""
-        sample_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
-        sample_dir.mkdir(parents=True)
-        (sample_dir / "v_legacy.mp4").write_bytes(b"")
-        monkeypatch.chdir(tmp_path)
-
-        assert resolve_video_from_result({"video_id": "v_legacy"}, locator) is None
-
-    def test_non_dict_returns_none(self, locator):
-        assert resolve_video_from_result("not a dict", locator) is None
-        assert resolve_video_from_result(None, locator) is None
 
 
 class TestResolveFrameFromResult:
-    def test_frame_path_takes_precedence(self, locator, tmp_path):
-        frame = tmp_path / "f.jpg"
-        frame.write_bytes(b"jpeg")
-
-        result = resolve_frame_from_result({"frame_path": str(frame)}, locator)
-        assert result == frame
-
-    def test_extracts_from_source_url_when_no_frame_path(self, locator, fake_video):
+    def test_extracts_frame_from_source_url(self, locator, fake_video):
         result = resolve_frame_from_result(
             {"source_url": f"file://{fake_video}", "frame_id": 2}, locator
         )
         assert result is not None
         assert result.exists()
         assert result.suffix == ".jpg"
-
-    def test_returns_none_when_nothing_resolves(self, locator):
-        assert resolve_frame_from_result({"video_id": "missing"}, locator) is None
 
 
 class TestExtractFrames:

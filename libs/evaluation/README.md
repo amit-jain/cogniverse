@@ -25,8 +25,8 @@ cogniverse_evaluation/
 │   ├── base_evaluator.py
 │   ├── golden_dataset.py    # Golden dataset evaluation
 │   ├── llm_judge.py         # LLM-as-judge evaluation
-│   ├── visual_judge.py      # Multi-modal visual evaluation
-│   ├── qwen_visual_judge.py # Qwen-based visual judge
+│   ├── configurable_visual_judge.py # Visual judge wired to a configured LLM provider
+│   ├── _media_helpers.py    # Shared source_url resolution + frame extraction
 │   ├── reference_free.py    # Reference-free evaluation
 │   └── routing_evaluator.py # Routing agent evaluation
 ├── inspect_tasks/           # Inspect AI task definitions
@@ -54,9 +54,9 @@ Built-in evaluators for different evaluation scenarios:
 
 **LLM-Based Evaluators:**
 - `LLMJudge`: Use LLMs as judges for quality assessment
-- `VisualJudge`: Multi-modal evaluation with vision-language models
-- `QwenVisualJudge`: Qwen2-VL based visual evaluation
-- `ConfigurableVisualJudge`: Configurable visual assessment
+- `ConfigurableVisualJudge`: Visual evaluation; provider, model, and endpoint
+  come from the evaluator config. Resolves frames from each result's
+  ``source_url`` via :class:`MediaLocator`.
 
 **Reference-Free Evaluators:**
 - `ReferenceFreeEvaluator`: Evaluate without ground truth
@@ -194,25 +194,27 @@ print(f"Reasoning: {judgment['reasoning']}")
 ### Multi-Modal Visual Evaluation
 
 ```python
-from cogniverse_evaluation.evaluators import QwenVisualJudge
-from PIL import Image
-
-# Initialize visual judge
-visual_judge = QwenVisualJudge(
-    model="qwen2-vl-7b",
-    criteria=["visual_quality", "relevance", "clarity"]
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+    ConfigurableVisualJudge,
 )
 
-# Evaluate image search results
-images = [Image.open(f"result_{i}.jpg") for i in range(5)]
-judgment = await visual_judge.evaluate(
-    query="red sports car",
-    images=images,
-    query_type="image_search"
+# The provider, model, and endpoint come from the tenant's evaluator config
+# (configured under evaluators.<evaluator_name>); the constructor only takes
+# the locator and the config key.
+locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+visual_judge = ConfigurableVisualJudge(
+    locator=locator, evaluator_name="visual_judge"
 )
 
-print(f"Visual Quality: {judgment['visual_quality']:.2f}")
-print(f"Relevance: {judgment['relevance']:.2f}")
+# Each search result must carry source_url; the judge resolves it through the
+# locator, extracts frames, and asks the configured LLM whether they match.
+result = visual_judge.evaluate(
+    input={"query": "red sports car"},
+    output={"results": search_results},
+)
+print(f"Score: {result.score:.2f} ({result.label})")
 ```
 
 ### Reference-Free Evaluation
@@ -352,8 +354,8 @@ uv pip install -e .
 pytest tests/evaluation/
 
 # Run specific evaluator tests
-pytest tests/evaluation/test_golden_dataset.py
-pytest tests/evaluation/test_visual_judge.py
+pytest tests/evaluation/unit/test_visual_plugin.py
+pytest tests/evaluation/unit/test_media_helpers.py
 ```
 
 ## Testing

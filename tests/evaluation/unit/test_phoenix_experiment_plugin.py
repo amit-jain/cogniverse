@@ -371,12 +371,10 @@ class TestPhoenixExperimentPluginUtilities:
 
             assert len(evaluators) == 1
             assert evaluators[0] == mock_instance
-            mock_judge.assert_called_once_with(
-                provider="ollama",
-                model="test_model",
-                base_url="http://localhost",
-                api_key="test_key",
-            )
+            mock_judge.assert_called_once()
+            kwargs = mock_judge.call_args.kwargs
+            assert kwargs["evaluator_name"] == "visual_judge"
+            assert kwargs["locator"] is not None
 
     @pytest.mark.unit
     def test_get_phoenix_evaluators_quality_only(self):
@@ -438,10 +436,10 @@ class TestPhoenixExperimentPluginUtilities:
 
             get_phoenix_evaluators(config)
 
-            # Should use defaults
-            mock_judge.assert_called_once_with(
-                provider="ollama", model=None, base_url=None, api_key=None
-            )
+            mock_judge.assert_called_once()
+            kwargs = mock_judge.call_args.kwargs
+            assert kwargs["evaluator_name"] == "visual_judge"
+            assert kwargs["locator"] is not None
 
     @pytest.mark.unit
     def test_get_phoenix_evaluators_custom_evaluator_name(self):
@@ -461,6 +459,7 @@ class TestPhoenixExperimentPluginUtilities:
 
             get_phoenix_evaluators(config)
 
-            mock_judge.assert_called_once_with(
-                provider="openai", model="gpt-4", base_url=None, api_key=None
-            )
+            mock_judge.assert_called_once()
+            kwargs = mock_judge.call_args.kwargs
+            assert kwargs["evaluator_name"] == "custom_evaluator"
+            assert kwargs["locator"] is not None

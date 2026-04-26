@@ -30,6 +30,7 @@ class VisualEvaluatorPlugin:
 
         async def score(state, target=None) -> Score:
             """Score video search results using visual judge."""
+            from cogniverse_core.common.media import MediaConfig, MediaLocator
             from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
             from cogniverse_evaluation.evaluators.configurable_visual_judge import (
                 ConfigurableVisualJudge,
@@ -51,7 +52,14 @@ class VisualEvaluatorPlugin:
                     explanation=f"Visual evaluator '{evaluator_name}' not configured",
                 )
 
-            visual_judge = ConfigurableVisualJudge(evaluator_name=evaluator_name)
+            media_section = config.get("media", {})
+            media_config = (
+                MediaConfig.from_dict(media_section) if media_section else MediaConfig()
+            )
+            locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=media_config)
+            visual_judge = ConfigurableVisualJudge(
+                locator=locator, evaluator_name=evaluator_name
+            )
 
             query = (
                 state.input.get("query", "")

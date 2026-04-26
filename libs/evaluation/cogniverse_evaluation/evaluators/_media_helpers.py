@@ -1,22 +1,14 @@
 """Shared media-resolution helpers for visual evaluators.
 
-The three visual judges (`ConfigurableVisualJudge`, `Qwen2VLVisualJudge`,
-`VisualRelevanceEvaluator`) historically reimplemented the same path-probing
-logic against hardcoded local directories. That broke them in any environment
-where the source videos / pre-extracted frames did not happen to live under
-``data/testset/...`` — pods, CI, anything not run from the repo root.
+``source_url`` is the single canonical pointer. Visual evaluators feed result
+dicts (originating from search) into these helpers; the helpers resolve the
+URI through :class:`MediaLocator` and either return a local video path or
+extract a single frame on demand. There are no alternative fields and no
+fallback probes — if ``source_url`` cannot be resolved, resolution returns
+``None`` so the caller can take the explicit no-frames branch.
 
-These helpers centralize the resolution path through :class:`MediaLocator`:
-
-- ``source_url`` (canonical URI written by ingestion) is the primary source
-  of truth.
-- For pre-extracted frames a ``frame_path`` field is consulted first; if
-  absent, a single frame is extracted on the fly from ``source_url`` at
-  ``result.get("frame_id", 0)``.
-
-Frame extraction (cv2.VideoCapture → JPEGs) lives in :func:`extract_frames` so
-all three judges share one implementation and none of them assume someone
-else pre-decoded.
+Frame extraction (cv2.VideoCapture → JPEGs) lives in :func:`extract_frames`
+so all three judges share one implementation.
 """
 
 from __future__ import annotations
@@ -34,67 +26,37 @@ logger = logging.getLogger(__name__)
 def resolve_video_from_result(
     result: dict[str, Any], locator: MediaLocator
 ) -> Optional[Path]:
-    """Return a local Path for the video referenced by ``result``.
+    """Return a local Path for the video referenced by ``result["source_url"]``.
 
-    Resolution order:
-      1. ``result["source_url"]`` via :meth:`MediaLocator.localize`.
-      2. ``result["video_path"]`` (treat as URI if it has a scheme, else as a
-         local path that the locator canonicalizes to ``file://``).
-
-    Returns ``None`` when neither succeeds.
+    Returns ``None`` when ``source_url`` is missing/empty or cannot be
+    localized. ``source_url`` is the only field consulted — there are no
+    alternative fields and no probe paths.
     """
-    if not isinstance(result, dict):
-        return None
-
     uri = result.get("source_url")
-    if uri:
-        try:
-            return locator.localize(uri)
-        except (FileNotFoundError, ValueError, OSError) as exc:
-            logger.warning("Failed to localize source_url %s: %s", uri, exc)
-
-    raw_path = result.get("video_path")
-    if raw_path:
-        try:
-            return locator.localize(locator.to_canonical_uri(str(raw_path)))
-        except (FileNotFoundError, ValueError, OSError) as exc:
-            logger.warning("Failed to localize video_path %s: %s", raw_path, exc)
-
-    return None
+    if not uri:
+        return None
+    try:
+        return locator.localize(uri)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        logger.warning("Failed to localize source_url %s: %s", uri, exc)
+        return None
 
 
 def resolve_frame_from_result(
     result: dict[str, Any],
     locator: MediaLocator,
 ) -> Optional[Path]:
-    """Return a local Path for the frame referenced by ``result``.
+    """Return a local Path for a single frame extracted from ``source_url``.
 
-    Resolution order:
-      1. ``result["frame_path"]`` if it exists locally (or via the locator
-         if it is a URI).
-      2. Extract a frame on the fly from ``result["source_url"]`` at
-         ``result.get("frame_id", 0)``.
-
-    Returns ``None`` when neither succeeds.
+    Frame index comes from ``result.get("frame_id", 0)``. Returns ``None``
+    when the video cannot be resolved or cv2 cannot decode the frame.
     """
-    if not isinstance(result, dict):
-        return None
-
-    frame_path = result.get("frame_path")
-    if frame_path:
-        try:
-            return locator.localize(locator.to_canonical_uri(str(frame_path)))
-        except (FileNotFoundError, ValueError, OSError) as exc:
-            logger.warning("Failed to localize frame_path %s: %s", frame_path, exc)
-
     video_path = resolve_video_from_result(result, locator)
-    if video_path is not None:
-        frame_id = int(result.get("frame_id", 0) or 0)
-        frames = extract_frames(video_path, num_frames=1, frame_index=frame_id)
-        if frames:
-            return frames[0]
-
-    return None
+    if video_path is None:
+        return None
+    frame_id = int(result.get("frame_id", 0) or 0)
+    frames = extract_frames(video_path, num_frames=1, frame_index=frame_id)
+    return frames[0] if frames else None
 
 
 def extract_frames(

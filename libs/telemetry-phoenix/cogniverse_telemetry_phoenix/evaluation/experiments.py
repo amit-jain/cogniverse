@@ -222,18 +222,20 @@ def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
 
     # Add visual evaluators if configured
     if config.get("enable_llm_evaluators", False):
+        from cogniverse_core.common.media import MediaConfig, MediaLocator
+        from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
         from cogniverse_evaluation.evaluators.configurable_visual_judge import (
             ConfigurableVisualJudge,
         )
 
         evaluator_name = config.get("evaluator_name", "visual_judge")
-        evaluator_config = config.get("evaluators", {}).get(evaluator_name, {})
-
+        media_section = config.get("media", {})
+        media_config = (
+            MediaConfig.from_dict(media_section) if media_section else MediaConfig()
+        )
+        locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=media_config)
         visual_judge = ConfigurableVisualJudge(
-            provider=evaluator_config.get("provider", "ollama"),
-            model=evaluator_config.get("model"),
-            base_url=evaluator_config.get("base_url"),
-            api_key=evaluator_config.get("api_key"),
+            locator=locator, evaluator_name=evaluator_name
         )
         evaluators.append(visual_judge)
 

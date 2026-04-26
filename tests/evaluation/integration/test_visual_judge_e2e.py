@@ -95,14 +95,13 @@ class TestVisualJudgeE2E:
     def test_judge_resolves_source_url_via_path_outside_legacy_dirs(
         self, visual_judge, tmp_path
     ):
-        """Source video lives at a tmp path with a unique filename, so the
-        legacy probe (``data/testset/...``, ``data/videos/``, ``outputs/videos/``)
-        cannot find it. Only the new ``source_url``-driven MediaLocator path
-        can resolve it.
+        """Pin the two outcomes the new MediaLocator path uniquely produces:
+        an exact frame count and a label drawn from the LLM-response set.
 
-        Hardened assertions confirm the LLM was actually invoked
-        (``frames_evaluated > 0`` + ``provider == "ollama"`` + a real label),
-        so a no_frames fallback returning score=0.0 cannot pass.
+        Source video lives at a tmp path with a unique filename so neither
+        the (already-removed) legacy probe nor any other resolution path
+        could have surfaced it — ``source_url`` is the only thing that
+        works.
         """
         videos_dir = (
             Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
@@ -164,52 +163,3 @@ class TestVisualJudgeE2E:
             "partial_match",
             "poor_match",
         }
-
-    def test_legacy_dir_video_is_not_resolved_without_source_url(
-        self, visual_judge, tmp_path, monkeypatch
-    ):
-        """Pre-rollout code resolved video_id by globbing ``data/testset/...``.
-        Phase 6 removed that probe. This test plants a video at the legacy
-        location, omits source_url, and asserts the judge returns no_frames —
-        proving the legacy probe is gone.
-
-        On pre-Phase-6 code, the legacy probe would have FOUND the video and
-        the judge would have called the LLM, so this test would fail (score
-        would be a real LLM response, not 0.0/no_frames).
-        """
-        legacy_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
-        legacy_dir.mkdir(parents=True)
-        # Use a real video so the old code path would actually have decoded it.
-        videos_dir = (
-            Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
-        )
-        source_videos = sorted(videos_dir.glob("*.mp4"))
-        if not source_videos:
-            pytest.skip(f"No test videos under {videos_dir}")
-        legacy_clip = legacy_dir / "legacy_visible.mp4"
-        legacy_clip.write_bytes(source_videos[0].read_bytes())
-
-        monkeypatch.chdir(tmp_path)
-
-        results = [
-            {
-                "video_id": "legacy_visible",
-                "score": 0.5,
-                "rank": 1,
-                # source_url deliberately omitted — pre-Phase-6 code would have
-                # found legacy_visible.mp4 via the data/testset/... probe.
-            }
-        ]
-
-        eval_result = visual_judge.evaluate(
-            input={"query": "anything"},
-            output={"results": results},
-        )
-
-        assert eval_result is not None
-        assert eval_result.score == 0.0
-        assert eval_result.label == "no_frames", (
-            f"Legacy probe is still active: judge returned {eval_result.label!r} "
-            f"(score={eval_result.score}) for a video discoverable only via the "
-            f"removed data/testset/... fallback."
-        )

@@ -30,11 +30,10 @@ libs/evaluation/cogniverse_evaluation/
 │   ├── reference_free.py                # Reference-free evaluators
 │   ├── golden_dataset.py                # Golden dataset evaluator
 │   ├── llm_judge.py                     # LLM-based evaluators
-│   ├── visual_judge.py                  # Visual relevance evaluator
 │   ├── sync_golden_dataset.py           # Synchronous golden dataset evaluator
 │   ├── sync_reference_free.py           # Synchronous reference-free evaluators
-│   ├── configurable_visual_judge.py     # Configurable visual judge
-│   ├── qwen_visual_judge.py             # Qwen2-VL visual judge
+│   ├── configurable_visual_judge.py     # Visual judge (provider/model from config)
+│   ├── _media_helpers.py                # source_url resolution + frame extraction
 │   ├── base.py                          # Base evaluator classes
 │   ├── base_evaluator.py                # Base evaluator interface
 │   ├── base_no_trace.py                 # Evaluator without tracing
@@ -2407,19 +2406,27 @@ scorers = get_visual_scorers({
 # Returns: [visual_relevance_scorer(), visual_diversity_scorer()]
 ```
 
-**VisualRelevanceEvaluator:**
+**ConfigurableVisualJudge:**
 
-Uses ColPali embeddings to compare query-frame similarity:
+Resolves each result's ``source_url`` through :class:`MediaLocator`, extracts
+frames via cv2, and asks the configured LLM (provider, model, endpoint all
+sourced from the evaluator config — never constructor defaults) whether they
+match the query.
 
 ```python
-from cogniverse_evaluation.evaluators.visual_judge import VisualRelevanceEvaluator
+from cogniverse_core.common.media import MediaConfig, MediaLocator
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_evaluation.evaluators.configurable_visual_judge import (
+    ConfigurableVisualJudge,
+)
 
-evaluator = VisualRelevanceEvaluator(model_name="vidore/colsmol-500m")
+locator = MediaLocator(tenant_id=SYSTEM_TENANT_ID, config=MediaConfig())
+evaluator = ConfigurableVisualJudge(locator=locator, evaluator_name="visual_judge")
 result = evaluator.evaluate(
     input={"query": "robots playing soccer"},
-    output={"results": [{"frame_path": "frame1.jpg"}, ...]}
+    output={"results": [{"video_id": "v1", "source_url": "s3://corpus/v1.mp4"}]},
 )
-# Returns: score (0-1), label (highly_relevant/relevant/not_relevant), explanation
+# Returns: score (0-1), label (excellent_match/good_match/partial_match/poor_match), explanation
 ```
 
 ---
