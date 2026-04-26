@@ -12,9 +12,12 @@ not hard-code one. ``llm_endpoint`` resolves it from, in order:
    ``OLLAMA_HOST`` etc. for the chosen provider).
 2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
    (same keys as the env vars, lower-cased).
-3. Otherwise, the fixture skips the test — there is no built-in default
-   provider, since different tests need chat vs. vision models and forcing
-   one would couple the test class to an implementation.
+3. ``llm_config.primary`` from ``configs/config.json`` — the same model the
+   rest of the project uses (typically ``ollama/qwen3:4b`` at
+   ``http://localhost:11434``). Skipping was the historical default but
+   the project's other LLM tests all default to this same source, so
+   diverging here just buried the suite behind an env var nobody set.
+4. Otherwise the fixture skips with a reason explaining how to configure.
 """
 
 from __future__ import annotations
@@ -40,8 +43,38 @@ def pytest_collection_modifyitems(items):
             )
 
 
+_PROJECT_CONFIG = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+
+
+def _load_from_project_config() -> dict[str, Any] | None:
+    """Read ``llm_config.primary`` from ``configs/config.json`` and shape it
+    into the same ``{provider_uri, base_url}`` dict the env-var path returns.
+
+    The project config carries ``model`` as the LiteLLM-style provider URI
+    (``ollama/qwen3:4b``) and ``api_base`` as the endpoint. Inspect AI's
+    provider plugins read base URLs from per-provider env vars
+    (``OLLAMA_HOST``, ``OPENAI_BASE_URL``, ...), which the ``llm_endpoint``
+    fixture already wires up downstream — same plumbing, lower friction."""
+    if not _PROJECT_CONFIG.exists():
+        return None
+    try:
+        with _PROJECT_CONFIG.open() as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    primary = (data.get("llm_config") or {}).get("primary") or {}
+    model = primary.get("model")
+    if not model:
+        return None
+    return {
+        "provider_uri": model,
+        "base_url": primary.get("api_base"),
+    }
+
+
 def _load_llm_config() -> dict[str, Any] | None:
-    """Resolve LLM endpoint from env vars or the resources/test_llm.json file."""
+    """Resolve LLM endpoint from env vars, the resources/test_llm.json file,
+    or the project's configs/config.json (in that priority order)."""
     provider_uri = os.environ.get("COGNIVERSE_TEST_LLM_PROVIDER_URI")
     base_url = os.environ.get("COGNIVERSE_TEST_LLM_BASE_URL")
     if provider_uri:
@@ -55,7 +88,8 @@ def _load_llm_config() -> dict[str, Any] | None:
                 "provider_uri": data["provider_uri"],
                 "base_url": data.get("base_url"),
             }
-    return None
+
+    return _load_from_project_config()
 
 
 @pytest.fixture(scope="module")

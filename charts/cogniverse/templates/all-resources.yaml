@@ -1315,6 +1315,43 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
+      {{- else if eq $engine "videoprism_jax" }}
+      # Custom FastAPI sidecar (deploy/videoprism) — loads VideoPrism via
+      # the upstream JAX/flax stack and serves POST /v1/video/embeddings.
+      # Externalising VideoPrism keeps the runtime image free of the
+      # tensorflow + flax dep (TF's static init in the same process as
+      # uvicorn server threads aborts on darwin). Profiles route here via
+      # ``inference_service: "videoprism_jax"``.
+      - name: videoprism
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ default 7999 $cfg.service.port }}
+        env:
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ default 7999 $cfg.service.port | quote }}
+        - name: NUM_FRAMES
+          value: {{ default 16 $cfg.numFrames | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        # JAX_PLATFORM_NAME is also baked into the image but having it
+        # here lets a values override flip CPU↔GPU without rebuilding.
+        - name: JAX_PLATFORM_NAME
+          value: {{ default "cpu" $cfg.jaxPlatform | quote }}
+        - name: JAX_PLATFORMS
+          value: {{ default "cpu" $cfg.jaxPlatform | quote }}
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
       {{- else if eq $engine "infinity" }}
       # Infinity (michaelfeil/infinity) — OpenAI-compatible /v1/embeddings
       # with multimodal input support. Kept as an option, but does NOT load

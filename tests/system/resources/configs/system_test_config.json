@@ -51,6 +51,36 @@
           "embedding_dim": 128,
           "binary_dim": 16
         }
+      },
+      "video_videoprism_base_mv_chunk_30s": {
+        "type": "video",
+        "description": "Test alias backed by the deployed colpali schema. Real VideoPrism inference would require the videoprism sidecar; ensemble RRF tests just need three distinct profile names against the same backing schema.",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "embedding_type": "multi_vector",
+        "model_loader": "colpali",
+        "schema_config": {
+          "schema_name": "video_colpali_smol500_mv_frame",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
+      "video_colqwen_omni_mv_chunk_30s": {
+        "type": "video",
+        "description": "Test alias backed by the deployed colpali schema. See note on video_videoprism_base_mv_chunk_30s.",
+        "schema_name": "video_colpali_smol500_mv_frame",
+        "embedding_model": "vidore/colsmol-500m",
+        "embedding_type": "multi_vector",
+        "model_loader": "colpali",
+        "schema_config": {
+          "schema_name": "video_colpali_smol500_mv_frame",
+          "model_name": "ColPali",
+          "num_patches": 1024,
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
       }
     },
     "default_profiles": {

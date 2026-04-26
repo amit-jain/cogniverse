@@ -106,8 +106,15 @@ def vespa_instance():
         schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
         with open(schema_file) as f:
             schema_json = json.load(f)
-        schema_json["name"] = "video_colpali_smol500_mv_frame_default"
-        schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_default"
+        # Tests in this module run against tenant "test:unit", which the
+        # VespaBackend tenant-scopes to the schema name suffix "_test_unit"
+        # (colon → underscore via ``get_tenant_schema_name``). The previous
+        # "_default" suffix predated the project's "_default" eradication
+        # (runtime/integration/conftest.py:107) and caused queries from
+        # tenant "test:unit" to resolve to "video_colpali_smol500_mv_frame
+        # _test_unit", which Vespa rejects as an unknown source ref.
+        schema_json["name"] = "video_colpali_smol500_mv_frame_test_unit"
+        schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_test_unit"
         parser = JsonSchemaParser()
         data_schema = parser.parse_schema(schema_json)
 

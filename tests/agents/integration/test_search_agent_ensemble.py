@@ -119,7 +119,16 @@ def search_agent_ensemble(multi_profile_vespa):
         base_path=Path("tests/system/resources/schemas")
     )
 
-    # Register all 3 real profiles in config_manager
+    # Register all 3 profile NAMES against the one schema VespaTestManager
+    # actually deploys (``video_colpali_smol500_mv_frame``). The test
+    # exercises ensemble RRF metadata, not real cross-encoder retrieval —
+    # querying three profile names all backed by the same schema gives
+    # three result lists with identical documents, which is exactly what
+    # RRF needs to score each doc across multiple ranks. Pointing the
+    # videoprism / colqwen profile names at their real schemas would
+    # require deploying those schemas + standing up the videoprism sidecar
+    # / colpali_infinity sidecar for query encoding — out of scope for
+    # the RRF-metadata assertion this test makes.
     backend_profiles = {
         "video_colpali_smol500_mv_frame": BackendProfileConfig(
             profile_name="video_colpali_smol500_mv_frame",
@@ -128,13 +137,13 @@ def search_agent_ensemble(multi_profile_vespa):
         ),
         "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
             profile_name="video_videoprism_base_mv_chunk_30s",
-            schema_name="video_videoprism_base_mv_chunk_30s",
-            embedding_model="google/videoprism-base",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model="vidore/colsmol-500m",
         ),
         "video_colqwen_omni_mv_chunk_30s": BackendProfileConfig(
             profile_name="video_colqwen_omni_mv_chunk_30s",
-            schema_name="video_colqwen_omni_mv_chunk_30s",
-            embedding_model="vidore/colqwen2-v0.1",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model="vidore/colsmol-500m",
         ),
     }
 
@@ -146,6 +155,20 @@ def search_agent_ensemble(multi_profile_vespa):
         profiles=backend_profiles,
     )
     config_manager.set_backend_config(backend_config)
+
+    # ``multi_profile_vespa`` (via ``full_setup``) already triggered the
+    # BackendRegistry to cache a search backend with the single default
+    # profile. Without this clear, the cached backend's ``self.profiles``
+    # dict is frozen at that point — subsequent searches against the new
+    # profile names fail with "Requested profile X not found. Available
+    # profiles: [video_colpali_smol500_mv_frame]" because the registry
+    # returns the cached instance instead of rebuilding from updated
+    # config.
+    from cogniverse_core.registries.backend_registry import get_backend_registry
+
+    _registry = get_backend_registry()
+    if hasattr(_registry, "_backend_instances"):
+        _registry._backend_instances.clear()
 
     # Create SearchAgent with first profile as default using deps pattern
     deps = SearchAgentDeps(
@@ -384,18 +407,28 @@ class TestSearchAgentEnsemble:
         assert result.search_mode == "ensemble"
         results = result.results
 
-        # Validate RRF metadata structure on all results
+        # Validate RRF metadata structure on all results. The public
+        # result shape (``_format_public_result``) nests every non-identity
+        # field into ``metadata``, so RRF-derived fields land at
+        # ``doc["metadata"]["rrf_score"]`` rather than at the top level —
+        # ``doc["score"]``, ``doc["id"]``, ``doc["document_id"]`` are the
+        # only top-level fields the public contract guarantees.
         for doc in results:
-            assert "rrf_score" in doc, f"Missing rrf_score in doc {doc.get('id')}"
-            assert "profile_ranks" in doc, (
-                f"Missing profile_ranks in doc {doc.get('id')}"
+            metadata = doc.get("metadata") or {}
+            assert "rrf_score" in metadata, (
+                f"Missing rrf_score in metadata for doc {doc.get('id')}"
             )
-            assert "num_profiles" in doc, f"Missing num_profiles in doc {doc.get('id')}"
-            assert doc["rrf_score"] > 0, (
-                f"Invalid RRF score {doc['rrf_score']} in doc {doc.get('id')}"
+            assert "profile_ranks" in metadata, (
+                f"Missing profile_ranks in metadata for doc {doc.get('id')}"
             )
-            assert doc["num_profiles"] >= 1, (
-                f"Invalid num_profiles {doc['num_profiles']} in doc {doc.get('id')}"
+            assert "num_profiles" in metadata, (
+                f"Missing num_profiles in metadata for doc {doc.get('id')}"
+            )
+            assert metadata["rrf_score"] > 0, (
+                f"Invalid RRF score {metadata['rrf_score']} in doc {doc.get('id')}"
+            )
+            assert metadata["num_profiles"] >= 1, (
+                f"Invalid num_profiles {metadata['num_profiles']} in doc {doc.get('id')}"
             )
 
         logger.info(

@@ -31,16 +31,6 @@ dependencies = [
     "pdf2image==1.17.0",
     "pypdf2==3.0.1",
 
-    # JAX is imported at module load time by
-    # ``cogniverse_core.common.models.videoprism_models`` regardless of
-    # whether a VideoPrism profile is in use, so it stays in base deps.
-    # The rest of the VideoPrism stack (flax / einops / einshape /
-    # tensorflow) is gated behind the ``videoprism`` extra so non-
-    # VideoPrism deployments — especially AMD ROCm where tensorflow has
-    # no published wheel — can install without resolution conflicts.
-    "jax==0.9.2",
-    "jaxlib==0.9.2",
-
     # Utilities
     "msgpack==1.1.2",
 
@@ -62,18 +52,12 @@ dependencies = [
 [project.optional-dependencies]
 vespa = ["cogniverse-vespa"]
 agents = ["cogniverse-agents"]
-# VideoPrism in-process inference stack. Heavy and platform-fragmented:
-# tensorflow has no AMD ROCm wheel and weak aarch64 support, jax/jaxlib
-# pins differ across CUDA / ROCm. Deployments that don't run a
-# VideoPrism profile (e.g. video_*_videoprism_*) skip this entirely.
-# The chart's ingestor image installs cogniverse-runtime[videoprism]
-# only when at least one VideoPrism profile is enabled.
-videoprism = [
-    "flax==0.12.0",
-    "einops==0.8.1",
-    "einshape==1.0",
-    "tensorflow==2.20.0",
-]
+# VideoPrism is now served by the dedicated `deploy/videoprism` sidecar
+# and addressed via `inference_services.embedding=videoprism_jax` on the
+# profile (see RemoteVideoPrismLoader). The runtime image therefore no
+# longer carries the JAX / flax / tensorflow stack — TF's static
+# initialiser used to abort on darwin when loaded into the same process
+# as uvicorn server threads, and TF has no ROCm wheel.
 all = ["cogniverse-vespa", "cogniverse-agents"]
 
 [tool.uv.sources]

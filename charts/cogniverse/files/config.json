@@ -880,6 +880,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
+        "inference_services": {"embedding": "videoprism_jax"},
         "model_specific": {
           "segment_duration": 30.0,
           "sampling_fps": 1.0,
@@ -936,6 +937,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
+        "inference_services": {"embedding": "videoprism_jax"},
         "model_specific": {
           "segment_duration": 30.0,
           "sampling_fps": 1.0,
@@ -995,6 +997,7 @@
         },
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
+        "inference_services": {"embedding": "videoprism_jax"},
         "model_specific": {
           "chunk_duration": 6.0,
           "chunk_overlap": 1.0,
@@ -1053,6 +1056,7 @@
         },
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
+        "inference_services": {"embedding": "videoprism_jax"},
         "model_specific": {
           "chunk_duration": 6.0,
           "chunk_overlap": 1.0,

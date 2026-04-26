@@ -358,7 +358,13 @@ def vespa_backend():
 
 
 @pytest_asyncio.fixture
-async def real_stack(redis_container, minio_container, vespa_backend, monkeypatch):
+async def real_stack(
+    redis_container,
+    minio_container,
+    vespa_backend,
+    videoprism_sidecar,
+    monkeypatch,
+):
     """All env vars the runtime + worker need, plus a Redis client + S3
     client the test can use directly for output assertions."""
     if not VIDEO_PATH.exists():
@@ -409,6 +415,13 @@ async def real_stack(redis_container, minio_container, vespa_backend, monkeypatc
         SystemConfig(
             backend_url="http://localhost",
             backend_port=vespa_backend["http_port"],
+            # Profiles route VideoPrism inference through the sidecar via
+            # ``inference_services.embedding=videoprism_jax`` on the profile
+            # (see configs/config.json). The factory pulls the URL out of
+            # this dict at embedding-generator build time, so the worker's
+            # RemoteVideoPrismLoader hits the sidecar instead of trying to
+            # load the JAX/flax stack in-process.
+            inference_service_urls={"videoprism_jax": videoprism_sidecar["url"]},
         )
     )
 
@@ -526,6 +539,96 @@ def _vespa_visit_count(
     )
 
 
+def _videoprism_image_built() -> bool:
+    """The chunk-30s VideoPrism profile is now served by the
+    ``deploy/videoprism`` sidecar (a remote inference pod). The runtime
+    no longer carries the JAX / flax / tensorflow stack in-process. The
+    test spins up the sidecar Docker container, so it needs the image
+    to be built locally first:
+
+        docker build -t cogniverse/videoprism:dev deploy/videoprism/
+
+    Skip with a clear reason when that image isn't present."""
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", "cogniverse/videoprism:dev"],
+            capture_output=True,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+_skip_no_videoprism = pytest.mark.skipif(
+    not _videoprism_image_built(),
+    reason=(
+        "cogniverse/videoprism:dev image not built — run "
+        "`docker build -t cogniverse/videoprism:dev deploy/videoprism/`"
+    ),
+)
+
+
+VIDEOPRISM_CONTAINER = "videoprism-upload-real-stack"
+
+
+@pytest.fixture(scope="module")
+def videoprism_sidecar():
+    """Spin up the VideoPrism inference sidecar that the worker's
+    ``RemoteVideoPrismLoader`` calls into. Mirrors how the chart
+    deploys the ``inference.videoprism_jax`` pod in production."""
+    if not _videoprism_image_built():
+        pytest.skip("cogniverse/videoprism:dev not built locally")
+
+    port = _free_port()
+    subprocess.run(["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True)
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            VIDEOPRISM_CONTAINER,
+            "-p",
+            f"{port}:7999",
+            "-e",
+            "JAX_PLATFORM_NAME=cpu",
+            "-e",
+            "JAX_PLATFORMS=cpu",
+            "--platform",
+            _docker_platform(),
+            "cogniverse/videoprism:dev",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start VideoPrism sidecar: {result.stderr}")
+
+    # Cold-start: the JAX JIT trace can take 60-120s. /health returns 503
+    # until the model is loaded.
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        try:
+            r = requests.get(f"http://127.0.0.1:{port}/health", timeout=2)
+            if r.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(2)
+    else:
+        subprocess.run(
+            ["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True
+        )
+        pytest.fail("VideoPrism sidecar did not become ready within 300s")
+
+    try:
+        yield {"url": f"http://127.0.0.1:{port}", "port": port}
+    finally:
+        subprocess.run(
+            ["docker", "rm", "-f", VIDEOPRISM_CONTAINER], capture_output=True
+        )
+
+
 @pytest.mark.integration
 @pytest.mark.requires_vespa
 @pytest.mark.slow
@@ -533,6 +636,7 @@ class TestUploadRealStack:
     """``POST /ingestion/upload`` end-to-end with real Redis + MinIO +
     Vespa + worker + pipeline + actual video bytes."""
 
+    @_skip_no_videoprism
     @pytest.mark.asyncio
     async def test_upload_writes_to_minio_queues_runs_pipeline_and_lands_in_vespa(
         self, real_stack, worker_task, http_client
@@ -642,6 +746,7 @@ class TestUploadRealStack:
             f"now {vespa_doc_count_2}"
         )
 
+    @_skip_no_videoprism
     @pytest.mark.asyncio
     async def test_resubmit_same_source_url_hits_idempotency(
         self, real_stack, worker_task, http_client

@@ -374,6 +374,17 @@ def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon
     Mem0MemoryManager._instances.clear()
     BackendRegistry._backend_instances.clear()
 
+    # Refresh SystemConfig with the denseon URL so AgentDispatcher's
+    # memory auto-init (which reads ``system_config.inference_service_urls
+    # ["denseon"]``) finds the embedder. The base ``config_manager``
+    # fixture seeds SystemConfig before shared_denseon is up, so the URL
+    # would otherwise be missing and ``_init_agent_memory`` silently
+    # skips with a warning.
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["denseon"] = shared_denseon
+    config_manager.set_system_config(sys_cfg)
+
     mm = Mem0MemoryManager(tenant_id="test:unit")
     mm.initialize(
         backend_host="http://localhost",

@@ -43,8 +43,9 @@ dependencies = [
     "mem0ai==1.0.11",
     # Machine Learning
     "torch==2.8.0",
-    "jax==0.9.2",
-    "jaxlib==0.9.2",
+    # JAX/jaxlib used to live here for VideoPrism in-process inference;
+    # VideoPrism now runs in the dedicated `deploy/videoprism` sidecar
+    # and the JAX stack lives only in that image.
     "transformers==4.56.2",
     "colpali-engine==0.3.13",
     "pylate==1.4.0",
@@ -185,12 +186,6 @@ explicit = true
 cuda = ["torch", "torchvision"]
 rocm = ["torch", "torchvision", "pytorch-triton-rocm"]
 cpu = ["torch", "torchvision"]
-# VideoPrism in-process inference stack (flax / einops / einshape /
-# tensorflow). Heavy and platform-fragmented — tensorflow has no AMD
-# ROCm wheel and weak aarch64 support — so it's gated here. Run
-# `uv sync --extra videoprism` (combine with the GPU extra you need)
-# only on hosts that will run a VideoPrism profile.
-videoprism = ["cogniverse-runtime[videoprism]"]
 dev = [
     # Linting and Code Quality
     "ruff>=0.4.0",
