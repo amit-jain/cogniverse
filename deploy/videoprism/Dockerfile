@@ -33,9 +33,19 @@ RUN pip install --no-cache-dir \
         tensorflow==2.20.0 \
         tf-keras==2.20.1
 
-# Install the upstream VideoPrism Python package (model + checkpoint loaders).
-# Pinned via git ref to keep image builds reproducible.
+# Install the upstream VideoPrism Python package (model + checkpoint
+# loaders). Pinned via git ref to keep image builds reproducible.
+# ``--no-deps`` skips the package's own ``tensorflow-cpu`` pin (which
+# has no aarch64 wheel on PyPI) — the full ``tensorflow`` install above
+# satisfies the actual runtime requirement, and the rest of the deps
+# (jax, flax, einops, einshape, huggingface_hub, sentencepiece) are
+# either pinned explicitly here or pulled in transitively. Install
+# huggingface_hub + sentencepiece explicitly since they're real runtime
+# deps videoprism uses for checkpoint downloads / tokeniser loading.
 RUN pip install --no-cache-dir \
+        huggingface-hub \
+        sentencepiece \
+    && pip install --no-cache-dir --no-deps \
         "videoprism @ git+https://github.com/google-deepmind/videoprism.git@main"
 
 COPY server.py ./

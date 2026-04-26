@@ -66,15 +66,32 @@ class VideoEmbeddingResponse(BaseModel):
 _MODEL: dict[str, Any] = {}
 
 
+_HF_SUFFIX_MAP = {
+    "videoprism_public_v1_base_hf": "videoprism_public_v1_base",
+    "videoprism_public_v1_large_hf": "videoprism_public_v1_large",
+    "videoprism_lvt_public_v1_base_hf": "videoprism_lvt_public_v1_base",
+    "videoprism_lvt_public_v1_large_hf": "videoprism_lvt_public_v1_large",
+}
+
+
 def _load_videoprism(model_name: str) -> None:
     """Build the JAX model + load pretrained weights once at startup. Heavy
     work — runs once and caches into module-level ``_MODEL``."""
     import jax
     from videoprism import models as vp
 
-    logger.info("Loading VideoPrism model: %s", model_name)
-    model = vp.get_model(model_name)
-    state = vp.load_pretrained_weights(model_name)
+    # The cogniverse codebase historically referred to VideoPrism
+    # checkpoints by their HuggingFace-cached aliases (``..._hf``); the
+    # upstream package's MODELS dict uses the bare names. Map back so
+    # callers can keep using the legacy aliases without changing config.
+    upstream_name = _HF_SUFFIX_MAP.get(model_name, model_name)
+    logger.info(
+        "Loading VideoPrism model: %s (upstream alias: %s)",
+        model_name,
+        upstream_name,
+    )
+    model = vp.get_model(upstream_name)
+    state = vp.load_pretrained_weights(upstream_name)
 
     def _forward(frames):
         embeddings, _ = model.apply(state, frames, train=False)
