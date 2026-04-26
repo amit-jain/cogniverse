@@ -596,7 +596,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "VLMDescriptionStrategy",
@@ -810,7 +810,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -867,7 +867,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -923,7 +923,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -982,7 +982,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -1040,7 +1040,7 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {"model": "base", "inference_service": "whisper"}
           },
           "description": {
             "class": "NoDescriptionStrategy",
