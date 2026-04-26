@@ -89,17 +89,47 @@ Return the proper image name
 {{- end -}}
 
 {{/*
-LLM endpoint URL. Prefers llm.external.url when external is enabled,
-otherwise derives the in-cluster service URL from the builtin LLM.
-Used by the config.json ConfigMap so DSPy/Ollama clients hit the
-deployed endpoint rather than the localhost default baked into config.json.
+LLM endpoint URL. Resolves to the right host:port based on llm.engine:
+  - external → llm.external.url (required)
+  - vllm     → in-cluster service on llm.vllm.service.port
+  - ollama   → in-cluster service on llm.ollama.service.port
+Single source of truth for every consumer (runtime, agents, init jobs,
+optimization workflows) so the URL never drifts between sites.
 */}}
 {{- define "cogniverse.llmEndpoint" -}}
-{{- if .Values.llm.external.enabled -}}
-{{- required "llm.external.url is required when llm.external.enabled=true" .Values.llm.external.url -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if eq $engine "external" -}}
+{{- required "llm.external.url is required when llm.engine=external" .Values.llm.external.url -}}
+{{- else if eq $engine "vllm" -}}
+{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.vllm.service.port) -}}
+{{- else if eq $engine "ollama" -}}
+{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.ollama.service.port) -}}
 {{- else -}}
-{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.builtin.service.port) -}}
+{{- fail (printf "llm.engine must be one of [ollama, vllm, external], got %q" $engine) -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+DSPy / litellm prefix for ``llm.model`` based on engine. The runtime joins
+this with llm.model to construct the dspy.LM model string. ollama needs
+the ``ollama_chat/`` prefix specifically (not ``ollama/`` — that targets
+the legacy non-chat completion API).
+*/}}
+{{- define "cogniverse.llmDspyPrefix" -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if eq $engine "vllm" -}}hosted_vllm
+{{- else if eq $engine "external" -}}openai
+{{- else -}}ollama_chat
+{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the chart should deploy an in-cluster LLM pod (true for engine
+ollama / vllm; false for engine external).
+*/}}
+{{- define "cogniverse.llmDeploysPod" -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if or (eq $engine "ollama") (eq $engine "vllm") -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -124,7 +154,13 @@ worker tasks) reaches the in-cluster service rather than localhost.
 Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "cogniverse.imagePullSecrets" -}}
-{{- include "common.images.pullSecrets" (dict "images" (list .Values.image .Values.vespa.image .Values.phoenix.image .Values.llm.builtin.image) "global" .Values.global) -}}
+{{- $llmImage := dict -}}
+{{- if eq (.Values.llm.engine | default "ollama") "vllm" -}}
+{{- $llmImage = .Values.llm.vllm.image -}}
+{{- else if eq (.Values.llm.engine | default "ollama") "ollama" -}}
+{{- $llmImage = .Values.llm.ollama.image -}}
+{{- end -}}
+{{- include "common.images.pullSecrets" (dict "images" (list .Values.image .Values.vespa.image .Values.phoenix.image $llmImage) "global" .Values.global) -}}
 {{- end -}}
 
 {{/*

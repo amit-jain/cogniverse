@@ -264,17 +264,13 @@ spec:
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
         - name: OLLAMA_API_BASE
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         resources:
           requests:
             cpu: "2"
@@ -331,11 +327,7 @@ spec:
           - "--phoenix-url"
           - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
           - "--llm-base-url"
-          {{- if .Values.llm.external.enabled }}
-          - {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          - "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          - {{ include "cogniverse.llmEndpoint" . | quote }}
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
           - "--argo-url"

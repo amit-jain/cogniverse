@@ -183,9 +183,9 @@ phoenix:
       memory: "4Gi"
 
 llm:
-  builtin:
-    gpu:
-      enabled: false
+  engine: ollama
+  device: cpu
+  ollama:
     service:
       type: NodePort
     persistence:
@@ -195,7 +195,7 @@ llm:
     # per conversation. Under orchestration load (detailed_report_agent fires
     # multiple agents → multiple LLM calls → parallel context windows) a
     # 16Gi cap OOMKilled and hung the complex-query e2e path. 20Gi covers
-    # gemma4:e2b + concurrent conversation context on CPU. requests == limits
+    # gemma3:4b + concurrent conversation context on CPU. requests == limits
     # puts the pod in Guaranteed memory QoS — under node pressure Ollama
     # cannot be evicted for exceeding its request baseline.
     resources:

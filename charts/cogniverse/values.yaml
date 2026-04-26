@@ -434,33 +434,44 @@ phoenix:
 # ===========================================
 # LLM Inference Configuration
 # ===========================================
+# One deployment-time switch picks both the in-cluster pod (if any) and
+# the DSPy/litellm prefix the runtime applies to ``llm.model``:
+#
+#   engine: ollama   → deploys ollama/ollama, runtime uses ``ollama_chat/<model>``
+#   engine: vllm     → deploys vllm-openai (CPU/GPU per ``device``),
+#                      runtime uses ``hosted_vllm/<model>``
+#   engine: external → no pod; runtime points at ``external.url``
+#                      and uses ``openai/<model>`` (any OAI-compatible host)
+#
+# Both Ollama (≥0.3) and vLLM expose ``/v1/chat/completions``, so the
+# rest of the runtime (mem0, agent dispatch) is engine-agnostic.
 llm:
-  # Deploy builtin Ollama pod
-  builtin:
-    enabled: true
+  engine: ollama                # ollama | vllm | external
+  model: gemma3:4b              # bare model id; helper prepends DSPy prefix
+  device: cpu                   # cpu | cuda | rocm | mps (vllm only)
+  gpuCount: 1
+  replicaCount: 1
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # ---------------------------------------------------------------
+  # engine: ollama — built-in Ollama pod (StatefulSet + PVC)
+  # ---------------------------------------------------------------
+  ollama:
     image:
       repository: ollama/ollama
       tag: "0.20.5"
       pullPolicy: IfNotPresent
-    replicaCount: 1
-    resources:
-      limits:
-        cpu: "8"
-        memory: "16Gi"
-      requests:
-        cpu: "4"
-        memory: "8Gi"
-    gpu:
-      enabled: false  # true for enterprise with NVIDIA GPUs
+    service:
+      type: ClusterIP
+      port: 11434
+      annotations: {}
     persistence:
       enabled: true
       storageClass: ""
       accessMode: ReadWriteOnce
       size: "100Gi"
-      annotations: {}
-    service:
-      type: ClusterIP
-      port: 11434
       annotations: {}
     env:
       OLLAMA_HOST: "0.0.0.0:11434"
@@ -470,9 +481,18 @@ llm:
       # reloading it on the next request takes 60-120s and causes spurious
       # test timeouts.
       OLLAMA_KEEP_ALIVE: "-1"
+    # Models pulled by the post-install init job (only when engine=ollama).
+    # vLLM downloads on first request via HF cache instead.
     models:
-      - "gemma4:e2b"
+      - "gemma3:4b"
       - "nomic-embed-text"
+    resources:
+      limits:
+        cpu: "8"
+        memory: "16Gi"
+      requests:
+        cpu: "4"
+        memory: "8Gi"
     livenessProbe:
       httpGet:
         path: /api/tags
@@ -489,13 +509,69 @@ llm:
       periodSeconds: 20
       timeoutSeconds: 5
       failureThreshold: 3
-    nodeSelector: {}
-    tolerations: []
-    affinity: {}
-  # External LLM endpoint (any URL — Ollama, vLLM, etc.)
+
+  # ---------------------------------------------------------------
+  # engine: vllm — vLLM-OpenAI Deployment (one pod, one model)
+  # ---------------------------------------------------------------
+  # On CPU laptops vLLM is overpowered for chat — prefer engine=ollama.
+  # Use vllm in production on CUDA / ROCm GPUs (see values.cuda.yaml,
+  # values.rocm.yaml). Both Ollama and vLLM expose /v1/chat/completions
+  # so the runtime path is identical.
+  vllm:
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
+      pullPolicy: IfNotPresent
+    # Per-device image override; chart picks ``imagesByDevice[device]`` if
+    # present, else falls back to ``image`` above. Set in values.cuda.yaml /
+    # values.rocm.yaml for GPU images. Keys: cpu, cuda, rocm, mps.
+    imagesByDevice: {}
+    service:
+      type: ClusterIP
+      port: 8000
+      annotations: {}
+    # HuggingFace cache PVC so model weights survive pod restarts.
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: "100Gi"
+      annotations: {}
+    dtype: float16                 # float16 on CUDA, bfloat16 on newer GPUs
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
+    resources:
+      limits:
+        cpu: "8"
+        memory: "32Gi"
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+    # Model load on a fresh PVC takes minutes for 7B-class checkpoints;
+    # generous start-period prevents liveness flapping during cold start.
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 300
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 120
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 10
+
+  # ---------------------------------------------------------------
+  # engine: external — point at a host-side or third-party endpoint
+  # ---------------------------------------------------------------
   external:
-    enabled: false
-    url: ""
+    url: ""                       # e.g. http://host.docker.internal:11434
 
 # ===========================================
 # Inference Services (embedding models)
@@ -945,9 +1021,12 @@ config:
       name: "colqwen/colqwen2-omni"
       device: "cuda"
 
-  # LLM models to pull (references llm.builtin.models)
+  # Documentation-only list of LLM model IDs the deployment expects to
+  # have available. Actual model pulling on engine=ollama happens via
+  # llm.ollama.models (see init-jobs.yaml). vLLM downloads on first
+  # request to /v1/chat/completions.
   llmModels:
-    - "qwen3:4b"
+    - "gemma3:4b"
 
 # ===========================================
 # Init Jobs

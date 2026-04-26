@@ -258,20 +258,16 @@ spec:
         - name: TRANSFORMERS_CACHE
           value: "/home/cogniverse/.cache/huggingface"
         - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
         - name: OLLAMA_API_BASE
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         # Route semantic text embeddings to the dedicated vLLM dense pod
         # when enabled (continuous batching, ~10 rps under load). Falls
-        # back to the shared Ollama endpoint when the dedicated pod is
+        # back to the shared LLM endpoint when the dedicated pod is
         # disabled.
         {{- if .Values.inference.dense_vllm.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
@@ -280,11 +276,7 @@ spec:
           value: {{ .Values.inference.dense_vllm.model | quote }}
         {{- else }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         - name: COGNIVERSE_SEMANTIC_EMBED_MODEL
           value: "nomic-embed-text"
         {{- end }}
@@ -425,11 +417,7 @@ spec:
         - "--phoenix-url"
         - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - "--llm-base-url"
-        {{- if .Values.llm.external.enabled }}
-        - {{ .Values.llm.external.url | quote }}
-        {{- else }}
-        - "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-        {{- end }}
+        - {{ include "cogniverse.llmEndpoint" . | quote }}
         - "--golden-interval"
         - {{ .Values.runtime.qualityMonitor.goldenIntervalSeconds | quote }}
         - "--live-interval"
@@ -452,11 +440,11 @@ spec:
         - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
         resources:
           {{- toYaml .Values.runtime.qualityMonitor.resources | nindent 10 }}
         volumeMounts:
@@ -631,23 +619,15 @@ spec:
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
         - name: OLLAMA_API_BASE
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         - name: OLLAMA_HOST
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
         {{- range $key, $value := .Values.dashboard.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
@@ -846,8 +826,14 @@ spec:
     app.kubernetes.io/component: phoenix
 {{- end }}
 ---
-# LLM Builtin (Ollama) StatefulSet
-{{- if .Values.llm.builtin.enabled }}
+# LLM pod — branched on llm.engine. Ollama (StatefulSet, /api/tags
+# health, model auto-pulled by post-install init job) or vLLM (Deployment,
+# /health, model downloaded on first request to /v1/chat/completions).
+# engine=external deploys nothing; runtime points at llm.external.url.
+{{- $llmEngine := .Values.llm.engine | default "ollama" }}
+{{- $llmDevice := .Values.llm.device | default "cpu" }}
+{{- if eq $llmEngine "ollama" }}
+{{- $ollama := .Values.llm.ollama }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -857,7 +843,7 @@ metadata:
     app.kubernetes.io/component: llm
 spec:
   serviceName: {{ $fullName }}-llm
-  replicas: {{ .Values.llm.builtin.replicaCount }}
+  replicas: {{ .Values.llm.replicaCount }}
   selector:
     matchLabels:
       {{- include "cogniverse.selectorLabels" . | nindent 6 }}
@@ -877,78 +863,96 @@ spec:
         runAsUser: 0
       containers:
       - name: llm
-        image: "{{ .Values.llm.builtin.image.repository }}:{{ .Values.llm.builtin.image.tag }}"
-        imagePullPolicy: {{ .Values.llm.builtin.image.pullPolicy }}
+        image: "{{ $ollama.image.repository }}:{{ $ollama.image.tag }}"
+        imagePullPolicy: {{ $ollama.image.pullPolicy }}
         ports:
         - name: http
           containerPort: 11434
         env:
-        {{- range $key, $value := .Values.llm.builtin.env }}
+        {{- range $key, $value := $ollama.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}
         {{- end }}
         livenessProbe:
-          {{- toYaml .Values.llm.builtin.livenessProbe | nindent 10 }}
+          {{- toYaml $ollama.livenessProbe | nindent 10 }}
         readinessProbe:
-          {{- toYaml .Values.llm.builtin.readinessProbe | nindent 10 }}
+          {{- toYaml $ollama.readinessProbe | nindent 10 }}
         resources:
-          {{- toYaml .Values.llm.builtin.resources | nindent 10 }}
-          {{- if .Values.llm.builtin.gpu.enabled }}
-          limits:
-            nvidia.com/gpu: "1"
+          {{- $base := $ollama.resources | default dict }}
+          {{- $baseLimits := $base.limits | default dict }}
+          {{- $baseRequests := $base.requests | default dict }}
+          {{- $gpuLimits := dict }}
+          {{- if eq $llmDevice "cuda" }}
+          {{- $gpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.llm.gpuCount)) }}
+          {{- else if eq $llmDevice "rocm" }}
+          {{- $gpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.llm.gpuCount)) }}
           {{- end }}
+          limits:
+            {{- toYaml (merge $gpuLimits $baseLimits) | nindent 12 }}
+          requests:
+            {{- toYaml $baseRequests | nindent 12 }}
         volumeMounts:
         - name: data
           mountPath: /root/.ollama
-      {{- if .Values.llm.builtin.gpu.enabled }}
+      {{- if eq $llmDevice "cuda" }}
       nodeSelector:
         nvidia.com/gpu.present: "true"
-        {{- with .Values.llm.builtin.nodeSelector }}
+        {{- with .Values.llm.nodeSelector }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       tolerations:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
-        {{- with .Values.llm.builtin.tolerations }}
+        {{- with .Values.llm.tolerations }}
+        {{- toYaml . | nindent 6 }}
+        {{- end }}
+      {{- else if eq $llmDevice "rocm" }}
+      nodeSelector:
+        amd.com/gpu.present: "true"
+        {{- with .Values.llm.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      tolerations:
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+        {{- with .Values.llm.tolerations }}
         {{- toYaml . | nindent 6 }}
         {{- end }}
       {{- else }}
-      {{- with .Values.llm.builtin.nodeSelector }}
+      {{- with .Values.llm.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.llm.builtin.tolerations }}
+      {{- with .Values.llm.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- end }}
-      {{- with .Values.llm.builtin.affinity }}
+      {{- with .Values.llm.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.llm.builtin.persistence.enabled }}
+  {{- if $ollama.persistence.enabled }}
   volumeClaimTemplates:
   - metadata:
       name: data
-      {{- with .Values.llm.builtin.persistence.annotations }}
+      {{- with $ollama.persistence.annotations }}
       annotations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
       accessModes:
-        - {{ .Values.llm.builtin.persistence.accessMode }}
-      {{- if .Values.llm.builtin.persistence.storageClass }}
-      storageClassName: {{ .Values.llm.builtin.persistence.storageClass }}
+        - {{ $ollama.persistence.accessMode }}
+      {{- if $ollama.persistence.storageClass }}
+      storageClassName: {{ $ollama.persistence.storageClass }}
       {{- end }}
       resources:
         requests:
-          storage: {{ .Values.llm.builtin.persistence.size }}
+          storage: {{ $ollama.persistence.size }}
   {{- end }}
-{{- end }}
 ---
-# LLM Service
-{{- if .Values.llm.builtin.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -956,20 +960,189 @@ metadata:
   labels:
     {{- include "cogniverse.labels" . | nindent 4 }}
     app.kubernetes.io/component: llm
-  {{- with .Values.llm.builtin.service.annotations }}
+  {{- with $ollama.service.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.llm.builtin.service.type }}
+  type: {{ $ollama.service.type }}
   ports:
-  - port: {{ .Values.llm.builtin.service.port }}
+  - port: {{ $ollama.service.port }}
     targetPort: http
     protocol: TCP
     name: http
-    {{- if eq .Values.llm.builtin.service.type "NodePort" }}
-    nodePort: {{ .Values.llm.builtin.service.port }}
+    {{- if eq $ollama.service.type "NodePort" }}
+    nodePort: {{ $ollama.service.port }}
     {{- end }}
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+{{- else if eq $llmEngine "vllm" }}
+{{- $vllm := .Values.llm.vllm }}
+{{- $vllmImageDefault := $vllm.image }}
+{{- $vllmImageOverride := dict }}
+{{- if $vllm.imagesByDevice }}
+{{- $vllmImageOverride = (index $vllm.imagesByDevice $llmDevice) }}
+{{- end }}
+{{- $vllmImage := default $vllmImageDefault $vllmImageOverride }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-llm
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+spec:
+  replicas: {{ .Values.llm.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: llm
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: llm
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: llm
+        image: "{{ $vllmImage.repository }}:{{ $vllmImage.tag }}"
+        imagePullPolicy: {{ $vllmImage.pullPolicy }}
+        args:
+          - "--model"
+          - {{ .Values.llm.model | quote }}
+          - "--port"
+          - {{ $vllm.service.port | quote }}
+          - "--dtype"
+          - {{ $vllm.dtype | quote }}
+          {{- range $vllm.extraArgs }}
+          - {{ . | quote }}
+          {{- end }}
+        ports:
+        - name: http
+          containerPort: {{ $vllm.service.port }}
+        env:
+        - name: HF_HOME
+          value: /cache/huggingface
+        livenessProbe:
+          {{- toYaml $vllm.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml $vllm.readinessProbe | nindent 10 }}
+        resources:
+          {{- $base := $vllm.resources | default dict }}
+          {{- $baseLimits := $base.limits | default dict }}
+          {{- $baseRequests := $base.requests | default dict }}
+          {{- $gpuLimits := dict }}
+          {{- if eq $llmDevice "cuda" }}
+          {{- $gpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.llm.gpuCount)) }}
+          {{- else if eq $llmDevice "rocm" }}
+          {{- $gpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.llm.gpuCount)) }}
+          {{- end }}
+          limits:
+            {{- toYaml (merge $gpuLimits $baseLimits) | nindent 12 }}
+          requests:
+            {{- toYaml $baseRequests | nindent 12 }}
+        volumeMounts:
+        - name: cache
+          mountPath: /cache
+      {{- if eq $llmDevice "cuda" }}
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+        {{- with .Values.llm.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+        {{- with .Values.llm.tolerations }}
+        {{- toYaml . | nindent 6 }}
+        {{- end }}
+      {{- else if eq $llmDevice "rocm" }}
+      nodeSelector:
+        amd.com/gpu.present: "true"
+        {{- with .Values.llm.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      tolerations:
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+        {{- with .Values.llm.tolerations }}
+        {{- toYaml . | nindent 6 }}
+        {{- end }}
+      {{- else }}
+      {{- with .Values.llm.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.llm.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.llm.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: cache
+      {{- if $vllm.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-llm-cache
+      {{- else }}
+        emptyDir:
+          sizeLimit: {{ $vllm.persistence.size | default "50Gi" }}
+      {{- end }}
+{{- if $vllm.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-llm-cache
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+  {{- with $vllm.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ $vllm.persistence.accessMode }}
+  {{- if $vllm.persistence.storageClass }}
+  storageClassName: {{ $vllm.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $vllm.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-llm
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: llm
+  {{- with $vllm.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $vllm.service.type }}
+  ports:
+  - port: {{ $vllm.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: llm
@@ -1444,11 +1617,11 @@ spec:
         - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
-          {{- if .Values.llm.external.enabled }}
-          value: {{ .Values.llm.external.url | quote }}
-          {{- else }}
-          value: "http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
-          {{- end }}
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
         {{- range $key, $value := .Values.messaging.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

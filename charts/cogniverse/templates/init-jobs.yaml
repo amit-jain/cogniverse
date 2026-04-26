@@ -61,7 +61,7 @@ spec:
         resources:
           {{- toYaml .Values.initJobs.schemaDeployment.resources | nindent 10 }}
 {{- end }}
-{{- if and .Values.initJobs.modelPulling.enabled .Values.llm.builtin.enabled -}}
+{{- if and .Values.initJobs.modelPulling.enabled (eq (.Values.llm.engine | default "ollama") "ollama") -}}
 ---
 # Model Pulling Job
 # Only runs when builtin LLM is deployed. Pulls configured models.
@@ -98,7 +98,7 @@ spec:
           - -c
           - |
             set -e
-            LLM_URL="http://{{ $fullName }}-llm:{{ .Values.llm.builtin.service.port }}"
+            LLM_URL={{ include "cogniverse.llmEndpoint" . | quote }}
 
             echo "Waiting for LLM to be ready..."
             until curl -sf "$LLM_URL/api/tags" > /dev/null 2>&1; do
@@ -108,7 +108,7 @@ spec:
             echo "LLM is ready!"
 
             echo "Pulling LLM models..."
-            {{- range .Values.llm.builtin.models }}
+            {{- range .Values.llm.ollama.models }}
             echo "  Pulling model: {{ . }}"
             curl -s -X POST "$LLM_URL/api/pull" \
               -H "Content-Type: application/json" \
