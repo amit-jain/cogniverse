@@ -225,12 +225,19 @@ def k3d_cluster():
     if _cluster_exists():
         _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
-    # Create cluster with offset port mappings. The main chart declares
-    # NodePort services with fixed ports in the 26xxx range (see
-    # ``values.k3s.yaml``), but Kubernetes' default NodePort range is
-    # 30000-32767 — so Helm install fails with "provided port is not in
-    # the valid range" unless we widen the range via k3s-arg. This
-    # matches ``cogniverse_cli.cluster.create_cluster``.
+    # Create cluster. Widen NodePort range so the chart's >32767
+    # NodePorts (vespa 28080, runtime 28000, etc.) install — k8s
+    # default range is 30000-32767. Matches
+    # ``cogniverse_cli.cluster.create_cluster``.
+    #
+    # No ``-p`` loadbalancer mappings: this fixture accesses services
+    # via ``kubectl port-forward`` (host ports 51xxx, see ``PORTS``),
+    # which bypasses NodePort routing. Adding ``-p 51000:51000@lb``
+    # would reserve host:51000 on docker side and then collide with
+    # port-forward's bind on the same port — last incident: every
+    # ``deployed_stack`` HTTP test failed with
+    # ``httpx.RemoteProtocolError`` because port-forward died with
+    # ``bind: address already in use``.
     cmd = [
         "k3d",
         "cluster",
@@ -239,8 +246,6 @@ def k3d_cluster():
         "--k3s-arg",
         "--service-node-port-range=1-65535@server:0",
     ]
-    for port in PORTS.values():
-        cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
 
     # GPU passthrough — k3d nodes are docker containers, so the host's
     # GPU device files have to be mounted in for any in-cluster device
