@@ -813,6 +813,65 @@ inference:
       failureThreshold: 10
 
 # ===========================================
+# Whisper ASR sidecar (deploy/whisper)
+# ===========================================
+# Whisper transcription was previously loaded in-process inside the
+# runtime pod (AudioTranscriptionStrategy). Externalizing into a
+# dedicated pod keeps runtime light and lets ASR scale independently.
+#
+# Engine pluggable via ``engine``:
+#   - faster-whisper: CTranslate2 backend; CPU and CUDA.
+#                     Image: cogniverse/whisper-fw (deploy/whisper/Dockerfile).
+#   - whisperx:       PyTorch-based; required on AMD ROCm.
+#                     Image: cogniverse/whisper-wx (Dockerfile.wx, stub).
+#   - whisper-cpp:    whisper.cpp; lightweight, useful for Apple Silicon.
+#                     Image: cogniverse/whisper-cpp (Dockerfile.cpp, stub).
+#
+# Profiles route here via ``transcription`` strategy class
+# ``RemoteWhisperTranscriptionStrategy(endpoint=...)`` (Phase 2b).
+whisper:
+  enabled: false                  # flip to true to deploy the pod
+  engine: faster-whisper          # faster-whisper | whisperx | whisper-cpp
+  model: base                     # base | small | medium | large-v3
+  device: cpu                     # cpu | cuda | rocm | mps
+  gpuCount: 1
+  nodeSelector: {}
+  tolerations: []
+  image:
+    repository: cogniverse/whisper-fw
+    tag: dev
+    pullPolicy: IfNotPresent
+  imagesByDevice: {}              # map keyed by device → per-device image override
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 7998
+    nodePort: 29005
+  resources:
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 7998
+    initialDelaySeconds: 180
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 10
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 7998
+    initialDelaySeconds: 60
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 5
+
+# ===========================================
 # Messaging Gateway (Telegram/Slack)
 # ===========================================
 messaging:
