@@ -1207,6 +1207,25 @@ spec:
         {{- toYaml $userTolerations | nindent 8 }}
       {{- end }}
       {{- end }}
+      {{- /*
+           Pod anti-affinity: when scaling beyond a single replica, prefer
+           that replicas land on different nodes so a single-node failure
+           doesn't drop all of one inference stack. preferredDuringScheduling
+           rather than requiredDuringScheduling so the pod still schedules
+           on a node-poor cluster (e.g. k3d laptop, single-node prod).
+      */ -}}
+      {{- if and $cfg.replicaCount (gt (int $cfg.replicaCount) 1) }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "cogniverse.selectorLabels" $ | nindent 18 }}
+                  app.kubernetes.io/component: inference-{{ $name }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
