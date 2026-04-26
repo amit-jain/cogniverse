@@ -41,7 +41,14 @@ def ollama_instance():
 
 @pytest.fixture
 def visual_judge(ollama_instance, tmp_path, monkeypatch):
-    """Construct ConfigurableVisualJudge wired to the test Ollama + a fresh cache."""
+    """Construct ConfigurableVisualJudge wired to the test Ollama + a fresh cache.
+
+    Patches BOTH the lazily-imported ``create_default_config_manager`` (called
+    inside ``evaluate``) and the module-level ``get_config`` so the judge runs
+    without needing the project's ``configs/config.json`` reachable on disk.
+    """
+    from unittest.mock import MagicMock
+
     from cogniverse_core.common.media import (
         MediaCacheConfig,
         MediaConfig,
@@ -52,8 +59,6 @@ def visual_judge(ollama_instance, tmp_path, monkeypatch):
         ConfigurableVisualJudge,
     )
 
-    # Patch the system-tenant evaluator config so the judge picks up the
-    # ephemeral Ollama endpoint and the moondream model.
     fake_config = {
         "evaluators": {
             "visual_judge": {
@@ -71,6 +76,10 @@ def visual_judge(ollama_instance, tmp_path, monkeypatch):
         "cogniverse_evaluation.evaluators.configurable_visual_judge.get_config",
         lambda **_: fake_config,
     )
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        lambda: MagicMock(),
+    )
 
     locator = MediaLocator(
         tenant_id=SYSTEM_TENANT_ID,
@@ -83,25 +92,49 @@ def visual_judge(ollama_instance, tmp_path, monkeypatch):
 @pytest.mark.requires_docker
 @pytest.mark.integration
 class TestVisualJudgeE2E:
-    def test_judge_resolves_source_url_and_returns_score(self, visual_judge, tmp_path):
-        """The judge must:
+    def test_judge_resolves_source_url_via_path_outside_legacy_dirs(
+        self, visual_judge, tmp_path
+    ):
+        """Source video lives at a tmp path with a unique filename, so the
+        legacy probe (``data/testset/...``, ``data/videos/``, ``outputs/videos/``)
+        cannot find it. Only the new ``source_url``-driven MediaLocator path
+        can resolve it.
 
-        - resolve ``source_url`` to a local file via the locator,
-        - extract frames into the locator-controlled cache,
-        - call the real Ollama LLM,
-        - return an ``EvaluationResult`` with a float score in [0, 1].
+        Hardened assertions confirm the LLM was actually invoked
+        (``frames_evaluated > 0`` + ``provider == "ollama"`` + a real label),
+        so a no_frames fallback returning score=0.0 cannot pass.
         """
         videos_dir = (
             Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
         )
-        videos = sorted(videos_dir.glob("*.mp4"))
-        if not videos:
+        sources = sorted(videos_dir.glob("*.mp4"))
+        if not sources:
             pytest.skip(f"No test videos under {videos_dir}")
 
-        clip = videos[0]
+        # Copy the test video to a tmp_path with a unique video_id that does
+        # NOT exist in any legacy probe directory. This is the load-bearing
+        # invariant: source_url is the ONLY path that can resolve this video.
+        unique_video_id = "cogniverse_e2e_judge_only_via_source_url"
+        clip = tmp_path / f"{unique_video_id}.mp4"
+        clip.write_bytes(sources[0].read_bytes())
+
+        # Invariant: confirm the unique filename exists nowhere a legacy probe
+        # would look. This sanity check fails fast if the test data layout
+        # changes in a way that compromises the assertion below.
+        legacy_dirs = {
+            Path("data/testset/evaluation/sample_videos"),
+            Path("data/videos"),
+            Path("outputs/videos"),
+        }
+        for legacy in legacy_dirs:
+            assert not (legacy / clip.name).exists(), (
+                f"Test invariant broken: {clip.name} exists under legacy probe "
+                f"path {legacy}."
+            )
+
         results = [
             {
-                "video_id": clip.stem,
+                "video_id": unique_video_id,
                 "score": 0.9,
                 "rank": 1,
                 "source_url": f"file://{clip.resolve()}",
@@ -116,18 +149,59 @@ class TestVisualJudgeE2E:
         )
 
         assert eval_result is not None
-        assert hasattr(eval_result, "score")
         assert isinstance(eval_result.score, float)
         assert 0.0 <= eval_result.score <= 1.0
-        # Judge should report frames evaluated and the provider used.
-        if hasattr(eval_result, "metadata") and eval_result.metadata:
-            assert eval_result.metadata.get("frames_evaluated", 0) > 0
-            assert eval_result.metadata.get("provider") == "ollama"
+        # Hardened: these assertions are unconditional. A no_frames fallback
+        # would have frames_evaluated == 0 and would fail here, distinguishing
+        # the new MediaLocator path from any legacy fallback.
+        assert eval_result.metadata is not None
+        assert eval_result.metadata.get("frames_evaluated", 0) > 0
+        assert eval_result.metadata.get("provider") == "ollama"
+        assert eval_result.label in {
+            "excellent_match",
+            "good_match",
+            "partial_match",
+            "poor_match",
+        }, (
+            f"Judge returned label={eval_result.label!r} suggesting it never "
+            f"reached the LLM; the new MediaLocator path is broken."
+        )
 
-    def test_judge_returns_no_frames_when_source_url_missing(self, visual_judge):
-        """Without source_url and without legacy probe (Phase 6 removed it),
-        the judge should report no_frames cleanly."""
-        results = [{"video_id": "no_such_video", "score": 0.5, "rank": 1}]
+    def test_legacy_dir_video_is_not_resolved_without_source_url(
+        self, visual_judge, tmp_path, monkeypatch
+    ):
+        """Pre-rollout code resolved video_id by globbing ``data/testset/...``.
+        Phase 6 removed that probe. This test plants a video at the legacy
+        location, omits source_url, and asserts the judge returns no_frames —
+        proving the legacy probe is gone.
+
+        On pre-Phase-6 code, the legacy probe would have FOUND the video and
+        the judge would have called the LLM, so this test would fail (score
+        would be a real LLM response, not 0.0/no_frames).
+        """
+        legacy_dir = tmp_path / "data" / "testset" / "evaluation" / "sample_videos"
+        legacy_dir.mkdir(parents=True)
+        # Use a real video so the old code path would actually have decoded it.
+        videos_dir = (
+            Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
+        )
+        source_videos = sorted(videos_dir.glob("*.mp4"))
+        if not source_videos:
+            pytest.skip(f"No test videos under {videos_dir}")
+        legacy_clip = legacy_dir / "legacy_visible.mp4"
+        legacy_clip.write_bytes(source_videos[0].read_bytes())
+
+        monkeypatch.chdir(tmp_path)
+
+        results = [
+            {
+                "video_id": "legacy_visible",
+                "score": 0.5,
+                "rank": 1,
+                # source_url deliberately omitted — pre-Phase-6 code would have
+                # found legacy_visible.mp4 via the data/testset/... probe.
+            }
+        ]
 
         eval_result = visual_judge.evaluate(
             input={"query": "anything"},
@@ -136,5 +210,8 @@ class TestVisualJudgeE2E:
 
         assert eval_result is not None
         assert eval_result.score == 0.0
-        if hasattr(eval_result, "label"):
-            assert eval_result.label in {"no_frames", "no_results"}
+        assert eval_result.label == "no_frames", (
+            f"Legacy probe is still active: judge returned {eval_result.label!r} "
+            f"(score={eval_result.score}) for a video discoverable only via the "
+            f"removed data/testset/... fallback."
+        )
