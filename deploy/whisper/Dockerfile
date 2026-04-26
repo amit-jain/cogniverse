@@ -23,8 +23,7 @@ RUN pip install --no-cache-dir \
 
 COPY server.py ./
 
-ENV WHISPER_ENGINE=faster-whisper \
-    MODEL_NAME=base \
+ENV MODEL_NAME=base \
     DEVICE=cpu \
     HOST=0.0.0.0 \
     PORT=7998 \

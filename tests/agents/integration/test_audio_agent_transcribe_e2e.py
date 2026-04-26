@@ -122,6 +122,10 @@ def whisper_sidecar():
             "MODEL_NAME=tiny",
             "-e",
             "DEVICE=cpu",
+            # No WHISPER_ENGINE env — engine is hardcoded by the image.
+            # cogniverse/whisper-fw is the faster-whisper variant; sibling
+            # images (cogniverse/whisper-wx, cogniverse/whisper-cpp) are
+            # selected by changing the IMAGE_TAG, not an env var.
             IMAGE_TAG,
         ],
         timeout=30,

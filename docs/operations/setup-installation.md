@@ -156,18 +156,21 @@ docker run -d --name ollama \
 
 `AudioAnalysisAgent.transcribe_audio` can run Whisper in-process or POST
 to a sidecar pod (`deploy/whisper`). The sidecar is the production path —
-keeps the agent engine-agnostic and lets you swap engines per host:
+keeps the agent engine-agnostic and lets the cluster swap engines per
+host. Engine selection happens at chart-render time (one image per
+engine, no runtime branch):
 
-| Engine | Backend | Image | Use when |
-|--------|---------|-------|----------|
-| `faster-whisper` | CTranslate2 (CPU + NVIDIA CUDA) | `cogniverse/whisper-fw` | Default. CPU laptops and CUDA GPUs. |
-| `whisperx` | PyTorch (incl. ROCm) | `cogniverse/whisper-wx` (stub) | AMD GPU hosts where CTranslate2 has no backend. |
-| `whisper-cpp` | whisper.cpp | `cogniverse/whisper-cpp` (stub) | Apple Silicon / constrained envs. |
+| Engine | Backend | Image | Status |
+|--------|---------|-------|--------|
+| `faster-whisper` | CTranslate2 (CPU + NVIDIA CUDA) | `cogniverse/whisper-fw` | Implemented (`deploy/whisper/Dockerfile`). |
+| `whisperx` | PyTorch (incl. ROCm) | `cogniverse/whisper-wx` | Not authored yet — selecting this engine fails at image pull. |
+| `whisper-cpp` | whisper.cpp | `cogniverse/whisper-cpp` | Not authored yet. |
 
-Build and run locally:
+Build and run the faster-whisper variant locally:
 
 ```bash
-# Build the faster-whisper variant from the canonical Dockerfile.
+# Build the canonical image. Each engine has its own Dockerfile —
+# this one bakes in faster-whisper; there's no runtime engine env.
 docker build -t cogniverse/whisper-fw:dev deploy/whisper
 
 # Run it. Persist the HuggingFace cache so model downloads survive
@@ -175,12 +178,12 @@ docker build -t cogniverse/whisper-fw:dev deploy/whisper
 docker run -d --name cogniverse-whisper \
   -p 7998:7998 \
   -v cogniverse-whisper-cache:/root/.cache/huggingface \
-  -e WHISPER_ENGINE=faster-whisper \
   -e MODEL_NAME=base \
   -e DEVICE=cpu \
   cogniverse/whisper-fw:dev
 
-# Smoke test: /health returns the engine + model identifier.
+# Smoke test: /health returns the engine + model identifier baked
+# into this image (ENGINE_NAME = "faster-whisper").
 curl -s http://localhost:7998/health
 # → {"status": "ok", "engine": "faster-whisper", "model": "base"}
 ```

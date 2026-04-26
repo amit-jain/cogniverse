@@ -956,18 +956,30 @@ inference:
 # runtime pod (AudioTranscriptionStrategy). Externalizing into a
 # dedicated pod keeps runtime light and lets ASR scale independently.
 #
-# Engine pluggable via ``engine``:
+# Engine selects the image at chart-render time. Each engine ships its
+# own image and its own server.py specialisation:
 #   - faster-whisper: CTranslate2 backend; CPU and CUDA.
 #                     Image: cogniverse/whisper-fw (deploy/whisper/Dockerfile).
 #   - whisperx:       PyTorch-based; required on AMD ROCm.
-#                     Image: cogniverse/whisper-wx (Dockerfile.wx, stub).
+#                     Image: cogniverse/whisper-wx (Dockerfile.wx,
+#                     not yet authored — selecting this engine before
+#                     the image lands will fail at image pull).
 #   - whisper-cpp:    whisper.cpp; lightweight, useful for Apple Silicon.
-#                     Image: cogniverse/whisper-cpp (Dockerfile.cpp, stub).
+#                     Image: cogniverse/whisper-cpp (Dockerfile.cpp,
+#                     not yet authored).
 #
-# Profiles route here via ``transcription`` strategy class
-# ``RemoteWhisperTranscriptionStrategy(endpoint=...)`` (Phase 2b).
+# Profiles route audio transcription through the sidecar by setting
+# ``inference_services.transcription: "whisper"`` at profile level —
+# StrategyFactory injects it into AudioTranscriptionStrategy and
+# ProcessorManager substitutes the URL.
 whisper:
   enabled: false                  # flip to true to deploy the pod
+  # Engine selects the image at chart-render time (not via an env var
+  # the pod reads). Each engine ships its own image with a matching
+  # server.py specialisation; setting an engine whose Dockerfile hasn't
+  # landed yet → ImagePullBackOff at deploy time, which is the correct
+  # signal. Sidecar Dockerfiles live alongside ``deploy/whisper/`` and
+  # the chart's image-by-engine map below points each one at its tag.
   engine: faster-whisper          # faster-whisper | whisperx | whisper-cpp
   model: base                     # base | small | medium | large-v3
   device: cpu                     # cpu | cuda | rocm | mps
@@ -978,7 +990,21 @@ whisper:
     repository: cogniverse/whisper-fw
     tag: dev
     pullPolicy: IfNotPresent
-  imagesByDevice: {}              # map keyed by device → per-device image override
+  # Per-engine image overrides — default to the canonical tag scheme.
+  # Keys MUST match the values that ``engine`` accepts.
+  imagesByEngine:
+    faster-whisper:
+      repository: cogniverse/whisper-fw
+      tag: dev
+      pullPolicy: IfNotPresent
+    whisperx:
+      repository: cogniverse/whisper-wx
+      tag: dev
+      pullPolicy: IfNotPresent
+    whisper-cpp:
+      repository: cogniverse/whisper-cpp
+      tag: dev
+      pullPolicy: IfNotPresent
   replicaCount: 1
   service:
     type: ClusterIP

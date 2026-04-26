@@ -1429,10 +1429,15 @@ spec:
 {{- if .Values.whisper.enabled }}
 {{- $whisper := .Values.whisper }}
 {{- $whisperDevice := default "cpu" $whisper.device }}
+{{- $whisperEngine := default "faster-whisper" $whisper.engine }}
+# Image is derived from the engine — each Whisper backend ships in its
+# own image. ``imagesByEngine`` lets values overrides target a single
+# engine without rewriting the whole image block; falls back to the
+# top-level ``image`` (faster-whisper default) when not provided.
 {{- $whisperImageDefault := $whisper.image }}
 {{- $whisperImageOverride := dict }}
-{{- if $whisper.imagesByDevice }}
-{{- $whisperImageOverride = (index $whisper.imagesByDevice $whisperDevice) }}
+{{- if $whisper.imagesByEngine }}
+{{- $whisperImageOverride = (index $whisper.imagesByEngine $whisperEngine) }}
 {{- end }}
 {{- $whisperImage := default $whisperImageDefault $whisperImageOverride }}
 {{- $whisperUserNodeSelector := $whisper.nodeSelector | default dict }}
@@ -1467,8 +1472,6 @@ spec:
         - name: http
           containerPort: {{ $whisper.service.port }}
         env:
-        - name: WHISPER_ENGINE
-          value: {{ $whisper.engine | quote }}
         - name: MODEL_NAME
           value: {{ $whisper.model | quote }}
         - name: DEVICE

@@ -1,18 +1,21 @@
 """FastAPI wrapper exposing a Whisper ASR model behind ``POST /v1/transcribe``.
 
-Pluggable engine selected at startup via the ``WHISPER_ENGINE`` env var:
+Each Whisper backend ships in its own image so engine selection happens
+at chart-template render time, not at runtime via env var. This file is
+the **faster-whisper variant** (image: ``cogniverse/whisper-fw``,
+``deploy/whisper/Dockerfile``) — it loads CTranslate2 directly and
+doesn't try to know about whisperx or whisper.cpp. Sibling images get
+their own ``server.py`` specialisations:
 
-  - ``faster-whisper`` (default): CTranslate2 backend, runs well on CPU
-    and CUDA. Image: ``cogniverse/whisper-fw``.
-  - ``whisperx``: PyTorch-based, used on AMD ROCm where CTranslate2 has
-    no backend. Image: ``cogniverse/whisper-wx``. (Stub raises until the
-    image and engine wiring are built.)
-  - ``whisper-cpp``: whisper.cpp C++ binding, used on Apple Silicon /
-    constrained environments. Image: ``cogniverse/whisper-cpp``. (Stub.)
+  - ``cogniverse/whisper-wx`` (``Dockerfile.wx``) — PyTorch-based whisperx,
+    required on AMD ROCm where CTranslate2 has no backend.
+  - ``cogniverse/whisper-cpp`` (``Dockerfile.cpp``) — whisper.cpp C++
+    binding, lightweight for Apple Silicon / constrained environments.
 
-Mirrors the ``deploy/colpali`` shape so the chart treats both the same:
-one pod, one model, env-var configuration, ``GET /health`` returns the
-model identifier so the runtime's inference health check can verify it.
+The chart's ``whisper.engine`` field picks which image to pull (see
+``charts/cogniverse/templates/all-resources.yaml``). A pod runs exactly
+one engine; ``GET /health`` returns the engine identifier so the runtime's
+inference health check can verify nobody mismatched image and config.
 
 Request shape (canonical):
 
@@ -42,6 +45,8 @@ logger = logging.getLogger("whisper_server")
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
 )
+
+ENGINE_NAME = "faster-whisper"
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +79,7 @@ class TranscribeResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Engine loaders
+# Engine
 # ---------------------------------------------------------------------------
 
 
@@ -100,18 +105,17 @@ def _load_faster_whisper(model_size: str, device: str) -> _Engine:
     from faster_whisper import WhisperModel
 
     # CTranslate2 compute_type: int8 on CPU is the standard small-footprint
-    # default; float16 on CUDA. ROCm isn't supported by CTranslate2 — that
-    # path raises NotImplementedError below and the deployer must use the
-    # whisperx engine.
+    # default; float16 on CUDA. ROCm has no CTranslate2 backend — deploy the
+    # whisperx image (Dockerfile.wx) instead.
     if device == "cpu":
         compute_type = "int8"
     elif device == "cuda":
         compute_type = "float16"
     else:
         raise NotImplementedError(
-            f"faster-whisper engine does not support device={device!r}. "
-            f"Use WHISPER_ENGINE=whisperx for ROCm, or "
-            f"WHISPER_ENGINE=whisper-cpp for Apple Silicon."
+            f"faster-whisper does not support device={device!r}. "
+            f"Use the whisperx image (cogniverse/whisper-wx) for ROCm, or "
+            f"the whisper-cpp image (cogniverse/whisper-cpp) for Apple Silicon."
         )
 
     logger.info(
@@ -123,7 +127,7 @@ def _load_faster_whisper(model_size: str, device: str) -> _Engine:
     model = WhisperModel(model_size, device=device, compute_type=compute_type)
 
     class FasterWhisperEngine(_Engine):
-        name = "faster-whisper"
+        name = ENGINE_NAME
         model_id = model_size
 
         def transcribe(
@@ -166,55 +170,14 @@ def _load_faster_whisper(model_size: str, device: str) -> _Engine:
     return FasterWhisperEngine()
 
 
-def _load_whisperx(model_size: str, device: str) -> _Engine:
-    """Load the whisperx backend (PyTorch). Required on ROCm.
-
-    Stub for now — image cogniverse/whisper-wx isn't built yet. When you
-    need ROCm, build the image with PyTorch-ROCm + whisperx and replace
-    this stub. The interface above (`_Engine`) is what the rest of the
-    server depends on.
-    """
-    raise NotImplementedError(
-        "whisperx engine is a stub. Build the cogniverse/whisper-wx image "
-        "(PyTorch-ROCm + whisperx) and implement this loader. See "
-        "deploy/whisper/Dockerfile.wx for the build recipe scaffold."
-    )
-
-
-def _load_whisper_cpp(model_size: str, device: str) -> _Engine:
-    """Load the whisper.cpp backend. Lightweight; useful on Apple Silicon.
-
-    Stub for now — image cogniverse/whisper-cpp isn't built yet.
-    """
-    raise NotImplementedError(
-        "whisper-cpp engine is a stub. Build the cogniverse/whisper-cpp image "
-        "(whisper.cpp + Python binding) and implement this loader. See "
-        "deploy/whisper/Dockerfile.cpp for the build recipe scaffold."
-    )
-
-
-_ENGINE_LOADERS = {
-    "faster-whisper": _load_faster_whisper,
-    "whisperx": _load_whisperx,
-    "whisper-cpp": _load_whisper_cpp,
-}
-
-
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
 
 
-def build_app(engine_name: str, model_size: str, device: str) -> FastAPI:
-    loader = _ENGINE_LOADERS.get(engine_name)
-    if loader is None:
-        raise ValueError(
-            f"Unknown WHISPER_ENGINE={engine_name!r}. "
-            f"Valid choices: {sorted(_ENGINE_LOADERS)}"
-        )
-
+def build_app(model_size: str, device: str) -> FastAPI:
     app = FastAPI(title="Whisper transcription", version="1.0")
-    engine = loader(model_size, device)
+    engine = _load_faster_whisper(model_size, device)
     app.state.engine = engine
 
     @app.get("/health")
@@ -257,13 +220,12 @@ def build_app(engine_name: str, model_size: str, device: str) -> FastAPI:
 def _main() -> None:
     import uvicorn
 
-    engine_name = os.environ.get("WHISPER_ENGINE", "faster-whisper")
     model_size = os.environ.get("MODEL_NAME", "base")
     device = os.environ.get("DEVICE", "cpu")
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "7998"))
 
-    app = build_app(engine_name, model_size, device)
+    app = build_app(model_size, device)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 

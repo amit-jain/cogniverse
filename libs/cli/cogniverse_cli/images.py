@@ -12,9 +12,11 @@ DASHBOARD_TAG = "cogniverse/dashboard:dev"
 PYLATE_TAG = "cogniverse/pylate:dev"
 COLPALI_TAG = "cogniverse/colpali:dev"
 # faster-whisper variant — chart's default whisper.image.repository is
-# ``cogniverse/whisper-fw``. Sibling images (``-wx`` for ROCm/whisperx,
-# ``-cpp`` for whisper.cpp) are stubs in deploy/whisper/server.py until
-# the corresponding Dockerfiles land.
+# ``cogniverse/whisper-fw``. Each engine ships its own image with a matching
+# server.py specialisation. ``-wx`` (PyTorch-ROCm + whisperx) and ``-cpp``
+# (whisper.cpp + binding) Dockerfiles aren't authored yet; once they land,
+# add the WHISPER_WX_TAG / WHISPER_CPP_TAG constants here and append their
+# build entries to ``build_images.workspace_builds``.
 WHISPER_TAG = "cogniverse/whisper-fw:dev"
 
 

@@ -248,9 +248,15 @@ whisper:
   engine: faster-whisper
   model: tiny  # smallest stable model; ~75MB first download
   device: cpu
-  image:
-    tag: "dev"
-    pullPolicy: Never  # k3d-imported tag, not on a registry
+  # Override the per-engine image entry (not the legacy top-level image)
+  # so pullPolicy=Never applies — the chart picks the image from
+  # imagesByEngine[engine] when that map is set, which it is in the
+  # default values.yaml.
+  imagesByEngine:
+    faster-whisper:
+      repository: cogniverse/whisper-fw
+      tag: "dev"
+      pullPolicy: Never  # k3d-imported tag, not on a registry
   resources:
     limits:
       cpu: "2"
