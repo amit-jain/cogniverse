@@ -538,6 +538,60 @@ class TestVespaRequired:
         ...
 ```
 
+### LLM-driven integration tests (`llm_endpoint` fixture)
+
+Tests that need a real LLM (visual judges, Inspect-AI eval tasks) consume
+the provider-agnostic ``llm_endpoint`` fixture defined in
+``tests/evaluation/integration/conftest.py``. The fixture resolves the
+endpoint from, in order:
+
+1. Env vars ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (required) and
+   ``COGNIVERSE_TEST_LLM_BASE_URL`` (optional — sets
+   ``OPENAI_BASE_URL`` / ``OLLAMA_HOST`` etc. for the chosen provider).
+2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
+   (gitignored; an ``test_llm.example.json`` is checked in).
+3. Otherwise, the fixture skips the test — there is no built-in default
+   provider, since different tests need chat vs. vision models and forcing
+   one would couple the test class to an implementation.
+
+Examples:
+
+```bash
+# Local Ollama with a vision-capable model, for the visual judge e2e:
+COGNIVERSE_TEST_LLM_PROVIDER_URI="ollama/moondream" \
+COGNIVERSE_TEST_LLM_BASE_URL="http://localhost:11434" \
+uv run pytest tests/evaluation/integration/test_visual_judge_e2e.py
+
+# OpenAI for inspect_eval-driven retrieval tests; OPENAI_API_KEY picked up
+# automatically by the provider SDK.
+COGNIVERSE_TEST_LLM_PROVIDER_URI="openai/gpt-4o-mini" \
+uv run pytest tests/evaluation/integration/test_end_to_end.py
+
+# vLLM behind an OpenAI-compatible proxy:
+COGNIVERSE_TEST_LLM_PROVIDER_URI="vllm/Qwen/Qwen2.5-7B-Instruct" \
+COGNIVERSE_TEST_LLM_BASE_URL="http://vllm.internal:8000/v1" \
+uv run pytest tests/evaluation/integration/
+```
+
+Test classes never reference any specific provider, model, or container
+manager — they only consume ``llm_endpoint["provider_uri"]`` and
+``llm_endpoint["base_url"]``. API keys are resolved by the provider SDK
+from its own conventional env var (``OPENAI_API_KEY``,
+``ANTHROPIC_API_KEY``, ...) — the test infrastructure does not
+re-implement that lookup.
+
+### MediaLocator-driven integration tests (`media_root_uri`)
+
+Tests that exercise the unified-MediaLocator rollout (ingestion, audio
+transcribe, visual judge) read media via ``MediaLocator`` instead of bare
+filesystem paths. The pipeline accepts a ``media_root_uri`` config (e.g.
+``s3://corpus/`` or ``file:///abs/path/``) that the locator joins with
+each video's relative path to produce the canonical ``source_url`` written
+into Vespa. See ``tests/ingestion/integration/test_pipeline_minio_round_trip.py``
+for the end-to-end pattern (MinIO docker fixture managed by
+``MinioTestManager``); the schema-level field is documented in
+``docs/modules/common.md`` under "MediaLocator".
+
 ---
 
 ## Test Coverage

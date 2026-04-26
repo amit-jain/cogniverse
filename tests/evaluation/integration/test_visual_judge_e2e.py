@@ -2,21 +2,22 @@
 
 Exercises the canonical chain the unified-MediaLocator rollout was built for:
 
-1. A real Vespa container (managed by ``eval_vespa_instance``) holds documents
-   with ``source_url`` set to the on-disk test videos via ``eval_seeded_documents``.
-2. A real Ollama container (managed by ``OllamaTestManager``) serves a small
-   multimodal model (``moondream``) at a tenant-scoped endpoint.
-3. ``ConfigurableVisualJudge`` is constructed against that endpoint and run
-   on result dicts shaped like the eval normalizer's output (with
-   ``source_url``, ``video_id``).
-4. The judge resolves ``source_url`` through ``MediaLocator``, extracts frames
-   from the local video, feeds them to Ollama, and returns a score.
+1. Test source video lives at a tmp path with a unique filename so neither
+   the (already-removed) legacy probe nor any other resolution path could
+   surface it — ``source_url`` on the result dict is the only thing that
+   works.
+2. ``ConfigurableVisualJudge`` is constructed against a user-supplied LLM
+   endpoint (provided by the ``llm_endpoint`` fixture in conftest) and run
+   on result dicts shaped like the eval normalizer's output.
+3. The judge resolves ``source_url`` through ``MediaLocator``, extracts
+   frames from the local video, feeds them to the configured LLM, and
+   returns a score.
 
-Asserts the judge returns a usable result object with a numeric score and
-non-empty frame extraction. No mocking the LLM, Vespa, or filesystem
-boundaries.
-
-Skips cleanly via ``requires_docker`` when Docker is unavailable.
+The test class does not reference any specific LLM provider, model, or
+container manager. Set ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (and optionally
+``COGNIVERSE_TEST_LLM_BASE_URL``) to point at a vision-capable model — see
+``conftest.py`` for the resolution chain. The test skips when no endpoint
+is configured.
 """
 
 from __future__ import annotations
@@ -25,27 +26,15 @@ from pathlib import Path
 
 import pytest
 
-from tests.system.ollama_test_manager import DEFAULT_MODEL, OllamaTestManager
-
-
-@pytest.fixture(scope="module")
-def ollama_instance():
-    """Start an Ollama container with the moondream multimodal model loaded."""
-    manager = OllamaTestManager(model=DEFAULT_MODEL)
-    instance = manager.start()
-    try:
-        yield instance
-    finally:
-        manager.stop()
-
 
 @pytest.fixture
-def visual_judge(ollama_instance, tmp_path, monkeypatch):
-    """Construct ConfigurableVisualJudge wired to the test Ollama + a fresh cache.
+def visual_judge(llm_endpoint, tmp_path, monkeypatch):
+    """Wire ``ConfigurableVisualJudge`` to ``llm_endpoint`` + a fresh cache.
 
     Patches BOTH the lazily-imported ``create_default_config_manager`` (called
-    inside ``evaluate``) and the module-level ``get_config`` so the judge runs
-    without needing the project's ``configs/config.json`` reachable on disk.
+    inside ``evaluate``) and the module-level ``get_config`` so the judge
+    runs without needing the project's ``configs/config.json`` reachable on
+    disk.
     """
     from unittest.mock import MagicMock
 
@@ -59,12 +48,17 @@ def visual_judge(ollama_instance, tmp_path, monkeypatch):
         ConfigurableVisualJudge,
     )
 
+    provider, model = llm_endpoint["provider_uri"].split("/", 1)
+
     fake_config = {
         "evaluators": {
             "visual_judge": {
-                "provider": "ollama",
-                "model": ollama_instance.model,
-                "base_url": ollama_instance.base_url,
+                "provider": provider,
+                "model": model,
+                "base_url": llm_endpoint["base_url"],
+                # Leave api_key unset; provider SDKs (litellm, openai,
+                # anthropic, ollama) auto-resolve from their standard env
+                # vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
                 "api_key": None,
                 "frames_per_video": 3,
                 "max_videos": 1,
@@ -89,7 +83,6 @@ def visual_judge(ollama_instance, tmp_path, monkeypatch):
     return ConfigurableVisualJudge(locator=locator)
 
 
-@pytest.mark.requires_docker
 @pytest.mark.integration
 class TestVisualJudgeE2E:
     def test_judge_resolves_source_url_via_path_outside_legacy_dirs(
