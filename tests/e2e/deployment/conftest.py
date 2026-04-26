@@ -355,6 +355,20 @@ def deployed_stack(k3d_cluster):
         f"runtime.backend={backend}",
         "--set",
         f"dashboard.backend={backend}",
+        # Disable devMode for e2e — values.k3s.yaml turns it on for the
+        # ``cogniverse up`` flow (host source mounted at /cogniverse-src
+        # into k3d via cluster-create --volume), but this test runs
+        # against built images and never edits source live. With devMode
+        # on but no workspace volume, runtime/dashboard/ingestor pods
+        # stay ContainerCreating forever on FailedMount of /cogniverse-src/*.
+        "--set",
+        "devMode.enabled=false",
+        # Same story for the openshell sandbox configmap/secret mounts —
+        # disabled by default in values.yaml; values.k3s.yaml leaves it
+        # off too, but the helm --set keeps it explicit so a future
+        # values change doesn't silently break the e2e.
+        "--set",
+        "runtime.sandbox.enabled=false",
         "--namespace",
         NAMESPACE,
         "--create-namespace",
