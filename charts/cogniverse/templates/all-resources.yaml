@@ -236,6 +236,17 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
+        {{- if eq $runtimeBackend "rocm" }}
+        # /dev/kfd and /dev/dri/renderD* on the host are owned by gid 992
+        # (render) and 44 (video) on Debian/Ubuntu. Pod runs as uid 1000
+        # which isn't in those groups inside the container, so without
+        # supplementalGroups the hostPath device files come through as
+        # root:render rw and the cogniverse user gets EACCES. Override
+        # via runtime.rocm.supplementalGroups for distros with different
+        # gids (Fedora render = 109, etc.).
+        supplementalGroups:
+          {{- toYaml (.Values.runtime.rocm.supplementalGroups | default (list 992 44)) | nindent 8 }}
+        {{- end }}
       containers:
       - name: runtime
         image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
@@ -371,17 +382,7 @@ spec:
         readinessProbe:
           {{- toYaml .Values.runtime.readinessProbe | nindent 10 }}
         resources:
-          {{- $runtimeBaseResources := .Values.runtime.resources | default dict }}
-          {{- $runtimeBaseLimits := dig "limits" dict $runtimeBaseResources }}
-          {{- $runtimeGpuLimits := dict }}
-          {{- if eq $runtimeBackend "cuda" }}
-          {{- $runtimeGpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.runtime.gpuCount)) }}
-          {{- else if eq $runtimeBackend "rocm" }}
-          {{- $runtimeGpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.runtime.gpuCount)) }}
-          {{- end }}
-          {{- $runtimeMergedLimits := merge $runtimeGpuLimits $runtimeBaseLimits }}
-          {{- $runtimeMergedResources := merge (dict "limits" $runtimeMergedLimits) $runtimeBaseResources }}
-          {{- toYaml $runtimeMergedResources | nindent 10 }}
+          {{- toYaml .Values.runtime.resources | nindent 10 }}
         volumeMounts:
         - name: config
           mountPath: /app/configs/config.json
@@ -389,6 +390,12 @@ spec:
           readOnly: true
         - name: model-cache
           mountPath: /home/cogniverse/.cache
+        {{- if eq $runtimeBackend "rocm" }}
+        - name: kfd
+          mountPath: /dev/kfd
+        - name: dri
+          mountPath: /dev/dri
+        {{- end }}
         {{- if .Values.runtime.sandbox.enabled }}
         {{- if .Values.runtime.sandbox.inCluster.enabled }}
         - name: openshell-client-tls
@@ -522,6 +529,21 @@ spec:
         emptyDir:
           sizeLimit: {{ .Values.runtime.modelCache.size | default "20Gi" }}
         {{- end }}
+      {{- if eq $runtimeBackend "rocm" }}
+      # ROCm device passthrough. The k3d cluster must mount /dev/kfd
+      # and /dev/dri from the host (deployment-e2e conftest does this
+      # via ``--volume`` flags on cluster create); these hostPath
+      # entries surface those nodes' device files into the pod so
+      # torch+rocm can talk to the GPU. Pod's containers must run with
+      # supplementalGroups including the host's render+video gids
+      # (``securityContext`` below) to satisfy /dev/kfd permissions.
+      - name: kfd
+        hostPath:
+          path: /dev/kfd
+      - name: dri
+        hostPath:
+          path: /dev/dri
+      {{- end }}
       {{- if .Values.runtime.qualityMonitor.enabled }}
       # Audit fix #1 — golden dataset for QualityMonitor sidecar.
       # ConfigMap is built by templates/configmap.yaml from
@@ -568,46 +590,16 @@ spec:
           path: {{ .Values.devMode.hostPath }}/data
           type: DirectoryOrCreate
       {{- end }}
-      {{- $runtimeUserNodeSelector := .Values.runtime.nodeSelector | default dict }}
-      {{- $runtimeUserTolerations := .Values.runtime.tolerations | default list }}
-      {{- if eq $runtimeBackend "cuda" }}
+      {{- with .Values.runtime.nodeSelector }}
       nodeSelector:
-        nvidia.com/gpu.present: "true"
-        {{- range $k, $v := $runtimeUserNodeSelector }}
-        {{ $k }}: {{ $v | quote }}
-        {{- end }}
-      tolerations:
-      - key: nvidia.com/gpu
-        operator: Exists
-        effect: NoSchedule
-      {{- range $runtimeUserTolerations }}
-      - {{ toYaml . | nindent 8 | trim }}
-      {{- end }}
-      {{- else if eq $runtimeBackend "rocm" }}
-      nodeSelector:
-        amd.com/gpu.present: "true"
-        {{- range $k, $v := $runtimeUserNodeSelector }}
-        {{ $k }}: {{ $v | quote }}
-        {{- end }}
-      tolerations:
-      - key: amd.com/gpu
-        operator: Exists
-        effect: NoSchedule
-      {{- range $runtimeUserTolerations }}
-      - {{ toYaml . | nindent 8 | trim }}
-      {{- end }}
-      {{- else }}
-      {{- if $runtimeUserNodeSelector }}
-      nodeSelector:
-        {{- toYaml $runtimeUserNodeSelector | nindent 8 }}
-      {{- end }}
-      {{- if $runtimeUserTolerations }}
-      tolerations:
-        {{- toYaml $runtimeUserTolerations | nindent 8 }}
-      {{- end }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.runtime.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.runtime.tolerations }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}
@@ -708,17 +700,7 @@ spec:
         readinessProbe:
           {{- toYaml .Values.dashboard.readinessProbe | nindent 10 }}
         resources:
-          {{- $dashboardBaseResources := .Values.dashboard.resources | default dict }}
-          {{- $dashboardBaseLimits := dig "limits" dict $dashboardBaseResources }}
-          {{- $dashboardGpuLimits := dict }}
-          {{- if eq $dashboardBackend "cuda" }}
-          {{- $dashboardGpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 .Values.dashboard.gpuCount)) }}
-          {{- else if eq $dashboardBackend "rocm" }}
-          {{- $dashboardGpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 .Values.dashboard.gpuCount)) }}
-          {{- end }}
-          {{- $dashboardMergedLimits := merge $dashboardGpuLimits $dashboardBaseLimits }}
-          {{- $dashboardMergedResources := merge (dict "limits" $dashboardMergedLimits) $dashboardBaseResources }}
-          {{- toYaml $dashboardMergedResources | nindent 10 }}
+          {{- toYaml .Values.dashboard.resources | nindent 10 }}
         volumeMounts:
         - name: config
           mountPath: /app/configs/config.json
@@ -744,46 +726,16 @@ spec:
           path: {{ .Values.devMode.hostPath }}/scripts
           type: Directory
       {{- end }}
-      {{- $dashboardUserNodeSelector := .Values.dashboard.nodeSelector | default dict }}
-      {{- $dashboardUserTolerations := .Values.dashboard.tolerations | default list }}
-      {{- if eq $dashboardBackend "cuda" }}
+      {{- with .Values.dashboard.nodeSelector }}
       nodeSelector:
-        nvidia.com/gpu.present: "true"
-        {{- range $k, $v := $dashboardUserNodeSelector }}
-        {{ $k }}: {{ $v | quote }}
-        {{- end }}
-      tolerations:
-      - key: nvidia.com/gpu
-        operator: Exists
-        effect: NoSchedule
-      {{- range $dashboardUserTolerations }}
-      - {{ toYaml . | nindent 8 | trim }}
-      {{- end }}
-      {{- else if eq $dashboardBackend "rocm" }}
-      nodeSelector:
-        amd.com/gpu.present: "true"
-        {{- range $k, $v := $dashboardUserNodeSelector }}
-        {{ $k }}: {{ $v | quote }}
-        {{- end }}
-      tolerations:
-      - key: amd.com/gpu
-        operator: Exists
-        effect: NoSchedule
-      {{- range $dashboardUserTolerations }}
-      - {{ toYaml . | nindent 8 | trim }}
-      {{- end }}
-      {{- else }}
-      {{- if $dashboardUserNodeSelector }}
-      nodeSelector:
-        {{- toYaml $dashboardUserNodeSelector | nindent 8 }}
-      {{- end }}
-      {{- if $dashboardUserTolerations }}
-      tolerations:
-        {{- toYaml $dashboardUserTolerations | nindent 8 }}
-      {{- end }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.dashboard.affinity }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dashboard.tolerations }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end }}

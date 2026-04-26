@@ -352,21 +352,12 @@ def deployed_stack(k3d_cluster):
         timeout=300,
     )
 
-    # GPU device plugin: advertises ``amd.com/gpu`` / ``nvidia.com/gpu``
-    # node resources so the scheduler can place GPU-requesting pods.
-    # k3s ships with NVIDIA support out of the box (matched by
-    # ``--gpus=all`` at cluster create); AMD needs an explicit DaemonSet
-    # since ROCm has no built-in k3d/k3s integration.
-    if backend == "rocm":
-        amd_plugin_url = (
-            "https://raw.githubusercontent.com/ROCm/"
-            "k8s-device-plugin/master/k8s-ds-amdgpu-dp.yaml"
-        )
-        _cmd(
-            ["kubectl", "apply", "-f", amd_plugin_url],
-            timeout=60,
-            check=False,
-        )
+    # No AMD device plugin install — runtime mounts /dev/kfd and
+    # /dev/dri via hostPath when backend=rocm (chart's
+    # ``$runtimeBackend == "rocm"`` branch). Skips the device-plugin
+    # readiness wait that was timing the helm post-install hook out.
+    # NVIDIA still routes through k3s's built-in nvidia.com/gpu
+    # support when --gpus=all is set on cluster create.
 
     # Argo CRD chicken-and-egg: the main cogniverse chart references
     # CronWorkflow / WorkflowTemplate (argoproj.io/v1alpha1) resources.
