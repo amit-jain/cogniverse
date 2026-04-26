@@ -152,6 +152,53 @@ docker run -d --name ollama \
   ollama/ollama:latest
 ```
 
+### 3a. (Optional) Whisper ASR Sidecar
+
+`AudioAnalysisAgent.transcribe_audio` can run Whisper in-process or POST
+to a sidecar pod (`deploy/whisper`). The sidecar is the production path —
+keeps the agent engine-agnostic and lets you swap engines per host:
+
+| Engine | Backend | Image | Use when |
+|--------|---------|-------|----------|
+| `faster-whisper` | CTranslate2 (CPU + NVIDIA CUDA) | `cogniverse/whisper-fw` | Default. CPU laptops and CUDA GPUs. |
+| `whisperx` | PyTorch (incl. ROCm) | `cogniverse/whisper-wx` (stub) | AMD GPU hosts where CTranslate2 has no backend. |
+| `whisper-cpp` | whisper.cpp | `cogniverse/whisper-cpp` (stub) | Apple Silicon / constrained envs. |
+
+Build and run locally:
+
+```bash
+# Build the faster-whisper variant from the canonical Dockerfile.
+docker build -t cogniverse/whisper-fw:dev deploy/whisper
+
+# Run it. Persist the HuggingFace cache so model downloads survive
+# container restarts.
+docker run -d --name cogniverse-whisper \
+  -p 7998:7998 \
+  -v cogniverse-whisper-cache:/root/.cache/huggingface \
+  -e WHISPER_ENGINE=faster-whisper \
+  -e MODEL_NAME=base \
+  -e DEVICE=cpu \
+  cogniverse/whisper-fw:dev
+
+# Smoke test: /health returns the engine + model identifier.
+curl -s http://localhost:7998/health
+# → {"status": "ok", "engine": "faster-whisper", "model": "base"}
+```
+
+Point the agent at it by setting `whisper_endpoint` on
+`AudioAnalysisDeps`. In a Helm-deployed stack the runtime reads it from
+`system_config.inference_service_urls["whisper"]`, populated by the chart
+template `charts/cogniverse/templates/all-resources.yaml:330` when
+`whisper.enabled=true` (`charts/cogniverse/values.yaml:908`). The
+`cogniverse images` build step in `libs/cli/cogniverse_cli/images.py`
+includes `cogniverse/whisper-fw:dev` so a `cogniverse up` flow against
+k3d picks it up automatically.
+
+For the deploy/ingestion side, profiles pick the sidecar by setting
+`inference_service: whisper` on their `AudioTranscriptionStrategy`.
+`AudioProcessor` (ingestion) and `AudioAnalysisAgent` (runtime) both
+honor the same `INFERENCE_SERVICE_URLS` lookup.
+
 ### 4. Pull Required Models
 
 ```bash
@@ -352,6 +399,7 @@ flowchart TB
 | **Phoenix Web** | 6006 | Dashboard & experiments |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
+| **Whisper sidecar** | 7998 | ASR transcription (`/v1/transcribe`, `/health`) |
 
 ---
 

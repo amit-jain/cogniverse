@@ -116,7 +116,7 @@ class TestAudioAnalysisAgent:
 
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
-    async def test_transcribe_audio(self, mock_transcriber):
+    async def test_transcribe_audio(self, mock_transcriber, tmp_path):
         """Test audio transcription using Whisper"""
         # Mock AudioTranscriber
         mock_transcriber_obj = MagicMock()
@@ -133,7 +133,16 @@ class TestAudioAnalysisAgent:
             "duration": 10.0,
         }
 
-        # Execute transcription
+        # Stub the locator: agent.transcribe_audio resolves audio_url via
+        # MediaLocator before handing off to the transcriber. Returning a
+        # known on-disk path keeps the unit test boundary at the agent's
+        # own logic without performing real HTTP fetches.
+        clip = tmp_path / "audio.mp3"
+        clip.write_bytes(b"")
+        self.agent._locator = MagicMock()
+        self.agent._locator.localize.return_value = clip
+        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+
         result = await self.agent.transcribe_audio("http://example.com/audio.mp3")
 
         # Verify result
@@ -176,7 +185,9 @@ class TestAudioAnalysisAgent:
     @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
     @patch("requests.post")
-    async def test_find_similar_audio_semantic(self, mock_post, mock_transcriber):
+    async def test_find_similar_audio_semantic(
+        self, mock_post, mock_transcriber, tmp_path
+    ):
         """Test finding similar audio using semantic similarity"""
         # Mock transcriber
         mock_transcriber_obj = MagicMock()
@@ -193,7 +204,12 @@ class TestAudioAnalysisAgent:
         mock_response.json.return_value = {"root": {"children": []}}
         mock_post.return_value = mock_response
 
-        # Execute similar audio search
+        clip = tmp_path / "ref.mp3"
+        clip.write_bytes(b"")
+        self.agent._locator = MagicMock()
+        self.agent._locator.localize.return_value = clip
+        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+
         await self.agent.find_similar_audio(
             reference_audio_url="http://example.com/ref.mp3",
             similarity_type="semantic",
@@ -205,28 +221,40 @@ class TestAudioAnalysisAgent:
         # Verify Vespa search was called
         mock_post.assert_called_once()
 
-    def test_get_audio_path_local(self):
+    def test_get_audio_path_local(self, tmp_path):
         """Test getting local audio path"""
-        local_path = "/path/to/audio.mp3"
-        result = self.agent._get_audio_path(local_path)
+        clip = tmp_path / "audio.mp3"
+        clip.write_bytes(b"")
 
-        # Should return the same path for local files
-        assert result == local_path
+        result = self.agent._get_audio_path(str(clip))
 
-    @patch("requests.get")
-    def test_get_audio_path_url(self, mock_get):
-        """Test downloading audio from URL"""
-        # Mock HTTP response
-        mock_response = MagicMock()
-        mock_response.content = b"fake audio data"
-        mock_get.return_value = mock_response
+        # MediaLocator's file:// short-circuit returns the canonical path
+        # unchanged — no copy, no cache entry.
+        assert result == str(clip)
 
-        # Execute download
+    def test_get_audio_path_url(self, tmp_path):
+        """Test downloading audio from URL via MediaLocator"""
+        # Stub the locator boundary: assert that bare-URL inputs are
+        # canonicalized then handed to the locator's localize. The locator
+        # itself is exercised end-to-end in the integration tests.
+        clip = tmp_path / "audio.mp3"
+        clip.write_bytes(b"fake audio data")
+
+        self.agent._locator = MagicMock()
+        self.agent._locator.localize.return_value = clip
+        self.agent._locator.to_canonical_uri.return_value = (
+            "http://example.com/audio.mp3"
+        )
+
         result = self.agent._get_audio_path("http://example.com/audio.mp3")
 
-        # Verify file was downloaded to temp location
-        assert result.endswith(".mp3")
-        mock_get.assert_called_once_with("http://example.com/audio.mp3")
+        assert result == str(clip)
+        self.agent._locator.to_canonical_uri.assert_called_once_with(
+            "http://example.com/audio.mp3"
+        )
+        self.agent._locator.localize.assert_called_once_with(
+            "http://example.com/audio.mp3"
+        )
 
     @pytest.mark.asyncio
     async def test_dspy_to_a2a_output(self):

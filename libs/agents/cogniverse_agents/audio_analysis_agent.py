@@ -5,6 +5,7 @@ Uses existing AudioTranscriber for transcription and connects to Vespa
 for real audio search. Supports both transcript-based and acoustic similarity search.
 """
 
+import base64
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,7 +76,24 @@ class AudioAnalysisDeps(AgentDeps):
     vespa_endpoint: str = PydanticField(
         "http://localhost:8080", description="Vespa endpoint"
     )
-    whisper_model_size: str = PydanticField("base", description="Whisper model size")
+    whisper_model_size: str = PydanticField(
+        "base",
+        description=(
+            "Whisper model size for the in-process AudioTranscriber fallback. "
+            "Ignored when whisper_endpoint is set."
+        ),
+    )
+    whisper_endpoint: Optional[str] = PydanticField(
+        None,
+        description=(
+            "Base URL of the deploy/whisper sidecar pod (e.g. "
+            "http://whisper:7998). When set, transcribe_audio POSTs to "
+            "{endpoint}/v1/transcribe instead of loading Whisper "
+            "in-process — mirrors the AudioProcessor remote pattern from "
+            "the ingestion pipeline. Read by the runtime from "
+            "system_config.inference_service_urls['whisper']."
+        ),
+    )
 
 
 @dataclass
@@ -177,6 +195,7 @@ class AudioAnalysisAgent(
 
         self._vespa_endpoint = deps.vespa_endpoint
         self._whisper_model_size = deps.whisper_model_size
+        self._whisper_endpoint = deps.whisper_endpoint
 
         # Initialize components (lazy loading)
         self._audio_transcriber = None
@@ -254,39 +273,73 @@ class AudioAnalysisAgent(
         language: Optional[str] = None,
     ) -> TranscriptionResult:
         """
-        Transcribe audio using Whisper
+        Transcribe audio using Whisper.
 
-        Args:
-            audio_url: URL or path to audio file
-            language: Language code (e.g., "en", "es"). Auto-detect if None
-
-        Returns:
-            TranscriptionResult with text, timestamps, and language
+        When ``whisper_endpoint`` is set on the agent's deps, the audio is
+        POSTed to ``{endpoint}/v1/transcribe`` (the deploy/whisper sidecar
+        contract). Otherwise the in-process AudioTranscriber runs Whisper
+        locally — fine for dev/test on hosts where docker isn't available.
         """
         logger.info(f"🎤 Transcribing audio: {audio_url}")
 
-        try:
-            # Download audio if URL
-            audio_path = self._get_audio_path(audio_url)
+        audio_path = self._get_audio_path(audio_url)
 
-            # Use AudioTranscriber
+        if self._whisper_endpoint:
+            result = self._transcribe_via_sidecar(Path(audio_path), language)
+        else:
             result = self.audio_transcriber.transcribe_audio(
                 video_path=Path(audio_path), output_dir=None
             )
 
-            transcription = TranscriptionResult(
-                text=result.get("full_text", ""),
-                segments=result.get("segments", []),
-                language=result.get("language", "unknown"),
-                confidence=1.0,  # Whisper doesn't provide confidence directly
-            )
+        transcription = TranscriptionResult(
+            text=result.get("full_text", ""),
+            segments=result.get("segments", []),
+            language=result.get("language", "unknown"),
+            confidence=1.0,
+        )
 
-            logger.info(f"✅ Transcription complete: language={transcription.language}")
-            return transcription
+        logger.info(f"✅ Transcription complete: language={transcription.language}")
+        return transcription
 
-        except Exception as e:
-            logger.error(f"❌ Transcription failed: {e}")
-            raise
+    def _transcribe_via_sidecar(
+        self, audio_path: Path, language: Optional[str]
+    ) -> Dict[str, Any]:
+        """POST audio bytes to the whisper sidecar's ``/v1/transcribe``.
+
+        Returns a dict in the same shape the in-process AudioTranscriber
+        produces (``full_text``, ``segments``, ``language``) so the
+        downstream TranscriptionResult mapping doesn't branch.
+        """
+        import requests
+
+        audio_bytes = audio_path.read_bytes()
+        payload: Dict[str, Any] = {
+            "audio_b64": base64.b64encode(audio_bytes).decode("ascii"),
+        }
+        if language and language != "auto":
+            payload["language"] = language
+
+        url = f"{self._whisper_endpoint.rstrip('/')}/v1/transcribe"
+        logger.info(
+            f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)"
+        )
+        resp = requests.post(url, json=payload, timeout=600.0)
+        resp.raise_for_status()
+        body = resp.json()
+
+        return {
+            "full_text": (body.get("text") or "").strip(),
+            "language": body.get("language", "unknown"),
+            "segments": [
+                {
+                    "start": float(seg.get("start", 0.0)),
+                    "end": float(seg.get("end", 0.0)),
+                    "text": (seg.get("text") or "").strip(),
+                }
+                for seg in body.get("segments", [])
+            ],
+            "duration": body.get("duration_seconds", 0.0),
+        }
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:
         """Search by transcript text using BM25"""

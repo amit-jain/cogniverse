@@ -28,7 +28,8 @@ class TestBuildImages:
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(self, mock_run: object) -> None:
-        """One docker build command per image: runtime, dashboard, pylate."""
+        """One docker build command per image: runtime, dashboard, then the
+        inference sidecars (pylate, colpali, whisper)."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -39,8 +40,10 @@ class TestBuildImages:
             "cogniverse/runtime:dev",
             "cogniverse/dashboard:dev",
             "cogniverse/pylate:dev",
+            "cogniverse/colpali:dev",
+            "cogniverse/whisper-fw:dev",
         ]
-        assert mock_run.call_count == 3  # type: ignore[attr-defined]
+        assert mock_run.call_count == 5  # type: ignore[attr-defined]
 
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
             cmd = call[0][0]

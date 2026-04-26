@@ -2248,6 +2248,19 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 - `detected_events` - Audio events
 - `language` - Detected language
 
+**Transcription (`transcribe_audio`):**
+
+`transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
+local path, reads the bytes, and POSTs them base64-encoded to
+`{whisper_endpoint}/v1/transcribe`. The response is mapped to a
+`TranscriptionResult(text, segments, language, confidence)`.
+
+`whisper_endpoint` is a required field on `AudioAnalysisDeps`. How it
+gets populated, which engine the sidecar runs, and how the pod is
+deployed are deployment concerns — see
+[`docs/operations/setup-installation.md`](../operations/setup-installation.md)
+and the chart's `whisper` block in `charts/cogniverse/values.yaml`.
+
 ---
 
 ### 12. TextAnalysisAgent

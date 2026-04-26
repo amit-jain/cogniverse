@@ -168,6 +168,7 @@ PORTS = {
     "phoenix": 51006,
     "otel_grpc": 51317,
     "llm": 51434,
+    "whisper": 51998,
 }
 
 
@@ -286,6 +287,26 @@ def deployed_stack(k3d_cluster):
             ["docker", "build", "-f", dockerfile, *build_args, "-t", tag, "."],
             timeout=900,
         )
+
+    # Inference sidecars deployed by the chart when their `enabled` flag
+    # flips to true. The whisper sidecar is gated behind ``whisper.enabled``
+    # in values.k3s.yaml; build the image unconditionally so a deploy with
+    # the flag on doesn't fail with ImagePullBackOff. CPU_ONLY/PREDOWNLOAD
+    # build args are runtime/dashboard-specific and not consumed by
+    # deploy/whisper/Dockerfile.
+    _cmd(
+        [
+            "docker",
+            "build",
+            "-f",
+            "deploy/whisper/Dockerfile",
+            "-t",
+            "cogniverse/whisper-fw:dev",
+            "deploy/whisper",
+        ],
+        timeout=600,
+    )
+
     _cmd(
         [
             "k3d",
@@ -293,6 +314,7 @@ def deployed_stack(k3d_cluster):
             "import",
             "cogniverse/runtime:dev",
             "cogniverse/dashboard:dev",
+            "cogniverse/whisper-fw:dev",
             "-c",
             CLUSTER_NAME,
         ],
@@ -365,6 +387,7 @@ def deployed_stack(k3d_cluster):
         ("svc/cogniverse-phoenix", f"{PORTS['phoenix']}:6006"),
         ("svc/cogniverse-phoenix", f"{PORTS['otel_grpc']}:4317"),
         ("svc/cogniverse-llm", f"{PORTS['llm']}:11434"),
+        ("svc/cogniverse-whisper", f"{PORTS['whisper']}:7998"),
     ]
     for svc, ports in pf_specs:
         proc = subprocess.Popen(
@@ -382,6 +405,7 @@ def deployed_stack(k3d_cluster):
         "vespa_url": f"http://localhost:{PORTS['vespa_http']}",
         "phoenix_url": f"http://localhost:{PORTS['phoenix']}",
         "llm_url": f"http://localhost:{PORTS['llm']}",
+        "whisper_url": f"http://localhost:{PORTS['whisper']}",
     }
 
     # Cleanup port-forwards

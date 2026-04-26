@@ -238,3 +238,23 @@ initJobs:
     enabled: true
   modelPulling:
     enabled: false  # Handled by E2E test fixtures
+
+# Deploy the whisper ASR sidecar in dev/k3s so the deployment-lifecycle
+# e2e exercises the same chart path production uses. faster-whisper engine
+# on CPU keeps this within the 49Gi laptop budget; ROCm/Metal users
+# override engine + image via values.rocm.yaml when those Dockerfiles land.
+whisper:
+  enabled: true
+  engine: faster-whisper
+  model: tiny  # smallest stable model; ~75MB first download
+  device: cpu
+  image:
+    tag: "dev"
+    pullPolicy: Never  # k3d-imported tag, not on a registry
+  resources:
+    limits:
+      cpu: "2"
+      memory: "1500Mi"
+    requests:
+      cpu: "500m"
+      memory: "512Mi"

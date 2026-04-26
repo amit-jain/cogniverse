@@ -11,6 +11,11 @@ RUNTIME_TAG = "cogniverse/runtime:dev"
 DASHBOARD_TAG = "cogniverse/dashboard:dev"
 PYLATE_TAG = "cogniverse/pylate:dev"
 COLPALI_TAG = "cogniverse/colpali:dev"
+# faster-whisper variant — chart's default whisper.image.repository is
+# ``cogniverse/whisper-fw``. Sibling images (``-wx`` for ROCm/whisperx,
+# ``-cpp`` for whisper.cpp) are stubs in deploy/whisper/server.py until
+# the corresponding Dockerfiles land.
+WHISPER_TAG = "cogniverse/whisper-fw:dev"
 
 
 def has_workspace_source(project_root: Path) -> bool:
@@ -21,15 +26,17 @@ def has_workspace_source(project_root: Path) -> bool:
 def build_images(project_root: Path) -> list[str]:
     """Build all cogniverse-owned Docker images.
 
-    Returns list of image tags that were built. Inference sidecars (pylate,
-    colpali) are always built so ``--set inference.<name>.engine=...``
-    against an existing k3d cluster works without a separate build step.
+    Returns list of image tags that were built. Inference sidecars
+    (pylate, colpali, whisper) are always built so
+    ``--set inference.<name>.engine=...`` against an existing k3d cluster
+    works without a separate build step.
     """
     workspace_builds = [
         (RUNTIME_TAG, "libs/runtime/Dockerfile", "."),
         (DASHBOARD_TAG, "libs/dashboard/Dockerfile", "."),
         (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate"),
         (COLPALI_TAG, "deploy/colpali/Dockerfile", "deploy/colpali"),
+        (WHISPER_TAG, "deploy/whisper/Dockerfile", "deploy/whisper"),
     ]
     built: list[str] = []
     for tag, dockerfile, context in workspace_builds:
