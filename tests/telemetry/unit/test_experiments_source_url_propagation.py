@@ -89,7 +89,10 @@ class TestSourceUrlPropagation:
         formatted = config_result["results"]
         assert formatted[0]["source_url"] == "file:///abs/v_xyz.mp4"
 
-    def test_missing_source_url_emits_empty_string(self, patched_search):
+    def test_missing_source_url_marks_config_failed(self, patched_search):
+        """source_url is required; the per-config result must record failure
+        when a search backend ever omits the field rather than emit empty
+        downstream."""
         out = _run_phoenix_task(
             patched_search,
             [
@@ -104,9 +107,8 @@ class TestSourceUrlPropagation:
         )
 
         config_result = out["results"]["video_colpali_binary_binary"]
-        assert config_result["success"], config_result.get("error")
-        formatted = config_result["results"]
-        assert formatted[0]["source_url"] == ""
+        assert config_result["success"] is False
+        assert "missing source_url" in config_result.get("error", "")
 
     def test_top_level_takes_precedence(self, patched_search):
         out = _run_phoenix_task(

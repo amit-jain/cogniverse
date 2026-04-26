@@ -2,37 +2,21 @@
 End-to-end integration tests for evaluation framework.
 
 Tests experiment mode with real Vespa search backend, real ColPali encoder,
-real Phoenix telemetry/datasets, and real Ollama LLM. All components are
-production code — no mocks.
+real Phoenix telemetry/datasets, and a real LLM resolved via the
+``llm_endpoint`` fixture (configurable per environment — see
+``tests/evaluation/integration/conftest.py``). All components are production
+code; no mocks at any service boundary.
 """
 
 import json
 import os
 import tempfile
 
-import httpx
 import pytest
 from inspect_ai import eval as inspect_eval
 
 from cogniverse_evaluation.cli import cli
 from cogniverse_evaluation.core.task import evaluation_task
-
-OLLAMA_MODEL = "ollama/qwen3:4b"
-
-
-def _is_ollama_available() -> bool:
-    """Check if Ollama is reachable for Inspect AI model parameter."""
-    try:
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
-skip_if_no_ollama = pytest.mark.skipif(
-    not _is_ollama_available(),
-    reason="Ollama not reachable at localhost:11434",
-)
 
 
 @pytest.mark.integration
@@ -52,14 +36,16 @@ class TestEndToEnd:
         set_evaluation_provider(search_evaluator_provider)
 
     @pytest.mark.integration
-    @skip_if_no_ollama
-    def test_experiment_mode_e2e(self, search_evaluator_provider, eval_search_client):
+    def test_experiment_mode_e2e(
+        self, search_evaluator_provider, eval_search_client, llm_endpoint
+    ):
         """Test complete experiment mode with real search.
 
-        Uses real ColPali encoder + real Vespa with seeded documents.
-        Real Phoenix for dataset loading. Real Ollama for Inspect AI model.
-        The solver's httpx.post calls are routed through the TestClient
-        to the real search router.
+        Uses real ColPali encoder + real Vespa with seeded documents, real
+        Phoenix for dataset loading, and the LLM endpoint resolved by the
+        ``llm_endpoint`` fixture (configurable per environment). The solver's
+        httpx.post calls are routed through the TestClient to the real
+        search router.
         """
         from tests.evaluation.conftest import intercept_search_calls
 
@@ -77,7 +63,7 @@ class TestEndToEnd:
                 },
             )
 
-            results = inspect_eval(task, model=OLLAMA_MODEL)
+            results = inspect_eval(task, model=llm_endpoint["provider_uri"])
 
             assert results is not None
             assert isinstance(results, list)
@@ -119,8 +105,7 @@ class TestEndToEnd:
                 assert len(sample.scores) > 0, f"Sample {sample.id} has empty scores"
 
     @pytest.mark.integration
-    @skip_if_no_ollama
-    def test_batch_mode_e2e(self, search_evaluator_provider):
+    def test_batch_mode_e2e(self, search_evaluator_provider, llm_endpoint):
         """Test complete batch mode workflow.
 
         Batch mode loads existing traces from real Phoenix.
@@ -133,14 +118,13 @@ class TestEndToEnd:
             config={"use_ragas": True, "ragas_metrics": ["context_relevancy"]},
         )
 
-        results = inspect_eval(task, model=OLLAMA_MODEL)
+        results = inspect_eval(task, model=llm_endpoint["provider_uri"])
 
         assert results is not None
         assert isinstance(results, list)
         assert len(results) > 0
 
     @pytest.mark.integration
-    @skip_if_no_ollama
     def test_cli_evaluate_command(self, search_evaluator_provider, eval_search_client):
         """Test CLI evaluate command with real search."""
         import tempfile
@@ -199,7 +183,6 @@ class TestEndToEnd:
         assert "Fetching traces" in result.output
 
     @pytest.mark.integration
-    @skip_if_no_ollama
     def test_evaluation_with_output_file(
         self, search_evaluator_provider, eval_search_client
     ):
@@ -247,7 +230,6 @@ class TestEndToEnd:
                     assert "timestamp" in data
 
     @pytest.mark.integration
-    @skip_if_no_ollama
     def test_evaluation_with_config_file(
         self, search_evaluator_provider, eval_search_client
     ):
@@ -294,8 +276,9 @@ class TestEndToEnd:
                 assert result.exit_code == 0
 
     @pytest.mark.integration
-    @skip_if_no_ollama
-    def test_multiple_profiles_e2e(self, search_evaluator_provider, eval_search_client):
+    def test_multiple_profiles_e2e(
+        self, search_evaluator_provider, eval_search_client, llm_endpoint
+    ):
         """Test evaluation with real search profile.
 
         Uses a single real profile (test_colpali) with the default strategy
@@ -312,7 +295,7 @@ class TestEndToEnd:
                 config={"use_custom": True, "tenant_id": "test:unit"},
             )
 
-            results = inspect_eval(task, model=OLLAMA_MODEL)
+            results = inspect_eval(task, model=llm_endpoint["provider_uri"])
 
             assert results is not None
             assert isinstance(results, list)

@@ -1,0 +1,11 @@
+{
+  "_comment": "Copy this file to test_llm.json and edit it to point at the LLM endpoint that the eval e2e tests should use. The conftest llm_endpoint fixture reads test_llm.json (which is gitignored) when COGNIVERSE_TEST_LLM_PROVIDER_URI is unset. Both fields are also accepted as the env vars COGNIVERSE_TEST_LLM_PROVIDER_URI and COGNIVERSE_TEST_LLM_BASE_URL.",
+  "_examples": {
+    "ollama_local": {"provider_uri": "ollama/qwen3:4b", "base_url": "http://localhost:11434"},
+    "openai":       {"provider_uri": "openai/gpt-4o-mini", "base_url": null},
+    "vllm_remote":  {"provider_uri": "vllm/Qwen/Qwen2.5-7B-Instruct", "base_url": "http://vllm.internal:8000/v1"},
+    "anthropic":    {"provider_uri": "anthropic/claude-haiku-4-5", "base_url": null}
+  },
+  "provider_uri": "ollama/qwen3:4b",
+  "base_url": "http://localhost:11434"
+}

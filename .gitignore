@@ -122,3 +122,6 @@ workflow_intelligence.db
 .colgrep/
 .playwright-mcp/
 .worktrees/
+
+# Local-only test config — see tests/evaluation/integration/resources/test_llm.example.json
+tests/evaluation/integration/resources/test_llm.json

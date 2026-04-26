@@ -90,8 +90,14 @@ class PhoenixExperimentPlugin:
 
                             metadata = result_dict.get("metadata", {})
                             source_url = result_dict.get("source_url") or metadata.get(
-                                "source_url", ""
+                                "source_url"
                             )
+                            if not source_url:
+                                raise RuntimeError(
+                                    f"Search result for video_id={video_id!r} "
+                                    "is missing source_url; ingestion must "
+                                    "populate it on every document."
+                                )
 
                             formatted_results.append(
                                 {

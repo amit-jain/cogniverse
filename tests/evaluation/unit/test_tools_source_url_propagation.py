@@ -80,7 +80,12 @@ async def test_source_url_in_metadata_propagates(mock_search_service, mock_confi
 
 
 @pytest.mark.asyncio
-async def test_missing_source_url_yields_empty_string(mock_search_service, mock_config):
+async def test_missing_source_url_raises(mock_search_service, mock_config):
+    """source_url is required on every search result; ingestion guarantees it.
+
+    If a search backend ever omits the field the normalizer must fail loudly
+    rather than silently emit an empty string downstream.
+    """
     from cogniverse_evaluation.core.tools import video_search_tool
 
     mock_search_service.search.return_value = [
@@ -95,9 +100,8 @@ async def test_missing_source_url_yields_empty_string(mock_search_service, mock_
     ]
 
     tool_fn = video_search_tool()
-    results = await tool_fn(query="q", profile="p", strategy="s", top_k=1)
-
-    assert results[0]["source_url"] == ""
+    with pytest.raises(RuntimeError, match="missing source_url"):
+        await tool_fn(query="q", profile="p", strategy="s", top_k=1)
 
 
 @pytest.mark.asyncio
