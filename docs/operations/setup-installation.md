@@ -8,8 +8,13 @@
 - **Python**: 3.12+ (required for compatibility)
 - **Memory**: 16GB RAM minimum (32GB recommended)
 - **Storage**: 20GB+ disk space
-- **GPU**: CUDA-capable GPU optional (recommended for video processing)
-- **OS**: Linux, macOS, or Windows with WSL2
+- **GPU**: optional but recommended for video processing. Supported:
+  - NVIDIA CUDA (Linux/x86_64) — torch+cu128 wheels
+  - AMD ROCm (Linux/x86_64) — torch+rocm6.4 wheels (Strix Halo / gfx1151, MI300, RX 7000 series)
+  - Apple Silicon MPS (macOS arm64) — default PyPI torch ships MPS support
+  - CPU-only fallback on Linux
+- **OS**: Linux/x86_64 or macOS arm64. Windows is not a supported resolution
+  target (the workspace's `[tool.uv] environments` excludes win32).
 
 ### Required Software
 - **Docker**: For Vespa, Phoenix, and Ollama containers
@@ -35,28 +40,94 @@ cd cogniverse
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
-# Sync all workspace packages (installs 11 packages)
-uv sync
-
-# This installs:
-# Foundation Layer:
-# - cogniverse_sdk (libs/sdk/)
-# - cogniverse_foundation (libs/foundation/)
-# Core Layer:
-# - cogniverse_core (libs/core/)
-# - cogniverse_evaluation (libs/evaluation/)
-# - cogniverse_telemetry_phoenix (libs/telemetry-phoenix/)
-# Implementation Layer:
-# - cogniverse_agents (libs/agents/)
-# - cogniverse_vespa (libs/vespa/)
-# - cogniverse_synthetic (libs/synthetic/)
-# - cogniverse_finetuning (libs/finetuning/)
-# Application Layer:
-# - cogniverse_runtime (libs/runtime/)
-# - cogniverse_dashboard (libs/dashboard/)
+# Sync all workspace packages with the right PyTorch backend for this host.
+# Autodetects macOS / NVIDIA / AMD ROCm / CPU and picks the matching wheels.
+scripts/install_with_gpu.sh
 ```
 
-**Note:** `uv sync` handles the entire UV workspace, installing all packages and their dependencies in editable mode.
+The wrapper exists because `uv sync` alone installs the default PyPI torch
+wheel, which on Linux/x86_64 is the CUDA build (`torch==2.8.0+cu128`) — wrong
+on AMD or CPU-only hosts and ~700 MB of useless NVIDIA libraries on machines
+without an NVIDIA GPU. See ["PyTorch backend selection"](#pytorch-backend-selection)
+below for the full story.
+
+**Workspace contents** (installed in editable mode):
+
+- Foundation Layer: `cogniverse_sdk` (libs/sdk/), `cogniverse_foundation` (libs/foundation/)
+- Core Layer: `cogniverse_core`, `cogniverse_evaluation`, `cogniverse_telemetry_phoenix`
+- Implementation Layer: `cogniverse_agents`, `cogniverse_vespa`, `cogniverse_synthetic`, `cogniverse_finetuning`
+- Application Layer: `cogniverse_runtime`, `cogniverse_dashboard`
+
+### 2a. PyTorch backend selection
+
+The same `pyproject.toml` ships to every host (your Mac, a CUDA workstation,
+this AMD/ROCm box, CI). uv has no native concept of "different default torch
+wheel per machine," so we use opt-in extras + per-extra wheel-index sources:
+
+| Host | Command | Result |
+|------|---------|--------|
+| macOS (Apple Silicon) | `uv sync` (no extra) | default PyPI torch — MPS / Metal built in |
+| Linux + NVIDIA | `uv sync --extra cuda` | `torch==2.8.0+cu128` from `download.pytorch.org/whl/cu128` |
+| Linux + AMD GPU | `uv sync --extra rocm` | `torch==2.8.0+rocm6.4` + `pytorch-triton-rocm` from `download.pytorch.org/whl/rocm6.4` |
+| Linux CPU-only | `uv sync --extra cpu` | `torch==2.8.0+cpu` from `download.pytorch.org/whl/cpu` |
+
+`scripts/install_with_gpu.sh` autodetects the host (`uname -s`, `nvidia-smi`,
+`rocminfo`) and forwards the right `--extra`. Override the detection with
+`COGNIVERSE_TORCH_BACKEND=cpu|cuda|rocm|mac`. The `[tool.uv] conflicts`
+block in `pyproject.toml` makes the three extras mutually exclusive so you
+can't accidentally combine them.
+
+**Why not uv's `torch-backend = "auto"`?** uv 0.11.7 only honors the
+`torch-backend` setting on `uv pip install` (the legacy interface), not on
+`uv sync` / `uv lock`. Setting it in `[tool.uv]` is silently ignored during
+the project workflow we use. If a future uv release wires `torch-backend`
+into `uv sync`, the extras + sources scaffolding can be deleted in favor of
+a single `torch-backend = "auto"` line. Until then, extras are how this
+works.
+
+**Avoiding `--extra rocm` on every command (Linux + ROCm only).** Once
+`scripts/install_with_gpu.sh` has installed the rocm wheels, plain
+`uv run python ...` will re-sync to the lockfile's base set on every
+invocation and overwrite them. To stop that, add to your shell rc on this
+machine:
+
+```bash
+export UV_NO_SYNC=1
+```
+
+Then `uv run` and bare `python` (after `source .venv/bin/activate`) both
+keep the rocm wheels. The cost: after a `pyproject.toml` change you must
+re-run `scripts/install_with_gpu.sh` manually instead of `uv run` doing it
+for you. **Do not set `UV_NO_SYNC=1` on your Mac** — there's nothing to
+preserve there since the default sync already installs the right MPS torch.
+
+#### ROCm-specific: Linux device permissions
+
+PyTorch's ROCm wheels need access to `/dev/kfd` (kernel fusion driver) and
+`/dev/dri/renderD*`, which on most Linux distros are owned by the `render`
+group (and `video` for some compositors). Without group membership, all
+GPU calls return `hipErrorNoDevice` even though `import torch` works and
+`torch.version.hip` looks right — `torch.cuda.is_available()` silently
+returns `False` and you get CPU fallback at full price.
+
+`scripts/install_with_gpu.sh` warns if the current user isn't in `render`
+or `video`. Fix:
+
+```bash
+sudo usermod -aG render,video $USER
+# Then log out and back in, or in the current shell:
+newgrp render
+```
+
+#### Why ROCm 6.4 (and not 7.0)?
+
+The ROCm wheel index pin in `pyproject.toml` is `rocm6.4`. ROCm 6.3 added
+support for Strix Halo / gfx1151, so 6.4 covers it. Bumping to ROCm 7.0
+would require `torch>=2.10.0`, which forces `colpali-engine>=0.3.15`,
+which requires `transformers>=5.3.0`. But `pylate==1.4.0` (latest release)
+caps `transformers<=4.56.2`, so the upgrade chain is blocked upstream
+until pylate ships a transformers v5–compatible release. Revisit when
+that happens.
 
 ### 3. Start Core Services
 

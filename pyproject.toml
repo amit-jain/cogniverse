@@ -2,6 +2,28 @@
 # Only allow pre-releases for graphql-core (required by arize-phoenix 14.x)
 prerelease = "if-necessary-or-explicit"
 
+# PyTorch backend extras — pick exactly one with `uv sync --extra <name>`.
+# macOS (Apple Silicon) installs without an extra: the default PyPI wheel
+# already includes MPS / Metal support.
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cuda" },
+        { extra = "rocm" },
+    ],
+]
+
+# Pin resolution to the platform/Python combinations we actually support.
+# The rocm6.4 wheel index ships pytorch-triton-rocm==3.4.0 only for cp312,
+# so leaving Python 3.13 in the resolution graph causes --extra rocm to
+# report unsat. Listing 3.12 explicitly keeps resolution sane.
+# Windows is not a supported target — openshell and the rocm/cuda wheel
+# indexes don't all ship win_amd64 wheels.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64' and python_full_version == '3.12.*'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64' and python_full_version == '3.12.*'",
+]
+
 [tool.uv.workspace]
 members = ["libs/*"]
 
@@ -107,8 +129,62 @@ cogniverse-synthetic = { workspace = true }
 cogniverse-telemetry-phoenix = { workspace = true }
 cogniverse-vespa = { workspace = true }
 cogniverse-cli = { workspace = true }
+# Non-Darwin only: macOS arm64 uses the default PyPI wheel which already
+# ships MPS support. CUDA / ROCm wheels exist only for linux/win.
+torch = [
+    { index = "pytorch-cuda", extra = "cuda", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu",  extra = "cpu",  marker = "sys_platform != 'darwin'" },
+]
+torchvision = [
+    { index = "pytorch-cuda", extra = "cuda", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-cpu",  extra = "cpu",  marker = "sys_platform != 'darwin'" },
+]
+# pytorch-triton-rocm is a transitive dep of the rocm-built torch and lives
+# in the rocm wheel index (PyPI does not ship rocm builds).
+pytorch-triton-rocm = [
+    { index = "pytorch-rocm", extra = "rocm", marker = "sys_platform == 'linux'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+# rocm6.4 publishes torch==2.8.0+rocm6.4, matching the project's torch pin.
+# Strix Halo (gfx1151) support landed in ROCm 6.3, so 6.4 is fully supported.
+# Bumping to rocm7.0 requires torch>=2.10.0, which would force colpali-engine
+# 0.3.15 which in turn requires transformers>=5.3.0 — and pylate 1.4.0 (the
+# latest release) caps transformers<=4.56.2, so the upgrade path is blocked
+# upstream until pylate ships a transformers v5–compatible release.
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.optional-dependencies]
+# PyTorch backend selectors. Pick exactly one with `uv sync --extra <name>`:
+#
+#   uv sync --extra cuda    # NVIDIA GPU            → torch+cu128
+#   uv sync --extra rocm    # AMD GPU on Linux      → torch+rocm6.4
+#                           #   (Strix Halo / gfx1151, MI300, RX 7000, ...)
+#   uv sync --extra cpu     # no GPU on Linux/Win   → torch+cpu
+#
+# macOS (Apple Silicon) — just `uv sync` with no extra. The default PyPI
+# arm64 wheel already ships MPS / Metal support, so the index overrides
+# above don't need to fire there.
+#
+# Or run scripts/install_with_gpu.sh which autodetects the platform and
+# picks the right extra (or none, on macOS).
+cuda = ["torch", "torchvision"]
+rocm = ["torch", "torchvision", "pytorch-triton-rocm"]
+cpu = ["torch", "torchvision"]
 dev = [
     # Linting and Code Quality
     "ruff>=0.4.0",
