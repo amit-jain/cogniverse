@@ -45,6 +45,9 @@ dependencies = [
     # Pinned to match the host gateway version — the SDK and gateway must
     # be version-compatible for mTLS and the gRPC protocol.
     "openshell==0.0.13",
+
+    # Redis Streams + consumer groups for the ingestion_v2 queue.
+    "redis==5.2.1",
 ]
 
 [project.optional-dependencies]
