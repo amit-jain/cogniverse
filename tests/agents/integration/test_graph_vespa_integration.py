@@ -7,11 +7,12 @@ Exactly the same pattern as test_wiki_vespa_integration.py.
 
 import json
 import platform
+import socket
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -96,7 +97,6 @@ def _wait_for_schema_ready(
             "confidence": 0.0,
             "created_at": "2024-01-01T00:00:00+00:00",
             "updated_at": "2024-01-01T00:00:00+00:00",
-            "embedding": [0.01] * 768,
         }
     }
     url = (
@@ -226,22 +226,113 @@ def graph_vespa():
     subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
 
 
-@pytest.fixture(scope="module")
-def graph_manager(graph_vespa):
-    """GraphManager wired to the test Vespa."""
-    http_port = graph_vespa["http_port"]
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
-    backend = MagicMock()
-    backend._url = "http://localhost"
-    backend._port = http_port
-    backend.search.return_value = []
+
+@pytest.fixture(scope="module")
+def pylate_server():
+    """Run the real deploy/pylate/server.py in a background thread.
+
+    Loads ``lightonai/LateOn`` via PyLate (downloads ~300MB on first
+    run, cached in HF home thereafter) and serves the same /pooling
+    contract the production sidecar speaks. The graph_manager fixture
+    points GraphManager at this URL so upserts exercise the full
+    encode → VespaEmbeddingProcessor → Vespa write path against real
+    multi-vector embeddings.
+    """
+    import importlib.util
+
+    import uvicorn
+
+    # Load the production sidecar module by path (no package install).
+    spec = importlib.util.spec_from_file_location(
+        "pylate_server_under_test", "deploy/pylate/server.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
+    port = _free_port()
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 180  # model load on first run is slow
+    while time.time() < deadline:
+        try:
+            resp = requests.get(f"{base_url}/health", timeout=2)
+            if resp.status_code == 200:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        pytest.fail("pylate /health did not come up within 180s — model load failed")
+
+    try:
+        yield base_url
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def graph_manager(graph_vespa, pylate_server):
+    """GraphManager wired to the test Vespa via the production VespaBackend
+    (BackendRegistry path) and the real PyLate /pooling server."""
+    from pathlib import Path
+
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    http_port = graph_vespa["http_port"]
+    config_port = graph_vespa["config_port"]
+
+    BackendRegistry._backend_instances.clear()
+    config_store = VespaConfigStore(
+        backend_url="http://localhost",
+        backend_port=http_port,
+    )
+    config_manager = ConfigManager(store=config_store)
+    config_manager.set_system_config(
+        SystemConfig(backend_url="http://localhost", backend_port=http_port)
+    )
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+    backend = BackendRegistry.get_instance().get_ingestion_backend(
+        name="vespa",
+        tenant_id=TENANT_ID,
+        config={
+            "backend": {
+                "url": "http://localhost",
+                "config_port": config_port,
+                "port": http_port,
+            }
+        },
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
 
     manager = GraphManager(
         backend=backend,
         tenant_id=TENANT_ID,
         schema_name=GRAPH_SCHEMA,
+        colbert_endpoint_url=pylate_server,
     )
-    yield manager, http_port
+    try:
+        yield manager, http_port
+    finally:
+        BackendRegistry._backend_instances.clear()
 
 
 @pytest.mark.integration
@@ -674,16 +765,34 @@ class TestMultimodalGraphExtraction:
         assert fields["name"] == colpali_node.name
         assert "tutorial.mp4" in json.loads(fields["mentions"])
 
-        embedding_field = fields.get("embedding", {})
-        embedding = (
-            embedding_field.get("values", [])
-            if isinstance(embedding_field, dict)
-            else embedding_field
-        )
-        assert len(embedding) == 768
-        non_zero_count = sum(1 for v in embedding if v != 0.0)
-        assert non_zero_count > 700, (
-            f"Real Ollama embedding should be densely non-zero, got {non_zero_count}/768"
+        # Embeddings are multi-vector ColBERT — Vespa GET returns the
+        # mapped tensor wrapped as {"type": "...", "blocks": [...]} or
+        # {"cells": [...]}. Confirm we have at least one token's worth of
+        # data on both fields. Wire-format details (bfloat16 hex etc.)
+        # are validated on the WRITE side by test_graph_kg_pylate_roundtrip
+        # — duplicating that here adds nothing.
+        def _token_count(tensor_field):
+            assert isinstance(tensor_field, dict), (
+                f"tensor field must be a dict envelope, got {type(tensor_field).__name__}"
+            )
+            blocks = tensor_field.get("blocks")
+            if blocks is not None:
+                # Vespa returns blocks as either a dict {"<key>": values}
+                # or a list [{"address": {...}, "values": [...]}].
+                return len(blocks)
+            cells = tensor_field.get("cells")
+            assert cells is not None, (
+                f"tensor envelope has neither 'blocks' nor 'cells': {tensor_field.keys()}"
+            )
+            tokens = {c["address"].get("token") for c in cells}
+            return len(tokens)
+
+        emb_tokens = _token_count(fields["embedding"])
+        bin_tokens = _token_count(fields["embedding_binary"])
+        assert emb_tokens > 0, "embedding must contain at least one token"
+        assert emb_tokens == bin_tokens, (
+            f"embedding has {emb_tokens} tokens, embedding_binary has {bin_tokens} — "
+            "the two fields must have the same token set"
         )
 
     def test_vlm_descriptions_extract_real_entities(

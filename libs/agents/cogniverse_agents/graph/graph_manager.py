@@ -3,6 +3,12 @@
 Follows the same pattern as WikiManager: takes a VespaSearchBackend,
 feeds documents via the Document v1 HTTP API, queries via YQL.
 
+Embeddings are multi-vector ColBERT (LateOn 128-dim per token) served
+by the ``colbert_pylate`` sidecar pod. Nodes ship two tensor fields to
+Vespa — ``embedding`` (bfloat16 hex per token) and ``embedding_binary``
+(1-bit packed) — so retrieval can use the standard MaxSim two-phase
+rank: hamming on binary first, full bfloat16 MaxSim rerank.
+
 Upserts are idempotent per node_id / edge_id (deterministic from name
 and relation), so re-indexing the same file is safe.
 """
@@ -12,6 +18,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import requests
 
 from cogniverse_agents.graph.code_extractor import CodeExtractor
@@ -28,6 +35,8 @@ from cogniverse_agents.graph.graph_schema import (
     Node,
     normalize_name,
 )
+from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +44,52 @@ logger = logging.getLogger(__name__)
 class GraphManager:
     """Manages the knowledge graph for a single tenant, backed by Vespa."""
 
-    def __init__(self, backend: Any, tenant_id: str, schema_name: str) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        tenant_id: str,
+        schema_name: str,
+        colbert_endpoint_url: str,
+        colbert_model: str = "lightonai/LateOn",
+    ) -> None:
         """
         Args:
-            backend: VespaSearchBackend instance (provides _url, _port, search).
+            backend: VespaSearchBackend instance (provides _url, _port).
             tenant_id: Tenant identifier.
             schema_name: Tenant-specific schema name
                          (e.g. "knowledge_graph_acme_production").
+            colbert_endpoint_url: URL of the colbert_pylate sidecar that
+                serves /pooling for ColBERT multi-vector encoding.
+            colbert_model: HF model id the sidecar serves; passed
+                through in /pooling requests for diagnostic logging.
         """
+        if not colbert_endpoint_url:
+            raise ValueError(
+                "GraphManager requires a colbert_endpoint_url — KG node "
+                "embeddings route through the colbert_pylate sidecar pod. "
+                "Configure inference.colbert_pylate in the chart, or pass "
+                "the URL explicitly."
+            )
+
         self._backend = backend
         self._tenant_id = tenant_id
         self._schema_name = schema_name
         self._code_extractor = CodeExtractor()
         self._doc_extractor = DocExtractor()
+
+        loader = RemoteColBERTLoader(
+            model_name=colbert_model,
+            config={"remote_inference_url": colbert_endpoint_url},
+            logger=logger,
+        )
+        self._encoder, _ = loader.load_model()
+        self._embedding_processor = VespaEmbeddingProcessor(
+            logger=logger, model_name=colbert_model, schema_name=schema_name
+        )
+
+    # ------------------------------------------------------------------ #
+    # Public API                                                         #
+    # ------------------------------------------------------------------ #
 
     def extract_file(
         self, file_path: Path, source_doc_id: str
@@ -73,10 +115,12 @@ class GraphManager:
         edges_upserted = 0
 
         merged_nodes = self._merge_duplicate_nodes(result.nodes)
-        for node in merged_nodes:
-            embedding = self._generate_embedding(f"{node.name}\n{node.description}")
-            if self._feed_node(node, embedding):
-                nodes_upserted += 1
+        if merged_nodes:
+            texts = [f"{node.name}\n{node.description}" for node in merged_nodes]
+            tensor_fields_per_node = self._encode_documents(texts)
+            for node, tensor_fields in zip(merged_nodes, tensor_fields_per_node):
+                if self._feed_node(node, tensor_fields):
+                    nodes_upserted += 1
 
         for edge in result.edges:
             if self._feed_edge(edge):
@@ -85,23 +129,36 @@ class GraphManager:
         return {"nodes_upserted": nodes_upserted, "edges_upserted": edges_upserted}
 
     def search_nodes(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
-        """Semantic + BM25 search over nodes."""
-        embedding = self._generate_embedding(query)
+        """MaxSim multi-vector search over nodes with bm25 rerank."""
+        try:
+            qt_blocks, qtb_blocks = self._encode_query_blocks(query)
+        except Exception as exc:
+            logger.warning("Query encode failed, falling back to YQL visit: %s", exc)
+            return self._visit(doc_type="node", name_contains=query, top_k=top_k)
+
         yql = (
             f"select * from sources {self._schema_name} "
             f'where tenant_id contains "{self._tenant_id}" '
             f'and doc_type contains "node" '
             f"and userQuery() limit {top_k}"
         )
+        body = {
+            "yql": yql,
+            "query": query,
+            "hits": top_k,
+            "ranking.profile": "hybrid_binary_bm25",
+            "input.query(qtb)": {"blocks": qtb_blocks},
+            "input.query(qt)": {"blocks": qt_blocks},
+        }
+        url = f"{self._backend._url}:{self._backend._port}/search/"
         try:
-            resp = self._backend.search(
-                query=query,
-                yql=yql,
-                hits=top_k,
-                ranking="hybrid",
-                query_embedding=embedding,
-            )
-            return self._extract_hits(resp)
+            resp = requests.post(url, json=body, timeout=10)
+            if not resp.ok:
+                raise RuntimeError(f"search returned {resp.status_code}: {resp.text}")
+            data = resp.json()
+            return [
+                h.get("fields", h) for h in data.get("root", {}).get("children", [])
+            ]
         except Exception as exc:
             logger.warning("Node search failed, trying YQL-only fallback: %s", exc)
             return self._visit(doc_type="node", name_contains=query, top_k=top_k)
@@ -174,7 +231,9 @@ class GraphManager:
             ],
         }
 
-    # ----- Internal helpers ------------------------------------------------
+    # ------------------------------------------------------------------ #
+    # Internal helpers                                                   #
+    # ------------------------------------------------------------------ #
 
     def _merge_duplicate_nodes(self, nodes: List[Node]) -> List[Node]:
         """Merge nodes with the same normalized name — union their mentions."""
@@ -189,6 +248,58 @@ class GraphManager:
             else:
                 merged[key] = node
         return list(merged.values())
+
+    def _encode_documents(self, texts: List[str]) -> List[Dict[str, Any]]:
+        """Encode document texts via the ColBERT sidecar; return per-text
+        ``{embedding, embedding_binary}`` tensor field dicts in Vespa wire
+        format (bfloat16 hex per token, 1-bit packed binary per token)."""
+        try:
+            per_text = self._encoder.encode(texts, is_query=False)
+        except Exception as exc:
+            logger.warning(
+                "ColBERT encode failed for %d texts; nodes will ship without "
+                "embeddings (semantic recall will degrade until pod recovers): %s",
+                len(texts),
+                exc,
+            )
+            return [{} for _ in texts]
+
+        out: List[Dict[str, Any]] = []
+        for tokens in per_text:
+            arr = np.asarray(tokens, dtype=np.float32)
+            if arr.ndim != 2 or arr.shape[0] == 0:
+                out.append({})
+                continue
+            out.append(self._embedding_processor.process_embeddings(arr))
+        return out
+
+    def _encode_query_blocks(self, query: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Encode a query into the two block-format tensors Vespa expects:
+        ``query(qt)`` (float per-token, 128-dim) and ``query(qtb)`` (1-bit
+        packed binary per token, 16 bytes). Each block keyed by token index."""
+        per_text = self._encoder.encode([query], is_query=True)
+        if not per_text:
+            raise RuntimeError("encoder returned no embeddings for query")
+        arr = np.asarray(per_text[0], dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[0] == 0:
+            raise RuntimeError(
+                f"encoder returned malformed query embedding shape {arr.shape}"
+            )
+
+        qt_blocks: Dict[str, Any] = {}
+        for token_idx in range(arr.shape[0]):
+            qt_blocks[str(token_idx)] = arr[token_idx].tolist()
+
+        # 1-bit packed binary: pack the sign bits of each 128-d vector into
+        # 16 bytes (int8). Matches Vespa's hamming distance over int8 tensors.
+        signs = (arr > 0).astype(np.uint8)
+        packed = np.packbits(signs, axis=-1).astype(np.int8)
+        qtb_blocks: Dict[str, Any] = {}
+        for token_idx in range(packed.shape[0]):
+            # Vespa expects signed int8; numpy int8 is already correct.
+            qtb_blocks[str(token_idx)] = packed[token_idx].tolist()
+
+        return qt_blocks, qtb_blocks
 
     def _feed_with_retry(
         self, feed_url: str, payload: dict, doc_id: str, kind: str
@@ -236,22 +347,28 @@ class GraphManager:
             backoff = min(backoff * 1.5, 8.0)
         return False
 
-    def _feed_node(self, node: Node, embedding: List[float]) -> bool:
+    def _feed_node(self, node: Node, tensor_fields: Dict[str, Any]) -> bool:
         url = f"{self._backend._url}:{self._backend._port}"
         feed_url = (
             f"{url}/document/v1/graph_content/{self._schema_name}/docid/{node.doc_id}"
         )
         payload = node.to_vespa_document()
-        payload["fields"]["embedding"] = embedding
+        # tensor_fields is empty when encoding failed — ship the node
+        # without embeddings rather than blocking the upsert. Mapped
+        # tensor attributes tolerate absent values.
+        for k, v in tensor_fields.items():
+            payload["fields"][k] = v
         return self._feed_with_retry(feed_url, payload, node.doc_id, "node")
 
     def _feed_edge(self, edge: Edge) -> bool:
+        """Feed an edge document. Edges don't carry embeddings — semantic
+        retrieval is over nodes only — so the mapped embedding fields are
+        omitted entirely (Vespa attribute tensors handle absence)."""
         url = f"{self._backend._url}:{self._backend._port}"
         feed_url = (
             f"{url}/document/v1/graph_content/{self._schema_name}/docid/{edge.doc_id}"
         )
         payload = edge.to_vespa_document()
-        payload["fields"]["embedding"] = [0.0] * 768
         return self._feed_with_retry(feed_url, payload, edge.doc_id, "edge")
 
     def _visit(
@@ -265,7 +382,10 @@ class GraphManager:
         visit_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid"
         params = {
             "wantedDocumentCount": str(top_k),
-            "selection": f'{self._schema_name}.doc_type=="{doc_type}" and {self._schema_name}.tenant_id=="{self._tenant_id}"',
+            "selection": (
+                f'{self._schema_name}.doc_type=="{doc_type}" and '
+                f'{self._schema_name}.tenant_id=="{self._tenant_id}"'
+            ),
         }
         try:
             resp = requests.get(visit_url, params=params, timeout=15)
@@ -318,17 +438,3 @@ class GraphManager:
         if isinstance(response, dict):
             return response.get("hits", [])
         return []
-
-    def _generate_embedding(self, text: str) -> List[float]:
-        """Generate a text embedding via Ollama nomic-embed-text."""
-        try:
-            import ollama
-
-            result = ollama.embed(model="nomic-embed-text", input=text)
-            embeddings = result.get("embeddings") or result.get("embedding") or []
-            if embeddings and isinstance(embeddings[0], list):
-                return embeddings[0]
-            return list(embeddings)
-        except Exception:
-            logger.warning("Embedding generation failed; using zero vector")
-            return [0.0] * 768

@@ -97,8 +97,13 @@
       },
       {
         "name": "embedding",
-        "type": "tensor<float>(d0[768])",
-        "indexing": ["summary", "attribute", "index"]
+        "type": "tensor<bfloat16>(token{}, v[128])",
+        "indexing": ["attribute"]
+      },
+      {
+        "name": "embedding_binary",
+        "type": "tensor<int8>(token{}, v[16])",
+        "indexing": ["attribute", "index"]
       }
     ]
   },
@@ -110,43 +115,122 @@
   ],
   "rank_profiles": [
     {
-      "name": "semantic_search",
+      "name": "default",
       "inputs": [
         {
-          "name": "query(q)",
-          "type": "tensor<float>(d0[768])"
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        },
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
         }
       ],
-      "first_phase": {
-        "expression": "closeness(field, embedding)"
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        },
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "second_phase": {
+        "expression": "max_sim",
+        "rerank_count": 100
       },
-      "match_features": [
-        "closeness(field, embedding)",
-        "distance(field, embedding)"
-      ]
+      "timeout": 5.0
     },
     {
-      "name": "bm25",
-      "first_phase": {
-        "expression": "bm25(name) + bm25(description)"
-      }
-    },
-    {
-      "name": "hybrid",
+      "name": "binary_only",
       "inputs": [
         {
-          "name": "query(q)",
-          "type": "tensor<float>(d0[768])"
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
         }
       ],
-      "first_phase": {
-        "expression": "0.6 * closeness(field, embedding) + 0.2 * bm25(name) + 0.2 * bm25(description)"
+      "functions": [
+        {
+          "name": "max_sim_hamming",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim_hamming",
+      "timeout": 2.0
+    },
+    {
+      "name": "float_float",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "max_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        }
+      ],
+      "first_phase": "max_sim",
+      "timeout": 2.0
+    },
+    {
+      "name": "bm25_only",
+      "first_phase": "bm25(name) + bm25(description)",
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_binary_bm25",
+      "inputs": [
+        {
+          "name": "query(qtb)",
+          "type": "tensor<int8>(querytoken{}, v[16])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "colbert_sim",
+          "expression": "sum(reduce(1/(1+ sum(hamming(query(qtb), attribute(embedding_binary)), v)), max, token), querytoken)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(name) + bm25(description)"
+        }
+      ],
+      "first_phase": "colbert_sim",
+      "second_phase": {
+        "expression": "text_score",
+        "rerank_count": 100
       },
-      "match_features": [
-        "closeness(field, embedding)",
-        "bm25(name)",
-        "bm25(description)"
-      ]
+      "timeout": 2.0
+    },
+    {
+      "name": "hybrid_float_bm25",
+      "inputs": [
+        {
+          "name": "query(qt)",
+          "type": "tensor<float>(querytoken{}, v[128])"
+        }
+      ],
+      "functions": [
+        {
+          "name": "colbert_sim",
+          "expression": "sum(reduce(sum(query(qt) * cell_cast(attribute(embedding), float), v), max, token), querytoken)"
+        },
+        {
+          "name": "text_score",
+          "expression": "bm25(name) + bm25(description)"
+        }
+      ],
+      "first_phase": "colbert_sim",
+      "second_phase": {
+        "expression": "text_score",
+        "rerank_count": 100
+      },
+      "timeout": 2.0
     }
   ]
 }
