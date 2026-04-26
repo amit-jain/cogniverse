@@ -292,9 +292,14 @@ def deployed_stack(k3d_cluster):
         ("libs/runtime/Dockerfile", runtime_tag),
         ("libs/dashboard/Dockerfile", dashboard_tag),
     ]:
+        # Cold build runs the full workspace install (uv sync —
+        # transformers, dspy, ColPali, VideoPrism, etc.), then the
+        # backend-specific torch reinstall, then GLiNER predownload
+        # (1.5 GB). Easily 15-25 min on the first run; cached
+        # subsequent runs finish in seconds via docker layer cache.
         _cmd(
             ["docker", "build", "-f", dockerfile, *build_args, "-t", tag, "."],
-            timeout=900,
+            timeout=1800,
         )
 
     # Inference sidecars deployed by the chart when their `enabled` flag
