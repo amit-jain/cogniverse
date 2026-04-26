@@ -1,16 +1,20 @@
 """End-to-end round-trip test: source_url written at ingest comes back at search.
 
 Builds a Vespa document via :class:`DocumentBuilder` carrying a known
-``source_url``, feeds it through a real Vespa instance, queries it back, and
-asserts the field round-trips exactly. No mocking the Vespa boundary — this
-is the canonical wiring test for the unified-MediaLocator write path.
+``source_url``, feeds it through a real Vespa instance managed by the
+``ingestion_vespa_backend`` fixture (Docker container via
+``VespaTestManager``), queries it back, and asserts the field round-trips
+exactly. No mocking the Vespa boundary.
 
-Skips cleanly when Vespa is not running (``requires_vespa`` marker).
+The fixture deploys metadata schemas only; this test redeploys with the
+``video_colpali_smol500_mv_frame`` schema added so documents of that type
+can be fed. Skips cleanly via ``requires_docker`` when Docker isn't there.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
@@ -20,32 +24,97 @@ from cogniverse_runtime.ingestion.processors.embedding_generator.document_builde
 )
 
 SCHEMA = "video_colpali_smol500_mv_frame"
+VIDEO_SCHEMA_JSON = (
+    Path(__file__).resolve().parents[2]
+    / "system"
+    / "resources"
+    / "schemas"
+    / f"{SCHEMA}_schema.json"
+)
 
 
-def _wait_for_searchable(vespa_app, doc_id: str, timeout: float = 30.0) -> dict | None:
+def _wait_for_searchable(vespa_app, doc_id: str, timeout: float = 60.0) -> dict | None:
     deadline = time.time() + timeout
-    yql = f"select * from {SCHEMA} where video_id contains 'roundtrip_v' limit 5"
     while time.time() < deadline:
         try:
-            response = vespa_app.query(yql=yql, hits=5)
-            children = response.json.get("root", {}).get("children", [])
-            for hit in children:
-                if hit.get("id", "").endswith(doc_id):
-                    return hit.get("fields", {})
+            response = vespa_app.get_data(schema=SCHEMA, data_id=doc_id)
+            if getattr(response, "is_successful", lambda: False)():
+                fields = response.json.get("fields") or {}
+                if fields:
+                    return fields
         except Exception:
             pass
         time.sleep(1.0)
     return None
 
 
-@pytest.fixture
+def _deploy_video_schema_alongside_metadata(config_port: int, http_port: int) -> None:
+    """Redeploy the cogniverse application with metadata + video schemas."""
+    import requests
+    from vespa.package import ApplicationPackage
+
+    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
+    from cogniverse_vespa.metadata_schemas import (
+        create_adapter_registry_schema,
+        create_config_metadata_schema,
+        create_organization_metadata_schema,
+        create_tenant_metadata_schema,
+    )
+    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+    parser = JsonSchemaParser()
+    video_schema = parser.load_schema_from_json_file(str(VIDEO_SCHEMA_JSON))
+
+    schemas = [
+        create_organization_metadata_schema(),
+        create_tenant_metadata_schema(),
+        create_config_metadata_schema(),
+        create_adapter_registry_schema(),
+        video_schema,
+    ]
+
+    schema_manager = VespaSchemaManager(
+        backend_endpoint="http://localhost",
+        backend_port=config_port,
+    )
+    app_package = ApplicationPackage(name="cogniverse", schema=schemas)
+    schema_manager._deploy_package(app_package, allow_schema_removal=True)
+
+    # Wait for the new document type to be queryable. Vespa returns 200 on
+    # prepareandactivate before the schema is actually active for feeds.
+    yql = f"select * from {SCHEMA} where true limit 0"
+    deadline = time.time() + 60.0
+    while time.time() < deadline:
+        try:
+            resp = requests.get(
+                f"http://localhost:{http_port}/search/",
+                params={"yql": yql, "hits": 0},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                root = resp.json().get("root", {})
+                if "errors" not in root:
+                    return
+        except requests.RequestException:
+            pass
+        time.sleep(2.0)
+    raise RuntimeError(
+        f"Schema {SCHEMA} did not become queryable within 60s after deploy"
+    )
+
+
+@pytest.fixture(scope="module")
 def vespa_app(ingestion_vespa_backend):
     from vespa.application import Vespa
 
+    _deploy_video_schema_alongside_metadata(
+        ingestion_vespa_backend["config_port"],
+        ingestion_vespa_backend["http_port"],
+    )
     return Vespa(url=ingestion_vespa_backend["backend_url"])
 
 
-@pytest.mark.requires_vespa
+@pytest.mark.requires_docker
 @pytest.mark.integration
 class TestSourceUrlRoundTrip:
     def test_canonical_uri_round_trips(self, ingestion_vespa_backend, vespa_app):
