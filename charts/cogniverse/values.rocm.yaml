@@ -1,0 +1,93 @@
+# Cogniverse — ROCm / AMD GPU overrides
+#
+# Compose this on top of values.yaml when deploying to a cluster with
+# AMD ROCm GPU nodes:
+#
+#   helm install cogniverse charts/cogniverse \
+#     -f charts/cogniverse/values.yaml \
+#     -f charts/cogniverse/values.rocm.yaml
+#
+# Image tags below assume you have built and pushed:
+#   - cogniverse/colpali:dev-rocm   (PyTorch-ROCm base + colpali-engine)
+#   - cogniverse/pylate:0.1.0-rocm  (PyTorch-ROCm base + pylate)
+#   - rocm/vllm                     (vLLM-ROCm, used by the Step-3 llm block)
+# Build recipes live under deploy/<component>/Dockerfile.rocm.
+#
+# Note on Whisper: faster-whisper / CTranslate2 has no ROCm backend. When
+# Step 2 (Whisper externalization) lands, set ``whisper.engine: whisperx``
+# (PyTorch-ROCm) here. This file is a skeleton; the whisper block will be
+# added once the chart template gains that section.
+
+devMode:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Inference services — device: rocm injects ``amd.com/gpu`` resource limits
+# and an ``amd.com/gpu.present: true`` nodeSelector + the standard ROCm
+# toleration.
+# ---------------------------------------------------------------------------
+inference:
+  colpali_infinity:
+    enabled: true
+    device: rocm
+    gpuCount: 1
+    replicaCount: 1            # bump as ROCm cluster grows
+    imagesByDevice:
+      rocm:
+        repository: cogniverse/colpali
+        tag: dev-rocm
+        pullPolicy: IfNotPresent
+    nodeSelector: {}
+    tolerations: []
+    resources:
+      limits:
+        cpu: "8"
+        memory: "16Gi"
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+
+  colbert_pylate:
+    enabled: true
+    device: rocm
+    gpuCount: 1
+    pylate:
+      imagesByDevice:
+        rocm:
+          repository: cogniverse/pylate
+          tag: 0.1.0-rocm
+          pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+
+  colqwen_infinity:
+    enabled: false
+
+  dense_vllm:
+    enabled: false
+    device: rocm
+    gpuCount: 1
+    imagesByDevice:
+      rocm:
+        repository: rocm/vllm
+        tag: latest
+        pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# LLM (Step 3) — flip to vllm-rocm. Keep commented until the chart's
+# llm.engine branching is in place.
+# ---------------------------------------------------------------------------
+# llm:
+#   engine: vllm-rocm
+#   model: qwen3:4b
+#   imagesByDevice:
+#     rocm:
+#       repository: rocm/vllm
+#       tag: latest
+
+runtime: {}

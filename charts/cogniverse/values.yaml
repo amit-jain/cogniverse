@@ -526,11 +526,25 @@ inference:
     engine: colpali_native
     model: vidore/colsmol-500m
     type: multi_vector
-    device: cpu
+    device: cpu                    # cpu | cuda | rocm | mps
+    # Default image (used when ``imagesByDevice.<device>`` is unset).
     image:
       repository: cogniverse/colpali
       tag: "dev"
       pullPolicy: IfNotPresent
+    # Optional per-device image override. The chart picks
+    # ``imagesByDevice[device]`` if present, else falls back to ``image``
+    # above. Set this in values.cuda.yaml / values.rocm.yaml after
+    # building the corresponding base images. Keys: cpu, cuda, rocm, mps.
+    imagesByDevice: {}
+    # GPU count when device is cuda or rocm. Ignored on cpu/mps. The chart
+    # auto-injects ``nvidia.com/gpu`` or ``amd.com/gpu`` resource limits.
+    gpuCount: 1
+    # Extra nodeSelector / tolerations merged on top of the GPU defaults
+    # the chart injects when device is cuda/rocm. Use to pin to a
+    # specific node pool, instance type, etc.
+    nodeSelector: {}
+    tolerations: []
     extraArgs: []
     replicaCount: 1
     service:
@@ -573,11 +587,15 @@ inference:
     engine: colpali_native
     model: vidore/colqwen-omni-v0.1
     type: multi_vector
-    device: cpu
+    device: cpu                    # cpu | cuda | rocm | mps
     image:
       repository: cogniverse/colpali
       tag: "dev"
       pullPolicy: IfNotPresent
+    imagesByDevice: {}             # see colpali_infinity for shape
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
     extraArgs: []
     replicaCount: 1
     service:
@@ -619,6 +637,13 @@ inference:
     engine: pylate
     model: lightonai/LateOn
     type: multi_vector
+    # Top-level device drives GPU resources / nodeSelector. The pylate
+    # block below carries its own ``device`` env var which is kept in
+    # sync with this top-level field by the chart template.
+    device: cpu                    # cpu | cuda | rocm | mps
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
     replicaCount: 1
     service:
       type: ClusterIP
@@ -629,6 +654,7 @@ inference:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
+    imagesByDevice: {}
     dtype: float32
     extraArgs:
       - "--max-model-len"
@@ -639,7 +665,8 @@ inference:
         repository: cogniverse/pylate
         tag: "0.1.0"
         pullPolicy: IfNotPresent
-      device: cpu
+      imagesByDevice: {}           # see colpali_infinity for shape
+      device: cpu                  # synced with top-level device by template
       containerPort: 8000
     resources:
       limits:
@@ -674,6 +701,10 @@ inference:
     engine: pylate
     model: lightonai/LateOn-Code-edge
     type: multi_vector
+    device: cpu                    # cpu | cuda | rocm | mps
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
     replicaCount: 1
     service:
       type: ClusterIP
@@ -684,6 +715,7 @@ inference:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
+    imagesByDevice: {}
     dtype: float32
     extraArgs: []
     # pylate-specific
@@ -692,7 +724,8 @@ inference:
         repository: cogniverse/pylate
         tag: "0.1.0"
         pullPolicy: IfNotPresent
-      device: cpu
+      imagesByDevice: {}
+      device: cpu                  # synced with top-level device by template
       containerPort: 8000
     resources:
       limits:
@@ -727,10 +760,15 @@ inference:
     enabled: false
     engine: vllm
     type: single_vector
+    device: cpu                    # cpu | cuda | rocm
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
+    imagesByDevice: {}
     model: google/embeddinggemma-300m
     dtype: float32
     extraArgs:

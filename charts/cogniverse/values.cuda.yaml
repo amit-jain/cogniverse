@@ -1,0 +1,106 @@
+# Cogniverse — CUDA / NVIDIA GPU overrides
+#
+# Compose this on top of values.yaml when deploying to a cluster with
+# NVIDIA GPU nodes (EKS p4/p5, GKE A100/L4, on-prem H100, etc.):
+#
+#   helm install cogniverse charts/cogniverse \
+#     -f charts/cogniverse/values.yaml \
+#     -f charts/cogniverse/values.cuda.yaml
+#
+# Each block here only overrides the deltas vs the base values.yaml.
+# CPU defaults stay in values.yaml so a fresh helm install on a CPU-only
+# cluster still works without this file.
+#
+# Image tags below assume you have built and pushed:
+#   - cogniverse/colpali:dev-cuda   (PyTorch CUDA base + colpali-engine)
+#   - cogniverse/pylate:0.1.0-cuda  (PyTorch CUDA base + pylate)
+#   - rocm/vllm                     (use vllm/vllm-openai for CUDA, see llm)
+# Build recipes live under deploy/<component>/Dockerfile.cuda. Adjust
+# repository/tag to match your registry.
+
+devMode:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Inference services — switch device to cuda; chart auto-injects
+# ``nvidia.com/gpu: <gpuCount>`` resource limits and the standard GPU
+# nodeSelector + toleration. Add more replicas to fan out throughput.
+# ---------------------------------------------------------------------------
+inference:
+  colpali_infinity:
+    enabled: true
+    device: cuda
+    gpuCount: 1
+    replicaCount: 5            # scale-out: ~5x ingest throughput vs single replica
+    imagesByDevice:
+      cuda:
+        repository: cogniverse/colpali
+        tag: dev-cuda
+        pullPolicy: IfNotPresent
+    # nodeSelector / tolerations merged on top of the auto-injected
+    # ``nvidia.com/gpu.present: true`` selector. Pin to a specific node
+    # pool here if you operate multiple GPU instance families.
+    nodeSelector: {}
+    tolerations: []
+    resources:
+      limits:
+        cpu: "8"
+        memory: "16Gi"
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+
+  colbert_pylate:
+    enabled: true
+    device: cuda
+    gpuCount: 1
+    replicaCount: 3
+    pylate:
+      imagesByDevice:
+        cuda:
+          repository: cogniverse/pylate
+          tag: 0.1.0-cuda
+          pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+
+  # Enable when needed; same shape as colpali_infinity.
+  colqwen_infinity:
+    enabled: false
+
+  # If you also run dense_vllm for embeddings:
+  dense_vllm:
+    enabled: false
+    device: cuda
+    gpuCount: 1
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: latest
+        pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# LLM (chat / DSPy reasoning) — Step 3 of the plan adds ``llm.engine`` so
+# this block can flip Ollama → vLLM here. Until that step lands, keep the
+# existing builtin Ollama config below; uncomment+populate when Step 3
+# template support is in place.
+# ---------------------------------------------------------------------------
+# llm:
+#   engine: vllm-cuda          # added in Step 3
+#   model: qwen3:4b
+#   imagesByDevice:
+#     cuda:
+#       repository: vllm/vllm-openai
+#       tag: latest
+
+# ---------------------------------------------------------------------------
+# Runtime — scale beyond a single replica once the ingestion path lives in
+# its own worker pool (Step 5). Until then, keep replicas: 1 to avoid the
+# colpali warm-cache duplication problem.
+# ---------------------------------------------------------------------------
+runtime: {}

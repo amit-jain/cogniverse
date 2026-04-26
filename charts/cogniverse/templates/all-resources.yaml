@@ -973,8 +973,29 @@ spec:
 {{- range $name, $cfg := .Values.inference }}
 {{- if $cfg.enabled }}
 {{- $engine := default "vllm" $cfg.engine }}
+{{- $device := default "cpu" $cfg.device }}
+{{- /*
+     Resolve the container image, allowing per-device overrides via
+     ``imagesByDevice.<device>``. Falls back to the engine-default image
+     block when no override is set. Pylate has its own nested image
+     block so we resolve both here for use below.
+*/ -}}
+{{- $imageDefault := $cfg.image }}
+{{- $imageByDev := dict }}
+{{- if $cfg.imagesByDevice }}{{ $imageByDev = $cfg.imagesByDevice }}{{ end }}
+{{- $imageOverride := index $imageByDev $device }}
+{{- $resolvedImage := default $imageDefault $imageOverride }}
+{{- $pylateImageDefault := dict }}
+{{- $pylateImageOverride := dict }}
+{{- if $cfg.pylate }}
+{{- $pylateImageDefault = $cfg.pylate.image }}
+{{- if $cfg.pylate.imagesByDevice }}
+{{- $pylateImageOverride = (index $cfg.pylate.imagesByDevice $device) }}
+{{- end }}
+{{- end }}
+{{- $resolvedPylateImage := default $pylateImageDefault $pylateImageOverride }}
 ---
-# Inference Deployment: {{ $name }} (engine={{ $engine }})
+# Inference Deployment: {{ $name }} (engine={{ $engine }} device={{ $device }})
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1007,8 +1028,8 @@ spec:
       containers:
       {{- if eq $engine "pylate" }}
       - name: pylate
-        image: "{{ $cfg.pylate.image.repository }}:{{ $cfg.pylate.image.tag }}"
-        imagePullPolicy: {{ $cfg.pylate.image.pullPolicy }}
+        image: "{{ $resolvedPylateImage.repository }}:{{ $resolvedPylateImage.tag }}"
+        imagePullPolicy: {{ $resolvedPylateImage.pullPolicy }}
         ports:
         - name: http
           containerPort: {{ $cfg.pylate.containerPort }}
@@ -1016,7 +1037,7 @@ spec:
         - name: MODEL_NAME
           value: {{ $cfg.model | quote }}
         - name: DEVICE
-          value: {{ $cfg.pylate.device | quote }}
+          value: {{ $device | quote }}
         - name: HOST
           value: "0.0.0.0"
         - name: PORT
@@ -1029,8 +1050,8 @@ spec:
       # place of Infinity / vLLM, neither of which can load vidore/colsmol-500m
       # cleanly today (peft eva_config + LoRA target_modules drift).
       - name: colpali
-        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
-        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
         ports:
         - name: http
           containerPort: {{ default 7997 $cfg.service.port }}
@@ -1038,7 +1059,7 @@ spec:
         - name: MODEL_NAME
           value: {{ $cfg.model | quote }}
         - name: DEVICE
-          value: {{ default "cpu" $cfg.device | quote }}
+          value: {{ $device | quote }}
         - name: HOST
           value: "0.0.0.0"
         - name: PORT
@@ -1058,8 +1079,8 @@ spec:
       # vidore/colsmol-500m cleanly today; prefer engine=colpali_native for
       # the colpali_infinity / colqwen_infinity blocks.
       - name: infinity
-        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
-        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
         ports:
         - name: http
           containerPort: {{ default 7997 $cfg.service.port }}
@@ -1086,8 +1107,8 @@ spec:
           {{- end }}
       {{- else }}
       - name: vllm
-        image: "{{ $cfg.image.repository }}:{{ $cfg.image.tag }}"
-        imagePullPolicy: {{ $cfg.image.pullPolicy }}
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
         ports:
         - name: http
           containerPort: 8000
@@ -1124,7 +1145,17 @@ spec:
         readinessProbe:
           {{- toYaml $cfg.readinessProbe | nindent 10 }}
         resources:
-          {{- toYaml $cfg.resources | nindent 10 }}
+          {{- $baseResources := $cfg.resources | default dict }}
+          {{- $baseLimits := dig "limits" dict $baseResources }}
+          {{- $gpuLimits := dict }}
+          {{- if eq $device "cuda" }}
+          {{- $gpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 $cfg.gpuCount)) }}
+          {{- else if eq $device "rocm" }}
+          {{- $gpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 $cfg.gpuCount)) }}
+          {{- end }}
+          {{- $mergedLimits := merge $gpuLimits $baseLimits }}
+          {{- $mergedResources := merge (dict "limits" $mergedLimits) $baseResources }}
+          {{- toYaml $mergedResources | nindent 10 }}
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/huggingface
@@ -1132,6 +1163,50 @@ spec:
       - name: model-cache
         emptyDir:
           sizeLimit: 10Gi
+      {{- /*
+           nodeSelector + tolerations: when device requires a GPU, inject
+           the standard discovery key + NoSchedule toleration; merge any
+           user-specified extras on top. CPU/MPS pass through user values
+           untouched.
+      */ -}}
+      {{- $userNodeSelector := $cfg.nodeSelector | default dict }}
+      {{- $userTolerations := $cfg.tolerations | default list }}
+      {{- if eq $device "cuda" }}
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+        {{- range $k, $v := $userNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $userTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else if eq $device "rocm" }}
+      nodeSelector:
+        amd.com/gpu.present: "true"
+        {{- range $k, $v := $userNodeSelector }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+      tolerations:
+      - key: amd.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      {{- range $userTolerations }}
+      - {{ toYaml . | nindent 8 | trim }}
+      {{- end }}
+      {{- else }}
+      {{- if $userNodeSelector }}
+      nodeSelector:
+        {{- toYaml $userNodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if $userTolerations }}
+      tolerations:
+        {{- toYaml $userTolerations | nindent 8 }}
+      {{- end }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
