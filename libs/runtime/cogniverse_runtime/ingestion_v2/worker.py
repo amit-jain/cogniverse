@@ -55,24 +55,53 @@ class WorkerConfig:
         self.claim_block_ms = int(os.environ.get("INGEST_CLAIM_BLOCK_MS", "5000"))
 
 
+def _media_config_from_env() -> "object":
+    """Build a MediaConfig that points fsspec at MinIO when the worker
+    runs alongside our object store. Reading the MINIO_* env once at
+    job-processing time keeps MediaConfig env-agnostic and avoids
+    mutating any global config singleton."""
+    from cogniverse_core.common.media import MediaConfig
+
+    minio_endpoint = os.environ.get("MINIO_ENDPOINT")
+    if not minio_endpoint:
+        return MediaConfig.from_dict({})
+
+    # fsspec's s3 client picks up AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    # from the process env. Mirror our MINIO_* secrets onto those names
+    # for the duration of the job so the localize() call authenticates.
+    access = os.environ.get("MINIO_ACCESS_KEY")
+    secret = os.environ.get("MINIO_SECRET_KEY")
+    if access:
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", access)
+    if secret:
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secret)
+
+    return MediaConfig.from_dict(
+        {"backends": {"s3": {"endpoint_url": minio_endpoint, "region": "us-east-1"}}}
+    )
+
+
 async def _default_processor(job: IngestJob) -> dict:
     """Production processor: localise the source via MediaLocator and
     run the existing VideoIngestionPipeline. Returns the pipeline's
     result dict; the worker passes it to ``_summarise`` for the status
     event payload."""
-    from cogniverse_core.common.media import MediaConfig, MediaLocator
+    from cogniverse_core.common.media import MediaLocator
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-    media_config = MediaConfig.from_dict({})
-    locator = MediaLocator(config=media_config)
+    media_config = _media_config_from_env()
+    locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
     local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
     config_manager = create_default_config_manager()
+    schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
+    schema_loader = FilesystemSchemaLoader(schemas_dir)
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
         config_manager=config_manager,
-        schema_loader=None,
+        schema_loader=schema_loader,
         schema_name=job.profile,
     )
     return await pipeline.process_video_async(Path(local_path))

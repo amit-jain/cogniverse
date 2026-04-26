@@ -605,18 +605,32 @@ class VideoIngestionPipeline:
     def _process_chunk_data(
         self, video_data: dict[str, Any], results: dict[str, Any]
     ) -> dict[str, Any]:
-        """Process chunk-based video data"""
-        if "chunks" in results["results"]:
-            video_data["chunks"] = results["results"]["chunks"]
+        """Process chunk-based video data.
+
+        ``ChunkSegmentationStrategy`` lands its output under
+        ``results["results"]["video_chunks"]`` (a dict with a
+        ``chunks`` list inside). Older code paths that wrote directly
+        to ``results["results"]["chunks"]`` are still supported.
+        """
+        inner = results.get("results", {})
+        if "chunks" in inner:
+            video_data["chunks"] = inner["chunks"]
+        elif "video_chunks" in inner:
+            chunk_result = inner["video_chunks"]
+            if isinstance(chunk_result, dict):
+                video_data["chunks"] = chunk_result.get("chunks", [])
+            else:
+                video_data["chunks"] = chunk_result
         else:
             self.logger.warning("No chunks data found in results")
             return video_data
 
-        # Add transcript if available
-        if "transcript" in results.get("results", {}):
-            video_data["transcript"] = results["results"]["transcript"]
+        if "transcript" in inner:
+            video_data["transcript"] = inner["transcript"]
 
-        self.logger.info("Using video chunks data")
+        self.logger.info(
+            "Using video chunks data (%d chunks)", len(video_data.get("chunks", []))
+        )
         return video_data
 
     def _process_single_vector_data(

@@ -313,41 +313,49 @@ class VespaBackend(Backend):
             timeout = self.config.get("indexing_timeout", 30.0)
             base_url = f"{self._url}:{self._port}"
 
+            target_schema = schema_name
+            if self._tenant_id:
+                target_schema = self.get_tenant_schema_name(
+                    self._tenant_id, schema_name
+                )
+            # Document v1 GET is the only reliable per-doc visibility probe.
+            # The previous YQL form `where id matches "<doc.id>"` returned
+            # HTTP 400 ("Field 'id' does not exist") on every attempt, and
+            # the loop only caught RequestException — a 4xx is *not* an
+            # exception in the `requests` library, so the probe silently
+            # spun for the full timeout and then logged a misleading
+            # "fed but not visible" warning even though the doc was already
+            # queryable. `documentid` is also not a YQL field on most
+            # schemas; Document v1 GET keys directly off the doc id and
+            # returns 200 vs 404 unambiguously.
+            namespace = getattr(client, "namespace", "content")
             for doc in documents:
-                if doc.id not in [
+                if doc.id in [
                     fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs
                 ]:
-                    target_schema = schema_name
-                    if self._tenant_id:
-                        target_schema = self.get_tenant_schema_name(
-                            self._tenant_id, schema_name
-                        )
-                    deadline = _time.monotonic() + timeout
-                    while _time.monotonic() < deadline:
-                        try:
-                            resp = _requests.get(
-                                f"{base_url}/search/",
-                                params={
-                                    "yql": f'select * from {target_schema} where id matches "{doc.id}" limit 1',
-                                },
-                                timeout=5,
+                    continue
+                doc_url = (
+                    f"{base_url}/document/v1/{namespace}/{target_schema}/docid/{doc.id}"
+                )
+                deadline = _time.monotonic() + timeout
+                while _time.monotonic() < deadline:
+                    try:
+                        resp = _requests.get(doc_url, timeout=5)
+                        if resp.status_code == 200:
+                            break
+                        if resp.status_code not in (404, 503):
+                            logger.warning(
+                                f"Visibility probe unexpected status "
+                                f"{resp.status_code} for {doc.id}: {resp.text[:200]}"
                             )
-                            if resp.status_code == 200:
-                                total = (
-                                    resp.json()
-                                    .get("root", {})
-                                    .get("fields", {})
-                                    .get("totalCount", 0)
-                                )
-                                if total > 0:
-                                    break
-                        except _requests.RequestException:
-                            pass
-                        _time.sleep(0.5)
-                    else:
-                        logger.warning(
-                            f"Document {doc.id} fed but not visible after {timeout}s"
-                        )
+                            break
+                    except _requests.RequestException:
+                        pass
+                    _time.sleep(0.5)
+                else:
+                    logger.warning(
+                        f"Document {doc.id} fed but not visible after {timeout}s"
+                    )
 
         return {
             "success_count": success_count,
@@ -1084,6 +1092,14 @@ class VespaBackend(Backend):
         logger.info(
             f"Waiting for content node convergence (schemas: {schema_names})..."
         )
+        # Probe each schema directly via YQL `from <schema>`. When content
+        # distributors haven't loaded the doctype yet, Vespa returns errors
+        # like "Schema 'X' not found" or 4xx; once it's loaded, the query
+        # returns 200 with an empty hit list and no errors. The previous
+        # `model.restrict` form was unreliable on recent Vespa versions —
+        # it silently returns 200 with empty results for unknown schemas
+        # instead of erroring, falsely confirming convergence after a single
+        # probe.
         remaining = set(schema_names)
         for i in range(timeout):
             for name in list(remaining):
@@ -1091,9 +1107,8 @@ class VespaBackend(Backend):
                     response = requests.post(
                         probe_url,
                         json={
-                            "yql": "select documentid from sources * where true limit 0",
+                            "yql": f"select documentid from {name} where true limit 0",
                             "hits": 0,
-                            "model.restrict": name,
                         },
                         timeout=5,
                     )
@@ -1102,25 +1117,6 @@ class VespaBackend(Backend):
                     body = response.json()
                     errors = body.get("root", {}).get("errors", [])
                     if not errors:
-                        remaining.discard(name)
-                        continue
-                    # Vespa lists every deployed source ref in its error
-                    # message as "cogniverse_content, cogniverse_content.<doc>,
-                    # ...". Parse exactly; substring match gives false positives
-                    # on name prefixes (e.g., lateon_mv in code_lateon_mv).
-                    deployed: set[str] = set()
-                    for err in errors:
-                        match = re.search(
-                            r"Valid source refs are (.+)$", err.get("message", "")
-                        )
-                        if not match:
-                            continue
-                        raw = match.group(1).rstrip().rstrip(".")
-                        for part in raw.split(","):
-                            part = part.strip()
-                            if "." in part:
-                                deployed.add(part.split(".", 1)[1])
-                    if name in deployed:
                         remaining.discard(name)
                 except (requests.exceptions.ConnectionError, ValueError):
                     pass
