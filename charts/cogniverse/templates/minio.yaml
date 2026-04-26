@@ -140,8 +140,11 @@ spec:
       - name: bucket-bootstrap
         image: minio/mc:latest
         env:
-        - name: MC_HOST_minio
-          value: "http://$(MINIO_USER):$(MINIO_PASS)@{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
+        # MINIO_USER/PASS must come BEFORE MC_HOST_minio: kubelet's
+        # ``$(VAR)`` expansion only substitutes variables defined
+        # earlier in the env list. Forward references stay as literal
+        # ``$(MINIO_USER)`` in the value, which makes mc auth as that
+        # literal string and hang in the connectivity probe loop.
         - name: MINIO_USER
           valueFrom:
             secretKeyRef:
@@ -152,15 +155,24 @@ spec:
             secretKeyRef:
               name: {{ $fullName }}-minio
               key: rootPassword
+        - name: MC_HOST_minio
+          value: "http://$(MINIO_USER):$(MINIO_PASS)@{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
         command:
           - /bin/sh
           - -c
           - |
             set -e
-            until mc ls minio >/dev/null 2>&1; do
-              echo "MinIO not ready yet, waiting..."
+            # Bounded retry: 30 attempts × 3s = 90s. Without this bound a
+            # misconfigured MC_HOST_minio (e.g. unsubstituted ``$(VAR)``)
+            # would loop forever and exhaust helm's hook timeout.
+            for i in $(seq 1 30); do
+              if mc ls minio >/dev/null 2>&1; then
+                break
+              fi
+              echo "MinIO not ready yet (attempt $i/30), waiting..."
               sleep 3
             done
+            mc ls minio >/dev/null
             mc mb --ignore-existing "minio/{{ .Values.minio.defaultBucket }}"
             echo "Bucket {{ .Values.minio.defaultBucket }} ready."
         resources:
