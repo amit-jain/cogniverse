@@ -1,0 +1,92 @@
+{{- if .Values.redis.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  accessModes:
+    - {{ .Values.redis.persistence.accessMode }}
+  {{- if .Values.redis.persistence.storageClass }}
+  storageClassName: {{ .Values.redis.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: {{ .Values.redis.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: redis
+        image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+        imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+        # AOF persistence so an in-flight queue survives a pod restart.
+        # ``everysec`` is the standard durability/throughput trade-off:
+        # at most 1s of writes lost on hard kill, >= 50k ops/sec sustained.
+        args:
+          - "redis-server"
+          - "--appendonly"
+          - "yes"
+          - "--appendfsync"
+          - "everysec"
+          - "--dir"
+          - "/data"
+        ports:
+        - name: redis
+          containerPort: 6379
+        livenessProbe:
+          {{- toYaml .Values.redis.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.redis.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.redis.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-redis
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: {{ .Values.redis.service.type }}
+  ports:
+  - port: {{ .Values.redis.service.port }}
+    targetPort: redis
+    protocol: TCP
+    name: redis
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

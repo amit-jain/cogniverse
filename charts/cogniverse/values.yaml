@@ -1268,3 +1268,143 @@ multiTenant:
     memory: "20Gi"
     storage: "100Gi"
     pods: "50"
+
+# ===========================================
+# Redis — ingestion queue + status streams
+# ===========================================
+# Used by the ingest_v2 pipeline. Two roles:
+#   1. Queue: producer (POST /ingest in runtime) XADDs to ``ingest:queue``;
+#      consumers (ingestor pods) XREADGROUP via a consumer group for at-least-
+#      once delivery. Idempotency lookups in ``ingest:done:<sha>``.
+#   2. Status: workers XADD per-event to ``ingest:status:<id>`` so the SSE
+#      endpoint can replay the full event history for late-connecting clients.
+# AOF on so a pod restart doesn't lose in-flight queue entries.
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7.4-alpine"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 6379
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: "10Gi"
+  resources:
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+  livenessProbe:
+    tcpSocket:
+      port: 6379
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readinessProbe:
+    exec:
+      command: ["redis-cli", "ping"]
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ===========================================
+# MinIO — S3-compatible object store
+# ===========================================
+# Default ``s3://`` source for ingestion. Files land in MinIO either by
+# direct upload through the runtime or by an external sync agent (Google
+# Photos, Drive). The ingestor worker fetches via ``MediaLocator`` which
+# already speaks ``s3://``. Webhook-based auto-ingest on bucket events is
+# Phase 5e — for now MinIO is just a dumb store.
+minio:
+  enabled: true
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-04-08T15-41-24Z"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    apiPort: 9000
+    consolePort: 9001
+  rootUser: "cogniverse"
+  # Override in production via secrets. Default is fine for laptop k3d.
+  rootPassword: "cogniverse-dev"
+  defaultBucket: "cogniverse-ingest"
+  persistence:
+    enabled: true
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: "100Gi"
+  resources:
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+  livenessProbe:
+    httpGet:
+      path: /minio/health/live
+      port: 9000
+    initialDelaySeconds: 30
+    periodSeconds: 30
+  readinessProbe:
+    httpGet:
+      path: /minio/health/ready
+      port: 9000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+# ===========================================
+# Ingestor workers — dequeue jobs, run pipeline
+# ===========================================
+# Same image as the runtime, different entry point
+# (``python -m cogniverse_runtime.ingestion_v2.worker``). Multi-replica
+# scales horizontally. Each worker joins a Redis consumer group and
+# claims one job at a time via XREADGROUP with BLOCK; a job in-flight
+# is owned by exactly one worker until it ACKs.
+ingestor:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: cogniverse/runtime
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  consumerGroup: "ingestors"
+  # Per-tenant in-flight cap. The runtime increments
+  # ``ingest:active:<tenant>`` on submit, decrements on completion.
+  # POST /ingest returns 429 when this is exceeded.
+  perTenantConcurrency: 4
+  # Cluster-wide queue depth cap. Once XLEN(ingest:queue) crosses this
+  # the runtime returns 429 regardless of per-tenant counts — protects
+  # the workers from a stampede.
+  queueDepthLimit: 1000
+  # Idempotency record TTL (seconds). After this window an identical
+  # source_url+profile+tenant submission re-enqueues. Set to 0 to keep
+  # idempotency records forever.
+  idempotencyTtlSeconds: 604800  # 7 days
+  resources:
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+    requests:
+      cpu: "1"
+      memory: "2Gi"
+  livenessProbe:
+    exec:
+      command: ["python", "-c", "import sys; sys.exit(0)"]
+    initialDelaySeconds: 30
+    periodSeconds: 60
+  readinessProbe:
+    exec:
+      command: ["python", "-c", "import sys; sys.exit(0)"]
+    initialDelaySeconds: 10
+    periodSeconds: 30
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}

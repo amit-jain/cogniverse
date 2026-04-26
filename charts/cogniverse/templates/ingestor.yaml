@@ -1,0 +1,143 @@
+{{- if .Values.ingestor.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+---
+# Ingestor workers — claim jobs from the redis queue, run the ingestion
+# pipeline, publish status events. Same image as the runtime, different
+# entry point. replicaCount scales horizontally; each replica joins
+# the same consumer group so a job is delivered to exactly one worker.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-ingestor
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingestor
+spec:
+  replicas: {{ .Values.ingestor.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ingestor
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ingestor
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: ingestor
+        image: "{{ .Values.ingestor.image.repository }}:{{ .Values.ingestor.image.tag }}"
+        imagePullPolicy: {{ .Values.ingestor.image.pullPolicy }}
+        command:
+          - python
+          - -m
+          - cogniverse_runtime.ingestion_v2.worker
+        env:
+        - name: REDIS_URL
+          value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        - name: INGEST_CONSUMER_GROUP
+          value: {{ .Values.ingestor.consumerGroup | quote }}
+        - name: INGEST_CONSUMER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: INGEST_IDEMPOTENCY_TTL_SECONDS
+          value: {{ .Values.ingestor.idempotencyTtlSeconds | quote }}
+        - name: BACKEND_URL
+          value: "{{ include "cogniverse.vespaUrl" . }}"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        - name: LLM_ENDPOINT
+          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        - name: LLM_ENGINE
+          value: {{ .Values.llm.engine | quote }}
+        - name: LLM_MODEL
+          value: {{ .Values.llm.model | quote }}
+        - name: MINIO_ENDPOINT
+          value: "http://{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootPassword
+        - name: INFERENCE_SERVICE_URLS
+          value: |-
+            {
+            {{- $first := true -}}
+            {{- range $name, $cfg := .Values.inference -}}
+            {{- if $cfg.enabled }}
+            {{- if not $first }},{{ end -}}
+            {{- $first = false }}
+              "{{ $name }}": "http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}"
+            {{- end -}}
+            {{- end -}}
+            {{- if .Values.whisper.enabled }}
+            {{- if not $first }},{{ end }}
+              "whisper": "http://{{ $fullName }}-whisper:{{ .Values.whisper.service.port }}"
+            {{- end }}
+            }
+        livenessProbe:
+          {{- toYaml .Values.ingestor.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.ingestor.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.ingestor.resources | nindent 10 }}
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        - name: model-cache
+          mountPath: /home/cogniverse/.cache
+        {{- if .Values.devMode.enabled }}
+        - name: src
+          mountPath: /app/libs
+          subPath: libs
+        - name: src
+          mountPath: /app/scripts
+          subPath: scripts
+        {{- end }}
+      volumes:
+      - name: config
+        configMap:
+          name: {{ $fullName }}-config
+      - name: model-cache
+        {{- if and .Values.runtime.modelCache.persistent .Values.runtime.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-runtime-model-cache
+        {{- else }}
+        emptyDir:
+          sizeLimit: {{ .Values.runtime.modelCache.size | default "20Gi" }}
+        {{- end }}
+      {{- if .Values.devMode.enabled }}
+      - name: src
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}
+      {{- end }}
+      {{- with .Values.ingestor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ingestor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ingestor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

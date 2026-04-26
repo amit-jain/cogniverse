@@ -336,6 +336,32 @@ spec:
               "whisper": "http://{{ $fullName }}-whisper:{{ .Values.whisper.service.port }}"
             {{- end }}
             }
+        {{- if .Values.redis.enabled }}
+        - name: REDIS_URL
+          value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
+        - name: INGEST_QUEUE_DEPTH_LIMIT
+          value: {{ .Values.ingestor.queueDepthLimit | quote }}
+        - name: INGEST_PER_TENANT_CONCURRENCY
+          value: {{ .Values.ingestor.perTenantConcurrency | quote }}
+        - name: INGEST_IDEMPOTENCY_TTL_SECONDS
+          value: {{ .Values.ingestor.idempotencyTtlSeconds | quote }}
+        {{- end }}
+        {{- if .Values.minio.enabled }}
+        - name: MINIO_ENDPOINT
+          value: "http://{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
+        - name: MINIO_DEFAULT_BUCKET
+          value: {{ .Values.minio.defaultBucket | quote }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootPassword
+        {{- end }}
         {{- range $key, $value := .Values.runtime.env }}
         - name: {{ $key }}
           value: {{ $value | quote }}

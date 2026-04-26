@@ -1,0 +1,173 @@
+{{- if .Values.minio.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $fullName }}-minio
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+type: Opaque
+stringData:
+  rootUser: {{ .Values.minio.rootUser | quote }}
+  rootPassword: {{ .Values.minio.rootPassword | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-minio
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  accessModes:
+    - {{ .Values.minio.persistence.accessMode }}
+  {{- if .Values.minio.persistence.storageClass }}
+  storageClassName: {{ .Values.minio.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-minio
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  replicas: {{ .Values.minio.replicaCount }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: minio
+        image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"
+        imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+        args:
+          - "server"
+          - "/data"
+          - "--console-address"
+          - ":{{ .Values.minio.service.consolePort }}"
+        ports:
+        - name: api
+          containerPort: 9000
+        - name: console
+          containerPort: {{ .Values.minio.service.consolePort }}
+        env:
+        - name: MINIO_ROOT_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootUser
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootPassword
+        livenessProbe:
+          {{- toYaml .Values.minio.livenessProbe | nindent 10 }}
+        readinessProbe:
+          {{- toYaml .Values.minio.readinessProbe | nindent 10 }}
+        resources:
+          {{- toYaml .Values.minio.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-minio
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-minio
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  type: {{ .Values.minio.service.type }}
+  ports:
+  - port: {{ .Values.minio.service.apiPort }}
+    targetPort: api
+    protocol: TCP
+    name: api
+  - port: {{ .Values.minio.service.consolePort }}
+    targetPort: console
+    protocol: TCP
+    name: console
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+---
+# Bootstrap the default ingestion bucket. Idempotent: ``mc mb --ignore-existing``
+# returns 0 if the bucket already exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-minio-bucket-bootstrap
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: bucket-bootstrap
+        image: minio/mc:latest
+        env:
+        - name: MC_HOST_minio
+          value: "http://$(MINIO_USER):$(MINIO_PASS)@{{ $fullName }}-minio:{{ .Values.minio.service.apiPort }}"
+        - name: MINIO_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootUser
+        - name: MINIO_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ $fullName }}-minio
+              key: rootPassword
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -e
+            until mc ls minio >/dev/null 2>&1; do
+              echo "MinIO not ready yet, waiting..."
+              sleep 3
+            done
+            mc mb --ignore-existing "minio/{{ .Values.minio.defaultBucket }}"
+            echo "Bucket {{ .Values.minio.defaultBucket }} ready."
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+{{- end }}
