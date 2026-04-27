@@ -1,15 +1,28 @@
 """Shared config utilities for integration tests.
 
-Reads values from configs/config.json so tests use the same backend / LLM /
-embedding configuration as production. Never hardcode these in test fixtures.
+Reads values from the active config (``COGNIVERSE_CONFIG`` env var when set,
+else ``configs/config.json``) so tests use whatever the test session's
+materialised config dictates. The ``cogniverse_test_config`` autouse
+fixture in tests/conftest.py rewrites ``llm_config.primary`` to point at
+local Ollama (or whatever ``TEST_LLM_*`` envs override to) and exports
+``COGNIVERSE_CONFIG``; this module honours that.
+
+Never hardcode model / base URL in test fixtures — pass through here.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
 
 def _load_config() -> Dict[str, Any]:
+    env_path = os.environ.get("COGNIVERSE_CONFIG")
+    if env_path:
+        path = Path(env_path)
+        if path.exists():
+            with open(path) as f:
+                return json.load(f)
     config_path = Path("configs/config.json")
     if not config_path.exists():
         return {}

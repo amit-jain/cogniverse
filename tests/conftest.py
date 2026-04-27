@@ -2,6 +2,7 @@
 
 import gc
 import importlib.util
+import json
 import os
 import shutil
 import socket
@@ -500,6 +501,78 @@ def backend_config_env():
         os.environ["BACKEND_PORT"] = original_port
     elif "BACKEND_PORT" in os.environ:
         del os.environ["BACKEND_PORT"]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cogniverse_test_config(backend_config_env, tmp_path_factory):
+    """
+    Materialize a test-shaped ``configs/config.json`` and point the
+    config-discovery path at it via ``COGNIVERSE_CONFIG``.
+
+    Production ``configs/config.json`` carries vLLM-served LLM endpoints
+    (``hosted_vllm/google/gemma-4-e4b-it`` at ``http://...:8101/v1``)
+    that match the chart's vllm_llm_student/teacher pods. Local test
+    runs typically have only Ollama running, so loading the prod config
+    surfaces 404s for the unknown HF model id.
+
+    This fixture clones prod ``configs/config.json`` into a tmpdir,
+    overrides ``llm_config.primary`` and ``llm_config.teacher`` to
+    whatever the test machine actually has serving (defaults to local
+    Ollama qwen3:4b), and sets ``COGNIVERSE_CONFIG`` to the clone.
+    Tests that need a different LLM target can override via env vars
+    ``TEST_LLM_MODEL`` / ``TEST_LLM_API_BASE`` / ``TEST_LLM_ENGINE``
+    before pytest starts (e.g. point at vLLM on a different port).
+
+    Skipped when ``COGNIVERSE_CONFIG`` is already set externally — that
+    means the operator wants their own config (e.g. CI matrix runs).
+    """
+    if os.environ.get("COGNIVERSE_CONFIG"):
+        yield None
+        return
+
+    src_path = Path(__file__).resolve().parent.parent / "configs" / "config.json"
+    if not src_path.exists():
+        yield None
+        return
+
+    blob = json.loads(src_path.read_text())
+
+    test_engine = os.environ.get("TEST_LLM_ENGINE", "ollama")
+    test_model = os.environ.get("TEST_LLM_MODEL", "qwen3:4b")
+    test_api_base = os.environ.get("TEST_LLM_API_BASE", "http://localhost:11434")
+
+    if test_engine == "ollama":
+        prefixed = f"ollama/{test_model}"
+    elif test_engine == "openai":
+        prefixed = f"openai/{test_model}"
+    else:
+        prefixed = f"hosted_vllm/{test_model}"
+
+    llm_cfg = blob.setdefault("llm_config", {})
+    primary = llm_cfg.setdefault("primary", {})
+    primary["model"] = prefixed
+    primary["api_base"] = test_api_base
+    teacher = llm_cfg.setdefault("teacher", {})
+    teacher["model"] = prefixed
+    teacher["api_base"] = test_api_base
+
+    test_dir = tmp_path_factory.mktemp("cogniverse_test_config")
+    schemas_link = test_dir / "schemas"
+    schemas_src = (src_path.parent / "schemas").resolve()
+    if schemas_src.exists() and not schemas_link.exists():
+        schemas_link.symlink_to(schemas_src, target_is_directory=True)
+    test_path = test_dir / "config.json"
+    test_path.write_text(json.dumps(blob))
+
+    original = os.environ.get("COGNIVERSE_CONFIG")
+    os.environ["COGNIVERSE_CONFIG"] = str(test_path)
+
+    yield str(test_path)
+
+    if original is not None:
+        os.environ["COGNIVERSE_CONFIG"] = original
+    elif "COGNIVERSE_CONFIG" in os.environ:
+        del os.environ["COGNIVERSE_CONFIG"]
 
 
 @pytest.fixture
