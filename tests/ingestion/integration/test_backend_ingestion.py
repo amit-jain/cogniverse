@@ -170,8 +170,52 @@ class TestVespaBackendIngestion:
 
         # Set BACKEND_URL for the tests to use
         old_backend_url = os.environ.get("BACKEND_URL")
+        old_cogniverse_config = os.environ.get("COGNIVERSE_CONFIG")
         os.environ["BACKEND_URL"] = "http://localhost"
         os.environ["BACKEND_PORT"] = str(manager.http_port)
+
+        # Materialise a test config.json (per-profile frame-count caps +
+        # backend port pointing at the test Vespa) and route the pipeline
+        # at it. See ``conftest.materialise_test_pipeline_config`` for
+        # rationale; both Vespa fixtures need this or the pipeline talks
+        # to localhost:8080 (k3d) and runs 100+ frames per profile.
+        from tests.ingestion.integration.conftest import (
+            materialise_test_pipeline_config,
+        )
+
+        os.environ["COGNIVERSE_CONFIG"] = materialise_test_pipeline_config(
+            manager.http_port
+        )
+
+        # Seed SystemConfig in the freshly-started Vespa so the pipeline's
+        # ``create_default_config_manager`` resolves to a config that
+        # carries the conftest-spawned colpali_infinity / videoprism_jax
+        # / etc. URLs. Without this, the pipeline reads an empty
+        # ``inference_service_urls`` from the new Vespa container and
+        # raises ``ValueError: Profile X specifies inference_services
+        # .embedding=Y but no URL is configured. Deployed services: []``
+        # the moment a remote-inference profile is touched.
+        import json
+
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+        )
+
+        raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
+        try:
+            inference_service_urls = json.loads(raw_urls) if raw_urls else {}
+        except json.JSONDecodeError:
+            inference_service_urls = {}
+
+        cm = create_default_config_manager()
+        cm.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=manager.http_port,
+                inference_service_urls=inference_service_urls,
+            )
+        )
 
         yield manager
 
@@ -182,6 +226,10 @@ class TestVespaBackendIngestion:
             del os.environ["BACKEND_URL"]
         if "BACKEND_PORT" in os.environ:
             del os.environ["BACKEND_PORT"]
+        if old_cogniverse_config is not None:
+            os.environ["COGNIVERSE_CONFIG"] = old_cogniverse_config
+        elif "COGNIVERSE_CONFIG" in os.environ:
+            del os.environ["COGNIVERSE_CONFIG"]
 
         # Cleanup container
         manager.cleanup()
