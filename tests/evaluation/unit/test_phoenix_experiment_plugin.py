@@ -33,6 +33,7 @@ class TestPhoenixExperimentPlugin:
             "score": 0.95,
             "content": "test content",
             "document_id": "video1_frame_0",
+            "source_url": "s3://bucket/video1.mp4",
         }
         service.search.return_value = [result]
         return service
@@ -166,11 +167,28 @@ class TestPhoenixExperimentPlugin:
                     "to_dict.return_value": {
                         "document_id": "video1_frame_0",
                         "score": 0.9,
+                        "source_url": "s3://bucket/video1.mp4",
                     }
                 }
             ),
-            Mock(**{"to_dict.return_value": {"source_id": "video2", "score": 0.8}}),
-            Mock(**{"to_dict.return_value": {"document_id": "video3", "score": 0.7}}),
+            Mock(
+                **{
+                    "to_dict.return_value": {
+                        "source_id": "video2",
+                        "score": 0.8,
+                        "source_url": "s3://bucket/video2.mp4",
+                    }
+                }
+            ),
+            Mock(
+                **{
+                    "to_dict.return_value": {
+                        "document_id": "video3",
+                        "score": 0.7,
+                        "source_url": "s3://bucket/video3.mp4",
+                    }
+                }
+            ),
         ]
         service.search.return_value = results
 
@@ -203,7 +221,10 @@ class TestPhoenixExperimentPlugin:
 
         # Test result without score
         result_without_score = Mock()
-        result_without_score.to_dict.return_value = {"source_id": "video1"}
+        result_without_score.to_dict.return_value = {
+            "source_id": "video1",
+            "source_url": "s3://bucket/video1.mp4",
+        }
         service.search.return_value = [result_without_score]
 
         with (

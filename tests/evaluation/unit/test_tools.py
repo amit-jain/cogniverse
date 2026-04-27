@@ -43,6 +43,7 @@ class TestVideoSearchTool:
                         "source_id": "video1",
                         "score": 0.9,
                         "content": "test content",
+                        "source_url": "s3://bucket/video1.mp4",
                         "metadata": {},
                     }
                 ),
@@ -52,6 +53,7 @@ class TestVideoSearchTool:
                         "source_id": "video2",
                         "score": 0.8,
                         "content": "test content 2",
+                        "source_url": "s3://bucket/video2.mp4",
                         "metadata": {},
                     }
                 ),
@@ -89,7 +91,13 @@ class TestVideoSearchTool:
             mock_config.return_value = {"test": "config"}
             mock_service = Mock()
             mock_service.search.return_value = [
-                Mock(to_dict=lambda: {"document_id": "video1_frame_5", "score": 0.9})
+                Mock(
+                    to_dict=lambda: {
+                        "document_id": "video1_frame_5",
+                        "score": 0.9,
+                        "source_url": "s3://bucket/video1.mp4",
+                    }
+                )
             ]
             mock_service_cls.return_value = mock_service
 
@@ -116,12 +124,19 @@ class TestVideoSearchTool:
             mock_config.return_value = {"test": "config"}
             mock_service = Mock()
             mock_service.search.return_value = [
-                Mock(to_dict=lambda: {"document_id": "video1", "source_id": "video1"}),
+                Mock(
+                    to_dict=lambda: {
+                        "document_id": "video1",
+                        "source_id": "video1",
+                        "source_url": "s3://bucket/video1.mp4",
+                    }
+                ),
                 Mock(
                     to_dict=lambda: {
                         "document_id": "video2",
                         "source_id": "video2",
                         "score": 0.0,  # Zero score
+                        "source_url": "s3://bucket/video2.mp4",
                     }
                 ),
             ]

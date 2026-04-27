@@ -851,11 +851,21 @@ class TestEmbeddingGeneratorImpl:
         assert result.shape == (128,)  # Averaged across frames
         mock_cap.release.assert_called_once()
 
+    @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("subprocess.run")
     def test_generate_chunk_embeddings_videoprism(
-        self, mock_subprocess, mock_logger, mock_backend_client
+        self,
+        mock_subprocess,
+        mock_get_or_load_model,
+        mock_logger,
+        mock_backend_client,
     ):
         """Test _generate_chunk_embeddings with VideoPrism model."""
+        # Constructor calls ``get_or_load_model`` for model_loader=videoprism;
+        # without this mock the real loader fires ``import jax`` (the
+        # JAX/flax stack now lives only in the deploy/videoprism sidecar
+        # image, not in base deps) and the test fails to even instantiate.
+        mock_get_or_load_model.return_value = (Mock(), None)
         videoprism_config = {
             "schema_name": "test_schema",
             "embedding_model": "test_model",
