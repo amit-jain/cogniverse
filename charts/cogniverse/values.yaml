@@ -691,17 +691,17 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 5
 
-  # ColQwen multimodal multi-vector embeddings served by the same
-  # cogniverse/colpali sidecar (colpali-engine supports ColQwen2 / Omni
-  # variants alongside ColPali / ColIdefics3). Separate pod because one
-  # FastAPI instance serves a single model. Used by profiles with
+  # ColQwen2 multi-vector visual retrieval served by the same
+  # cogniverse/colpali sidecar (colpali-engine handles ColQwen2 alongside
+  # ColPali / ColIdefics3). Separate pod because one FastAPI instance
+  # serves a single model. Used by profiles with
   # ``inference_service: "colqwen_infinity"`` (video_colqwen_omni_mv_chunk_30s).
-  # Off by default — ColQwen-Omni is large (~5-7Gi RSS) and the laptop
+  # Off by default — the model is large (~5-7Gi RSS) and the laptop
   # cluster usually doesn't need it.
   colqwen_infinity:
     enabled: false
     engine: colpali_native
-    model: vidore/colqwen-omni-v0.1
+    model: vidore/colqwen2-v1.0
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm | mps
     image:
@@ -1203,7 +1203,7 @@ config:
       name: "google/videoprism-base"
       device: "cuda"
     colqwen:
-      name: "colqwen/colqwen2-omni"
+      name: "vidore/colqwen2-v1.0"
       device: "cuda"
 
   # Documentation-only list of LLM model IDs the deployment expects to

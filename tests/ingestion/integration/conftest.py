@@ -112,16 +112,7 @@ _INFERENCE_SIDECARS = {
     "colqwen_infinity": {
         "image": _COLPALI_IMAGE,
         "container_name": "colqwen-infinity-ingest-tests",
-        # The chart's production default is ``vidore/colqwen-omni-v0.1``,
-        # but that checkpoint's tensor shapes don't match colpali-engine
-        # 0.3.13's ``ColQwen2`` class — the multimodal omni variant
-        # needs a loader that hasn't shipped yet (RuntimeError on
-        # ``Linear.bias`` size 2048 vs 1280). The standard ``colqwen2``
-        # release loads cleanly and exercises the same remote-inference
-        # contract the colqwen test asserts on (just embeddings come
-        # back), so the test still validates the production code path
-        # end-to-end without depending on a model upstream can't load.
-        "model_name": "vidore/colqwen2-v0.1",
+        "model_name": "vidore/colqwen2-v1.0",
         "internal_port": 7997,
         "extra_env": {"DEVICE": "cpu"},
     },

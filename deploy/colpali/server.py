@@ -65,19 +65,45 @@ class EmbeddingsResponse(BaseModel):
 
 
 def _resolve_model_classes(model_name: str):
-    """Pick the colpali-engine model + processor pair for the model name."""
+    """Pick the colpali-engine model + processor pair for the model name.
+
+    Order matters here: ``"qwen"`` is a substring of every ColQwen
+    variant so the more specific patterns (omni, 3.5, 3, 2.5) must be
+    checked before the plain ``ColQwen2`` fallback. Picking the wrong
+    class produces a runtime ``size mismatch for bias`` from
+    ``load_state_dict`` because the backbone Linear projection
+    dimensions differ across families (Qwen2-VL=1280, Qwen2.5-VL=1280
+    with reshaped MLP, Qwen2.5-Omni-Thinker=2048, Qwen3=different
+    again). colpali-engine 0.3.15 ships dedicated loaders for each
+    family — match them here."""
     from colpali_engine.models import (
         ColIdefics3,
         ColIdefics3Processor,
         ColPali,
         ColPaliProcessor,
         ColQwen2,
+        ColQwen2_5,
+        ColQwen2_5_Processor,
+        ColQwen2_5Omni,
+        ColQwen2_5OmniProcessor,
         ColQwen2Processor,
+        ColQwen3,
+        ColQwen3_5,
+        ColQwen3_5Processor,
+        ColQwen3Processor,
     )
 
     name = model_name.lower()
     if "smol" in name or "idefics3" in name:
         return ColIdefics3, ColIdefics3Processor
+    if "omni" in name:
+        return ColQwen2_5Omni, ColQwen2_5OmniProcessor
+    if "qwen3.5" in name or "qwen3_5" in name:
+        return ColQwen3_5, ColQwen3_5Processor
+    if "qwen3" in name:
+        return ColQwen3, ColQwen3Processor
+    if "qwen2.5" in name or "qwen2_5" in name:
+        return ColQwen2_5, ColQwen2_5_Processor
     if "qwen" in name:
         return ColQwen2, ColQwen2Processor
     return ColPali, ColPaliProcessor

@@ -789,9 +789,9 @@
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding. Processes audio and visual content together.",
+        "description": "ColQwen2 visual document retrieval served by the cogniverse/colpali sidecar. 128-dim per-patch multi-vector embeddings.",
         "schema_name": "video_colqwen_omni_mv_chunk_30s",
-        "embedding_model": "vidore/colqwen-omni-v0.1",
+        "embedding_model": "vidore/colqwen2-v1.0",
         "process_type": "video_chunks",
         "pipeline_config": {
           "extract_keyframes": false,
@@ -839,7 +839,7 @@
         },
         "schema_config": {
           "schema_name": "video_colqwen_omni_mv_chunk_30s",
-          "model_name": "ColQwen-Omni",
+          "model_name": "ColQwen2",
           "num_patches": 1024,
           "embedding_dim": 128,
           "binary_dim": 16
