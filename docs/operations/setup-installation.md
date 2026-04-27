@@ -164,49 +164,36 @@ docker run -d --name ollama \
   ollama/ollama:latest
 ```
 
-### 3a. (Optional) Whisper ASR Sidecar
+### 3a. (Optional) Whisper ASR via vLLM
 
 `AudioAnalysisAgent.transcribe_audio` can run Whisper in-process or POST
-to a sidecar pod (`deploy/whisper`). The sidecar is the production path —
-keeps the agent engine-agnostic and lets the cluster swap engines per
-host. Engine selection happens at chart-render time (one image per
-engine, no runtime branch). The faster-whisper variant
-(`cogniverse/whisper-fw`, `deploy/whisper/Dockerfile`) covers CPU and
-NVIDIA CUDA hosts.
+to a vLLM-served ASR endpoint (chart key `inference.vllm_asr`, image
+`vllm/vllm-openai-cpu` with the `vllm[audio]` extra). The remote path is
+the production default — keeps the agent engine-agnostic and lets the
+cluster scale ASR independently of the runtime.
 
-Build and run locally:
+Run locally:
 
 ```bash
-# Build the canonical image. Each engine has its own Dockerfile —
-# this one bakes in faster-whisper; there's no runtime engine env.
-docker build -t cogniverse/whisper-fw:dev deploy/whisper
+docker run -d --name cogniverse-vllm-asr \
+  -p 8000:8000 \
+  -v cogniverse-hf-cache:/root/.cache/huggingface \
+  vllm/vllm-openai-cpu:latest \
+  serve openai/whisper-large-v3-turbo --task transcription --max-model-len 448
 
-# Run it. Persist the HuggingFace cache so model downloads survive
-# container restarts.
-docker run -d --name cogniverse-whisper \
-  -p 7998:7998 \
-  -v cogniverse-whisper-cache:/root/.cache/huggingface \
-  -e MODEL_NAME=base \
-  -e DEVICE=cpu \
-  cogniverse/whisper-fw:dev
-
-# Smoke test: /health returns the engine + model identifier baked
-# into this image (ENGINE_NAME = "faster-whisper").
-curl -s http://localhost:7998/health
-# → {"status": "ok", "engine": "faster-whisper", "model": "base"}
+# Smoke test the OpenAI-compatible health endpoint.
+curl -s http://localhost:8000/health
 ```
 
 Point the agent at it by setting `whisper_endpoint` on
 `AudioAnalysisDeps`. In a Helm-deployed stack the runtime reads it from
-`system_config.inference_service_urls["whisper"]`, populated by the chart
-template `charts/cogniverse/templates/all-resources.yaml:330` when
-`whisper.enabled=true` (`charts/cogniverse/values.yaml:908`). The
-`cogniverse images` build step in `libs/cli/cogniverse_cli/images.py`
-includes `cogniverse/whisper-fw:dev` so a `cogniverse up` flow against
-k3d picks it up automatically.
+`system_config.inference_service_urls["vllm_asr"]`, populated by the
+chart template `charts/cogniverse/templates/all-resources.yaml` when
+`inference.vllm_asr.enabled=true`
+(`charts/cogniverse/values.yaml`).
 
-For the deploy/ingestion side, profiles pick the sidecar by setting
-`inference_services.transcription: "whisper"` at profile level.
+For the ingestion side, profiles pick the endpoint by setting
+`inference_services.transcription: "vllm_asr"` at profile level.
 `StrategyFactory` injects the service name into
 `AudioTranscriptionStrategy`'s params; the same profile-level map drives
 embedding routing via `inference_services.embedding`. `AudioProcessor`

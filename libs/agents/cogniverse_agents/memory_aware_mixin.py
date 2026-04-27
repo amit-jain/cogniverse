@@ -59,9 +59,10 @@ class MemoryAwareMixin:
         agent_name: str,
         tenant_id: str,
         embedder_base_url: str,
+        *,
+        llm_model: str,
         backend_host: str = "localhost",
         backend_port: int = 8080,
-        llm_model: str = "qwen3:4b",
         embedding_model: str = "lightonai/DenseOn",
         llm_base_url: str = "http://localhost:11434",
         config_manager=None,
@@ -78,9 +79,10 @@ class MemoryAwareMixin:
             tenant_id: Tenant identifier (REQUIRED - no default)
             embedder_base_url: OpenAI-compatible /v1/embeddings endpoint of
                 the denseon sidecar (separate from the LLM endpoint).
+            llm_model: LLM model name for memory extraction (REQUIRED - must
+                come from llm_config.primary, no fallback default).
             backend_host: Backend endpoint host
             backend_port: Backend endpoint port
-            llm_model: LLM model name for memory extraction
             embedding_model: Embedding model name for memory search
             llm_base_url: OpenAI-compatible LLM API endpoint
             config_manager: ConfigManager instance (REQUIRED for dependency injection)

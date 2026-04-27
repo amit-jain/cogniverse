@@ -93,28 +93,23 @@ def materialise_test_pipeline_config(http_port: int) -> str:
 # Tests gate themselves with ``@pytest.mark.skipif(not _service_configured(...))``
 # decorators evaluated at module-import time, so the env var has to be set
 # *before* pytest imports the test module — which is what ``pytest_configure``
-# is for. We spin up the colpali / colqwen FastAPI sidecars (deploy/colpali)
-# once per session, populate ``INFERENCE_SERVICE_URLS``, and tear them down on
-# session exit. Image must be pre-built (``docker build -t cogniverse/colpali
-# :dev deploy/colpali/``); session is skipped if it isn't.
+# is for. We spin up the vllm-colpali container (vLLM serving
+# vidore/colpali-v1.3-hf via ColPaliForRetrieval) and the videoprism JAX
+# sidecar once per session, populate ``INFERENCE_SERVICE_URLS``, and tear
+# them down on session exit. The vllm/vllm-openai-cpu image is pulled
+# from upstream automatically; videoprism is local
+# (``docker build -t cogniverse/videoprism:dev deploy/videoprism/``).
 # ---------------------------------------------------------------------------
 
-_COLPALI_IMAGE = "cogniverse/colpali:dev"
+_VLLM_IMAGE = "vllm/vllm-openai-cpu:latest"
 _VIDEOPRISM_IMAGE = "cogniverse/videoprism:dev"
 _INFERENCE_SIDECARS = {
-    "colpali_infinity": {
-        "image": _COLPALI_IMAGE,
-        "container_name": "colpali-infinity-ingest-tests",
-        "model_name": "vidore/colsmol-500m",
-        "internal_port": 7997,
-        "extra_env": {"DEVICE": "cpu"},
-    },
-    "colqwen_infinity": {
-        "image": _COLPALI_IMAGE,
-        "container_name": "colqwen-infinity-ingest-tests",
-        "model_name": "vidore/colqwen2-v1.0",
-        "internal_port": 7997,
-        "extra_env": {"DEVICE": "cpu"},
+    "vllm_colpali": {
+        "image": _VLLM_IMAGE,
+        "container_name": "vllm-colpali-ingest-tests",
+        "model_name": "vidore/colpali-v1.3-hf",
+        "internal_port": 8000,
+        "extra_env": {},
     },
     "videoprism_jax": {
         "image": _VIDEOPRISM_IMAGE,
@@ -227,16 +222,15 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
 
 
 def pytest_configure(config):
-    """Boot colpali / colqwen sidecars before any test module imports so that
-    ``@requires_colpali_infinity`` / ``@requires_colqwen_infinity`` skipif
-    decorators evaluated at import time see a populated
-    ``INFERENCE_SERVICE_URLS`` env var.
+    """Boot the vllm-colpali + videoprism sidecars before any test module
+    imports so that ``@requires_vllm_colpali`` skipif decorators evaluated
+    at import time see a populated ``INFERENCE_SERVICE_URLS`` env var.
 
     Honours an existing env var: if the user already exported one (e.g.
     pointing at a long-running k3d sidecar) we don't fight them. Skips
-    silently when ``cogniverse/colpali:dev`` isn't built locally — the
-    individual tests then fall through to their own skipif and surface a
-    clear ``not configured`` reason."""
+    silently when the required image isn't available — the individual
+    tests then fall through to their own skipif and surface a clear
+    ``not configured`` reason."""
     # Honour an existing INFERENCE_SERVICE_URLS only if every URL is
     # actually reachable — otherwise a stale env var from a previous
     # pytest session points at dead sidecar ports and every test that
@@ -368,7 +362,7 @@ def ingestion_vespa_backend():
         os.environ["BACKEND_URL"] = "http://localhost"
         os.environ["BACKEND_PORT"] = str(manager.http_port)
 
-        # Seed SystemConfig with the colpali_infinity / videoprism_jax /
+        # Seed SystemConfig with the vllm_colpali / videoprism_jax /
         # ... URLs ``pytest_configure`` populated. Profiles that route
         # embedding through a remote service (model_loader=colpali /
         # videoprism + inference_services.embedding=...) read the URL

@@ -1379,7 +1379,7 @@ Evaluates query-result relevance without requiring ground truth.
 from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceFreeEvaluator
 
 evaluator = SyncLLMReferenceFreeEvaluator(
-    model_name="llava:7b",
+    model_name="google/gemma-4-e4b-it",
     base_url="http://localhost:11434"
 )
 
@@ -1406,7 +1406,7 @@ Compares results against ground truth from database.
 from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceBasedEvaluator
 
 evaluator = SyncLLMReferenceBasedEvaluator(
-    model_name="llava:7b",
+    model_name="google/gemma-4-e4b-it",
     base_url="http://localhost:11434"
 )
 
@@ -2400,7 +2400,7 @@ Provides visual evaluation scorers for Inspect AI.
 from cogniverse_evaluation.plugins.visual_evaluator import get_visual_scorers
 
 scorers = get_visual_scorers({
-    "model_name": "vidore/colsmol-500m",
+    "model_name": "vidore/colpali-v1.3-hf",
     "evaluate_top_k": 5
 })
 # Returns: [visual_relevance_scorer(), visual_diversity_scorer()]

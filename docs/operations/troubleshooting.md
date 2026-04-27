@@ -130,12 +130,12 @@ Use smaller, stable models for testing:
 model_name = "vidore/colpali-v1.2"  # 1.2B params, unstable in tests
 
 # ✅ Good: Smaller model
-model_name = "vidore/colsmol-500m"  # 500M params, stable
+model_name = "vidore/colpali-v1.3-hf"  # 500M params, stable
 ```
 
 **Default Models:**
 
-- ColPali: `vidore/colsmol-500m` (recommended)
+- ColPali: `vidore/colpali-v1.3-hf` (recommended)
 
 - VideoPrism: `google/videoprism-base`
 
@@ -253,7 +253,7 @@ First-time model downloads from HuggingFace can be large (several GB).
 
 **Model Sizes:**
 
-- `vidore/colsmol-500m`: ~2GB
+- `vidore/colpali-v1.3-hf`: ~2GB
 
 - `vidore/colpali-v1.2`: ~5GB
 

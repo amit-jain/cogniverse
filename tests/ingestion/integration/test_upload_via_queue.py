@@ -21,7 +21,7 @@ Asserts on the OUTPUT, not just structural shape:
 
 Profile choice: ``video_videoprism_base_mv_chunk_30s`` runs VideoPrism
 in-process (no remote ColPali pod required) so the test doesn't need
-the colpali_infinity service deployed.
+the vllm_colpali service deployed.
 """
 
 from __future__ import annotations

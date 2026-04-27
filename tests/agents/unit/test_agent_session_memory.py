@@ -23,6 +23,29 @@ class MockAgent(MemoryAwareMixin):
         super().__init__()
         self.agent_name = agent_name
 
+    def initialize_memory(
+        self,
+        agent_name,
+        tenant_id,
+        embedder_base_url="http://denseon-test:8000",
+        llm_model="test-llm",
+        **kwargs,
+    ):
+        """Test wrapper that supplies sane defaults for required init args.
+
+        ``embedder_base_url`` (positional-required in the real signature) and
+        ``llm_model`` (keyword-only required after Phase 1c-2b) get test
+        defaults here so individual tests can focus on the behaviour they
+        exercise without re-typing infrastructure plumbing.
+        """
+        return super().initialize_memory(
+            agent_name=agent_name,
+            tenant_id=tenant_id,
+            embedder_base_url=embedder_base_url,
+            llm_model=llm_model,
+            **kwargs,
+        )
+
 
 @pytest.mark.unit
 class TestMemoryInitialization:
@@ -177,6 +200,7 @@ class TestMemoryUpdates:
             tenant_id="acme",
             agent_name="search_agent",
             metadata=None,
+            infer=True,
         )
 
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")

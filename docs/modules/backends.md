@@ -208,7 +208,7 @@ flowchart TD
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -251,7 +251,7 @@ profile = BackendProfileConfig(
     type="video",
     description="Frame-based ColPali processing",
     schema_name="video_colpali_smol500_mv_frame",  # Vespa schema name
-    embedding_model="vidore/colsmol-500m",
+    embedding_model="vidore/colpali-v1.3-hf",
     model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
@@ -374,7 +374,7 @@ modified_profile = config.merge_profile(
     profile_name="video_colpali_smol500_mv_frame",
     overrides={
         "pipeline_config": {"keyframe_fps": 2.0},  # Only override FPS
-        "embedding_model": "vidore/colsmol-500m-v2"  # Update model
+        "embedding_model": "vidore/colpali-v1.3-hf-v2"  # Update model
     }
 )
 
@@ -431,7 +431,7 @@ manager = create_default_config_manager()
 tenant_profile = BackendProfileConfig(
     profile_name="acme_high_fps",
     schema_name="video_colpali_smol500_mv_frame",
-    embedding_model="vidore/colsmol-500m",
+    embedding_model="vidore/colpali-v1.3-hf",
     model_loader="colpali",
     pipeline_config={"keyframe_fps": 5.0},  # 5 FPS instead of 1 FPS
     embedding_type="multi_vector"
@@ -709,7 +709,7 @@ backend = BackendRegistry.get_search_backend(
 custom_profile = BackendProfileConfig(
     profile_name="acme_ultra_high_quality",
     schema_name="video_colpali_smol500_mv_frame",  # Reuse existing schema
-    embedding_model="vidore/colsmol-500m",
+    embedding_model="vidore/colpali-v1.3-hf",
     model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
@@ -2366,7 +2366,7 @@ import logging
 # Create processor (logger is optional first parameter)
 processor = VespaEmbeddingProcessor(
     logger=logging.getLogger(__name__),
-    model_name="vidore/colsmol-500m",
+    model_name="vidore/colpali-v1.3-hf",
     schema_name="video_colpali_smol500_mv_frame"
 )
 

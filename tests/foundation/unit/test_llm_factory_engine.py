@@ -23,18 +23,17 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 def _reset_default_config_manager(monkeypatch):
     """Each test gets a fresh default ConfigManager.
 
-    create_default_config_manager memoises a singleton; tests that
-    mutate system_config.llm_engine bleed across test boundaries unless
-    the cache is cleared. Patching the function directly avoids that.
+    Two singletons can leak engine state across tests:
+      - ``utils.create_default_config_manager()`` (the factory)
+      - ``utils._config_manager_singleton`` (the process-level cached CM
+        used by ``create_dspy_lm`` via ``get_config_manager_singleton()``)
+    The fixture resets BOTH so the LM factory reads engine state set up
+    by the current test, not the previous one.
     """
     from cogniverse_foundation.config import utils
 
     real_factory = utils.create_default_config_manager
 
-    # Force a brand-new ConfigManager per test by clearing the singleton
-    # holder (utils caches via a module-level reference inside
-    # create_default_config_manager). The lazy import inside
-    # create_dspy_lm picks up whichever instance the fixture installs.
     holder = {"cm": None}
 
     def _stub_factory():
@@ -43,6 +42,10 @@ def _reset_default_config_manager(monkeypatch):
         return holder["cm"]
 
     monkeypatch.setattr(utils, "create_default_config_manager", _stub_factory)
+    # Reset the process-level singleton so get_config_manager_singleton()
+    # rebuilds it via the stubbed factory; otherwise the first test's CM
+    # bleeds into every subsequent one.
+    monkeypatch.setattr(utils, "_config_manager_singleton", None)
     yield holder
 
 

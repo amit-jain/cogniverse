@@ -50,7 +50,7 @@ This guide covers GPU requirements for embedding models used in ingestion and se
 
 ### 1. ColPali (Frame-Based Video Embeddings)
 
-**Model:** `vidore/colpali-v1.2` or `vidore/colsmol-500m`
+**Model:** `vidore/colpali-v1.2` or `vidore/colpali-v1.3-hf`
 **Content Types:** VIDEO (frames), IMAGE, DOCUMENT
 
 #### Memory Requirements
@@ -136,11 +136,11 @@ def encode_video_frames_budget(frames: list):
     import torch
 
     model = ColIdefics3.from_pretrained(
-        "vidore/colsmol-500m",
+        "vidore/colpali-v1.3-hf",
         torch_dtype=torch.bfloat16,
         device_map="cuda"
     ).eval()
-    processor = ColIdefics3Processor.from_pretrained("vidore/colsmol-500m")
+    processor = ColIdefics3Processor.from_pretrained("vidore/colpali-v1.3-hf")
 
     batch_inputs = processor.process_images(frames).to(model.device)
     with torch.no_grad():
@@ -248,7 +248,7 @@ def encode_video_chunks_performance():
 
 ### 3. ColQwen2 (Multi-Modal Image/Document Embeddings)
 
-**Model:** `vidore/colqwen-omni-v0.1` or `vidore/colqwen2-v1.0`
+**Model:** `vidore/colqwen-omni-v0.1` or `vidore/colpali-v1.3-hf`
 **Content Types:** IMAGE, DOCUMENT, TEXT
 
 #### Memory Requirements
@@ -342,11 +342,11 @@ def encode_images_budget(images: list):
     )
 
     model = ColQwen2.from_pretrained(
-        "vidore/colqwen2-v1.0",
+        "vidore/colpali-v1.3-hf",
         quantization_config=quantization_config,
         device_map="cuda"
     ).eval()
-    processor = ColQwen2Processor.from_pretrained("vidore/colqwen2-v1.0")
+    processor = ColQwen2Processor.from_pretrained("vidore/colpali-v1.3-hf")
 
     # Smaller batch for T4 (batch_size=4)
     batch_inputs = processor.process_images(images).to(model.device)
@@ -540,9 +540,9 @@ def batch_encode_frames(frame_batches: list[list]):
     import torch
 
     model = ColIdefics3.from_pretrained(
-        "vidore/colsmol-500m", torch_dtype=torch.bfloat16, device_map="cuda"
+        "vidore/colpali-v1.3-hf", torch_dtype=torch.bfloat16, device_map="cuda"
     ).eval()
-    processor = ColIdefics3Processor.from_pretrained("vidore/colsmol-500m")
+    processor = ColIdefics3Processor.from_pretrained("vidore/colpali-v1.3-hf")
 
     results = []
     for batch in frame_batches:
@@ -582,7 +582,7 @@ quantization_config = BitsAndBytesConfig(
 )
 
 model = ColQwen2.from_pretrained(
-    "vidore/colqwen2-v1.0",
+    "vidore/colpali-v1.3-hf",
     quantization_config=quantization_config
 )
 ```

@@ -27,21 +27,21 @@ devMode:
 # toleration.
 # ---------------------------------------------------------------------------
 inference:
-  colpali_infinity:
+  vllm_colpali:
     enabled: true
     device: rocm
     gpuCount: 1
-    replicaCount: 1            # bump as ROCm cluster grows
+    replicaCount: 1
     imagesByDevice:
       rocm:
-        repository: cogniverse/colpali
-        tag: dev-rocm
+        repository: rocm/vllm
+        tag: latest
         pullPolicy: IfNotPresent
     nodeSelector: {}
     tolerations: []
     resources:
       limits:
-        cpu: "8"
+        cpu: "4"
         memory: "16Gi"
       requests:
         cpu: "2"
@@ -64,19 +64,6 @@ inference:
       requests:
         cpu: "1"
         memory: "4Gi"
-
-  colqwen_infinity:
-    enabled: false
-
-  dense_vllm:
-    enabled: false
-    device: rocm
-    gpuCount: 1
-    imagesByDevice:
-      rocm:
-        repository: rocm/vllm
-        tag: latest
-        pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
 # LLM (Step 3) — flip to vllm-rocm. Keep commented until the chart's

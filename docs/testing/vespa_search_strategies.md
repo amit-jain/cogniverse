@@ -168,7 +168,7 @@ Backend profiles are configured in system config files. Ranking strategies are s
       "video_colpali_smol500_mv_frame": {
         "type": "video",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "schema_config": {
           "embedding_dim": 128,
           "binary_dim": 16

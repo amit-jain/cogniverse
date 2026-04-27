@@ -290,6 +290,11 @@ runtime:
     # charts/cogniverse/files/quality-monitor/golden_dataset.json (a copy
     # of data/testset/evaluation/sample_videos_retrieval_queries.json).
     goldenDatasetPath: "/app/data/quality-monitor/golden_dataset.json"
+    # Bare model id passed to ``quality_monitor_cli --llm-model`` (the LLM
+    # judge target). Must match evaluators.llm_judge.model in config.json so
+    # the judge and the rest of the stack agree on the same Ollama/vLLM
+    # model name. Required when qualityMonitor.enabled=true.
+    llmModel: "qwen3:4b"
     resources:
       limits:
         cpu: "1"
@@ -630,105 +635,48 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  # ColPali / ColIdefics3 image multi-vector embeddings served by the
-  # custom FastAPI sidecar in deploy/colpali (cogniverse/colpali:dev).
-  # Uses colpali-engine to load vidore/colsmol-500m end-to-end (model +
-  # processor + LoRA adapter merge) — Infinity / vLLM both fail this on
-  # peft/target_modules drift. Profiles route here via
-  # ``inference_service: "colpali_infinity"`` (the key is kept for
-  # backward compatibility; engine switched to colpali_native).
-  colpali_infinity:
+  # vLLM-served visual multi-vector retrieval (ColPali). Replaces the
+  # legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
+  # ColPaliForRetrieval class to serve vidore/colpali-v1.3-hf — a 3B
+  # PaliGemma-based model with 128-dim per-token output, matching the
+  # existing Vespa schema (no migration). Profiles route here via
+  # ``inference_service: "vllm_colpali"``.
+  vllm_colpali:
     enabled: false
-    engine: colpali_native
-    model: vidore/colsmol-500m
+    engine: vllm_token_embed
+    model: vidore/colpali-v1.3-hf
     type: multi_vector
-    device: cpu                    # cpu | cuda | rocm | mps
-    # Default image (used when ``imagesByDevice.<device>`` is unset).
-    image:
-      repository: cogniverse/colpali
-      tag: "dev"
-      pullPolicy: IfNotPresent
-    # Optional per-device image override. The chart picks
-    # ``imagesByDevice[device]`` if present, else falls back to ``image``
-    # above. Set this in values.cuda.yaml / values.rocm.yaml after
-    # building the corresponding base images. Keys: cpu, cuda, rocm, mps.
-    imagesByDevice: {}
-    # GPU count when device is cuda or rocm. Ignored on cpu/mps. The chart
-    # auto-injects ``nvidia.com/gpu`` or ``amd.com/gpu`` resource limits.
+    device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
-    # Extra nodeSelector / tolerations merged on top of the GPU defaults
-    # the chart injects when device is cuda/rocm. Use to pin to a
-    # specific node pool, instance type, etc.
     nodeSelector: {}
     tolerations: []
-    extraArgs: []
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
+      pullPolicy: IfNotPresent
+    imagesByDevice: {}
+    extraArgs:
+      - "--max-model-len"
+      - "4096"
+      - "--task"
+      - "token_embed"
+    hfTokenSecret: ""              # colpali-v1.3-hf is ungated
     replicaCount: 1
     service:
       type: ClusterIP
-      port: 7997
+      port: 8000
       nodePort: 29001
     resources:
       limits:
         cpu: "4"
-        memory: "6Gi"
+        memory: "12Gi"
       requests:
-        cpu: "1"
-        memory: "2Gi"
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 7997
-      initialDelaySeconds: 240
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 10
-    readinessProbe:
-      httpGet:
-        path: /health
-        port: 7997
-      initialDelaySeconds: 120
-      periodSeconds: 15
-      timeoutSeconds: 10
-      failureThreshold: 5
-
-  # ColQwen2 multi-vector visual retrieval served by the same
-  # cogniverse/colpali sidecar (colpali-engine handles ColQwen2 alongside
-  # ColPali / ColIdefics3). Separate pod because one FastAPI instance
-  # serves a single model. Used by profiles with
-  # ``inference_service: "colqwen_infinity"`` (video_colqwen_omni_mv_chunk_30s).
-  # Off by default — the model is large (~5-7Gi RSS) and the laptop
-  # cluster usually doesn't need it.
-  colqwen_infinity:
-    enabled: false
-    engine: colpali_native
-    model: vidore/colqwen2-v1.0
-    type: multi_vector
-    device: cpu                    # cpu | cuda | rocm | mps
-    image:
-      repository: cogniverse/colpali
-      tag: "dev"
-      pullPolicy: IfNotPresent
-    imagesByDevice: {}             # see colpali_infinity for shape
-    gpuCount: 1
-    nodeSelector: {}
-    tolerations: []
-    extraArgs: []
-    replicaCount: 1
-    service:
-      type: ClusterIP
-      port: 7997
-      nodePort: 29004
-    resources:
-      limits:
-        cpu: "4"
+        cpu: "2"
         memory: "8Gi"
-      requests:
-        cpu: "1"
-        memory: "3Gi"
     livenessProbe:
       httpGet:
         path: /health
-        port: 7997
+        port: 8000
       initialDelaySeconds: 240
       periodSeconds: 30
       timeoutSeconds: 10
@@ -736,11 +684,11 @@ inference:
     readinessProbe:
       httpGet:
         path: /health
-        port: 7997
-      initialDelaySeconds: 120
-      periodSeconds: 15
+        port: 8000
+      initialDelaySeconds: 180
+      periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 5
+      failureThreshold: 10
 
   # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
   # sidecar (deploy/pylate). Used by profiles with
@@ -781,7 +729,7 @@ inference:
         repository: cogniverse/pylate
         tag: "0.1.0"
         pullPolicy: IfNotPresent
-      imagesByDevice: {}           # see colpali_infinity for shape
+      imagesByDevice: {}           # per-device image override; same shape as vllm_colpali
       device: cpu                  # synced with top-level device by template
       containerPort: 8000
     resources:
@@ -872,8 +820,7 @@ inference:
   # SentenceTransformer and exposes POST /v1/embeddings
   # (OpenAI-compatible). Used by Mem0 + SemanticEmbedder + the
   # job-executor delivery router. Profiles route here via
-  # ``inference_service: "denseon"``. dense_vllm (below) is the path
-  # for vLLM-supported dense models like EmbeddingGemma.
+  # ``inference_service: "denseon"``.
   denseon:
     enabled: true
     engine: pylate
@@ -929,64 +876,6 @@ inference:
       periodSeconds: 15
       timeoutSeconds: 5
       failureThreshold: 5
-
-  # Dedicated single-vector dense-embedding service (vLLM + EmbeddingGemma
-  # or similar). Splits embedding traffic off the shared Ollama pod
-  # (Ollama serializes requests per model, so embedding calls queue
-  # behind LLM token streams). Profiles route here via
-  # ``inference_service: "dense_vllm"``.
-  dense_vllm:
-    enabled: false
-    engine: vllm
-    type: single_vector
-    device: cpu                    # cpu | cuda | rocm
-    gpuCount: 1
-    nodeSelector: {}
-    tolerations: []
-    image:
-      repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
-      pullPolicy: IfNotPresent
-    imagesByDevice: {}
-    model: google/embeddinggemma-300m
-    dtype: float32
-    extraArgs:
-      - "--max-model-len"
-      - "2048"
-    # EmbeddingGemma is gated on HuggingFace. Create a k8s Secret with the
-    # token (key: HF_TOKEN) and set hfTokenSecret to its name; the chart
-    # wires it into the pod env as HF_TOKEN. Leave empty for ungated models.
-    hfTokenSecret: "hf-token"
-    replicaCount: 1
-    service:
-      type: ClusterIP
-      port: 8000
-      nodePort: 29003
-    # requests == limits gives Guaranteed QoS so the scheduler reserves
-    # headroom and the pod isn't evicted under node memory pressure.
-    resources:
-      limits:
-        cpu: "4"
-        memory: "6Gi"
-      requests:
-        cpu: "4"
-        memory: "6Gi"
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: 8000
-      initialDelaySeconds: 180
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 10
-    readinessProbe:
-      httpGet:
-        path: /health
-        port: 8000
-      initialDelaySeconds: 120
-      periodSeconds: 30
-      timeoutSeconds: 10
-      failureThreshold: 10
 
   # VideoPrism (JAX) video multi-vector embeddings served by the custom
   # FastAPI sidecar in deploy/videoprism (cogniverse/videoprism:dev).
@@ -1047,90 +936,166 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 10
 
-# ===========================================
-# Whisper ASR sidecar (deploy/whisper)
-# ===========================================
-# Whisper transcription was previously loaded in-process inside the
-# runtime pod (AudioTranscriptionStrategy). Externalizing into a
-# dedicated pod keeps runtime light and lets ASR scale independently.
-#
-# Engine selects the image at chart-render time. Each engine ships its
-# own image and its own server.py specialisation:
-#   - faster-whisper: CTranslate2 backend; CPU and CUDA.
-#                     Image: cogniverse/whisper-fw (deploy/whisper/Dockerfile).
-#   - whisperx:       PyTorch-based; required on AMD ROCm.
-#                     Image: cogniverse/whisper-wx (Dockerfile.wx,
-#                     not yet authored — selecting this engine before
-#                     the image lands will fail at image pull).
-#   - whisper-cpp:    whisper.cpp; lightweight, useful for Apple Silicon.
-#                     Image: cogniverse/whisper-cpp (Dockerfile.cpp,
-#                     not yet authored).
-#
-# Profiles route audio transcription through the sidecar by setting
-# ``inference_services.transcription: "whisper"`` at profile level —
-# StrategyFactory injects it into AudioTranscriptionStrategy and
-# ProcessorManager substitutes the URL.
-whisper:
-  enabled: false                  # flip to true to deploy the pod
-  # Engine selects the image at chart-render time (not via an env var
-  # the pod reads). Each engine ships its own image with a matching
-  # server.py specialisation; setting an engine whose Dockerfile hasn't
-  # landed yet → ImagePullBackOff at deploy time, which is the correct
-  # signal. Sidecar Dockerfiles live alongside ``deploy/whisper/`` and
-  # the chart's image-by-engine map below points each one at its tag.
-  engine: faster-whisper          # faster-whisper | whisperx | whisper-cpp
-  model: base                     # base | small | medium | large-v3
-  device: cpu                     # cpu | cuda | rocm | mps
-  gpuCount: 1
-  nodeSelector: {}
-  tolerations: []
-  image:
-    repository: cogniverse/whisper-fw
-    tag: dev
-    pullPolicy: IfNotPresent
-  # Per-engine image overrides — default to the canonical tag scheme.
-  # Keys MUST match the values that ``engine`` accepts.
-  imagesByEngine:
-    faster-whisper:
-      repository: cogniverse/whisper-fw
-      tag: dev
+  # vLLM-served LLM student — runtime hot path. Single instance handling
+  # all DSPy / agent / search / judge calls. Gemma 4 E4B (4B effective)
+  # for low-latency. Multimodal (text + image + video + audio) so it
+  # folds in vlm_interface, evaluators.llm_judge, evaluators.visual_judge
+  # in one model. Profiles do not route through this — agents resolve it
+  # via llm_config.primary at the runtime layer.
+  vllm_llm_student:
+    enabled: false
+    engine: vllm_chat
+    type: chat
+    model: google/gemma-4-e4b-it
+    device: cpu                    # cpu | cuda | rocm
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
       pullPolicy: IfNotPresent
-    whisperx:
-      repository: cogniverse/whisper-wx
-      tag: dev
+    imagesByDevice: {}
+    extraArgs:
+      - "--max-model-len"
+      - "262144"
+    # Gemma 4 is gated on HuggingFace; create a Secret named hf-token
+    # with key HF_TOKEN before deploying.
+    hfTokenSecret: "hf-token"
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29010
+    resources:
+      limits:
+        cpu: "4"
+        memory: "16Gi"
+      requests:
+        cpu: "2"
+        memory: "12Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 240
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 180
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 10
+
+  # vLLM-served LLM teacher — DSPy compile / MIPROv2 / GEPA only. NOT on
+  # the runtime hot path. Default replicaCount=0 keeps idle GPU footprint
+  # to just the student; optimization_cli scales up on-demand.
+  # Gemma 4 26B-A4B MoE (4B activated) replaces the previous Claude SaaS
+  # teacher — keeps the stack fully self-hosted.
+  # vLLM-served ASR via Whisper. Replaces the legacy ``deploy/whisper``
+  # FastAPI sidecar. Profiles route audio transcription here via
+  # ``inference_services.transcription: "vllm_asr"``. The vLLM image
+  # must include the ``vllm[audio]`` extra so ``--task transcription``
+  # is registered (set in extraArgs).
+  vllm_asr:
+    enabled: false
+    engine: vllm_transcription
+    type: transcription
+    model: openai/whisper-large-v3-turbo
+    device: cpu                    # cpu | cuda | rocm
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
       pullPolicy: IfNotPresent
-    whisper-cpp:
-      repository: cogniverse/whisper-cpp
-      tag: dev
+    imagesByDevice: {}
+    extraArgs:
+      - "--task"
+      - "transcription"
+      - "--max-model-len"
+      - "448"
+    hfTokenSecret: ""              # whisper is ungated
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29005
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 180
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 90
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 8
+
+  vllm_llm_teacher:
+    enabled: false
+    engine: vllm_chat
+    type: chat
+    model: google/gemma-4-26b-a4b-it
+    device: cpu
+    gpuCount: 1
+    nodeSelector: {}
+    tolerations: []
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
       pullPolicy: IfNotPresent
-  replicaCount: 1
-  service:
-    type: ClusterIP
-    port: 7998
-    nodePort: 29005
-  resources:
-    limits:
-      cpu: "2"
-      memory: "2Gi"
-    requests:
-      cpu: "500m"
-      memory: "512Mi"
-  livenessProbe:
-    httpGet:
-      path: /health
-      port: 7998
-    initialDelaySeconds: 180
-    periodSeconds: 30
-    timeoutSeconds: 5
-    failureThreshold: 10
-  readinessProbe:
-    httpGet:
-      path: /health
-      port: 7998
-    initialDelaySeconds: 60
-    periodSeconds: 15
-    timeoutSeconds: 5
-    failureThreshold: 5
+    imagesByDevice: {}
+    extraArgs:
+      - "--max-model-len"
+      - "262144"
+    hfTokenSecret: "hf-token"
+    replicaCount: 0                # scale-to-zero by default
+    service:
+      type: ClusterIP
+      port: 8000
+      nodePort: 29011
+    resources:
+      limits:
+        cpu: "8"
+        memory: "32Gi"
+      requests:
+        cpu: "4"
+        memory: "20Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 480
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 12
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 360
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 12
 
 # ===========================================
 # Messaging Gateway (Telegram/Slack)

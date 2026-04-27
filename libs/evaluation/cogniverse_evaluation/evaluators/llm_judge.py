@@ -36,14 +36,16 @@ class LLMJudgeBase:
 
     def __init__(
         self,
-        model_name: str = "deepseek-r1:7b",
+        model_name: str,
         base_url: str = "http://localhost:11434",
     ):
         """
         Initialize LLM judge
 
         Args:
-            model_name: Model to use for evaluation
+            model_name: Model to use for evaluation. Must come from config —
+                callers must not rely on a hardcoded default, which would
+                silently mask `evaluators.llm_judge.model` being out of sync.
             base_url: Base URL for LLM API (Ollama default)
         """
         self.model_name = model_name
@@ -174,14 +176,12 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
     Evaluates query-result relevance without ground truth using multimodal models
     """
 
-    def __init__(
-        self, model_name: str = "llava:7b", base_url: str = "http://localhost:11434"
-    ):
+    def __init__(self, model_name: str, base_url: str = "http://localhost:11434"):
         """
         Initialize with multimodal model for visual evaluation
 
         Args:
-            model_name: Multimodal model (llava, bakllava, etc.)
+            model_name: Multimodal model id from `evaluators.visual_judge.model`.
             base_url: Ollama API URL
         """
         LLMJudgeBase.__init__(self, model_name, base_url)
@@ -347,14 +347,14 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
 
     def __init__(
         self,
-        model_name: str = "deepseek-r1:7b",
+        model_name: str,
         base_url: str = "http://localhost:11434",
     ):
         """
         Initialize reference-based evaluator
 
         Args:
-            model_name: LLM model to use
+            model_name: LLM model id from `evaluators.llm_judge.model`.
             base_url: LLM API base URL
         """
         LLMJudgeBase.__init__(self, model_name, base_url)
@@ -603,7 +603,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
 
     def __init__(
         self,
-        model_name: str = "deepseek-r1:7b",
+        model_name: str,
         base_url: str = "http://localhost:11434",
         reference_weight: float = 0.5,
     ):
@@ -725,7 +725,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
 
 
 def create_llm_evaluators(
-    model_name: str = "llava:7b",
+    model_name: str,
     base_url: str = "http://localhost:11434",
     include_hybrid: bool = True,
 ) -> list[Evaluator]:
@@ -733,7 +733,9 @@ def create_llm_evaluators(
     Create LLM-based evaluators for Phoenix experiments
 
     Args:
-        model_name: LLM model to use (llava:7b for multimodal)
+        model_name: LLM model id from `evaluators.llm_judge.model` /
+            `evaluators.visual_judge.model` (a multimodal model is required
+            because the reference-free evaluator passes images).
         base_url: LLM API base URL
         include_hybrid: Whether to include hybrid evaluator
 

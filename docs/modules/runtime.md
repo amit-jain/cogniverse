@@ -297,7 +297,7 @@ from cogniverse_runtime.ingestion.strategies import (
 )
 
 # Multi-vector (ColPali, ColQwen)
-mv_strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colsmol-500m")
+mv_strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colpali-v1.3-hf")
 
 # Single-vector (VideoPrism)
 sv_strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-base")
@@ -590,7 +590,7 @@ backend:
   profiles:
     video_colpali_mv_frame:
       type: multi_vector
-      embedding_model: vidore/colsmol-500m
+      embedding_model: vidore/colpali-v1.3-hf
       strategies:
         segmentation:
           class: FrameSegmentationStrategy
@@ -608,7 +608,7 @@ backend:
         embedding:
           class: MultiVectorEmbeddingStrategy
           params:
-            model_name: vidore/colsmol-500m
+            model_name: vidore/colpali-v1.3-hf
 
     video_videoprism_sv_chunk:
       type: single_vector
@@ -904,7 +904,7 @@ class ProfileCreateRequest(BaseModel):
     type: str = "video"        # video, image, audio, text
     description: str = ""
     schema_name: str           # Base schema (must have template)
-    embedding_model: str       # e.g., "vidore/colsmol-500m"
+    embedding_model: str       # e.g., "vidore/colpali-v1.3-hf"
     pipeline_config: Dict      # keyframe extraction, transcription, etc.
     strategies: Dict           # segmentation, embedding strategies
     embedding_type: str        # frame_based, video_chunks, direct_video_segment, single_vector
@@ -954,7 +954,7 @@ generator = EmbeddingGenerator(
     logger=logger,
     profile_config={
         "process_type": "frame_based",
-        "embedding_model": "vidore/colsmol-500m"
+        "embedding_model": "vidore/colpali-v1.3-hf"
     },
     backend_client=vespa_backend
 )

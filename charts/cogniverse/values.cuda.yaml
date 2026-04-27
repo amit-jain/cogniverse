@@ -27,24 +27,21 @@ devMode:
 # nodeSelector + toleration. Add more replicas to fan out throughput.
 # ---------------------------------------------------------------------------
 inference:
-  colpali_infinity:
+  vllm_colpali:
     enabled: true
     device: cuda
     gpuCount: 1
-    replicaCount: 5            # scale-out: ~5x ingest throughput vs single replica
+    replicaCount: 3            # scale-out for ingest throughput
     imagesByDevice:
       cuda:
-        repository: cogniverse/colpali
-        tag: dev-cuda
+        repository: vllm/vllm-openai
+        tag: latest
         pullPolicy: IfNotPresent
-    # nodeSelector / tolerations merged on top of the auto-injected
-    # ``nvidia.com/gpu.present: true`` selector. Pin to a specific node
-    # pool here if you operate multiple GPU instance families.
     nodeSelector: {}
     tolerations: []
     resources:
       limits:
-        cpu: "8"
+        cpu: "4"
         memory: "16Gi"
       requests:
         cpu: "2"
@@ -68,21 +65,6 @@ inference:
       requests:
         cpu: "1"
         memory: "4Gi"
-
-  # Enable when needed; same shape as colpali_infinity.
-  colqwen_infinity:
-    enabled: false
-
-  # If you also run dense_vllm for embeddings:
-  dense_vllm:
-    enabled: false
-    device: cuda
-    gpuCount: 1
-    imagesByDevice:
-      cuda:
-        repository: vllm/vllm-openai
-        tag: latest
-        pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
 # LLM (chat / DSPy reasoning) — Step 3 of the plan adds ``llm.engine`` so

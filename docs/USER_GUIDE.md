@@ -319,7 +319,7 @@ memory = Mem0MemoryManager(tenant_id="your_org:production")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -647,7 +647,7 @@ Create custom profiles for specific use cases:
         "type": "video",
         "description": "Custom high-resolution frame-based profile",
         "schema_name": "video_custom_highres_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "keyframe_strategy": "fps",
@@ -1180,7 +1180,7 @@ memory = Mem0MemoryManager(tenant_id="your_org:production")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -1232,7 +1232,7 @@ Configure embedding profiles in `configs/config.json`:
         "type": "video",
         "description": "Frame-based ColPali profile",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "keyframe_strategy": "fps",

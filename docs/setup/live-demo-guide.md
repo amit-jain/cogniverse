@@ -644,7 +644,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 | `--live-interval` | 14400 (4h) | Seconds between live traffic evaluations |
 | `--live-sample-count` | 20 | Spans to sample per agent for live eval |
 | `--golden-dataset-path` | `data/testset/evaluation/sample_videos_retrieval_queries.json` | Path to golden dataset |
-| `--llm-model` | `qwen3:4b` | LLM for judge evaluations |
+| `--llm-model` | `google/gemma-4-e4b-it` | LLM for judge evaluations |
 | `--once` | false | Single cycle and exit (for Argo CronWorkflows) |
 
 In production, the quality monitor runs as a Kubernetes sidecar (`runtime.qualityMonitor.enabled: true` in Helm values).

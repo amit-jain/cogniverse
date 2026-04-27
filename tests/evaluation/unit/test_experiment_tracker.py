@@ -56,9 +56,16 @@ class TestExperimentTracker:
         assert tracker.enable_quality_evaluators is True
         assert tracker.enable_llm_evaluators is False
         assert tracker.evaluator_name == "visual_judge"
-        assert tracker.llm_model == "deepseek-r1:7b"
+        # llm_model is None by default; required only when enable_llm_evaluators=True
+        assert tracker.llm_model is None
         assert tracker.experiments == []
         assert tracker.configurations == []
+
+    @pytest.mark.unit
+    def test_init_llm_evaluators_without_model_raises(self, mock_dependencies):
+        """LLM evaluators require an explicit model from config."""
+        with pytest.raises(ValueError, match="llm_model is required"):
+            ExperimentTracker(tenant_id="test:unit", enable_llm_evaluators=True)
 
     @pytest.mark.unit
     def test_init_custom_params(self, mock_dependencies):
@@ -102,7 +109,11 @@ class TestExperimentTracker:
         with patch(
             "cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
         ):
-            ExperimentTracker(tenant_id="test:unit", enable_llm_evaluators=True)
+            ExperimentTracker(
+                tenant_id="test:unit",
+                enable_llm_evaluators=True,
+                llm_model="test-model",
+            )
 
             mock_dependencies["register_plugin"].assert_called()
 

@@ -326,7 +326,7 @@ OSError: Unable to load weights from pytorch checkpoint
 rm -rf ~/.cache/huggingface/hub
 
 # Download model explicitly
-python -c "from transformers import AutoModel; AutoModel.from_pretrained('vidore/colsmol-500m')"
+python -c "from transformers import AutoModel; AutoModel.from_pretrained('vidore/colpali-v1.3-hf')"
 
 # Check disk space
 df -h

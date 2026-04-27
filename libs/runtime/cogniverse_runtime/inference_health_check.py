@@ -109,9 +109,7 @@ def collect_profile_bindings(profiles: dict[str, dict]) -> list[ProfileBinding]:
     for profile_name, profile_body in profiles.items():
         if not isinstance(profile_body, dict):
             continue
-        service_name = (profile_body.get("inference_services") or {}).get(
-            "embedding"
-        )
+        service_name = (profile_body.get("inference_services") or {}).get("embedding")
         if not service_name:
             continue
         # ``semantic_model`` wins over ``embedding_model`` for hybrid profiles

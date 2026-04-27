@@ -385,16 +385,11 @@ Use exact JSON format in your response.""",
     entity_confidence_threshold: float = 0.6
     min_entities_for_fast_path: int = 1
 
-    # LangExtract configuration (for development/data generation)
-    langextract_config: dict[str, Any] = field(
-        default_factory=lambda: {
-            "enabled": False,
-            "model_id": "gemini-2.5-flash",
-            "enable_source_grounding": True,
-            "enable_visualization": True,
-            "output_dir": "outputs/langextract",
-        }
-    )
+    # TODO(routing-quality): GLiNER → langextract fallback was removed when the
+    # DSPy unified extractor (_path_b in dspy_relationship_router.py) replaced
+    # it. If real-world entity/relationship extraction quality regresses on the
+    # slow path, reintroduce langextract as a Path B alternative before falling
+    # through to the unified LLM call.
 
     def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary."""

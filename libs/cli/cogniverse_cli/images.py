@@ -12,26 +12,21 @@ import yaml
 # Runtime + dashboard ship one image per torch backend. Each variant
 # bakes in the matching torch wheel — cogniverse/runtime-cpu carries
 # torch+cpu, -cuda carries torch+cu128, -rocm carries torch+rocm6.4.
-# Mirrors the whisper engine-per-image pattern (whisper-fw / -wx / -cpp).
 RUNTIME_TAGS_BY_BACKEND = {
-    "cpu":  "cogniverse/runtime-cpu:dev",
+    "cpu": "cogniverse/runtime-cpu:dev",
     "cuda": "cogniverse/runtime-cuda:dev",
     "rocm": "cogniverse/runtime-rocm:dev",
 }
 DASHBOARD_TAGS_BY_BACKEND = {
-    "cpu":  "cogniverse/dashboard-cpu:dev",
+    "cpu": "cogniverse/dashboard-cpu:dev",
     "cuda": "cogniverse/dashboard-cuda:dev",
     "rocm": "cogniverse/dashboard-rocm:dev",
 }
 PYLATE_TAG = "cogniverse/pylate:dev"
-COLPALI_TAG = "cogniverse/colpali:dev"
-# faster-whisper variant — chart's default whisper.image.repository is
-# ``cogniverse/whisper-fw``. Each engine ships its own image with a matching
-# server.py specialisation. ``-wx`` (PyTorch-ROCm + whisperx) and ``-cpp``
-# (whisper.cpp + binding) Dockerfiles aren't authored yet; once they land,
-# add the WHISPER_WX_TAG / WHISPER_CPP_TAG constants here and append their
-# build entries to ``build_images.workspace_builds``.
-WHISPER_TAG = "cogniverse/whisper-fw:dev"
+# colpali and whisper are no longer built by us — vLLM serves both:
+# vidore/colpali-v1.3-hf via inference.vllm_colpali (vllm/vllm-openai-cpu)
+# openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
+# Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 
 
 def detect_torch_backend() -> str:
@@ -97,10 +92,9 @@ def build_images(
     """Build all cogniverse-owned Docker images.
 
     Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected via ``detect_torch_backend()`` when None). Inference
-    sidecars (pylate, colpali, whisper) are always built so
-    ``--set inference.<name>.engine=...`` against an existing k3d cluster
-    works without a separate build step.
+    (auto-detected via ``detect_torch_backend()`` when None). The pylate
+    inference sidecar is always built. ColPali and Whisper are now
+    served via vLLM (vllm/vllm-openai-cpu) and pulled directly by k3d.
     """
     backend = torch_backend or detect_torch_backend()
     runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
@@ -111,8 +105,6 @@ def build_images(
         (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
         (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
         (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate", []),
-        (COLPALI_TAG, "deploy/colpali/Dockerfile", "deploy/colpali", []),
-        (WHISPER_TAG, "deploy/whisper/Dockerfile", "deploy/whisper", []),
     ]
     built: list[str] = []
     for tag, dockerfile, context, extra_args in workspace_builds:

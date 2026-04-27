@@ -79,7 +79,14 @@ def render_memory_management_tab():
             # only known DSPy prefixes are stripped.
             from cogniverse_foundation.dspy import bare_model_name
 
-            llm_model = bare_model_name(llm_primary.get("model", "qwen3:4b"))
+            primary_model = llm_primary.get("model")
+            if not primary_model:
+                st.error(
+                    "❌ Memory init requires llm_config.primary.model in config — "
+                    "no model id found."
+                )
+                return
+            llm_model = bare_model_name(primary_model)
 
             llm_base_url = llm_primary.get("api_base") or system_config.base_url
             denseon_url = system_config.inference_service_urls.get("denseon")

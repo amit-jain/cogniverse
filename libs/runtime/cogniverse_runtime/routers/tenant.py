@@ -235,7 +235,13 @@ def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
 
         config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=cm)
         llm_cfg = config.get("llm_config", {}).get("primary", {})
-        model = llm_cfg.get("model", "qwen3:4b")
+        model = llm_cfg.get("model")
+        if not model:
+            raise RuntimeError(
+                "llm_config.primary.model is missing — Mem0 lazy-init requires "
+                "an explicit model id. Check configs/config.json or the chart "
+                "values that populate it."
+            )
         if "/" in model:
             model = model.split("/", 1)[1]
 

@@ -94,10 +94,6 @@ spec:
               "{{ $name }}": "http://{{ $fullName }}-{{ $name | kebabcase }}:{{ $cfg.service.port }}"
             {{- end -}}
             {{- end -}}
-            {{- if .Values.whisper.enabled }}
-            {{- if not $first }},{{ end }}
-              "whisper": "http://{{ $fullName }}-whisper:{{ .Values.whisper.service.port }}"
-            {{- end }}
             }
         livenessProbe:
           {{- toYaml .Values.ingestor.livenessProbe | nindent 10 }}

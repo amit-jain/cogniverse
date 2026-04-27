@@ -248,7 +248,7 @@ def initialize_memory(
     tenant_id: str,
     backend_host: str = "localhost",
     backend_port: int = 8080,
-    llm_model: str = "qwen3:4b",
+    llm_model: str = "google/gemma-4-e4b-it",
     embedding_model: str = "nomic-embed-text",
     llm_base_url: str = "http://localhost:11434",
     config_manager=None,             # Required for schema deployment
@@ -483,7 +483,7 @@ memory = Mem0MemoryManager(tenant_id="acme")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -770,8 +770,8 @@ from cogniverse_core.common.cache import EmbeddingCache
 cache = EmbeddingCache(cache_manager, ttl=86400)  # 24 hours
 
 # Get/set individual embeddings
-embedding = await cache.get_embedding("query text", model="vidore/colsmol-500m")
-await cache.set_embedding("query text", "vidore/colsmol-500m", embedding_array)
+embedding = await cache.get_embedding("query text", model="vidore/colpali-v1.3-hf")
+await cache.set_embedding("query text", "vidore/colpali-v1.3-hf", embedding_array)
 
 # Batch operations
 results = await cache.get_batch_embeddings(["text1", "text2"], model="...")
@@ -994,7 +994,7 @@ from cogniverse_core.common.models import ModelLoaderFactory
 
 # Config must contain "model_loader" key — raises ValueError if missing
 loader = ModelLoaderFactory.create_loader(
-    model_name="vidore/colsmol-500m",
+    model_name="vidore/colpali-v1.3-hf",
     config={"model_loader": "colpali", "embedding_type": "multi_vector"},
     logger=logger,
 )

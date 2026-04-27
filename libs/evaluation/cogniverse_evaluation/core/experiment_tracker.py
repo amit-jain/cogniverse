@@ -66,7 +66,13 @@ class ExperimentTracker:
         self.enable_quality_evaluators = enable_quality_evaluators
         self.enable_llm_evaluators = enable_llm_evaluators
         self.evaluator_name = evaluator_name
-        self.llm_model = llm_model or "deepseek-r1:7b"
+        if enable_llm_evaluators and not llm_model:
+            raise ValueError(
+                "llm_model is required when enable_llm_evaluators=True; pass "
+                "the model id from `evaluators.llm_judge.model` in config "
+                "instead of relying on a hardcoded default."
+            )
+        self.llm_model = llm_model
         self.llm_base_url = llm_base_url
 
         # Initialize provider (auto-detect if not provided)

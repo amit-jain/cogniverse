@@ -109,9 +109,7 @@ def create_embedding_generator(
     if "remote_inference_url" not in profile_config and config_manager is not None:
         system_config = config_manager.get_system_config()
         loader = profile_config.get("model_loader", "")
-        service_name = (profile_config.get("inference_services") or {}).get(
-            "embedding"
-        )
+        service_name = (profile_config.get("inference_services") or {}).get("embedding")
         service_urls = getattr(system_config, "inference_service_urls", {}) or {}
 
         if service_name:

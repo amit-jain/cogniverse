@@ -136,11 +136,11 @@ class TestDeployedServices:
         assert env_dump.returncode == 0, env_dump.stderr[:200]
 
         urls = json.loads(env_dump.stdout)
-        assert "whisper" in urls, (
+        assert "vllm_asr" in urls, (
             f"whisper service URL missing from runtime pod env; got keys "
             f"{sorted(urls.keys())!r}"
         )
-        assert urls["whisper"].startswith("http://"), urls["whisper"]
+        assert urls["vllm_asr"].startswith("http://"), urls["vllm_asr"]
 
     def test_all_pods_running(self, deployed_stack):
         """All pods in test namespace are Running."""

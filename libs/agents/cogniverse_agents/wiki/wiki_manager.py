@@ -21,7 +21,13 @@ _CONTENT_SEPARATOR = "\n\n---\n\n"
 class WikiManager:
     """Manages wiki knowledge pages for a single tenant, backed by Vespa."""
 
-    def __init__(self, backend: Any, tenant_id: str, schema_name: str) -> None:
+    def __init__(
+        self,
+        backend: Any,
+        tenant_id: str,
+        schema_name: str,
+        llm_endpoint_config: Optional[LLMEndpointConfig] = None,
+    ) -> None:
         """
         Args:
             backend: VespaSearchBackend instance (provides get_document, search).
@@ -33,6 +39,10 @@ class WikiManager:
                          "Illegal key-value pair" 400s on every feed. Use
                          ``backend.get_tenant_schema_name(tenant_id, base)``
                          to get the sanitized form.
+            llm_endpoint_config: Endpoint config for the RLM merge call in
+                ``_merge_with_rlm``. Sourced from runtime ``llm_config.primary``
+                — required when the topic-page merge path is exercised. Tests
+                that don't trigger that path can omit it.
         """
         if ":" in schema_name:
             raise ValueError(
@@ -43,6 +53,7 @@ class WikiManager:
         self._backend = backend
         self._tenant_id = tenant_id
         self._schema_name = schema_name
+        self._llm_endpoint_config = llm_endpoint_config
 
     # ------------------------------------------------------------------
     # Public API
@@ -375,9 +386,14 @@ class WikiManager:
             f"\n\n---\n\n## New information about {entity}\n\n{new_content}"
         )
         query = f"Synthesize a comprehensive, non-redundant summary about {entity} from the existing and new information."
+        if self._llm_endpoint_config is None:
+            raise RuntimeError(
+                "WikiManager._merge_with_rlm requires llm_endpoint_config — "
+                "construct WikiManager with llm_endpoint_config sourced from "
+                "config.get_llm_config().primary."
+            )
         try:
-            rlm_llm_config = LLMEndpointConfig(model="ollama/qwen3:4b")
-            rlm = RLMInference(llm_config=rlm_llm_config)
+            rlm = RLMInference(llm_config=self._llm_endpoint_config)
             result = rlm.process(query=query, context=combined_context)
             return result.answer
         except Exception:

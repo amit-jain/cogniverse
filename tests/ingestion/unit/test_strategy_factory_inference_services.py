@@ -21,7 +21,7 @@ class TestInferenceServicesInjection:
     def test_transcription_service_lifted_from_profile_map(self):
         """``inference_services.transcription`` lands on the strategy."""
         profile_config = {
-            "inference_services": {"transcription": "whisper"},
+            "inference_services": {"transcription": "vllm_asr"},
             "strategies": {
                 "transcription": {
                     "class": "AudioTranscriptionStrategy",
@@ -34,7 +34,7 @@ class TestInferenceServicesInjection:
 
         strategy = strategy_set.transcription
         assert isinstance(strategy, AudioTranscriptionStrategy)
-        assert strategy.inference_service == "whisper", (
+        assert strategy.inference_service == "vllm_asr", (
             "factory must inject inference_service from profile-level map "
             "into the strategy"
         )
@@ -65,7 +65,7 @@ class TestInferenceServicesInjection:
         spurious ``inference_service`` param at construction time.
         """
         profile_config = {
-            "inference_services": {"embedding": "colpali_infinity"},
+            "inference_services": {"embedding": "vllm_colpali"},
             "strategies": {
                 "transcription": {
                     "class": "AudioTranscriptionStrategy",

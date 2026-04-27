@@ -104,7 +104,6 @@ class TestConfigPersistence:
             routing_mode="ensemble",
             enable_fast_path=False,
             gliner_threshold=0.5,
-            llm_routing_model="custom-model",
         )
 
         config_manager.set_routing_config(routing_config)
@@ -114,7 +113,6 @@ class TestConfigPersistence:
         assert loaded_config.routing_mode == "ensemble"
         assert loaded_config.enable_fast_path is False
         assert loaded_config.gliner_threshold == 0.5
-        assert loaded_config.llm_routing_model == "custom-model"
 
     def test_telemetry_config_persistence(self, config_manager):
         """Test telemetry configuration persists and loads"""

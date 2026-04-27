@@ -299,7 +299,7 @@ manager = Mem0MemoryManager(tenant_id="your_org:production")
 manager.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -806,7 +806,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )
@@ -838,7 +838,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )
@@ -1078,7 +1078,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )
@@ -1448,7 +1448,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )

@@ -110,7 +110,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "tenant_id": "acme_corp",
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
-    "embedding_model": "vidore/colsmol-500m",
+    "embedding_model": "vidore/colpali-v1.3-hf",
     "embedding_type": "multi_vector",
     "model_loader": "colpali",
     "description": "ColPali model with frame-based embedding for video search",
@@ -187,7 +187,7 @@ curl "http://localhost:8000/admin/profiles?tenant_id=acme_corp"
       "profile_name": "video_colpali_mv_frame",
       "type": "video",
       "schema_name": "video_colpali_smol500_mv_frame",
-      "embedding_model": "vidore/colsmol-500m",
+      "embedding_model": "vidore/colpali-v1.3-hf",
       "description": "ColPali model with frame-based embedding",
       "schema_deployed": true,
       "created_at": "2024-01-15T10:00:00.000Z"
@@ -243,7 +243,7 @@ curl "http://localhost:8000/admin/profiles/video_colpali_mv_frame?tenant_id=acme
   "tenant_id": "acme_corp",
   "type": "video",
   "schema_name": "video_colpali_smol500_mv_frame",
-  "embedding_model": "vidore/colsmol-500m",
+  "embedding_model": "vidore/colpali-v1.3-hf",
   "embedding_type": "multi_vector",
   "description": "ColPali model with frame-based embedding for video search",
   "strategies": {
@@ -652,7 +652,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "tenant_id": "test_tenant",
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
-    "embedding_model": "vidore/colsmol-500m",
+    "embedding_model": "vidore/colpali-v1.3-hf",
     "embedding_type": "multi_vector",
     "model_loader": "colpali",
     "description": "Test profile for development"
@@ -773,7 +773,7 @@ profile = client.create_profile({
     "tenant_id": "my_tenant",
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
-    "embedding_model": "vidore/colsmol-500m",
+    "embedding_model": "vidore/colpali-v1.3-hf",
     "embedding_type": "multi_vector",
     "model_loader": "colpali"
 })
@@ -827,7 +827,7 @@ const profile = await client.createProfile({
   tenant_id: "my_tenant",
   type: "video",
   schema_name: "video_colpali_smol500_mv_frame",
-  embedding_model: "vidore/colsmol-500m",
+  embedding_model: "vidore/colpali-v1.3-hf",
   embedding_type: "multi_vector",
   model_loader: "colpali"
 });

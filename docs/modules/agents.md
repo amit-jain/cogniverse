@@ -2918,7 +2918,7 @@ memory = Mem0MemoryManager(tenant_id="acme")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="qwen3:4b",
+    llm_model="google/gemma-4-e4b-it",
     embedding_model="nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,

@@ -919,7 +919,7 @@ async def test_orchestrator_agent_with_vespa_backend(config_manager, tenant_id):
     deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
+            model="hosted_vllm/google/gemma-4-e4b-it",
             api_base="http://localhost:11434",
         ),
     )

@@ -156,35 +156,22 @@
   },
   "llm_config": {
     "primary": {
-      "model": "ollama/gemma4:e2b",
+      "model": "hosted_vllm/google/gemma-4-e4b-it",
       "api_key": null,
       "temperature": 0.1,
       "max_tokens": 1000,
       "adapter_path": null,
-      "api_base": "{{ include "cogniverse.llmEndpoint" . }}"
+      "api_base": "{{ include "cogniverse.llmStudentEndpoint" . }}"
     },
     "teacher": {
-      "model": "claude-3-5-sonnet-20241022",
-      "api_base": null,
+      "model": "hosted_vllm/google/gemma-4-26b-a4b-it",
+      "api_base": "{{ include "cogniverse.llmTeacherEndpoint" . }}",
       "api_key": null,
       "temperature": 0.7,
       "max_tokens": 2048,
       "adapter_path": null
     },
     "overrides": {
-      "summarizer_agent": {
-        "model": "ollama/gemma4:e2b"
-      },
-      "detailed_report_agent": {
-        "model": "ollama/gemma4:e2b"
-      },
-      "vlm_interface": {
-        "model": "ollama/gemma4:e2b"
-      },
-      "coding_agent": {
-        "model": "ollama/gemma4:e2b",
-        "max_tokens": 2048
-      },
       "query_analysis_module": null,
       "llm_auto_annotator": null
     }
@@ -278,9 +265,8 @@
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
-  "colpali_model": "vidore/colsmol-500m",
+  "colpali_model": "vidore/colpali-v1.3-hf",
   "embedding_model": "lightonai/DenseOn",
-  "local_llm_model": "deepseek-r1:7b",
   "prompts": {
     "artifacts_path": null,
     "default_system_prompt": "You are a precise and efficient routing agent. Analyze the query and output a JSON object with 'search_modality' (video or text) and 'generation_type' (detailed_report, summary, or raw_results)."
@@ -292,9 +278,9 @@
   },
   "evaluators": {
     "visual_judge": {
-      "provider": "ollama",
-      "model": "llava:7b",
-      "base_url": "{{ include "cogniverse.llmEndpoint" . }}",
+      "provider": "vllm",
+      "model": "google/gemma-4-e4b-it",
+      "base_url": "{{ include "cogniverse.llmStudentEndpoint" . }}",
       "api_key": null,
       "frames_per_video": 30,
       "max_videos": 2,
@@ -302,9 +288,9 @@
       "max_total_frames": 60
     },
     "llm_judge": {
-      "provider": "ollama",
-      "model": "deepseek-r1:7b",
-      "base_url": "{{ include "cogniverse.llmEndpoint" . }}",
+      "provider": "vllm",
+      "model": "google/gemma-4-e4b-it",
+      "base_url": "{{ include "cogniverse.llmStudentEndpoint" . }}",
       "api_key": null
     },
     "modal_visual_judge": {
@@ -407,11 +393,9 @@
     "tier_config": {
       "enable_fast_path": true,
       "enable_slow_path": true,
-      "enable_langextract": true,
       "enable_fallback": true,
       "fast_path_confidence_threshold": 0.7,
       "slow_path_confidence_threshold": 0.6,
-      "langextract_confidence_threshold": 0.5,
       "max_routing_time_ms": 5000
     },
     "gliner_config": {
@@ -438,22 +422,6 @@
       "device": "cpu",
       "batch_size": 32,
       "max_length": 512
-    },
-    "llm_config": {
-      "provider": "local",
-      "model": "smollm2:1.7b",
-      "endpoint": "{{ include "cogniverse.llmEndpoint" . }}",
-      "temperature": 0.1,
-      "max_tokens": 150,
-      "use_chain_of_thought": true,
-      "timeout": 30,
-      "system_prompt": "You are a routing agent. Classify queries using these examples:\n\nGENERATION TYPES:\nraw_results: extract timestamps, get IDs, list items, parse data, JSON output, specific values\nsummary: main points, key takeaways, brief overview, gist, recap\ndetailed_report: detailed analysis, comprehensive breakdown, full report, in-depth review\n\nExamples:\n\"extract timestamps from video\" \u2192 {\"search_modality\":\"video\",\"generation_type\":\"raw_results\"}\n\"summarize the main points\" \u2192 {\"search_modality\":\"both\",\"generation_type\":\"summary\"}\n\"detailed analysis of issues\" \u2192 {\"search_modality\":\"both\",\"generation_type\":\"detailed_report\"}\n\nRESPOND WITH ONLY JSON:\n{\"search_modality\":\"video\" or \"text\" or \"both\",\"generation_type\":\"raw_results\" or \"summary\" or \"detailed_report\",\"reasoning\":\"brief explanation\"}"
-    },
-    "langextract_config": {
-      "langextract_model": "qwen2.5:7b",
-      "ollama_url": "{{ include "cogniverse.llmEndpoint" . }}",
-      "timeout": 30,
-      "use_structured_extraction": true
     },
     "keyword_config": {
       "video_keywords": [
@@ -576,7 +544,7 @@
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -614,7 +582,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
-        "inference_services": {"embedding": "colpali_infinity", "transcription": "whisper"},
+        "inference_services": {"embedding": "vllm_colpali", "transcription": "vllm_asr"},
         "schema_config": {
           "schema_name": "video_colpali",
           "model_name": "ColPali",
@@ -627,7 +595,7 @@
         "type": "image",
         "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
         "schema_name": "image_colpali_mv",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": false,
@@ -656,7 +624,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
-        "inference_services": {"embedding": "colpali_infinity"},
+        "inference_services": {"embedding": "vllm_colpali"},
         "schema_config": {
           "schema_name": "image_colpali",
           "model_name": "ColPali",
@@ -698,7 +666,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
-        "inference_services": {"embedding": "colbert_pylate", "transcription": "whisper"},
+        "inference_services": {"embedding": "colbert_pylate", "transcription": "vllm_asr"},
         "semantic_model": "lightonai/LateOn",
         "schema_config": {
           "schema_name": "audio_content",
@@ -823,7 +791,7 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colqwen",
-        "inference_services": {"embedding": "colqwen_infinity", "transcription": "whisper"},
+        "inference_services": {"embedding": "vllm_colpali", "transcription": "vllm_asr"},
         "model_specific": {
           "max_patches": 1024,
           "segment_duration": 30.0,
@@ -892,7 +860,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colsmol-500m"
+          "query_encoder": "vidore/colpali-v1.3-hf"
         },
         "schema_config": {
           "schema_name": "video_videoprism_base_mv_chunk_30s",
@@ -949,7 +917,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colsmol-500m"
+          "query_encoder": "vidore/colpali-v1.3-hf"
         },
         "schema_config": {
           "schema_name": "video_videoprism_large_mv_chunk_30s",

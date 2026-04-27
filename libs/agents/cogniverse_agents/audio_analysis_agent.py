@@ -86,12 +86,12 @@ class AudioAnalysisDeps(AgentDeps):
     whisper_endpoint: Optional[str] = PydanticField(
         None,
         description=(
-            "Base URL of the deploy/whisper sidecar pod (e.g. "
-            "http://whisper:7998). When set, transcribe_audio POSTs to "
-            "{endpoint}/v1/transcribe instead of loading Whisper "
-            "in-process — mirrors the AudioProcessor remote pattern from "
-            "the ingestion pipeline. Read by the runtime from "
-            "system_config.inference_service_urls['whisper']."
+            "Base URL of the vllm-asr inference pod (e.g. "
+            "http://vllm-asr:8000). When set, transcribe_audio POSTs to "
+            "{endpoint}/v1/audio/transcriptions instead of loading "
+            "Whisper in-process — mirrors the AudioProcessor remote "
+            "pattern from the ingestion pipeline. Read by the runtime "
+            "from system_config.inference_service_urls['vllm_asr']."
         ),
     )
 
@@ -320,9 +320,7 @@ class AudioAnalysisAgent(
             payload["language"] = language
 
         url = f"{self._whisper_endpoint.rstrip('/')}/v1/transcribe"
-        logger.info(
-            f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)"
-        )
+        logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
         resp = requests.post(url, json=payload, timeout=600.0)
         resp.raise_for_status()
         body = resp.json()

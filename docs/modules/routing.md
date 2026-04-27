@@ -60,7 +60,7 @@ flowchart TB
     QueryInput["<span style='color:#000'>Query Input</span>"] --> Tier1["<span style='color:#000'>TIER 1: GLiNER Fast Path<br/>• NER-based entity detection<br/>• Rule-based classification<br/>• Latency: ~50-100ms<br/>• Confidence threshold: 0.7</span>"]
 
     Tier1 -->|confidence >= 0.7| Decision1["<span style='color:#000'>Routing Decision</span>"]
-    Tier1 -->|confidence < 0.7| Tier2["<span style='color:#000'>TIER 2: LLM Medium Path<br/>• Local LLM Ollama: gemma3:4b<br/>• Chain-of-thought reasoning<br/>• Latency: ~500-1000ms<br/>• Confidence threshold: 0.6</span>"]
+    Tier1 -->|confidence < 0.7| Tier2["<span style='color:#000'>TIER 2: LLM Medium Path<br/>• Local LLM Ollama: google/gemma-4-e4b-it<br/>• Chain-of-thought reasoning<br/>• Latency: ~500-1000ms<br/>• Confidence threshold: 0.6</span>"]
 
     Tier2 -->|confidence >= 0.6| Decision2["<span style='color:#000'>Routing Decision</span>"]
     Tier2 -->|confidence < 0.6| Tier3["<span style='color:#000'>TIER 3: LangExtract Slow Path<br/>• Structured extraction Gemini<br/>• Source grounding + visualization<br/>• Latency: ~2000-3000ms<br/>• Always succeeds fallback</span>"]
@@ -159,7 +159,7 @@ class RoutingConfig:
     # LLM configuration (Tier 2)
     llm_config: dict = {
         "provider": "local",
-        "model": "gemma3:4b",
+        "model": "google/gemma-4-e4b-it",
         "endpoint": "http://localhost:11434",
         "use_chain_of_thought": True,
         "use_think_mode": True,
@@ -1372,7 +1372,7 @@ gliner_config["device"] = "cuda"  # Use GPU
 gliner_config["batch_size"] = 64  # Batch requests
 
 # LLM optimization
-llm_config["model"] = "gemma3:4b"  # Smaller model for speed
+llm_config["model"] = "google/gemma-4-e4b-it"  # Smaller model for speed
 llm_config["max_tokens"] = 100  # Limit output length
 ```
 
@@ -1474,7 +1474,7 @@ except Exception as e:
 ```bash
 # Override routing config via env vars
 export ROUTING_MODE=tiered
-export ROUTING_LLM_MODEL=gemma3:4b
+export ROUTING_LLM_MODEL=google/gemma-4-e4b-it
 export ROUTING_GLINER_DEVICE=cuda
 export ROUTING_CACHE_ENABLE_CACHING=true
 export ROUTING_CACHE_TTL_SECONDS=3600

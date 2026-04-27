@@ -45,6 +45,13 @@ pytestmark = [
     pytest.mark.requires_models,
     pytest.mark.slow,
     pytest.mark.integration,
+    pytest.mark.skip(
+        reason=(
+            "deploy/whisper sidecar removed; ASR migrated to vllm-asr "
+            "(/v1/audio/transcriptions). Rewrite this round-trip against "
+            "the vLLM Whisper endpoint before re-enabling."
+        ),
+    ),
     pytest.mark.skipif(
         shutil.which("docker") is None,
         reason="docker CLI not installed",

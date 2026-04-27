@@ -297,7 +297,7 @@ Profiles are defined in `config.json`:
       "video_colpali_smol500_mv_frame": {
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "embedding_type": "multi_vector",
         "schema_config": {
           "embedding_dim": 128

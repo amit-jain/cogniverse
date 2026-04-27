@@ -124,11 +124,11 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
 
     # Wire: strategy → ProcessorManager → resolved URL → AudioProcessor.endpoint
     strategy = AudioTranscriptionStrategy(
-        model="base", language="en", inference_service="whisper"
+        model="base", language="en", inference_service="vllm_asr"
     )
     strategy_set = ProcessingStrategySet(transcription=strategy)
     manager = ProcessorManager(logging.getLogger("test"))
-    manager.initialize_from_strategies(strategy_set, service_urls={"whisper": url})
+    manager.initialize_from_strategies(strategy_set, service_urls={"vllm_asr": url})
 
     processor = manager.get_processor("audio")
     assert isinstance(processor, AudioProcessor)
@@ -178,11 +178,11 @@ def test_language_auto_is_omitted_from_request(stub_whisper, tmp_path):
     audio_path.write_bytes(b"AUDIO")
 
     strategy = AudioTranscriptionStrategy(
-        model="base", language="auto", inference_service="whisper"
+        model="base", language="auto", inference_service="vllm_asr"
     )
     strategy_set = ProcessingStrategySet(transcription=strategy)
     manager = ProcessorManager(logging.getLogger("test"))
-    manager.initialize_from_strategies(strategy_set, service_urls={"whisper": url})
+    manager.initialize_from_strategies(strategy_set, service_urls={"vllm_asr": url})
 
     processor = manager.get_processor("audio")
     processor.transcribe_audio(audio_path, output_dir=tmp_path)

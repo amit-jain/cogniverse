@@ -74,7 +74,6 @@ ROUTING_CONFIG_SCHEMA = {
         "gliner_device": {"type": "string", "enum": ["cpu", "cuda", "mps"]},
         "gliner_labels": {"type": "array", "items": {"type": "string"}},
         "llm_provider": {"type": "string", "enum": ["local", "modal", "langextract"]},
-        "llm_routing_model": {"type": "string", "minLength": 1},
         "llm_endpoint": {"type": "string", "format": "uri"},
         "llm_temperature": {"type": "number", "minimum": 0.0, "maximum": 2.0},
         "llm_max_tokens": {"type": "integer", "minimum": 1},

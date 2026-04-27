@@ -372,7 +372,7 @@ llm:
         cpu: "2"
         memory: "8Gi"
     models:
-      - "qwen3:4b"
+      - "google/gemma-4-e4b-it"
     nodeSelector: {}
     tolerations: []
 
@@ -399,7 +399,7 @@ config:
     - id: "default"
       name: "Default Tenant"
   llmModels:
-    - "qwen3:4b"
+    - "google/gemma-4-e4b-it"
 
 # Enable init jobs
 initJobs:

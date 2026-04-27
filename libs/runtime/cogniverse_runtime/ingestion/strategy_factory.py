@@ -25,8 +25,8 @@ class StrategyFactory:
         Expects config format:
         {
           "inference_services": {                # optional, profile-level
-            "embedding": "colpali_infinity",
-            "transcription": "whisper"
+            "embedding": "vllm_colpali",
+            "transcription": "vllm_asr"
           },
           "strategies": {
             "segmentation": {

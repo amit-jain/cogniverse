@@ -87,8 +87,11 @@ def main():
     )
     parser.add_argument(
         "--llm-model",
-        default="qwen3:4b",
-        help="LLM model name for LLM judge evaluations",
+        required=True,
+        help=(
+            "LLM model name for LLM judge evaluations. Must match "
+            "evaluators.llm_judge.model in config — pass the bare model id."
+        ),
     )
     parser.add_argument(
         "--golden-dataset-path",

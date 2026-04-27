@@ -176,6 +176,91 @@ class RemoteInferenceClient:
         config=RetryConfig(
             max_attempts=3,
             initial_delay=0.5,
+            exceptions=(requests.RequestException, ConnectionError, TimeoutError),
+        )
+    )
+    def process_images_vllm(self, images: list, **kwargs) -> Dict[str, Any]:
+        """
+        Send images to a vLLM ColPaliForRetrieval endpoint via OpenAI-compat
+        /v1/embeddings. Returns per-token (multi-vector) embeddings.
+
+        Payload shape matches vLLM's ColPali example:
+            {
+              "model": "<hf-model-id>",
+              "input": [
+                {"type": "image_url",
+                 "image_url": {"url": "data:image/png;base64,..."}},
+                ...
+              ],
+              "encoding_format": "float"
+            }
+
+        Response shape (OpenAI embeddings list with per-token arrays for
+        token_embed task):
+            {"data": [{"embedding": [[...128 floats...], ...]}, ...],
+             "model": "...", "usage": {...}}
+        """
+        import base64
+        import io
+
+        from PIL import Image
+
+        data_uris = []
+        for img in images:
+            if isinstance(img, (str, Path)):
+                with Image.open(img) as pil_img:
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format="PNG")
+                    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            elif hasattr(img, "save"):
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+            else:
+                raise ValueError(f"Unsupported image type: {type(img)}")
+            data_uris.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                }
+            )
+
+        payload = {
+            "model": kwargs.get("model_name", kwargs.get("model", "")),
+            "input": data_uris,
+            "encoding_format": "float",
+        }
+
+        response = self.session.post(
+            f"{self.endpoint_url}/v1/embeddings",
+            json=payload,
+            timeout=1800,
+        )
+        response.raise_for_status()
+        result = response.json()
+
+        # vLLM token_embed returns data[i].embedding as a list of per-token
+        # vectors. Stack each example's tokens into a single ndarray; the
+        # caller batches across examples.
+        per_image = []
+        for item in result.get("data", []):
+            tokens = item.get("embedding", [])
+            per_image.append(np.array(tokens))
+        embeddings = (
+            per_image[0] if len(per_image) == 1 else np.array(per_image, dtype=object)
+        )
+
+        return {
+            "embeddings": embeddings,
+            "processing_time": result.get("processing_time", 0.0),
+            "model": result.get("model"),
+            "usage": result.get("usage", {}),
+        }
+
+    @retry_with_backoff(
+        config=RetryConfig(
+            max_attempts=3,
+            initial_delay=0.5,
             exceptions=(
                 requests.RequestException,
                 ConnectionError,
@@ -274,10 +359,19 @@ class RemoteInferenceClient:
 
 class RemoteColPaliLoader(ModelLoader):
     """
-    Remote ColPali model loader using inference endpoints.
+    Remote ColPali multi-vector loader.
 
-    Instead of loading the model locally, this loader sends requests
-    to a remote inference service (e.g., Infinity).
+    Talks to a vLLM ``ColPaliForRetrieval`` instance serving
+    ``vidore/colpali-v1.3-hf`` (or any colpali-engine HF variant vLLM
+    accepts) over the OpenAI-compatible /v1/embeddings endpoint with the
+    ``token_embed`` pooling task. Returns per-token embeddings (shape
+    ``[num_patches, 128]`` for colpali-v1.3-hf).
+
+    The legacy ``deploy/colpali`` FastAPI sidecar is replaced by this
+    path. ``RemoteInferenceClient.process_images_vllm`` constructs the
+    OpenAI-compat payload; the older ``process_images`` method kept on
+    the client is for any deployment still pointed at the legacy
+    sidecar but is no longer the default.
     """
 
     def __init__(
@@ -296,6 +390,9 @@ class RemoteColPaliLoader(ModelLoader):
             raise ValueError("remote_inference_url required for remote model loader")
 
         self.client = RemoteInferenceClient(self.remote_url, self.api_key, self.logger)
+        # Bind the OpenAI-compat path so callers that only see the
+        # client surface (model, processor) hit the vLLM contract.
+        self.client.process_images = self.client.process_images_vllm  # type: ignore[method-assign]
 
     def load_model(self) -> Tuple[Any, Any]:
         """
@@ -303,7 +400,10 @@ class RemoteColPaliLoader(ModelLoader):
 
         The client handles both preprocessing (processor) and inference (model).
         """
-        self.logger.info(f"Initialized remote ColPali inference at {self.remote_url}")
+        self.logger.info(
+            f"Initialized vLLM ColPali inference at {self.remote_url} "
+            f"(model={self.model_name})"
+        )
         return self.client, self.client
 
 
@@ -434,6 +534,71 @@ class RemoteColBERTLoader(ModelLoader):
                 return all_embeddings
 
         wrapper = ColBERTRemoteWrapper(
+            self.remote_url, self.api_key, self.model_name, self.logger
+        )
+        return wrapper, None
+
+
+class RemoteWhisperLoader(ModelLoader):
+    """Remote Whisper ASR loader against a vLLM /v1/audio/transcriptions
+    endpoint. Replaces the legacy ``deploy/whisper`` FastAPI sidecar.
+
+    The wrapper exposes ``.transcribe(audio_path, language=...)`` so it
+    drops into AudioTranscriptionStrategy in place of an in-process
+    faster-whisper model.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        config: Dict[str, Any],
+        logger: Optional[logging.Logger] = None,
+    ):
+        super().__init__(model_name, config, logger)
+        self.remote_url = config.get("remote_inference_url")
+        self.api_key = config.get("remote_inference_api_key")
+        if not self.remote_url:
+            raise ValueError("remote_inference_url required for remote Whisper loader")
+
+    def load_model(self) -> Tuple[Any, Any]:
+        """Return a Whisper-compatible wrapper that calls the remote endpoint."""
+        self.logger.info(
+            f"Initialized vLLM ASR inference at {self.remote_url} "
+            f"(model={self.model_name})"
+        )
+
+        class WhisperRemoteWrapper:
+            def __init__(self, endpoint_url, api_key, model_name, logger):
+                self.endpoint_url = endpoint_url.rstrip("/")
+                self.model_name = model_name
+                self.logger = logger
+                self.session = requests.Session()
+                if api_key:
+                    self.session.headers["Authorization"] = f"Bearer {api_key}"
+
+            def transcribe(
+                self, audio_path: str, language: Optional[str] = None, **kwargs
+            ) -> Dict[str, Any]:
+                """Transcribe an audio file via vLLM /v1/audio/transcriptions.
+
+                Mirrors the OpenAI Whisper API contract: multipart upload
+                with ``file``, ``model``, optional ``language``.
+                """
+                with open(audio_path, "rb") as f:
+                    files = {"file": (Path(audio_path).name, f, "audio/wav")}
+                    data: Dict[str, Any] = {"model": self.model_name}
+                    if language and language != "auto":
+                        data["language"] = language
+                    resp = self.session.post(
+                        f"{self.endpoint_url}/v1/audio/transcriptions",
+                        files=files,
+                        data=data,
+                        timeout=600,
+                    )
+                resp.raise_for_status()
+                return resp.json()
+
+        wrapper = WhisperRemoteWrapper(
             self.remote_url, self.api_key, self.model_name, self.logger
         )
         return wrapper, None

@@ -326,6 +326,8 @@ spec:
           - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
           - "--llm-base-url"
           - {{ include "cogniverse.llmEndpoint" . | quote }}
+          - "--llm-model"
+          - {{ .Values.runtime.qualityMonitor.llmModel | quote }}
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
           - "--argo-url"

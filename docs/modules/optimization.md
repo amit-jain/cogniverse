@@ -517,7 +517,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Provide them only if using synthetic data generation
 optimizer = ModalityOptimizer(
     llm_config=LLMEndpointConfig(       # REQUIRED: LLM config for DSPy training
-        model="ollama_chat/qwen3:4b",
+        model="ollama_chat/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -584,7 +584,7 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize coordinator with lazy-loaded optimizers
 coordinator = OptimizerCoordinator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/qwen3:4b",
+        model="ollama_chat/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
     telemetry_provider=telemetry_provider,
@@ -982,7 +982,7 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 async def test_xgboost_meta_model_training():
     """Test XGBoost meta-models for training decisions"""
     optimizer = ModalityOptimizer(
-        llm_config=LLMEndpointConfig(model="ollama_chat/qwen3:4b", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="ollama_chat/google/gemma-4-e4b-it", api_base="http://localhost:11434"),
         telemetry_provider=telemetry_provider,
         tenant_id="test",
     )
@@ -1324,7 +1324,7 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
 {
   "llm_config": {
     "primary": {
-      "model": "ollama_chat/qwen3:4b",
+      "model": "ollama_chat/google/gemma-4-e4b-it",
       "api_base": "http://localhost:11434"
     },
     "teacher": {

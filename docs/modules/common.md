@@ -201,7 +201,7 @@ class SystemConfig:
     application_name: str = "cogniverse"
 
     # LLM configuration
-    llm_model: str = "ollama/gemma3:4b"
+    llm_model: str = "hosted_vllm/google/gemma-4-e4b-it"
     base_url: str = "http://localhost:11434"
     llm_api_key: Optional[str] = None
 
@@ -283,7 +283,7 @@ class RoutingConfigUnified:
 
     # LLM configuration (Slow Path)
     llm_provider: str = "local"
-    llm_routing_model: str = "ollama/gemma3:4b"
+    llm_routing_model: str = "hosted_vllm/google/gemma-4-e4b-it"
     llm_endpoint: str = "http://localhost:11434"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 150

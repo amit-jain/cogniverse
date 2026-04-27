@@ -170,7 +170,7 @@ PORTS = {
     "phoenix": 51006,
     "otel_grpc": 51317,
     "llm": 51434,
-    "whisper": 51998,
+    "vllm_asr": 51998,
 }
 
 

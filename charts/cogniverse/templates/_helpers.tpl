@@ -133,6 +133,24 @@ ollama / vllm; false for engine external).
 {{- end -}}
 
 {{/*
+vLLM student LLM endpoint — runtime hot path (low-latency Gemma 4 E4B).
+Resolves to the in-cluster vllm-llm-student service. Always /v1 suffix
+because litellm hosted_vllm provider expects an OpenAI-compatible base.
+*/}}
+{{- define "cogniverse.llmStudentEndpoint" -}}
+{{- printf "http://%s-vllm-llm-student:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_student.service.port) -}}
+{{- end -}}
+
+{{/*
+vLLM teacher LLM endpoint — DSPy compile-time only (Gemma 4 26B-A4B).
+Resolves to the in-cluster vllm-llm-teacher service. Scale-to-zero by
+default (replicaCount: 0); spun up on-demand by optimization_cli runs.
+*/}}
+{{- define "cogniverse.llmTeacherEndpoint" -}}
+{{- printf "http://%s-vllm-llm-teacher:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_teacher.service.port) -}}
+{{- end -}}
+
+{{/*
 Runtime service URL. All agents share the runtime pod, so the orchestrator
 dispatches to them via path routing on this single URL
 (e.g. http://<runtime>:8000/agents/<name>/process).

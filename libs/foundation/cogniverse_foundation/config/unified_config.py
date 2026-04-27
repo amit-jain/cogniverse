@@ -160,13 +160,13 @@ class SystemConfig:
     application_name: str = "cogniverse"  # Vespa application package name
 
     # LLM configuration
-    # ``llm_model`` is the bare model id (e.g. "gemma3:4b" or
+    # ``llm_model`` is the bare model id (e.g. "google/gemma-4-e4b-it" or
     # "Qwen/Qwen2.5-7B-Instruct"); ``llm_engine`` picks the DSPy/litellm
     # prefix at call time via ``cogniverse_foundation.llm.dspy_format``.
     # Both are populated from chart env (LLM_MODEL / LLM_ENGINE).
-    llm_model: str = "gemma3:4b"
-    llm_engine: str = "ollama"
-    base_url: str = "http://localhost:11434"
+    llm_model: str = "google/gemma-4-e4b-it"
+    llm_engine: str = "vllm"
+    base_url: str = "http://localhost:8101/v1"
     llm_api_key: Optional[str] = None
 
     # Phoenix/Telemetry
@@ -187,13 +187,12 @@ class SystemConfig:
     colpali_inference_url: str = ""
 
     # Map of inference-service logical name -> URL. Keys match the Helm
-    # ``inference.*`` block names (e.g., "colpali_infinity", "colbert_pylate")
-    # plus the modality-adapter sidecars (whisper, llm, messaging) registered
-    # alongside. Profiles pick services via the per-role
-    # ``inference_services`` map (``{"embedding": "...", "transcription":
-    # "..."}``); the runtime resolves each role's URL from this flat map.
-    # Populated from the JSON in the ``INFERENCE_SERVICE_URLS`` env var at
-    # startup.
+    # ``inference.*`` block names (e.g., "vllm_colpali", "colbert_pylate",
+    # "vllm_llm_student", "vllm_asr"). Profiles pick services via the
+    # per-role ``inference_services`` map (``{"embedding": "...",
+    # "transcription": "..."}``); the runtime resolves each role's URL
+    # from this flat map. Populated from the JSON in the
+    # ``INFERENCE_SERVICE_URLS`` env var at startup.
     inference_service_urls: Dict[str, str] = field(default_factory=dict)
 
     # Metadata
@@ -237,9 +236,9 @@ class SystemConfig:
             search_backend=data.get("search_backend", "vespa"),
             backend_url=data.get("backend_url", "http://localhost"),
             backend_port=data.get("backend_port", 8080),
-            llm_model=data.get("llm_model", "gemma3:4b"),
-            llm_engine=data.get("llm_engine", "ollama"),
-            base_url=data.get("base_url", "http://localhost:11434"),
+            llm_model=data.get("llm_model", "google/gemma-4-e4b-it"),
+            llm_engine=data.get("llm_engine", "vllm"),
+            base_url=data.get("base_url", "http://localhost:8101/v1"),
             llm_api_key=data.get("llm_api_key"),
             telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
             telemetry_collector_endpoint=data.get(
@@ -287,7 +286,6 @@ class RoutingConfigUnified:
 
     # LLM configuration (Slow Path)
     llm_provider: str = "local"
-    llm_routing_model: str = "ollama/gemma3:4b"
     llm_endpoint: str = "http://localhost:11434"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 150
@@ -330,7 +328,6 @@ class RoutingConfigUnified:
             "gliner_device": self.gliner_device,
             "gliner_labels": self.gliner_labels,
             "llm_provider": self.llm_provider,
-            "llm_routing_model": self.llm_routing_model,
             "llm_endpoint": self.llm_endpoint,
             "llm_temperature": self.llm_temperature,
             "llm_max_tokens": self.llm_max_tokens,
@@ -373,7 +370,6 @@ class RoutingConfigUnified:
             gliner_device=data.get("gliner_device", "cpu"),
             gliner_labels=data.get("gliner_labels", []),
             llm_provider=data.get("llm_provider", "local"),
-            llm_routing_model=data.get("llm_routing_model", "ollama/gemma3:4b"),
             llm_endpoint=data.get("llm_endpoint", "http://localhost:11434"),
             llm_temperature=data.get("llm_temperature", 0.1),
             llm_max_tokens=data.get("llm_max_tokens", 150),

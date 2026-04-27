@@ -20,25 +20,14 @@ devMode:
 # profile's ``inference_service`` in configs/config.json. Empty pods
 # burn memory the laptop doesn't have. Current references:
 #   - colbert_pylate   (document_text_semantic, lateon_mv, audio_clap_semantic)
-#   - colpali_infinity (video_colpali_smol500_mv_frame, image_colpali_mv,
+#   - vllm_colpali     (video_colpali_smol500_mv_frame, image_colpali_mv,
 #                       video_colqwen_omni_mv_chunk_30s)
 #   - code_colbert_pylate (code_lateon_mv — keep off unless code search is wanted)
-#   - dense_vllm       (currently referenced by NO profile — keep off)
 inference:
-  # ColPali image multi-vector embeddings via the deploy/colpali FastAPI
-  # sidecar (cogniverse/colpali:dev). Required for any ingest / query on
-  # video_colpali_* / image_colpali_* profiles.
-  colpali_infinity:
+  # vLLM-served ColPali — visual multi-vector retrieval. Replaces the
+  # legacy deploy/colpali sidecar.
+  vllm_colpali:
     enabled: true
-    image:
-      tag: "dev"
-      pullPolicy: Never
-    # 6Gi was triggering OOMKills under e2e load (model RSS ~4Gi + activations
-    # for batched keyframes). Bumping to 12Gi removes the OOM budget pressure
-    # without crowding the 49Gi node — runtime keeps 40Gi limit, llm 20Gi.
-    # requests.memory MUST equal limits.memory so the pod gets Guaranteed
-    # QoS — Burstable pods are first-evicted under node pressure and
-    # this sidecar would crash before the runtime does.
     resources:
       limits:
         cpu: "4"

@@ -34,7 +34,7 @@ tenant_id = "acme_corp"
 # 1. Create tenant configuration
 tenant_config = SystemConfig(
     tenant_id=tenant_id,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     base_url="http://localhost:11434",
     backend_url="http://localhost",
     backend_port=8080,
@@ -52,7 +52,7 @@ memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 memory_manager.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -411,7 +411,7 @@ memory_acme = Mem0MemoryManager(tenant_id="acme_corp")
 memory_acme.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -422,7 +422,7 @@ memory_globex = Mem0MemoryManager(tenant_id="globex_inc")
 memory_globex.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="ollama/gemma3:4b",
+    llm_model="hosted_vllm/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -481,13 +481,13 @@ TENANT_TEMPLATES = {
         "telemetry_url": "http://localhost:6006"
     },
     "startup": {
-        "llm_model": "ollama/gemma3:4b",
+        "llm_model": "hosted_vllm/google/gemma-4-e4b-it",
         "backend_url": "http://localhost",
         "backend_port": 8080,
         "telemetry_url": "http://localhost:6006"
     },
     "trial": {
-        "llm_model": "ollama/gemma3:4b",
+        "llm_model": "hosted_vllm/google/gemma-4-e4b-it",
         "backend_url": "http://localhost",
         "backend_port": 8080,
         "telemetry_url": "http://localhost:6006"
@@ -522,7 +522,7 @@ def create_tenant_from_template(
 create_tenant_from_template(
     tenant_id="new_startup",
     template="startup",
-    overrides={"llm_model": "deepseek-r1:7b"}  # Custom override
+    overrides={"llm_model": "google/gemma-4-e4b-it"}  # Custom override
 )
 ```
 

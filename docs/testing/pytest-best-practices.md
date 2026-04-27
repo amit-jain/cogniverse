@@ -229,7 +229,7 @@ Fetching 5 files: 100%
 
 **Solution:** Use smaller models in tests:
 
-- ✅ Use: `vidore/colsmol-500m` (stable, 500M parameters)
+- ✅ Use: `vidore/colpali-v1.3-hf` (stable, 500M parameters)
 
 - ❌ Avoid: `vidore/colpali-v1.2` (1.2B parameters, less stable in tests)
 
@@ -355,7 +355,7 @@ def test_agents_depends_on_foundation_and_core():
     deps = OrchestratorDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
+            model="hosted_vllm/google/gemma-4-e4b-it",
             api_base="http://localhost:11434",
         ),
     )
@@ -509,7 +509,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
     memory_a.initialize(
         backend_host="localhost",
         backend_port=8080,
-        llm_model="ollama/gemma3:4b",
+        llm_model="hosted_vllm/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -520,7 +520,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
     memory_b.initialize(
         backend_host="localhost",
         backend_port=8080,
-        llm_model="ollama/gemma3:4b",
+        llm_model="hosted_vllm/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -588,7 +588,7 @@ def tenant_agent(tenant_a_config):
     deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
+            model="hosted_vllm/google/gemma-4-e4b-it",
             api_base="http://localhost:11434",
         ),
     )

@@ -417,7 +417,7 @@ memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )
@@ -556,7 +556,7 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="ollama/qwen3:4b",
+        model="hosted_vllm/google/gemma-4-e4b-it",
         api_base="http://localhost:11434",
     ),
 )
@@ -881,7 +881,7 @@ flowchart TB
       "video_colpali_smol500_mv_frame": {
         "type": "video",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "vidore/colpali-v1.3-hf",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -1406,7 +1406,7 @@ def test_tenant_isolation():
 deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
+            model="hosted_vllm/google/gemma-4-e4b-it",
             api_base="http://localhost:11434",
         ),
     )
@@ -1576,7 +1576,7 @@ async def search(
 deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="ollama/qwen3:4b",
+            model="hosted_vllm/google/gemma-4-e4b-it",
             api_base="http://localhost:11434",
         ),
     )

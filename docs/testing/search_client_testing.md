@@ -47,7 +47,7 @@ uv run python tests/test_search_client.py
 
 ## Test Process
 
-1. **ColPali Model Loading**: Loads `vidore/colsmol-500m` for embedding generation
+1. **ColPali Model Loading**: Loads `vidore/colpali-v1.3-hf` for embedding generation
 2. **Text-Only Testing**: Tests BM25 strategies with query validation
 3. **Visual Testing**: Tests pure visual strategies with generated embeddings
 4. **Hybrid Testing**: Tests combined text + visual strategies

@@ -675,7 +675,7 @@ python scripts/run_experiments_with_visualization.py \
   --quality-evaluators \
   --llm-evaluators \
   --evaluator visual_judge \
-  --llm-model deepseek-r1:7b
+  --llm-model google/gemma-4-e4b-it
 ```
 
 ---
