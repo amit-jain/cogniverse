@@ -539,6 +539,20 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 **DELETE /admin/profiles/{profile_name}** - Delete profile
 **POST /admin/profiles/{profile_name}/deploy** - Deploy schema for profile
 
+**Tenant lifecycle**
+
+**POST /admin/organizations** - Create organization
+**GET /admin/organizations/{org_id}** - Get organization
+**DELETE /admin/organizations/{org_id}** - Delete organization (and its tenants)
+**POST /admin/tenants** - Create tenant (writes `tenant_metadata`)
+**GET /admin/tenants/{tenant_full_id}** - Get tenant
+**DELETE /admin/tenants/{tenant_full_id}** - Delete tenant — drops registered schemas and Vespa-side orphans matching the tenant suffix; refuses (`BackendDeploymentError`) if a peer tenant has an unreconstructable orphan that would be silently dropped by the redeploy
+**POST /admin/reconcile-orphans?dry_run={true|false}** - List Vespa-only schema orphans (no registry record), or drop every orphan tenant in one atomic redeploy. `dry_run=true` (default) returns the diff for operator review; `dry_run=false` calls `delete_tenant_schemas_bulk` so all orphans are removed in a single Vespa redeploy. See [operations/multi-tenant-ops.md#orphan-reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation) for the operator workflow.
+
+**Endpoint guards**
+
+- `/ingestion/upload`, `/ingestion/start`, and every `/graph/*` endpoint require the `tenant_id` to have a `tenant_metadata` document; missing tenant returns 404 (`Tenant '...' not registered`). Pre-fix the runtime auto-deployed schemas for any unknown tenant id, accumulating schema-only orphans. Create the tenant via `POST /admin/tenants` before sending traffic.
+
 ### Health Endpoints
 
 **GET /health** - Health check

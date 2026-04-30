@@ -142,6 +142,21 @@ The tenant management service (`libs/runtime/cogniverse_runtime/admin/tenant_man
 | GET | `/admin/tenants/{tenant_full_id}` | Get tenant details | None (open) |
 | DELETE | `/admin/tenants/{tenant_full_id}` | Delete tenant and all data | None (open) |
 | DELETE | `/admin/organizations/{org_id}` | Delete organization and all tenants | None (open) |
+| POST | `/admin/reconcile-orphans?dry_run={true\|false}` | List Vespa-only schema orphans, optionally drop them all in one redeploy. See [Orphan reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation). | None (open) |
+
+> `DELETE /admin/tenants/{id}` redeploys the Vespa application package
+> without the tenant's schemas. If a peer tenant has an
+> unreconstructable Vespa-only orphan (schema in Vespa, no registry
+> record), the redeploy refuses with `BackendDeploymentError` rather
+> than silently dropping the peer's data. Recover by running
+> `cogniverse admin reconcile-orphans --confirm` (or
+> `POST /admin/reconcile-orphans?dry_run=false`) to clear all orphans
+> in one atomic redeploy.
+
+> Ingestion and graph endpoints (`/ingestion/upload`,
+> `/ingestion/start`, `/graph/*`) require the tenant to be registered
+> via `POST /admin/tenants` before they accept traffic. Calls with an
+> unregistered `tenant_id` return 404 `Tenant '...' not registered`.
 
 ### Create Organization
 

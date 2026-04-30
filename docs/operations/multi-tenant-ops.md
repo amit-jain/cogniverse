@@ -214,6 +214,88 @@ else:
 # Tenant-specific schemas follow pattern: {base_schema}_{tenant_id}
 ```
 
+### Bulk delete tenant schemas
+
+`VespaSchemaManager.delete_tenant_schemas` refuses when an
+unreconstructable peer-tenant orphan exists (an unsafe redeploy would
+silently drop the peer's schema). The bulk variant accepts every
+target tenant in one call so all orphans land in the deletion set
+together and one redeploy clears them.
+
+```python
+# Single-tenant delete (fails if a peer orphan is present)
+schema_manager.delete_tenant_schemas("acme:prod")
+
+# Multi-tenant atomic delete (operator recovery path)
+schema_manager.delete_tenant_schemas_bulk(["acme:prod", "globex:dev"])
+```
+
+---
+
+## Orphan reconciliation
+
+A schema is an **orphan** when it exists in Vespa's deployed application
+package but has no active record in the SchemaRegistry. Orphans
+accumulate from interrupted deploy paths — a SIGKILL between
+`backend.deploy_schemas` and `register_schema`, a power loss
+mid-cleanup, or pre-`assert_tenant_exists` code paths that bypassed
+`POST /admin/tenants`.
+
+Production runtimes do not auto-drop orphans (they may represent
+half-completed deploys of real customer data). Recovery is operator-
+triggered.
+
+### `cogniverse admin reconcile-orphans`
+
+```bash
+# Dry-run (default): list every orphan schema and the implied tenant
+cogniverse admin reconcile-orphans
+
+# Confirm: drop every orphan tenant in a single atomic redeploy
+cogniverse admin reconcile-orphans --confirm
+
+# Point at a non-default runtime
+cogniverse admin reconcile-orphans --runtime-url http://runtime.cogniverse.svc:28000
+```
+
+The CLI calls `POST /admin/reconcile-orphans` on the runtime. Output
+includes:
+
+- `orphan_schemas` — full schema names found in Vespa but not in the registry
+- `orphan_tenants` — tenant ids recovered by stripping known base prefixes
+- `unrecovered_schemas` — orphan names whose base prefix isn't in the
+  built-in `KNOWN_BASES` list (operator review required before forcing
+  removal)
+
+### `POST /admin/reconcile-orphans?dry_run={true|false}`
+
+```bash
+# Dry-run
+curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=true" | jq .
+
+# Confirm — drops every orphan tenant in one Vespa redeploy
+curl -sfX POST "$RUNTIME_URL/admin/reconcile-orphans?dry_run=false" | jq .
+```
+
+Response body:
+
+```json
+{
+  "dry_run": false,
+  "deleted": ["knowledge_graph_acme_dev", "video_colpali_smol500_mv_frame_globex_test"],
+  "orphan_schemas": ["knowledge_graph_acme_dev", "video_colpali_smol500_mv_frame_globex_test"],
+  "orphan_tenants": ["acme:dev", "globex:test"],
+  "unrecovered_schemas": []
+}
+```
+
+Why one endpoint instead of iterating per-tenant DELETEs: the single-
+tenant delete path refuses when peer orphans are present, so an
+operator with N orphan tenants would see N − 1 refusals and have to
+chain them in the right order. The reconcile endpoint computes the
+deletion set across every orphan tenant, then runs one `_redeploy_dropping`
+call so the peer-orphan safeguard is satisfied for the whole batch.
+
 ---
 
 ## Data Ingestion

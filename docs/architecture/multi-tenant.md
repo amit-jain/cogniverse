@@ -225,8 +225,11 @@ Tested by `TestSchemaRegistryDeletion::test_delete_tenant_does_not_drop_peer_ten
 - After `deploy_schema` returns, the schema is in Vespa and the registry has the entry.
 - After `delete_tenant_schemas` returns, the schemas are gone from Vespa; registry entries are tombstoned (best-effort).
 - After a crash mid-deploy, Vespa is the truth; on next startup the e2e
-  fixture's `_reconcile_vespa_orphans` (test only) or operator action
-  (production) reconciles the registry to match.
+  fixture's `_reconcile_vespa_orphans` (test only) or
+  `cogniverse admin reconcile-orphans` / `POST /admin/reconcile-orphans`
+  (production) reconciles the registry to match. See
+  [`operations/multi-tenant-ops.md`](../operations/multi-tenant-ops.md#orphan-reconciliation)
+  for the operator workflow.
 - A peer process's `register_schema` becomes visible to your next
   `_get_all_schemas` call without a sleep.
 
@@ -441,14 +444,23 @@ if schema_manager.tenant_schema_exists("acme", "video_frames"):
 #### Schema Deletion
 
 ```python
-# Delete all schemas for a tenant and redeploy to Vespa
-# IMPORTANT: Requires schema_registry to be configured during VespaSchemaManager initialization
-# Example: schema_manager = VespaSchemaManager(..., schema_registry=schema_registry)
-# Without schema_registry, this method will raise ValueError
+# Delete all schemas for one tenant and redeploy.
+# IMPORTANT: Requires schema_registry to be configured during VespaSchemaManager initialization.
+# Raises BackendDeploymentError if a peer-tenant unreconstructable orphan
+# is present (the redeploy would silently drop the peer's schema).
 deleted = schema_manager.delete_tenant_schemas("acme")
 # Returns: ['video_frames_acme', 'agent_memories_acme']
-# Schemas are immediately removed from Vespa via redeployment (no restart needed)
-# Raises ValueError: "schema_registry required for tenant schema operations" if not configured
+
+# Atomic multi-tenant delete (operator recovery path).
+# Single-tenant delete refuses when peer orphans exist; this variant
+# accepts every target tenant in one call so all orphans land in the
+# deletion set and one Vespa redeploy clears them.
+deleted = schema_manager.delete_tenant_schemas_bulk(
+    ["acme:dev", "globex:test"]
+)
+# Returns the union of all dropped full-schema names.
+# This is the path the runtime's POST /admin/reconcile-orphans endpoint
+# uses internally — see operations/multi-tenant-ops.md#orphan-reconciliation.
 ```
 
 #### Schema Validation

@@ -446,6 +446,39 @@ For a single-schema JSON deploy from the filesystem (dev workflow),
 
 ---
 
+### 3a. cogniverse admin reconcile-orphans
+
+`DELETE /admin/tenants/{id}` refuses if a peer tenant has an
+unreconstructable Vespa-only orphan (the redeploy would silently drop
+the peer's schema). After power loss, SIGKILL between Vespa deploy and
+registry write, or any other interrupted-deploy path, an operator
+needs an out-of-band recovery tool — that's
+`cogniverse admin reconcile-orphans`.
+
+```bash
+# Dry-run (default): list orphan schemas + implied tenants, no changes
+cogniverse admin reconcile-orphans
+
+# Confirm: drop every orphan tenant in ONE atomic Vespa redeploy
+cogniverse admin reconcile-orphans --confirm
+
+# Point at a non-default runtime
+cogniverse admin reconcile-orphans --runtime-url http://runtime.cogniverse.svc:28000
+```
+
+The CLI is a thin client over `POST /admin/reconcile-orphans?dry_run=…`,
+which internally calls `VespaSchemaManager.delete_tenant_schemas_bulk`.
+The endpoint reports:
+
+- `orphan_schemas` — Vespa-deployed names with no registry record
+- `orphan_tenants` — implied tenant ids (recovered by stripping known base prefixes)
+- `unrecovered_schemas` — orphans whose base prefix isn't in `KNOWN_BASES`; need operator review
+
+See [`operations/multi-tenant-ops.md#orphan-reconciliation`](../operations/multi-tenant-ops.md#orphan-reconciliation)
+for the full operator workflow and JSON shapes.
+
+---
+
 ### 4. setup_system.py
 
 **Purpose:** Initialize the system environment, create directories, and setup initial content
