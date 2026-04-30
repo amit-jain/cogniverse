@@ -825,28 +825,21 @@ class VespaBackend(Backend):
                         f"Could not fetch existing schemas from registry: {registry_exc}"
                     )
 
-            # Second source: ask Vespa what it currently has deployed. Any
-            # schema name here that the registry didn't cover must be
-            # reconstructed or the deploy fails — silently dropping a
-            # peer-tenant schema is never acceptable. Discovery uses the
-            # HTTP query port (self._port), not the config port the
-            # schema_manager was initialised with.
-            #
-            # Retry briefly: a peer schema deployed seconds earlier may not
-            # be visible in /search/ source-refs immediately if the content
-            # distributors haven't republished the routing tables. Without
-            # this retry, the docs-then-graph flow races (document_text
-            # deployed by ingestion → graph deploy probes too quickly →
-            # probe returns empty → graph package excludes document_text →
-            # Vespa rejects deploy as "schema removal").
+            # Second source: ask the config server what is currently
+            # deployed. Any schema here that the registry didn't cover
+            # must be reconstructed or the deploy fails — silently
+            # dropping a peer-tenant schema is never acceptable. The
+            # config-server listing is read-after-write consistent with
+            # prepareandactivate so a single call is enough; the retry
+            # exists only to ride out config-server bootstrap latency
+            # on a freshly-started cluster (empty result on the first
+            # call before the metadata schemas have been activated).
             import time as _time
 
             vespa_deployed: List[str] = []
             for probe_attempt in range(5):
                 try:
-                    vespa_deployed = self.schema_manager.list_deployed_document_types(
-                        query_port=self._port
-                    )
+                    vespa_deployed = self.schema_manager.list_deployed_document_types()
                 except Exception as probe_exc:
                     logger.warning(
                         f"Vespa schema discovery failed (attempt "

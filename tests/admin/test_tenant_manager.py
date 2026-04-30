@@ -404,7 +404,7 @@ class TestTenantManagerAPI:
         tid = "schemaonly:test"
         backend.schema_registry.deploy_schema(tid, "video_colpali_smol500_mv_frame")
         full_name = "video_colpali_smol500_mv_frame_" + tid.replace(":", "_")
-        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed, "setup failure — schema not deployed"
 
         get_resp = test_client.get(f"/admin/tenants/{tid}")
@@ -424,9 +424,7 @@ class TestTenantManagerAPI:
             name.endswith(tid.replace(":", "_")) for name in body["deleted_schemas"]
         )
 
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after, (
             "schema still in Vespa after schema-only-tenant DELETE"
         )

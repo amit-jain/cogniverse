@@ -714,7 +714,7 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
 
     tenant_suffix = "_" + tenant_full_id.replace(":", "_")
     try:
-        deployed_full_names = schema_manager.list_deployed_document_types(query_port=0)
+        deployed_full_names = schema_manager.list_deployed_document_types()
     except Exception as e:
         deployed_full_names = []
         logger.warning(

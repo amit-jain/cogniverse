@@ -1555,7 +1555,7 @@ class VespaSchemaManager:
 
         tenant_suffix = "_" + tenant_id.replace(":", "_")
         try:
-            deployed = self.list_deployed_document_types(query_port=0)
+            deployed = self.list_deployed_document_types()
         except Exception as e:
             raise RuntimeError(
                 f"Cannot enumerate Vespa-deployed schemas before deleting "
@@ -1683,16 +1683,15 @@ class VespaSchemaManager:
 
         return self._schema_registry.schema_exists(tenant_id, base_schema_name)
 
-    def list_deployed_document_types(self, query_port: int) -> List[str]:
+    def list_deployed_document_types(self) -> List[str]:
         """Return the document-type names currently deployed in Vespa.
 
         Reads the config server's application listing — read-after-write
-        consistent with prepareandactivate. ``query_port`` is unused and
-        kept for back-compat. Returns an empty list on failure.
+        consistent with prepareandactivate. Returns an empty list on
+        failure so callers can treat it as "don't know, fall back to
+        registry".
         """
         import requests
-
-        del query_port
 
         base_url = re.sub(r":\d+$", "", self.backend_endpoint)
         list_url = (

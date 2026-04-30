@@ -224,9 +224,7 @@ class TestSchemaRegistryDeletion:
         full_name = "video_colpali_smol500_mv_frame_del_round_trip"
 
         # Sanity: schema is deployed in Vespa.
-        deployed_before = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_before = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed_before, (
             f"setup failure — schema {full_name!r} not in Vespa after deploy"
         )
@@ -236,9 +234,7 @@ class TestSchemaRegistryDeletion:
         assert full_name in deleted
 
         # Vespa-side: schema removed from running application.
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after, (
             f"orphan: {full_name!r} still in Vespa after delete_tenant_schemas"
         )
@@ -267,9 +263,7 @@ class TestSchemaRegistryDeletion:
         backend.schema_registry.deploy_schema(
             tenant_id, "video_colpali_smol500_mv_frame"
         )
-        deployed_before = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_before = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed_before, "setup failure — schema not deployed"
 
         # Force registry-only tombstone (no redeploy) → orphan in Vespa.
@@ -280,7 +274,7 @@ class TestSchemaRegistryDeletion:
         assert backend.schema_registry.get_tenant_schemas(tenant_id) == [], (
             "setup failure — registry still has the entry"
         )
-        deployed_mid = backend.schema_manager.list_deployed_document_types(query_port=0)
+        deployed_mid = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed_mid, (
             "setup failure — Vespa already dropped the schema; cannot test "
             "orphan recovery"
@@ -295,9 +289,7 @@ class TestSchemaRegistryDeletion:
             f"discovery is broken — this is the regression the plan fixed."
         )
 
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after, (
             f"orphan {full_name!r} still in Vespa after kill-recovery cleanup"
         )
@@ -319,7 +311,7 @@ class TestSchemaRegistryDeletion:
             tenant_id, "video_colpali_smol500_mv_frame"
         )
         full_name = "video_colpali_smol500_mv_frame_schema_only_tenant"
-        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed, "setup failure — schema not deployed"
 
         # No tenant_metadata exists for this tenant — delete must still
@@ -331,9 +323,7 @@ class TestSchemaRegistryDeletion:
             f"delete_tenant_schemas missed {full_name!r}; returned {deleted!r}"
         )
 
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after, (
             f"schema {full_name!r} still in Vespa after schema-only tenant delete"
         )
@@ -375,26 +365,20 @@ class TestSchemaRegistryDeletion:
         )
 
         try:
-            deployed_before = backend.schema_manager.list_deployed_document_types(
-                query_port=0
-            )
+            deployed_before = backend.schema_manager.list_deployed_document_types()
             assert a_full in deployed_before, "setup failure — tenant A schema missing"
             assert b_full in deployed_before, "setup failure — peer orphan missing"
 
             try:
                 backend.schema_manager.delete_tenant_schemas("victim_a")
             except BackendDeploymentError:
-                deployed_after = backend.schema_manager.list_deployed_document_types(
-                    query_port=0
-                )
+                deployed_after = backend.schema_manager.list_deployed_document_types()
                 assert b_full in deployed_after, (
                     f"peer orphan {b_full!r} dropped despite refused delete"
                 )
                 return
 
-            deployed_after = backend.schema_manager.list_deployed_document_types(
-                query_port=0
-            )
+            deployed_after = backend.schema_manager.list_deployed_document_types()
             assert a_full not in deployed_after, (
                 f"tenant A schema {a_full!r} still in Vespa"
             )
@@ -516,7 +500,7 @@ class TestDeleteSchemaDirect:
         )
         full_name = "video_colpali_smol500_mv_frame_single_delete"
 
-        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed
 
         removed = backend.schema_manager.delete_schema(
@@ -524,9 +508,7 @@ class TestDeleteSchemaDirect:
         )
         assert removed == full_name
 
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after
         assert backend.schema_registry.get_tenant_schemas("single_delete") == []
 
@@ -597,9 +579,7 @@ class TestDeleteFailureSemantics:
             "tombstone_fail", "video_colpali_smol500_mv_frame"
         )
         full_name = "video_colpali_smol500_mv_frame_tombstone_fail"
-        assert full_name in backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        assert full_name in backend.schema_manager.list_deployed_document_types()
 
         original_unregister = backend.schema_registry.unregister_schema
 
@@ -616,9 +596,7 @@ class TestDeleteFailureSemantics:
             backend.schema_registry, "unregister_schema", original_unregister
         )
 
-        deployed_after = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
+        deployed_after = backend.schema_manager.list_deployed_document_types()
         assert full_name not in deployed_after, (
             "Vespa redeploy must have removed the schema even though the "
             "registry tombstone failed; Vespa is authoritative."
