@@ -8,9 +8,18 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 
 - **Helm Chart**: `charts/cogniverse/`
 
-- **StatefulSets**: Vespa, Phoenix, Ollama (with persistent storage)
+- **StatefulSets**: Vespa, Phoenix (with persistent storage)
 
-- **Deployments**: Runtime, Dashboard
+- **Deployments**: Runtime, Dashboard, vLLM inference sidecars
+  (`vllm_llm_student`, `vllm_llm_teacher`, `vllm_colpali`,
+  `vllm_asr`, `vllm_colqwen`), `colbert_pylate`,
+  `denseon`, `videoprism` (remote sidecar)
+
+- **LLM serving**: vLLM is the chart default (`llm.engine: vllm`).
+  Ollama remains as an opt-in alternative for local development —
+  set `llm.engine: ollama` and the chart deploys `Ollama` as a
+  StatefulSet. Configure once via `llm.builtin.enabled` and
+  `llm.engine` in your values file.
 
 - **Auto-scaling**: HPA for Runtime
 
@@ -42,7 +51,7 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 
 - 64GB RAM per node
 
-- GPU nodes for Ollama
+- GPU nodes for vLLM inference sidecars (or for Ollama if used)
 
 - NVMe/SSD storage
 
@@ -415,16 +424,71 @@ initJobs:
 # Create namespace
 kubectl create namespace cogniverse
 
-# Deploy with K3s values
+# Deploy with K3s values (CPU host)
 helm install cogniverse ./charts/cogniverse \
   --namespace cogniverse \
   --values values.k3s.yaml \
   --wait \
   --timeout 10m
 
+# Deploy with K3s + ROCm overlay (AMD GPU host)
+helm install cogniverse ./charts/cogniverse \
+  --namespace cogniverse \
+  --values values.k3s.yaml \
+  --values values.rocm.yaml \
+  --wait \
+  --timeout 10m
+
 # Check status
 kubectl get pods -n cogniverse -w
 ```
+
+`cogniverse up` (the dev CLI) composes these layers automatically when
+it detects a GPU host: see
+[`development/scripts-operations.md`](../development/scripts-operations.md)
+for the auto-detection path.
+
+### GPU passthrough (ROCm + CUDA)
+
+**ROCm (AMD)**: GPU access is via `hostPath` volume mounts of
+`/dev/kfd` and `/dev/dri` into the pods, not the legacy k8s device
+plugin. This means:
+
+- The k3d cluster must be created with the host devices bind-mounted.
+  `cogniverse up` does this automatically when `/dev/kfd` is detected
+  on the host:
+
+  ```
+  k3d cluster create cogniverse \
+    --volume /dev/kfd:/dev/kfd@server:0 \
+    --volume /dev/dri:/dev/dri@server:0 \
+    ...
+  ```
+
+- The k3d node must carry the label `amd.com/gpu.present=true` so
+  the chart's `nodeSelector` schedules vLLM pods. `cogniverse up`
+  applies this via `kubectl label`. For manual `helm install`,
+  apply it once: `kubectl label node --all amd.com/gpu.present=true --overwrite`.
+
+- Pods need `supplementalGroups` for the host's `render` and `video`
+  group ids (default 992 and 44 on Debian/Ubuntu). Override per
+  service for distros with different ids:
+
+  ```yaml
+  inference:
+    vllm_colpali:
+      rocm:
+        supplementalGroups: [109, 18]   # Fedora render=109, video=18
+  ```
+
+  The chart resolves `supplementalGroups` via `dig()` so an absent
+  `inference.<svc>.rocm` block falls through to the default `[992, 44]`
+  rather than nil-derefing.
+
+**CUDA (NVIDIA)**: still uses `nvidia.com/gpu` resource requests via
+the NVIDIA device plugin. Apply the `nvidia.com/gpu.present=true`
+label on the node and set GPU resource requests on the relevant pods
+in `values.cuda.yaml`.
 
 ### Local Access Setup
 

@@ -59,7 +59,7 @@ If you still see segfaults:
 
 - Don't override threading environment variables
 
-- Use smaller models in tests (colsmol-500m vs colpali-v1.2)
+- Use smaller models in tests (e.g. ColPali `vidore/colpali-v1.3-hf` rather than larger ColQwen variants)
 
 ---
 
@@ -126,11 +126,11 @@ Large models (1B+ parameters) can cause threading issues or memory exhaustion in
 Use smaller, stable models for testing:
 
 ```python
-# ❌ Bad: Large model
-model_name = "vidore/colpali-v1.2"  # 1.2B params, unstable in tests
+# ❌ Bad: heavy ColQwen model in unit tests
+model_name = "vidore/colqwen2-v1.0"  # multi-GB, slow on CPU
 
-# ✅ Good: Smaller model
-model_name = "vidore/colpali-v1.3-hf"  # 500M params, stable
+# ✅ Good: smaller ColPali model for fast feedback
+model_name = "vidore/colpali-v1.3-hf"  # ~2GB, stable on CPU
 ```
 
 **Default Models:**
@@ -249,13 +249,13 @@ First-time model downloads from HuggingFace can be large (several GB).
 
 2. **Check disk space**: Models cache in `~/.cache/huggingface/`
 
-3. **Use smaller models**: colsmol-500m vs colpali-v1.2
+3. **Use smaller models**: prefer `vidore/colpali-v1.3-hf` over the heavier ColQwen variants when iterating
 
 **Model Sizes:**
 
 - `vidore/colpali-v1.3-hf`: ~2GB
 
-- `vidore/colpali-v1.2`: ~5GB
+- `vidore/colqwen2-v1.0`: ~6GB
 
 - `google/videoprism-base`: ~3GB
 
@@ -281,8 +281,8 @@ OSError: Unable to load weights
 Clear the HuggingFace cache:
 
 ```bash
-# Remove corrupted cache
-rm -rf ~/.cache/huggingface/hub/models--vidore--colsmol-500m
+# Remove corrupted cache for the affected model
+rm -rf ~/.cache/huggingface/hub/models--vidore--colpali-v1.3-hf
 
 # Re-run ingestion or tests to re-download
 JAX_PLATFORM_NAME=cpu uv run pytest

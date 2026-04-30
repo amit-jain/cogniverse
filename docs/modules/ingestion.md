@@ -834,6 +834,50 @@ strategy_set = StrategyFactory.create_from_profile_config(profile_config)
 - No hardcoded if/elif logic - fully config-driven
 - All strategy classes must be in `cogniverse_runtime.ingestion.strategies`
 
+#### Profile-level `inference_services` injection (opt-in)
+
+A profile can declare which inference service backs each
+strategy_type at the profile level:
+
+```yaml
+inference_services:
+  embedding: vllm_colpali
+  transcription: vllm_asr
+strategies:
+  transcription:
+    class: AudioTranscriptionStrategy
+    params: { model: "openai/whisper-large-v3-turbo" }
+  embedding:
+    class: MultiVectorEmbeddingStrategy
+    params: {}
+```
+
+The factory looks up `inference_services[<strategy_type>]` and, if the
+strategy's `__init__` declares an `inference_service` parameter (or
+accepts `**kwargs`), passes it as `inference_service=<name>`.
+Strategies whose constructor does NOT declare the parameter are
+**not** injected — this is an opt-in contract, the factory never
+broadcasts the kwarg blindly.
+
+```python
+# Strategy opts in by declaring the parameter:
+class AudioTranscriptionStrategy(BaseStrategy):
+    def __init__(
+        self,
+        model: str = "base",
+        language: str = "auto",
+        inference_service: str | None = None,
+    ):
+        ...
+```
+
+**Strict params**: any other key in `params` that isn't a constructor
+parameter (and the constructor doesn't have `**kwargs`) raises
+`TypeError` at construction. Pre-fix the factory silently dropped
+unknown kwargs via a whole-signature filter, masking typos in profile
+JSON. Now misspelled params fail loudly so misconfiguration is
+observable.
+
 ### 3. ProcessingStrategySet
 
 **Purpose**: Container for processing strategies with execution orchestration
@@ -1614,7 +1658,7 @@ video_colqwen_omni_mv_chunk_30s:
     embedding:
       class: "MultiVectorEmbeddingStrategy"
       params:
-        model_name: "bytelatent/colqwen2-v1.0-medium"
+        model_name: "vidore/colqwen2-v1.0"
 ```
 
 ### Example 5: Custom Strategy Configuration

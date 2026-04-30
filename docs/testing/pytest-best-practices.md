@@ -648,6 +648,54 @@ def cleanup_dspy_state():
 3. **Don't rely on test execution order** - tests should be independent
 4. **Use unique IDs** for multi-tenant tests (tenant_id, user_id)
 
+### Test Config Isolation (`cogniverse_test_config`)
+
+`tests/conftest.py` ships a session-scoped `autouse=True` fixture
+named `cogniverse_test_config`. Its job is to keep integration tests
+off the production `configs/config.json` LLM endpoints — production
+points at vLLM-served `hosted_vllm/google/gemma-4-e4b-it` on
+`http://...:8101/v1`, which doesn't exist on local dev or CI machines.
+
+What it does:
+
+1. Clones `configs/config.json` into a tmpdir.
+2. Rewrites `llm_config.primary` and `llm_config.teacher` to whatever
+   the test machine actually serves (defaults to local Ollama
+   `qwen3:4b` on `http://localhost:11434`).
+3. Sets `COGNIVERSE_CONFIG=<tmpdir>/config.json` for the session.
+
+Override via env vars **before pytest starts**:
+
+```bash
+TEST_LLM_ENGINE=vllm \
+TEST_LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+TEST_LLM_API_BASE=http://my-vllm:8000/v1 \
+uv run pytest
+```
+
+Skip it by setting `COGNIVERSE_CONFIG` yourself (e.g. CI matrix):
+
+```bash
+COGNIVERSE_CONFIG=/path/to/ci-config.json uv run pytest
+```
+
+> **If your unit test exercises ConfigUtils' cwd-based auto-discovery**
+> (chdir to a tmp dir that has its own `configs/config.json`), clear
+> `COGNIVERSE_CONFIG` first — otherwise `ConfigUtils` honours the env
+> var and bypasses the chdir:
+>
+> ```python
+> def test_something(self, monkeypatch):
+>     monkeypatch.delenv("COGNIVERSE_CONFIG", raising=False)
+>     monkeypatch.chdir(tmp_path)
+>     # ...
+> ```
+
+`tests/utils/llm_config.py` honours the same `COGNIVERSE_CONFIG`
+priority: env var first, then `configs/config.json`. Use
+`get_llm_model()` / `get_llm_base_url()` from there in test code so
+the autouse fixture's overrides flow through.
+
 ---
 
 ## Performance
