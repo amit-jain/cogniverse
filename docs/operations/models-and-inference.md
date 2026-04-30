@@ -1,10 +1,10 @@
 # Models and Inference Deployment
 
-Single canonical reference for **what models the system runs, what
-container image serves each, and how the deployment varies between
-CPU and ROCm**. Keep this in sync with `charts/cogniverse/values.yaml`,
-`charts/cogniverse/values.rocm.yaml`, `charts/cogniverse/values.cuda.yaml`,
-and the `deploy/` sidecars.
+Every served model, the container image that serves it, and how the
+deployment differs between CPU, ROCm, and CUDA. The chart's
+`values.yaml`, `values.rocm.yaml`, `values.cuda.yaml`, and the
+`deploy/` sidecars are the underlying source of truth; this page
+flattens them into one reference.
 
 ---
 
