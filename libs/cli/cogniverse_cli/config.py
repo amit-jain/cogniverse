@@ -106,3 +106,16 @@ def get_values_file(
     if not values_file.is_file():
         raise FileNotFoundError(f"Values file not found: {values_file}")
     return values_file
+
+
+def get_device_values_file(
+    backend: str,
+    project_root: Path | None = None,
+) -> Path | None:
+    """Path to ``values.<backend>.yaml`` (rocm/cuda overlays). Returns
+    None when no device file exists for the backend (e.g. cpu, mps).
+    """
+    chart_dir = get_chart_path(project_root)
+    filename = f"values.{backend}.yaml"
+    candidate = chart_dir / filename
+    return candidate if candidate.is_file() else None

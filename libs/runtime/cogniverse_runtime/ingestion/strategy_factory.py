@@ -89,6 +89,8 @@ class StrategyFactory:
         Returns:
             Strategy instance or None if creation failed
         """
+        import inspect
+
         try:
             # Import the strategies module
             strategies_module = importlib.import_module(
@@ -97,6 +99,30 @@ class StrategyFactory:
 
             # Get the class
             strategy_class = getattr(strategies_module, class_name)
+
+            # Filter to kwargs the ctor declares (unless it has **kwargs);
+            # profile-level injectables like inference_service are passed
+            # to every strategy but only some accept them.
+            try:
+                sig = inspect.signature(strategy_class.__init__)
+                accepts_var_kw = any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD
+                    for p in sig.parameters.values()
+                )
+                if not accepts_var_kw:
+                    accepted = {
+                        name
+                        for name, p in sig.parameters.items()
+                        if p.kind
+                        in (
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                            inspect.Parameter.KEYWORD_ONLY,
+                        )
+                        and name != "self"
+                    }
+                    params = {k: v for k, v in params.items() if k in accepted}
+            except (TypeError, ValueError):
+                pass
 
             # Create instance with parameters
             return strategy_class(**params)

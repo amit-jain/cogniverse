@@ -200,9 +200,11 @@ def _upload_file(
     profile: str,
     tenant_id: str,
 ) -> Optional[Dict]:
+    # Synchronous upload so the schema registration completes before the
+    # caller fires follow-up requests against the same tenant.
     with open(file_path, "rb") as f:
         resp = client.post(
-            "/ingestion/upload",
+            "/ingestion/upload?wait=true&wait_timeout=900",
             files={"file": (str(rel_path), f, "application/octet-stream")},
             data={
                 "profile": profile,

@@ -116,17 +116,39 @@ def refresh_workload_pods_if_devmode(
     for pod in devmode_pods:
         _kc("delete", "pod", pod, "-n", namespace, "--grace-period=5", timeout=30)
 
-    # Wait for runtime to be fully ready. /health/live returns 200 as soon as
-    # uvicorn binds (before routers / agents finish loading), so probe the
-    # richer /health endpoint — it resolves the agent registry, dispatches
-    # a backend ping, and only returns 200 once POST traffic is safe.
+    # kubectl rollout status blocks until readyReplicas == replicas, which
+    # /health probes alone don't guarantee — they can land on a pod from
+    # the old rollout that's about to terminate.
+    for deploy in ("cogniverse-runtime", "cogniverse-dashboard"):
+        rollout = _kc(
+            "rollout",
+            "status",
+            f"deployment/{deploy}",
+            "-n",
+            namespace,
+            f"--timeout={timeout_s}s",
+            timeout=timeout_s + 30,
+        )
+        if rollout.returncode != 0:
+            return False
+
+    # Two consecutive 200s — guards against /health hitting an
+    # about-to-terminate pod just before the LB endpoints flip.
     for _ in range(timeout_s):
         _time.sleep(1)
         try:
             r = httpx.get("http://localhost:28000/health", timeout=10.0)
             if r.status_code == 200:
-                return True
-        except (httpx.ConnectError, httpx.ReadTimeout, OSError):
+                _time.sleep(2)
+                r2 = httpx.get("http://localhost:28000/health", timeout=10.0)
+                if r2.status_code == 200:
+                    return True
+        except (
+            httpx.ConnectError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+            OSError,
+        ):
             pass
     return False
 

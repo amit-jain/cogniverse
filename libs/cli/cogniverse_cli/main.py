@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import click
 import httpx
@@ -29,6 +30,7 @@ from cogniverse_cli.cluster import (
 )
 from cogniverse_cli.config import (
     get_chart_path,
+    get_device_values_file,
     get_values_file,
     get_workflows_path,
     resolve_project_root,
@@ -37,6 +39,7 @@ from cogniverse_cli.deploy import helm_install, helm_uninstall
 from cogniverse_cli.health import check_service_health, wait_for_url
 from cogniverse_cli.images import (
     build_images,
+    detect_torch_backend,
     has_workspace_source,
     import_images,
     pull_and_import_third_party,
@@ -71,18 +74,18 @@ def _resolve_cli_tenant(tenant: str | None) -> str:
 
 SERVICE_HEALTH_URLS: dict[str, str] = {
     "Vespa": "http://localhost:19071/state/v1/health",
-    "Runtime": "http://localhost:8000/health",
-    "Dashboard": "http://localhost:8501/_stcore/health",
-    "Phoenix": "http://localhost:6006/health",
+    "Runtime": "http://localhost:28000/health",
+    "Dashboard": "http://localhost:28501/_stcore/health",
+    "Phoenix": "http://localhost:26006/health",
     "LLM": "http://localhost:11434/api/tags",
     "Argo": "https://localhost:2746/api/v1/info",
 }
 
 SERVICE_ENDPOINTS: dict[str, str] = {
     "Vespa": "http://localhost:8080",
-    "Runtime": "http://localhost:8000",
-    "Dashboard": "http://localhost:8501",
-    "Phoenix": "http://localhost:6006",
+    "Runtime": "http://localhost:28000",
+    "Dashboard": "http://localhost:28501",
+    "Phoenix": "http://localhost:26006",
     "LLM": "http://localhost:11434",
     "Argo": "http://localhost:2746",
 }
@@ -218,6 +221,37 @@ def up(
             )
         else:
             console.print("[cyan]Using existing k3d cluster.[/cyan]")
+        # Label the node with amd.com/gpu.present / nvidia.com/gpu.present
+        # so the chart's nodeSelector schedules GPU pods.
+        host_backend_for_label = detect_torch_backend()
+        if host_backend_for_label == "rocm":
+            subprocess.run(
+                [
+                    "kubectl",
+                    "label",
+                    "node",
+                    "--all",
+                    "amd.com/gpu.present=true",
+                    "--overwrite",
+                ],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        elif host_backend_for_label == "cuda":
+            subprocess.run(
+                [
+                    "kubectl",
+                    "label",
+                    "node",
+                    "--all",
+                    "nvidia.com/gpu.present=true",
+                    "--overwrite",
+                ],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
     if project_root and has_workspace_source(project_root):
         console.print("[cyan]Building container images...[/cyan]")
         tags = build_images(project_root)
@@ -231,10 +265,12 @@ def up(
         if host_llm_detected or _probe_host_llm():
             console.print("[cyan]Using host LLM endpoint (external mode).[/cyan]")
             external_url = (
-                "http://host.docker.internal:11434"
+                "http://host.k3d.internal:11434"
                 if use_k3d
                 else "http://localhost:11434"
             )
+            # Don't override llm.engine — the chart helper constructs the
+            # right litellm prefix (ollama_chat/* vs openai/*) per engine.
             set_values["llm.builtin.enabled"] = "false"
             set_values["llm.external.enabled"] = "true"
             set_values["llm.external.url"] = external_url
@@ -244,13 +280,14 @@ def up(
         if llm_url:
             resolved_url = llm_url
         elif use_k3d:
-            resolved_url = "http://host.docker.internal:11434"
+            resolved_url = "http://host.k3d.internal:11434"
         else:
             console.print(
                 "[red]--llm-url is required when using --llm=external "
                 "with an existing Kubernetes cluster.[/red]"
             )
             sys.exit(1)
+        set_values["llm.engine"] = "external"
         set_values["llm.builtin.enabled"] = "false"
         set_values["llm.external.enabled"] = "true"
         set_values["llm.external.url"] = resolved_url
@@ -265,19 +302,31 @@ def up(
         set_values["messaging.enabled"] = "true"
         console.print("[cyan]Messaging gateway enabled (Telegram).[/cyan]")
 
-    # 5a. Resolve chart and values file
+    # 5a. Compose device-specific overrides (values.rocm.yaml /
+    # values.cuda.yaml) on top of values.k3s.yaml when present.
     llm_is_external = set_values.get("llm.external.enabled") == "true"
     chart_path = get_chart_path()
-    values_file = get_values_file(prod=not use_k3d)
+    base_values_file = get_values_file(prod=not use_k3d)
+    values_files: list[Path] = [base_values_file]
+    if use_k3d:
+        host_backend = detect_torch_backend()
+        device_values = get_device_values_file(host_backend)
+        if device_values is not None:
+            values_files.append(device_values)
+            console.print(
+                f"[cyan]Composing device overrides:[/cyan] {device_values.name}"
+            )
 
-    # 5b. Pre-pull third-party images into k3d (reads image refs from values file)
+    # 5b. Pre-pull third-party images from every values file so GB-scale
+    # GPU images don't blow the helm-install timeout at pod start.
     if use_k3d:
         console.print("[cyan]Pre-pulling third-party images...[/cyan]")
-        pull_and_import_third_party(
-            CLUSTER_NAME,
-            values_file,
-            skip_llm=llm_is_external,
-        )
+        for vf in values_files:
+            pull_and_import_third_party(
+                CLUSTER_NAME,
+                vf,
+                skip_llm=llm_is_external,
+            )
     # 5c. Bootstrap secrets the chart references by name. Must happen
     # BEFORE helm install so gated-model pods (e.g. inference.dense_vllm with
     # google/embeddinggemma-300m) find hf-token at startup.
@@ -293,10 +342,39 @@ def up(
     install_argo_controller()
     console.print("[green]Argo Workflows installed[/green]")
 
-    # 7. Deploy the main Helm release with sub-chart CRD install disabled
+    # 7. Bring up the OpenShell sandbox BEFORE helm install — the runtime
+    # pod mounts openshell-mtls / openshell-{metadata,active} as volumes
+    # and won't start until they exist. Missing CLI / failed gateway is
+    # non-fatal: the chart sandbox toggle is flipped off and runtime
+    # comes up without the coding agent.
+    if use_k3d:
+        subprocess.run(
+            ["kubectl", "create", "namespace", NAMESPACE],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+        console.print("[cyan]Setting up coding agent sandbox (pre-helm)...[/cyan]")
+        from cogniverse_cli.sandbox import ensure_sandbox_ready
+
+        if ensure_sandbox_ready():
+            console.print("  [green]Sandbox[/green] ready")
+        else:
+            console.print(
+                "  [yellow]Sandbox[/yellow] unavailable — disabling in chart so "
+                "runtime can start"
+            )
+            set_values["runtime.sandbox.enabled"] = "false"
+
+    # 8. Deploy the main Helm release. Backend mirrors host detection so
+    # the chart picks the matching imagesByBackend entry instead of the
+    # default cpu (which would ErrImageNeverPull on a non-cpu host).
     set_values["argo-workflows.crds.install"] = "false"
+    if use_k3d:
+        set_values["runtime.backend"] = host_backend
+        set_values["dashboard.backend"] = host_backend
     console.print("[cyan]Deploying Helm release...[/cyan]")
-    helm_install(chart_path, values_file, set_values=set_values or None)
+    helm_install(chart_path, values_files, set_values=set_values or None)
     console.print("[green]Helm release deployed[/green]")
 
     # 8. Deploy workflow templates
@@ -351,16 +429,6 @@ def up(
             console.print(f"  [green]{name}[/green] ready")
         else:
             console.print(f"  [yellow]{name}[/yellow] not reachable")
-
-    console.print("[cyan]Setting up coding agent sandbox...[/cyan]")
-    from cogniverse_cli.sandbox import ensure_sandbox_ready
-
-    if ensure_sandbox_ready():
-        console.print("  [green]Sandbox[/green] ready")
-    else:
-        console.print(
-            "  [yellow]Sandbox[/yellow] disabled (coding agent execution unavailable)"
-        )
 
     console.print()
     _print_status_table()

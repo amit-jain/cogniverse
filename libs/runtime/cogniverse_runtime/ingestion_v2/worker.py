@@ -190,12 +190,28 @@ def _summarise(pipeline_result: dict) -> dict:
     }
     results = pipeline_result.get("results", {})
     if isinstance(results, dict):
-        out["chunks"] = sum(
-            len(v.get("chunks", [])) for v in results.values() if isinstance(v, dict)
-        )
-        out["keyframes"] = sum(
-            len(v.get("keyframes", [])) for v in results.values() if isinstance(v, dict)
-        )
+        keyframe_list = results.get("keyframes")
+        if isinstance(keyframe_list, list):
+            out["keyframes"] = len(keyframe_list)
+        elif isinstance(keyframe_list, dict):
+            out["keyframes"] = len(keyframe_list.get("keyframes", []))
+        else:
+            out["keyframes"] = 0
+
+        embeddings = results.get("embeddings")
+        if isinstance(embeddings, dict):
+            out["documents_fed"] = embeddings.get("documents_fed", 0)
+        else:
+            out["documents_fed"] = 0
+
+        chunks = out["documents_fed"] or out["keyframes"]
+        if not chunks:
+            chunks = sum(
+                len(v.get("chunks", []))
+                for v in results.values()
+                if isinstance(v, dict)
+            )
+        out["chunks"] = chunks
     return out
 
 

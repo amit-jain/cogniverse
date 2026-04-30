@@ -89,16 +89,22 @@ Return the proper image name
 {{- end -}}
 
 {{/*
-LLM endpoint URL. Resolves to the right host:port based on llm.engine:
-  - external → llm.external.url (required)
-  - vllm     → in-cluster service on llm.vllm.service.port
-  - ollama   → in-cluster service on llm.ollama.service.port
+LLM endpoint URL. Resolves to the right host:port based on llm.engine
+PLUS the ``llm.external.enabled`` switch (so a host-side Ollama can
+co-exist with engine=ollama — the *protocol* is ollama, the *host*
+is external):
+  - external (engine)       → llm.external.url (required)
+  - external.enabled = true → llm.external.url (overrides in-cluster)
+  - vllm                    → in-cluster service on llm.vllm.service.port
+  - ollama                  → in-cluster service on llm.ollama.service.port
 Single source of truth for every consumer (runtime, agents, init jobs,
 optimization workflows) so the URL never drifts between sites.
 */}}
 {{- define "cogniverse.llmEndpoint" -}}
 {{- $engine := .Values.llm.engine | default "ollama" -}}
-{{- if eq $engine "external" -}}
+{{- if .Values.llm.external.enabled -}}
+{{- required "llm.external.url is required when llm.external.enabled=true" .Values.llm.external.url -}}
+{{- else if eq $engine "external" -}}
 {{- required "llm.external.url is required when llm.engine=external" .Values.llm.external.url -}}
 {{- else if eq $engine "vllm" -}}
 {{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.vllm.service.port) -}}
@@ -148,6 +154,33 @@ default (replicaCount: 0); spun up on-demand by optimization_cli runs.
 */}}
 {{- define "cogniverse.llmTeacherEndpoint" -}}
 {{- printf "http://%s-vllm-llm-teacher:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_teacher.service.port) -}}
+{{- end -}}
+
+{{/*
+Runtime primary LLM model. Resolves to ``runtime.primaryLLM.model``
+when set, otherwise the upstream default ``hosted_vllm/google/gemma-4-e4b-it``.
+The override path is how k3s deploys (which can't run vllm_llm_student
+on CPU within reasonable memory/time) point at Ollama gemma3:4b instead.
+*/}}
+{{- define "cogniverse.primaryLLMModel" -}}
+{{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.model -}}
+{{- .Values.runtime.primaryLLM.model -}}
+{{- else -}}
+hosted_vllm/google/gemma-4-e4b-it
+{{- end -}}
+{{- end -}}
+
+{{/*
+Runtime primary LLM api_base. Resolves to ``runtime.primaryLLM.apiBase``
+when set, otherwise ``cogniverse.llmStudentEndpoint`` (the in-cluster
+vllm_llm_student service).
+*/}}
+{{- define "cogniverse.primaryLLMEndpoint" -}}
+{{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
+{{- .Values.runtime.primaryLLM.apiBase -}}
+{{- else -}}
+{{- include "cogniverse.llmStudentEndpoint" . -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

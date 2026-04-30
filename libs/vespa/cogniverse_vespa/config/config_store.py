@@ -401,49 +401,61 @@ class VespaConfigStore(ConfigStore):
 
         Returns:
             List of latest version ConfigEntry objects from all tenants
+
+        Uses the Document v1 visit API for read-after-write consistency.
+        Vespa's search endpoint is eventually consistent and races
+        cross-process schema_registry writes.
         """
-        # Build YQL query with filters (no tenant_id filter)
-        # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        conditions = []
+        import requests
 
+        url = f"{self.vespa_app.url}/document/v1/"
+        namespace = self.schema_name
+        path = f"{url}{namespace}/{self.schema_name}/docid/"
+        selection_parts = []
         if scope is not None:
-            conditions.append(f'scope contains "{scope.value}"')
-
+            selection_parts.append(f'{self.schema_name}.scope == "{scope.value}"')
         if service is not None:
-            conditions.append(f'service contains "{service}"')
+            selection_parts.append(f'{self.schema_name}.service == "{service}"')
+        params: Dict[str, Any] = {"wantedDocumentCount": 400}
+        if selection_parts:
+            params["selection"] = " and ".join(selection_parts)
 
-        where_clause = " and ".join(conditions) if conditions else "true"
-
-        # Query all matching configs, then filter to latest versions
-        yql = f"select * from {self.schema_name} where {where_clause} limit 400"
+        latest_configs: Dict[str, ConfigEntry] = {}
 
         try:
-            response = self.vespa_app.query(yql=yql)
-
-            # Group by config_id and keep only latest version
-            latest_configs: Dict[str, ConfigEntry] = {}
-
-            for hit in response.hits:
-                fields = hit["fields"]
-                config_id = fields["config_id"]
-
-                entry = ConfigEntry(
-                    tenant_id=fields["tenant_id"],
-                    scope=ConfigScope(fields["scope"]),
-                    service=fields["service"],
-                    config_key=fields["config_key"],
-                    config_value=json.loads(fields["config_value"]),
-                    version=fields["version"],
-                    created_at=datetime.fromisoformat(fields["created_at"]),
-                    updated_at=datetime.fromisoformat(fields["updated_at"]),
-                )
-
-                # Keep only latest version for each config_id
-                if (
-                    config_id not in latest_configs
-                    or entry.version > latest_configs[config_id].version
-                ):
-                    latest_configs[config_id] = entry
+            continuation: Optional[str] = None
+            while True:
+                if continuation:
+                    params["continuation"] = continuation
+                resp = requests.get(path, params=params, timeout=30)
+                resp.raise_for_status()
+                payload = resp.json()
+                for doc in payload.get("documents") or []:
+                    fields = doc.get("fields") or {}
+                    if not fields:
+                        continue
+                    try:
+                        config_id = fields["config_id"]
+                        entry = ConfigEntry(
+                            tenant_id=fields["tenant_id"],
+                            scope=ConfigScope(fields["scope"]),
+                            service=fields["service"],
+                            config_key=fields["config_key"],
+                            config_value=json.loads(fields["config_value"]),
+                            version=fields["version"],
+                            created_at=datetime.fromisoformat(fields["created_at"]),
+                            updated_at=datetime.fromisoformat(fields["updated_at"]),
+                        )
+                    except KeyError:
+                        continue
+                    if (
+                        config_id not in latest_configs
+                        or entry.version > latest_configs[config_id].version
+                    ):
+                        latest_configs[config_id] = entry
+                continuation = payload.get("continuation")
+                if not continuation:
+                    break
 
             return list(latest_configs.values())
 

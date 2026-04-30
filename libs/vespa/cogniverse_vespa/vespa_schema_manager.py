@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -14,6 +15,11 @@ from vespa.package import (
     Schema,
     SecondPhaseRanking,
 )
+
+# Process-wide lock serialising prepare+activate against Vespa's
+# config-server session pipeline. Concurrent deploys that race the
+# activate step return 409 ACTIVATION_CONFLICT.
+_DEPLOY_LOCK = threading.Lock()
 
 
 class VespaSchemaManager:
@@ -1234,22 +1240,45 @@ class VespaSchemaManager:
 
         try:
             app_zip = app_package.to_zip()
-            response = requests.post(
-                deploy_url,
-                headers={"Content-Type": "application/zip"},
-                data=app_zip,
-                verify=False,
-            )
+            import time as _time
 
-            if response.status_code == 200:
+            backoff = 0.5
+            max_attempts = 5
+            response = None
+            for attempt in range(max_attempts):
+                with _DEPLOY_LOCK:
+                    response = requests.post(
+                        deploy_url,
+                        headers={"Content-Type": "application/zip"},
+                        data=app_zip,
+                        verify=False,
+                    )
+                if response.status_code == 200:
+                    break
+                body_text = response.content.decode("utf-8", errors="replace")
+                conflict = (
+                    response.status_code == 409 and "ACTIVATION_CONFLICT" in body_text
+                )
+                if not conflict or attempt == max_attempts - 1:
+                    break
+                self._logger.warning(
+                    f"Vespa ACTIVATION_CONFLICT on attempt {attempt + 1}/"
+                    f"{max_attempts}; retrying after {backoff:.1f}s"
+                )
+                _time.sleep(backoff)
+                backoff = min(backoff * 2, 4.0)
+
+            if response is not None and response.status_code == 200:
                 self._logger.info("Successfully deployed application package")
             else:
-                error_msg = f"Deployment failed with status {response.status_code}"
-                try:
-                    error_detail = json.loads(response.content.decode("utf-8"))
-                    error_msg += f": {error_detail}"
-                except Exception:
-                    error_msg += f": {response.content.decode('utf-8')}"
+                status = response.status_code if response is not None else "no-response"
+                error_msg = f"Deployment failed with status {status}"
+                if response is not None:
+                    try:
+                        error_detail = json.loads(response.content.decode("utf-8"))
+                        error_msg += f": {error_detail}"
+                    except Exception:
+                        error_msg += f": {response.content.decode('utf-8')}"
 
                 raise RuntimeError(error_msg)
 
@@ -1419,73 +1448,166 @@ class VespaSchemaManager:
         tenant_suffix = tenant_id.replace(":", "_")
         return f"{base_schema_name}_{tenant_suffix}"
 
-    def delete_tenant_schemas(self, tenant_id: str) -> list:
+    _PROTECTED_SCHEMAS = frozenset(
+        {
+            "adapter_registry",
+            "config_metadata",
+            "organization_metadata",
+            "tenant_metadata",
+        }
+    )
+
+    def delete_schema(self, tenant_id: str, base_schema_name: str) -> str:
+        """Delete one tenant-namespaced schema from Vespa.
+
+        Redeploys the application package without the target schema, using
+        the contentTypeRemoval validation override, then tombstones the
+        registry entry. Vespa is authoritative; registry write failures
+        are logged but do not roll back the deploy.
+
+        Returns the full tenant-namespaced schema name that was removed.
         """
-        Delete all schemas for a tenant and redeploy to Vespa.
+        if not tenant_id:
+            raise ValueError("tenant_id is required")
+        if not base_schema_name:
+            raise ValueError("base_schema_name is required")
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for schema deletion")
+        if base_schema_name in self._PROTECTED_SCHEMAS:
+            raise ValueError(
+                f"Refusing to delete system schema '{base_schema_name}'. "
+                f"Protected schemas: {sorted(self._PROTECTED_SCHEMAS)}"
+            )
 
-        Unregisters each schema from the registry, then redeploys
-        the application package without the deleted schemas.
+        target = self.get_tenant_schema_name(tenant_id, base_schema_name)
+        tenant_suffix = "_" + tenant_id.replace(":", "_")
+        if not target.endswith(tenant_suffix):
+            raise ValueError(
+                f"Computed target '{target}' does not carry the expected "
+                f"tenant suffix '{tenant_suffix}'. Refusing to delete — this "
+                f"is a defensive check against typo-driven cross-tenant deletes."
+            )
 
-        Args:
-            tenant_id: Tenant identifier
+        survivors = [s for s in self._get_existing_tenant_schemas() if s.name != target]
 
-        Returns:
-            List of deleted schema names
+        from vespa.package import ApplicationPackage
 
-        Raises:
-            ValueError: If schema_registry not configured
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+
+        metadata_schemas = [
+            create_organization_metadata_schema(),
+            create_tenant_metadata_schema(),
+            create_config_metadata_schema(),
+            create_adapter_registry_schema(),
+        ]
+        app_package = ApplicationPackage(
+            name="cogniverse", schema=metadata_schemas + survivors
+        )
+
+        self._logger.info(
+            f"Deploying app package without '{target}' ({len(survivors)} survivors)"
+        )
+        self._deploy_package(app_package, allow_schema_removal=True)
+
+        try:
+            self._schema_registry.unregister_schema(tenant_id, base_schema_name)
+        except Exception as e:
+            self._logger.error(
+                f"Schema '{target}' removed from Vespa but registry tombstone "
+                f"write failed: {e}"
+            )
+
+        return target
+
+    def delete_tenant_schemas(self, tenant_id: str) -> list:
+        """Delete all schemas for a tenant and redeploy.
+
+        Unions registry-known names with Vespa-side orphans (filtered by
+        tenant suffix) so an interrupted prior cleanup can't leave a
+        schema live in Vespa with no registry record. Vespa redeploy
+        runs first; the registry is tombstoned only after Vespa
+        confirms removal so a failed redeploy leaves both sides
+        consistent.
         """
         if not self._schema_registry:
             raise ValueError("schema_registry required for tenant schema operations")
 
-        deleted_schemas = []
+        registry_full_names: list[str] = []
+        registry_base_names: list[str] = []
         tenant_schema_infos = self._schema_registry.get_tenant_schemas(tenant_id)
-
         for schema_info in tenant_schema_infos:
-            base_schema_name = schema_info.base_schema_name
-            tenant_schema_name = self.get_tenant_schema_name(
-                tenant_id, base_schema_name
+            base = schema_info.base_schema_name
+            full = self.get_tenant_schema_name(tenant_id, base)
+            registry_full_names.append(full)
+            registry_base_names.append(base)
+
+        tenant_suffix = "_" + tenant_id.replace(":", "_")
+        try:
+            deployed = self.list_deployed_document_types(query_port=0)
+        except Exception as e:
+            deployed = []
+            self._logger.warning(
+                f"Vespa-side schema discovery failed for tenant "
+                f"'{tenant_id}' (continuing with registry-only set): {e}"
             )
+        vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
+
+        deleted_schemas = sorted(set(registry_full_names) | set(vespa_orphan_names))
+        if not deleted_schemas:
+            return deleted_schemas
+
+        from vespa.package import ApplicationPackage
+
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+
+        metadata_schemas = [
+            create_organization_metadata_schema(),
+            create_tenant_metadata_schema(),
+            create_config_metadata_schema(),
+            create_adapter_registry_schema(),
+        ]
+        survivors = [
+            schema
+            for schema in self._get_existing_tenant_schemas()
+            if schema.name not in registry_full_names
+        ]
+        all_schemas = metadata_schemas + survivors
+
+        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
+        self._logger.info(
+            f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa "
+            f"(registry: {len(registry_full_names)}, vespa-only: "
+            f"{len(set(vespa_orphan_names) - set(registry_full_names))})"
+        )
+        self._deploy_package(app_package, allow_schema_removal=True)
+        self._logger.info(
+            f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
+        )
+
+        for base in registry_base_names:
             try:
-                # Unregister from SchemaRegistry (redeployment happens after the loop)
-                self._schema_registry.unregister_schema(tenant_id, base_schema_name)
-                deleted_schemas.append(tenant_schema_name)
+                self._schema_registry.unregister_schema(tenant_id, base)
                 self._logger.info(
-                    f"Unregistered schema '{tenant_schema_name}' for tenant '{tenant_id}'"
+                    f"Unregistered schema "
+                    f"'{self.get_tenant_schema_name(tenant_id, base)}' "
+                    f"for tenant '{tenant_id}'"
                 )
             except Exception as e:
                 self._logger.error(
-                    f"Failed to delete schema '{tenant_schema_name}': {e}"
+                    f"Failed to unregister schema '"
+                    f"{self.get_tenant_schema_name(tenant_id, base)}' "
+                    f"after Vespa removal succeeded: {e}"
                 )
-
-        if deleted_schemas:
-            self._logger.info(
-                f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa"
-            )
-            from vespa.package import ApplicationPackage
-
-            from cogniverse_vespa.metadata_schemas import (
-                create_adapter_registry_schema,
-                create_config_metadata_schema,
-                create_organization_metadata_schema,
-                create_tenant_metadata_schema,
-            )
-
-            metadata_schemas = [
-                create_organization_metadata_schema(),
-                create_tenant_metadata_schema(),
-                create_config_metadata_schema(),
-                create_adapter_registry_schema(),
-            ]
-            remaining_tenant_schemas = self._get_existing_tenant_schemas()
-            all_schemas = metadata_schemas + remaining_tenant_schemas
-
-            app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
-            self._deploy_package(app_package, allow_schema_removal=True)
-
-            self._logger.info(
-                f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
-            )
 
         return deleted_schemas
 
@@ -1511,61 +1633,38 @@ class VespaSchemaManager:
     def list_deployed_document_types(self, query_port: int) -> List[str]:
         """Return the document-type names currently deployed in Vespa.
 
-        Queries the running cluster's search endpoint (``query_port``, not
-        the config port this manager was initialised with) to get the
-        authoritative answer for "what's deployed right now", independent of
-        the SchemaRegistry's cache. Used by :py:meth:`VespaBackend.deploy_schemas`
-        to preserve peer schemas that exist in Vespa but aren't (yet) in the
-        registry's record (for example, schemas deployed by a different
-        process or by an integration-test fixture that pushes an
-        ApplicationPackage directly).
-
-        Returns an empty list if discovery fails for any reason — the caller
-        is expected to treat that as "don't know, fall back to registry".
+        Reads the config server's application listing — read-after-write
+        consistent with prepareandactivate. ``query_port`` is unused and
+        kept for back-compat. Returns an empty list on failure.
         """
         import requests
 
+        del query_port
+
         base_url = re.sub(r":\d+$", "", self.backend_endpoint)
-        # A YQL query against a deliberately-bogus source forces Vespa to
-        # respond with an error whose message enumerates every deployed
-        # source ref. This is the most reliable Vespa API — /config endpoints
-        # vary across Vespa versions and cluster layouts.
-        probe_url = f"{base_url}:{query_port}/search/"
-        probe_body = {
-            "yql": "select documentid from __cogniverse_probe_missing__ where true",
-            "hits": 0,
-        }
+        list_url = (
+            f"{base_url}:{self.backend_port}"
+            "/application/v2/tenant/default/application/default/"
+            "environment/prod/region/default/instance/default/content/schemas/"
+        )
         try:
-            resp = requests.post(probe_url, json=probe_body, timeout=10)
+            resp = requests.get(list_url, timeout=10)
+            resp.raise_for_status()
         except requests.RequestException as exc:
             self._logger.warning(
-                f"list_deployed_document_types: Vespa probe failed: {exc}"
+                f"list_deployed_document_types: config-server probe failed: {exc}"
             )
             return []
 
         try:
-            body = resp.json()
+            entries = resp.json()
         except ValueError:
             return []
 
-        errors = body.get("root", {}).get("errors", [])
-        for err in errors:
-            msg = err.get("message", "")
-            # Vespa returns: "... Valid source refs are cogniverse_content,
-            # cogniverse_content.foo, cogniverse_content.bar." — i.e. the
-            # refs themselves contain dots, and the message ends with a
-            # period. Capture everything after the prefix up to end-of-string
-            # or end-of-sentence, then strip the final period.
-            m = re.search(r"Valid source refs are (.+)$", msg)
-            if not m:
-                continue
-            raw = m.group(1).rstrip().rstrip(".")
-            parts = [p.strip() for p in raw.split(",")]
-            # Entries are either the bare cluster name ("cogniverse_content")
-            # or "cluster.document_type" — keep only the latter.
-            doc_types = []
-            for part in parts:
-                if "." in part:
-                    doc_types.append(part.split(".", 1)[1])
-            return sorted(set(doc_types))
-        return []
+        # Each entry is a URL ending in ``schemas/<name>.sd``.
+        names = []
+        for entry in entries:
+            tail = entry.rsplit("/", 1)[-1]
+            if tail.endswith(".sd"):
+                names.append(tail[: -len(".sd")])
+        return sorted(set(names))

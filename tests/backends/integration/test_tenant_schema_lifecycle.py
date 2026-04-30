@@ -190,3 +190,150 @@ class TestSchemaRegistryDeployment:
             backend.schema_registry.deploy_schema(
                 "test_tenant_nonexistent", "nonexistent_schema_xyz"
             )
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestSchemaRegistryDeletion:
+    """Test schema deletion paths — both the registry-tracked happy path
+    and the orphan-recovery case (Vespa has the schema, registry doesn't).
+
+    The orphan case is the bug from
+    ``.claude/plans/i-would-like-you-melodic-sunbeam.md``: a SIGKILL or
+    crash mid-cleanup can leave the registry's tombstone half-written
+    while Vespa still has the schema. Without the union-of-sources
+    discovery in ``delete_tenant_schemas``, a subsequent DELETE returned
+    200 OK while the orphan stayed in Vespa, blocking the next deploy
+    with ``Refusing to deploy: Vespa has schemas X that are not in
+    SchemaRegistry``.
+    """
+
+    def test_delete_tenant_schema_round_trip(self, get_backend):
+        """Deploy → DELETE → verify gone from BOTH registry and Vespa.
+
+        Round-trip: registry write + Vespa deploy → registry tombstone +
+        Vespa redeploy without the schema. After the cycle, the running
+        application generation must no longer list the tenant-namespaced
+        schema.
+        """
+        backend = get_backend("del_round_trip")
+
+        backend.schema_registry.deploy_schema(
+            "del_round_trip", "video_colpali_smol500_mv_frame"
+        )
+        full_name = "video_colpali_smol500_mv_frame_del_round_trip"
+
+        # Sanity: schema is deployed in Vespa.
+        deployed_before = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name in deployed_before, (
+            f"setup failure — schema {full_name!r} not in Vespa after deploy"
+        )
+
+        # Delete via the bulk path (same code DELETE /admin/tenants takes).
+        deleted = backend.schema_manager.delete_tenant_schemas("del_round_trip")
+        assert full_name in deleted
+
+        # Vespa-side: schema removed from running application.
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name not in deployed_after, (
+            f"orphan: {full_name!r} still in Vespa after delete_tenant_schemas"
+        )
+
+        # Registry-side: tombstoned.
+        assert backend.schema_registry.get_tenant_schemas("del_round_trip") == [], (
+            "registry still lists schemas for the deleted tenant"
+        )
+
+    def test_delete_tenant_schema_recovers_orphan(self, get_backend):
+        """Simulate the kill-recovery case: registry empty, Vespa has it.
+
+        Build the inconsistent state by deploying a schema, then directly
+        clearing the registry entry without going through the redeploy
+        path (mimics a SIGKILL between ``unregister_schema`` and the
+        application-package redeploy). ``delete_tenant_schemas`` must
+        still drop the schema from Vespa using the Vespa-side discovery
+        leg, otherwise the next deploy fails with
+        ``Refusing to deploy: Vespa has schemas X that are not in
+        SchemaRegistry``.
+        """
+        backend = get_backend("del_orphan")
+        tenant_id = "del_orphan"
+        full_name = "video_colpali_smol500_mv_frame_del_orphan"
+
+        backend.schema_registry.deploy_schema(
+            tenant_id, "video_colpali_smol500_mv_frame"
+        )
+        deployed_before = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name in deployed_before, "setup failure — schema not deployed"
+
+        # Force registry-only tombstone (no redeploy) → orphan in Vespa.
+        # This is what an interrupted cleanup leaves behind.
+        backend.schema_registry.unregister_schema(
+            tenant_id, "video_colpali_smol500_mv_frame"
+        )
+        assert backend.schema_registry.get_tenant_schemas(tenant_id) == [], (
+            "setup failure — registry still has the entry"
+        )
+        deployed_mid = backend.schema_manager.list_deployed_document_types(query_port=0)
+        assert full_name in deployed_mid, (
+            "setup failure — Vespa already dropped the schema; cannot test "
+            "orphan recovery"
+        )
+
+        # Run the cleanup. Pre-fix this returned [] (registry empty → no
+        # work, redeploy skipped). Post-fix it must include the orphan.
+        deleted = backend.schema_manager.delete_tenant_schemas(tenant_id)
+        assert full_name in deleted, (
+            f"delete_tenant_schemas did not see the Vespa-side orphan "
+            f"{full_name!r} (returned {deleted!r}). The union-of-sources "
+            f"discovery is broken — this is the regression the plan fixed."
+        )
+
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name not in deployed_after, (
+            f"orphan {full_name!r} still in Vespa after kill-recovery cleanup"
+        )
+
+    def test_delete_schema_only_tenant_succeeds(self, get_backend):
+        """``DELETE /admin/tenants`` must clean up tenants that have a
+        schema in Vespa + registry but no ``tenant_metadata`` record.
+
+        ``/ingestion/upload`` auto-deploys the per-tenant ingestion schema
+        without going through the tenant-create flow, so the tenant_metadata
+        document is never created. Pre-fix the early 404 check in
+        ``delete_tenant_internal`` rejected DELETE for these tenants — the
+        e2e session-start orphan reconciliation could not clean them up
+        and the suite kept piling on schemas every run.
+        """
+        backend = get_backend("schema_only_tenant")
+        tenant_id = "schema_only_tenant"
+        backend.schema_registry.deploy_schema(
+            tenant_id, "video_colpali_smol500_mv_frame"
+        )
+        full_name = "video_colpali_smol500_mv_frame_schema_only_tenant"
+        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        assert full_name in deployed, "setup failure — schema not deployed"
+
+        # No tenant_metadata exists for this tenant — delete must still
+        # succeed and drop the schema. Calling the schema-side leg
+        # directly mirrors what ``delete_tenant_internal`` now does
+        # after the early-404 check was loosened.
+        deleted = backend.schema_manager.delete_tenant_schemas(tenant_id)
+        assert full_name in deleted, (
+            f"delete_tenant_schemas missed {full_name!r}; returned {deleted!r}"
+        )
+
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name not in deployed_after, (
+            f"schema {full_name!r} still in Vespa after schema-only tenant delete"
+        )

@@ -12,7 +12,6 @@ Transcribes audio from videos using Whisper. Two modes:
   processor stays engine-agnostic.
 """
 
-import base64
 import json
 import logging
 import time
@@ -188,44 +187,67 @@ class AudioProcessor(BaseProcessor):
         }
 
     def _transcribe_remote(self, video_path: Path, video_id: str) -> dict[str, Any]:
-        """Run transcription via the deploy/whisper sidecar pod.
-
-        The pod owns engine selection (faster-whisper / whisperx /
-        whisper-cpp) and the loaded model — the processor only ships the
-        bytes and a language hint.
+        """POST audio to the vLLM Whisper sidecar's
+        ``/v1/audio/transcriptions`` endpoint and return the parsed
+        transcript with per-segment timestamps.
         """
         import requests
 
         audio_bytes = video_path.read_bytes()
-        payload: dict[str, Any] = {
-            "audio_b64": base64.b64encode(audio_bytes).decode("ascii"),
+        url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
+        files = {"file": (video_path.name, audio_bytes, "audio/wav")}
+        try:
+            models_resp = requests.get(
+                f"{self.endpoint.rstrip('/')}/v1/models", timeout=10
+            )
+            models_resp.raise_for_status()
+            served = (models_resp.json().get("data") or [{}])[0].get("id", self.model)
+        except Exception:
+            served = self.model
+        data: dict[str, Any] = {
+            "model": served,
+            "response_format": "verbose_json",
         }
         if self.language and self.language != "auto":
-            payload["language"] = self.language
+            data["language"] = self.language
 
-        url = f"{self.endpoint.rstrip('/')}/v1/transcribe"
         self.logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
         resp = requests.post(
-            url, json=payload, timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS
+            url, data=data, files=files, timeout=REMOTE_TRANSCRIBE_TIMEOUT_SECONDS
         )
         resp.raise_for_status()
         body = resp.json()
 
+        full_text = (body.get("text") or "").strip()
+        raw_segments = body.get("segments") or []
+        segments = [
+            {
+                "start": float(seg.get("start", 0.0)),
+                "end": float(seg.get("end", 0.0)),
+                "text": (seg.get("text") or "").strip(),
+            }
+            for seg in raw_segments
+            if isinstance(seg, dict)
+        ]
+        # vLLM omits segments on short audio; synthesize one so callers
+        # always have a non-empty list to iterate.
+        if not segments and full_text:
+            segments = [
+                {
+                    "start": 0.0,
+                    "end": float(body.get("duration") or 0.0),
+                    "text": full_text,
+                }
+            ]
+
         return {
             "video_id": video_id,
             "video_path": str(video_path),
-            "model": body.get("model", self.model),
+            "model": body.get("model", served),
             "language": body.get("language", "unknown"),
-            "duration": body.get("duration_seconds", 0.0),
-            "full_text": body.get("text", "").strip(),
-            "segments": [
-                {
-                    "start": float(seg.get("start", 0.0)),
-                    "end": float(seg.get("end", 0.0)),
-                    "text": (seg.get("text") or "").strip(),
-                }
-                for seg in body.get("segments", [])
-            ],
+            "duration": float(body.get("duration") or 0.0),
+            "full_text": full_text,
+            "segments": segments,
         }
 
     def process(

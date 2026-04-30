@@ -55,6 +55,10 @@ class BackendRegistry:
         capacity=_tenant_cache_capacity(),
         on_evict=_on_backend_evicted,
     )
+    # Process-wide SchemaRegistry. Populated on first backend creation and
+    # reused by every subsequent backend so they share a single in-memory
+    # schema map.
+    _shared_schema_registry: Any = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -117,6 +121,7 @@ class BackendRegistry:
         config: Optional[Dict[str, Any]] = None,
         config_manager=None,
         schema_loader=None,
+        schema_registry=None,
     ) -> IngestionBackend:
         """
         Get a tenant-specific ingestion backend instance.
@@ -220,13 +225,17 @@ class BackendRegistry:
         # Factory handles: backend creation, SchemaRegistry creation, injection, and initialize()
         backend_class = cls._ingestion_backends[name]
 
+        effective_registry = schema_registry or cls._shared_schema_registry
         instance = BackendFactory.create_backend_with_dependencies(
             backend_class=backend_class,
             backend_config=backend_config_obj,
             config_manager=config_manager,
             schema_loader=schema_loader,
             backend_init_config=backend_init_config,
+            schema_registry=effective_registry,
         )
+        if cls._shared_schema_registry is None and instance.schema_registry is not None:
+            cls._shared_schema_registry = instance.schema_registry
 
         # Cache instance with tenant_id (LRU eviction if over capacity)
         cls._backend_instances.set(instance_key, instance)
@@ -347,7 +356,10 @@ class BackendRegistry:
             config_manager=config_manager,
             schema_loader=schema_loader,
             backend_init_config=backend_init_config,
+            schema_registry=cls._shared_schema_registry,
         )
+        if cls._shared_schema_registry is None and instance.schema_registry is not None:
+            cls._shared_schema_registry = instance.schema_registry
 
         # Cache shared instance (LRU eviction if over capacity)
         cls._backend_instances.set(instance_key, instance)

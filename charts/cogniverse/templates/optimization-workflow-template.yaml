@@ -1,5 +1,16 @@
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- if .Values.argo.enabled }}
+{{- /* Resolve workflow image via runtime's imagesByBackend so workflow
+       pods pull the same torch backend variant the runtime built for.
+       The legacy ``runtime.image`` block defaults to
+       ``cogniverse/runtime-cuda:2.0.0`` which never gets built locally
+       — without this the workflow goes to ImagePullBackOff every time
+       on a non-cuda host. */}}
+{{- $workflowBackend := default "cuda" .Values.runtime.backend }}
+{{- $workflowImage := .Values.runtime.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $workflowImage = (index .Values.runtime.imagesByBackend $workflowBackend) | default .Values.runtime.image }}
+{{- end }}
 ---
 # Shared Argo WorkflowTemplate for running ``optimization_cli --mode <mode>``
 # in a runtime-image pod. Referenced via workflowTemplateRef / templateRef by:
@@ -45,8 +56,8 @@ spec:
       - name: tenant-id
       - name: lookback-hours
     container:
-      image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-      imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+      image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+      imagePullPolicy: {{ $workflowImage.pullPolicy }}
       command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
       args:
         - "--mode"

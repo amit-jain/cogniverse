@@ -83,10 +83,12 @@ def _upload_file(
     tenant_id: str,
     mime_type: str = "video/mp4",
 ) -> dict:
-    """Upload file via /ingestion/upload, return response data."""
+    """Upload via /ingestion/upload (wait=true so the response shape is
+    synchronous; isolation tests assert status=='success').
+    """
     with open(file_path, "rb") as f:
         resp = client.post(
-            "/ingestion/upload",
+            "/ingestion/upload?wait=true&wait_timeout=600",
             files={"file": (file_path.name, f, mime_type)},
             data={"profile": profile, "tenant_id": tenant_id, "backend": "vespa"},
         )

@@ -24,31 +24,45 @@ devMode:
 #                       video_colqwen_omni_mv_chunk_30s)
 #   - code_colbert_pylate (code_lateon_mv — keep off unless code search is wanted)
 inference:
-  # vLLM-served ColPali — visual multi-vector retrieval. Replaces the
-  # legacy deploy/colpali sidecar.
+  # ColPali uses the native FastAPI sidecar (deploy/colpali) — vLLM's
+  # ColPaliForRetrieval exposes /v1/score (scalar) but the runtime needs
+  # per-token multi-vector embeddings via /v1/embeddings.
   vllm_colpali:
     enabled: true
+    engine: colpali_native
+    image:
+      repository: cogniverse/colpali
+      tag: dev
+      pullPolicy: Never
+    extraArgs: []
+    kvCacheGiB: null
     resources:
       limits:
         cpu: "4"
-        memory: "10Gi"
+        memory: "16Gi"
       requests:
         cpu: "4"
-        memory: "10Gi"
+        memory: "16Gi"
   # Dev override: use locally-built pylate image for the default text pod.
   colbert_pylate:
+    service:
+      type: NodePort
     pylate:
       image:
         tag: "dev"
         pullPolicy: Never
   # Dev override for the code-search pylate pod (disabled by default).
   code_colbert_pylate:
+    service:
+      type: NodePort
     pylate:
       image:
         tag: "dev"
         pullPolicy: Never
   # Dev override for the dense-mode pylate pod (denseon).
   denseon:
+    service:
+      type: NodePort
     pylate:
       image:
         tag: "dev"
@@ -102,6 +116,8 @@ runtime:
   # install_with_gpu.sh ladder via cogniverse_cli.images.detect_torch_backend).
   # Override here to force a specific variant for repeated local runs.
   backend: cpu
+  # First-launch HuggingFace downloads can exceed the 120s default.
+  inferenceHealthBootDeadlineSeconds: 900
   imagesByBackend:
     cpu:
       repository: cogniverse/runtime-cpu
@@ -132,29 +148,23 @@ runtime:
     periodSeconds: 30
     timeoutSeconds: 45
     failureThreshold: 10
+  # Guaranteed QoS (request == limit) — Burstable invites kernel OOMKill
+  # under cumulative vLLM + Vespa + Phoenix pressure. Pairs with the
+  # Recreate deployment strategy so the request doesn't block rollout.
   resources:
     requests:
-      cpu: "2"
-      # Runtime memory grows through a suite: every ingested tenant loads
-      # ColPali (~500MB) in-process, memory manager caches per-tenant Mem0
-      # instances (LRU-bounded at 16), and Vespa search buffers climb with
-      # stored docs. Under combined fixture-ingestion + full orchestration
-      # chain (gateway → orchestrator → entity/search/detailed_report) the
-      # pod crossed 32Gi. 40Gi gives real headroom on a 49Gi node; the
-      # Ollama pod is simultaneously reduced to 20Gi so total limits fit.
-      memory: "8Gi"
+      cpu: "4"
+      # 40 GiB is the cap before cumulative pod requests overrun the
+      # 128 GiB node alongside vLLM sidecars + Vespa + Phoenix.
+      memory: "40Gi"
     limits:
       cpu: "16"
       memory: "40Gi"
   # Turn on POST /admin/debug/memsnap for the dev cluster. Off in prod.
   env:
     COGNIVERSE_DEBUG_MEM: "1"
-  # Host-mode OpenShell sandbox: developer starts `openshell gateway start
-  # --port 19091` on the host, then `cogniverse sandbox sync` stores the
-  # mTLS certs + metadata as `openshell-mtls` / `openshell-metadata` in the
-  # cluster. The runtime mounts those into ~/.config/openshell so the SDK
-  # resolves the active cluster and connects over host.docker.internal.
-  # Port 19091 matches the sync tool's POD_GATEWAY_ENDPOINT constant.
+  # Host-mode OpenShell sandbox: requires `openshell gateway start --port
+  # 19091` on the host + `cogniverse sandbox sync` to copy mTLS certs.
   sandbox:
     enabled: true
     gatewayEndpoint: "https://host.docker.internal:19091"

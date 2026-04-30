@@ -626,11 +626,9 @@ class TestJobExecution:
 
 
 def _get_runtime_config_manager():
-    """Get a ConfigManager pointing at the k3d Vespa (host port 8080).
-
-    The k3d loadbalancer publishes the Vespa Service port (8080) directly;
-    the backing NodePort inside the cluster is 28080 but that port isn't
-    exposed on the host. See cluster.py DEFAULT_PORTS for the list.
+    """ConfigManager pointing at the k3d Vespa with inference URLs
+    rewritten from cluster DNS to host port-forwards. The runtime stores
+    cluster-internal URLs that don't resolve on the host.
     """
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_vespa.config.config_store import VespaConfigStore
@@ -639,7 +637,26 @@ def _get_runtime_config_manager():
         backend_url="http://localhost",
         backend_port=8080,
     )
-    return ConfigManager(store=store)
+    cm = ConfigManager(store=store)
+
+    # k3d-LB host ports per inference.<svc>.service.nodePort.
+    sys_cfg = cm.get_system_config()
+    host_inference_urls = {
+        "denseon": "http://localhost:29006",
+        "vllm_colpali": "http://localhost:29001",
+        "colbert_pylate": "http://localhost:29002",
+        "code_colbert_pylate": "http://localhost:29004",
+        "videoprism_jax": "http://localhost:29006",
+        "vllm_asr": "http://localhost:29005",
+    }
+    sys_cfg.inference_service_urls = {
+        k: host_inference_urls.get(k, v)
+        for k, v in (sys_cfg.inference_service_urls or {}).items()
+    }
+    # In-memory only — cm.set_system_config would persist host-localhost
+    # URLs into config_metadata and break the in-cluster runtime.
+    cm._system_config_cache = sys_cfg  # noqa: SLF001
+    return cm
 
 
 @pytest.mark.e2e

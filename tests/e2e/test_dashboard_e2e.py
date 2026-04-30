@@ -131,6 +131,15 @@ class TestInteractiveSearch:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Interactive Search")
 
+        # Streamlit reconciles widgets a beat after the tab-click network
+        # goes idle, so a bare count() check races and reports 0.
+        try:
+            page.get_by_role("textbox", name="Enter your search query").first.wait_for(
+                state="visible", timeout=15_000
+            )
+        except Exception:
+            pass
+
         # Verify search widgets present
         assert (
             page.get_by_role("textbox", name="Enter your search query").count() > 0

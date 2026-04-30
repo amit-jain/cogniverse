@@ -26,6 +26,7 @@ class BackendFactory:
         config_manager: Any,
         schema_loader: Any,
         backend_init_config: Dict[str, Any],
+        schema_registry: Any = None,
     ) -> Any:
         """
         Create backend instance with all dependencies properly initialized.
@@ -77,26 +78,18 @@ class BackendFactory:
             config_manager=config_manager,
         )
 
-        # Phase 2: Create SchemaRegistry with backend reference
-        # SchemaRegistry needs backend for deployment operations
-        from cogniverse_core.registries.schema_registry import SchemaRegistry
+        # Reuse a caller-supplied registry when given so all backends in
+        # the process share one in-memory schema view; build one
+        # otherwise.
+        if schema_registry is None:
+            from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-        # Debug: Log which DB config_manager is using
-        db_path = (
-            getattr(config_manager.store, "db_path", "unknown")
-            if config_manager and hasattr(config_manager, "store")
-            else "no store"
-        )
-        logger.warning(
-            f"🔍 BACKEND_FACTORY creating SchemaRegistry with config_manager DB: {db_path}"
-        )
-
-        schema_registry = SchemaRegistry(
-            config_manager=config_manager,
-            backend=backend_instance,
-            schema_loader=schema_loader,
-            strict_mode=True,  # Production default - fail fast on errors
-        )
+            schema_registry = SchemaRegistry(
+                config_manager=config_manager,
+                backend=backend_instance,
+                schema_loader=schema_loader,
+                strict_mode=True,
+            )
 
         # Phase 3: Inject schema_registry into backend
         # Backend can now use schema_registry for schema operations

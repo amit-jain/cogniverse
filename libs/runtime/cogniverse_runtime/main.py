@@ -425,11 +425,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 7d. Validate each inference service actually serves the model the
     # profiles expect. Closes the silent-wrong-embedding failure mode.
-    # Disabled with SKIP_INFERENCE_VALIDATION=1 (e.g., when running the
-    # runtime without any inference pods deployed).
+    # Disabled with SKIP_INFERENCE_VALIDATION=1; deadline overridable via
+    # INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS for slow-loading vLLM models.
     if os.environ.get("SKIP_INFERENCE_VALIDATION") != "1":
         from cogniverse_foundation.config.utils import ConfigUtils
         from cogniverse_runtime.inference_health_check import (
+            DEFAULT_BOOT_DEADLINE_SECONDS,
             collect_profile_bindings,
             validate_inference_services,
         )
@@ -440,7 +441,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 raw_config = json.load(f)
             profiles = raw_config.get("backend", {}).get("profiles", {})
             bindings = collect_profile_bindings(profiles)
-            validate_inference_services(bindings, system_config.inference_service_urls)
+            boot_deadline = float(
+                os.environ.get(
+                    "INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS",
+                    DEFAULT_BOOT_DEADLINE_SECONDS,
+                )
+            )
+            validate_inference_services(
+                bindings,
+                system_config.inference_service_urls,
+                boot_deadline_seconds=boot_deadline,
+            )
         else:
             logger.warning(
                 "Skipping inference-service validation: no config.json found"

@@ -2841,7 +2841,9 @@ with main_tabs[10]:
 
     with col3:
         top_k = st.slider("Number of Results", 1, 20, 5)
-        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.5)
+        # Default 0.0 — Vespa rank scores are unbounded reals, not 0-1
+        # confidences, and a 0.5 floor silently hides every ColPali result.
+        confidence_threshold = st.slider("Confidence Threshold", 0.0, 1.0, 0.0)
 
     # Search Results
     if search_button and search_query:

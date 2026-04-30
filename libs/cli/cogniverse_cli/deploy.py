@@ -21,7 +21,7 @@ def release_exists(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> bool
 
 def helm_install(
     chart_path: Path,
-    values_file: Path,
+    values_file: Path | list[Path],
     *,
     set_values: dict[str, str] | None = None,
     name: str = RELEASE_NAME,
@@ -29,10 +29,14 @@ def helm_install(
 ) -> None:
     """Install or upgrade Helm release.
 
-    Uses ``install`` if the release does not exist yet, ``upgrade`` if it
-    does.
+    ``values_file`` accepts a single Path or a list — multiple files are
+    applied in order so later overlays override earlier ones.
     """
     action = "upgrade" if release_exists(name, namespace) else "install"
+    if isinstance(values_file, Path):
+        values_files = [values_file]
+    else:
+        values_files = list(values_file)
     cmd: list[str] = [
         "helm",
         action,
@@ -41,11 +45,11 @@ def helm_install(
         "--namespace",
         namespace,
         "--create-namespace",
-        "-f",
-        str(values_file),
         "--timeout",
         "10m",
     ]
+    for vf in values_files:
+        cmd.extend(["-f", str(vf)])
     if set_values:
         for key, value in set_values.items():
             cmd.extend(["--set", f"{key}={value}"])

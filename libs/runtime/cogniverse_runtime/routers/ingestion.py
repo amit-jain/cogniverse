@@ -186,21 +186,10 @@ async def upload_video(
         description="Bypass idempotency and re-enqueue even on a cache hit.",
     ),
 ) -> Dict[str, Any]:
-    """Upload and ingest a single file.
+    """Upload a file to MinIO and enqueue ingestion via Redis.
 
-    Streams bytes to MinIO under ``{tenant}/{uuid}.{ext}``, derives the
-    ``s3://`` URL, submits to the redis ingestion queue. Workers pull
-    the queue, fetch via ``MediaLocator`` (which already speaks
-    ``s3://``), run the pipeline, publish status events.
-
-    Default response is 202 + ingest_id. ``?wait=true`` polls the
-    status stream and returns a result-shaped response — useful for
-    short jobs and callers that need synchronous behaviour. ``?force=
-    true`` bypasses idempotency.
-
-    Requires ``REDIS_URL`` + ``MINIO_ENDPOINT`` to be configured. No
-    in-process pipeline fallback — single ingestion path, single
-    backpressure budget, no second code path to rot.
+    Returns 202 + ingest_id by default. ``wait=true`` polls until terminal
+    state and returns a synchronous result. ``force=true`` bypasses idempotency.
     """
     try:
         upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
@@ -275,28 +264,41 @@ async def upload_video(
         "source_url": source_url,
     }
     if result.final_event is not None:
-        # ``wait=true`` mode: re-emit the legacy response fields so
-        # synchronous callers don't have to re-shape against the new
-        # event payload.
         pipeline_result = result.final_event.get("result", {}) or {}
         response["video_id"] = pipeline_result.get("video_id")
         response["chunks_created"] = pipeline_result.get(
             "chunks", pipeline_result.get("keyframes", 0)
         )
+        response["documents_fed"] = pipeline_result.get("documents_fed", 0)
         response["status"] = "success" if result.state == "complete" else result.state
+
+        response["graph_nodes"] = 0
+        response["graph_edges"] = 0
+        if result.state == "complete":
+            text = _extract_text_for_graph(pipeline_result.get("results", {}) or {})
+            if text:
+                source_doc_id = (
+                    pipeline_result.get("video_id") or result.ingest_id or file.filename
+                )
+                try:
+                    counts = await _extract_graph_from_multimodal(
+                        text=text,
+                        source_doc_id=source_doc_id,
+                        tenant_id=upload_tenant_id,
+                    )
+                    response["graph_nodes"] = counts.get("nodes_upserted", 0)
+                    response["graph_edges"] = counts.get("edges_upserted", 0)
+                except Exception as exc:
+                    logger.warning(
+                        f"Multimodal graph extraction failed for {source_doc_id}: {exc}"
+                    )
     else:
         response["status"] = "queued"
     return response
 
 
 def _extract_text_for_graph(processing_results: Dict[str, Any]) -> str:
-    """Pull any LLM-analyzable text out of ingestion pipeline results.
-
-    Walks the pipeline output and concatenates every text-ish field the
-    processors already produced: Whisper transcripts (audio/video), VLM
-    keyframe descriptions (images/video), and existing "extracted_text"
-    blobs. Returns an empty string if nothing useful is found.
-    """
+    """Concatenate transcript, description, OCR, and document text fields."""
     if not isinstance(processing_results, dict):
         return ""
 
@@ -351,11 +353,7 @@ async def _extract_graph_from_multimodal(
     source_doc_id: str,
     tenant_id: str,
 ) -> Dict[str, int]:
-    """Run the DocExtractor on multimodal text outputs and upsert to graph.
-
-    Uses the same tenant-scoped GraphManager factory the /graph router
-    uses, so no new manager wiring is needed.
-    """
+    """Run DocExtractor on multimodal text and upsert to the tenant graph."""
     from cogniverse_agents.graph.doc_extractor import DocExtractor
     from cogniverse_runtime.routers import graph as graph_router
 
@@ -391,11 +389,6 @@ async def run_ingestion(
     try:
         from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 
-        # Background task: the originating /ingestion endpoint already
-        # validated tenant_id via require_tenant_id before enqueuing, so
-        # this is belt-and-suspenders.  Missing tenant here is a logic
-        # bug, not a user error — raise and let the task status record
-        # the failure rather than silently ingesting under a ghost tenant.
         tenant_id = require_tenant_id(
             request.tenant_id, source="run_ingestion background task"
         )

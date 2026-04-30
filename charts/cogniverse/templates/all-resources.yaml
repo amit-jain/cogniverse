@@ -217,6 +217,11 @@ metadata:
     app.kubernetes.io/component: runtime
 spec:
   replicas: {{ .Values.runtime.replicaCount }}
+  # Recreate so the rolling-update overlap doesn't double-book runtime
+  # memory and trip FailedScheduling on memory-constrained single-node
+  # clusters.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "cogniverse.selectorLabels" . | nindent 6 }}
@@ -237,13 +242,8 @@ spec:
         runAsUser: 1000
         fsGroup: 1000
         {{- if eq $runtimeBackend "rocm" }}
-        # /dev/kfd and /dev/dri/renderD* on the host are owned by gid 992
-        # (render) and 44 (video) on Debian/Ubuntu. Pod runs as uid 1000
-        # which isn't in those groups inside the container, so without
-        # supplementalGroups the hostPath device files come through as
-        # root:render rw and the cogniverse user gets EACCES. Override
-        # via runtime.rocm.supplementalGroups for distros with different
-        # gids (Fedora render = 109, etc.).
+        # /dev/kfd, /dev/dri/renderD* are root:render(992)/video(44).
+        # Override per distro via runtime.rocm.supplementalGroups.
         supplementalGroups:
           {{- toYaml (dig "rocm" "supplementalGroups" (list 992 44) .Values.runtime) | nindent 8 }}
         {{- end }}
@@ -279,6 +279,8 @@ spec:
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
           value: {{ .Values.llm.model | quote }}
+        - name: INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS
+          value: {{ default 120 .Values.runtime.inferenceHealthBootDeadlineSeconds | quote }}
         # Route semantic text embeddings to the denseon sidecar (DenseOn
         # via deploy/pylate in mode=dense).
         {{- if .Values.inference.denseon.enabled }}
@@ -886,9 +888,17 @@ spec:
 # health, model auto-pulled by post-install init job) or vLLM (Deployment,
 # /health, model downloaded on first request to /v1/chat/completions).
 # engine=external deploys nothing; runtime points at llm.external.url.
+# llm.builtin.enabled=false skips the whole block — used by ROCm
+# deployments that route the agent LLM to inference.vllm_llm_student.
 {{- $llmEngine := .Values.llm.engine | default "ollama" }}
 {{- $llmDevice := .Values.llm.device | default "cpu" }}
-{{- if eq $llmEngine "ollama" }}
+{{- $llmBuiltinEnabled := true }}
+{{- if hasKey .Values.llm "builtin" }}
+{{- if hasKey .Values.llm.builtin "enabled" }}
+{{- $llmBuiltinEnabled = .Values.llm.builtin.enabled }}
+{{- end }}
+{{- end }}
+{{- if and $llmBuiltinEnabled (eq $llmEngine "ollama") }}
 {{- $ollama := .Values.llm.ollama }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -1033,7 +1043,7 @@ spec:
   selector:
     {{- include "cogniverse.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: llm
-{{- else if eq $llmEngine "vllm" }}
+{{- else if and $llmBuiltinEnabled (eq $llmEngine "vllm") }}
 {{- $vllm := .Values.llm.vllm }}
 {{- $vllmImageDefault := $vllm.image }}
 {{- $vllmImageOverride := dict }}
@@ -1258,6 +1268,19 @@ spec:
         app.kubernetes.io/component: inference-{{ $name }}
     spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
+      {{- if eq $device "rocm" }}
+      # /dev/kfd and /dev/dri/renderD* are owned by gid 992 (render) on
+      # Debian/Ubuntu — supplementalGroups injects that membership
+      # without changing runAsUser. Override per-service for distros
+      # with different gids.
+      securityContext:
+        supplementalGroups:
+          {{- toYaml (dig "rocm" "supplementalGroups" (list 992 44) $cfg) | nindent 8 }}
+      # vLLM's multi-process worker uses host POSIX shm for tensor IPC;
+      # without hostIPC + a /dev/shm emptyDir it crashes with
+      # shm_open: Function not implemented.
+      hostIPC: true
+      {{- end }}
       containers:
       {{- if eq $engine "pylate" }}
       - name: pylate
@@ -1272,7 +1295,9 @@ spec:
         - name: MODEL_MODE
           value: {{ default "colbert" $cfg.mode | quote }}
         - name: DEVICE
-          value: {{ $device | quote }}
+          # PyTorch reuses the cuda:N namespace for ROCm; passing "rocm"
+          # to torch.device fails parsing.
+          value: {{ ternary "cuda" $device (eq $device "rocm") | quote }}
         - name: HOST
           value: "0.0.0.0"
         - name: PORT
@@ -1317,10 +1342,10 @@ spec:
               key: HF_TOKEN
         {{- end }}
       {{- else if eq $engine "vllm_transcription" }}
-      # vLLM serving an OpenAI-compatible /v1/audio/transcriptions
-      # endpoint. Used by vllm_asr to serve Whisper. Requires the
-      # ``vllm[audio]`` install extra (already included upstream
-      # in vllm/vllm-openai images), selected via ``--task transcription``.
+      # vLLM serving OpenAI-compatible /v1/audio/transcriptions for
+      # Whisper. The container ``command`` overrides the upstream image's
+      # ENTRYPOINT so we can pip-install the [audio] extras before exec-ing
+      # vllm serve.
       - name: vllm-transcription
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -1328,8 +1353,56 @@ spec:
         - name: http
           containerPort: 8000
         env:
-        - name: VLLM_CPU_OMP_THREADS_BIND
-          value: "all"
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $cfg.kvCacheGiB }}
+        # vLLM's CPU worker doesn't honour pod cgroup limits; without an
+        # explicit cap it pre-allocates from full node memory and OOMKills.
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: {{ $cfg.kvCacheGiB | quote }}
+        {{- end }}
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
+        # Upstream vllm-openai images ship without [audio] extras, so
+        # /v1/audio/transcriptions returns 400 until soundfile + librosa
+        # are installed. exec keeps vLLM as PID 1 for signal propagation.
+        command:
+          - "sh"
+          - "-c"
+        args:
+          - |
+            pip install --no-cache-dir --quiet soundfile librosa || exit 1
+            exec vllm serve {{ $cfg.model | squote }} \
+              --host 0.0.0.0 --port 8000 \
+              {{- range $cfg.extraArgs }}
+              {{ . | squote }} \
+              {{- end }}
+      {{- else if eq $engine "colpali_native" }}
+      # Custom FastAPI sidecar (deploy/colpali) wrapping colpali-engine.
+      # Serves /v1/embeddings with per-token multi-vector arrays — the
+      # contract RemoteColPaliLoader requires.
+      - name: colpali
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ default 8000 $cfg.service.port }}
+        env:
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: DEVICE
+          # PyTorch reuses the cuda:N namespace for ROCm; passing "rocm"
+          # to torch.device fails parsing.
+          value: {{ ternary "cuda" $device (eq $device "rocm") | quote }}
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ default 8000 $cfg.service.port | quote }}
         - name: HF_HOME
           value: /root/.cache/huggingface
         {{- if $cfg.hfTokenSecret }}
@@ -1339,22 +1412,15 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
-        args:
-          - "serve"
-          - {{ $cfg.model | quote }}
-          - "--host"
-          - "0.0.0.0"
-          - "--port"
-          - "8000"
-          {{- range $cfg.extraArgs }}
-          - {{ . | quote }}
-          {{- end }}
       {{- else if eq $engine "vllm_token_embed" }}
       # vLLM serving an OpenAI-compatible /v1/embeddings endpoint with
       # per-token (multi-vector) outputs. Used by vllm_colpali for
-      # ColPali-style visual retrieval. The ``--task token_embed`` flag
-      # selects vLLM's pooling task that emits per-token embeddings
-      # rather than a single pooled vector.
+      # ColPali-style visual retrieval. The ``--runner pooling
+      # --convert embed`` pair (vLLM 0.20+) replaces the older
+      # ``--task token_embed`` flag — selects vLLM's pooling runner
+      # and reshapes the output to per-token embeddings. ``command:
+      # ["vllm"]`` overrides the image ENTRYPOINT so ``args[0] = "serve"``
+      # isn't duplicated (see vllm_transcription comment above).
       - name: vllm-token-embed
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -1362,12 +1428,16 @@ spec:
         - name: http
           containerPort: 8000
         env:
-        - name: VLLM_CPU_OMP_THREADS_BIND
-          value: "all"
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- if $cfg.kvCacheGiB }}
+        # vLLM's CPU worker doesn't honour pod cgroup limits; without an
+        # explicit cap it pre-allocates from full node memory and OOMKills.
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: {{ $cfg.kvCacheGiB | quote }}
+        {{- end }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:
@@ -1375,6 +1445,7 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
+        command: ["vllm"]
         args:
           - "serve"
           - {{ $cfg.model | quote }}
@@ -1391,7 +1462,9 @@ spec:
       # vllm_llm_teacher (DSPy compile-time only, Gemma 4 26B-A4B).
       # Distinguished from the embedding-style ``vllm`` engine by the
       # absence of ``--convert embed`` — chat models serve /v1/chat/completions
-      # natively without conversion.
+      # natively without conversion. ``command: ["vllm"]`` overrides
+      # the image ENTRYPOINT so ``args[0] = "serve"`` isn't duplicated
+      # (see vllm_transcription comment above).
       - name: vllm-chat
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -1399,12 +1472,16 @@ spec:
         - name: http
           containerPort: 8000
         env:
-        - name: VLLM_CPU_OMP_THREADS_BIND
-          value: "all"
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        {{- if $cfg.kvCacheGiB }}
+        # vLLM's CPU worker doesn't honour pod cgroup limits; without an
+        # explicit cap it pre-allocates from full node memory and OOMKills.
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: {{ $cfg.kvCacheGiB | quote }}
+        {{- end }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:
@@ -1412,6 +1489,7 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
+        command: ["vllm"]
         args:
           - "serve"
           - {{ $cfg.model | quote }}
@@ -1430,8 +1508,6 @@ spec:
         - name: http
           containerPort: 8000
         env:
-        - name: VLLM_CPU_OMP_THREADS_BIND
-          value: "all"
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
@@ -1464,10 +1540,18 @@ spec:
         resources:
           {{- $baseResources := $cfg.resources | default dict }}
           {{- $baseLimits := dig "limits" dict $baseResources }}
+          # GPU resource request only when a device plugin advertises
+          # the resource. ``inference.<svc>.useDevicePlugin: true`` opts
+          # in; default is hostPath passthrough (k3d bind-mounts
+          # /dev/kfd + /dev/dri into the node, the pod template mounts
+          # them into containers, supplementalGroups gives access).
+          # Without a device plugin advertising ``amd.com/gpu`` /
+          # ``nvidia.com/gpu``, requesting that resource leaves the pod
+          # Pending with ``Insufficient amd.com/gpu``.
           {{- $gpuLimits := dict }}
-          {{- if eq $device "cuda" }}
+          {{- if and (eq $device "cuda") $cfg.useDevicePlugin }}
           {{- $gpuLimits = dict "nvidia.com/gpu" (printf "%v" (default 1 $cfg.gpuCount)) }}
-          {{- else if eq $device "rocm" }}
+          {{- else if and (eq $device "rocm") $cfg.useDevicePlugin }}
           {{- $gpuLimits = dict "amd.com/gpu" (printf "%v" (default 1 $cfg.gpuCount)) }}
           {{- end }}
           {{- $mergedLimits := merge $gpuLimits $baseLimits }}
@@ -1476,10 +1560,75 @@ spec:
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/huggingface
+        {{- if eq $device "rocm" }}
+        # ROCm device passthrough. The k3d cluster bind-mounts
+        # /dev/kfd and /dev/dri from the host (cluster.py
+        # ``create_cluster``); this hostPath mount injects them into
+        # the inference pod's container so amdgpu/HSA can enumerate
+        # the GPU. Without this, ``rocminfo`` inside the pod reports
+        # "Agent creation failed" and torch / vLLM fall through to CPU
+        # even with the right ROCm wheels installed.
+        - name: kfd
+          mountPath: /dev/kfd
+        - name: dri
+          mountPath: /dev/dri
+        # Large /dev/shm — vLLM's reference run uses --shm-size 16G
+        # because the multi-process engine passes activation tensors
+        # through POSIX shm. The default 64MB tmpfs is enough for
+        # ColPali (~3 GiB image batches) but vLLM-LLM-student spills
+        # past it on first generation and crashes with
+        # ``RuntimeError: shm_open returned ENOSPC``.
+        - name: shm
+          mountPath: /dev/shm
+        {{- end }}
+        {{- if eq $device "rocm" }}
+        # ``privileged: true`` is what ``docker run --device=/dev/kfd``
+        # gets you implicitly: full access to /dev/kfd despite the
+        # default container's restricted device cgroup. ``SYS_PTRACE``
+        # + ``seccompProfile: Unconfined`` mirror vLLM's reference
+        # docker-run for ROCm (``--cap-add=SYS_PTRACE
+        # --security-opt=seccomp=unconfined``). Without privileged,
+        # opening /dev/kfd inside the pod returns "Operation not
+        # permitted" even when the file is mounted, the user is in
+        # the render group, and the file is mode 0660. This is
+        # standard for ROCm in kubernetes — the AMD device plugin
+        # also runs privileged.
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - SYS_PTRACE
+          seccompProfile:
+            type: Unconfined
+        {{- end }}
       volumes:
       - name: model-cache
         emptyDir:
-          sizeLimit: 10Gi
+          # Inference services that pull HF weights (vllm_llm_student
+          # @ ~10 GiB, vllm_colpali @ ~5.5 GiB, vllm_asr @ ~3 GiB) blow
+          # past a 10 GiB sizeLimit on first launch and the pod gets
+          # Evicted with "Usage of EmptyDir volume model-cache exceeds
+          # the limit". Per-service override via ``modelCacheSize``;
+          # default at 32 GiB covers the largest current model with
+          # headroom for tokenizer/processor metadata HF caches.
+          sizeLimit: {{ default "32Gi" $cfg.modelCacheSize }}
+      {{- if eq $device "rocm" }}
+      - name: kfd
+        hostPath:
+          path: /dev/kfd
+      - name: dri
+        hostPath:
+          path: /dev/dri
+      # tmpfs-backed /dev/shm sized like the vLLM reference run's
+      # ``--shm-size 16G``. Per-service override via
+      # ``inference.<svc>.shmSize``. Actual memory only fills up to
+      # the cap; emptyDir Memory medium counts against the pod's
+      # memory limit so we keep the limit in sync downstream.
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: {{ default "16Gi" $cfg.shmSize }}
+      {{- end }}
       {{- /*
            nodeSelector + tolerations: when device requires a GPU, inject
            the standard discovery key + NoSchedule toleration; merge any

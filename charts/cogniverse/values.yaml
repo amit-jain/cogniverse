@@ -655,24 +655,43 @@ inference:
       tag: latest
       pullPolicy: IfNotPresent
     imagesByDevice: {}
+    # vLLM 0.20+ retired the ``--task token_embed`` flag in favour of
+    # ``--runner pooling --convert embed`` (runner picks the model
+    # runner; convert reshapes the pooled output into per-token
+    # embeddings — exactly what ColPali multi-vector retrieval needs).
+    # Older vLLM still accepted ``--task``; keeping the new flags is
+    # forward-compatible.
     extraArgs:
       - "--max-model-len"
       - "4096"
-      - "--task"
-      - "token_embed"
+      - "--runner"
+      - "pooling"
+      - "--convert"
+      - "embed"
+    # ``VLLM_CPU_KVCACHE_SPACE`` (GiB) is the CPU equivalent of
+    # ``--gpu-memory-utilization``: it sets the absolute size of the
+    # KV cache instead of a fraction of node memory. The fraction
+    # path doesn't compose with cgroup limits — vLLM sees the full
+    # node memory but the pod cgroup caps the actual usable budget,
+    # so the worker pre-allocates more than the limit and OOMKills.
+    # 2 GiB KV cache + 5.5 GiB model weights + ~4 GiB activations =
+    # ~12 GiB working set; ``resources.limits.memory: 16Gi`` adds
+    # headroom for cudagraph/transient buffers.
+    kvCacheGiB: 2
     hfTokenSecret: ""              # colpali-v1.3-hf is ungated
     replicaCount: 1
     service:
       type: ClusterIP
       port: 8000
       nodePort: 29001
+    # Guaranteed QoS — see vllm_llm_student note.
     resources:
       limits:
         cpu: "4"
-        memory: "12Gi"
+        memory: "16Gi"
       requests:
-        cpu: "2"
-        memory: "8Gi"
+        cpu: "4"
+        memory: "16Gi"
     livenessProbe:
       httpGet:
         path: /health
@@ -956,9 +975,43 @@ inference:
       tag: latest
       pullPolicy: IfNotPresent
     imagesByDevice: {}
+    # ``--max-model-len`` is dropped from Gemma 4 native (262144) to
+    # 8192 because the CPU worker pre-allocates KV blocks for the
+    # full context length, and 262144 alone would blow past the cgroup
+    # limit before any cache-fraction math runs. 8192 covers every
+    # in-suite agent prompt comfortably.
+    #
+    # ``--enforce-eager`` skips torch.compile / Inductor warmup. On CPU
+    # the compilation step allocates large transient buffers that
+    # routinely push the pod past its memory limit during the
+    # "Warming up model for the compilation..." phase. Eager mode is
+    # ~10-15% slower per token but the pod doesn't OOMKill on cold
+    # start, which matters far more here.
+    #
+    # ``--limit-mm-per-prompt {"video":0,"image":0}`` tells vLLM not
+    # to reserve encoder-cache space for multimodal inputs. gemma-4-
+    # e4b-it is a vision-language model, so the warmup pass profiles
+    # the largest video the encoder can ingest (default budget grows
+    # with video frames × patches × bf16 — easily 30+ GiB transient).
+    # The runtime only exercises chat-completions on text, so we
+    # disable multimodal capacity entirely. ``--max-num-seqs 1`` keeps
+    # batched-prefill memory at single-request size; the runtime
+    # serializes generation requests so >1 buys nothing.
     extraArgs:
       - "--max-model-len"
-      - "262144"
+      - "8192"
+      - "--enforce-eager"
+      - "--max-num-seqs"
+      - "1"
+      - "--limit-mm-per-prompt"
+      - '{"video":0,"image":0}'
+    # See vllm_colpali kvCacheGiB note. Gemma 4 E4B at bfloat16 is
+    # ~9.6 GiB of weights; 4 GiB KV cache + ~6 GiB activations +
+    # ~4 GiB transient buffers (load-time HF cache copies, NCCL/UCX
+    # init, dynamic compilation) = ~24 GiB peak. The 24 GiB limit
+    # was clipping the loading phase intermittently — 32 GiB drops
+    # the OOMKill rate to zero for repeated cold starts.
+    kvCacheGiB: 4
     # Gemma 4 is gated on HuggingFace; create a Secret named hf-token
     # with key HF_TOKEN before deploying.
     hfTokenSecret: "hf-token"
@@ -967,13 +1020,27 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29010
+    # Guaranteed QoS — see vllm_colpali note. gemma-4-e4b-it is the
+    # runtime's primary LLM and we cannot afford to lose it mid-test.
+    #
+    # Why 64 GiB: gemma-4-e4b-it ships float32 checkpoints
+    # (~14.9 GiB on disk). vLLM holds the float32 buffer AND the
+    # converted bf16 buffer in memory simultaneously during weight
+    # loading (~22 GiB peak). The Gemma 4 model wraps the multimodal
+    # PaliGemma2 architecture which keeps the vision tower resident
+    # alongside the text decoder, adding ~8 GiB. KV cache (4 GiB),
+    # activations during eager warmup (~12 GiB at max-model-len 8192
+    # × num_layers × hidden_dim × bf16 with no compile fusion), plus
+    # ~4 GiB framework overhead = ~50 GiB peak working set. Earlier
+    # 32 GiB and 48 GiB ceilings OOMKilled mid-warmup; 64 GiB lands
+    # above the observed peak by a safe margin.
     resources:
       limits:
         cpu: "4"
-        memory: "16Gi"
+        memory: "64Gi"
       requests:
-        cpu: "2"
-        memory: "12Gi"
+        cpu: "4"
+        memory: "64Gi"
     livenessProbe:
       httpGet:
         path: /health
@@ -1015,24 +1082,36 @@ inference:
       tag: latest
       pullPolicy: IfNotPresent
     imagesByDevice: {}
+    # vLLM 0.20+ replaced ``--task transcription`` with the implicit
+    # ``--runner generate`` path — the OpenAI-compatible /v1/audio/
+    # transcriptions endpoint is registered automatically when the model
+    # is detected as a Whisper variant. Keep ``--runner generate``
+    # explicit so the runner choice is unambiguous on future versions.
     extraArgs:
-      - "--task"
-      - "transcription"
+      - "--runner"
+      - "generate"
       - "--max-model-len"
       - "448"
+    # See vllm_colpali kvCacheGiB note. Whisper-large-v3-turbo is
+    # ~3 GiB at bf16 with negligible KV cache (max-model-len 448 is
+    # tiny vs Gemma's 8192). 1 GiB cap is plenty.
+    kvCacheGiB: 1
     hfTokenSecret: ""              # whisper is ungated
     replicaCount: 1
     service:
       type: ClusterIP
       port: 8000
       nodePort: 29005
+    # Guaranteed QoS — Whisper at bf16 + dynamic activations + framework
+    # overhead works in 8 GiB on CPU. The 4 GiB default in values.yaml
+    # OOMs during weight load.
     resources:
       limits:
         cpu: "2"
-        memory: "4Gi"
+        memory: "8Gi"
       requests:
-        cpu: "500m"
-        memory: "1Gi"
+        cpu: "2"
+        memory: "8Gi"
     livenessProbe:
       httpGet:
         path: /health

@@ -291,11 +291,41 @@ class DeepResearchAgent(
 
         return sufficient, gaps, confidence
 
+    # Sized to fit the synthesis prompt inside an 8k-token model context
+    # alongside the DSPy ChainOfThought template and chat envelope.
+    _SYNTHESIS_EVIDENCE_CHAR_BUDGET = 6000
+
     async def _synthesize(self, query: str, evidence: List[Dict[str, Any]]) -> str:
-        """Synthesize evidence into a research report."""
+        """Synthesize evidence into a research report. Per-question
+        sections are truncated proportionally so every sub-question gets
+        coverage instead of late questions being dropped.
+        """
+
+        def _stringify(results: Any, char_budget: int) -> str:
+            text = (
+                "No results"
+                if results in (None, "", [], {})
+                else (results if isinstance(results, str) else repr(results))
+            )
+            if len(text) > char_budget:
+                text = text[:char_budget] + "…"
+            return text
+
+        if evidence:
+            per_question_budget = max(
+                512,
+                self._SYNTHESIS_EVIDENCE_CHAR_BUDGET // len(evidence),
+            )
+        else:
+            per_question_budget = self._SYNTHESIS_EVIDENCE_CHAR_BUDGET
+
         evidence_text = "\n\n".join(
-            f"## {e['question']}\n{e.get('results', 'No results')}" for e in evidence
+            f"## {e['question']}\n{_stringify(e.get('results'), per_question_budget)}"
+            for e in evidence
         )
+        if len(evidence_text) > self._SYNTHESIS_EVIDENCE_CHAR_BUDGET:
+            evidence_text = evidence_text[: self._SYNTHESIS_EVIDENCE_CHAR_BUDGET] + "…"
+
         result = await self.call_dspy(
             self._synthesizer,
             output_field="summary",

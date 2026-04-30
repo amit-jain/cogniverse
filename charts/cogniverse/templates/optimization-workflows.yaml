@@ -1,5 +1,15 @@
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- if .Values.argo.enabled }}
+{{- /* Workflow pods reuse the runtime image — same Dockerfile, same
+       Python venv, just different entrypoint. Resolve the image via
+       runtime's imagesByBackend so the workflow always matches the
+       runtime's torch wheel variant. Falls back to the legacy
+       runtime.image block when imagesByBackend isn't populated. */}}
+{{- $workflowBackend := default "cuda" .Values.runtime.backend }}
+{{- $workflowImage := .Values.runtime.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $workflowImage = (index .Values.runtime.imagesByBackend $workflowBackend) | default .Values.runtime.image }}
+{{- end }}
 {{- if .Values.argo.maintenance.cleanup.enabled }}
 ---
 # Daily cleanup — logs, temp files, expired memories
@@ -23,8 +33,8 @@ spec:
     templates:
     - name: cleanup
       container:
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
         command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
         args:
           - "--mode"
@@ -244,8 +254,8 @@ spec:
     templates:
     - name: generate-synthetic
       container:
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
         command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
         args:
           - "--mode"
@@ -313,8 +323,8 @@ spec:
     templates:
     - name: scheduled-distillation
       container:
-        image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
-        imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
         command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
         args:
           - "--once"

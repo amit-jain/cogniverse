@@ -180,32 +180,20 @@ class RemoteInferenceClient:
         )
     )
     def process_images_vllm(self, images: list, **kwargs) -> Dict[str, Any]:
-        """
-        Send images to a vLLM ColPaliForRetrieval endpoint via OpenAI-compat
-        /v1/embeddings. Returns per-token (multi-vector) embeddings.
+        """POST one image at a time to vLLM's ``/pooling`` endpoint and
+        return per-token multi-vector embeddings.
 
-        Payload shape matches vLLM's ColPali example:
-            {
-              "model": "<hf-model-id>",
-              "input": [
-                {"type": "image_url",
-                 "image_url": {"url": "data:image/png;base64,..."}},
-                ...
-              ],
-              "encoding_format": "float"
-            }
-
-        Response shape (OpenAI embeddings list with per-token arrays for
-        token_embed task):
-            {"data": [{"embedding": [[...128 floats...], ...]}, ...],
-             "model": "...", "usage": {...}}
+        vLLM 0.20+ doesn't register ``/v1/embeddings`` for ColPali's
+        architecture — it stays on ``/pooling`` regardless of runner
+        flags — and only the chat-style ``messages`` shape accepts
+        image_url content (the ``input`` shape fails validation).
         """
         import base64
         import io
 
         from PIL import Image
 
-        data_uris = []
+        per_image: list[np.ndarray] = []
         for img in images:
             if isinstance(img, (str, Path)):
                 with Image.open(img) as pil_img:
@@ -218,34 +206,31 @@ class RemoteInferenceClient:
                 b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
             else:
                 raise ValueError(f"Unsupported image type: {type(img)}")
-            data_uris.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
-                }
+
+            payload = {
+                "model": kwargs.get("model_name", kwargs.get("model", "")),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/png;base64,{b64}"},
+                            }
+                        ],
+                    }
+                ],
+            }
+            response = self.session.post(
+                f"{self.endpoint_url}/pooling",
+                json=payload,
+                timeout=1800,
             )
-
-        payload = {
-            "model": kwargs.get("model_name", kwargs.get("model", "")),
-            "input": data_uris,
-            "encoding_format": "float",
-        }
-
-        response = self.session.post(
-            f"{self.endpoint_url}/v1/embeddings",
-            json=payload,
-            timeout=1800,
-        )
-        response.raise_for_status()
-        result = response.json()
-
-        # vLLM token_embed returns data[i].embedding as a list of per-token
-        # vectors. Stack each example's tokens into a single ndarray; the
-        # caller batches across examples.
-        per_image = []
-        for item in result.get("data", []):
-            tokens = item.get("embedding", [])
+            response.raise_for_status()
+            result = response.json()
+            tokens = result.get("data", [{}])[0].get("data", [])
             per_image.append(np.array(tokens))
+
         embeddings = (
             per_image[0] if len(per_image) == 1 else np.array(per_image, dtype=object)
         )

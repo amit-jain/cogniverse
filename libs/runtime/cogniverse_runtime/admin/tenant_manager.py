@@ -694,26 +694,60 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
 
 
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
-    """Internal helper to delete tenant"""
-    # Get tenant
+    """Delete a tenant's schemas and metadata.
+
+    Unions schemas from the registry with schemas in the deployed Vespa
+    package (filtered by tenant suffix) so schema-only orphans from
+    interrupted cleanups are still removable. Deletes each schema via
+    its own redeploy, then drops the tenant_metadata document.
+    """
     tenant = await get_tenant_internal(tenant_full_id)
-    if not tenant:
+
+    backend = get_backend()
+    schema_manager = backend.schema_manager
+    schema_registry = schema_manager._schema_registry
+
+    base_names: set[str] = set()
+    if schema_registry is not None:
+        for info in schema_registry.get_tenant_schemas(tenant_full_id):
+            base_names.add(info.base_schema_name)
+
+    tenant_suffix = "_" + tenant_full_id.replace(":", "_")
+    try:
+        deployed_full_names = schema_manager.list_deployed_document_types(query_port=0)
+    except Exception as e:
+        deployed_full_names = []
+        logger.warning(
+            f"Vespa-side schema discovery failed for tenant "
+            f"'{tenant_full_id}' (continuing with registry-only set): {e}"
+        )
+    for full_name in deployed_full_names:
+        if full_name.endswith(tenant_suffix):
+            base_names.add(full_name[: -len(tenant_suffix)])
+
+    # Allow schema-only orphans (no tenant_metadata record) to be cleaned
+    # up — they're created by /ingestion/upload auto-deploy bypassing
+    # tenant create, and accumulate every test run without this branch.
+    if not tenant and not base_names:
         raise HTTPException(
             status_code=404, detail=f"Tenant {tenant_full_id} not found"
         )
 
-    backend = get_backend()
+    deleted_schemas: list = []
+    for base_name in sorted(base_names):
+        try:
+            full_name = schema_manager.delete_schema(tenant_full_id, base_name)
+            deleted_schemas.append(full_name)
+        except Exception as e:
+            logger.error(
+                f"Failed to delete schema '{base_name}' for "
+                f"tenant '{tenant_full_id}': {e}"
+            )
 
-    # Delete tenant schemas
-    deleted_schemas = []
-    try:
-        schemas = backend.delete_schema(schema_name=None, tenant_id=tenant_full_id)
-        deleted_schemas.extend(schemas)
-    except Exception as e:
-        logger.error(f"Failed to delete schemas for {tenant_full_id}: {e}")
-
-    # Delete tenant metadata
-    backend.delete_metadata_document(schema="tenant_metadata", doc_id=tenant_full_id)
+    if tenant:
+        backend.delete_metadata_document(
+            schema="tenant_metadata", doc_id=tenant_full_id
+        )
 
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
 

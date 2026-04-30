@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import platform
 import shutil
 import subprocess
@@ -9,7 +10,26 @@ import subprocess
 PREREQUISITES = ["docker", "kubectl", "helm"]
 CLUSTER_NAME = "cogniverse"
 NAMESPACE = "cogniverse"
-DEFAULT_PORTS = [8080, 19071, 8000, 8501, 6006, 4317, 11434, 2746]
+# Host ports k3d's loadbalancer publishes — each must match the chart's
+# service.nodePort. 28xxx/26xxx avoid collisions with common dev ports,
+# 29xxx are inference sidecars that e2e tests probe directly.
+DEFAULT_PORTS = [
+    8080,
+    19071,
+    28000,
+    28501,
+    26006,
+    4317,
+    11434,
+    2746,
+    29001,
+    29002,
+    29004,
+    29005,
+    29006,
+    29010,
+    29011,
+]
 
 
 def _get_arch() -> str:
@@ -152,6 +172,9 @@ def create_cluster(
     (e.g., 11434 when host Ollama is running).
     *workspace_path* mounts the project root into the k3d node at
     ``/cogniverse-src`` for devMode volume access.
+
+    On AMD hosts (/dev/kfd present) bind-mounts /dev/kfd and /dev/dri
+    into the k3d server so in-cluster pods can enumerate the GPU.
     """
     if ports is None:
         ports = DEFAULT_PORTS
@@ -168,6 +191,10 @@ def create_cluster(
     ]
     if workspace_path:
         cmd.extend(["--volume", f"{workspace_path}:/cogniverse-src@server:0"])
+    if os.path.exists("/dev/kfd"):
+        cmd.extend(["--volume", "/dev/kfd:/dev/kfd@server:0"])
+    if os.path.isdir("/dev/dri"):
+        cmd.extend(["--volume", "/dev/dri:/dev/dri@server:0"])
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
@@ -182,15 +209,10 @@ def delete_cluster(name: str = CLUSTER_NAME) -> None:
     )
 
 
-# Port-forward specs: (service_name, namespace, local_port, service_port)
+# Port-forward specs: (service, namespace, local_port, service_port).
+# Cogniverse services use the k3d loadbalancer; only argo (different
+# namespace, no NodePort) needs an explicit port-forward.
 PORT_FORWARD_SPECS: list[tuple[str, str, int, int]] = [
-    ("cogniverse-vespa", NAMESPACE, 8080, 8080),
-    ("cogniverse-vespa", NAMESPACE, 19071, 19071),
-    ("cogniverse-runtime", NAMESPACE, 8000, 8000),
-    ("cogniverse-dashboard", NAMESPACE, 8501, 8501),
-    ("cogniverse-phoenix", NAMESPACE, 6006, 6006),
-    ("cogniverse-phoenix", NAMESPACE, 4317, 4317),
-    ("cogniverse-llm", NAMESPACE, 11434, 11434),
     ("argo-server", "argo", 2746, 2746),
 ]
 

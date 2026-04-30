@@ -21,9 +21,11 @@ RUNTIME_URL = "http://localhost:28000"
 
 
 def _runtime_available() -> bool:
+    # /health/live is cheap; /health does backend + registry lookups and
+    # can block under LLM load, producing false-negative skips.
     try:
-        return httpx.get(f"{RUNTIME_URL}/health", timeout=5.0).status_code == 200
-    except Exception:
+        return httpx.get(f"{RUNTIME_URL}/health/live", timeout=10.0).status_code == 200
+    except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
         return False
 
 

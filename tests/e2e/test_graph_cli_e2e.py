@@ -245,10 +245,12 @@ class TestMultimodalGraphExtraction:
             pytest.skip(f"Sample video missing at {video_path}")
 
         tenant = _unique_tenant()
-        with httpx.Client(timeout=600.0) as client:
+        with httpx.Client(timeout=1800.0) as client:
             with open(video_path, "rb") as f:
+                # wait=true is needed: graph_nodes/graph_edges are only
+                # populated in the synchronous response shape.
                 resp = client.post(
-                    f"{RUNTIME}/ingestion/upload",
+                    f"{RUNTIME}/ingestion/upload?wait=true&wait_timeout=900",
                     files={"file": (video_path.name, f, "video/mp4")},
                     data={
                         "profile": "video_colpali_smol500_mv_frame",

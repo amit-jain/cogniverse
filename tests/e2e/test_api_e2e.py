@@ -1268,15 +1268,14 @@ class TestVideoIngestionAndSearch:
     def test_upload_video_and_search(self, real_video_path):
         """Upload a sample video, ingest it through the ColPali pipeline,
         then verify it surfaces in search.
-
-        CPU-only ColPali inference is slow: each keyframe takes ~30-60s
-        through colsmol-500m. The 1800s timeout reflects the real
-        pipeline cost; tighter budgets just mask successes as timeouts.
         """
         with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:
             with open(real_video_path, "rb") as f:
+                # wait=true keeps the synchronous response shape
+                # (status, chunks_created, ...); the default async
+                # path returns only ingest_id + state=queued.
                 resp = client.post(
-                    "/ingestion/upload",
+                    "/ingestion/upload?wait=true&wait_timeout=900",
                     files={"file": (real_video_path.name, f, "video/mp4")},
                     data={
                         "profile": "video_colpali_smol500_mv_frame",
@@ -1332,7 +1331,7 @@ class TestImageIngestionAndSearch:
 
             with open(real_image_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload",
+                    "/ingestion/upload?wait=true&wait_timeout=600",
                     files={"file": (real_image_path.name, f, "image/jpeg")},
                     data={
                         "profile": "image_colpali_mv",
@@ -1383,7 +1382,7 @@ class TestAudioIngestionAndSearch:
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(extracted_audio_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload",
+                    "/ingestion/upload?wait=true&wait_timeout=600",
                     files={"file": (extracted_audio_path.name, f, "audio/wav")},
                     data={
                         "profile": "audio_clap_semantic",
@@ -1426,7 +1425,7 @@ class TestPDFIngestionAndSearch:
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_pdf_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload",
+                    "/ingestion/upload?wait=true&wait_timeout=600",
                     files={"file": (real_pdf_path.name, f, "application/pdf")},
                     data={
                         "profile": "document_text_semantic",
@@ -1470,7 +1469,7 @@ class TestDocumentIngestionAndSearch:
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload",
+                    "/ingestion/upload?wait=true&wait_timeout=600",
                     files={"file": (real_document_path.name, f, "text/markdown")},
                     data={
                         "profile": "document_text_semantic",

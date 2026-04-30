@@ -535,16 +535,19 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
     def __init__(
         self,
         colbert_model: str = "lightonai/LateOn",
+        inference_service: str | None = None,
     ):
         self.colbert_model = colbert_model
+        self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
-        return {
-            "embedding": {
-                "type": "document_text",
-                "colbert_model": self.colbert_model,
-            }
+        config: dict[str, Any] = {
+            "type": "document_text",
+            "colbert_model": self.colbert_model,
         }
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"embedding": config}
 
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any

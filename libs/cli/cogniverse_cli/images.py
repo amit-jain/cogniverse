@@ -104,7 +104,8 @@ def build_images(
     workspace_builds = [
         (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
         (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
-        (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate", []),
+        # Pass TORCH_BACKEND so the pylate sidecar wheel matches the host.
+        (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate", backend_arg),
     ]
     built: list[str] = []
     for tag, dockerfile, context, extra_args in workspace_builds:
@@ -128,29 +129,62 @@ def import_images(cluster_name: str, tags: list[str]) -> None:
 
 
 def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[str]:
-    """Read third-party image references from Helm values file."""
+    """Read third-party image references from a Helm values file.
+
+    Walks top-level vespa/phoenix/llm.builtin and every enabled
+    ``inference.<svc>`` block including device-specific overrides.
+    """
     with open(values_file) as f:
         values = yaml.safe_load(f) or {}
 
-    images = []
+    images: list[str] = []
 
-    # Vespa
-    vespa = values.get("vespa", {}).get("image", {})
-    if vespa.get("repository"):
-        images.append(f"{vespa['repository']}:{vespa.get('tag', 'latest')}")
+    def _add_image(image_block: object) -> None:
+        if not isinstance(image_block, dict):
+            return
+        # pullPolicy: Never means a locally-built image — skip (it isn't
+        # in any registry).
+        if image_block.get("pullPolicy") == "Never":
+            return
+        repo = image_block.get("repository")
+        if repo:
+            tag = image_block.get("tag", "latest")
+            images.append(f"{repo}:{tag}")
 
-    # Phoenix
-    phoenix = values.get("phoenix", {}).get("image", {})
-    if phoenix.get("repository"):
-        images.append(f"{phoenix['repository']}:{phoenix.get('tag', 'latest')}")
+    _add_image(values.get("vespa", {}).get("image"))
+    _add_image(values.get("phoenix", {}).get("image"))
 
-    # LLM builtin (only if not using external)
     if not skip_llm:
-        llm = values.get("llm", {}).get("builtin", {}).get("image", {})
-        if llm.get("repository"):
-            images.append(f"{llm['repository']}:{llm.get('tag', 'latest')}")
+        _add_image(values.get("llm", {}).get("builtin", {}).get("image"))
 
-    return images
+    # Mirror the chart's image-resolution order:
+    # imagesByDevice[device] -> image -> pylate.imagesByDevice -> pylate.image
+    inference = values.get("inference", {}) or {}
+    for svc_cfg in inference.values():
+        if not isinstance(svc_cfg, dict):
+            continue
+        if svc_cfg.get("enabled") is False:
+            continue
+        device = svc_cfg.get("device")
+        by_device = svc_cfg.get("imagesByDevice") or {}
+        if device and device in by_device:
+            _add_image(by_device.get(device))
+        _add_image(svc_cfg.get("image"))
+        pylate = svc_cfg.get("pylate") or {}
+        if isinstance(pylate, dict):
+            pylate_by_device = pylate.get("imagesByDevice") or {}
+            if device and device in pylate_by_device:
+                _add_image(pylate_by_device.get(device))
+            _add_image(pylate.get("image"))
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for img in images:
+        if img in seen:
+            continue
+        seen.add(img)
+        unique.append(img)
+    return unique
 
 
 def pull_and_import_third_party(
