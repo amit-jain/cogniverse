@@ -365,33 +365,271 @@ class TestSchemaRegistryDeletion:
         backend.schema_registry.deploy_schema(
             peer_tenant, "video_colpali_smol500_mv_frame"
         )
+
+        # Capture the peer's registry record BEFORE we tombstone it so the
+        # finally-block can re-register and clean up properly. Without
+        # this the peer orphan blocks every later test in the module.
+        peer_info = backend.schema_registry.get_tenant_schemas(peer_tenant)[0]
         backend.schema_registry.unregister_schema(
             peer_tenant, "video_colpali_smol500_mv_frame"
         )
 
-        deployed_before = backend.schema_manager.list_deployed_document_types(
-            query_port=0
-        )
-        assert a_full in deployed_before, "setup failure — tenant A schema missing"
-        assert b_full in deployed_before, "setup failure — peer orphan missing"
-
         try:
-            backend.schema_manager.delete_tenant_schemas("victim_a")
-        except BackendDeploymentError:
+            deployed_before = backend.schema_manager.list_deployed_document_types(
+                query_port=0
+            )
+            assert a_full in deployed_before, "setup failure — tenant A schema missing"
+            assert b_full in deployed_before, "setup failure — peer orphan missing"
+
+            try:
+                backend.schema_manager.delete_tenant_schemas("victim_a")
+            except BackendDeploymentError:
+                deployed_after = backend.schema_manager.list_deployed_document_types(
+                    query_port=0
+                )
+                assert b_full in deployed_after, (
+                    f"peer orphan {b_full!r} dropped despite refused delete"
+                )
+                return
+
             deployed_after = backend.schema_manager.list_deployed_document_types(
                 query_port=0
             )
-            assert b_full in deployed_after, (
-                f"peer orphan {b_full!r} dropped despite refused delete"
+            assert a_full not in deployed_after, (
+                f"tenant A schema {a_full!r} still in Vespa"
             )
-            return
+            assert b_full in deployed_after, (
+                f"peer orphan {b_full!r} silently dropped when deleting tenant A"
+            )
+        finally:
+            # Re-register peer_tenant in the registry, then delete it via
+            # the bulk path so both Vespa and the registry are clean.
+            try:
+                backend.schema_registry.register_schema(
+                    tenant_id=peer_tenant,
+                    base_schema_name=peer_info.base_schema_name,
+                    full_schema_name=peer_info.full_schema_name,
+                    schema_definition=peer_info.schema_definition,
+                    config=peer_info.config,
+                )
+                backend.schema_manager.delete_tenant_schemas(peer_tenant)
+            except Exception as cleanup_exc:
+                # Surface but don't mask the test result.
+                logger.warning(f"peer orphan cleanup failed: {cleanup_exc}")
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestSharedSchemaRegistry:
+    """The process-wide ``_shared_schema_registry`` singleton is the
+    coupling that lets two backends in one process see each other's
+    ``register_schema`` writes. Without this round-trip test the wiring
+    is constructor-acceptance only — backends accept the parameter but
+    nothing proves they actually share state.
+    """
+
+    def test_two_ingestion_backends_share_registry(
+        self, vespa_instance, temp_config_manager, schema_loader
+    ):
+        """Two ingestion backends for different tenants share one registry.
+
+        Reset the singleton, build two ingestion backends keyed by
+        different tenants, register a schema via backend A, and assert
+        backend B's ``schema_registry`` reflects it without any
+        cross-backend reload.
+        """
+        BackendRegistry._shared_schema_registry = None
+        BackendRegistry._backend_instances.clear()
+
+        registry = BackendRegistry.get_instance()
+        config = {
+            "backend": {
+                "url": "http://localhost",
+                "config_port": vespa_instance["config_port"],
+                "port": vespa_instance["http_port"],
+            }
+        }
+        backend_a = registry.get_ingestion_backend(
+            name="vespa",
+            tenant_id="shared_a",
+            config=config,
+            config_manager=temp_config_manager,
+            schema_loader=schema_loader,
+        )
+        backend_b = registry.get_ingestion_backend(
+            name="vespa",
+            tenant_id="shared_b",
+            config=config,
+            config_manager=temp_config_manager,
+            schema_loader=schema_loader,
+        )
+
+        assert backend_a is not backend_b, (
+            "ingestion backends are tenant-keyed; same instance defeats the test"
+        )
+        assert backend_a.schema_registry is backend_b.schema_registry, (
+            "shared singleton broken — backends got two distinct registries"
+        )
+
+        backend_a.schema_registry.deploy_schema(
+            "shared_a", "video_colpali_smol500_mv_frame"
+        )
+        peer_view = backend_b.schema_registry.get_tenant_schemas("shared_a")
+        assert peer_view, (
+            "peer backend's schema_registry doesn't see schemas registered "
+            "via backend_a — singleton sharing is broken or each "
+            "registry holds its own in-memory cache."
+        )
+        assert peer_view[0].base_schema_name == "video_colpali_smol500_mv_frame"
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestDeleteSchemaDirect:
+    """Direct coverage for the per-schema ``delete_schema`` entry point on
+    VespaSchemaManager. The bulk path ``delete_tenant_schemas`` exercises it
+    transitively, but the input-validation guards (system schema list,
+    tenant suffix typo) need explicit coverage so a future refactor can't
+    quietly weaken them.
+    """
+
+    def test_delete_schema_refuses_protected_metadata(self, get_backend):
+        """``tenant_metadata`` and the other system schemas must not be
+        droppable via the per-tenant entry point.
+        """
+        backend = get_backend("guard_protected")
+        with pytest.raises(ValueError, match="Protected schemas"):
+            backend.schema_manager.delete_schema("guard_protected", "tenant_metadata")
+
+    def test_delete_schema_refuses_empty_inputs(self, get_backend):
+        backend = get_backend("guard_empty")
+        with pytest.raises(ValueError, match="tenant_id is required"):
+            backend.schema_manager.delete_schema("", "video_colpali_smol500_mv_frame")
+        with pytest.raises(ValueError, match="base_schema_name is required"):
+            backend.schema_manager.delete_schema("guard_empty", "")
+
+    def test_delete_schema_round_trip(self, get_backend):
+        """Deploy → delete_schema → schema gone from Vespa AND tombstoned."""
+        backend = get_backend("single_delete")
+        backend.schema_registry.deploy_schema(
+            "single_delete", "video_colpali_smol500_mv_frame"
+        )
+        full_name = "video_colpali_smol500_mv_frame_single_delete"
+
+        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        assert full_name in deployed
+
+        removed = backend.schema_manager.delete_schema(
+            "single_delete", "video_colpali_smol500_mv_frame"
+        )
+        assert removed == full_name
 
         deployed_after = backend.schema_manager.list_deployed_document_types(
             query_port=0
         )
-        assert a_full not in deployed_after, (
-            f"tenant A schema {a_full!r} still in Vespa"
+        assert full_name not in deployed_after
+        assert backend.schema_registry.get_tenant_schemas("single_delete") == []
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+class TestDeleteFailureSemantics:
+    """The reordered delete path promises two invariants:
+
+    1. ``Vespa redeploy fails → registry untouched.`` The whole point of
+       deploying Vespa first and tombstoning the registry second.
+    2. ``Vespa redeploy succeeds, registry tombstone fails → Vespa is
+       authoritative; failure is logged.`` The asymmetric rollback
+       trade-off the docstring acknowledges.
+
+    Both paths are failure-injection tests; without them the docstring
+    is aspirational.
+    """
+
+    def test_vespa_failure_leaves_registry_untouched(self, get_backend, monkeypatch):
+        """Inject a ``_deploy_package`` failure during delete_tenant_schemas.
+
+        After the failure the registry must STILL have the schema entry —
+        if it doesn't, the next delete retry would observe an empty
+        registry, redeploy successfully, and Vespa would still hold the
+        schema as an orphan. That's the bug the reorder was supposed to
+        eliminate.
+        """
+        backend = get_backend("vespa_fail")
+        backend.schema_registry.deploy_schema(
+            "vespa_fail", "video_colpali_smol500_mv_frame"
         )
-        assert b_full in deployed_after, (
-            f"peer orphan {b_full!r} silently dropped when deleting tenant A"
+        assert backend.schema_registry.get_tenant_schemas("vespa_fail")
+
+        original = backend.schema_manager._deploy_package
+
+        def failing_deploy(*args, **kwargs):
+            raise RuntimeError("simulated Vespa redeploy failure")
+
+        monkeypatch.setattr(backend.schema_manager, "_deploy_package", failing_deploy)
+
+        with pytest.raises(RuntimeError, match="simulated Vespa redeploy failure"):
+            backend.schema_manager.delete_tenant_schemas("vespa_fail")
+
+        monkeypatch.setattr(backend.schema_manager, "_deploy_package", original)
+
+        assert backend.schema_registry.get_tenant_schemas("vespa_fail"), (
+            "registry was tombstoned despite Vespa redeploy failure — "
+            "ordering invariant violated"
         )
+
+        # Cleanup: properly delete now that the failure is uninjected so
+        # the schema doesn't pollute later module-scoped tests.
+        backend.schema_manager.delete_tenant_schemas("vespa_fail")
+
+    def test_registry_tombstone_failure_does_not_block_vespa_removal(
+        self, get_backend, monkeypatch
+    ):
+        """When ``unregister_schema`` fails AFTER Vespa removal, the
+        schema must still be gone from Vespa (Vespa is authoritative).
+
+        The asymmetric failure mode the docstring acknowledges: Vespa
+        is the source of truth; a registry-side write failure is logged
+        and recovered later.
+        """
+        backend = get_backend("tombstone_fail")
+        backend.schema_registry.deploy_schema(
+            "tombstone_fail", "video_colpali_smol500_mv_frame"
+        )
+        full_name = "video_colpali_smol500_mv_frame_tombstone_fail"
+        assert full_name in backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+
+        original_unregister = backend.schema_registry.unregister_schema
+
+        def failing_unregister(*args, **kwargs):
+            raise RuntimeError("simulated registry tombstone failure")
+
+        monkeypatch.setattr(
+            backend.schema_registry, "unregister_schema", failing_unregister
+        )
+
+        backend.schema_manager.delete_tenant_schemas("tombstone_fail")
+
+        monkeypatch.setattr(
+            backend.schema_registry, "unregister_schema", original_unregister
+        )
+
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name not in deployed_after, (
+            "Vespa redeploy must have removed the schema even though the "
+            "registry tombstone failed; Vespa is authoritative."
+        )
+
+        # Reconcile so the lingering registry entry doesn't pollute
+        # later tests. The tombstone failure was simulated; manually
+        # clean it up.
+        try:
+            backend.schema_registry.unregister_schema(
+                "tombstone_fail", "video_colpali_smol500_mv_frame"
+            )
+        except Exception:
+            pass

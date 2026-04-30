@@ -384,6 +384,53 @@ class TestTenantManagerAPI:
         get_response = test_client.get("/admin/tenants/deltenant:test")
         assert get_response.status_code == 404
 
+    def test_delete_schema_only_tenant_via_router(self, test_client):
+        """DELETE /admin/tenants/{id} succeeds for tenants that have a
+        schema deployed but no ``tenant_metadata`` record.
+
+        ``/ingestion/upload`` auto-deploys the per-tenant schema without
+        going through ``POST /admin/tenants``, leaving a tenant with
+        Vespa state but no metadata document. The pre-fix early 404 in
+        ``delete_tenant_internal`` rejected DELETE for these tenants and
+        the e2e session-start orphan reconciliation could not clean them
+        up. This is the router-level coverage of the loosened branch
+        — the integration test file covers the schema-manager layer.
+        """
+        from cogniverse_runtime.admin import tenant_manager
+
+        backend = tenant_manager.backend
+        assert backend is not None, "test_client fixture must wire backend"
+
+        tid = "schemaonly:test"
+        backend.schema_registry.deploy_schema(tid, "video_colpali_smol500_mv_frame")
+        full_name = "video_colpali_smol500_mv_frame_" + tid.replace(":", "_")
+        deployed = backend.schema_manager.list_deployed_document_types(query_port=0)
+        assert full_name in deployed, "setup failure — schema not deployed"
+
+        get_resp = test_client.get(f"/admin/tenants/{tid}")
+        assert get_resp.status_code == 404, (
+            "tenant_metadata exists for a tenant the test bypassed; setup invalid"
+        )
+
+        delete_resp = test_client.delete(f"/admin/tenants/{tid}")
+        assert delete_resp.status_code == 200, (
+            f"DELETE refused schema-only tenant: {delete_resp.status_code} "
+            f"{delete_resp.text}"
+        )
+        body = delete_resp.json()
+        assert body["status"] == "deleted"
+        assert body["schemas_deleted"] >= 1
+        assert any(
+            name.endswith(tid.replace(":", "_")) for name in body["deleted_schemas"]
+        )
+
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert full_name not in deployed_after, (
+            "schema still in Vespa after schema-only-tenant DELETE"
+        )
+
     def test_delete_organization(self, test_client):
         """Test deleting organization and all its tenants"""
         # Create org with tenants
