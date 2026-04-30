@@ -16,9 +16,13 @@ from vespa.package import (
     SecondPhaseRanking,
 )
 
-# Process-wide lock serialising prepare+activate against Vespa's
-# config-server session pipeline. Concurrent deploys that race the
-# activate step return 409 ACTIVATION_CONFLICT.
+# Intra-process lock serialising prepare+activate so threads in the
+# same Python process don't race each other's deploys. Cross-process /
+# cross-pod races against Vespa's session pipeline still happen and
+# are caught by the retry-on-409 loop in ``_deploy_package`` — the
+# lock alone does NOT make the deploy cluster-safe, the retry does.
+# Keeping the lock avoids cheap self-inflicted 409s on multi-threaded
+# uvicorn workers without precluding the cluster-wide retry path.
 _DEPLOY_LOCK = threading.Lock()
 
 
@@ -1242,6 +1246,11 @@ class VespaSchemaManager:
             app_zip = app_package.to_zip()
             import time as _time
 
+            # Retry on any 409 from prepareandactivate. Vespa's session
+            # pipeline returns 409 for several distinct conditions —
+            # ACTIVATION_CONFLICT (activate stage), session-busy (prepare
+            # stage), and others — so matching on the status code rather
+            # than a specific message catches every cross-process race.
             backoff = 0.5
             max_attempts = 5
             response = None
@@ -1255,15 +1264,12 @@ class VespaSchemaManager:
                     )
                 if response.status_code == 200:
                     break
-                body_text = response.content.decode("utf-8", errors="replace")
-                conflict = (
-                    response.status_code == 409 and "ACTIVATION_CONFLICT" in body_text
-                )
-                if not conflict or attempt == max_attempts - 1:
+                if response.status_code != 409 or attempt == max_attempts - 1:
                     break
+                body_text = response.content.decode("utf-8", errors="replace")
                 self._logger.warning(
-                    f"Vespa ACTIVATION_CONFLICT on attempt {attempt + 1}/"
-                    f"{max_attempts}; retrying after {backoff:.1f}s"
+                    f"Vespa deploy 409 on attempt {attempt + 1}/{max_attempts}; "
+                    f"retrying after {backoff:.1f}s. Body: {body_text[:200]}"
                 )
                 _time.sleep(backoff)
                 backoff = min(backoff * 2, 4.0)
