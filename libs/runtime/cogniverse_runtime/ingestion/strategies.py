@@ -133,12 +133,13 @@ class SingleVectorSegmentationStrategy(BaseStrategy):
 class AudioTranscriptionStrategy(BaseStrategy):
     """Transcribe audio from video.
 
-    When ``inference_service`` is set (e.g. ``"whisper"``), the
-    AudioProcessor runs in remote mode: it POSTs the audio bytes to the
-    sidecar pod's ``/v1/transcribe`` endpoint instead of loading a local
-    Whisper model. The processor stays env-agnostic — ProcessorManager
-    resolves the service name to a URL and substitutes ``endpoint`` into
-    the processor config before construction.
+    When ``inference_service`` is set (e.g. ``"vllm_asr"``), the
+    AudioProcessor runs in remote mode: it POSTs the audio multipart
+    to the vLLM Whisper pod's ``/v1/audio/transcriptions`` endpoint
+    instead of loading a local Whisper model. The processor stays
+    env-agnostic — ProcessorManager resolves the service name to a URL
+    and substitutes ``endpoint`` into the processor config before
+    construction.
     """
 
     def __init__(

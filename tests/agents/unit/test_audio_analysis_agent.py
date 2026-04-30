@@ -153,6 +153,88 @@ class TestAudioAnalysisAgent:
         assert result.confidence == 1.0
 
     @pytest.mark.asyncio
+    @patch("requests.post")
+    async def test_transcribe_audio_via_vllm_sidecar(self, mock_post, tmp_path):
+        """Sidecar path POSTs multipart to vLLM /v1/audio/transcriptions.
+
+        Pins the agent against the vLLM Whisper contract — the chart-deployed
+        endpoint. The legacy deploy/whisper path served /v1/transcribe with
+        a JSON ``audio_b64`` body and was removed when ASR migrated to
+        vLLM; this test would have caught that the agent was still using
+        the dead endpoint.
+        """
+        clip = tmp_path / "audio.wav"
+        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "text": "hello world",
+            "language": "en",
+            "duration": 1.23,
+            "segments": [
+                {"start": 0.0, "end": 1.0, "text": "hello"},
+                {"start": 1.0, "end": 1.23, "text": "world"},
+            ],
+        }
+        mock_post.return_value = mock_response
+
+        self.agent._whisper_endpoint = "http://vllm-asr:8000"
+        self.agent._whisper_model = "openai/whisper-large-v3-turbo"
+        self.agent._locator = MagicMock()
+        self.agent._locator.localize.return_value = clip
+        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+
+        result = await self.agent.transcribe_audio(f"file://{clip}")
+
+        assert mock_post.call_count == 1
+        call = mock_post.call_args
+        assert call.args[0] == "http://vllm-asr:8000/v1/audio/transcriptions"
+        assert "files" in call.kwargs and "file" in call.kwargs["files"]
+        assert call.kwargs["data"]["model"] == "openai/whisper-large-v3-turbo"
+
+        assert result.text == "hello world"
+        assert result.language == "en"
+        assert len(result.segments) == 2
+        assert result.segments[0]["start"] == 0.0
+        assert result.segments[0]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    @patch("requests.post")
+    async def test_transcribe_audio_sidecar_empty_segments_surfaced(
+        self, mock_post, tmp_path
+    ):
+        """Empty segments from vLLM are returned as-is, not synthesised.
+
+        vLLM may return ``segments=[]`` for very short audio. Synthesising a
+        single segment to "always have something" hides the producer's
+        actual output from downstream consumers; the test pins the surface-
+        the-truth behaviour.
+        """
+        clip = tmp_path / "audio.wav"
+        clip.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "text": "ok",
+            "language": "en",
+            "duration": 0.5,
+            "segments": [],
+        }
+        mock_post.return_value = mock_response
+
+        self.agent._whisper_endpoint = "http://vllm-asr:8000"
+        self.agent._whisper_model = "openai/whisper-large-v3-turbo"
+        self.agent._locator = MagicMock()
+        self.agent._locator.localize.return_value = clip
+        self.agent._locator.to_canonical_uri.return_value = f"file://{clip}"
+
+        result = await self.agent.transcribe_audio(f"file://{clip}")
+        assert result.text == "ok"
+        assert result.segments == []
+
+    @pytest.mark.asyncio
     async def test_detect_audio_events(self):
         """Test audio event detection (placeholder)"""
         # This is a placeholder method

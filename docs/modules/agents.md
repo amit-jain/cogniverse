@@ -2251,15 +2251,17 @@ class AudioAnalysisAgent(A2AAgent[AudioSearchInput, AudioSearchOutput, AudioAnal
 **Transcription (`transcribe_audio`):**
 
 `transcribe_audio(audio_url)` resolves the URL through `MediaLocator` to a
-local path, reads the bytes, and POSTs them base64-encoded to
-`{whisper_endpoint}/v1/transcribe`. The response is mapped to a
+local path and POSTs the file multipart to
+`{whisper_endpoint}/v1/audio/transcriptions` (OpenAI-compatible vLLM
+Whisper). The response is mapped to a
 `TranscriptionResult(text, segments, language, confidence)`.
 
-`whisper_endpoint` is a required field on `AudioAnalysisDeps`. How it
-gets populated, which engine the sidecar runs, and how the pod is
-deployed are deployment concerns — see
+`whisper_endpoint` and `whisper_model` are fields on `AudioAnalysisDeps`.
+The runtime populates `whisper_endpoint` from
+`system_config.inference_service_urls['vllm_asr']`. How the pod is
+deployed and which model it serves are chart concerns — see
 [`docs/operations/setup-installation.md`](../operations/setup-installation.md)
-and the chart's `whisper` block in `charts/cogniverse/values.yaml`.
+and the `inference.vllm_asr` block in `charts/cogniverse/values.yaml`.
 
 ---
 

@@ -1,27 +1,19 @@
-"""End-to-end test: AudioAnalysisAgent.transcribe_audio against the real
-deploy/whisper sidecar.
+"""End-to-end test: AudioAnalysisAgent.transcribe_audio against a real
+vLLM Whisper pod.
 
-Exercises the full chain that runs in production::
+Currently skipped — the legacy deploy/whisper sidecar (which served
+``/v1/transcribe`` with a JSON ``audio_b64`` body) was removed when ASR
+migrated to the vLLM ``/v1/audio/transcriptions`` multipart contract.
+The chain to exercise is::
 
     audio_url
         → AudioAnalysisAgent._get_audio_path           (MediaLocator)
         → AudioAnalysisAgent._transcribe_via_sidecar   (HTTP POST)
-        → deploy/whisper /v1/transcribe                (real faster-whisper)
+        → vllm-asr /v1/audio/transcriptions            (real Whisper)
         → TranscriptionResult
 
-The fixture builds and runs the ``cogniverse/whisper:inttest`` image
-(``deploy/whisper/Dockerfile``) on a free port with ``MODEL_NAME=tiny`` so
-first-run download stays small. ``HF_HOME`` is mounted to a named docker
-volume so subsequent test runs reuse the cached weights.
-
-Companion to ``test_audio_agent_source_url.py`` (covers ``search_audio`` →
-``AudioResult.audio_url`` round-trip via Vespa). Between the two, the
-production chain ``search_audio → AudioResult.audio_url →
-transcribe_audio(audio_url) → /v1/transcribe → TranscriptionResult`` is
-fully covered without mocking any service boundary.
-
-Mirrors the docker-fixture pattern in
-``tests/ingestion/integration/test_pylate_sidecar_docker.py``.
+Re-enabling needs a docker fixture that runs ``vllm/vllm-openai`` with
+``--task transcription`` and an OpenAI Whisper model.
 """
 
 from __future__ import annotations
@@ -213,6 +205,4 @@ class TestTranscribeAudioE2E:
             assert "start" in seg and "end" in seg and "text" in seg, (
                 f"segment missing canonical fields: {seg!r}"
             )
-            assert seg["end"] >= seg["start"], (
-                f"segment end before start: {seg!r}"
-            )
+            assert seg["end"] >= seg["start"], f"segment end before start: {seg!r}"

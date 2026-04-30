@@ -400,7 +400,7 @@ flowchart TB
 | **Phoenix Web** | 6006 | Dashboard & experiments |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
-| **Whisper sidecar** | 7998 | ASR transcription (`/v1/transcribe`, `/health`) |
+| **vLLM ASR (Whisper)** | 29005 | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
 
 ---
 

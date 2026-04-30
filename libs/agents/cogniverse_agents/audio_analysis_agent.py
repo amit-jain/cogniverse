@@ -5,7 +5,6 @@ Uses existing AudioTranscriber for transcription and connects to Vespa
 for real audio search. Supports both transcript-based and acoustic similarity search.
 """
 
-import base64
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,6 +91,14 @@ class AudioAnalysisDeps(AgentDeps):
             "Whisper in-process — mirrors the AudioProcessor remote "
             "pattern from the ingestion pipeline. Read by the runtime "
             "from system_config.inference_service_urls['vllm_asr']."
+        ),
+    )
+    whisper_model: str = PydanticField(
+        "openai/whisper-large-v3-turbo",
+        description=(
+            "Model id sent in the /v1/audio/transcriptions request. Must "
+            "match the model the vLLM ASR pod is serving — the chart's "
+            "default is openai/whisper-large-v3-turbo."
         ),
     )
 
@@ -196,6 +203,7 @@ class AudioAnalysisAgent(
         self._vespa_endpoint = deps.vespa_endpoint
         self._whisper_model_size = deps.whisper_model_size
         self._whisper_endpoint = deps.whisper_endpoint
+        self._whisper_model = deps.whisper_model
 
         # Initialize components (lazy loading)
         self._audio_transcriber = None
@@ -276,9 +284,10 @@ class AudioAnalysisAgent(
         Transcribe audio using Whisper.
 
         When ``whisper_endpoint`` is set on the agent's deps, the audio is
-        POSTed to ``{endpoint}/v1/transcribe`` (the deploy/whisper sidecar
-        contract). Otherwise the in-process AudioTranscriber runs Whisper
-        locally — fine for dev/test on hosts where docker isn't available.
+        POSTed multipart to ``{endpoint}/v1/audio/transcriptions`` (the
+        OpenAI-compatible vLLM Whisper contract). Otherwise the in-process
+        AudioTranscriber runs Whisper locally — fine for dev/test on hosts
+        where the cluster ASR pod is unavailable.
         """
         logger.info(f"🎤 Transcribing audio: {audio_url}")
 
@@ -304,24 +313,30 @@ class AudioAnalysisAgent(
     def _transcribe_via_sidecar(
         self, audio_path: Path, language: Optional[str]
     ) -> Dict[str, Any]:
-        """POST audio bytes to the whisper sidecar's ``/v1/transcribe``.
+        """POST audio multipart to vLLM ``/v1/audio/transcriptions``.
 
         Returns a dict in the same shape the in-process AudioTranscriber
         produces (``full_text``, ``segments``, ``language``) so the
-        downstream TranscriptionResult mapping doesn't branch.
+        downstream TranscriptionResult mapping doesn't branch. Empty
+        ``segments`` are passed through as-is — no synthesis — so callers
+        can distinguish "no segments returned" from "single full-clip
+        segment" if it matters.
         """
         import requests
 
-        audio_bytes = audio_path.read_bytes()
-        payload: Dict[str, Any] = {
-            "audio_b64": base64.b64encode(audio_bytes).decode("ascii"),
-        }
-        if language and language != "auto":
-            payload["language"] = language
-
-        url = f"{self._whisper_endpoint.rstrip('/')}/v1/transcribe"
-        logger.info(f"🛰️  POST {url}  ({len(audio_bytes) / 1024:.1f} KiB audio)")
-        resp = requests.post(url, json=payload, timeout=600.0)
+        url = f"{self._whisper_endpoint.rstrip('/')}/v1/audio/transcriptions"
+        with open(audio_path, "rb") as f:
+            files = {"file": (audio_path.name, f, "audio/wav")}
+            data: Dict[str, Any] = {
+                "model": self._whisper_model,
+                "response_format": "verbose_json",
+            }
+            if language and language != "auto":
+                data["language"] = language
+            logger.info(
+                f"🛰️  POST {url}  ({audio_path.stat().st_size / 1024:.1f} KiB audio)"
+            )
+            resp = requests.post(url, files=files, data=data, timeout=600.0)
         resp.raise_for_status()
         body = resp.json()
 
@@ -334,9 +349,9 @@ class AudioAnalysisAgent(
                     "end": float(seg.get("end", 0.0)),
                     "text": (seg.get("text") or "").strip(),
                 }
-                for seg in body.get("segments", [])
+                for seg in body.get("segments") or []
             ],
-            "duration": body.get("duration_seconds", 0.0),
+            "duration": float(body.get("duration") or 0.0),
         }
 
     async def _search_transcript(self, query: str, limit: int) -> List[AudioResult]:

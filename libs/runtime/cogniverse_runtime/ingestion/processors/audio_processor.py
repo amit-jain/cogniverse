@@ -5,11 +5,9 @@ Audio Processor - Pluggable audio transcription.
 Transcribes audio from videos using Whisper. Two modes:
 
 - Local: loads ``openai-whisper`` in-process (default).
-- Remote: when ``endpoint`` is set, POSTs the audio bytes to the
-  Whisper sidecar pod's ``/v1/transcribe`` endpoint. The pod
-  (``deploy/whisper``) decides which engine (faster-whisper / whisperx /
-  whisper-cpp) to use based on its own ``WHISPER_ENGINE`` env, so the
-  processor stays engine-agnostic.
+- Remote: when ``endpoint`` is set, POSTs the audio multipart to the
+  vLLM Whisper pod's OpenAI-compatible ``/v1/audio/transcriptions``
+  endpoint. The pod owns model selection via its ``--model`` arg.
 """
 
 import json
@@ -44,8 +42,8 @@ class AudioProcessor(BaseProcessor):
                 model selection via the ``MODEL_NAME`` env var)
             language: Language for transcription (auto for detection)
             endpoint: When set, the processor runs in remote mode and POSTs
-                audio to ``{endpoint}/v1/transcribe`` instead of loading
-                Whisper locally.
+                audio multipart to ``{endpoint}/v1/audio/transcriptions``
+                instead of loading Whisper locally.
         """
         super().__init__(logger)
         self.model = model
