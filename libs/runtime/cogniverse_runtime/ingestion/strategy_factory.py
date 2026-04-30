@@ -6,10 +6,13 @@ Uses actual class names in config - no string mappings or if/elif logic.
 """
 
 import importlib
+import inspect
 from typing import Any
 
 from .processing_strategy_set import ProcessingStrategySet
 from .processor_base import BaseStrategy
+
+INFERENCE_SERVICE_PARAM = "inference_service"
 
 
 class StrategyFactory:
@@ -40,11 +43,15 @@ class StrategyFactory:
           }
         }
 
-        When ``inference_services[<strategy_type>]`` is set, the matching
-        strategy receives an injected ``inference_service`` param so the
-        strategy → processor → URL substitution chain in ProcessorManager
-        can route remote without the JSON repeating the service name in
-        each strategy's params block.
+        Profile-level ``inference_services[<strategy_type>]`` becomes an
+        ``inference_service=`` kwarg on the matching strategy — but only
+        when the strategy's constructor declares the parameter (or
+        accepts ``**kwargs``). Strategies that don't take it (in-process
+        embedding strategies, segmentation, etc.) are not injected.
+
+        Other params from the profile are passed through unchanged: a
+        typo like ``"models": "..."`` in the JSON raises ``TypeError`` at
+        construction so the misconfiguration is loud, not silent.
 
         Args:
             profile_config: Profile configuration dict
@@ -58,75 +65,80 @@ class StrategyFactory:
 
         for strategy_type, strategy_config in strategies_config.items():
             class_name = strategy_config.get("class")
+            if not class_name:
+                continue
+
             params = dict(strategy_config.get("params", {}))
-
-            # Profile-level inference_services map drives remote routing for
-            # strategies that don't carry the field in their own params.
-            # Existing strategy params win — tests and tooling that pass the
-            # field directly stay backwards compatible.
             service_name = inference_services.get(strategy_type)
-            if service_name and "inference_service" not in params:
-                params["inference_service"] = service_name
+            if (
+                service_name
+                and INFERENCE_SERVICE_PARAM not in params
+                and cls._strategy_accepts_inference_service(class_name)
+            ):
+                params[INFERENCE_SERVICE_PARAM] = service_name
 
-            if class_name:
-                strategy_instance = cls._create_strategy_instance(class_name, params)
-                if strategy_instance:
-                    strategies[strategy_type] = strategy_instance
+            strategy_instance = cls._create_strategy_instance(class_name, params)
+            if strategy_instance:
+                strategies[strategy_type] = strategy_instance
 
         return ProcessingStrategySet(**strategies)
+
+    @classmethod
+    def _resolve_strategy_class(cls, class_name: str) -> type[BaseStrategy] | None:
+        """Look up the strategy class on the strategies module.
+
+        Returns ``None`` if the module or attribute cannot be resolved so
+        ``create_from_profile_config`` can skip a single bad entry instead
+        of failing the whole profile load.
+        """
+        try:
+            strategies_module = importlib.import_module(
+                "cogniverse_runtime.ingestion.strategies"
+            )
+            return getattr(strategies_module, class_name)
+        except (ImportError, AttributeError):
+            return None
+
+    @classmethod
+    def _strategy_accepts_inference_service(cls, class_name: str) -> bool:
+        """True when the strategy's ``__init__`` declares
+        ``inference_service`` (or absorbs unknown kwargs via ``**kwargs``).
+
+        Narrowed introspection: only checks for the one well-known
+        injectable, never filters arbitrary user-supplied params. A
+        strategy author opts in by declaring the parameter; everything
+        else passes through unchanged.
+        """
+        strategy_class = cls._resolve_strategy_class(class_name)
+        if strategy_class is None:
+            return False
+        try:
+            sig = inspect.signature(strategy_class.__init__)
+        except (TypeError, ValueError):
+            return False
+        for param in sig.parameters.values():
+            if param.name == INFERENCE_SERVICE_PARAM:
+                return True
+            if param.kind is inspect.Parameter.VAR_KEYWORD:
+                return True
+        return False
 
     @classmethod
     def _create_strategy_instance(
         cls, class_name: str, params: dict[str, Any]
     ) -> BaseStrategy:
+        """Construct the strategy with the resolved params.
+
+        Returns ``None`` if the class cannot be resolved; lets
+        ``TypeError`` from a parameter mismatch propagate so a typo in
+        profile config produces a loud failure.
         """
-        Create strategy instance from class name and parameters.
-
-        Args:
-            class_name: Name of strategy class (e.g., "FrameSegmentationStrategy")
-            params: Parameters to pass to strategy constructor
-
-        Returns:
-            Strategy instance or None if creation failed
-        """
-        import inspect
-
+        strategy_class = cls._resolve_strategy_class(class_name)
+        if strategy_class is None:
+            print(f"Failed to resolve strategy class {class_name!r}")
+            return None
         try:
-            # Import the strategies module
-            strategies_module = importlib.import_module(
-                "cogniverse_runtime.ingestion.strategies"
-            )
-
-            # Get the class
-            strategy_class = getattr(strategies_module, class_name)
-
-            # Filter to kwargs the ctor declares (unless it has **kwargs);
-            # profile-level injectables like inference_service are passed
-            # to every strategy but only some accept them.
-            try:
-                sig = inspect.signature(strategy_class.__init__)
-                accepts_var_kw = any(
-                    p.kind is inspect.Parameter.VAR_KEYWORD
-                    for p in sig.parameters.values()
-                )
-                if not accepts_var_kw:
-                    accepted = {
-                        name
-                        for name, p in sig.parameters.items()
-                        if p.kind
-                        in (
-                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                            inspect.Parameter.KEYWORD_ONLY,
-                        )
-                        and name != "self"
-                    }
-                    params = {k: v for k, v in params.items() if k in accepted}
-            except (TypeError, ValueError):
-                pass
-
-            # Create instance with parameters
             return strategy_class(**params)
-
-        except (ImportError, AttributeError, TypeError) as e:
-            print(f"Failed to create strategy {class_name}: {e}")
+        except TypeError as e:
+            print(f"Failed to instantiate strategy {class_name}: {e}")
             return None

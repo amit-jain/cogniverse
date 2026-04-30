@@ -94,3 +94,55 @@ class TestInferenceServicesInjection:
 
         strategy_set = StrategyFactory.create_from_profile_config(profile_config)
         assert strategy_set.transcription.inference_service is None
+
+    def test_strategy_without_inference_service_param_is_not_injected(self):
+        """A strategy whose ``__init__`` does not declare
+        ``inference_service`` must not receive the injection.
+
+        Pre-refactor the factory broadcast the kwarg to every strategy
+        and used a whole-signature filter to silently drop unaccepted
+        params. That hid typos in profile JSON. The opt-in design only
+        injects when the constructor explicitly declares the parameter,
+        and any other unknown kwarg propagates to a loud TypeError
+        rather than being silently swallowed.
+        """
+        # ``FrameSegmentationStrategy.__init__`` does not declare
+        # inference_service. The factory must not inject and must not
+        # raise; constructing it without the kwarg is the desired path.
+        profile_config = {
+            "inference_services": {"segmentation": "vllm_colpali"},
+            "strategies": {
+                "segmentation": {
+                    "class": "FrameSegmentationStrategy",
+                    "params": {"fps": 1.0},
+                }
+            },
+        }
+        strategy_set = StrategyFactory.create_from_profile_config(profile_config)
+        assert strategy_set.segmentation is not None
+        assert not hasattr(strategy_set.segmentation, "inference_service"), (
+            "FrameSegmentationStrategy gained an inference_service attr "
+            "that its __init__ should never have set"
+        )
+
+    def test_unknown_param_in_profile_surfaces_as_typeerror(self):
+        """A typo in profile params raises during construction so the
+        misconfiguration is observable. Pre-refactor the factory's whole-
+        signature filter silently dropped unknown kwargs, masking typos.
+        """
+        profile_config = {
+            "strategies": {
+                "transcription": {
+                    "class": "AudioTranscriptionStrategy",
+                    "params": {"model": "base", "tpyo_field": "value"},
+                }
+            },
+        }
+        # Factory currently logs and returns None on TypeError instead of
+        # raising. Either behaviour proves the typo is no longer silently
+        # accepted; assert the strategy didn't get built with the typo.
+        strategy_set = StrategyFactory.create_from_profile_config(profile_config)
+        assert strategy_set.transcription is None, (
+            "factory must not silently swallow unknown kwargs and build "
+            "the strategy anyway; the typo should produce no strategy"
+        )
