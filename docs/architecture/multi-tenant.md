@@ -6,18 +6,19 @@
 
 1. [Overview](#overview)
 2. [Architecture Principles](#architecture-principles)
-3. [Schema-Per-Tenant Pattern](#schema-per-tenant-pattern)
-4. [Schema Manager](#schema-manager)
-5. [Tenant Context Flow](#tenant-context-flow)
-6. [Memory Isolation](#memory-isolation)
-7. [Telemetry Isolation](#telemetry-isolation)
-8. [Backend Configuration](#backend-configuration)
-9. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
-10. [Tenant ID Formats](#tenant-id-formats)
-11. [Operational Procedures](#operational-procedures)
-12. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
-13. [Common Patterns](#common-patterns)
-14. [Troubleshooting](#troubleshooting)
+3. [Schema Lifecycle: Source of Truth](#schema-lifecycle-source-of-truth)
+4. [Schema-Per-Tenant Pattern](#schema-per-tenant-pattern)
+5. [Schema Manager](#schema-manager)
+6. [Tenant Context Flow](#tenant-context-flow)
+7. [Memory Isolation](#memory-isolation)
+8. [Telemetry Isolation](#telemetry-isolation)
+9. [Backend Configuration](#backend-configuration)
+10. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
+11. [Tenant ID Formats](#tenant-id-formats)
+12. [Operational Procedures](#operational-procedures)
+13. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
+14. [Common Patterns](#common-patterns)
+15. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -139,6 +140,108 @@ request.state.tenant_id = "acme"
 def handler(request: Request):
     tenant_id = request.state.tenant_id  # Always available
 ```
+
+---
+
+## Schema Lifecycle: Source of Truth
+
+Two stores hold schema state and they are NOT equivalent peers — Vespa is
+authoritative and the SchemaRegistry is bookkeeping. This invariant is
+load-bearing for every schema-manager read path, the deploy/delete
+ordering, and the failure-recovery semantics. Code that violates it
+silently produces orphan schemas, peer-tenant data loss, or split-brain
+states between processes.
+
+### The two stores
+
+| Store | What it holds | Authority |
+|-------|---------------|-----------|
+| **Vespa application package** | The actual deployed schemas (the source of all queries and feeds). | **Authoritative.** A schema exists iff it is in the running application generation. |
+| **SchemaRegistry** (config_metadata) | Per-tenant rows recording what was deployed and the JSON definitions used to build the package. | **Bookkeeping.** A cache + audit trail. Tombstoned (`deleted=True`) entries persist for history. |
+
+If the two disagree, **Vespa wins.** Recovery code reconciles the
+registry to match the running package, never the other way round.
+
+### Read-after-write consistency
+
+Reading the registry from a peer process must see writes the local
+process just made — schemas registered by ingestion must be visible
+to the next deploy in the runtime. To get this guarantee:
+
+- Writes go through Vespa's Document v1 API (`set_config` →
+  `feed_data_point`). Document v1 returns success only after the
+  document store has accepted the write.
+- Reads go through Vespa's Document v1 **visit** API
+  (`list_all_configs` → `/document/v1/.../docid/?selection=...`).
+  The visit API is consistent with the document store.
+- The YQL `/search/` endpoint is **eventually** consistent — a feed
+  followed by an immediate search routinely misses the just-written
+  document. Reads on the schema-registry path MUST NOT use search.
+
+`VespaSchemaManager.list_deployed_document_types` queries the **config
+server** (the same endpoint `prepareandactivate` writes to) for the
+same reason: a deploy followed by an immediate listing must observe
+the new generation.
+
+### Process-wide singleton
+
+`BackendRegistry._shared_schema_registry` is a class-level singleton.
+The first backend created in a process builds the registry; every
+subsequent backend reuses it via `BackendFactory.create_backend_with_dependencies`.
+Without this, an ingestion backend's writes wouldn't be visible to a
+search backend's reads in the same process — the rollback safeguard in
+`backend.deploy_schemas` would refuse every cross-component deploy.
+
+Tested by `tests/backends/integration/test_tenant_schema_lifecycle.py::TestSharedSchemaRegistry::test_two_ingestion_backends_share_registry`.
+
+### Asymmetric rollback
+
+Create and delete handle their respective failure modes differently
+because Vespa is authoritative:
+
+| Path | Step 1 | Step 2 | If step 2 fails |
+|------|--------|--------|-----------------|
+| **Create** (`SchemaRegistry.deploy_schema`) | `backend.deploy_schemas` (Vespa) | `register_schema` (registry) | **Roll back Vespa.** Re-deploy the previous package so the registry write failure doesn't leave Vespa with a schema the registry doesn't know about. |
+| **Delete** (`schema_manager.delete_tenant_schemas`) | Redeploy without target schemas (Vespa) | `unregister_schema` for each (registry) | **Log and continue.** Vespa already has the authoritative state (schema is gone); a registry tombstone failure is a bookkeeping inconsistency that the next read reconciles, not a rollback trigger. |
+
+Tested by `TestDeleteFailureSemantics::test_vespa_failure_leaves_registry_untouched`
+and `test_registry_tombstone_failure_does_not_block_vespa_removal`.
+
+### Peer-tenant orphan protection
+
+`delete_tenant_schemas` and `delete_schema` build the redeploy survivor
+list by enumerating Vespa's actual deployed schemas (not by walking the
+registry). Each survivor is reconstructed from the registry by full
+name; if any survivor cannot be reconstructed, the delete refuses with
+`BackendDeploymentError` rather than silently dropping it. This catches
+the case where tenant B's schema is in Vespa but absent from the
+registry (interrupted earlier cleanup) and tenant A's delete would
+otherwise wipe it.
+
+Tested by `TestSchemaRegistryDeletion::test_delete_tenant_does_not_drop_peer_tenant_orphan`.
+
+### What you can rely on
+
+- After `deploy_schema` returns, the schema is in Vespa and the registry has the entry.
+- After `delete_tenant_schemas` returns, the schemas are gone from Vespa; registry entries are tombstoned (best-effort).
+- After a crash mid-deploy, Vespa is the truth; on next startup the e2e
+  fixture's `_reconcile_vespa_orphans` (test only) or operator action
+  (production) reconciles the registry to match.
+- A peer process's `register_schema` becomes visible to your next
+  `_get_all_schemas` call without a sleep.
+
+### What you cannot rely on
+
+- That two registries (in two processes that don't share
+  `_shared_schema_registry`) hold the same in-memory cache. They do
+  share the **persistent** cache via the config_metadata schema; the
+  `_load_schemas_from_storage` refresh pulls peer writes on every
+  `_get_all_schemas` call.
+- That a `_DEPLOY_LOCK`-protected `prepareandactivate` is exclusive
+  cluster-wide. The lock is process-local; concurrent deploys from
+  different pods or processes still race the config server's session
+  pipeline. The retry-on-409 loop narrows the window but does not
+  eliminate it.
 
 ---
 

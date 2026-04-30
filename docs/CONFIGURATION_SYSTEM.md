@@ -380,14 +380,25 @@ curl -X POST http://localhost:8000/admin/tenants \
   -d '{"tenant_id": "acme:production", "created_by": "admin"}'
 ```
 
-For schema cleanup, use VespaSchemaManager with SchemaRegistry:
+For schema cleanup, use VespaSchemaManager with SchemaRegistry. In a
+running runtime the SchemaRegistry is a process-wide singleton on
+`BackendRegistry._shared_schema_registry` — the first backend created
+in the process builds it, every subsequent backend reuses it. Direct
+construction (below) is only needed for one-off scripts or tests.
+
+See [Schema Lifecycle: Source of Truth](./architecture/multi-tenant.md#schema-lifecycle-source-of-truth)
+for the full invariant: Vespa is authoritative, the registry is
+bookkeeping, and the read path uses Document v1 visit for
+read-after-write consistency.
 
 ```python
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_core.registries.schema_registry import SchemaRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# SchemaRegistry is required for tenant schema operations
+# SchemaRegistry is required for tenant schema operations.
+# In a running runtime, prefer ``BackendRegistry.get_*_backend(...)``
+# which reuses the process-wide _shared_schema_registry.
 config_manager = create_default_config_manager()
 schema_registry = SchemaRegistry(config_manager, backend, schema_loader)
 
@@ -397,7 +408,9 @@ schema_manager = VespaSchemaManager(
     schema_registry=schema_registry  # Required for delete_tenant_schemas and tenant_schema_exists
 )
 
-# Delete all schemas for a tenant (immediately redeploys to Vespa)
+# Delete all schemas for a tenant. Refuses with BackendDeploymentError
+# if a peer-tenant Vespa-only orphan exists that can't be reconstructed
+# from the registry — operator must reconcile that orphan first.
 deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 print(f"Deleted schemas: {deleted}")
 
