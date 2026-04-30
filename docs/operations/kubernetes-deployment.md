@@ -21,6 +21,11 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
   StatefulSet. Configure once via `llm.builtin.enabled` and
   `llm.engine` in your values file.
 
+> See [`models-and-inference.md`](./models-and-inference.md) for the
+> canonical list of every model, image source, and deployment style
+> (custom-built sidecars vs official vLLM/Ollama images, CPU vs ROCm,
+> student vs teacher LLM).
+
 - **Auto-scaling**: HPA for Runtime
 
 - **Ingress**: NGINX with TLS/SSL

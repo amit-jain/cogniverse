@@ -402,6 +402,11 @@ flowchart TB
 | **Ollama** | 11434 | LLM inference API |
 | **vLLM ASR (Whisper)** | 29005 | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
 
+For the canonical inventory of every model, image source, and
+deployment style (CPU vs ROCm, custom sidecar vs official vLLM
+image, student vs teacher LLM), see
+[`models-and-inference.md`](./models-and-inference.md).
+
 ---
 
 ## Environment Configuration
