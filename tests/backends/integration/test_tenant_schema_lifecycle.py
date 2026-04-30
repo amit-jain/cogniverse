@@ -337,3 +337,61 @@ class TestSchemaRegistryDeletion:
         assert full_name not in deployed_after, (
             f"schema {full_name!r} still in Vespa after schema-only tenant delete"
         )
+
+    def test_delete_tenant_does_not_drop_peer_tenant_orphan(self, get_backend):
+        """Deleting tenant A must not silently drop tenant B's Vespa-only orphan.
+
+        ``delete_tenant_schemas`` previously built the redeploy survivor list
+        from the registry only. A peer tenant's Vespa-only orphan (schema in
+        Vespa but no registry entry — e.g. from an interrupted earlier
+        cleanup) was excluded from survivors and silently dropped by the
+        ``allow_schema_removal=True`` redeploy. Multi-tenant data loss.
+
+        Setup builds the inconsistent peer state by deploying tenant B's
+        schema, then tombstoning the registry entry without redeploy. Then
+        delete tenant A. Tenant B's orphan must either survive the redeploy
+        or the call must refuse with a clear error.
+        """
+        from cogniverse_core.registries.exceptions import BackendDeploymentError
+
+        backend = get_backend("victim_a")
+        peer_tenant = "victim_b"
+        a_full = "video_colpali_smol500_mv_frame_victim_a"
+        b_full = "video_colpali_smol500_mv_frame_victim_b"
+
+        backend.schema_registry.deploy_schema(
+            "victim_a", "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.deploy_schema(
+            peer_tenant, "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.unregister_schema(
+            peer_tenant, "video_colpali_smol500_mv_frame"
+        )
+
+        deployed_before = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert a_full in deployed_before, "setup failure — tenant A schema missing"
+        assert b_full in deployed_before, "setup failure — peer orphan missing"
+
+        try:
+            backend.schema_manager.delete_tenant_schemas("victim_a")
+        except BackendDeploymentError:
+            deployed_after = backend.schema_manager.list_deployed_document_types(
+                query_port=0
+            )
+            assert b_full in deployed_after, (
+                f"peer orphan {b_full!r} dropped despite refused delete"
+            )
+            return
+
+        deployed_after = backend.schema_manager.list_deployed_document_types(
+            query_port=0
+        )
+        assert a_full not in deployed_after, (
+            f"tenant A schema {a_full!r} still in Vespa"
+        )
+        assert b_full in deployed_after, (
+            f"peer orphan {b_full!r} silently dropped when deleting tenant A"
+        )

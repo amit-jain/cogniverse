@@ -1533,6 +1533,13 @@ class VespaSchemaManager:
         runs first; the registry is tombstoned only after Vespa
         confirms removal so a failed redeploy leaves both sides
         consistent.
+
+        Survivors (every Vespa-deployed schema except the deletion
+        targets and metadata) are reconstructed from the registry by
+        full name. If any survivor cannot be reconstructed — e.g. a
+        peer tenant's Vespa-only orphan from an interrupted cleanup
+        elsewhere — the call raises ``BackendDeploymentError`` rather
+        than silently dropping that peer's data.
         """
         if not self._schema_registry:
             raise ValueError("schema_registry required for tenant schema operations")
@@ -1550,19 +1557,37 @@ class VespaSchemaManager:
         try:
             deployed = self.list_deployed_document_types(query_port=0)
         except Exception as e:
-            deployed = []
-            self._logger.warning(
-                f"Vespa-side schema discovery failed for tenant "
-                f"'{tenant_id}' (continuing with registry-only set): {e}"
-            )
-        vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before deleting "
+                f"tenant '{tenant_id}': {e}. Refusing to redeploy without an "
+                f"authoritative survivor list — a partial view risks dropping "
+                f"peer-tenant schemas."
+            ) from e
 
+        vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
         deleted_schemas = sorted(set(registry_full_names) | set(vespa_orphan_names))
         if not deleted_schemas:
             return deleted_schemas
 
+        _METADATA_NAMES = {
+            "tenant_metadata",
+            "organization_metadata",
+            "config_metadata",
+            "adapter_registry",
+        }
+        deletion_set = set(deleted_schemas)
+        survivor_names = [
+            name
+            for name in deployed
+            if name not in deletion_set and name not in _METADATA_NAMES
+        ]
+
+        import json
+
         from vespa.package import ApplicationPackage
 
+        from cogniverse_core.registries.exceptions import BackendDeploymentError
+        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
         from cogniverse_vespa.metadata_schemas import (
             create_adapter_registry_schema,
             create_config_metadata_schema,
@@ -1570,16 +1595,43 @@ class VespaSchemaManager:
             create_tenant_metadata_schema,
         )
 
+        registry_by_full_name: Dict[str, object] = {}
+        for info in self._schema_registry._get_all_schemas() or []:
+            registry_by_full_name[info.full_schema_name] = info
+
+        parser = JsonSchemaParser()
+        survivors = []
+        unresolved: list[str] = []
+        for full_name in survivor_names:
+            info = registry_by_full_name.get(full_name)
+            if info is None:
+                unresolved.append(full_name)
+                continue
+            try:
+                schema_def = info.schema_definition
+                if isinstance(schema_def, str):
+                    schema_def = json.loads(schema_def)
+                survivors.append(parser.parse_schema(schema_def))
+            except Exception as exc:
+                self._logger.error(
+                    f"Cannot reconstruct survivor schema {full_name!r}: {exc}"
+                )
+                unresolved.append(full_name)
+
+        if unresolved:
+            raise BackendDeploymentError(
+                f"Refusing to delete tenant '{tenant_id}': peer schemas "
+                f"{sorted(unresolved)} exist in Vespa but cannot be "
+                f"reconstructed from the registry. Proceeding would silently "
+                f"drop them. Reconcile each orphan (re-register or delete its "
+                f"owning tenant) before retrying this delete."
+            )
+
         metadata_schemas = [
             create_organization_metadata_schema(),
             create_tenant_metadata_schema(),
             create_config_metadata_schema(),
             create_adapter_registry_schema(),
-        ]
-        survivors = [
-            schema
-            for schema in self._get_existing_tenant_schemas()
-            if schema.name not in registry_full_names
         ]
         all_schemas = metadata_schemas + survivors
 
@@ -1587,7 +1639,8 @@ class VespaSchemaManager:
         self._logger.info(
             f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa "
             f"(registry: {len(registry_full_names)}, vespa-only: "
-            f"{len(set(vespa_orphan_names) - set(registry_full_names))})"
+            f"{len(set(vespa_orphan_names) - set(registry_full_names))}, "
+            f"survivors: {len(survivors)})"
         )
         self._deploy_package(app_package, allow_schema_removal=True)
         self._logger.info(
