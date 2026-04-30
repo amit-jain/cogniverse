@@ -105,6 +105,17 @@ def pytest_collection_modifyitems(config, items):
     if not _openshell_sandbox_ready():
         skip_substrings.append("test_coding_agent_full_execution_with_sandbox")
 
+    # Teacher-model optimization e2e requires scaling up cogniverse-vllm-llm-teacher
+    # which is a 1-2 hour run end-to-end. Off by default; opt in via
+    # RUN_TEACHER_OPTIMIZATION_E2E=1 (or invoke pytest with
+    # ``-m requires_teacher_model`` to bypass this deselection).
+    teacher_optim_explicit = (
+        os.environ.get("RUN_TEACHER_OPTIMIZATION_E2E") == "1"
+        or "requires_teacher_model" in (config.option.markexpr or "")
+    )
+    if not teacher_optim_explicit:
+        skip_substrings.append("test_router_optimization_e2e")
+
     if skip_substrings:
         keep = []
         deselected = []
