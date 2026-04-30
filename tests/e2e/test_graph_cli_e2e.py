@@ -24,7 +24,25 @@ GRAPH_PATH_URL = f"{RUNTIME}/graph/path"
 
 
 def _unique_tenant() -> str:
-    return f"graph_e2e_{uuid.uuid4().hex[:8]}"
+    """Mint a fresh tenant id AND register it via POST /admin/tenants.
+
+    The graph and ingestion endpoints now refuse traffic for tenants
+    without a ``tenant_metadata`` record (auth-class check). Any e2e
+    test that mints a tenant must register it before using it; doing
+    that registration here keeps test bodies focused on what they're
+    actually exercising.
+    """
+    tid = f"graph_e2e_{uuid.uuid4().hex[:8]}"
+    with httpx.Client(timeout=30.0) as client:
+        resp = client.post(
+            f"{RUNTIME}/admin/tenants",
+            json={"tenant_id": tid, "created_by": "graph_e2e_test"},
+        )
+        if resp.status_code not in (200, 201, 409):
+            raise RuntimeError(
+                f"Could not register e2e tenant {tid!r}: {resp.status_code} {resp.text}"
+            )
+    return tid
 
 
 @pytest.mark.e2e
