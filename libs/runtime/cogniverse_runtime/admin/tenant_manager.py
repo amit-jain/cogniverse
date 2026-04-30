@@ -32,7 +32,7 @@ import time
 from typing import Dict, List, Optional
 
 import uvicorn
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, parse_tenant_id
 from cogniverse_foundation.config.utils import get_config
@@ -756,6 +756,103 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
         "tenant_full_id": tenant_full_id,
         "schemas_deleted": len(deleted_schemas),
         "deleted_schemas": deleted_schemas,
+    }
+
+
+# ============================================================================
+# Reconciliation
+# ============================================================================
+
+
+def _list_orphan_schemas() -> Dict[str, list]:
+    """Diff Vespa-deployed schemas against the registry's active set.
+
+    Returns a dict with two lists: ``orphan_schemas`` (Vespa-only full
+    schema names) and ``orphan_tenants`` (tenants implied by stripping
+    known base prefixes from those names). Bases unknown to the
+    well-known list are reported in ``unrecovered_schemas``.
+    """
+    backend = get_backend()
+    schema_manager = backend.schema_manager
+    schema_registry = schema_manager._schema_registry
+
+    deployed = set(schema_manager.list_deployed_document_types())
+    registered = {
+        info.full_schema_name for info in (schema_registry._get_all_schemas() or [])
+    }
+    orphans = sorted(deployed - registered - schema_manager._PROTECTED_SCHEMAS)
+
+    # Recover tenant_id from the orphan name by stripping a known base
+    # schema prefix. Bases that ship with the platform; if a deployment
+    # adds new base schema names, extend this list.
+    KNOWN_BASES = (
+        "video_colpali_smol500_mv_frame",
+        "video_videoprism_base_mv_chunk_30s",
+        "video_videoprism_large_mv_chunk_30s",
+        "video_colqwen_omni_mv_chunk_30s",
+        "image_colpali_mv",
+        "audio_clap_semantic",
+        "audio_content",
+        "document_text",
+        "document_text_semantic",
+        "knowledge_graph",
+        "agent_memories",
+        "wiki_pages",
+        "code_lateon_mv",
+    )
+    orphan_tenants: set = set()
+    unrecovered: list = []
+    for orphan in orphans:
+        for base in KNOWN_BASES:
+            prefix = f"{base}_"
+            if orphan.startswith(prefix):
+                orphan_tenants.add(orphan[len(prefix) :])
+                break
+        else:
+            unrecovered.append(orphan)
+    return {
+        "orphan_schemas": orphans,
+        "orphan_tenants": sorted(orphan_tenants),
+        "unrecovered_schemas": unrecovered,
+    }
+
+
+@router.post("/reconcile-orphans")
+async def reconcile_orphans(
+    dry_run: bool = Query(
+        default=True,
+        description=(
+            "When true (default), report orphans without modifying state. "
+            "Pass dry_run=false to actually drop the orphan schemas."
+        ),
+    ),
+) -> Dict:
+    """List Vespa-only orphan schemas, optionally drop them in one redeploy.
+
+    Diffs Vespa's deployed schemas against the SchemaRegistry's active
+    set. Orphans (Vespa has, registry doesn't) are grouped by the
+    implied tenant_id by stripping known base prefixes.
+
+    With ``dry_run=true`` returns the diff for operator review. With
+    ``dry_run=false`` calls ``delete_tenant_schemas_bulk`` so all
+    orphan tenants are dropped atomically (single redeploy) — required
+    because individual tenant deletes refuse when a peer-tenant
+    unreconstructable orphan exists.
+    """
+    diff = _list_orphan_schemas()
+    if dry_run or not diff["orphan_tenants"]:
+        return {
+            "dry_run": dry_run,
+            "deleted": [],
+            **diff,
+        }
+
+    backend = get_backend()
+    deleted = backend.schema_manager.delete_tenant_schemas_bulk(diff["orphan_tenants"])
+    return {
+        "dry_run": False,
+        "deleted": deleted,
+        **diff,
     }
 
 

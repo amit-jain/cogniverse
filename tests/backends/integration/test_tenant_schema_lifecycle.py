@@ -404,6 +404,54 @@ class TestSchemaRegistryDeletion:
 
 @pytest.mark.integration
 @pytest.mark.ci_fast
+class TestBulkTenantDelete:
+    """Atomic bulk-delete path that drops schemas for multiple tenants in
+    one Vespa redeploy. Single-tenant ``delete_tenant_schemas`` refuses
+    when an unreconstructable peer-tenant orphan exists; the bulk variant
+    accepts every orphan tenant in ``deletion_targets`` simultaneously
+    so the survivor reconstruction succeeds.
+    """
+
+    def test_bulk_delete_two_orphan_tenants_in_one_redeploy(self, get_backend):
+        backend = get_backend("bulk_a")
+
+        backend.schema_registry.deploy_schema(
+            "bulk_a", "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.deploy_schema(
+            "bulk_b", "video_colpali_smol500_mv_frame"
+        )
+        a_full = "video_colpali_smol500_mv_frame_bulk_a"
+        b_full = "video_colpali_smol500_mv_frame_bulk_b"
+
+        backend.schema_registry.unregister_schema(
+            "bulk_a", "video_colpali_smol500_mv_frame"
+        )
+        backend.schema_registry.unregister_schema(
+            "bulk_b", "video_colpali_smol500_mv_frame"
+        )
+
+        deployed_before = backend.schema_manager.list_deployed_document_types()
+        assert a_full in deployed_before
+        assert b_full in deployed_before
+
+        deleted = backend.schema_manager.delete_tenant_schemas_bulk(
+            ["bulk_a", "bulk_b"]
+        )
+        assert a_full in deleted
+        assert b_full in deleted
+
+        deployed_after = backend.schema_manager.list_deployed_document_types()
+        assert a_full not in deployed_after
+        assert b_full not in deployed_after
+
+    def test_bulk_delete_empty_list_is_noop(self, get_backend):
+        backend = get_backend("bulk_noop")
+        assert backend.schema_manager.delete_tenant_schemas_bulk([]) == []
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestSharedSchemaRegistry:
     """The process-wide ``_shared_schema_registry`` singleton is the
     coupling that lets two backends in one process see each other's

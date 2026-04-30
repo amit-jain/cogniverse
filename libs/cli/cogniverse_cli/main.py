@@ -554,6 +554,40 @@ def secrets_sync(required: bool) -> None:
 
 
 @cli.group()
+def admin() -> None:
+    """Admin-side operations: tenant lifecycle, orphan reconciliation."""
+
+
+@admin.command(name="reconcile-orphans")
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help=(
+        "Actually drop the orphan schemas. Default is dry-run (list only). "
+        "All orphan tenants are dropped in one Vespa redeploy."
+    ),
+)
+@click.option(
+    "--runtime-url",
+    default="http://localhost:28000",
+    show_default=True,
+    help="Runtime endpoint to call /admin/reconcile-orphans on.",
+)
+def admin_reconcile_orphans(confirm: bool, runtime_url: str) -> None:
+    """Find and drop Vespa-only schema orphans.
+
+    Diffs the deployed Vespa schemas against the SchemaRegistry's active
+    set. Anything in Vespa but not in the registry is an orphan from an
+    interrupted deploy path. Default mode (dry-run) lists them; pass
+    --confirm to drop them all in one atomic redeploy.
+    """
+    from cogniverse_cli.admin import run
+
+    run(runtime_url, confirm=confirm)
+
+
+@cli.group()
 def sandbox() -> None:
     """Manage the OpenShell sandbox gateway for the coding agent."""
 

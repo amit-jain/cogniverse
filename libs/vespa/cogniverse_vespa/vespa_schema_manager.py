@@ -1530,64 +1530,19 @@ class VespaSchemaManager:
 
         return target
 
-    def delete_tenant_schemas(self, tenant_id: str) -> list:
-        """Delete all schemas for a tenant and redeploy.
+    def _redeploy_dropping(self, deletion_targets: set) -> list:
+        """Redeploy the application package without ``deletion_targets``.
 
-        Unions registry-known names with Vespa-side orphans (filtered by
-        tenant suffix) so an interrupted prior cleanup can't leave a
-        schema live in Vespa with no registry record. Vespa redeploy
-        runs first; the registry is tombstoned only after Vespa
-        confirms removal so a failed redeploy leaves both sides
-        consistent.
+        Enumerates every Vespa-deployed schema, excludes the deletion
+        targets and metadata schemas, reconstructs each remaining
+        survivor from the registry by full name, and raises
+        ``BackendDeploymentError`` if any survivor is unreconstructable.
+        Returns the sorted list of names that were dropped from the
+        running package.
 
-        Survivors (every Vespa-deployed schema except the deletion
-        targets and metadata) are reconstructed from the registry by
-        full name. If any survivor cannot be reconstructed — e.g. a
-        peer tenant's Vespa-only orphan from an interrupted cleanup
-        elsewhere — the call raises ``BackendDeploymentError`` rather
-        than silently dropping that peer's data.
+        Used by both single-tenant and bulk-tenant delete paths so the
+        peer-orphan safeguard is shared.
         """
-        if not self._schema_registry:
-            raise ValueError("schema_registry required for tenant schema operations")
-
-        registry_full_names: list[str] = []
-        registry_base_names: list[str] = []
-        tenant_schema_infos = self._schema_registry.get_tenant_schemas(tenant_id)
-        for schema_info in tenant_schema_infos:
-            base = schema_info.base_schema_name
-            full = self.get_tenant_schema_name(tenant_id, base)
-            registry_full_names.append(full)
-            registry_base_names.append(base)
-
-        tenant_suffix = "_" + tenant_id.replace(":", "_")
-        try:
-            deployed = self.list_deployed_document_types()
-        except Exception as e:
-            raise RuntimeError(
-                f"Cannot enumerate Vespa-deployed schemas before deleting "
-                f"tenant '{tenant_id}': {e}. Refusing to redeploy without an "
-                f"authoritative survivor list — a partial view risks dropping "
-                f"peer-tenant schemas."
-            ) from e
-
-        vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
-        deleted_schemas = sorted(set(registry_full_names) | set(vespa_orphan_names))
-        if not deleted_schemas:
-            return deleted_schemas
-
-        _METADATA_NAMES = {
-            "tenant_metadata",
-            "organization_metadata",
-            "config_metadata",
-            "adapter_registry",
-        }
-        deletion_set = set(deleted_schemas)
-        survivor_names = [
-            name
-            for name in deployed
-            if name not in deletion_set and name not in _METADATA_NAMES
-        ]
-
         import json
 
         from vespa.package import ApplicationPackage
@@ -1600,6 +1555,25 @@ class VespaSchemaManager:
             create_organization_metadata_schema,
             create_tenant_metadata_schema,
         )
+
+        try:
+            deployed = self.list_deployed_document_types()
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before delete: {e}. "
+                f"Refusing to redeploy without an authoritative survivor "
+                f"list — a partial view risks dropping peer-tenant schemas."
+            ) from e
+
+        deleted_schemas = sorted(deletion_targets & set(deployed))
+        if not deleted_schemas:
+            return deleted_schemas
+
+        survivor_names = [
+            name
+            for name in deployed
+            if name not in deletion_targets and name not in self._PROTECTED_SCHEMAS
+        ]
 
         registry_by_full_name: Dict[str, object] = {}
         for info in self._schema_registry._get_all_schemas() or []:
@@ -1626,11 +1600,11 @@ class VespaSchemaManager:
 
         if unresolved:
             raise BackendDeploymentError(
-                f"Refusing to delete tenant '{tenant_id}': peer schemas "
-                f"{sorted(unresolved)} exist in Vespa but cannot be "
-                f"reconstructed from the registry. Proceeding would silently "
-                f"drop them. Reconcile each orphan (re-register or delete its "
-                f"owning tenant) before retrying this delete."
+                f"Refusing to redeploy: peer schemas {sorted(unresolved)} "
+                f"exist in Vespa but cannot be reconstructed from the "
+                f"registry. Proceeding would silently drop them. Reconcile "
+                f"each orphan (re-register or include its tenant in the "
+                f"deletion target set) before retrying."
             )
 
         metadata_schemas = [
@@ -1639,16 +1613,50 @@ class VespaSchemaManager:
             create_config_metadata_schema(),
             create_adapter_registry_schema(),
         ]
-        all_schemas = metadata_schemas + survivors
-
-        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
+        app_package = ApplicationPackage(
+            name="cogniverse", schema=metadata_schemas + survivors
+        )
         self._logger.info(
-            f"Redeploying to remove {len(deleted_schemas)} schemas from Vespa "
-            f"(registry: {len(registry_full_names)}, vespa-only: "
-            f"{len(set(vespa_orphan_names) - set(registry_full_names))}, "
-            f"survivors: {len(survivors)})"
+            f"Redeploying to remove {len(deleted_schemas)} schemas; "
+            f"{len(survivors)} survivors"
         )
         self._deploy_package(app_package, allow_schema_removal=True)
+        return deleted_schemas
+
+    def delete_tenant_schemas(self, tenant_id: str) -> list:
+        """Delete all schemas for one tenant.
+
+        Unions registry-known names with Vespa-side orphans (filtered by
+        tenant suffix), redeploys without them via ``_redeploy_dropping``,
+        then tombstones the registry. The redeploy refuses if any
+        unreconstructable peer-tenant orphan exists. Returns the list of
+        full schema names dropped from Vespa.
+        """
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for tenant schema operations")
+
+        registry_full_names: list[str] = []
+        registry_base_names: list[str] = []
+        for info in self._schema_registry.get_tenant_schemas(tenant_id):
+            registry_full_names.append(
+                self.get_tenant_schema_name(tenant_id, info.base_schema_name)
+            )
+            registry_base_names.append(info.base_schema_name)
+
+        tenant_suffix = "_" + tenant_id.replace(":", "_")
+        try:
+            deployed = self.list_deployed_document_types()
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before deleting "
+                f"tenant '{tenant_id}': {e}"
+            ) from e
+        vespa_orphan_names = [name for name in deployed if name.endswith(tenant_suffix)]
+        deletion_targets = set(registry_full_names) | set(vespa_orphan_names)
+
+        deleted = self._redeploy_dropping(deletion_targets)
+        if not deleted:
+            return deleted
         self._logger.info(
             f"Successfully removed tenant '{tenant_id}' schemas from Vespa"
         )
@@ -1656,19 +1664,73 @@ class VespaSchemaManager:
         for base in registry_base_names:
             try:
                 self._schema_registry.unregister_schema(tenant_id, base)
-                self._logger.info(
-                    f"Unregistered schema "
-                    f"'{self.get_tenant_schema_name(tenant_id, base)}' "
-                    f"for tenant '{tenant_id}'"
-                )
             except Exception as e:
                 self._logger.error(
-                    f"Failed to unregister schema '"
-                    f"{self.get_tenant_schema_name(tenant_id, base)}' "
-                    f"after Vespa removal succeeded: {e}"
+                    f"Vespa removal succeeded but registry tombstone failed "
+                    f"for {self.get_tenant_schema_name(tenant_id, base)!r}: {e}"
                 )
+        return deleted
 
-        return deleted_schemas
+    def delete_tenant_schemas_bulk(self, tenant_ids: list) -> list:
+        """Atomically drop the schemas of multiple tenants in one redeploy.
+
+        Single-tenant ``delete_tenant_schemas`` refuses when an
+        unreconstructable peer orphan exists. When the recovery scenario
+        IS multiple peer orphans (the operator's reconciliation case),
+        the safe path is to add every orphan tenant to the deletion set
+        and redeploy once — every orphan is now in ``deletion_targets``
+        and the survivor reconstruction succeeds.
+
+        For each input tenant, unions registry-known schemas with
+        Vespa-side suffix-matched orphans, redeploys once, then
+        tombstones the registry per tenant. Returns the full list of
+        schemas dropped.
+        """
+        if not self._schema_registry:
+            raise ValueError("schema_registry required for tenant schema operations")
+        if not tenant_ids:
+            return []
+
+        try:
+            deployed = self.list_deployed_document_types()
+        except Exception as e:
+            raise RuntimeError(
+                f"Cannot enumerate Vespa-deployed schemas before bulk delete: {e}"
+            ) from e
+
+        deletion_targets: set = set()
+        registry_bases_by_tenant: Dict[str, list] = {}
+        for tid in tenant_ids:
+            bases: list = []
+            for info in self._schema_registry.get_tenant_schemas(tid):
+                bases.append(info.base_schema_name)
+                deletion_targets.add(
+                    self.get_tenant_schema_name(tid, info.base_schema_name)
+                )
+            registry_bases_by_tenant[tid] = bases
+            suffix = "_" + tid.replace(":", "_")
+            for name in deployed:
+                if name.endswith(suffix):
+                    deletion_targets.add(name)
+
+        deleted = self._redeploy_dropping(deletion_targets)
+        if not deleted:
+            return deleted
+        self._logger.info(
+            f"Successfully removed schemas for {len(tenant_ids)} tenants "
+            f"({len(deleted)} schemas dropped)"
+        )
+
+        for tid, bases in registry_bases_by_tenant.items():
+            for base in bases:
+                try:
+                    self._schema_registry.unregister_schema(tid, base)
+                except Exception as e:
+                    self._logger.error(
+                        f"Vespa removal succeeded but registry tombstone "
+                        f"failed for {self.get_tenant_schema_name(tid, base)!r}: {e}"
+                    )
+        return deleted
 
     def tenant_schema_exists(self, tenant_id: str, base_schema_name: str) -> bool:
         """
