@@ -491,107 +491,72 @@ def _cleanup_test_tenants() -> None:
             print(f"Cleanup failed for tenant {tid}: {exc}")
 
 
-# Metadata schemas are re-added by every deploy and never count as orphans.
-_METADATA_SCHEMA_NAMES = frozenset(
-    {
-        "tenant_metadata",
-        "organization_metadata",
-        "config_metadata",
-        "adapter_registry",
-    }
-)
-
-
 def _reconcile_vespa_orphans() -> None:
     """Drop tenants whose schemas survive in Vespa with no registry record.
 
     Test-only — production runtimes must not auto-drop orphans because
     they may represent half-completed deploys of real customer data.
+
+    Calls ``/admin/reconcile-orphans?dry_run=false`` so all orphan
+    tenants land in a single redeploy. Iterating per-tenant DELETE
+    fails in the multi-orphan case: each individual delete refuses on
+    the others' presence, so atomic bulk-drop is required.
     """
-    config_port = int(os.environ.get("VESPA_CONFIG_PORT", "19071"))
-    config_url = (
-        f"http://localhost:{config_port}/application/v2/tenant/default/"
-        "application/default/environment/prod/region/default/instance/default/"
-        "content/schemas/"
-    )
     try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(config_url)
-            if resp.status_code != 200:
-                return
-            entries = resp.json()
-    except (httpx.HTTPError, OSError, ValueError):
+        with httpx.Client(timeout=300.0) as client:
+            dry = client.post(
+                f"{RUNTIME}/admin/reconcile-orphans", params={"dry_run": "true"}
+            )
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"Session pre-flight: reconcile dry-run failed: {exc}")
         return
 
-    deployed: set[str] = set()
-    for entry in entries:
-        tail = entry.rsplit("/", 1)[-1]
-        if tail.endswith(".sd"):
-            deployed.add(tail[: -len(".sd")])
-
-    # Registered names from the schema_registry-backing config_metadata.
-    vespa_url = os.environ.get("VESPA_URL", "http://localhost:18080")
-    yql = (
-        "select * from config_metadata "
-        'where scope contains "schema" '
-        'and service contains "schema_registry"'
-    )
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{vespa_url}/search/", params={"yql": yql, "hits": 400})
-            if resp.status_code != 200:
-                return
-            hits = resp.json().get("root", {}).get("children", []) or []
-    except (httpx.HTTPError, OSError):
+    if dry.status_code == 404:
+        # Older runtime image without the endpoint — fall through silently
+        # so a partially-deployed cluster doesn't block the rest of the
+        # session-start fixture.
+        print(
+            "Session pre-flight: /admin/reconcile-orphans not available on "
+            "this runtime; skipping orphan reconciliation."
+        )
+        return
+    if dry.status_code != 200:
+        print(
+            f"Session pre-flight: reconcile dry-run returned "
+            f"{dry.status_code}: {dry.text[:200]}"
+        )
         return
 
-    registered_full_names: set[str] = set()
-    for hit in hits:
-        cv = (hit.get("fields") or {}).get("config_value")
-        if isinstance(cv, str):
-            try:
-                cv = json.loads(cv)
-            except (TypeError, ValueError):
-                continue
-        if isinstance(cv, dict) and not cv.get("deleted", False):
-            full = cv.get("full_schema_name")
-            if full:
-                registered_full_names.add(full)
-
-    orphans = deployed - registered_full_names - _METADATA_SCHEMA_NAMES
+    diff = dry.json()
+    orphans = diff.get("orphan_schemas") or []
     if not orphans:
         return
-
-    # Orphan names have the shape ``<base>_<safe_tenant_id>``; recover the
-    # tenant_id by stripping a known base prefix.
-    known_bases = (
-        "video_colpali_smol500_mv_frame",
-        "document_text",
-        "knowledge_graph",
-        "agent_memories",
-        "wiki_pages",
-        "image_colpali_mv",
-        "audio_clap_semantic",
-        "code_lateon_mv",
-    )
-    tenants_to_delete: set[str] = set()
-    for orphan in orphans:
-        for base in known_bases:
-            prefix = f"{base}_"
-            if orphan.startswith(prefix):
-                tenants_to_delete.add(orphan[len(prefix) :])
-                break
-
+    orphan_tenants = diff.get("orphan_tenants") or []
+    unrecovered = diff.get("unrecovered_schemas") or []
     print(
         f"Session pre-flight: dropping {len(orphans)} Vespa orphan schema(s) "
-        f"via {len(tenants_to_delete)} tenant DELETE(s)"
+        f"across {len(orphan_tenants)} tenant(s) in one atomic redeploy."
     )
-    for tid in sorted(tenants_to_delete):
-        try:
-            with httpx.Client(timeout=120.0) as client:
-                client.delete(f"{RUNTIME}/admin/tenants/{tid}")
-        except (httpx.HTTPError, OSError) as exc:
-            print(f"Orphan cleanup failed for tenant {tid}: {exc}")
+    if unrecovered:
+        print(
+            f"  {len(unrecovered)} schema(s) with unknown base prefixes will "
+            f"NOT be dropped: {unrecovered}"
+        )
+
+    try:
+        with httpx.Client(timeout=300.0) as client:
+            confirm = client.post(
+                f"{RUNTIME}/admin/reconcile-orphans", params={"dry_run": "false"}
+            )
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"Session pre-flight: reconcile confirm failed: {exc}")
+        return
+
+    if confirm.status_code != 200:
+        print(
+            f"Session pre-flight: reconcile confirm returned "
+            f"{confirm.status_code}: {confirm.text[:200]}"
+        )
 
 
 def _ensure_sandbox_gateway() -> None:
