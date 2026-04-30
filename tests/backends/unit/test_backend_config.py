@@ -419,7 +419,12 @@ class TestConfigUtilsBackendConfig:
         self, temp_config_file, tmp_path, monkeypatch, memory_config_manager
     ):
         """Test auto-discovery finds config.json in configs/ directory"""
-        # Change to temp directory so configs/config.json can be found
+        # The session-autouse cogniverse_test_config fixture in tests/conftest.py
+        # sets COGNIVERSE_CONFIG to a tmpdir clone of prod config so integration
+        # tests don't load it directly. That env var short-circuits ConfigUtils'
+        # cwd-based auto-discovery, which is exactly what this test exercises.
+        # Clear it for the duration of this test so the chdir takes effect.
+        monkeypatch.delenv("COGNIVERSE_CONFIG", raising=False)
         monkeypatch.chdir(tmp_path)
 
         config_utils = ConfigUtils(
@@ -435,6 +440,8 @@ class TestConfigUtilsBackendConfig:
         self, temp_config_file, tmp_path, monkeypatch, memory_config_manager
     ):
         """Test merging system config with tenant overrides"""
+        # See note in test_auto_discovery_from_configs_dir.
+        monkeypatch.delenv("COGNIVERSE_CONFIG", raising=False)
         monkeypatch.chdir(tmp_path)
 
         # Create tenant-specific profile
