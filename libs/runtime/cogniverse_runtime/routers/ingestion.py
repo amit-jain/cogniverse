@@ -17,7 +17,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
@@ -101,7 +101,16 @@ async def start_ingestion(
 ) -> Dict[str, Any]:
     """Start video ingestion process."""
     try:
-        # Validate inputs
+        # Tenant identity first — auth-class checks (existence, ownership)
+        # belong before any filesystem or request-content inspection so we
+        # don't leak server-side state (e.g. dir existence) to unauth'd
+        # callers.
+        try:
+            tenant_id = require_tenant_id(request.tenant_id, source="IngestionRequest")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        await assert_tenant_exists(tenant_id)
+
         video_dir = Path(request.video_dir)
         if not video_dir.exists():
             raise HTTPException(
@@ -109,12 +118,7 @@ async def start_ingestion(
                 detail=f"Video directory not found: {request.video_dir}",
             )
 
-        # Get backend with dependency injection
         backend_registry = BackendRegistry.get_instance()
-        try:
-            tenant_id = require_tenant_id(request.tenant_id, source="IngestionRequest")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
         _backend = backend_registry.get_ingestion_backend(
             name=request.backend,
             tenant_id=tenant_id,
@@ -195,6 +199,15 @@ async def upload_video(
         upload_tenant_id = require_tenant_id(tenant_id, source="/ingestion/upload")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    # Reject ingestion for tenants that haven't been registered. Without
+    # this guard the worker auto-deploys per-tenant schemas on first
+    # upload, which produces "schema-only tenants" — schema in Vespa,
+    # registry entry present, but no tenant_metadata document. In a
+    # production deployment with auth, the auth layer enforces this
+    # already; this check is the consistent answer for unauthenticated
+    # local dev clusters and for any pre-auth code path.
+    await assert_tenant_exists(upload_tenant_id)
 
     redis_url = os.environ.get("REDIS_URL")
     minio_endpoint = os.environ.get("MINIO_ENDPOINT")

@@ -96,7 +96,9 @@ class StatsResponse(BaseModel):
 async def upsert(request: UpsertRequest) -> UpsertResponse:
     """Upsert a batch of nodes and edges for a tenant."""
     from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
+    from cogniverse_core.common.tenant_utils import assert_tenant_exists
 
+    await assert_tenant_exists(request.tenant_id)
     mgr = get_graph_manager(request.tenant_id)
 
     nodes = [
@@ -138,6 +140,9 @@ async def search_nodes(
     top_k: int = Query(10, ge=1, le=100),
 ) -> NodeSearchResponse:
     """Semantic search over graph nodes."""
+    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+
+    await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     nodes = mgr.search_nodes(q, top_k=top_k)
     return NodeSearchResponse(nodes=nodes, count=len(nodes))
@@ -150,6 +155,9 @@ async def get_neighbors(
     depth: int = Query(1, ge=1, le=3),
 ) -> NeighborsResponse:
     """Return direct neighbors (out and in) of a node by name."""
+    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+
+    await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     result = mgr.get_neighbors(node, depth=depth)
     return NeighborsResponse(**result)
@@ -163,6 +171,9 @@ async def get_path(
     max_depth: int = Query(4, ge=1, le=6),
 ) -> PathResponse:
     """Shortest path between two nodes by name."""
+    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+
+    await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     path = mgr.get_path(source, target, max_depth=max_depth)
     return PathResponse(
@@ -176,6 +187,9 @@ async def get_path(
 @router.get("/stats", response_model=StatsResponse)
 async def get_stats(tenant_id: str) -> StatsResponse:
     """Graph statistics: node and edge counts, top-degree nodes."""
+    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+
+    await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     stats = mgr.get_stats()
     return StatsResponse(tenant_id=tenant_id, **stats)
