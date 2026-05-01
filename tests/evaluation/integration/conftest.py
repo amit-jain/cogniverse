@@ -80,6 +80,13 @@ def _load_llm_config() -> dict[str, Any] | None:
     if provider_uri:
         return {"provider_uri": provider_uri, "base_url": base_url}
 
+    test_model = os.environ.get("TEST_LLM_MODEL")
+    test_api_base = os.environ.get("TEST_LLM_API_BASE")
+    if test_model and test_api_base:
+        bare = test_model.split("/", 1)[1] if "/" in test_model else test_model
+        prefix = "openai" if test_api_base.rstrip("/").endswith("/v1") else "ollama"
+        return {"provider_uri": f"{prefix}/{bare}", "base_url": test_api_base}
+
     if _TEST_LLM_CONFIG.exists():
         with _TEST_LLM_CONFIG.open() as fh:
             data = json.load(fh)
