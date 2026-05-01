@@ -109,12 +109,22 @@ def pytest_collection_modifyitems(config, items):
     # which is a 1-2 hour run end-to-end. Off by default; opt in via
     # RUN_TEACHER_OPTIMIZATION_E2E=1 (or invoke pytest with
     # ``-m requires_teacher_model`` to bypass this deselection).
-    teacher_optim_explicit = (
-        os.environ.get("RUN_TEACHER_OPTIMIZATION_E2E") == "1"
-        or "requires_teacher_model" in (config.option.markexpr or "")
-    )
+    teacher_optim_explicit = os.environ.get(
+        "RUN_TEACHER_OPTIMIZATION_E2E"
+    ) == "1" or "requires_teacher_model" in (config.option.markexpr or "")
     if not teacher_optim_explicit:
         skip_substrings.append("test_router_optimization_e2e")
+
+    # Non-router optimizer persistence tests are slow (each invokes
+    # optimization_cli or ModalityOptimizer end-to-end against the
+    # cluster) and need real telemetry traces to produce meaningful
+    # output. Off by default; opt in via RUN_OPTIMIZER_PERSISTENCE_E2E=1
+    # or pytest -m requires_optimizer_data.
+    optimizer_data_explicit = os.environ.get(
+        "RUN_OPTIMIZER_PERSISTENCE_E2E"
+    ) == "1" or "requires_optimizer_data" in (config.option.markexpr or "")
+    if not optimizer_data_explicit:
+        skip_substrings.append("test_optimizer_persistence_e2e")
 
     if skip_substrings:
         keep = []
