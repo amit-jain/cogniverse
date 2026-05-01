@@ -370,6 +370,115 @@ def _load_blob_in_pod(kind: str, key: str, tenant_id: str = TENANT_ID) -> str:
     return result.stdout.strip()
 
 
+def _bounce_runtime_pod(ready_timeout_s: int = 240) -> str:
+    """Delete-pod 1:1 replacement of the runtime pod and wait for ready.
+
+    Uses ``kubectl delete pod`` rather than ``kubectl rollout restart``
+    because a rolling update tries to surge a second 8Gi pod alongside
+    the current one, which never schedules on a memory-pinned k3d
+    laptop. Returns the new pod name so callers can scrape its logs.
+    """
+    old_pod = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "pods",
+            "-n",
+            NAMESPACE,
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        check=True,
+        timeout=15,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "delete",
+            "pod",
+            old_pod,
+            "-n",
+            NAMESPACE,
+            "--grace-period=10",
+        ],
+        check=True,
+        timeout=30,
+    )
+    deadline = time.monotonic() + ready_timeout_s
+    while time.monotonic() < deadline:
+        try:
+            r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
+            if r.status_code == 200:
+                break
+        except httpx.HTTPError:
+            pass
+        time.sleep(5)
+    else:
+        raise AssertionError(
+            f"Runtime did not return /health/live=200 within {ready_timeout_s}s"
+        )
+    # Settle for agent registry, schema convergence, artifact loading.
+    time.sleep(20)
+
+    # Resolve the NEW pod name for log scraping. The deployment
+    # controller schedules the replacement under a different name.
+    new_pod = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "get",
+            "pods",
+            "-n",
+            NAMESPACE,
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ],
+        check=True,
+        timeout=15,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return new_pod
+
+
+def _read_pod_logs(pod_name: str, since: str = "5m", tail_lines: int = 5000) -> str:
+    """Return container logs for ``pod_name`` (runtime container)."""
+    result = subprocess.run(
+        [
+            "kubectl",
+            "--context",
+            KUBECTL_CONTEXT,
+            "logs",
+            pod_name,
+            "-n",
+            NAMESPACE,
+            "-c",
+            CONTAINER,
+            f"--since={since}",
+            f"--tail={tail_lines}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"kubectl logs {pod_name} failed: {result.stderr[-500:]}")
+    return result.stdout
+
+
 # ---------------------------------------------------------------------------
 # 1. Gateway threshold optimization
 # ---------------------------------------------------------------------------
@@ -777,6 +886,95 @@ class TestProfileOptimization:
             assert "video_colpali" in avail, (
                 f"available_profiles should contain known profiles, got: {avail[:100]}"
             )
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+@skip_if_no_kubectl
+class TestProfileSelectionArtifactReload:
+    """Verify ProfileSelectionAgent's ``_load_artifact`` actually runs at
+    startup and applies the optimized DSPy state to its in-memory
+    module — not just that the artifact blob persists. Closes the
+    verification gap between 'optimizer wrote a blob' and 'the live
+    agent uses it on the next request'.
+
+    The chart's ``agent-optimization`` CronWorkflow runs
+    ``optimization_cli --mode profile`` weekly and then
+    ``kubectl rollout restart deployment/runtime`` so agents pick up
+    new artifacts. This test mirrors that exact sequence end-to-end.
+    """
+
+    def test_profile_agent_loads_optimized_module_after_restart(self):
+        # 1. Run the profile optimizer to produce a fresh artifact.
+        result = _run_batch_job("profile")
+        assert result["status"] == "success"
+        assert result["training_examples"] >= 1
+
+        # 2. Verify the artifact has a non-trivial demo set before
+        # restart, so we know there is something for _load_artifact to
+        # actually load.
+        blob_before = _load_blob_in_pod("model", "profile_selection")
+        assert blob_before, "Profile artifact blob is empty before restart"
+        artifact_before = json.loads(blob_before)
+        demos_before = artifact_before.get("selector.predict", {}).get("demos", [])
+        assert len(demos_before) >= 1, (
+            f"Pre-restart artifact has 0 demos — nothing to load. "
+            f"Keys present: {list(artifact_before.keys())}"
+        )
+
+        # 3. Bounce the runtime pod.
+        new_pod = _bounce_runtime_pod()
+
+        # 4. Issue a query first — the dispatcher constructs each agent
+        # lazily on first dispatch, and ``_load_artifact`` only runs at
+        # construction time. Without driving traffic, the agent is never
+        # built and the load-success log line never fires.
+        resp = httpx.post(
+            f"{RUNTIME}/agents/profile_selection_agent/process",
+            json={
+                "agent_name": "profile_selection_agent",
+                "query": "find a clip about machine learning",
+                "context": {"tenant_id": TENANT_ID},
+            },
+            timeout=600.0,
+        )
+        assert resp.status_code == 200, (
+            f"profile_selection_agent failed after restart: "
+            f"{resp.status_code} {resp.text[:300]}"
+        )
+        body = resp.json()
+        assert body.get("status") == "success", (
+            f"Agent dispatch did not succeed: {json.dumps(body, default=str)[:300]}"
+        )
+
+        # 5. Now scrape logs. The success marker is emitted by
+        # ``ProfileSelectionAgent._load_artifact`` (profile_selection_agent.py
+        # line 254-255). Presence proves the artifact blob made it into
+        # the live ``dspy_module.load_state`` call. Absence means the
+        # agent silently fell back to the unoptimized module — the bug
+        # this test was added to catch.
+        logs = _read_pod_logs(new_pod, since="10m")
+        assert (
+            "ProfileSelectionAgent loaded optimized DSPy module from artifact" in logs
+        ), (
+            "Expected ProfileSelectionAgent load-success log line in new "
+            f"pod {new_pod}; either _load_artifact didn't run or it "
+            "swallowed an exception. Last 1500 chars of logs:\n"
+            f"{logs[-1500:]}"
+        )
+
+        # 6. Re-read the artifact from inside the pod and assert demo
+        # parity with the pre-restart state. This proves persistence
+        # across the restart and that ProfileSelectionModule's load
+        # didn't mutate the on-disk state.
+        blob_after = _load_blob_in_pod("model", "profile_selection")
+        assert blob_after, "Profile artifact missing after restart"
+        artifact_after = json.loads(blob_after)
+        demos_after = artifact_after.get("selector.predict", {}).get("demos", [])
+        assert len(demos_after) == len(demos_before), (
+            f"Demo count drifted across restart: "
+            f"{len(demos_before)} -> {len(demos_after)}"
+        )
 
 
 # ---------------------------------------------------------------------------
