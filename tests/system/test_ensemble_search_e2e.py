@@ -270,9 +270,10 @@ class TestEnsembleSearchEndToEnd:
         # VALIDATE: RRF metadata on results (if any returned)
         if result.results:
             first_result = result.results[0]
-            assert "rrf_score" in first_result, "Should have RRF score"
-            assert "profile_ranks" in first_result, "Should have profile ranks"
-            assert "num_profiles" in first_result, "Should have profile count"
+            metadata = first_result.get("metadata", {})
+            assert "rrf_score" in metadata, "Should have RRF score in metadata"
+            assert "profile_ranks" in metadata, "Should have profile ranks in metadata"
+            assert "num_profiles" in metadata, "Should have profile count in metadata"
 
         # VALIDATE: Latency (relaxed for E2E with mocked encoders)
         logger.info(
@@ -451,14 +452,16 @@ class TestEnsembleSearchEndToEnd:
             assert len(video1_results) == 1, "test_video_1 should appear once"
 
             video1 = video1_results[0]
-            assert video1["num_profiles"] == 3, (
-                f"test_video_1 should appear in 3 profiles, got {video1['num_profiles']}"
+            video1_meta = video1.get("metadata", {})
+            assert video1_meta.get("num_profiles") == 3, (
+                f"test_video_1 should appear in 3 profiles, got "
+                f"{video1_meta.get('num_profiles')}"
             )
 
             # VALIDATE: test_video_0 appears in 2 profiles
             video0_results = [r for r in results if r["id"] == "test_video_0"]
             if video0_results:
-                assert video0_results[0]["num_profiles"] == 2
+                assert video0_results[0].get("metadata", {}).get("num_profiles") == 2
 
             # VALIDATE: Videos in more profiles rank higher (generally)
             # Get rank of video1 (3 profiles) vs video4 (1 profile)
