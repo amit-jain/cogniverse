@@ -30,6 +30,14 @@ hfCache:
   enabled: true
   path: /host-hf-cache
 
+# k3d bind-mounts ``~/.local/share/cogniverse`` into the node at
+# ``/host-data``; pinning Vespa + Phoenix data here lets a cluster
+# recreate (``cogniverse up`` after delete) preserve every tenant's
+# documents, schemas, optimization run history, and Phoenix datasets.
+hostStorage:
+  enabled: true
+  path: /host-data
+
 inference:
   # ColPali uses the native FastAPI sidecar (deploy/colpali) — vLLM's
   # ColPaliForRetrieval exposes /v1/score (scalar) but the runtime needs

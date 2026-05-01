@@ -98,6 +98,26 @@ commonLabels: {}
 commonAnnotations: {}
 
 # ===========================================
+# Host-bound stateful storage
+# ===========================================
+# Bind stateful service data directories (Vespa document store + config,
+# Phoenix SQLite + traces) to host-side directories instead of the
+# default ``local-path`` PVC provisioner. Off by default — production
+# clusters want real PVCs backed by cloud storage. Dev/k3s overlays
+# opt in so cluster recreation (``cogniverse up`` after a previous
+# delete) does not lose Vespa application state or Phoenix experiment
+# history. The k3d cluster bind-mounts ``hostStorage.hostPath`` from
+# the operator's host into the node, and the chart hostPaths each
+# service's subdir into its pod when this flag is on, bypassing PVC
+# entirely so the data lives on the host filesystem.
+hostStorage:
+  enabled: false
+  # Path INSIDE the k3d node where ``~/.local/share/cogniverse`` is
+  # bind-mounted. Per-service subdirs (vespa/, phoenix/) are created
+  # inside automatically.
+  path: /host-data
+
+# ===========================================
 # HuggingFace cache sharing
 # ===========================================
 # Cross-cutting: lets every inference pod (and the runtime) read the

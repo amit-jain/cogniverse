@@ -153,7 +153,19 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.vespa.persistence.enabled }}
+      {{- if .Values.hostStorage.enabled }}
+      # Host-bound: pin the ``data`` volume to a host-side directory so
+      # cluster recreation does not destroy Vespa's document store +
+      # config-server state. The k3d node has ``hostStorage.path``
+      # bind-mounted from the operator's host (cluster.py); each
+      # service gets its own subdir to keep state isolated.
+      volumes:
+      - name: data
+        hostPath:
+          path: {{ .Values.hostStorage.path }}/vespa
+          type: DirectoryOrCreate
+      {{- end }}
+  {{- if and .Values.vespa.persistence.enabled (not .Values.hostStorage.enabled) }}
   volumeClaimTemplates:
   - metadata:
       name: data
@@ -864,7 +876,18 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- if .Values.phoenix.persistence.enabled }}
+      {{- if .Values.hostStorage.enabled }}
+      # Host-bound: pin the ``data`` volume to a host-side directory so
+      # cluster recreation preserves Phoenix's SQLite database (traces,
+      # experiments, datasets, dataset versions). See ``hostStorage`` in
+      # values.yaml for the cross-cutting layout.
+      volumes:
+      - name: data
+        hostPath:
+          path: {{ .Values.hostStorage.path }}/phoenix
+          type: DirectoryOrCreate
+      {{- end }}
+  {{- if and .Values.phoenix.persistence.enabled (not .Values.hostStorage.enabled) }}
   volumeClaimTemplates:
   - metadata:
       name: data

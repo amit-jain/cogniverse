@@ -204,6 +204,14 @@ def create_cluster(
     host_hf_cache = os.path.expanduser("~/.cache/huggingface")
     if os.path.isdir(host_hf_cache):
         cmd.extend(["--volume", f"{host_hf_cache}:/host-hf-cache@server:0"])
+    # Pin Vespa + Phoenix data to a host-side directory so cluster
+    # recreation (``cogniverse up`` after a previous delete) does not
+    # destroy every tenant's documents, schemas, and Phoenix datasets.
+    # The chart's ``hostStorage`` block hostPaths per-service subdirs
+    # (vespa/, phoenix/) under this mount when enabled.
+    host_state = os.path.expanduser("~/.local/share/cogniverse")
+    os.makedirs(host_state, exist_ok=True)
+    cmd.extend(["--volume", f"{host_state}:/host-data@server:0"])
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
