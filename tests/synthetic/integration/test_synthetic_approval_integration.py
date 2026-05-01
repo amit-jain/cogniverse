@@ -46,7 +46,10 @@ from tests.utils.async_polling import wait_for_phoenix_processing
 logger = logging.getLogger(__name__)
 
 
-def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
+
+def is_ollama_available(base_url: str = OLLAMA_BASE_URL) -> bool:
     """Check if Ollama service is available."""
     try:
         response = httpx.get(f"{base_url}/api/tags", timeout=5.0)
@@ -89,11 +92,11 @@ def dspy_lm(request):
 
     if lm_type == "ollama":
         if not is_ollama_available():
-            pytest.skip("Ollama not available")
+            pytest.skip(f"Ollama not available at {OLLAMA_BASE_URL}")
         # Use dspy.LM with smallest model for tests
         lm = dspy.LM(
-            model="ollama/gemma3:4b",
-            api_base="http://localhost:11434",
+            model=os.environ.get("OLLAMA_TEST_MODEL", "ollama/gemma3:4b"),
+            api_base=OLLAMA_BASE_URL,
         )
     else:
         raise ValueError(f"Unknown LM type: {lm_type}")
