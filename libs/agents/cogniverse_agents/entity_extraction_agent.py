@@ -210,7 +210,7 @@ class EntityExtractionAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info(
+                logger.warning(
                     "EntityExtractionAgent loaded optimized DSPy module from artifact"
                 )
         except Exception as e:

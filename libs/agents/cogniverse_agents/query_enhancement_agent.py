@@ -267,7 +267,7 @@ class QueryEnhancementAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info(
+                logger.warning(
                     "QueryEnhancementAgent loaded optimized DSPy module from artifact"
                 )
         except Exception as e:

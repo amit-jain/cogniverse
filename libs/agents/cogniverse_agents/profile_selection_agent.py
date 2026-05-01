@@ -251,7 +251,7 @@ class ProfileSelectionAgent(
             if blob:
                 state = json.loads(blob)
                 self.dspy_module.load_state(state)
-                logger.info(
+                logger.warning(
                     "ProfileSelectionAgent loaded optimized DSPy module from artifact"
                 )
         except Exception as e:
