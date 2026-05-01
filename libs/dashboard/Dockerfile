@@ -47,13 +47,19 @@ RUN case "$TORCH_BACKEND" in \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/cpu \
                 torch==2.8.0 torchvision==0.23.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
+                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
+                   /app/.venv/lib/python3.12/site-packages/triton \
+                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
         rocm) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/rocm6.4 \
                 torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
                 pytorch-triton-rocm==3.4.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia ;; \
+            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
+                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
+                   /app/.venv/lib/python3.12/site-packages/triton \
+                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
         cuda) \
             : ;; \
         *) \
