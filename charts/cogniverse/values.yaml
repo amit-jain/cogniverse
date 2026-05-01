@@ -98,6 +98,24 @@ commonLabels: {}
 commonAnnotations: {}
 
 # ===========================================
+# HuggingFace cache sharing
+# ===========================================
+# Cross-cutting: lets every inference pod (and the runtime) read the
+# operator's HuggingFace cache directly instead of each pod
+# downloading or each cluster bringing up an empty per-service cache
+# dir. Off by default — production clusters do not expose a developer's
+# host filesystem. Dev/k3s overlays opt in. The k3d cluster
+# bind-mounts ``~/.cache/huggingface`` to ``hfCache.path`` on the
+# node (see libs/cli/cogniverse_cli/cluster.py); the inference pod
+# template hostPaths that into the pod when ``hfCache.enabled`` is
+# true.
+hfCache:
+  enabled: false
+  # Path INSIDE the k3d node where ``~/.cache/huggingface`` is
+  # bind-mounted. Pods see this path as their HF_HOME.
+  path: /host-hf-cache
+
+# ===========================================
 # Vespa Configuration
 # ===========================================
 vespa:

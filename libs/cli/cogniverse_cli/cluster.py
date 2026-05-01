@@ -195,9 +195,12 @@ def create_cluster(
         cmd.extend(["--volume", "/dev/kfd:/dev/kfd@server:0"])
     if os.path.isdir("/dev/dri"):
         cmd.extend(["--volume", "/dev/dri:/dev/dri@server:0"])
-    # Share host's HuggingFace cache so vLLM pods don't re-download
-    # multi-GiB weights on every pod restart. The chart's inference
-    # pod template mounts /host-hf-cache/<service> as model-cache.
+    # Share host's HuggingFace cache so every inference pod reads the
+    # same on-host model directory the developer already populates with
+    # ``hf download``. Bind to the path the chart expects (its
+    # ``hfCache.path`` value, defaulting to ``/host-hf-cache``); when
+    # ``hfCache.enabled`` is true (k3s/dev overlay), the inference pod
+    # template hostPaths this directory in as ``/root/.cache/huggingface``.
     host_hf_cache = os.path.expanduser("~/.cache/huggingface")
     if os.path.isdir(host_hf_cache):
         cmd.extend(["--volume", f"{host_hf_cache}:/host-hf-cache@server:0"])

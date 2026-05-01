@@ -23,6 +23,13 @@ devMode:
 #   - vllm_colpali     (video_colpali_smol500_mv_frame, image_colpali_mv,
 #                       video_colqwen_omni_mv_chunk_30s)
 #   - code_colbert_pylate (code_lateon_mv — keep off unless code search is wanted)
+# k3d bind-mounts the developer's ``~/.cache/huggingface`` into the
+# node at ``/host-hf-cache``; sharing it with every inference pod
+# eliminates docker-cp-the-model dance after a fresh cluster.
+hfCache:
+  enabled: true
+  path: /host-hf-cache
+
 inference:
   # ColPali uses the native FastAPI sidecar (deploy/colpali) — vLLM's
   # ColPaliForRetrieval exposes /v1/score (scalar) but the runtime needs
