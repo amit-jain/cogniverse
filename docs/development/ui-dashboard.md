@@ -537,18 +537,17 @@ def build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_days):
 Generate training data for all optimizers by sampling from Vespa backend:
 
 **Supported Optimizers**:
-1. **Modality Optimizer**: Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
-2. **Cross-Modal Optimizer**: Multi-modal fusion decisions
-3. **Routing Optimizer**: Entity-based advanced routing
-4. **Workflow Optimizer**: Multi-agent workflow orchestration
-5. **Unified Optimizer**: Combined routing and workflow planning
+1. **Profile Optimizer**: ProfileSelectionAgent (per-query backend profile, modality, complexity, intent)
+2. **Routing Optimizer**: Entity-based advanced routing
+3. **Workflow Optimizer**: Multi-agent workflow orchestration
+4. **Unified Optimizer**: Combined routing and workflow planning
 
 **Configuration**:
 
 - **Optimizer Type**: Which optimizer to generate data for
 - **Examples to Generate**: Number of training examples (10-10,000)
 - **Vespa Sample Size**: Documents to sample from backend (10-10,000)
-- **Sampling Strategies**: diverse, temporal_recent, entity_rich, multi_modal_sequences, by_modality, cross_modal_pairs
+- **Sampling Strategies**: diverse, temporal_recent, entity_rich, multi_modal_sequences
 - **Max Profiles**: Maximum number of backend profiles to use (1-10)
 - **Tenant ID**: Tenant-specific data isolation
 
@@ -557,7 +556,7 @@ Generate training data for all optimizers by sampling from Vespa backend:
 # 1. Call synthetic data API
 api_base = "http://localhost:8000"
 request_payload = {
-    "optimizer": "cross_modal",
+    "optimizer": "profile",
     "count": 100,
     "vespa_sample_size": 200,
     "strategies": ["diverse"],
@@ -574,8 +573,8 @@ response = requests.post(
 # 2. Receive generated data
 result = response.json()
 # {
-#   "optimizer": "cross_modal",
-#   "schema_name": "FusionHistorySchema",
+#   "optimizer": "profile",
+#   "schema_name": "ProfileSelectionExampleSchema",
 #   "count": 100,
 #   "selected_profiles": ["video_colpali_smol500_mv_frame", ...],
 #   "profile_selection_reasoning": "Selected frame-based and chunk-based...",
@@ -597,15 +596,13 @@ json.dump(result, open("synthetic_data.json", "w"))
 
 **Output Schemas**:
 
-- `ModalityExampleSchema`: Query, modality, agent mapping
-- `FusionHistorySchema`: Fusion context, improvement metrics
+- `ProfileSelectionExampleSchema`: Query, profile, modality, complexity, intent
 - `RoutingExperienceSchema`: Query, entities, relationships, agent
 - `WorkflowExecutionSchema`: Multi-step workflow patterns
 
 **Integration with Optimizers**:
 
-- `modality` → Routing Optimization Tab
-- `cross_modal` → Reranking Optimization Tab
+- `profile` → Profile Selection Optimization
 - `routing` → Routing Optimization Tab
 - `workflow` → DSPy Optimization Tab
 - `unified` → Multiple tabs (Routing + DSPy)
@@ -618,8 +615,7 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 
 **What Gets Optimized (Modules)**:
 
-- `modality` - Per-modality routing (VIDEO/DOCUMENT/IMAGE/AUDIO)
-- `cross_modal` - Multi-modal fusion decisions
+- `profile` - ProfileSelectionAgent (per-query backend profile selection)
 - `routing` - Entity-based advanced routing
 - `workflow` - Multi-agent workflow orchestration
 - `unified` - Combined routing + workflow planning

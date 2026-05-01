@@ -423,9 +423,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
     ) -> None:
         """Emit a cogniverse.routing span with the gateway's decision.
 
-        Downstream telemetry consumers (RoutingEvaluator, AnnotationAgent,
-        ModalitySpanCollector) filter on the `cogniverse.routing` span name
-        and read `routing.*` attributes.
+        Downstream telemetry consumers (RoutingEvaluator, AnnotationAgent)
+        filter on the `cogniverse.routing` span name and read
+        `routing.*` attributes.
         """
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return

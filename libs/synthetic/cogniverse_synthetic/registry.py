@@ -12,8 +12,7 @@ from typing import Dict, Type
 from pydantic import BaseModel
 
 from cogniverse_synthetic.schemas import (
-    FusionHistorySchema,
-    ModalityExampleSchema,
+    ProfileSelectionExampleSchema,
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
@@ -49,26 +48,6 @@ class OptimizerConfig:
 # Optimizer Registry
 # Maps optimizer names to their configurations
 OPTIMIZER_REGISTRY: Dict[str, OptimizerConfig] = {
-    "modality": OptimizerConfig(
-        name="modality",
-        description="Per-modality routing optimization. Learns which agents handle different content types (video, document, image, audio) most effectively.",
-        schema_class=ModalityExampleSchema,
-        generator_class_name="ModalityGenerator",
-        backend_query_strategy="by_modality",
-        agent_mapping_required=True,
-        default_sample_size=200,
-        default_generation_count=100,
-    ),
-    "cross_modal": OptimizerConfig(
-        name="cross_modal",
-        description="Multi-modal fusion optimization. Learns when combining multiple modalities (e.g., video + document) improves results and by how much.",
-        schema_class=FusionHistorySchema,
-        generator_class_name="CrossModalGenerator",
-        backend_query_strategy="cross_modal_pairs",
-        agent_mapping_required=False,
-        default_sample_size=200,
-        default_generation_count=100,
-    ),
     "routing": OptimizerConfig(
         name="routing",
         description="Advanced routing with entity extraction. Learns to route queries based on extracted entities, relationships, and semantic understanding.",
@@ -86,6 +65,16 @@ OPTIMIZER_REGISTRY: Dict[str, OptimizerConfig] = {
         generator_class_name="WorkflowGenerator",
         backend_query_strategy="multi_modal_sequences",
         agent_mapping_required=True,
+        default_sample_size=200,
+        default_generation_count=100,
+    ),
+    "profile": OptimizerConfig(
+        name="profile",
+        description="ProfileSelectionAgent optimization. Learns which Vespa backend profile best matches a query's modality, complexity, and intent.",
+        schema_class=ProfileSelectionExampleSchema,
+        generator_class_name="ProfileGenerator",
+        backend_query_strategy="diverse",
+        agent_mapping_required=False,
         default_sample_size=200,
         default_generation_count=100,
     ),

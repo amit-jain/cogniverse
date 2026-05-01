@@ -20,6 +20,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timedelta
 
@@ -1079,7 +1080,10 @@ async def run_profile_optimization(
             except (ValueError, TypeError):
                 continue
         if isinstance(inp, dict):
-            example = dspy.Example(**inp).with_inputs("query")
+            # ProfileSelectionSignature has query AND available_profiles as
+            # InputFields; match the production trainset's input set so
+            # BootstrapFewShot doesn't see split-shape demos.
+            example = dspy.Example(**inp).with_inputs("query", "available_profiles")
             trainset.append(example)
     logger.info(
         "Merged %d synthetic + %d production = %d total training examples",
@@ -1291,6 +1295,18 @@ async def run_synthetic_generation(
     telemetry_manager = get_telemetry_manager()
     telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
+    # Synthetic generators that wrap DSPy modules (RoutingGenerator)
+    # need a configured LM. The other optimizer modes (simba, profile,
+    # entity-extraction) call ``dspy.configure(lm=create_dspy_lm(...))``;
+    # matching that pattern here so any DSPy-backed generator finds a
+    # default LM at module-construction time.
+    import dspy
+
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+    llm_endpoint = config.get_llm_config().primary
+    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
     am = ArtifactManager(telemetry_provider, tenant_id)
@@ -1315,20 +1331,51 @@ async def run_synthetic_generation(
             if isinstance(backend_config, dict):
                 backend_config = {**backend_config}
                 backend_config.setdefault("tenant_id", tenant_id)
-                bc = BackendConfig(**backend_config)
+                # Use ``from_dict`` (not ``BackendConfig(**...)``)
+                # because the chart-rendered config.json stores the
+                # backend kind under the JSON-friendly ``type`` key
+                # while the dataclass attribute is ``backend_type``.
+                # ``from_dict`` does the rename + nested profile parse;
+                # plain kwargs raise ``unexpected keyword argument 'type'``.
+                bc = BackendConfig.from_dict(backend_config)
             else:
                 bc = backend_config
             if isinstance(generator_config, dict):
                 generator_config = {**generator_config}
                 generator_config.setdefault("tenant_id", tenant_id)
-                gc = SyntheticGeneratorConfig(**generator_config)
+                # Use ``from_dict`` (not ``SyntheticGeneratorConfig(**...)``)
+                # because the nested ``optimizer_configs[key]`` values
+                # need to be hydrated as ``OptimizerGenerationConfig``
+                # instances — kwargs construction leaves them as raw
+                # dicts, so the generator later trips on
+                # ``'dict' object has no attribute 'profile_scoring_rules'``.
+                gc = SyntheticGeneratorConfig.from_dict(generator_config)
             else:
                 gc = generator_config
 
-            from cogniverse_core.registries.backend_registry import BackendRegistry
+            from pathlib import Path
 
-            registry = BackendRegistry(config_manager=config_manager)
-            backend = registry.get_backend(tenant_id=tenant_id)
+            from cogniverse_core.registries.backend_registry import BackendRegistry
+            from cogniverse_core.schemas.filesystem_loader import (
+                FilesystemSchemaLoader,
+            )
+
+            # BackendRegistry is a singleton — its __new__ takes no args.
+            # get_search_backend is the public accessor; tenant isolation
+            # is per-query via tenant_id in query_dict, so we don't pass
+            # tenant_id here. Backend name comes from the resolved
+            # backend config (defaults to "vespa"). schema_loader is
+            # required for backend init — match what the ingestion v2
+            # worker does (see ingestion_v2/worker.py).
+            schemas_dir = Path(
+                os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
+            )
+            registry = BackendRegistry()
+            backend = registry.get_search_backend(
+                name=bc.backend_type,
+                config_manager=config_manager,
+                schema_loader=FilesystemSchemaLoader(schemas_dir),
+            )
 
             service = SyntheticDataService(
                 backend=backend,

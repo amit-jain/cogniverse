@@ -705,7 +705,6 @@ main_tabs = st.tabs(
         "🗺️ Embedding Atlas",
         "🎯 Routing Evaluation",
         "🔄 Orchestration Annotation",
-        "📊 Multi-Modal Performance",
         "🔧 Optimization",
         "🔬 Synthetic Data & Optimization",
         "✅ Approval Queue",
@@ -2000,240 +1999,8 @@ with main_tabs[4]:
             "The orchestration annotation tab provides UI for human annotation of orchestration workflows."
         )
 
-# Multi-Modal Performance Tab
-with main_tabs[5]:
-    st.header("📊 Multi-Modal Performance Dashboard")
-    st.markdown(
-        "Real-time performance metrics, cache analytics, and optimization status for each modality."
-    )
-
-    # Import required modules
-    try:
-        from cogniverse_agents.routing.modality_cache import ModalityCacheManager
-        from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
-        from cogniverse_agents.search.types import QueryModality
-
-        # Initialize components
-        if "metrics_tracker" not in st.session_state:
-            st.session_state.metrics_tracker = ModalityMetricsTracker()
-        if "cache_manager" not in st.session_state:
-            st.session_state.cache_manager = ModalityCacheManager()
-
-        metrics_tracker = st.session_state.metrics_tracker
-        cache_manager = st.session_state.cache_manager
-
-        # Section 1: Per-Modality Metrics
-        st.subheader("📈 Performance by Modality")
-
-        modalities = [
-            QueryModality.TEXT,
-            QueryModality.DOCUMENT,
-            QueryModality.IMAGE,
-            QueryModality.VIDEO,
-            QueryModality.AUDIO,
-        ]
-
-        for modality in modalities:
-            with st.expander(f"{modality.value.upper()} Modality", expanded=False):
-                stats = metrics_tracker.get_modality_stats(modality)
-                cache_stats = cache_manager.get_cache_stats(modality)
-
-                if stats and stats.get("total_requests", 0) > 0:
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        st.metric("P95 Latency", f"{stats.get('p95_latency', 0):.0f}ms")
-                    with col2:
-                        st.metric("Success Rate", f"{stats.get('success_rate', 0):.1%}")
-                    with col3:
-                        st.metric(
-                            "Total Requests", f"{stats.get('total_requests', 0):,}"
-                        )
-                    with col4:
-                        cache_hit_rate = cache_stats.get("hit_rate", 0)
-                        st.metric("Cache Hit Rate", f"{cache_hit_rate:.1%}")
-
-                    # Latency distribution chart
-                    if "latency_distribution" in stats:
-                        st.markdown("**Latency Distribution:**")
-                        latency_data = pd.DataFrame(
-                            {
-                                "Percentile": ["P50", "P75", "P95", "P99"],
-                                "Latency (ms)": [
-                                    stats.get("p50_latency", 0),
-                                    stats.get("p75_latency", 0),
-                                    stats.get("p95_latency", 0),
-                                    stats.get("p99_latency", 0),
-                                ],
-                            }
-                        )
-                        fig = px.bar(
-                            latency_data,
-                            x="Percentile",
-                            y="Latency (ms)",
-                            title=f"{modality.value.upper()} Latency Distribution",
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info(f"No data available for {modality.value} modality yet.")
-
-        st.markdown("---")
-
-        # Section 2: Cross-Modal Patterns
-        st.subheader("🔗 Cross-Modal Patterns")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.markdown("**Modality Co-Occurrence**")
-            # Get co-occurrence data from tracker
-            summary = metrics_tracker.get_summary_stats()
-            if summary and "modality_distribution" in summary:
-                dist_df = pd.DataFrame(
-                    [
-                        {"Modality": k.upper(), "Count": v}
-                        for k, v in summary["modality_distribution"].items()
-                    ]
-                )
-                fig = px.pie(
-                    dist_df,
-                    values="Count",
-                    names="Modality",
-                    title="Query Distribution by Modality",
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No cross-modal data available yet.")
-
-        with col2:
-            st.markdown("**Slowest Modalities**")
-            slowest = metrics_tracker.get_slowest_modalities(top_k=5)
-            if slowest:
-                slowest_df = pd.DataFrame(slowest)
-                fig = px.bar(
-                    slowest_df,
-                    x="modality",
-                    y="p95_latency",
-                    title="P95 Latency by Modality",
-                    labels={"modality": "Modality", "p95_latency": "P95 Latency (ms)"},
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("No latency data available yet.")
-
-        st.markdown("---")
-
-        # Section 3: Cache Performance
-        st.subheader("💾 Cache Performance")
-
-        cache_stats_all = cache_manager.get_cache_stats()
-        if cache_stats_all:
-            cache_data = []
-            for modality_str, stats in cache_stats_all.items():
-                cache_data.append(
-                    {
-                        "Modality": modality_str.upper(),
-                        "Cache Size": stats.get("cache_size", 0),
-                        "Hits": stats.get("hits", 0),
-                        "Misses": stats.get("misses", 0),
-                        "Hit Rate": stats.get("hit_rate", 0),
-                    }
-                )
-
-            cache_df = pd.DataFrame(cache_data)
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("**Cache Hit Rates**")
-                fig = px.bar(
-                    cache_df,
-                    x="Modality",
-                    y="Hit Rate",
-                    title="Cache Hit Rate by Modality",
-                    labels={"Hit Rate": "Hit Rate (%)"},
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col2:
-                st.markdown("**Cache Utilization**")
-                fig = px.bar(
-                    cache_df,
-                    x="Modality",
-                    y="Cache Size",
-                    title="Cache Size by Modality",
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Detailed cache stats table
-            st.markdown("**Detailed Cache Statistics:**")
-            st.dataframe(cache_df, use_container_width=True)
-        else:
-            st.info("No cache data available yet.")
-
-        st.markdown("---")
-
-        # Section 4: Optimization Status
-        st.subheader("🎯 Per-Modality Optimization Status")
-
-        try:
-            from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-
-            if "modality_optimizer" not in st.session_state:
-                from cogniverse_foundation.config.manager import (
-                    create_default_config_manager,
-                )
-                from cogniverse_foundation.config.utils import get_config
-
-                _cm = create_default_config_manager()
-                _cfg = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=_cm)
-                _llm = _cfg.get_llm_config().primary
-                st.session_state.modality_optimizer = ModalityOptimizer(llm_config=_llm)
-
-            optimizer = st.session_state.modality_optimizer
-
-            st.markdown("**Trained Models:**")
-            for modality in modalities:
-                has_model = modality in optimizer.modality_models
-                status_emoji = "✅" if has_model else "⏸️"
-                status_text = "Trained" if has_model else "Not Trained"
-
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    st.markdown(
-                        f"{status_emoji} **{modality.value.upper()}**: {status_text}"
-                    )
-                with col2:
-                    if not has_model and st.button(
-                        "Train", key=f"train_{modality.value}"
-                    ):
-                        st.info(
-                            f"Training for {modality.value} modality would be triggered here."
-                        )
-
-            st.markdown("---")
-            st.markdown("**Optimization Metrics:**")
-
-            # Show improvement metrics if available
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Models Trained", len(optimizer.modality_models))
-            with col2:
-                avg_improvement = 0.0  # Would calculate from real data
-                st.metric("Avg Accuracy Improvement", f"+{avg_improvement:.1%}")
-            with col3:
-                last_training = "Never"  # Would get from real data
-                st.metric("Last Training", last_training)
-
-        except Exception as e:
-            st.warning(f"Optimization status unavailable: {e}")
-
-    except ImportError as e:
-        st.error(f"Failed to import required modules: {e}")
-        st.info("Make sure Phase 12 components are properly installed.")
-
 # Optimization Tab
-with main_tabs[6]:
+with main_tabs[5]:
     st.header("🔧 System Optimization")
     st.markdown(
         "Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure."
@@ -2464,7 +2231,7 @@ with main_tabs[6]:
     )
 
 # Ingestion Testing Tab
-with main_tabs[7]:
+with main_tabs[6]:
     # Synthetic Data & Optimization (enhanced_optimization_tab)
     if enhanced_optimization_tab_available:
         try:
@@ -2480,7 +2247,7 @@ with main_tabs[7]:
             "and comprehensive optimization controls."
         )
 
-with main_tabs[8]:
+with main_tabs[7]:
     # Approval Queue (approval_queue_tab)
     if approval_queue_tab_available:
         try:
@@ -2494,7 +2261,7 @@ with main_tabs[8]:
             "and AI-generated outputs."
         )
 
-with main_tabs[9]:
+with main_tabs[8]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown(
         "Interactive testing and configuration of video ingestion pipelines with different processing profiles."
@@ -2755,7 +2522,7 @@ with main_tabs[9]:
         st.info("📊 Upload a video and process it to see detailed analysis")
 
 # Interactive Search Tab
-with main_tabs[10]:
+with main_tabs[9]:
     st.header("🔍 Interactive Search Interface")
     st.markdown(
         "Live search testing and evaluation with multiple ranking strategies and real-time results."
@@ -3176,7 +2943,7 @@ with main_tabs[10]:
         st.metric("Coverage Rate", "76%", "2%")
 
 # Chat Tab
-with main_tabs[11]:
+with main_tabs[10]:
     st.header("💬 Multi-Modal Chat")
     st.markdown("Chat with agents via the routing layer.")
 
@@ -3250,17 +3017,17 @@ with main_tabs[11]:
         st.rerun()
 
 # Configuration Tab
-with main_tabs[12]:
+with main_tabs[11]:
     st.header("⚙️ Configuration Management")
     render_config_management_tab()
 
 # Tenant Management Tab
-with main_tabs[13]:
+with main_tabs[12]:
     st.header("👥 Tenant Management")
     render_tenant_management_tab()
 
 # Memory Management Tab
-with main_tabs[14]:
+with main_tabs[13]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
 

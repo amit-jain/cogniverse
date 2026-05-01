@@ -576,7 +576,7 @@ def _render_synthetic_data_tab():
     with col1:
         optimizer = st.selectbox(
             "Optimizer Type",
-            ["modality", "cross_modal", "routing", "workflow", "unified"],
+            ["profile", "routing", "workflow", "unified"],
             help="Which optimizer to generate data for",
         )
     with col2:
@@ -644,8 +644,6 @@ def _render_synthetic_data_tab():
                     "temporal_recent",
                     "entity_rich",
                     "multi_modal_sequences",
-                    "by_modality",
-                    "cross_modal_pairs",
                 ],
                 default=["diverse"],
                 help="How to sample content from Vespa",
@@ -787,8 +785,7 @@ def _render_synthetic_data_tab():
         4. Load the synthetic data for training
 
         **Optimizer Tabs:**
-        - `modality` → Routing Optimization Tab
-        - `cross_modal` → Reranking Optimization Tab
+        - `profile` → Profile Selection Tab
         - `routing` → Routing Optimization Tab
         - `workflow` → DSPy Optimization Tab
         - `unified` → Multiple tabs (Routing + DSPy)
@@ -799,15 +796,10 @@ def _render_synthetic_data_tab():
     st.subheader("ℹ️ Optimizer Information")
 
     optimizer_info = {
-        "modality": {
-            "description": "Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)",
-            "schema": "ModalityExampleSchema",
-            "features": "Generates queries targeting specific modalities",
-        },
-        "cross_modal": {
-            "description": "Multi-modal fusion decisions",
-            "schema": "FusionHistorySchema",
-            "features": "Creates fusion scenarios with improvement metrics",
+        "profile": {
+            "description": "Profile selection per query (modality + complexity + intent)",
+            "schema": "ProfileSelectionExampleSchema",
+            "features": "Generates query→profile training pairs for ProfileSelectionAgent",
         },
         "routing": {
             "description": "Entity-based advanced routing",
@@ -843,7 +835,7 @@ def _render_routing_optimization_tab():
     st.markdown("""
     Optimize routing/workflow modules with automatic DSPy optimizer selection.
 
-    **Modules**: modality (per-modality routing), cross_modal (fusion), routing (entity-based), workflow (orchestration), unified (combined)
+    **Modules**: routing (entity-based), workflow (orchestration), unified (combined)
 
     **Auto DSPy Optimizer Selection**: System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
     """)
@@ -858,8 +850,8 @@ def _render_routing_optimization_tab():
         st.text(f"Tenant: {tenant_id}")
         optimizer_type = st.selectbox(
             "Module to Optimize",
-            ["modality", "cross_modal", "routing", "workflow", "unified"],
-            help="Which routing/workflow module to optimize (modality=per-modality routing, cross_modal=fusion, routing=entity-based, workflow=orchestration, unified=combined)",
+            ["routing", "workflow", "unified"],
+            help="Which routing/workflow module to optimize (routing=entity-based, workflow=orchestration, unified=combined)",
         )
 
     with col2:

@@ -18,8 +18,7 @@ from cogniverse_foundation.config.unified_config import (
 from cogniverse_sdk.interfaces.backend import Backend
 from cogniverse_synthetic.backend_querier import BackendQuerier
 from cogniverse_synthetic.generators import (
-    CrossModalGenerator,
-    ModalityGenerator,
+    ProfileGenerator,
     RoutingGenerator,
     WorkflowGenerator,
 )
@@ -58,12 +57,12 @@ class SyntheticDataService:
         ...     generator_config=generator_config
         ... )
         >>> request = SyntheticDataRequest(
-        ...     optimizer_name="modality",
-        ...     target_count=100,
-        ...     modality="VIDEO"
+        ...     optimizer="profile",
+        ...     count=100,
+        ...     tenant_id="acme:production",
         ... )
         >>> response = await service.generate(request)
-        >>> print(f"Generated {len(response.examples)} examples")
+        >>> print(f"Generated {len(response.data)} examples")
     """
 
     def __init__(
@@ -126,7 +125,7 @@ class SyntheticDataService:
         Get or create generator for optimizer (lazy initialization)
 
         Args:
-            optimizer_name: Name of optimizer (modality, routing, cross_modal, workflow)
+            optimizer_name: Name of optimizer (profile, routing, workflow)
 
         Returns:
             Generator instance
@@ -140,19 +139,7 @@ class SyntheticDataService:
             return self.generators[generator_class_name]
 
         # Create generator based on type
-        if optimizer_name == "modality":
-            modality_config = self.generator_config.get_optimizer_config("modality")
-            if not modality_config:
-                raise ValueError(
-                    "ModalityGenerator requires optimizer configuration. "
-                    "SyntheticGeneratorConfig must include optimizer_configs['modality'] with query_templates and agent_mappings."
-                )
-            generator = ModalityGenerator(
-                pattern_extractor=self.pattern_extractor,
-                agent_inferrer=self.agent_inferrer,
-                optimizer_config=modality_config,
-            )
-        elif optimizer_name == "routing":
+        if optimizer_name == "routing":
             routing_config = self.generator_config.get_optimizer_config("routing")
             if not routing_config:
                 raise ValueError(
@@ -164,10 +151,10 @@ class SyntheticDataService:
                 agent_inferrer=self.agent_inferrer,
                 optimizer_config=routing_config,
             )
-        elif optimizer_name == "cross_modal":
-            generator = CrossModalGenerator()
         elif optimizer_name == "workflow":
             generator = WorkflowGenerator()
+        elif optimizer_name == "profile":
+            generator = ProfileGenerator()
         else:
             raise ValueError(f"Unknown optimizer: {optimizer_name}")
 
@@ -298,15 +285,9 @@ class SyntheticDataService:
         # Get generator lazily (creates on first use)
         generator = self._get_generator(request.optimizer)
 
-        # For modality generator, add modality hint if possible (not in current schema, but we can infer)
-        generation_kwargs = {}
-        if request.optimizer == "modality" and hasattr(request, "modality"):
-            generation_kwargs["modality"] = request.modality
-
         examples = await generator.generate(
             sampled_content=sampled_content,
             target_count=request.count,
-            **generation_kwargs,
         )
 
         return examples

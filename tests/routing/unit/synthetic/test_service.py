@@ -7,7 +7,6 @@ Tests the main service orchestrator end-to-end.
 import pytest
 
 from cogniverse_foundation.config.unified_config import (
-    AgentMappingRule,
     DSPyModuleConfig,
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
@@ -21,21 +20,6 @@ def create_test_generator_config():
     return SyntheticGeneratorConfig(
         tenant_id="test:unit",
         optimizer_configs={
-            "modality": OptimizerGenerationConfig(
-                optimizer_type="modality",
-                dspy_modules={
-                    "query_generator": DSPyModuleConfig(
-                        signature_class="cogniverse_synthetic.dspy_signatures.GenerateModalityQuery",
-                        module_type="Predict",
-                    )
-                },
-                agent_mappings=[
-                    AgentMappingRule(modality="VIDEO", agent_name="video_search_agent"),
-                    AgentMappingRule(
-                        modality="DOCUMENT", agent_name="document_search_agent"
-                    ),
-                ],
-            ),
             "routing": OptimizerGenerationConfig(
                 optimizer_type="routing",
                 dspy_modules={
@@ -86,40 +70,24 @@ class TestSyntheticDataService:
         assert service.backend_config == config
 
     @pytest.mark.asyncio
-    async def test_generate_modality_examples(self):
-        """Test generating modality examples"""
+    async def test_generate_profile_examples(self):
+        """Test generating profile selection examples"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=10
+            tenant_id="test:unit", optimizer="profile", count=10
         )
 
         response = await service.generate(request)
 
-        assert response.optimizer == "modality"
+        assert response.optimizer == "profile"
         assert response.count == 10
-        assert response.schema_name == "ModalityExampleSchema"
+        assert response.schema_name == "ProfileSelectionExampleSchema"
         assert len(response.data) == 10
         assert isinstance(response.selected_profiles, list)
         assert len(response.selected_profiles) > 0
         assert isinstance(response.metadata, dict)
         assert isinstance(response.profile_selection_reasoning, str)
-
-    @pytest.mark.asyncio
-    async def test_generate_cross_modal_examples(self):
-        """Test generating cross-modal fusion examples"""
-        service = SyntheticDataService(generator_config=create_test_generator_config())
-
-        request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="cross_modal", count=15
-        )
-
-        response = await service.generate(request)
-
-        assert response.optimizer == "cross_modal"
-        assert response.count == 15
-        assert response.schema_name == "FusionHistorySchema"
-        assert len(response.data) == 15
 
     @pytest.mark.asyncio
     async def test_generate_routing_examples(self):
@@ -159,7 +127,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=10, vespa_sample_size=50
+            tenant_id="test:unit", optimizer="profile", count=10, vespa_sample_size=50
         )
 
         response = await service.generate(request)
@@ -173,7 +141,7 @@ class TestSyntheticDataService:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=5, max_profiles=1
+            tenant_id="test:unit", optimizer="profile", count=5, max_profiles=1
         )
 
         response = await service.generate(request)
@@ -214,14 +182,14 @@ class TestSyntheticDataService:
         """Test getting optimizer information"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        info = service.get_optimizer_info("modality")
+        info = service.get_optimizer_info("profile")
 
-        assert info["name"] == "modality"
+        assert info["name"] == "profile"
         assert "description" in info
-        assert info["schema"] == "ModalityExampleSchema"
-        assert info["generator"] == "ModalityGenerator"
-        assert info["backend_strategy"] == "by_modality"
-        assert info["requires_agent_mapping"] is True
+        assert info["schema"] == "ProfileSelectionExampleSchema"
+        assert info["generator"] == "ProfileGenerator"
+        assert info["backend_strategy"] == "diverse"
+        assert info["requires_agent_mapping"] is False
         assert "defaults" in info
         # Note: "generator_info" is only present if generator has been initialized (lazy init)
 
@@ -230,7 +198,7 @@ class TestSyntheticDataService:
         """Test getting info for all optimizers"""
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
-        for optimizer_name in ["modality", "cross_modal", "routing", "workflow"]:
+        for optimizer_name in ["routing", "workflow", "profile", "unified"]:
             info = service.get_optimizer_info(optimizer_name)
             assert info["name"] == optimizer_name
             assert "description" in info
@@ -244,11 +212,10 @@ class TestSyntheticDataService:
 
         all_optimizers = service.list_all_optimizers()
 
-        assert len(all_optimizers) >= 4
-        assert "modality" in all_optimizers
-        assert "cross_modal" in all_optimizers
+        assert len(all_optimizers) >= 3
         assert "routing" in all_optimizers
         assert "workflow" in all_optimizers
+        assert "profile" in all_optimizers
 
         for name, info in all_optimizers.items():
             assert "name" in info
@@ -331,7 +298,7 @@ class TestServiceWithBackendConfig:
         )
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=5
+            tenant_id="test:unit", optimizer="profile", count=5
         )
 
         response = await service.generate(request)
@@ -345,7 +312,7 @@ class TestServiceWithBackendConfig:
         service = SyntheticDataService(generator_config=create_test_generator_config())
 
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=5
+            tenant_id="test:unit", optimizer="profile", count=5
         )
 
         response = await service.generate(request)

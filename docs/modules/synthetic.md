@@ -11,7 +11,7 @@ The Synthetic module provides **training data generation** for DSPy optimizers:
 
 - **DSPy-Driven Generation**: Uses DSPy signatures and modules for LLM-driven query generation
 - **Backend-Agnostic Sampling**: Works with any backend implementing the Backend interface
-- **Optimizer Support**: Generates data for Modality, CrossModal, Routing, and Workflow optimizers
+- **Optimizer Support**: Generates data for Profile, Routing, and Workflow optimizers
 - **REST API**: FastAPI router for HTTP endpoints
 
 ---
@@ -32,7 +32,7 @@ service = SyntheticDataService(
 
 # Generate training data
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="profile",
     count=100,
     vespa_sample_size=200,
     strategies=["diverse"]
@@ -47,21 +47,18 @@ print(f"Generated {response.count} examples")
 
 Four generator types are available. See source at `libs/synthetic/cogniverse_synthetic/generators/`.
 
-### ModalityGenerator
+### ProfileGenerator
 
 ```python
-from cogniverse_synthetic.generators.modality import ModalityGenerator
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
+from cogniverse_synthetic.generators.profile import ProfileGenerator
 
-optimizer_config = OptimizerGenerationConfig(optimizer_type="modality")
-generator = ModalityGenerator(optimizer_config=optimizer_config)
+generator = ProfileGenerator()
 
 examples = await generator.generate(
     sampled_content=documents,
-    target_count=100,
-    modality="VIDEO"
+    target_count=100
 )
-# Returns List[ModalityExampleSchema]
+# Returns List[ProfileSelectionExampleSchema]
 ```
 
 ### RoutingGenerator
@@ -77,17 +74,14 @@ examples = await generator.generate(sampled_content=documents, target_count=75)
 # Returns List[RoutingExperienceSchema]
 ```
 
-### CrossModalGenerator & WorkflowGenerator
+### WorkflowGenerator
 
 ```python
-from cogniverse_synthetic.generators.cross_modal import CrossModalGenerator
 from cogniverse_synthetic.generators.workflow import WorkflowGenerator
 
-# These use default configs
-cross_modal = CrossModalGenerator()
 workflow = WorkflowGenerator()
 
-examples = await cross_modal.generate(sampled_content=documents, target_count=50)
+examples = await workflow.generate(sampled_content=documents, target_count=50)
 ```
 
 ---
@@ -119,7 +113,7 @@ app.include_router(router, tags=["synthetic"])
 ```bash
 curl -X POST http://localhost:8000/synthetic/generate \
   -H "Content-Type: application/json" \
-  -d '{"optimizer": "modality", "count": 100, "strategies": ["diverse"]}'
+  -d '{"optimizer": "profile", "count": 100, "strategies": ["diverse"]}'
 ```
 
 ---
@@ -192,8 +186,7 @@ cogniverse_synthetic/
 ├── profile_selector.py     # Profile selection logic
 ├── generators/
 │   ├── base.py             # BaseGenerator abstract class
-│   ├── modality.py         # ModalityGenerator
-│   ├── cross_modal.py      # CrossModalGenerator
+│   ├── profile.py          # ProfileGenerator
 │   ├── routing.py          # RoutingGenerator
 │   └── workflow.py         # WorkflowGenerator
 ├── utils/                  # Utility modules

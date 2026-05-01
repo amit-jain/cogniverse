@@ -448,7 +448,7 @@ from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 # Import from implementation layer
 from cogniverse_agents.gateway_agent import GatewayAgent
-from cogniverse_synthetic.generators.modality import ModalityGenerator
+from cogniverse_synthetic.generators.profile import ProfileGenerator
 from pathlib import Path
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -834,10 +834,10 @@ tests/
 │       └── test_mem0_vespa_integration.py
 └── routing/             # cogniverse_agents.routing tests
     ├── unit/
-    │   ├── test_phoenix_span_evaluator.py
-    │   └── test_modality_evaluator.py
+    │   ├── test_xgboost_meta_models.py
+    │   └── test_multi_modal_reranker.py
     └── integration/
-        └── test_routing_evaluation.py
+        └── test_deep_research_integration.py
 ```
 
 ### Testing Best Practices

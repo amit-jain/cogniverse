@@ -11,79 +11,55 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-class ModalityExampleSchema(BaseModel):
-    """
-    Training example for ModalityOptimizer
+class ProfileSelectionExampleSchema(BaseModel):
+    """Training example for ProfileSelectionAgent optimization.
 
-    Used to train per-modality routing decisions.
-    """
-
-    query: str = Field(..., description="User query text")
-    modality: str = Field(
-        ..., description="Target modality (VIDEO, DOCUMENT, IMAGE, AUDIO)"
-    )
-    correct_agent: str = Field(..., description="Agent that should handle this query")
-    success: bool = Field(
-        default=True, description="Whether this represents a successful routing"
-    )
-    modality_features: Optional[Dict[str, Any]] = Field(
-        default=None, description="Modality-specific features extracted from query"
-    )
-    is_synthetic: bool = Field(
-        default=True, description="Whether this is synthetic data"
-    )
-    synthetic_source: str = Field(
-        default="backend_query",
-        description="Source of synthetic data (backend_query, template, etc.)",
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "show me machine learning tutorial videos",
-                "modality": "VIDEO",
-                "correct_agent": "video_search_agent",
-                "success": True,
-                "is_synthetic": True,
-                "synthetic_source": "backend_query",
-            }
-        }
-
-
-class FusionHistorySchema(BaseModel):
-    """
-    Training example for CrossModalOptimizer
-
-    Represents a multi-modal fusion scenario with outcome metrics.
+    Output fields mirror ``ProfileSelectionSignature``
+    (``libs/agents/cogniverse_agents/profile_selection_agent.py``) and feed
+    ``run_profile_optimization`` in
+    ``libs/runtime/cogniverse_runtime/optimization_cli.py``, which builds
+    a ``dspy.Example`` from these fields and trains the
+    ``ProfileSelectionModule`` via teleprompter.
     """
 
-    primary_modality: str = Field(..., description="Primary modality for fusion")
-    secondary_modality: str = Field(..., description="Secondary modality for fusion")
-    fusion_context: Dict[str, Any] = Field(
+    query: str = Field(..., description="User query text (DSPy input)")
+    available_profiles: str = Field(
         ...,
-        description="Context about the fusion (modality_agreement, query_ambiguity, etc.)",
+        description="Comma-separated list of available backend profiles (DSPy input)",
     )
-    success: bool = Field(..., description="Whether fusion was successful")
-    improvement: float = Field(
-        ..., ge=0.0, le=1.0, description="Improvement gained from fusion (0-1)"
+    selected_profile: str = Field(
+        ..., description="Profile that should be selected for the query"
     )
-    query: Optional[str] = Field(default=None, description="Original query (optional)")
-    timestamp: datetime = Field(
-        default_factory=datetime.now, description="When this fusion occurred"
+    confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="Confidence in the selection (0-1)"
+    )
+    reasoning: str = Field(..., description="Reason for the selection")
+    query_intent: str = Field(
+        ..., description="text_search, video_search, image_search, etc."
+    )
+    modality: str = Field(
+        ..., description="Target modality: video, image, text, audio, document"
+    )
+    complexity: str = Field(
+        ..., description="Query complexity: simple, medium, complex"
     )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "primary_modality": "VIDEO",
-                "secondary_modality": "DOCUMENT",
-                "fusion_context": {
-                    "modality_agreement": 0.75,
-                    "query_ambiguity": 0.3,
-                    "content_overlap": 0.6,
-                },
-                "success": True,
-                "improvement": 0.25,
+                "query": "find a clip about transformer architecture",
+                "available_profiles": (
+                    "video_colpali_smol500_mv_frame,"
+                    "video_colqwen_omni_mv_chunk_30s,"
+                    "video_videoprism_base_mv_chunk_30s,"
+                    "video_videoprism_large_mv_chunk_30s"
+                ),
+                "selected_profile": "video_colqwen_omni_mv_chunk_30s",
+                "confidence": 0.85,
+                "reasoning": "Selected chunk-based profile for medium-complexity video search",
+                "query_intent": "video_search",
+                "modality": "video",
+                "complexity": "medium",
             }
         }
 
@@ -210,7 +186,7 @@ class SyntheticDataRequest(BaseModel):
 
     optimizer: str = Field(
         ...,
-        description="Optimizer name (modality, cross_modal, routing, workflow, unified)",
+        description="Optimizer name (profile, routing, workflow, unified)",
     )
     count: int = Field(
         ..., ge=1, le=10000, description="Number of examples to generate"
@@ -233,7 +209,7 @@ class SyntheticDataRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "optimizer": "cross_modal",
+                "optimizer": "profile",
                 "count": 100,
                 "vespa_sample_size": 200,
                 "strategies": ["diverse"],
@@ -259,8 +235,8 @@ class SyntheticDataResponse(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "optimizer": "cross_modal",
-                "schema_name": "FusionHistorySchema",
+                "optimizer": "profile",
+                "schema_name": "ProfileSelectionExampleSchema",
                 "count": 100,
                 "selected_profiles": [
                     "video_colpali_smol500_mv_frame",
@@ -270,7 +246,7 @@ class SyntheticDataResponse(BaseModel):
                 "data": [],
                 "metadata": {
                     "backend_type": "vespa",
-                    "query_strategy": "cross_modal_pairs",
+                    "query_strategy": "diverse",
                     "generation_time_ms": 1250,
                 },
             }

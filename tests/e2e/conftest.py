@@ -116,10 +116,10 @@ def pytest_collection_modifyitems(config, items):
         skip_substrings.append("test_router_optimization_e2e")
 
     # Non-router optimizer persistence tests are slow (each invokes
-    # optimization_cli or ModalityOptimizer end-to-end against the
-    # cluster) and need real telemetry traces to produce meaningful
-    # output. Off by default; opt in via RUN_OPTIMIZER_PERSISTENCE_E2E=1
-    # or pytest -m requires_optimizer_data.
+    # optimization_cli end-to-end against the cluster) and need real
+    # telemetry traces to produce meaningful output. Off by default;
+    # opt in via RUN_OPTIMIZER_PERSISTENCE_E2E=1 or
+    # ``pytest -m requires_optimizer_data``.
     optimizer_data_explicit = os.environ.get(
         "RUN_OPTIMIZER_PERSISTENCE_E2E"
     ) == "1" or "requires_optimizer_data" in (config.option.markexpr or "")

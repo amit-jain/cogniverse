@@ -523,55 +523,35 @@ sequenceDiagram
     Gateway->>Phoenix: Record deployment event (tenant context)
 ```
 
-### Scenario 12: Cross-Modal Optimization
+### Scenario 12: Profile Selection Optimization
 
 ```mermaid
 flowchart LR
     subgraph DataCollection[<span style='color:#000'>Data Collection<br/>cogniverse_telemetry_phoenix</span>]
-        V[<span style='color:#000'>Video Queries</span>] --> VMetrics[<span style='color:#000'>Video Metrics<br/>per tenant</span>]
-        T[<span style='color:#000'>Text Queries</span>] --> TMetrics[<span style='color:#000'>Text Metrics<br/>per tenant</span>]
-        M[<span style='color:#000'>Multi-Modal</span>] --> MMetrics[<span style='color:#000'>Multi-Modal Metrics<br/>per tenant</span>]
+        Q[<span style='color:#000'>Queries</span>] --> Spans[<span style='color:#000'>cogniverse.profile_selection spans<br/>per tenant</span>]
     end
 
-    subgraph Analysis[<span style='color:#000'>Analysis<br/>cogniverse_evaluation</span>]
-        VMetrics --> Analyzer[<span style='color:#000'>CrossModalOptimizer<br/>tenant-aware</span>]
-        TMetrics --> Analyzer
-        MMetrics --> Analyzer
-
-        Analyzer --> Patterns[<span style='color:#000'>Pattern Detection</span>]
-        Patterns --> Insights[<span style='color:#000'>Insights per tenant</span>]
+    subgraph Synthesis[<span style='color:#000'>Synthetic Data<br/>cogniverse_synthetic</span>]
+        Spans --> ProfileGen[<span style='color:#000'>ProfileGenerator<br/>generates ProfileSelectionExampleSchema</span>]
     end
 
-    subgraph Optimization[<span style='color:#000'>Optimization - cogniverse_agents</span>]
-        Insights --> VidOpt[<span style='color:#000'>Video Optimizer</span>]
-        Insights --> TextOpt[<span style='color:#000'>Text Optimizer</span>]
-        Insights --> FusionOpt[<span style='color:#000'>CrossModalOptimizer</span>]
-
-        VidOpt --> Deploy[<span style='color:#000'>Deploy Updates<br/>per tenant</span>]
-        TextOpt --> Deploy
-        FusionOpt --> Deploy
+    subgraph Optimization[<span style='color:#000'>Optimization<br/>cogniverse_runtime</span>]
+        ProfileGen --> OptCLI[<span style='color:#000'>run_profile_optimization<br/>MIPROv2 / BootstrapFewShot</span>]
+        OptCLI --> Artifact[<span style='color:#000'>Artifact saved<br/>("model", "profile_selection")</span>]
     end
 
-    Deploy --> V
-    Deploy --> T
-    Deploy --> M
+    Artifact --> Agent[<span style='color:#000'>ProfileSelectionAgent<br/>loads at startup</span>]
+    Agent --> Q
 
     style DataCollection fill:#90caf9,stroke:#1565c0,color:#000
-    style V fill:#64b5f6,stroke:#1565c0,color:#000
-    style T fill:#64b5f6,stroke:#1565c0,color:#000
-    style M fill:#64b5f6,stroke:#1565c0,color:#000
-    style VMetrics fill:#64b5f6,stroke:#1565c0,color:#000
-    style TMetrics fill:#64b5f6,stroke:#1565c0,color:#000
-    style MMetrics fill:#64b5f6,stroke:#1565c0,color:#000
-    style Analysis fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Analyzer fill:#81c784,stroke:#388e3c,color:#000
-    style Patterns fill:#81c784,stroke:#388e3c,color:#000
-    style Insights fill:#81c784,stroke:#388e3c,color:#000
+    style Q fill:#64b5f6,stroke:#1565c0,color:#000
+    style Spans fill:#64b5f6,stroke:#1565c0,color:#000
+    style Synthesis fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProfileGen fill:#81c784,stroke:#388e3c,color:#000
     style Optimization fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VidOpt fill:#ffb74d,stroke:#ef6c00,color:#000
-    style TextOpt fill:#ffb74d,stroke:#ef6c00,color:#000
-    style FusionOpt fill:#ffb74d,stroke:#ef6c00,color:#000
-    style Deploy fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style OptCLI fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Artifact fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Agent fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 ---

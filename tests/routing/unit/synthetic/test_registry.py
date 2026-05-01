@@ -13,8 +13,7 @@ from cogniverse_synthetic.registry import (
     validate_optimizer_exists,
 )
 from cogniverse_synthetic.schemas import (
-    FusionHistorySchema,
-    ModalityExampleSchema,
+    ProfileSelectionExampleSchema,
     RoutingExperienceSchema,
     WorkflowExecutionSchema,
 )
@@ -28,7 +27,7 @@ class TestOptimizerConfig:
         config = OptimizerConfig(
             name="test",
             description="Test optimizer",
-            schema_class=ModalityExampleSchema,
+            schema_class=ProfileSelectionExampleSchema,
             generator_class_name="TestGenerator",
             backend_query_strategy="test_strategy",
             agent_mapping_required=True,
@@ -36,7 +35,7 @@ class TestOptimizerConfig:
 
         assert config.name == "test"
         assert config.description == "Test optimizer"
-        assert config.schema_class == ModalityExampleSchema
+        assert config.schema_class == ProfileSelectionExampleSchema
         assert config.generator_class_name == "TestGenerator"
         assert config.backend_query_strategy == "test_strategy"
         assert config.agent_mapping_required is True
@@ -48,7 +47,7 @@ class TestOptimizerConfig:
         config = OptimizerConfig(
             name="test",
             description="Test",
-            schema_class=ModalityExampleSchema,
+            schema_class=ProfileSelectionExampleSchema,
             generator_class_name="TestGenerator",
             backend_query_strategy="test_strategy",
             agent_mapping_required=True,
@@ -56,7 +55,7 @@ class TestOptimizerConfig:
 
         repr_str = repr(config)
         assert "test" in repr_str
-        assert "ModalityExampleSchema" in repr_str
+        assert "ProfileSelectionExampleSchema" in repr_str
         assert "test_strategy" in repr_str
 
 
@@ -70,37 +69,14 @@ class TestOptimizerRegistry:
     def test_registry_has_required_optimizers(self):
         """Test registry contains all required optimizers"""
         required_optimizers = [
-            "modality",
-            "cross_modal",
             "routing",
             "workflow",
+            "profile",
             "unified",
         ]
 
         for optimizer in required_optimizers:
             assert optimizer in OPTIMIZER_REGISTRY, f"Missing optimizer: {optimizer}"
-
-    def test_modality_optimizer_config(self):
-        """Test modality optimizer configuration"""
-        config = OPTIMIZER_REGISTRY["modality"]
-
-        assert config.name == "modality"
-        assert config.schema_class == ModalityExampleSchema
-        assert config.generator_class_name == "ModalityGenerator"
-        assert config.backend_query_strategy == "by_modality"
-        assert config.agent_mapping_required is True
-        assert len(config.description) > 0
-
-    def test_cross_modal_optimizer_config(self):
-        """Test cross_modal optimizer configuration"""
-        config = OPTIMIZER_REGISTRY["cross_modal"]
-
-        assert config.name == "cross_modal"
-        assert config.schema_class == FusionHistorySchema
-        assert config.generator_class_name == "CrossModalGenerator"
-        assert config.backend_query_strategy == "cross_modal_pairs"
-        assert config.agent_mapping_required is False
-        assert len(config.description) > 0
 
     def test_routing_optimizer_config(self):
         """Test routing optimizer configuration"""
@@ -122,6 +98,17 @@ class TestOptimizerRegistry:
         assert config.generator_class_name == "WorkflowGenerator"
         assert config.backend_query_strategy == "multi_modal_sequences"
         assert config.agent_mapping_required is True
+        assert len(config.description) > 0
+
+    def test_profile_optimizer_config(self):
+        """Test profile optimizer configuration"""
+        config = OPTIMIZER_REGISTRY["profile"]
+
+        assert config.name == "profile"
+        assert config.schema_class == ProfileSelectionExampleSchema
+        assert config.generator_class_name == "ProfileGenerator"
+        assert config.backend_query_strategy == "diverse"
+        assert config.agent_mapping_required is False
         assert len(config.description) > 0
 
     def test_unified_optimizer_config(self):
@@ -172,10 +159,10 @@ class TestGetOptimizerConfig:
 
     def test_get_valid_optimizer_config(self):
         """Test getting config for valid optimizer"""
-        config = get_optimizer_config("modality")
+        config = get_optimizer_config("profile")
 
         assert isinstance(config, OptimizerConfig)
-        assert config.name == "modality"
+        assert config.name == "profile"
 
     def test_get_invalid_optimizer_config(self):
         """Test getting config for invalid optimizer raises error"""
@@ -226,10 +213,10 @@ class TestGetOptimizerSchema:
         """Test getting schema for valid optimizer"""
         from pydantic import BaseModel
 
-        schema = get_optimizer_schema("modality")
+        schema = get_optimizer_schema("profile")
 
         assert issubclass(schema, BaseModel)
-        assert schema == ModalityExampleSchema
+        assert schema == ProfileSelectionExampleSchema
 
     def test_get_invalid_optimizer_schema(self):
         """Test getting schema for invalid optimizer raises error"""
@@ -239,10 +226,9 @@ class TestGetOptimizerSchema:
     def test_get_all_optimizer_schemas(self):
         """Test getting schemas for all optimizers"""
         expected_schemas = {
-            "modality": ModalityExampleSchema,
-            "cross_modal": FusionHistorySchema,
             "routing": RoutingExperienceSchema,
             "workflow": WorkflowExecutionSchema,
+            "profile": ProfileSelectionExampleSchema,
             "unified": WorkflowExecutionSchema,
         }
 
@@ -256,8 +242,7 @@ class TestValidateOptimizerExists:
 
     def test_validate_existing_optimizer(self):
         """Test validating existing optimizer returns True"""
-        assert validate_optimizer_exists("modality") is True
-        assert validate_optimizer_exists("cross_modal") is True
+        assert validate_optimizer_exists("profile") is True
         assert validate_optimizer_exists("routing") is True
         assert validate_optimizer_exists("workflow") is True
         assert validate_optimizer_exists("unified") is True

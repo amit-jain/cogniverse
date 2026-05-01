@@ -9,10 +9,12 @@
 
 ```text
 libs/agents/cogniverse_agents/routing/
-├── modality_optimizer.py          # Per-modality optimization with XGBoost
-├── cross_modal_optimizer.py       # Cross-modal fusion optimization
-├── optimizer_coordinator.py       # Facade for optimizer routing
-└── optimizer.py                   # Base optimizer with auto-tuning
+├── xgboost_meta_models.py         # XGBoost meta-learning for training decisions
+└── config.py                      # Routing configuration
+
+libs/agents/cogniverse_agents/optimizer/
+├── dspy_agent_optimizer.py        # DSPy prompt optimization (SIMBA/MIPROv2/GEPA)
+└── artifact_manager.py            # Artifact save/load via ArtifactManager
 
 libs/runtime/cogniverse_runtime/
 ├── optimization_cli.py            # CLI for per-agent optimization modes
@@ -25,8 +27,8 @@ libs/synthetic/                     # Synthetic data generation system
 │   ├── service.py                 # Main SyntheticDataService
 │   ├── generators/                # Optimizer-specific generators
 │   │   ├── base.py               # Base generator classes
-│   │   ├── modality.py           # ModalityOptimizer training data
-│   │   ├── cross_modal.py        # CrossModalOptimizer training data
+│   │   ├── profile.py            # ProfileSelectionAgent training data
+│   │   ├── routing.py            # RoutingOptimizer training data
 │   │   └── workflow.py           # WorkflowIntelligence training data
 │   ├── profile_selector.py       # LLM-based profile selection
 │   ├── backend_querier.py        # Vespa content sampling
@@ -48,13 +50,12 @@ libs/synthetic/                     # Synthetic data generation system
 ## Module Overview
 
 ### Purpose
-The Optimization Module provides sophisticated multi-stage optimization for routing decisions, modality-specific routing, and cross-modal result fusion using DSPy 3.0 advanced optimizers (GEPA, MIPROv2, SIMBA, BootstrapFewShot).
+The Optimization Module provides sophisticated multi-stage optimization for routing decisions, profile selection, query enhancement, and entity extraction using DSPy 3.0 advanced optimizers (GEPA, MIPROv2, SIMBA, BootstrapFewShot).
 
 ### Key Features
 - **Advanced DSPy Optimization**: GEPA, MIPROv2, SIMBA, BootstrapFewShot optimizers
 - **Gateway Threshold Tuning**: `_compute_gateway_thresholds()` derives GLiNER thresholds from Phoenix spans
-- **Modality-Specific Optimization**: Per-modality routing with XGBoost meta-learning
-- **Optimizer Coordination**: Facade pattern for optimizer requests
+- **Profile Selection Optimization**: `run_profile_optimization` compiles the ProfileSelectionAgent DSPy module
 - **On-Demand Workflows**: Dashboard triggers POST `/admin/tenant/{id}/optimize`, which submits an Argo Workflow
 
 ### Dependencies
@@ -62,11 +63,7 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 **Note**: Optimizer classes require full module path imports as they are not exported at package level.
 
 ```python
-# Optimizers (require full module paths)
-from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-
-# CLI optimization (gateway-thresholds mode)
+# CLI optimization
 from cogniverse_runtime.optimization_cli import _compute_gateway_thresholds, GATEWAY_DEFAULT_THRESHOLD
 
 # Synthetic Data Generation (exported at package level)
@@ -87,15 +84,13 @@ flowchart TB
     Dashboard --> OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>Modes: simba | gateway-thresholds | entity-extraction<br/>workflow | profile | cleanup | triggered</span>"]
 
     OptCLI --> GatewayOpt["<span style='color:#000'>Gateway Threshold Optimizer<br/>_compute_gateway_thresholds(spans_df)</span>"]
-    OptCLI --> Modality["<span style='color:#000'>Modality<br/>Optimizer</span>"]
-    OptCLI --> CrossModal["<span style='color:#000'>Cross-Modal<br/>Optimizer</span>"]
+    OptCLI --> Profile["<span style='color:#000'>Profile<br/>Selection</span>"]
     OptCLI --> Coordinator["<span style='color:#000'>Optimizer<br/>Coordinator<br/>Facade</span>"]
 
     style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style OptCLI fill:#ffcc80,stroke:#ef6c00,color:#000
     style GatewayOpt fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Modality fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style CrossModal fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Profile fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Coordinator fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
@@ -117,22 +112,25 @@ flowchart TB
     style Gateway fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-### 3. Modality Optimizer Architecture (XGBoost Meta-Learning)
+### 3. Profile Selection Optimization Architecture
 
 ```mermaid
 flowchart TB
-    SpanCollection["<span style='color:#000'>Modality Span Collection<br/>• Collect spans per modality VIDEO, IMAGE, AUDIO, DOCUMENT<br/>• Extract modality features from telemetry<br/>• Filter by confidence threshold</span>"]
+    Spans["<span style='color:#000'>cogniverse.profile_selection Phoenix spans<br/>• Emitted by ProfileSelectionAgent on every dispatch<br/>• Attributes: query, selected_profile, modality,<br/>  complexity, intent, confidence</span>"]
 
-    SpanCollection --> XGBoost["<span style='color:#000'>XGBoost Meta-Models Decision Making<br/>1. TrainingDecisionModel:<br/>• should_train context → bool + expected_improvement<br/>• Features: sample_count, success_rate, days_since_training<br/><br/>2. TrainingStrategyModel:<br/>• select_strategy context → SKIP / SYNTHETIC / HYBRID / REAL<br/>• Progressive strategies based on data availability</span>"]
+    Spans --> RunOpt["<span style='color:#000'>run_profile_optimization tenant_id, lookback_hours<br/>• Build dspy.Example trainset<br/>• Filter on confidence ≥ 0.5</span>"]
 
-    XGBoost --> SyntheticService["<span style='color:#000'>Synthetic Data Generation libs/synthetic<br/>• SyntheticDataService with modular generators<br/>• Profile selector chooses backend schemas<br/>• BackendQuerier samples backend content using DSPy modules<br/>• Pattern extraction + agent inference<br/>• Generates ModalityExampleSchema objects</span>"]
+    Synthetic["<span style='color:#000'>Synthetic demos via ProfileGenerator<br/>• ArtifactManager.load_demonstrations 'synthetic_profile'<br/>• Filter to APPROVED status</span>"] --> RunOpt
 
-    SyntheticService --> Training["<span style='color:#000'>Modality-Specific DSPy Module Training<br/>• ModalityRoutingSignature query, modality → agent + confidence<br/>• ChainOfThought reasoning<br/>• MIPROv2 if ≥50 examples or BootstrapFewShot if <50<br/>• Save trained models per modality</span>"]
+    RunOpt --> Compile["<span style='color:#000'>BootstrapFewShot teleprompter<br/>• Compile ProfileSelectionModule<br/>• Save via ArtifactManager.save_blob 'model','profile_selection'</span>"]
 
-    style SpanCollection fill:#90caf9,stroke:#1565c0,color:#000
-    style XGBoost fill:#ffcc80,stroke:#ef6c00,color:#000
-    style SyntheticService fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Training fill:#a5d6a7,stroke:#388e3c,color:#000
+    Compile --> Reload["<span style='color:#000'>Next agent restart<br/>• ProfileSelectionAgent._load_artifact<br/>• dspy_module.load_state applied to live module</span>"]
+
+    style Spans fill:#90caf9,stroke:#1565c0,color:#000
+    style Synthetic fill:#90caf9,stroke:#1565c0,color:#000
+    style RunOpt fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Compile fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Reload fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -177,127 +175,33 @@ def _compute_gateway_thresholds(spans_df) -> dict:
 
 ---
 
-### 2. **ModalityOptimizer**
+### 2. **ProfileSelectionAgent Optimization**
 
-Per-modality routing optimization with XGBoost meta-learning.
+DSPy module optimization for `ProfileSelectionAgent` — the per-query classifier that picks the
+backend profile and emits modality/complexity/intent in a `cogniverse.profile_selection` span.
 
-**Key Methods:**
+**CLI mode:** `--mode profile`
+
+**Key function:**
 
 ```python
-async def optimize_all_modalities(
-    lookback_hours: int = 24,
-    min_confidence: float = 0.7
-) -> Dict[QueryModality, Dict[str, Any]]:
+async def run_profile_optimization(
+    tenant_id: str,
+    lookback_hours: float = 24.0,
+) -> dict:
     """
-    Evaluate and optimize all modalities (VIDEO, IMAGE, AUDIO, DOCUMENT)
+    Optimize ProfileSelectionAgent's DSPy module:
 
-    For each modality:
-    1. Collect training examples from Phoenix spans
-    2. Build ModelingContext
-    3. Use XGBoost to decide: should_train?
-    4. Select training strategy (SYNTHETIC/HYBRID/PURE_REAL)
-    5. Train modality-specific DSPy module
+    For each optimization run:
+    1. Collect ProfileSelectionExampleSchema examples from Phoenix spans
+    2. Augment with synthetic data from ProfileGenerator if needed
+    3. Compile ProfileSelectionModule via MIPROv2 (≥50 examples) or BootstrapFewShot (<50)
+    4. Save compiled module as artifact ("model", "profile_selection")
 
-    Returns optimization results per modality
+    The agent loads the artifact at startup via _load_artifact().
+
+    Returns: {"trained": bool, "examples_count": int, "strategy": str}
     """
-
-async def optimize_modality(
-    modality: QueryModality,
-    lookback_hours: int = 24,
-    min_confidence: float = 0.7,
-    force_training: bool = False
-) -> Dict[str, Any]:
-    """
-    Optimize single modality:
-
-    1. Collect training examples
-    2. Build ModelingContext
-    3. TrainingDecisionModel.should_train(context)
-    4. TrainingStrategyModel.select_strategy(context)
-    5. Prepare training data (synthetic/hybrid/real)
-    6. Train ModalityRoutingModule (DSPy)
-    7. Record training history
-
-    Returns:
-        {
-            "modality": str,
-            "trained": bool,
-            "strategy": str,
-            "examples_count": int,
-            "expected_improvement": float,
-            "training_result": dict
-        }
-    """
-
-def predict_agent(
-    query: str,
-    modality: QueryModality,
-    query_features: Optional[Dict[str, Any]] = None
-) -> Optional[Dict[str, Any]]:
-    """
-    Predict best agent using trained modality model
-
-    Returns:
-        {
-            "recommended_agent": str,
-            "confidence": float,
-            "reasoning": str,
-            "modality": str
-        }
-    or None if no model trained
-    """
-
-def get_optimization_summary(self) -> Dict[str, Any]:
-    """
-    Get summary of all modality optimizations
-
-    Returns training history, meta-model status, last training details
-    """
-```
-
-**XGBoost Meta-Models:**
-```python
-# 1. TrainingDecisionModel
-should_train(context: ModelingContext) -> Tuple[bool, float]:
-    """
-    Decide whether to train based on:
-    - real_sample_count (sufficient data?)
-    - success_rate (performance degradation?)
-    - days_since_last_training (stale model?)
-    - current_performance_score
-    - data_quality_score
-
-    Returns: (should_train: bool, expected_improvement: float)
-    """
-
-# 2. TrainingStrategyModel
-select_strategy(context: ModelingContext) -> TrainingStrategy:
-    """
-    Select strategy based on data availability:
-    - SKIP: Not enough benefit
-    - SYNTHETIC: < 20 real examples
-    - HYBRID: 20-50 real examples (mix synthetic + real)
-    - PURE_REAL: >= 50 real examples
-
-    Returns: TrainingStrategy enum
-    """
-```
-
-**Modality-Specific DSPy Module:**
-```python
-class ModalityRoutingSignature(dspy.Signature):
-    query = dspy.InputField(desc="User query")
-    modality = dspy.InputField(desc="Query modality (video, image, audio, document, text)")
-    query_features = dspy.InputField(desc="Extracted query features as JSON")
-
-    recommended_agent = dspy.OutputField(desc="Recommended agent")
-    confidence = dspy.OutputField(desc="Confidence (0-1)")
-    reasoning = dspy.OutputField(desc="Reasoning for routing choice")
-
-class ModalityRoutingModule(dspy.Module):
-    def __init__(self):
-        super().__init__()
-        self.route = dspy.ChainOfThought(ModalityRoutingSignature)
 ```
 
 **Training:**
@@ -306,70 +210,19 @@ class ModalityRoutingModule(dspy.Module):
 
 - Uses **BootstrapFewShot** if <50 examples (few-shot learning)
 
-- Saves trained models per modality to telemetry via `ArtifactManager.save_blob()`
+- Saves compiled module as artifact (`("model", "profile_selection")`) via `ArtifactManager`
 
-**File:** `libs/agents/cogniverse_agents/routing/modality_optimizer.py`
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
 
 ---
 
-### 3. **OptimizerCoordinator**
+### 3. **DSPyAgentPromptOptimizer**
 
-Facade pattern for routing optimization requests to appropriate optimizers.
+DSPy prompt optimizer for agent modules (SIMBA, MIPROv2, GEPA, BootstrapFewShot).
 
-**Key Methods:**
+**CLI mode:** `--mode simba`
 
-```python
-def optimize(
-    type: OptimizationType,
-    training_data: List[Dict[str, Any]],
-    **kwargs
-) -> Dict[str, Any]:
-    """
-    Route optimization request to appropriate optimizer:
-
-    - MODALITY → ModalityOptimizer
-    - CROSS_MODAL → CrossModalOptimizer
-
-    Returns optimization results
-    """
-
-def get_optimizer(
-    type: OptimizationType
-):
-    """
-    Get direct access to specific optimizer
-
-    Use when you need optimizer-specific methods not exposed via coordinator
-    """
-
-def get_optimization_status(self) -> Dict[str, Any]:
-    """
-    Get status of all loaded optimizers
-
-    Returns:
-        {
-            "tenant_id": str,
-            "loaded_optimizers": List[str]
-        }
-    """
-```
-
-**Lazy Loading:**
-```python
-# Optimizers loaded on-demand to minimize memory usage
-_get_modality_optimizer()    # ModalityOptimizer(llm_config, telemetry_provider, tenant_id)
-_get_cross_modal_optimizer() # CrossModalOptimizer(telemetry_provider, tenant_id)
-```
-
-**OptimizationType Enum:**
-```python
-class OptimizationType(Enum):
-    MODALITY = "modality"        # ModalityOptimizer
-    CROSS_MODAL = "cross_modal"  # CrossModalOptimizer
-    ORCHESTRATION = "orchestration"
-```
-
-**File:** `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py`
+**File:** `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py`
 
 ---
 
@@ -506,117 +359,22 @@ print(f"Computed threshold: {thresholds['fast_path_confidence_threshold']:.2f}")
 
 ---
 
-### Example 2: Modality-Specific Optimization with XGBoost
+### Example 2: Profile Selection Optimization
 
 ```python
-from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer, QueryModality
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+# Trigger via the runtime CLI (or Argo Workflow --mode profile):
+# uv run python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
 
-# Initialize modality optimizer
-# vespa_client and backend_config parameters are optional (default to None)
-# Provide them only if using synthetic data generation
-optimizer = ModalityOptimizer(
-    llm_config=LLMEndpointConfig(       # REQUIRED: LLM config for DSPy training
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-    vespa_client=None,  # Optional VespaClient instance for synthetic data generation
-    backend_config=None  # Optional backend config dict for synthetic data generation
+# Or trigger on-demand via the admin API:
+import requests
+
+response = requests.post(
+    "http://localhost:8000/admin/tenant/acme:production/optimize",
+    json={"mode": "profile"}
 )
-
-# Optimize all modalities automatically
-results = await optimizer.optimize_all_modalities(
-    lookback_hours=24,      # Look back 24 hours for training data
-    min_confidence=0.7      # Filter spans with confidence >= 0.7
-)
-
-for modality, result in results.items():
-    print(f"\n{modality.value}:")
-    if result["trained"]:
-        print(f"  Strategy: {result['strategy']}")  # HYBRID, PURE_REAL, SYNTHETIC
-        print(f"  Examples: {result['examples_count']}")  # 85
-        print(f"  Expected improvement: {result['expected_improvement']:.3f}")  # 0.123
-        print(f"  Training result: {result['training_result']['status']}")  # success
-        print(f"  Validation accuracy: {result['training_result']['validation_accuracy']:.2f}")  # 0.92
-    else:
-        print(f"  Reason: {result['reason']}")  # insufficient_benefit
-
-# Optimize specific modality with force training
-video_result = await optimizer.optimize_modality(
-    modality=QueryModality.VIDEO,
-    lookback_hours=72,  # More data
-    min_confidence=0.6,
-    force_training=True  # Force training regardless of XGBoost decision
-)
-
-# Use trained model for predictions
-prediction = optimizer.predict_agent(
-    query="Find videos about deep learning tutorials",
-    modality=QueryModality.VIDEO,
-    query_features={
-        "query_length": 35,
-        "has_technical_terms": True,
-        "routing_confidence": 0.78
-    }
-)
-
-if prediction:
-    print(f"Recommended agent: {prediction['recommended_agent']}")  # video_search_agent
-    print(f"Confidence: {prediction['confidence']:.2f}")  # 0.91
-    print(f"Reasoning: {prediction['reasoning']}")
-
-# Get optimization summary
-summary = optimizer.get_optimization_summary()
-print(f"Total modalities trained: {summary['total_modalities']}")
-print(f"Meta-model status: {summary['meta_models']}")
-for modality, details in summary['modalities'].items():
-    print(f"{modality}: {details['training_count']} trainings, last: {details['last_training']}")
-```
-
-### Example 3: OptimizerCoordinator (Facade Pattern)
-
-```python
-from cogniverse_agents.routing.optimizer_coordinator import OptimizerCoordinator, OptimizationType
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-# Initialize coordinator with lazy-loaded optimizers
-coordinator = OptimizerCoordinator(
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-)
-
-# Prepare training data
-training_data = [
-    {
-        "query": "Find quantum physics lectures",
-        "correct_agent": "video_search_agent",
-        "entities": [{"text": "quantum physics", "label": "topic"}],
-        "success": True,
-        "user_satisfaction": 0.9
-    },
-    # ... more examples
-]
-
-modality_result = coordinator.optimize(
-    type=OptimizationType.MODALITY,
-    training_data=training_data,
-    modality="video"  # Required for modality optimization
-)
-
-cross_modal_result = coordinator.optimize(
-    type=OptimizationType.CROSS_MODAL,
-    training_data=training_data
-)
-
-# Get status of all optimizers
-status = coordinator.get_optimization_status()
-print(f"Loaded optimizers: {status['loaded_optimizers']}")
+result = response.json()
+print(f"Workflow: {result['workflow_name']}")
+print(f"Status URL: {result['status_url']}")
 ```
 
 ---
@@ -625,17 +383,10 @@ print(f"Loaded optimizers: {status['loaded_optimizers']}")
 
 ### 1. **Performance Optimization**
 
-**Lazy Loading:**
+**Optimization on Demand:**
 ```python
-# OptimizerCoordinator lazy-loads optimizers to minimize memory
-coordinator = OptimizerCoordinator(
-    llm_config=llm_config,
-    telemetry_provider=telemetry_provider,
-    tenant_id="production",
-)  # No optimizers loaded yet
-
-# Optimizers loaded on first use
-modality_optimizer = coordinator.get_optimizer(OptimizationType.MODALITY)  # Now loaded
+# optimization_cli runs modes in isolation; no long-running optimizer process
+# Triggered via Argo Workflow or direct API call
 ```
 
 **Asynchronous Optimization:**
@@ -673,32 +424,10 @@ strategy = training_strategy_model.select_strategy(context)
 # Each tenant has isolated optimization state via telemetry
 # Optimization is submitted per-tenant via the runtime API:
 # POST /admin/tenant/tenant_a/optimize  {"mode": "gateway-thresholds"}
-# POST /admin/tenant/tenant_b/optimize  {"mode": "simba"}
+# POST /admin/tenant/tenant_b/optimize  {"mode": "profile"}
 
-# ModalityOptimizer uses tenant-scoped telemetry provider for artifact isolation
-provider_a = telemetry_manager.get_provider(tenant_id="tenant_a")
-modality_optimizer_a = ModalityOptimizer(
-    llm_config=llm_config,
-    telemetry_provider=provider_a,
-    tenant_id="tenant_a",
-)
-```
-
-**Shared vs Tenant-Specific Models:**
-```python
-# Option 1: Tenant-specific models (better personalization)
-modality_optimizer = ModalityOptimizer(
-    llm_config=llm_config,
-    telemetry_provider=provider_a,
-    tenant_id="tenant_a",
-)
-
-# Option 2: Shared models (faster cold start, less personalization)
-shared_modality_optimizer = ModalityOptimizer(
-    llm_config=llm_config,
-    telemetry_provider=shared_provider,
-    tenant_id="shared",
-)
+# Optimization CLI uses tenant-scoped telemetry provider for artifact isolation
+# Artifacts saved as ("model", "profile_selection") scoped to tenant_id
 ```
 
 ---
@@ -749,7 +478,7 @@ The optimization module includes production-ready deployment infrastructure with
 **Command-line interface for per-agent optimization:**
 
 ```bash
-# Optimize modality routing (SIMBA)
+# Optimize query enhancement (SIMBA)
 uv run python -m cogniverse_runtime.optimization_cli \
   --mode simba \
   --tenant-id default
@@ -811,7 +540,7 @@ argo submit workflows/batch-optimization.yaml \
   -n cogniverse \
   --parameter tenant-id="acme_corp" \
   --parameter optimizer-category="routing" \
-  --parameter optimizer-type="modality" \
+  --parameter optimizer-type="profile" \
   --parameter max-iterations="100" \
   --parameter use-synthetic-data="true"
 ```
@@ -846,7 +575,7 @@ argo cron resume daily-optimization-check -n cogniverse
 
 **What Gets Optimized:**
 
-- Weekly: All modules (modality, cross_modal, workflow, gateway-thresholds) + DSPy optimizer
+- Weekly: All modules (profile, routing, workflow, gateway-thresholds) + DSPy optimizer
 
 - Daily: gateway-thresholds optimization
 
@@ -864,9 +593,9 @@ argo cron resume daily-optimization-check -n cogniverse
 
 #### Module Optimization vs DSPy Optimization
 
-**Module Optimization** (`optimizer-category: modality`):
+**Module Optimization** (`optimizer-category: routing`):
 
-- **What**: modality, cross_modal, workflow modules
+- **What**: profile, routing, workflow modules
 
 - **How**: Auto-selected DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA)
 
@@ -938,7 +667,7 @@ argo resubmit <workflow-name> -n cogniverse
 
 **Artifact Persistence:**
 
-Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. The ModalityOptimizer and DSPyAgentPromptOptimizer save compiled modules that agents reload at startup.
+Optimization artifacts are persisted to the telemetry store via `ArtifactManager` using Phoenix `DatasetStore`. `run_profile_optimization` and `DSPyAgentPromptOptimizer` save compiled modules that agents reload at startup via `_load_artifact`.
 
 ---
 
@@ -946,23 +675,11 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 
 ### Test Files
 
-**Modality Optimizer:**
+**Profile Selection Optimization:**
 
-- Location: `tests/routing/unit/test_modality_optimizer.py`
+- Location: `tests/routing/unit/` and `tests/runtime/`
 
-- Focus: Per-modality optimization, XGBoost meta-learning, synthetic data
-
-- Key Tests:
-  - `test_optimize_modality_with_synthetic_data`
-  - `test_xgboost_training_decision_model`
-  - `test_modality_model_training`
-  - `test_predict_agent_with_trained_model`
-
-**Optimizer Coordinator:**
-
-- Location: `tests/routing/unit/test_optimizer_coordinator.py`
-
-- Focus: Facade pattern, lazy loading, optimizer routing
+- Focus: ProfileSelectionAgent artifact save/load round-trip
 
 **Gateway Threshold Computation:**
 
@@ -976,42 +693,7 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 
 ### Test Scenarios
 
-**1. XGBoost Meta-Model Training:**
-```python
-@pytest.mark.asyncio
-async def test_xgboost_meta_model_training():
-    """Test XGBoost meta-models for training decisions"""
-    optimizer = ModalityOptimizer(
-        llm_config=LLMEndpointConfig(model="openai/google/gemma-4-e4b-it", api_base="http://localhost:11434/v1"),
-        telemetry_provider=telemetry_provider,
-        tenant_id="test",
-    )
-
-    contexts = [
-        ModelingContext(
-            modality=QueryModality.VIDEO,
-            real_sample_count=100,
-            success_rate=0.85,
-            days_since_last_training=30
-        ),
-        ModelingContext(
-            modality=QueryModality.VIDEO,
-            real_sample_count=10,
-            success_rate=0.6,
-            days_since_last_training=5
-        )
-    ]
-
-    optimizer.training_decision_model.train(contexts, targets=[True, False])
-
-    should_train_1, _ = optimizer.training_decision_model.should_train(contexts[0])
-    assert should_train_1 == True
-
-    should_train_2, _ = optimizer.training_decision_model.should_train(contexts[1])
-    assert should_train_2 == False
-```
-
-**2. Gateway Threshold Computation:**
+**1. Gateway Threshold Computation:**
 ```python
 def test_compute_gateway_thresholds():
     """Test threshold derivation from Phoenix spans"""
@@ -1032,9 +714,9 @@ def test_compute_gateway_thresholds():
 
 **Coverage:**
 
-- **Unit tests**: ModalityOptimizer logic, XGBoost meta-models, gateway threshold computation
+- **Unit tests**: XGBoost meta-models, gateway threshold computation, ProfileGenerator
 
-- **Integration tests**: Modality optimization with synthetic data, optimizer coordinator routing
+- **Integration tests**: Profile selection optimization with synthetic data, artifact round-trip
 
 - **Error handling tests**: Graceful degradation, artifact persistence
 
@@ -1537,19 +1219,17 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 4. Tune reward weights for your use case (search_quality_weight, agent_success_weight)
 
-5. Test synthetic data generation for modality optimization cold start
+5. Test synthetic data generation for profile selection cold start
 
 ---
 
 **File References:**
 
-- `libs/agents/cogniverse_agents/routing/modality_optimizer.py` - Per-modality optimization with XGBoost
-
-- `libs/agents/cogniverse_agents/routing/optimizer_coordinator.py` - Facade for optimizer routing
-
-- `libs/agents/cogniverse_agents/routing/optimizer.py` - Base optimizer with auto-tuning
+- `libs/agents/cogniverse_agents/routing/xgboost_meta_models.py` - XGBoost meta-models for training decisions
 
 - `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py` - Multi-agent DSPy prompt optimization
+
+- `libs/runtime/cogniverse_runtime/optimization_cli.py` - CLI entry point for all optimization modes
 
 - `libs/agents/cogniverse_agents/optimizer/router_optimizer.py` - Router MIPROv2 optimization
 

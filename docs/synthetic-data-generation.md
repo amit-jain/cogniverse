@@ -11,8 +11,8 @@ The system extends DSPy optimization to all routing and orchestration components
 
 ### Supported Optimizers
 
-1. **ModalityOptimizer** - Per-modality routing (VIDEO, DOCUMENT, IMAGE, AUDIO)
-2. **CrossModalOptimizer** - Multi-modal fusion decisions
+1. **ProfileSelectionAgent** - Per-query backend profile classification (modality, complexity, intent)
+2. **RoutingOptimizer** - Entity-based advanced routing
 3. **WorkflowOptimizer** - Multi-agent workflow orchestration
 
 ## Architecture
@@ -32,8 +32,7 @@ flowchart TB
         BackendQuerier["<span style='color:#000'>BackendQuerier<br/>Backend Sampling</span>"]
 
         subgraph Generators["<span style='color:#000'>Generators</span>"]
-            ModalityGen["<span style='color:#000'>ModalityGenerator</span>"]
-            CrossModalGen["<span style='color:#000'>CrossModalGenerator</span>"]
+            ProfileGen["<span style='color:#000'>ProfileGenerator</span>"]
             RoutingGen["<span style='color:#000'>RoutingGenerator</span>"]
             WorkflowGen["<span style='color:#000'>WorkflowGenerator</span>"]
         end
@@ -66,8 +65,7 @@ flowchart TB
     style ProfileSelector fill:#ffcc80,stroke:#ef6c00,color:#000
     style BackendQuerier fill:#ffcc80,stroke:#ef6c00,color:#000
     style Generators fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ModalityGen fill:#a5d6a7,stroke:#388e3c,color:#000
-    style CrossModalGen fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProfileGen fill:#a5d6a7,stroke:#388e3c,color:#000
     style RoutingGen fill:#a5d6a7,stroke:#388e3c,color:#000
     style WorkflowGen fill:#a5d6a7,stroke:#388e3c,color:#000
     style Utilities fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -130,16 +128,15 @@ Central configuration mapping optimizers to generators and schemas:
 from cogniverse_synthetic.registry import OPTIMIZER_REGISTRY, get_optimizer_config
 
 # Get optimizer configuration
-config = get_optimizer_config("cross_modal")
-print(config.schema_class)  # FusionHistorySchema
-print(config.backend_query_strategy)  # "cross_modal_pairs"
+config = get_optimizer_config("profile")
+print(config.schema_class)  # ProfileSelectionExampleSchema
+print(config.backend_query_strategy)  # "diverse"
 ```
 
 #### 2. Schemas (`schemas.py`)
 Pydantic models for all optimizer training data:
 
-- `ModalityExampleSchema` - Modality routing examples
-- `FusionHistorySchema` - Cross-modal fusion results
+- `ProfileSelectionExampleSchema` - ProfileSelectionAgent training examples
 - `RoutingExperienceSchema` - Entity-based routing
 - `WorkflowExecutionSchema` - Workflow execution patterns
 - `SyntheticDataRequest` / `SyntheticDataResponse` - API contracts
@@ -212,51 +209,26 @@ samples = await querier.query_profiles(
 - `temporal_recent` - Recent content (time-based)
 - `entity_rich` - Content with many named entities
 - `multi_modal_sequences` - Content from different modalities
-- `by_modality` - Specific modality filtering
-- `cross_modal_pairs` - Paired content from different modalities
 
 **Backend Abstraction**: Uses `Backend` interface to support any vector database (Vespa, Pinecone, Weaviate, etc.)
 
 #### 5. Generators (`generators/`)
-Four concrete generators implementing the `BaseGenerator` interface:
+Three concrete generators implementing the `BaseGenerator` interface:
 
-**ModalityGenerator** (`generators/modality.py`):
+**ProfileGenerator** (`generators/profile.py`):
 ```python
-# Uses DSPy modules to generate modality-specific queries
-# Example DSPy-generated queries:
-# "show me TensorFlow videos"
-# "find machine learning documents"
+# Generates ProfileSelectionAgent training examples.
+# Each example pairs a query with the best backend profile
+# plus modality, complexity, and intent labels.
 
-# ModalityGenerator requires configuration (created by SyntheticDataService)
-# When used directly:
-from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
-from cogniverse_synthetic.utils import PatternExtractor, AgentInferrer
+from cogniverse_synthetic.generators.profile import ProfileGenerator
 
-optimizer_config = OptimizerGenerationConfig(...)  # With DSPy modules and agent mappings
-modality_gen = ModalityGenerator(
-    pattern_extractor=PatternExtractor(),
-    agent_inferrer=AgentInferrer(),
-    optimizer_config=optimizer_config
-)
-examples = await modality_gen.generate(
-    sampled_content=backend_samples,
-    target_count=100,
-    modality="VIDEO"
-)
-# Returns: List[ModalityExampleSchema]
-```
-
-**CrossModalGenerator** (`generators/cross_modal.py`):
-```python
-# Generates fusion scenarios:
-# Primary: VIDEO results, Secondary: DOCUMENT results
-# fusion_context: {"agreement": 0.8, "ambiguity": 0.2, ...}
-
-examples = await cross_modal_gen.generate(
+profile_gen = ProfileGenerator()
+examples = await profile_gen.generate(
     sampled_content=backend_samples,
     target_count=100
 )
-# Returns: List[FusionHistorySchema]
+# Returns: List[ProfileSelectionExampleSchema]
 ```
 
 **RoutingGenerator** (`generators/routing.py`):
@@ -435,7 +407,7 @@ service = SyntheticDataService(
 
 # Generate training data
 request = SyntheticDataRequest(
-    optimizer="cross_modal",
+    optimizer="profile",
     count=100,
     vespa_sample_size=200,      # Number of documents to sample from backend
     strategies=["diverse"],
@@ -511,7 +483,7 @@ app.include_router(router)
 curl -X POST http://localhost:8000/synthetic/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "optimizer": "modality",
+    "optimizer": "profile",
     "count": 50,
     "vespa_sample_size": 100,
     "max_profiles": 2
@@ -521,19 +493,19 @@ curl -X POST http://localhost:8000/synthetic/generate \
 **GET /synthetic/optimizers**
 ```bash
 curl http://localhost:8000/synthetic/optimizers
-# Returns: {"modality": "Per-modality routing...", ...}
+# Returns: {"profile": "ProfileSelectionAgent optimization...", ...}
 ```
 
 **GET /synthetic/optimizers/{name}**
 ```bash
-curl http://localhost:8000/synthetic/optimizers/cross_modal
+curl http://localhost:8000/synthetic/optimizers/profile
 # Returns: Detailed optimizer info with schema, generator, etc.
 ```
 
 **GET /synthetic/health**
 ```bash
 curl http://localhost:8000/synthetic/health
-# Returns: {"status": "healthy", "generators": 4, ...}
+# Returns: {"status": "healthy", "generators": 3, ...}
 ```
 
 **POST /synthetic/batch/generate**
@@ -544,48 +516,21 @@ curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&c
 
 ## Integration with Optimizers
 
-### ModalityOptimizer
+### ProfileSelectionAgent
 
 ```python
-from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
 from cogniverse_synthetic import SyntheticDataService
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
-# Generate training data
+# Generate training data for ProfileSelectionAgent
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="modality", count=200)
+request = SyntheticDataRequest(optimizer="profile", count=200)
 response = await service.generate(request)
 
-# Convert to ModalityExample objects
-from cogniverse_agents.routing.modality_example import ModalityExample
-examples = [ModalityExample(**ex) for ex in response.data]
-
-# Train optimizer (uses async methods)
-optimizer = ModalityOptimizer(tenant_id="acme")
-await optimizer.optimize_all_modalities(lookback_hours=24, min_confidence=0.7)
+# Pass examples to run_profile_optimization (cogniverse_runtime.optimization_cli)
+# which compiles the ProfileSelectionAgent DSPy module and saves the artifact.
+print(f"Generated {response.count} ProfileSelectionExampleSchema examples")
 ```
-
-### CrossModalOptimizer
-
-```python
-from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-from cogniverse_synthetic import SyntheticDataService
-from cogniverse_synthetic.schemas import SyntheticDataRequest, FusionHistorySchema
-
-# Generate fusion training data
-service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="cross_modal", count=200)
-response = await service.generate(request)
-
-# Convert to FusionHistorySchema objects (from cogniverse_synthetic)
-fusion_histories = [FusionHistorySchema(**ex) for ex in response.data]
-
-# Train optimizer (uses internal fusion history)
-optimizer = CrossModalOptimizer(tenant_id="acme")
-# First, record fusion histories (method not shown, done via predict_fusion_benefit tracking)
-optimizer.train_fusion_model()  # Trains on recorded internal history
-```
-
 
 ### Workflow Intelligence
 
@@ -676,14 +621,12 @@ uv run pytest tests/routing/unit/synthetic/test_generators_integration.py -v
 
 **Test Coverage**:
 
-- 11 base generator tests
-- 7 generator integration tests
-- 25 registry tests
-- 20 schema tests
-- 19 service tests
-- 14 approval system tests
-- 8 synthetic integration tests
-- **Total: 104 tests**
+- Base generator tests (`test_base_generator.py`)
+- Generator integration tests (`test_generators_integration.py`)
+- Registry tests (`test_registry.py`)
+- Schema tests (`test_schemas.py`)
+- Service tests (`test_service.py`)
+- Approval system tests (`test_approval_system.py`)
 
 ## Development
 
@@ -788,8 +731,7 @@ libs/
     │   ├── dspy_modules.py         # Validated query generators
     │   ├── generators/             # Concrete generators
     │   │   ├── base.py
-    │   │   ├── modality.py
-    │   │   ├── cross_modal.py
+    │   │   ├── profile.py
     │   │   ├── routing.py
     │   │   └── workflow.py
     │   ├── utils/                  # Pattern extraction utilities

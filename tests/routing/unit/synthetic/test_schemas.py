@@ -2,14 +2,11 @@
 Unit tests for synthetic data schemas
 """
 
-from datetime import datetime
-
 import pytest
 from pydantic import ValidationError
 
 from cogniverse_synthetic.schemas import (
-    FusionHistorySchema,
-    ModalityExampleSchema,
+    ProfileSelectionExampleSchema,
     RoutingExperienceSchema,
     SyntheticDataRequest,
     SyntheticDataResponse,
@@ -17,146 +14,77 @@ from cogniverse_synthetic.schemas import (
 )
 
 
-class TestModalityExampleSchema:
-    """Test ModalityExampleSchema validation and serialization"""
+class TestProfileSelectionExampleSchema:
+    """Test ProfileSelectionExampleSchema validation and serialization"""
 
-    def test_valid_modality_example(self):
-        """Test creating valid ModalityExample"""
-        example = ModalityExampleSchema(
-            query="show me videos about machine learning",
-            modality="VIDEO",
-            correct_agent="video_search_agent",
-            success=True,
-            is_synthetic=True,
-            synthetic_source="backend_query",
+    def test_valid_profile_selection_example(self):
+        example = ProfileSelectionExampleSchema(
+            query="find a clip about machine learning",
+            available_profiles="video_colpali_smol500_mv_frame,video_colqwen_omni_mv_chunk_30s",
+            selected_profile="video_colqwen_omni_mv_chunk_30s",
+            confidence=0.85,
+            reasoning="Chunk-based profile fits clip-style queries",
+            query_intent="video_search",
+            modality="video",
+            complexity="medium",
         )
 
-        assert example.query == "show me videos about machine learning"
-        assert example.modality == "VIDEO"
-        assert example.correct_agent == "video_search_agent"
-        assert example.success is True
-        assert example.is_synthetic is True
-        assert example.synthetic_source == "backend_query"
+        assert example.query == "find a clip about machine learning"
+        assert example.selected_profile == "video_colqwen_omni_mv_chunk_30s"
+        assert 0.0 <= example.confidence <= 1.0
+        assert example.modality == "video"
 
-    def test_modality_example_with_features(self):
-        """Test ModalityExample with modality features"""
-        example = ModalityExampleSchema(
-            query="test query",
-            modality="VIDEO",
-            correct_agent="video_search_agent",
-            modality_features={"visual_indicators": 0.9, "temporal_context": True},
+    def test_confidence_bounds(self):
+        # 0.0 and 1.0 are valid bounds.
+        ProfileSelectionExampleSchema(
+            query="q",
+            available_profiles="a,b",
+            selected_profile="a",
+            confidence=0.0,
+            reasoning="r",
+            query_intent="text_search",
+            modality="text",
+            complexity="simple",
+        )
+        ProfileSelectionExampleSchema(
+            query="q",
+            available_profiles="a,b",
+            selected_profile="a",
+            confidence=1.0,
+            reasoning="r",
+            query_intent="text_search",
+            modality="text",
+            complexity="simple",
         )
 
-        assert example.modality_features is not None
-        assert example.modality_features["visual_indicators"] == 0.9
+        with pytest.raises(ValidationError):
+            ProfileSelectionExampleSchema(
+                query="q",
+                available_profiles="a,b",
+                selected_profile="a",
+                confidence=1.5,
+                reasoning="r",
+                query_intent="text_search",
+                modality="text",
+                complexity="simple",
+            )
 
-    def test_modality_example_defaults(self):
-        """Test default values"""
-        example = ModalityExampleSchema(
-            query="test", modality="VIDEO", correct_agent="agent"
+    def test_serialization_roundtrip(self):
+        example = ProfileSelectionExampleSchema(
+            query="q",
+            available_profiles="a,b",
+            selected_profile="a",
+            confidence=0.7,
+            reasoning="r",
+            query_intent="video_search",
+            modality="video",
+            complexity="simple",
         )
-
-        assert example.success is True
-        assert example.is_synthetic is True
-        assert example.synthetic_source == "backend_query"
-        assert example.modality_features is None
-
-    def test_modality_example_serialization(self):
-        """Test JSON serialization"""
-        example = ModalityExampleSchema(
-            query="test", modality="VIDEO", correct_agent="agent"
-        )
-
         data = example.model_dump()
-        assert isinstance(data, dict)
-        assert data["query"] == "test"
-        assert data["modality"] == "VIDEO"
-
-        # Test round-trip
-        example2 = ModalityExampleSchema(**data)
-        assert example2.query == example.query
-
-
-class TestFusionHistorySchema:
-    """Test FusionHistorySchema validation and serialization"""
-
-    def test_valid_fusion_history(self):
-        """Test creating valid FusionHistory"""
-        fusion = FusionHistorySchema(
-            primary_modality="VIDEO",
-            secondary_modality="DOCUMENT",
-            fusion_context={"modality_agreement": 0.75, "query_ambiguity": 0.3},
-            success=True,
-            improvement=0.25,
-        )
-
-        assert fusion.primary_modality == "VIDEO"
-        assert fusion.secondary_modality == "DOCUMENT"
-        assert fusion.success is True
-        assert fusion.improvement == 0.25
-
-    def test_fusion_improvement_validation(self):
-        """Test improvement value bounds (0-1)"""
-        # Valid values
-        FusionHistorySchema(
-            primary_modality="VIDEO",
-            secondary_modality="DOCUMENT",
-            fusion_context={},
-            success=True,
-            improvement=0.0,
-        )
-
-        FusionHistorySchema(
-            primary_modality="VIDEO",
-            secondary_modality="DOCUMENT",
-            fusion_context={},
-            success=True,
-            improvement=1.0,
-        )
-
-        # Invalid values
-        with pytest.raises(ValidationError):
-            FusionHistorySchema(
-                primary_modality="VIDEO",
-                secondary_modality="DOCUMENT",
-                fusion_context={},
-                success=True,
-                improvement=-0.1,
-            )
-
-        with pytest.raises(ValidationError):
-            FusionHistorySchema(
-                primary_modality="VIDEO",
-                secondary_modality="DOCUMENT",
-                fusion_context={},
-                success=True,
-                improvement=1.1,
-            )
-
-    def test_fusion_with_query(self):
-        """Test FusionHistory with optional query"""
-        fusion = FusionHistorySchema(
-            primary_modality="VIDEO",
-            secondary_modality="DOCUMENT",
-            fusion_context={},
-            success=True,
-            improvement=0.5,
-            query="test query",
-        )
-
-        assert fusion.query == "test query"
-
-    def test_fusion_timestamp(self):
-        """Test timestamp is automatically set"""
-        fusion = FusionHistorySchema(
-            primary_modality="VIDEO",
-            secondary_modality="DOCUMENT",
-            fusion_context={},
-            success=True,
-            improvement=0.5,
-        )
-
-        assert isinstance(fusion.timestamp, datetime)
+        assert data["query"] == "q"
+        assert data["selected_profile"] == "a"
+        rebuilt = ProfileSelectionExampleSchema(**data)
+        assert rebuilt.confidence == example.confidence
 
 
 class TestRoutingExperienceSchema:
@@ -355,35 +283,35 @@ class TestSyntheticDataRequest:
         """Test creating valid request"""
         request = SyntheticDataRequest(
             tenant_id="test:unit",
-            optimizer="cross_modal",
+            optimizer="profile",
             count=100,
             vespa_sample_size=200,
             strategies=["diverse"],
             max_profiles=3,
         )
 
-        assert request.optimizer == "cross_modal"
+        assert request.optimizer == "profile"
         assert request.count == 100
 
     def test_request_count_validation(self):
         """Test count bounds validation"""
         # Valid
-        SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=1)
-        SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=10000)
+        SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=1)
+        SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=10000)
 
         # Invalid
         with pytest.raises(ValidationError):
-            SyntheticDataRequest(tenant_id="test:unit", optimizer="modality", count=0)
+            SyntheticDataRequest(tenant_id="test:unit", optimizer="profile", count=0)
 
         with pytest.raises(ValidationError):
             SyntheticDataRequest(
-                tenant_id="test:unit", optimizer="modality", count=10001
+                tenant_id="test:unit", optimizer="profile", count=10001
             )
 
     def test_request_defaults(self):
         """Test default values for optional fields — tenant_id is required."""
         request = SyntheticDataRequest(
-            tenant_id="test:unit", optimizer="modality", count=100
+            tenant_id="test:unit", optimizer="profile", count=100
         )
 
         assert request.vespa_sample_size == 200
@@ -396,7 +324,7 @@ class TestSyntheticDataRequest:
         import pydantic
 
         with pytest.raises(pydantic.ValidationError):
-            SyntheticDataRequest(optimizer="modality", count=1)
+            SyntheticDataRequest(optimizer="profile", count=1)
 
 
 class TestSyntheticDataResponse:
@@ -405,8 +333,8 @@ class TestSyntheticDataResponse:
     def test_valid_response(self):
         """Test creating valid response"""
         response = SyntheticDataResponse(
-            optimizer="cross_modal",
-            schema_name="FusionHistorySchema",
+            optimizer="profile",
+            schema_name="ProfileSelectionExampleSchema",
             count=100,
             selected_profiles=["profile1", "profile2"],
             profile_selection_reasoning="Selected for diversity",
@@ -414,8 +342,8 @@ class TestSyntheticDataResponse:
             metadata={"backend_type": "vespa", "generation_time_ms": 1250},
         )
 
-        assert response.optimizer == "cross_modal"
-        assert response.schema_name == "FusionHistorySchema"
+        assert response.optimizer == "profile"
+        assert response.schema_name == "ProfileSelectionExampleSchema"
         assert len(response.selected_profiles) == 2
         assert response.metadata["generation_time_ms"] == 1250
 

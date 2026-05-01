@@ -712,16 +712,16 @@ if response.data:
 
 **Test different optimizers:**
 ```python
-# Test cross_modal optimizer
-request_cm = SyntheticDataRequest(
-    optimizer="cross_modal",
+# Test profile optimizer
+request_profile = SyntheticDataRequest(
+    optimizer="profile",
     count=5,
     vespa_sample_size=20
 )
 
-response_cm = await service.generate(request_cm)
-print(f"\nCross-modal examples: {response_cm.count}")
-print(f"Schema: {response_cm.schema_name}")
+response_profile = await service.generate(request_profile)
+print(f"\nProfile examples: {response_profile.count}")
+print(f"Schema: {response_profile.schema_name}")
 ```
 
 **Learning Points:**
@@ -752,7 +752,7 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 - Registry maps optimizer → generator + schema
 
-- Supports: modality, cross_modal, routing, workflow, unified
+- Supports: profile, routing, workflow, unified
 
 - Extensible for new optimizers
 
@@ -879,71 +879,7 @@ print(f"Compare query → {compare_routing.recommended_agent}")
 
 - Returns OrchestratorOutput with recommended_agent + confidence + reasoning
 
-### 7.3 Modality Optimizer
-
-**Test ModalityOptimizer:**
-```python
-from cogniverse_agents.routing.modality_optimizer import ModalityOptimizer
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
-
-# Initialize optimizer
-optimizer = ModalityOptimizer(tenant_id="your_org:production")
-
-# Optimize single modality
-result = await optimizer.optimize_modality(
-    modality=QueryModality.VIDEO,
-    lookback_hours=24,
-    min_confidence=0.7,
-    force_training=True  # Force for testing
-)
-
-print(f"Optimization result:")
-print(f"  Modality: {result['modality']}")
-print(f"  Trained: {result['trained']}")
-print(f"  Strategy: {result.get('strategy')}")
-print(f"  Examples: {result.get('examples_count')}")
-```
-
-**Learning Points:**
-
-- ModalityOptimizer trains per-modality routing
-
-- Uses XGBoost meta-models for training decisions
-
-- Auto-generates synthetic data if needed
-
-### 7.4 Cross-Modal Optimizer
-
-**Test CrossModalOptimizer:**
-```python
-from cogniverse_agents.routing.cross_modal_optimizer import CrossModalOptimizer
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
-
-# Initialize optimizer
-cm_optimizer = CrossModalOptimizer(tenant_id="your_org:production")
-
-# Predict if fusion would help for a query
-benefit = cm_optimizer.predict_fusion_benefit(
-    primary_modality=QueryModality.VIDEO,
-    primary_confidence=0.7,
-    secondary_modality=QueryModality.DOCUMENT,
-    secondary_confidence=0.6,
-    query_text="machine learning tutorial"
-)
-
-print(f"Cross-modal fusion benefit: {benefit:.3f}")
-print(f"Recommendation: {'Use fusion' if benefit > 0.5 else 'Single modality sufficient'}")
-```
-
-**Learning Points:**
-
-- CrossModalOptimizer learns fusion decisions
-
-- When to combine multiple modalities
-
-- When single modality is sufficient
-
-### 7.5 Gateway Threshold Optimization (On-Demand)
+### 7.3 Gateway Threshold Optimization (On-Demand)
 
 **Trigger gateway-threshold optimization via the admin API:**
 ```python
