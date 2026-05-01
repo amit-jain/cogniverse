@@ -158,6 +158,19 @@ def cluster_exists(name: str = CLUSTER_NAME) -> bool:
     return result.returncode == 0
 
 
+def _parse_port_csv(value: str | None) -> list[int]:
+    """Parse a comma-separated list of integer ports, ignoring blanks."""
+    if not value:
+        return []
+    out: list[int] = []
+    for raw in value.split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        out.append(int(raw))
+    return out
+
+
 def create_cluster(
     name: str = CLUSTER_NAME,
     ports: list[int] | None = None,
@@ -173,13 +186,33 @@ def create_cluster(
     *workspace_path* mounts the project root into the k3d node at
     ``/cogniverse-src`` for devMode volume access.
 
+    Port set resolution (highest precedence first):
+
+    - ``ports`` argument (explicit) — full override.
+    - ``COGNIVERSE_K3D_PORTS`` env (comma-separated ints) — full override.
+    - ``DEFAULT_PORTS`` plus the env ``COGNIVERSE_K3D_EXTRA_PORTS``
+      (additive).
+
+    Then ``exclude_ports`` and the env ``COGNIVERSE_K3D_EXCLUDE_PORTS``
+    are subtracted.
+
     On AMD hosts (/dev/kfd present) bind-mounts /dev/kfd and /dev/dri
     into the k3d server so in-cluster pods can enumerate the GPU.
     """
     if ports is None:
-        ports = DEFAULT_PORTS
+        env_override = _parse_port_csv(os.environ.get("COGNIVERSE_K3D_PORTS"))
+        if env_override:
+            ports = env_override
+        else:
+            ports = list(DEFAULT_PORTS) + _parse_port_csv(
+                os.environ.get("COGNIVERSE_K3D_EXTRA_PORTS")
+            )
+    env_exclude = _parse_port_csv(os.environ.get("COGNIVERSE_K3D_EXCLUDE_PORTS"))
+    drop = set(env_exclude)
     if exclude_ports:
-        ports = [p for p in ports if p not in exclude_ports]
+        drop.update(exclude_ports)
+    if drop:
+        ports = [p for p in ports if p not in drop]
     cmd = [
         "k3d",
         "cluster",

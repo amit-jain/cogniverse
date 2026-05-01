@@ -87,6 +87,69 @@ class TestCreateCluster:
         for port in DEFAULT_PORTS:
             assert f"{port}:{port}@loadbalancer" in port_flags
 
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_env_override_replaces_default_ports(
+        self, mock_run: object, monkeypatch
+    ) -> None:
+        """COGNIVERSE_K3D_PORTS replaces DEFAULT_PORTS entirely."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+        monkeypatch.setenv("COGNIVERSE_K3D_PORTS", "5000,5001,5002")
+        monkeypatch.delenv("COGNIVERSE_K3D_EXTRA_PORTS", raising=False)
+        monkeypatch.delenv("COGNIVERSE_K3D_EXCLUDE_PORTS", raising=False)
+
+        create_cluster("cogniverse")
+
+        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
+        assert sorted(port_flags) == [
+            "5000:5000@loadbalancer",
+            "5001:5001@loadbalancer",
+            "5002:5002@loadbalancer",
+        ]
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_extra_ports_env_appends_to_defaults(
+        self, mock_run: object, monkeypatch
+    ) -> None:
+        """COGNIVERSE_K3D_EXTRA_PORTS adds to DEFAULT_PORTS."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+        monkeypatch.delenv("COGNIVERSE_K3D_PORTS", raising=False)
+        monkeypatch.setenv("COGNIVERSE_K3D_EXTRA_PORTS", "9999,7777")
+        monkeypatch.delenv("COGNIVERSE_K3D_EXCLUDE_PORTS", raising=False)
+
+        create_cluster("cogniverse")
+
+        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
+        assert "9999:9999@loadbalancer" in port_flags
+        assert "7777:7777@loadbalancer" in port_flags
+        for port in DEFAULT_PORTS:
+            assert f"{port}:{port}@loadbalancer" in port_flags
+
+    @patch("cogniverse_cli.cluster.subprocess.run")
+    def test_exclude_ports_env_drops_from_set(
+        self, mock_run: object, monkeypatch
+    ) -> None:
+        """COGNIVERSE_K3D_EXCLUDE_PORTS drops listed ports from the published set."""
+        mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
+            args=[], returncode=0
+        )
+        sample_drop = DEFAULT_PORTS[0]
+        monkeypatch.delenv("COGNIVERSE_K3D_PORTS", raising=False)
+        monkeypatch.delenv("COGNIVERSE_K3D_EXTRA_PORTS", raising=False)
+        monkeypatch.setenv("COGNIVERSE_K3D_EXCLUDE_PORTS", str(sample_drop))
+
+        create_cluster("cogniverse")
+
+        cmd = mock_run.call_args[0][0]  # type: ignore[attr-defined]
+        port_flags = [cmd[i + 1] for i in range(len(cmd)) if cmd[i] == "-p"]
+        assert f"{sample_drop}:{sample_drop}@loadbalancer" not in port_flags
+        assert len(port_flags) == len(DEFAULT_PORTS) - 1
+
 
 class TestHasExistingK8s:
     """Tests for :func:`has_existing_k8s`."""
