@@ -249,3 +249,75 @@ def test_validate_dedupes_shared_service():
 
     validate_inference_services(bindings, urls, probe=probe, sleep=_StubSleep())
     assert len(probes) == 1
+
+
+def test_validate_skips_parked_service_with_zero_endpoints(caplog):
+    """When the K8s endpoints check reports a service has no live
+    endpoints (Deployment scaled to 0), validate logs a warning and
+    skips the probe — it does NOT block startup waiting on the boot
+    deadline. Without this, an operator who parks a sidecar to free
+    memory for a different pod would deadlock the runtime: the
+    inference probe loops on the parked service for boot_deadline
+    seconds, port 8000 never binds, the liveness probe times out, and
+    the kubelet kills the pod before it ever serves traffic.
+    """
+    import logging
+
+    bindings = [
+        ProfileBinding("audio", "vllm_asr", "openai/whisper-large-v3-turbo"),
+        ProfileBinding("text", "colbert_pylate", "lightonai/LateOn"),
+    ]
+    urls = {
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
+        "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
+    }
+    probes: list[str] = []
+
+    def probe(url: str) -> str:
+        probes.append(url)
+        return "lightonai/LateOn"
+
+    def has_endpoints(url: str):
+        # vllm_asr is parked (False); colbert_pylate is alive (True).
+        return "vllm-asr" not in url
+
+    with caplog.at_level(logging.WARNING):
+        validate_inference_services(
+            bindings,
+            urls,
+            probe=probe,
+            sleep=_StubSleep(),
+            has_endpoints=has_endpoints,
+        )
+
+    assert probes == ["http://cogniverse-colbert-pylate:8000"], (
+        "parked service must not be probed; only the live one is"
+    )
+    assert any(
+        "no live endpoints" in r.message and "vllm_asr" in r.message
+        for r in caplog.records
+    ), "expected a warning naming the parked service"
+
+
+def test_validate_probes_when_endpoint_check_returns_none():
+    """``has_endpoints`` returning None means we cannot determine
+    endpoint state (out-of-cluster, K8s API unreachable, no Endpoints
+    object). Fall back to probing — the existing
+    retry-then-fail-loud-on-deadline path stays in force.
+    """
+    bindings = [ProfileBinding("text", "colbert_pylate", "lightonai/LateOn")]
+    urls = {"colbert_pylate": "http://colbert-pylate:8000"}
+    probes: list[str] = []
+
+    def probe(url: str) -> str:
+        probes.append(url)
+        return "lightonai/LateOn"
+
+    validate_inference_services(
+        bindings,
+        urls,
+        probe=probe,
+        sleep=_StubSleep(),
+        has_endpoints=lambda _: None,
+    )
+    assert probes == ["http://colbert-pylate:8000"]

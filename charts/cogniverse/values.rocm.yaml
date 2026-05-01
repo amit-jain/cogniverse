@@ -112,34 +112,70 @@ inference:
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
-    # See vllm_colpali memory split note. ~50% of the iGPU's
-    # unified memory for the runtime's primary LLM (Gemma 4 4B
-    # + KV cache + activations). Larger fraction than the embedding
-    # services because chat-completion latency is the user-facing
-    # bottleneck and benefits most from generous KV cache.
+    # Strix Halo unified memory pool reports ~123 GiB usable; the
+    # vLLM gpu-memory-utilization fraction is taken against that
+    # pool. 0.20 × 123 ≈ 25 GiB of GPU mapping for student weights
+    # + KV cache + activations. max-model-len bumped to 16384 to
+    # give DSPy/MIPROv2 longer contexts during optimization.
     extraArgs:
       - "--max-model-len"
-      - "8192"
+      - "16384"
       - "--enforce-eager"
       - "--gpu-memory-utilization"
-      - "0.40"
-    # Unified memory: 0.40 × 62 = ~25 GiB GPU + ~7 GiB framework.
-    # 32 GiB pod limit covers both with a small cushion. Lowered
-    # gpu-memory-utilization from 0.50 → 0.40 because vllm probes
-    # post-colpali-allocation, so the absolute share for the LLM
-    # ends up smaller anyway.
+      - "0.30"
+      # Gemma 4 is multimodal (image + video + audio); cogniverse
+      # agents currently use the LLM only for text reasoning (visual
+      # encoding goes through ColPali, audio through Whisper). The
+      # encoder-profile pass on startup allocates ~5 GiB for the
+      # audio/video encoders which pushes KV cache below zero on a
+      # ~25 GiB student budget. To re-enable multimodal: bump
+      # gpu-memory-utilization to 0.40, drop max-model-len to 8192,
+      # remove this flag. Only worth it when an agent actually feeds
+      # images/audio to the student LLM.
+      - "--limit-mm-per-prompt"
+      - '{"image":0,"video":0,"audio":0}'
     resources:
       limits:
         cpu: "4"
-        memory: "32Gi"
+        memory: "40Gi"
       requests:
         cpu: "4"
-        memory: "32Gi"
+        memory: "40Gi"
 
   vllm_llm_teacher:
+    # Scaled to zero by default — only spin up for DSPy MIPROv2
+    # optimization runs. AWQ-INT4 weights load directly, no in-flight
+    # quantization. See values.yaml for why we run AWQ-INT4 instead of
+    # FP8 on this GPU.
+    enabled: true
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
+    extraArgs:
+      - "--max-model-len"
+      - "4096"
+      - "--enforce-eager"
+      - "--gpu-memory-utilization"
+      - "0.55"
+      # Qwen 3.6 27B's base config carries a ViT vision encoder.
+      # Without this, vLLM's startup memory profiler tries to allocate
+      # the worst-case ViT attention buffer (~256 GiB) and HIP-OOMs
+      # before the model even loads. We use the teacher for text-only
+      # demo generation; the vision tower is dead weight here.
+      - "--limit-mm-per-prompt"
+      - '{"image":0,"video":0}'
+    # ROCm reports half the unified pool as GPU-visible (~61 GiB out
+    # of 123 GiB). gpu-memory-utilization 0.55 → ~34 GiB allocator,
+    # which covers ~14 GiB AWQ-INT4 weights + ~16 GiB KV cache + ~4
+    # GiB activations. 0.25 was too tight: only ~1 GiB left after
+    # weights and vLLM raised "No available memory for cache blocks".
+    resources:
+      limits:
+        cpu: "4"
+        memory: "40Gi"
+      requests:
+        cpu: "4"
+        memory: "40Gi"
 
   # Pylate sidecars (colbert/code_colbert/denseon) — the cogniverse/pylate
   # image is built with rocm-flavoured torch when
@@ -162,3 +198,11 @@ inference:
     gpuCount: 1
 
 runtime: {}
+
+# ROCm hosts already serve the agent LLM via inference.vllm_llm_student.
+# Disable the chart's builtin LLM block (Ollama StatefulSet by default)
+# so it doesn't duplicate the role and burn 20 GiB of unified memory
+# the vLLM pods need.
+llm:
+  builtin:
+    enabled: false

@@ -11,6 +11,7 @@ Requires Docker to be running. Uses the ``phoenix_container`` and
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from tests.agents.integration.conftest import skip_if_no_ollama
 
 
 @pytest.fixture
@@ -74,20 +75,54 @@ class TestArtifactManagerRoundTrip:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_optimization_metrics_logged(self, real_provider):
-        """Optimization metrics are written to Phoenix experiment store."""
+    async def test_optimization_metrics_round_trip(self, real_provider):
+        """log_optimization_run persists metrics and load_optimization_run
+        reads them back. Earlier ``log_run`` was a no-op stub on
+        PhoenixProvider — anything written through it disappeared, so
+        every prior optimization run lost its metrics. This test
+        verifies the new save_blob-backed implementation actually
+        round-trips.
+        """
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test")
 
-        run_id = await mgr.log_optimization_run(
-            "router",
-            {
-                "accuracy": 0.85,
-                "latency_ms": 120,
-                "num_examples": 50,
+        original_metrics = {
+            "baseline": {
+                "modality_accuracy": 0.5,
+                "generation_accuracy": 0.5,
+                "overall_accuracy": 0.5,
             },
-        )
+            "optimized": {
+                "modality_accuracy": 1.0,
+                "generation_accuracy": 1.0,
+                "overall_accuracy": 1.0,
+            },
+            "improvement": {
+                "modality": 0.5,
+                "generation": 0.5,
+                "overall": 0.5,
+            },
+        }
 
-        assert run_id  # Real Phoenix returns an actual run ID
+        dataset_id = await mgr.log_optimization_run("router", original_metrics)
+        assert dataset_id
+
+        loaded = await mgr.load_optimization_run("router")
+        assert loaded is not None, (
+            "log_optimization_run claimed it persisted but "
+            "load_optimization_run reads nothing — the write went "
+            "nowhere (regressed back to the no-op stub?)"
+        )
+        assert loaded["agent_type"] == "router"
+        assert loaded["tenant_id"] == "roundtrip-test"
+        assert loaded["metrics"] == original_metrics
+        assert "timestamp" in loaded
+
+    @pytest.mark.asyncio
+    async def test_load_optimization_run_missing_returns_none(self, real_provider):
+        """No prior log_optimization_run for this agent → None."""
+        mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test-2")
+        loaded = await mgr.load_optimization_run("never-saved-agent")
+        assert loaded is None
 
 
 class TestTenantIsolation:
@@ -134,11 +169,6 @@ class TestTenantIsolation:
 
         assert (await mgr_a.load_prompts("router")) == {"system": "A's prompt"}
         assert (await mgr_b.load_prompts("router")) == {"system": "B's prompt"}
-
-
-# ---------------------------------------------------------------------------
-# Agent artifact loading round-trip — real Phoenix, real agents
-# ---------------------------------------------------------------------------
 
 
 class TestGatewayAgentArtifactRoundTrip:
@@ -682,6 +712,7 @@ class TestDispatcherArtifactWiring:
         assert result["agent"] == "entity_extraction_agent"
 
     @pytest.mark.asyncio
+    @skip_if_no_ollama
     async def test_dispatcher_gateway_path_loads_artifact(self, real_provider):
         """Gateway dispatch path should save/load threshold artifact via _load_artifact."""
         import json
@@ -757,11 +788,6 @@ class TestDispatcherArtifactWiring:
             f"Dispatcher should have loaded gliner_threshold 0.38 from artifact, "
             f"got {gw_agent.deps.gliner_threshold}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Behavior tests — loaded artifacts change actual agent output
-# ---------------------------------------------------------------------------
 
 
 class TestArtifactAffectsBehavior:

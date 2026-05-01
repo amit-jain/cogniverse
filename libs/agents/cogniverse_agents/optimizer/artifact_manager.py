@@ -5,6 +5,7 @@ Provides tenant-isolated, versioned artifact persistence using DatasetStore
 (for prompts and demonstrations) and ExperimentStore (for optimization metrics).
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -457,27 +458,57 @@ class ArtifactManager:
     async def log_optimization_run(
         self, agent_type: str, metrics: Dict[str, Any]
     ) -> str:
-        """Log an optimization run to the experiment store.
+        """Persist an optimization run's metrics for later inspection.
+
+        Stored as a single-row JSON blob via ``save_blob`` rather than the
+        provider's experiments API: the latter is currently a no-op stub
+        on PhoenixProvider, so anything written through it disappears.
+        ``save_blob`` is the same persistence path used by the xgboost
+        models, profile-selection, gateway-thresholds, etc., and is
+        verified working by their load_blob round-trips.
+
+        Each call overwrites the previous run for the same
+        ``(tenant_id, agent_type)`` — the blob holds the latest metrics
+        only. Use ``load_optimization_run`` to read it back.
 
         Returns:
-            Run identifier.
+            Dataset identifier returned by the underlying store.
         """
-        experiment_name = self._experiment_name()
-        experiment_id = await self._provider.experiments.create_experiment(
-            name=experiment_name,
-            metadata={"tenant_id": self._tenant_id},
+        payload = json.dumps(
+            {
+                "metrics": metrics,
+                "tenant_id": self._tenant_id,
+                "agent_type": agent_type,
+                "timestamp": datetime.now().isoformat(),
+            },
+            default=str,
         )
-        run_id = await self._provider.experiments.log_run(
-            experiment_id=experiment_id,
-            inputs={"agent_type": agent_type, "tenant_id": self._tenant_id},
-            outputs=metrics,
-            metadata={"timestamp": datetime.now().isoformat()},
-        )
+        dataset_id = await self.save_blob("metrics", agent_type, payload)
         logger.info(
-            "Logged optimization run for %s/%s → experiment %s, run %s",
+            "Logged optimization run for %s/%s → dataset %s",
             self._tenant_id,
             agent_type,
-            experiment_id,
-            run_id,
+            dataset_id,
         )
-        return run_id
+        return dataset_id
+
+    async def load_optimization_run(self, agent_type: str) -> Optional[Dict[str, Any]]:
+        """Load the latest optimization-run record for ``agent_type``.
+
+        Returns the parsed payload (with ``metrics``, ``tenant_id``,
+        ``agent_type``, ``timestamp`` keys) or ``None`` if no run has
+        been logged for this tenant + agent.
+        """
+        raw = await self.load_blob("metrics", agent_type)
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "Optimization-run blob for %s/%s is not valid JSON: %s",
+                self._tenant_id,
+                agent_type,
+                exc,
+            )
+            return None

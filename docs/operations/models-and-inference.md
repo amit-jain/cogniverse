@@ -40,16 +40,18 @@ path). The chart renders one Deployment + Service per enabled service.
 | ROCm GPU memory | `--gpu-memory-utilization 0.40` (≈25 GiB on 62 GiB unified memory) |
 
 The student is the primary chat LLM used by every agent for
-DSPy/litellm calls. The runtime picks the litellm prefix from
-`llm.engine` (`hosted_vllm/...` for `vllm`, `ollama_chat/...` for
-`ollama`).
+DSPy/litellm calls. The litellm provider prefix (e.g. `hosted_vllm/...`)
+is baked into the model string by the Helm template
+(`cogniverse.primaryLLMModel` in `templates/_helpers.tpl`) and written
+verbatim into `config.json`; `create_dspy_lm()` passes it through
+unchanged.
 
 ### Teacher (DSPy MIPROv2 optimization only)
 
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_llm_teacher` |
-| Model | `google/gemma-4-26b-a4b-it` (MoE: 26B total, ~4B active) |
+| Model | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (AWQ-INT4, ~14 GiB) |
 | Image (CPU) | `vllm/vllm-openai-cpu:latest` (official) |
 | Image (ROCm) | `vllm/vllm-openai-rocm:v0.20.0` (official) |
 | NodePort | 29011 |
@@ -85,7 +87,8 @@ side that consumes the optimized program.
 | Default state | opt-in via `llm.engine: ollama`, `llm.builtin.enabled: true` |
 
 Use Ollama for local development on machines without a vLLM-ready GPU.
-The runtime constructs the right litellm prefix automatically based on
+The Helm template (`cogniverse.primaryLLMModel`) writes the correct
+litellm prefix (`ollama_chat/...`) into `config.json` based on
 `llm.engine`.
 
 ### Optional: external LLM endpoint

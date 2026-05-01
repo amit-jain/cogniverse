@@ -46,6 +46,41 @@ roleRef:
   kind: Role
   name: {{ include "cogniverse.serviceAccountName" . }}-argo
   apiGroup: rbac.authorization.k8s.io
+---
+# RBAC so the runtime's startup health-check can read the Endpoints
+# objects of inference Services and skip probes for Deployments that
+# an operator has scaled to 0. Without this, the runtime probes parked
+# services until the boot-deadline expires, port 8000 never binds, the
+# liveness probe times out, and the kubelet kills the pod before it
+# can serve traffic. Read-only on Endpoints in the runtime's own
+# namespace — narrow enough that we don't need a ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "cogniverse.serviceAccountName" . }}-endpoints-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "cogniverse.serviceAccountName" . }}-endpoints-reader
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "cogniverse.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "cogniverse.serviceAccountName" . }}-endpoints-reader
+  apiGroup: rbac.authorization.k8s.io
 {{- end }}
 ---
 # Vespa StatefulSet
@@ -1432,6 +1467,9 @@ spec:
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        # Persist vLLM's torch.compile cache alongside HF weights.
+        - name: VLLM_CACHE_ROOT
+          value: /root/.cache/huggingface/.vllm
         {{- if $cfg.kvCacheGiB }}
         # vLLM's CPU worker doesn't honour pod cgroup limits; without an
         # explicit cap it pre-allocates from full node memory and OOMKills.
@@ -1459,7 +1497,7 @@ spec:
       {{- else if eq $engine "vllm_chat" }}
       # vLLM serving an OpenAI-compatible chat-completion endpoint.
       # Used by vllm_llm_student (runtime hot path, Gemma 4 E4B) and
-      # vllm_llm_teacher (DSPy compile-time only, Gemma 4 26B-A4B).
+      # vllm_llm_teacher (DSPy compile-time only, Qwen3.6-27B-AWQ-INT4).
       # Distinguished from the embedding-style ``vllm`` engine by the
       # absence of ``--convert embed`` — chat models serve /v1/chat/completions
       # natively without conversion. ``command: ["vllm"]`` overrides
@@ -1476,6 +1514,9 @@ spec:
           value: "1"
         - name: HF_HOME
           value: /root/.cache/huggingface
+        # Persist vLLM's torch.compile cache alongside HF weights.
+        - name: VLLM_CACHE_ROOT
+          value: /root/.cache/huggingface/.vllm
         {{- if $cfg.kvCacheGiB }}
         # vLLM's CPU worker doesn't honour pod cgroup limits; without an
         # explicit cap it pre-allocates from full node memory and OOMKills.
@@ -1603,15 +1644,10 @@ spec:
         {{- end }}
       volumes:
       - name: model-cache
-        emptyDir:
-          # Inference services that pull HF weights (vllm_llm_student
-          # @ ~10 GiB, vllm_colpali @ ~5.5 GiB, vllm_asr @ ~3 GiB) blow
-          # past a 10 GiB sizeLimit on first launch and the pod gets
-          # Evicted with "Usage of EmptyDir volume model-cache exceeds
-          # the limit". Per-service override via ``modelCacheSize``;
-          # default at 32 GiB covers the largest current model with
-          # headroom for tokenizer/processor metadata HF caches.
-          sizeLimit: {{ default "32Gi" $cfg.modelCacheSize }}
+        # Persistent across pod restarts; per-service subdir.
+        hostPath:
+          path: /var/lib/cogniverse/hf-cache/{{ $name }}
+          type: DirectoryOrCreate
       {{- if eq $device "rocm" }}
       - name: kfd
         hostPath:

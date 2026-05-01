@@ -195,6 +195,12 @@ def create_cluster(
         cmd.extend(["--volume", "/dev/kfd:/dev/kfd@server:0"])
     if os.path.isdir("/dev/dri"):
         cmd.extend(["--volume", "/dev/dri:/dev/dri@server:0"])
+    # Share host's HuggingFace cache so vLLM pods don't re-download
+    # multi-GiB weights on every pod restart. The chart's inference
+    # pod template mounts /host-hf-cache/<service> as model-cache.
+    host_hf_cache = os.path.expanduser("~/.cache/huggingface")
+    if os.path.isdir(host_hf_cache):
+        cmd.extend(["--volume", f"{host_hf_cache}:/host-hf-cache@server:0"])
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)

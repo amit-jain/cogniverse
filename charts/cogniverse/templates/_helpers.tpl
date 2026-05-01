@@ -148,12 +148,23 @@ because litellm hosted_vllm provider expects an OpenAI-compatible base.
 {{- end -}}
 
 {{/*
-vLLM teacher LLM endpoint — DSPy compile-time only (Gemma 4 26B-A4B).
+vLLM teacher LLM endpoint — DSPy compile-time only (Qwen3.6-27B-AWQ-INT4).
 Resolves to the in-cluster vllm-llm-teacher service. Scale-to-zero by
 default (replicaCount: 0); spun up on-demand by optimization_cli runs.
 */}}
 {{- define "cogniverse.llmTeacherEndpoint" -}}
 {{- printf "http://%s-vllm-llm-teacher:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_teacher.service.port) -}}
+{{- end -}}
+
+{{/*
+Teacher LLM model id passed to litellm. Derived from
+inference.vllm_llm_teacher.model with the ``hosted_vllm/`` provider
+prefix — vLLM's served-model-name defaults to whatever path is passed
+to ``vllm serve``, so config.json's teacher.model and the pod's
+``args[1]`` must reference the same string.
+*/}}
+{{- define "cogniverse.teacherLLMModel" -}}
+{{- printf "hosted_vllm/%s" .Values.inference.vllm_llm_teacher.model -}}
 {{- end -}}
 
 {{/*

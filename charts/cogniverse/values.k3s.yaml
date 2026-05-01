@@ -154,12 +154,17 @@ runtime:
   resources:
     requests:
       cpu: "4"
-      # 40 GiB is the cap before cumulative pod requests overrun the
-      # 128 GiB node alongside vLLM sidecars + Vespa + Phoenix.
-      memory: "40Gi"
+      # All inference now lives in dedicated pods (vllm_asr, vllm_colpali,
+      # vllm_llm_student, vllm_llm_teacher, colbert_pylate, denseon), so
+      # runtime no longer loads ColPali in-process. Observed actual
+      # working set on a warmed runtime is ~12 GiB (FastAPI + DSPy +
+      # agent registry + Phoenix span batchers + mem0 LRU). 18 GiB =
+      # ~50% headroom; the freed 10 GiB lets the teacher pod coexist
+      # with the rest of the inference sidecars.
+      memory: "18Gi"
     limits:
       cpu: "16"
-      memory: "40Gi"
+      memory: "18Gi"
   # Turn on POST /admin/debug/memsnap for the dev cluster. Off in prod.
   env:
     COGNIVERSE_DEBUG_MEM: "1"

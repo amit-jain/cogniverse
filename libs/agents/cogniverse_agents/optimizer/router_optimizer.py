@@ -10,6 +10,7 @@ This optimizer implements the design specified in NEW_PROPOSAL.md:
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -22,8 +23,9 @@ from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
-# Import schemas from the new location
 from .schemas import AgenticRouter, AgenticRoutingDecision
+
+logger = logging.getLogger(__name__)
 
 
 class RouterModule(dspy.Module):
@@ -37,16 +39,13 @@ class RouterModule(dspy.Module):
         self, conversation_history: str, user_query: str
     ) -> AgenticRoutingDecision:
         """Execute the routing decision."""
-        print(f"\n🔍 RouterModule.forward called with query: {user_query[:100]}...")
+        logger.debug("RouterModule.forward: query=%s", user_query[:100])
 
         response = self.route(
             conversation_history=conversation_history, user_query=user_query
         )
 
-        # Log the raw response for debugging
-        print(f"📝 Raw LLM response: {response}")
-        if hasattr(response, "_asdict"):
-            print(f"📊 Response dict: {response._asdict()}")
+        logger.debug("RouterModule raw response: %s", response)
 
         return response.routing_decision
 
@@ -280,42 +279,37 @@ def generate_teacher_examples(
         examples = []
 
         # Generate examples using the teacher
-        for i in range(num_examples):
-            # Randomly select template and fill it
-            import random
+        import random
 
+        for i in range(num_examples):
             template = random.choice(query_templates)
 
-            if "{action}" in template:
-                query = template.format(action=random.choice(actions))
-            elif (
-                "{topic}" in template
-                or "{subject}" in template
-                or "{area}" in template
-                or "{domain}" in template
-            ):
-                query = template.format(
-                    topic=random.choice(topics),
-                    subject=random.choice(topics),
-                    area=random.choice(topics),
-                    domain=random.choice(topics),
-                )
-            elif "{content_type}" in template:
-                content_type = random.choice(
+            # Build every substitution the templates may need, then let
+            # str.format pick what it actually references. The previous
+            # if/elif chain branched on the *first* placeholder it saw,
+            # which broke templates that combined two (e.g.
+            # "Find {content_type} about {topic}" picked the topic
+            # branch and crashed on the unfilled content_type slot).
+            subs = {
+                "action": random.choice(actions),
+                "topic": random.choice(topics),
+                "subject": random.choice(topics),
+                "area": random.choice(topics),
+                "domain": random.choice(topics),
+                "content_type": random.choice(
                     ["papers", "articles", "documents", "videos"]
-                )
-                query = template.format(
-                    content_type=content_type,
-                    topic=random.choice(topics),
-                    subject=random.choice(topics),
-                    area=random.choice(topics),
-                )
-            else:
-                query = template.format(
-                    video_name=f"{random.choice(['tutorial', 'lecture', 'presentation'])} {random.choice(topics)}",
-                    document=f"the {random.choice(['paper', 'article', 'study'])} on {random.choice(topics)}",
-                    study=f"{random.choice(topics)} research",
-                )
+                ),
+                "video_name": (
+                    f"{random.choice(['tutorial', 'lecture', 'presentation'])} "
+                    f"{random.choice(topics)}"
+                ),
+                "document": (
+                    f"the {random.choice(['paper', 'article', 'study'])} on "
+                    f"{random.choice(topics)}"
+                ),
+                "study": f"{random.choice(topics)} research",
+            }
+            query = template.format(**subs)
 
             # Generate conversation history sometimes
             conversation_history = ""
@@ -339,7 +333,7 @@ def generate_teacher_examples(
                 )
 
             except Exception as e:
-                print(f"Error generating example {i}: {e}")
+                logger.warning("Error generating example %d: %s", i, e)
                 continue
 
         return examples
@@ -383,7 +377,7 @@ def evaluate_routing_accuracy(
                 correct_both += 1
 
         except Exception as e:
-            print(f"Error evaluating example: {e}")
+            logger.warning("Error evaluating example: %s", e)
             continue
 
     return {
@@ -416,42 +410,45 @@ def optimize_router(
     Returns:
         Dictionary with optimization results
     """
-    # Initialize student model via centralized factory
-    print(f"Initializing student model: {student_config.model}")
+    logger.info("Initializing student model: %s", student_config.model)
     student_lm = create_dspy_lm(student_config)
 
-    # Generate or load training data
-    print("Generating training data...")
     if use_manual_examples:
         train_examples = generate_training_examples()
-        print(f"Generated {len(train_examples)} manual examples")
+        logger.info("Generated %d manual examples", len(train_examples))
     else:
         train_examples = []
 
     if teacher_config and num_teacher_examples > 0:
-        print(
-            f"Generating {num_teacher_examples} examples with teacher model: {teacher_config.model}"
+        logger.info(
+            "Generating %d examples with teacher model: %s",
+            num_teacher_examples,
+            teacher_config.model,
         )
-
-        # Configure teacher LM via centralized factory
         teacher_lm = create_dspy_lm(teacher_config)
-
         teacher_examples = generate_teacher_examples(teacher_lm, num_teacher_examples)
         train_examples.extend(teacher_examples)
-        print(f"Total examples: {len(train_examples)}")
+        logger.info("Total examples: %d", len(train_examples))
 
-    # Split into train and validation
     split_idx = int(0.8 * len(train_examples))
     train_set = train_examples[:split_idx]
     val_set = train_examples[split_idx:]
 
-    print(f"Train set: {len(train_set)}, Validation set: {len(val_set)}")
+    logger.info("Train set: %d, Validation set: %d", len(train_set), len(val_set))
 
-    # Define the metric for optimization
     def routing_metric(
-        example: dspy.Example, prediction: AgenticRoutingDecision
+        example: dspy.Example,
+        prediction: AgenticRoutingDecision,
+        trace=None,
     ) -> float:
-        """Metric for MIPROv2 optimization."""
+        """Metric for MIPROv2 optimization.
+
+        DSPy's bootstrap path calls metrics as ``metric(example,
+        prediction, trace)`` so prompt-tuning teleprompters can inspect
+        the call trace; pure evaluators call ``metric(example,
+        prediction)``. Accept ``trace`` as an optional positional so
+        both paths work; ignore it (we score on the prediction alone).
+        """
         score = 0.0
 
         # Check if prediction is valid
@@ -468,33 +465,33 @@ def optimize_router(
 
         return score
 
-    # All DSPy operations scoped to student LM
     with dspy.context(lm=student_lm):
-        # Initialize router module
         router = RouterModule()
 
-        # Run baseline evaluation
-        print("\nEvaluating baseline performance...")
+        logger.info("Evaluating baseline performance...")
         baseline_metrics = evaluate_routing_accuracy(router, val_set)
-        print(f"Baseline accuracy: {baseline_metrics}")
+        logger.info("Baseline accuracy: %s", baseline_metrics)
 
-        # Run MIPROv2 optimization
-        print("\nRunning MIPROv2 optimization...")
+        logger.info("Running MIPROv2 optimization...")
         start_time = time.time()
 
+        # ``auto`` is mutually exclusive with explicit num_candidates /
+        # num_trials. Recent DSPy defaults auto='light'; we want explicit
+        # control over the search budget so disable auto and pass the
+        # exact knobs.
         optimizer = MIPROv2(
             metric=routing_metric,
-            num_candidates=10,  # Number of instruction candidates
+            auto=None,
+            num_candidates=10,
             init_temperature=0.7,
             verbose=True,
         )
 
-        # Compile the module
         optimized_router = optimizer.compile(
             router,
             trainset=train_set,
             valset=val_set,
-            num_trials=20,  # Number of optimization trials
+            num_trials=20,
             minibatch_size=4,
             minibatch_full_eval_steps=10,
             minibatch=True,
@@ -503,20 +500,22 @@ def optimize_router(
 
         optimization_time = time.time() - start_time
 
-        # Evaluate optimized performance
-        print("\nEvaluating optimized performance...")
+        logger.info("Evaluating optimized performance...")
         optimized_metrics = evaluate_routing_accuracy(optimized_router, val_set)
-        print(f"Optimized accuracy: {optimized_metrics}")
+        logger.info("Optimized accuracy: %s", optimized_metrics)
 
-    # Extract optimized prompt and demonstrations
-    print("\nExtracting optimization artifacts...")
+    logger.info("Extracting optimization artifacts...")
 
-    # Get the optimized state
     state = optimized_router.dump_state()
 
-    # Extract demonstrations and instructions
+    # Extract demonstrations and instructions. ``dump_state`` nests the
+    # signature one level deep — ``state["route"]["signature"]["instructions"]``
+    # — not directly under ``state["route"]``. The earlier flat path
+    # silently returned "" and we wrote empty system prompts to Phoenix
+    # for every optimization run before this fix.
+    route_state = state.get("route", {})
     artifacts = {
-        "instructions": state.get("route", {}).get("instructions", ""),
+        "instructions": route_state.get("signature", {}).get("instructions", ""),
         "demonstrations": [],
         "model_config": {
             "student_model": student_config.model,
@@ -539,7 +538,6 @@ def optimize_router(
         "timestamp": datetime.now().isoformat(),
     }
 
-    # Extract demonstrations
     if "demos" in state.get("route", {}):
         for demo in state["route"]["demos"]:
             artifacts["demonstrations"].append(
@@ -564,7 +562,6 @@ def optimize_router(
     prompts_dict = {"system_prompt": artifacts["instructions"]}
     asyncio.run(artifact_mgr.save_prompts("router", prompts_dict))
 
-    # Demos dataset
     if artifacts["demonstrations"]:
         demos = [
             {
@@ -581,10 +578,9 @@ def optimize_router(
         ]
         asyncio.run(artifact_mgr.save_demonstrations("router", demos))
 
-    # Metrics
     asyncio.run(artifact_mgr.log_optimization_run("router", artifacts["metrics"]))
 
-    print(f"\nOptimization complete! Artifacts saved for tenant '{tenant_id}'")
+    logger.info("Optimization complete. Artifacts saved for tenant '%s'", tenant_id)
 
     return artifacts
 
@@ -695,12 +691,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Load LLM config from centralized config.json
-    from cogniverse_foundation.config import create_default_config_manager
-    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     from cogniverse_foundation.telemetry import get_telemetry_manager
 
     config_manager = create_default_config_manager()
-    config_utils = get_config(config_manager=config_manager)
+    config_utils = get_config(tenant_id=args.tenant_id, config_manager=config_manager)
     llm_config = config_utils.get_llm_config()
 
     # Student = primary, Teacher = teacher from llm_config
@@ -720,7 +718,6 @@ if __name__ == "__main__":
         num_teacher_examples=args.num_examples,
     )
 
-    # Print summary
     print("\n" + "=" * 50)
     print("OPTIMIZATION SUMMARY")
     print("=" * 50)

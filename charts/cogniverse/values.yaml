@@ -230,7 +230,7 @@ runtime:
     initialDelaySeconds: 60
     periodSeconds: 30
     timeoutSeconds: 10
-    failureThreshold: 10
+    failureThreshold: 24
 
   readinessProbe:
     httpGet:
@@ -610,7 +610,7 @@ llm:
       initialDelaySeconds: 120
       periodSeconds: 15
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
 
   # ---------------------------------------------------------------
   # engine: external — point at a host-side or third-party endpoint
@@ -696,18 +696,18 @@ inference:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 240
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
     readinessProbe:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 180
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
 
   # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
   # sidecar (deploy/pylate). Used by profiles with
@@ -942,18 +942,18 @@ inference:
         path: /health
         port: 7999
       # First JIT trace can take 60-90s on a cold container.
-      initialDelaySeconds: 240
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
     readinessProbe:
       httpGet:
         path: /health
         port: 7999
-      initialDelaySeconds: 180
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
 
   # vLLM-served LLM student — runtime hot path. Single instance handling
   # all DSPy / agent / search / judge calls. Gemma 4 E4B (4B effective)
@@ -1045,24 +1045,19 @@ inference:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 240
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
     readinessProbe:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 180
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
 
-  # vLLM-served LLM teacher — DSPy compile / MIPROv2 / GEPA only. NOT on
-  # the runtime hot path. Default replicaCount=0 keeps idle GPU footprint
-  # to just the student; optimization_cli scales up on-demand.
-  # Gemma 4 26B-A4B MoE (4B activated) replaces the previous Claude SaaS
-  # teacher — keeps the stack fully self-hosted.
   # vLLM-served ASR via Whisper. Replaces the legacy ``deploy/whisper``
   # FastAPI sidecar. Profiles route audio transcription here via
   # ``inference_services.transcription: "vllm_asr"``. The vLLM image
@@ -1116,10 +1111,10 @@ inference:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 180
+      initialDelaySeconds: 600
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 10
+      failureThreshold: 24
     readinessProbe:
       httpGet:
         path: /health
@@ -1133,7 +1128,15 @@ inference:
     enabled: false
     engine: vllm_chat
     type: chat
-    model: google/gemma-4-26b-a4b-it
+    # AWQ-INT4 Qwen 3.6 27B (~14 GiB). FP8 was tried first but vLLM
+    # 0.20.0 on ROCm/gfx1151 (Strix Halo, RDNA 3.5) cannot run FP8
+    # weights at all — both the MoE and dense FP8 paths bottom out in
+    # ``torch._scaled_mm`` which requires CUDA SM>=8.9 or ROCm MI300+
+    # (CDNA3). gfx1151 is RDNA, not CDNA, so neither Gemma-4-26B-A4B
+    # FP8 nor Gemma-4-31B FP8 would load. AWQ-INT4 uses Marlin/Triton
+    # INT4 kernels that do work on RDNA. Update this once vLLM ships
+    # an FP8 RDNA path or we move to MI300-class hardware.
+    model: cyankiwi/Qwen3.6-27B-AWQ-INT4
     device: cpu
     gpuCount: 1
     nodeSelector: {}
@@ -1163,18 +1166,18 @@ inference:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 480
+      initialDelaySeconds: 900
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 12
+      failureThreshold: 24
     readinessProbe:
       httpGet:
         path: /health
         port: 8000
-      initialDelaySeconds: 360
+      initialDelaySeconds: 900
       periodSeconds: 30
       timeoutSeconds: 10
-      failureThreshold: 12
+      failureThreshold: 24
 
 # ===========================================
 # Messaging Gateway (Telegram/Slack)

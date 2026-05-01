@@ -285,10 +285,17 @@ class TestDSPyOptimizerIntegration:
 
         pipeline.compiled_modules = mock_modules
 
-        # Mock telemetry provider with async dataset/experiment stores
+        # Mock telemetry provider: save_optimized_prompts goes through
+        # ArtifactManager which calls datasets.create_dataset for prompts
+        # and metrics blobs (one dataset.create_dataset per artifact type
+        # per module).  The old experiments.create_experiment path was
+        # removed when ArtifactManager replaced direct provider calls.
         mock_provider = Mock()
         mock_provider.datasets = Mock()
         mock_provider.datasets.create_dataset = AsyncMock(return_value="ds-123")
+        mock_provider.datasets.get_dataset = AsyncMock(
+            side_effect=KeyError("not found")
+        )
         mock_provider.experiments = Mock()
         mock_provider.experiments.create_experiment = AsyncMock(return_value="exp-123")
         mock_provider.experiments.log_run = AsyncMock(return_value="run-123")
@@ -298,10 +305,13 @@ class TestDSPyOptimizerIntegration:
             tenant_id="test-tenant", telemetry_provider=mock_provider
         )
 
-        # Verify artifacts were saved for each module
-        assert mock_provider.datasets.create_dataset.call_count >= len(mock_modules)
-        assert mock_provider.experiments.create_experiment.call_count >= len(
-            mock_modules
+        # ArtifactManager routes every artifact through datasets.create_dataset
+        # (prompts blob + metrics blob = 2 calls per module, no demos since
+        # mock_module.demos is []).  At minimum one call per module for prompts.
+        assert mock_provider.datasets.create_dataset.call_count >= len(mock_modules), (
+            f"Expected at least {len(mock_modules)} datasets.create_dataset calls "
+            f"(one prompt-blob per module), got "
+            f"{mock_provider.datasets.create_dataset.call_count}"
         )
 
 

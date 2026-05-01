@@ -18,9 +18,11 @@ The probe tries both and uses whichever responds.
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -29,6 +31,71 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_BOOT_DEADLINE_SECONDS = 120.0
 DEFAULT_RETRY_INTERVAL_SECONDS = 5.0
+
+# In-cluster service-account paths. Present when the runtime runs in K8s
+# with default automountServiceAccountToken; absent in unit tests and
+# outside-cluster invocations.
+_SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+_SA_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+_SA_NAMESPACE_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+_K8S_API_HOST = "https://kubernetes.default.svc"
+
+
+def k8s_service_has_endpoints(service_url: str) -> Optional[bool]:
+    """Return whether the K8s Service backing ``service_url`` has live endpoints.
+
+    Looks up the Endpoints object for the service host via the
+    in-cluster K8s API. Returns:
+      * True  — at least one ready endpoint address.
+      * False — Endpoints exists with no addresses (the Service is
+        defined but its Deployment is at 0 replicas, all backing pods
+        are unready, or every pod is terminating).
+      * None  — cannot determine (no in-cluster credentials, K8s API
+        unreachable, or the Service host doesn't look like a cluster
+        DNS name). Caller should fall back to probing.
+    """
+    if not (os.path.exists(_SA_TOKEN_PATH) and os.path.exists(_SA_NAMESPACE_PATH)):
+        return None
+
+    host = urlparse(service_url).hostname
+    if not host:
+        return None
+    # Cluster DNS shapes: "svc", "svc.namespace", "svc.namespace.svc",
+    # "svc.namespace.svc.cluster.local". Take the leftmost label as the
+    # service name; the namespace comes from the runtime's own SA.
+    service_name = host.split(".", 1)[0]
+
+    try:
+        with open(_SA_TOKEN_PATH) as f:
+            token = f.read().strip()
+        with open(_SA_NAMESPACE_PATH) as f:
+            namespace = f.read().strip()
+    except OSError:
+        return None
+
+    api_url = f"{_K8S_API_HOST}/api/v1/namespaces/{namespace}/endpoints/{service_name}"
+    try:
+        resp = requests.get(
+            api_url,
+            headers={"Authorization": f"Bearer {token}"},
+            verify=_SA_CA_PATH if os.path.exists(_SA_CA_PATH) else True,
+            timeout=3,
+        )
+    except requests.RequestException as exc:
+        logger.debug("k8s endpoints lookup for %s failed: %s", service_name, exc)
+        return None
+    if resp.status_code == 404:
+        # No Endpoints object — Service may exist without selector, or
+        # it doesn't exist at all. Either way, fall back to probing.
+        return None
+    if not resp.ok:
+        return None
+    try:
+        body = resp.json()
+    except ValueError:
+        return None
+    subsets = body.get("subsets") or []
+    return any(s.get("addresses") for s in subsets)
 
 
 class InferenceServiceMismatch(RuntimeError):
@@ -139,12 +206,19 @@ def validate_inference_services(
     retry_interval_seconds: float = DEFAULT_RETRY_INTERVAL_SECONDS,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    has_endpoints: Callable[[str], Optional[bool]] = k8s_service_has_endpoints,
 ) -> None:
     """Raise if any profile's service serves the wrong model.
 
     Retries unreachable services until ``boot_deadline_seconds`` elapses —
     the runtime often starts before inference pods are ready. A service that
     never responds is a deployment failure and must fail loud.
+
+    Services whose K8s Endpoints are empty (Deployment scaled to 0 by
+    an operator or test fixture) are treated as parked: log a warning
+    and skip the probe instead of blocking startup. ``has_endpoints``
+    can be overridden in tests; the default in-cluster implementation
+    returns ``None`` outside K8s, in which case we always probe.
     """
     bindings = list(bindings)
     if not bindings:
@@ -184,6 +258,16 @@ def validate_inference_services(
     deadline = now() + boot_deadline_seconds
     for service_name, expected_model in unique.items():
         url = service_urls[service_name]
+        endpoints_present = has_endpoints(url)
+        if endpoints_present is False:
+            logger.warning(
+                "Inference service %r at %s has no live endpoints "
+                "(Deployment likely scaled to 0). Skipping probe; "
+                "profiles bound to this service will fail on first use.",
+                service_name,
+                url,
+            )
+            continue
         served_model = _probe_until_reachable(
             probe, service_name, url, deadline, retry_interval_seconds, sleep, now
         )

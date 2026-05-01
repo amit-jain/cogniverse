@@ -89,23 +89,17 @@ class TestDynamicDSPyMixin:
         assert agent._optimizer is None
 
     def test_configure_dspy_lm(self, agent_config):
-        """Test DSPy LM configuration.
-
-        ``create_dspy_lm`` reads ``system_config.llm_engine`` and applies
-        the matching DSPy/litellm prefix. Default engine is ``ollama``,
-        so a bare ``gpt-4`` model id from agent_config emerges as
-        ``ollama_chat/gpt-4`` at the dspy.LM boundary. The test asserts
-        the prefix is applied — not the bare model id — because that's
-        the contract the factory promises every caller.
+        """``create_dspy_lm`` passes ``LLMEndpointConfig.model`` through
+        to dspy.LM verbatim; whatever the AgentConfig set is what dspy
+        sees. The agent fixture sets ``llm_model="gpt-4"`` so the
+        dspy.LM boundary receives exactly that.
         """
         with patch("dspy.LM") as mock_lm:
             TestAgent(agent_config)
 
-            # Verify LM was created with correct parameters
-            # create_dspy_lm passes model as first positional arg
             mock_lm.assert_called_once()
             call_args = mock_lm.call_args
-            assert call_args[0][0] == "ollama_chat/gpt-4"
+            assert call_args[0][0] == "gpt-4"
             assert call_args[1]["api_base"] == "http://localhost:11434"
 
     def test_register_signature(self, agent_config):

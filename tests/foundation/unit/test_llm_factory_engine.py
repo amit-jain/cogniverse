@@ -1,14 +1,12 @@
-"""Tests for create_dspy_lm engine resolution via SystemConfig.
+"""Tests for create_dspy_lm.
 
-Verifies the full chart→runtime→factory wiring path:
-  chart sets LLM_ENGINE / LLM_MODEL  →
-    main.py reads env into SystemConfig.llm_engine / llm_model  →
-      create_dspy_lm reads SystemConfig and applies the matching
-      DSPy/litellm prefix to the LLMEndpointConfig's bare model id.
-
-The factory stays a single chokepoint: every dspy.LM in the codebase
-goes through it, and every one of them gets the correct prefix without
-the caller knowing which engine the deployment chose.
+The factory passes ``LLMEndpointConfig.model`` through to dspy.LM
+verbatim — no string manipulation, no provider rewriting. The chart
+(or whatever else builds the LLMEndpointConfig) is responsible for
+populating ``model`` with whatever litellm-recognised string should be
+sent. The factory's only job is to wire api_base / api_key /
+extra_body / sampling onto the dspy.LM and emit one well-formed log
+line per construction.
 """
 
 from __future__ import annotations
@@ -19,113 +17,51 @@ from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 
-@pytest.fixture(autouse=True)
-def _reset_default_config_manager(monkeypatch):
-    """Each test gets a fresh default ConfigManager.
+class TestModelPassthrough:
+    """Whatever model id the caller hands in is what dspy.LM gets."""
 
-    Two singletons can leak engine state across tests:
-      - ``utils.create_default_config_manager()`` (the factory)
-      - ``utils._config_manager_singleton`` (the process-level cached CM
-        used by ``create_dspy_lm`` via ``get_config_manager_singleton()``)
-    The fixture resets BOTH so the LM factory reads engine state set up
-    by the current test, not the previous one.
-    """
-    from cogniverse_foundation.config import utils
-
-    real_factory = utils.create_default_config_manager
-
-    holder = {"cm": None}
-
-    def _stub_factory():
-        if holder["cm"] is None:
-            holder["cm"] = real_factory()
-        return holder["cm"]
-
-    monkeypatch.setattr(utils, "create_default_config_manager", _stub_factory)
-    # Reset the process-level singleton so get_config_manager_singleton()
-    # rebuilds it via the stubbed factory; otherwise the first test's CM
-    # bleeds into every subsequent one.
-    monkeypatch.setattr(utils, "_config_manager_singleton", None)
-    yield holder
-
-
-def _set_engine(holder, engine: str, model: str = "qwen3:4b"):
-    cm = holder["cm"]
-    if cm is None:
-        from cogniverse_foundation.config import utils
-
-        cm = utils.create_default_config_manager()
-        holder["cm"] = cm
-    sc = cm.get_system_config()
-    sc.llm_engine = engine
-    sc.llm_model = model
-    cm.set_system_config(sc)
-
-
-class TestFactoryEngineResolution:
-    """create_dspy_lm picks the prefix from system_config.llm_engine."""
-
-    def test_ollama_engine_applies_ollama_chat_prefix(
-        self, _reset_default_config_manager
-    ):
-        _set_engine(_reset_default_config_manager, "ollama")
-        endpoint = LLMEndpointConfig(model="qwen3:4b", api_base="http://ollama:11434")
+    @pytest.mark.parametrize(
+        "model",
+        [
+            "qwen3:4b",
+            "ollama_chat/qwen3:4b",
+            "hosted_vllm/google/gemma-4-e4b-it",
+            "hosted_vllm/cyankiwi/Qwen3.6-27B-AWQ-INT4",
+            "openai/gpt-4o-mini",
+            "anthropic/claude-3-5-sonnet-20241022",
+            "Qwen/Qwen2.5-7B-Instruct",
+        ],
+    )
+    def test_model_passes_through_unchanged(self, model):
+        endpoint = LLMEndpointConfig(model=model, api_base="http://endpoint:8000/v1")
         lm = create_dspy_lm(endpoint)
-        assert lm.model == "ollama_chat/qwen3:4b", (
-            "engine=ollama must produce the chat-completions litellm prefix"
-        )
-        assert lm.kwargs["api_base"] == "http://ollama:11434"
+        assert lm.model == model
 
-    def test_vllm_engine_applies_hosted_vllm_prefix_with_hf_org(
-        self, _reset_default_config_manager
-    ):
-        _set_engine(_reset_default_config_manager, "vllm")
+    def test_endpoint_kwargs_are_wired_onto_dspy_lm(self):
         endpoint = LLMEndpointConfig(
-            model="Qwen/Qwen2.5-7B-Instruct",
-            api_base="http://vllm:8000",
+            model="hosted_vllm/test/Model",
+            api_base="http://endpoint:8000/v1",
+            api_key="sk-test",
+            temperature=0.42,
+            max_tokens=2048,
+            extra_body={"reasoning": "auto"},
         )
         lm = create_dspy_lm(endpoint)
-        assert lm.model == "hosted_vllm/Qwen/Qwen2.5-7B-Instruct", (
-            "engine=vllm must keep HF Org/Name and add hosted_vllm prefix"
-        )
+        assert lm.model == "hosted_vllm/test/Model"
+        assert lm.kwargs["api_base"] == "http://endpoint:8000/v1"
+        assert lm.kwargs["api_key"] == "sk-test"
+        assert lm.kwargs["temperature"] == 0.42
+        assert lm.kwargs["max_tokens"] == 2048
+        assert lm.kwargs["extra_body"] == {"reasoning": "auto"}
 
-    def test_external_engine_applies_openai_prefix(self, _reset_default_config_manager):
-        _set_engine(_reset_default_config_manager, "external")
-        endpoint = LLMEndpointConfig(model="gpt-4", api_base="https://api.openai.com")
+    def test_optional_kwargs_omitted_when_none(self):
+        endpoint = LLMEndpointConfig(model="test/Model")
         lm = create_dspy_lm(endpoint)
-        assert lm.model == "openai/gpt-4"
+        assert "api_base" not in lm.kwargs
+        assert "api_key" not in lm.kwargs
+        assert "extra_body" not in lm.kwargs
 
-    def test_pre_prefixed_config_is_not_double_prefixed(
-        self, _reset_default_config_manager
-    ):
-        """A config that still ships ``ollama/qwen3:4b`` (legacy shape)
-        must round-trip cleanly under engine=ollama — not produce
-        ``ollama_chat/ollama/qwen3:4b``."""
-        _set_engine(_reset_default_config_manager, "ollama")
-        endpoint = LLMEndpointConfig(
-            model="ollama/qwen3:4b", api_base="http://ollama:11434"
-        )
-        lm = create_dspy_lm(endpoint)
-        assert lm.model == "ollama_chat/qwen3:4b"
-
-    def test_engine_change_at_runtime_picks_up_new_prefix(
-        self, _reset_default_config_manager
-    ):
-        """The factory reads engine on every call — flipping the config
-        between calls (as a deployment does on helm upgrade) must not
-        leave a stale prefix cached."""
-        endpoint = LLMEndpointConfig(model="qwen3:4b", api_base="http://x")
-
-        _set_engine(_reset_default_config_manager, "ollama")
-        lm1 = create_dspy_lm(endpoint)
-        assert lm1.model == "ollama_chat/qwen3:4b"
-
-        _set_engine(_reset_default_config_manager, "vllm")
-        lm2 = create_dspy_lm(endpoint)
-        assert lm2.model == "hosted_vllm/qwen3:4b"
-
-    def test_empty_model_raises(self, _reset_default_config_manager):
-        _set_engine(_reset_default_config_manager, "ollama")
+    def test_empty_model_raises(self):
         endpoint = LLMEndpointConfig(model="", api_base="http://x")
         with pytest.raises(ValueError, match="model is required"):
             create_dspy_lm(endpoint)
