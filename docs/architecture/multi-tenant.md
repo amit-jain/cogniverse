@@ -532,8 +532,8 @@ memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="hosted_vllm/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434",
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
     ),
 )
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
@@ -671,8 +671,8 @@ from cogniverse_foundation.telemetry import TelemetryConfig
 deps = OrchestratorDeps(  # 
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="hosted_vllm/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434",
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
     ),
 )
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
@@ -1521,8 +1521,8 @@ def test_tenant_isolation():
 deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="hosted_vllm/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434",
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://localhost:11434/v1",
         ),
     )
     orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
@@ -1691,8 +1691,8 @@ async def search(
 deps = OrchestratorDeps(  # 
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="hosted_vllm/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434",
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://localhost:11434/v1",
         ),
     )
     orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))

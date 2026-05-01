@@ -479,19 +479,18 @@ phoenix:
 # LLM Inference Configuration
 # ===========================================
 # One deployment-time switch picks both the in-cluster pod (if any) and
-# the DSPy/litellm prefix the runtime applies to ``llm.model``:
+# the api_base the runtime points its LLM calls at. All three engines
+# expose the OpenAI-compatible HTTP contract (``/v1/chat/completions``)
+# so the runtime uses one canonical litellm provider prefix for every
+# backend (see ``cogniverse.llmProviderPrefix`` in templates/_helpers.tpl);
+# the engine choice only steers the URL, not the wire shape:
 #
-#   engine: ollama   → deploys ollama/ollama, runtime uses ``ollama_chat/<model>``
-#   engine: vllm     → deploys vllm-openai (CPU/GPU per ``device``),
-#                      runtime uses ``hosted_vllm/<model>``
-#   engine: external → no pod; runtime points at ``external.url``
-#                      and uses ``openai/<model>`` (any OAI-compatible host)
-#
-# Both Ollama (≥0.3) and vLLM expose ``/v1/chat/completions``, so the
-# rest of the runtime (mem0, agent dispatch) is engine-agnostic.
+#   engine: ollama   → deploys built-in Ollama StatefulSet + PVC
+#   engine: vllm     → deploys built-in vLLM Deployment (CPU/GPU per ``device``)
+#   engine: external → no pod; ``llm.external.url`` is the api_base
 llm:
   engine: ollama                # ollama | vllm | external
-  model: gemma3:4b              # bare model id; helper prepends DSPy prefix
+  model: gemma3:4b              # bare model id; helper prepends provider prefix
   device: cpu                   # cpu | cuda | rocm | mps (vllm only)
   gpuCount: 1
   replicaCount: 1

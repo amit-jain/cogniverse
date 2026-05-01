@@ -510,9 +510,9 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
     config-discovery path at it via ``COGNIVERSE_CONFIG``.
 
     Production ``configs/config.json`` carries vLLM-served LLM endpoints
-    (``hosted_vllm/google/gemma-4-e4b-it`` at ``http://...:8101/v1``)
-    that match the chart's vllm_llm_student/teacher pods. Local test
-    runs typically have only Ollama running, so loading the prod config
+    (``openai/google/gemma-4-e4b-it`` at ``http://...:8101/v1``) that
+    match the chart's vllm_llm_student/teacher pods. Local test runs
+    typically have only Ollama running, so loading the prod config
     surfaces 404s for the unknown HF model id.
 
     This fixture clones prod ``configs/config.json`` into a tmpdir,
@@ -520,8 +520,7 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
     whatever the test machine actually has serving (defaults to local
     Ollama qwen3:4b), and sets ``COGNIVERSE_CONFIG`` to the clone.
     Tests that need a different LLM target can override via env vars
-    ``TEST_LLM_MODEL`` / ``TEST_LLM_API_BASE`` / ``TEST_LLM_ENGINE``
-    before pytest starts (e.g. point at vLLM on a different port).
+    ``TEST_LLM_MODEL`` / ``TEST_LLM_API_BASE`` before pytest starts.
 
     Skipped when ``COGNIVERSE_CONFIG`` is already set externally — that
     means the operator wants their own config (e.g. CI matrix runs).
@@ -537,16 +536,14 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
 
     blob = json.loads(src_path.read_text())
 
-    test_engine = os.environ.get("TEST_LLM_ENGINE", "ollama")
     test_model = os.environ.get("TEST_LLM_MODEL", "qwen3:4b")
     test_api_base = os.environ.get("TEST_LLM_API_BASE", "http://localhost:11434")
 
-    if test_engine == "ollama":
-        prefixed = f"ollama/{test_model}"
-    elif test_engine == "openai":
-        prefixed = f"openai/{test_model}"
-    else:
-        prefixed = f"hosted_vllm/{test_model}"
+    # Single litellm provider prefix for every test backend; chart and
+    # runtime emit the same. See cogniverse.llmProviderPrefix in the
+    # chart helpers — prefix is decoupled from the serving topology
+    # because Ollama, vLLM, and SaaS providers all speak OAI-compat.
+    prefixed = f"openai/{test_model}"
 
     llm_cfg = blob.setdefault("llm_config", {})
     primary = llm_cfg.setdefault("primary", {})

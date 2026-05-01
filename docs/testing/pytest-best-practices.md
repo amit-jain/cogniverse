@@ -355,8 +355,8 @@ def test_agents_depends_on_foundation_and_core():
     deps = OrchestratorDeps(
         telemetry_config=telemetry_config,
         llm_config=LLMEndpointConfig(
-            model="hosted_vllm/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434",
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://localhost:11434/v1",
         ),
     )
 
@@ -509,7 +509,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
     memory_a.initialize(
         backend_host="localhost",
         backend_port=8080,
-        llm_model="hosted_vllm/google/gemma-4-e4b-it",
+        llm_model="openai/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -520,7 +520,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
     memory_b.initialize(
         backend_host="localhost",
         backend_port=8080,
-        llm_model="hosted_vllm/google/gemma-4-e4b-it",
+        llm_model="openai/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -588,8 +588,8 @@ def tenant_agent(tenant_a_config):
     deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
-            model="hosted_vllm/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434",
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://localhost:11434/v1",
         ),
     )
     return OrchestratorAgent(deps=deps)
@@ -653,7 +653,7 @@ def cleanup_dspy_state():
 `tests/conftest.py` ships a session-scoped `autouse=True` fixture
 named `cogniverse_test_config`. Its job is to keep integration tests
 off the production `configs/config.json` LLM endpoints — production
-points at vLLM-served `hosted_vllm/google/gemma-4-e4b-it` on
+points at vLLM-served `openai/google/gemma-4-e4b-it` on
 `http://...:8101/v1`, which doesn't exist on local dev or CI machines.
 
 What it does:

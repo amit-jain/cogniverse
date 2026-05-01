@@ -517,8 +517,8 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Provide them only if using synthetic data generation
 optimizer = ModalityOptimizer(
     llm_config=LLMEndpointConfig(       # REQUIRED: LLM config for DSPy training
-        model="ollama_chat/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434",
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
     ),
     telemetry_provider=telemetry_provider,
     tenant_id="production",
@@ -584,8 +584,8 @@ from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 # Initialize coordinator with lazy-loaded optimizers
 coordinator = OptimizerCoordinator(
     llm_config=LLMEndpointConfig(
-        model="ollama_chat/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434",
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
     ),
     telemetry_provider=telemetry_provider,
     tenant_id="production",
@@ -982,7 +982,7 @@ Optimization artifacts are persisted to the telemetry store via `ArtifactManager
 async def test_xgboost_meta_model_training():
     """Test XGBoost meta-models for training decisions"""
     optimizer = ModalityOptimizer(
-        llm_config=LLMEndpointConfig(model="ollama_chat/google/gemma-4-e4b-it", api_base="http://localhost:11434"),
+        llm_config=LLMEndpointConfig(model="openai/google/gemma-4-e4b-it", api_base="http://localhost:11434/v1"),
         telemetry_provider=telemetry_provider,
         tenant_id="test",
     )
@@ -1286,16 +1286,16 @@ flowchart TB
 
 **Location:** `libs/foundation/cogniverse_foundation/config/llm_factory.py`
 
-All DSPy LM creation goes through the centralized `create_dspy_lm()` factory. Provider is encoded in the model string (LiteLLM convention).
+All DSPy LM creation goes through the centralized `create_dspy_lm()` factory. Provider is encoded in the model string (LiteLLM convention). The Cogniverse chart always emits `openai/<bare-model>` for every in-cluster backend (vLLM or Ollama); the actual destination is selected by `api_base`. External SaaS providers use their own litellm prefix (`anthropic/`, `together/`, etc.).
 
 ```python
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-# Local Ollama
+# Local Ollama (modern Ollama exposes /v1/chat/completions; use openai/ prefix)
 local_lm = create_dspy_lm(LLMEndpointConfig(
-    model="ollama_chat/llama3:8b",
-    api_base="http://localhost:11434",
+    model="openai/llama3:8b",
+    api_base="http://localhost:11434/v1",
 ))
 
 # Modal (OpenAI-compatible endpoint)
@@ -1324,8 +1324,9 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
 {
   "llm_config": {
     "primary": {
-      "model": "ollama_chat/google/gemma-4-e4b-it",
-      "api_base": "http://localhost:11434"
+      "model": "openai/google/gemma-4-e4b-it",
+      "api_base": "http://localhost:11434/v1",
+      "api_key": "placeholder-no-auth-needed"
     },
     "teacher": {
       "model": "anthropic/claude-3-5-sonnet-20241022",
@@ -1333,7 +1334,9 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
     },
     "overrides": {
       "orchestrator_agent": {
-        "model": "ollama_chat/qwen3:8b"
+        "model": "openai/qwen3:8b",
+        "api_base": "http://localhost:11434/v1",
+        "api_key": "placeholder-no-auth-needed"
       }
     }
   }
@@ -1368,8 +1371,8 @@ optimizer = DSPyAgentPromptOptimizer(config={
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 endpoint_config = LLMEndpointConfig(
-    model="ollama_chat/llama3:8b",
-    api_base="http://localhost:11434",
+    model="openai/llama3:8b",
+    api_base="http://localhost:11434/v1",
 )
 optimizer.initialize_language_model(endpoint_config=endpoint_config)
 

@@ -490,8 +490,9 @@ All DSPy-based agents and optimizers use a centralized LLM configuration system 
 {
   "llm_config": {
     "primary": {
-      "model": "ollama_chat/google/gemma-4-e4b-it",
-      "api_base": "http://localhost:11434"
+      "model": "openai/google/gemma-4-e4b-it",
+      "api_base": "http://localhost:11434/v1",
+      "api_key": "placeholder-no-auth-needed"
     },
     "teacher": {
       "model": "anthropic/claude-3-5-sonnet-20241022",
@@ -499,7 +500,9 @@ All DSPy-based agents and optimizers use a centralized LLM configuration system 
     },
     "overrides": {
       "orchestrator_agent": {
-        "model": "ollama_chat/qwen3:8b"
+        "model": "openai/qwen3:8b",
+        "api_base": "http://localhost:11434/v1",
+        "api_key": "placeholder-no-auth-needed"
       }
     }
   }
@@ -527,7 +530,7 @@ with dspy.context(lm=lm):
     result = module(query="machine learning videos")
 ```
 
-- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`, `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3). Provider is encoded in the model string (e.g., `"ollama_chat/google/gemma-4-e4b-it"`, `"anthropic/claude-3-5-sonnet-20241022"`)
+- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`, `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
 - `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
 - `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory
 

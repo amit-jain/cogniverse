@@ -40,11 +40,11 @@ path). The chart renders one Deployment + Service per enabled service.
 | ROCm GPU memory | `--gpu-memory-utilization 0.40` (≈25 GiB on 62 GiB unified memory) |
 
 The student is the primary chat LLM used by every agent for
-DSPy/litellm calls. The litellm provider prefix (e.g. `hosted_vllm/...`)
-is baked into the model string by the Helm template
-(`cogniverse.primaryLLMModel` in `templates/_helpers.tpl`) and written
-verbatim into `config.json`; `create_dspy_lm()` passes it through
-unchanged.
+DSPy/litellm calls. The Helm template (`cogniverse.primaryLLMModel` in
+`templates/_helpers.tpl`) always prepends the `openai/` provider prefix
+and writes the resulting model id verbatim into `config.json`;
+`create_dspy_lm()` passes it through unchanged. The actual destination
+is determined by `api_base`, not the prefix.
 
 ### Teacher (DSPy MIPROv2 optimization only)
 
@@ -87,9 +87,11 @@ side that consumes the optimized program.
 | Default state | opt-in via `llm.engine: ollama`, `llm.builtin.enabled: true` |
 
 Use Ollama for local development on machines without a vLLM-ready GPU.
-The Helm template (`cogniverse.primaryLLMModel`) writes the correct
-litellm prefix (`ollama_chat/...`) into `config.json` based on
-`llm.engine`.
+The Helm template (`cogniverse.primaryLLMModel`) writes `openai/<model>`
+into `config.json` regardless of engine; `llm.engine` only selects the
+`api_base` URL (pointing at the in-cluster Ollama `/v1` endpoint in this
+case). Modern Ollama exposes `/v1/chat/completions`, so the OpenAI-compat
+wire contract routes to it unchanged.
 
 ### Optional: external LLM endpoint
 

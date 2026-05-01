@@ -4066,11 +4066,11 @@ Wrapper around DSPy's RLM module with timeout handling and optional EventQueue i
 
 ```python
 from cogniverse_agents.inference import RLMInference, RLMResult, RLMTimeoutError
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 # Basic usage
 rlm = RLMInference(
-    backend="openai",
-    model="gpt-4o",
+    llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
     max_iterations=10,
     max_llm_calls=30,
     timeout_seconds=300
@@ -4091,12 +4091,12 @@ print(f"Latency: {result.latency_ms:.0f}ms")
 
 ```python
 from cogniverse_core.events import EventQueue
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 event_queue = EventQueue(tenant_id="acme")
 
 rlm = RLMInference(
-    backend="openai",
-    model="gpt-4o",
+    llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
     event_queue=event_queue,
     task_id="rlm_task_001",
     tenant_id="acme"
@@ -4191,14 +4191,19 @@ await event_queue.cancel("User requested cancellation")
 # Raises RLMCancelledError if cancelled
 ```
 
-### Backend Support
+### Model String Format
 
-| Backend | Model Format | Example |
-|---------|--------------|---------|
-| `openai` | `openai/{model}` | `openai/gpt-4o` |
-| `anthropic` | `anthropic/{model}` | `anthropic/claude-3-5-sonnet-20241022` |
-| `ollama` | `ollama_chat/{model}` | `ollama_chat/llama3:70b` |
-| `litellm` | Provider-prefixed | `together/meta-llama/Llama-3-70b` |
+`RLMInference` receives an `LLMEndpointConfig` whose `model` field is a
+litellm-prefixed model id. The Cogniverse chart always emits `openai/<bare>`
+for every engine (vLLM, Ollama, external); `api_base` selects the actual
+destination. External SaaS providers use their own litellm prefix:
+
+| Provider | Model format | Example |
+|----------|--------------|---------|
+| In-cluster vLLM / Ollama (chart) | `openai/{model}` | `openai/google/gemma-4-e4b-it` |
+| OpenAI (SaaS) | `openai/{model}` | `openai/gpt-4o` |
+| Anthropic | `anthropic/{model}` | `anthropic/claude-3-5-sonnet-20241022` |
+| Together, Anyscale, etc. | Provider-prefixed | `together/meta-llama/Llama-3-70b` |
 
 ---
 

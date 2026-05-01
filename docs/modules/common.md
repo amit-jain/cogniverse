@@ -201,8 +201,12 @@ class SystemConfig:
     application_name: str = "cogniverse"
 
     # LLM configuration
-    llm_model: str = "hosted_vllm/google/gemma-4-e4b-it"
-    base_url: str = "http://localhost:11434"
+    # Bare model id (e.g. "google/gemma-4-e4b-it"). The chart writes the
+    # full litellm-prefixed id (openai/<model>) into config.json; this
+    # field carries the bare name for topology-display purposes only.
+    llm_model: str = "google/gemma-4-e4b-it"
+    llm_engine: str = "vllm"
+    base_url: str = "http://localhost:8101/v1"
     llm_api_key: Optional[str] = None
 
     # Phoenix/Telemetry
@@ -283,7 +287,6 @@ class RoutingConfigUnified:
 
     # LLM configuration (Slow Path)
     llm_provider: str = "local"
-    llm_routing_model: str = "hosted_vllm/google/gemma-4-e4b-it"
     llm_endpoint: str = "http://localhost:11434"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 150

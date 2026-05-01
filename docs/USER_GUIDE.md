@@ -319,7 +319,7 @@ memory = Mem0MemoryManager(tenant_id="your_org:production")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="hosted_vllm/google/gemma-4-e4b-it",
+    llm_model="openai/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,
@@ -1180,7 +1180,7 @@ memory = Mem0MemoryManager(tenant_id="your_org:production")
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
-    llm_model="hosted_vllm/google/gemma-4-e4b-it",
+    llm_model="openai/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
     config_manager=config_manager,

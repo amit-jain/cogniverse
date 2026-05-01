@@ -269,8 +269,8 @@ def up(
                 if use_k3d
                 else "http://localhost:11434"
             )
-            # Don't override llm.engine — the chart helper constructs the
-            # right litellm prefix (ollama_chat/* vs openai/*) per engine.
+            # Don't override llm.engine — the chart helper renders the
+            # canonical litellm model id (and api_base) per engine choice.
             set_values["llm.builtin.enabled"] = "false"
             set_values["llm.external.enabled"] = "true"
             set_values["llm.external.url"] = external_url

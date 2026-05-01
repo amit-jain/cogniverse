@@ -157,7 +157,7 @@
   "llm_config": {
     "primary": {
       "model": "{{ include "cogniverse.primaryLLMModel" . }}",
-      "api_key": null,
+      "api_key": "{{ include "cogniverse.llmPlaceholderApiKey" . }}",
       "temperature": 0.1,
       "max_tokens": 1000,
       "adapter_path": null,
@@ -166,7 +166,7 @@
     "teacher": {
       "model": "{{ include "cogniverse.teacherLLMModel" . }}",
       "api_base": "{{ include "cogniverse.llmTeacherEndpoint" . }}",
-      "api_key": null,
+      "api_key": "{{ include "cogniverse.llmPlaceholderApiKey" . }}",
       "temperature": 0.7,
       "max_tokens": 2048,
       "adapter_path": null

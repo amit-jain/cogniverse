@@ -356,9 +356,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.base_url = os.environ["LLM_ENDPOINT"]
         updated = True
     # LLM_ENGINE / LLM_MODEL come from the chart's llm.engine / llm.model
-    # values. The runtime's DSPy LM construction sites read these via
-    # ``cogniverse_foundation.dspy.format_dspy_model`` so the right
-    # litellm prefix (ollama_chat / hosted_vllm / openai) is applied.
+    # values. Kept on system_config for components that surface the
+    # serving topology (e.g. dashboard health UI). The DSPy LM
+    # construction path no longer reads these — the chart renders the
+    # full litellm-prefixed model id into config.json directly.
     if os.environ.get("LLM_ENGINE"):
         system_config.llm_engine = os.environ["LLM_ENGINE"]
         updated = True

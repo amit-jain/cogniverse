@@ -89,16 +89,21 @@ Return the proper image name
 {{- end -}}
 
 {{/*
-LLM endpoint URL. Resolves to the right host:port based on llm.engine
-PLUS the ``llm.external.enabled`` switch (so a host-side Ollama can
-co-exist with engine=ollama — the *protocol* is ollama, the *host*
-is external):
-  - external (engine)       → llm.external.url (required)
-  - external.enabled = true → llm.external.url (overrides in-cluster)
-  - vllm                    → in-cluster service on llm.vllm.service.port
-  - ollama                  → in-cluster service on llm.ollama.service.port
-Single source of truth for every consumer (runtime, agents, init jobs,
-optimization workflows) so the URL never drifts between sites.
+LLM endpoint URL. The chart talks to every LLM backend through the
+OpenAI-compatible HTTP shape (``/v1/chat/completions``,
+``/v1/embeddings``); modern Ollama, vLLM, and external SaaS providers
+all expose it. This helper picks the backend host:port based on
+``llm.engine`` plus the ``llm.external.enabled`` switch:
+
+  - ``external`` (engine)       → ``llm.external.url`` (required)
+  - ``external.enabled = true`` → ``llm.external.url`` (overrides in-cluster)
+  - ``vllm`` / ``ollama``       → in-cluster ``-llm`` service on the
+                                   matching backend port
+
+The ``/v1`` suffix is appended so litellm's openai provider can post
+chat/completions directly. Single source of truth for every consumer
+(runtime, agents, init jobs, optimization workflows) so the URL never
+drifts between sites.
 */}}
 {{- define "cogniverse.llmEndpoint" -}}
 {{- $engine := .Values.llm.engine | default "ollama" -}}
@@ -107,25 +112,11 @@ optimization workflows) so the URL never drifts between sites.
 {{- else if eq $engine "external" -}}
 {{- required "llm.external.url is required when llm.engine=external" .Values.llm.external.url -}}
 {{- else if eq $engine "vllm" -}}
-{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.vllm.service.port) -}}
+{{- printf "http://%s-llm:%d/v1" (include "cogniverse.fullname" .) (int .Values.llm.vllm.service.port) -}}
 {{- else if eq $engine "ollama" -}}
-{{- printf "http://%s-llm:%d" (include "cogniverse.fullname" .) (int .Values.llm.ollama.service.port) -}}
+{{- printf "http://%s-llm:%d/v1" (include "cogniverse.fullname" .) (int .Values.llm.ollama.service.port) -}}
 {{- else -}}
 {{- fail (printf "llm.engine must be one of [ollama, vllm, external], got %q" $engine) -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
-DSPy / litellm prefix for ``llm.model`` based on engine. The runtime joins
-this with llm.model to construct the dspy.LM model string. ollama needs
-the ``ollama_chat/`` prefix specifically (not ``ollama/`` — that targets
-the legacy non-chat completion API).
-*/}}
-{{- define "cogniverse.llmDspyPrefix" -}}
-{{- $engine := .Values.llm.engine | default "ollama" -}}
-{{- if eq $engine "vllm" -}}hosted_vllm
-{{- else if eq $engine "external" -}}openai
-{{- else -}}ollama_chat
 {{- end -}}
 {{- end -}}
 
@@ -139,58 +130,99 @@ ollama / vllm; false for engine external).
 {{- end -}}
 
 {{/*
-vLLM student LLM endpoint — runtime hot path (low-latency Gemma 4 E4B).
-Resolves to the in-cluster vllm-llm-student service. Always /v1 suffix
-because litellm hosted_vllm provider expects an OpenAI-compatible base.
+vLLM student LLM endpoint — runtime hot path. Resolves to the
+in-cluster vllm-llm-student service with the ``/v1`` suffix so the
+generic OpenAI-compatible client can hit /v1/chat/completions.
 */}}
 {{- define "cogniverse.llmStudentEndpoint" -}}
 {{- printf "http://%s-vllm-llm-student:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_student.service.port) -}}
 {{- end -}}
 
 {{/*
-vLLM teacher LLM endpoint — DSPy compile-time only (Qwen3.6-27B-AWQ-INT4).
-Resolves to the in-cluster vllm-llm-teacher service. Scale-to-zero by
-default (replicaCount: 0); spun up on-demand by optimization_cli runs.
+vLLM teacher LLM endpoint — DSPy compile-time only. Resolves to the
+in-cluster vllm-llm-teacher service. Scale-to-zero by default
+(replicaCount: 0); spun up on-demand by optimization_cli runs.
 */}}
 {{- define "cogniverse.llmTeacherEndpoint" -}}
 {{- printf "http://%s-vllm-llm-teacher:%d/v1" (include "cogniverse.fullname" .) (int .Values.inference.vllm_llm_teacher.service.port) -}}
 {{- end -}}
 
 {{/*
-Teacher LLM model id passed to litellm. Derived from
-inference.vllm_llm_teacher.model with the ``hosted_vllm/`` provider
-prefix — vLLM's served-model-name defaults to whatever path is passed
-to ``vllm serve``, so config.json's teacher.model and the pod's
-``args[1]`` must reference the same string.
+litellm provider prefix the runtime emits for every model id. The
+chart talks to all backends through the OpenAI-compatible wire
+contract (vLLM, modern Ollama, OpenAI proper, Modal, Anyscale,
+Together…) so one prefix routes them all; the actual destination is
+selected by ``api_base``. Centralised here so any future provider
+swap is a one-line change.
+*/}}
+{{- define "cogniverse.llmProviderPrefix" -}}openai{{- end -}}
+
+{{/*
+Default api_key value for endpoints that don't require authentication
+(in-cluster vLLM/Ollama). litellm's openai-compatible client refuses
+to dispatch with a null/empty key, so we hand it a sentinel string;
+the receiving server ignores Authorization headers it doesn't check.
+External SaaS providers should override via runtime.primaryLLM.apiKey
+or by injecting the real secret into the runtime pod's environment.
+*/}}
+{{- define "cogniverse.llmPlaceholderApiKey" -}}placeholder-no-auth-needed{{- end -}}
+
+{{/*
+Teacher LLM model id passed to litellm. ``inference.vllm_llm_teacher.model``
+is the bare model name vLLM serves; the prefix is supplied by
+``cogniverse.llmProviderPrefix``. config.json's teacher.model and the
+pod's ``args[1]`` must reference the same bare model string —
+vLLM's served-model-name defaults to whatever path is passed to
+``vllm serve``.
 */}}
 {{- define "cogniverse.teacherLLMModel" -}}
-{{- printf "hosted_vllm/%s" .Values.inference.vllm_llm_teacher.model -}}
+{{- printf "%s/%s" (include "cogniverse.llmProviderPrefix" .) .Values.inference.vllm_llm_teacher.model -}}
 {{- end -}}
 
 {{/*
-Runtime primary LLM model. Resolves to ``runtime.primaryLLM.model``
-when set, otherwise the upstream default ``hosted_vllm/google/gemma-4-e4b-it``.
-The override path is how k3s deploys (which can't run vllm_llm_student
-on CPU within reasonable memory/time) point at Ollama gemma3:4b instead.
+Runtime primary LLM model — the model id the runtime hands to
+``dspy.LM`` verbatim. ``create_dspy_lm`` does no string manipulation
+on it, so the chart is the single place that picks the model id.
+
+Resolution order:
+  1. ``runtime.primaryLLM.model`` if explicitly set — escape hatch for
+     ops who want to override the chart's default.
+  2. Bare model id derived from the chosen engine:
+       - ``vllm``     → ``inference.vllm_llm_student.model``
+       - else         → ``llm.model``
+     prefixed with ``cogniverse.llmProviderPrefix``.
 */}}
 {{- define "cogniverse.primaryLLMModel" -}}
 {{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.model -}}
 {{- .Values.runtime.primaryLLM.model -}}
 {{- else -}}
-hosted_vllm/google/gemma-4-e4b-it
+{{- $prefix := include "cogniverse.llmProviderPrefix" . -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if eq $engine "vllm" -}}
+{{- printf "%s/%s" $prefix .Values.inference.vllm_llm_student.model -}}
+{{- else -}}
+{{- printf "%s/%s" $prefix .Values.llm.model -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
 {{/*
 Runtime primary LLM api_base. Resolves to ``runtime.primaryLLM.apiBase``
-when set, otherwise ``cogniverse.llmStudentEndpoint`` (the in-cluster
-vllm_llm_student service).
+when set, otherwise to the endpoint matching ``llm.engine``:
+  - ollama   → ``cogniverse.llmEndpoint`` (the in-cluster Ollama service)
+  - vllm     → ``cogniverse.llmStudentEndpoint`` (in-cluster vllm-llm-student)
+  - external → ``cogniverse.llmEndpoint`` (the configured external URL)
 */}}
 {{- define "cogniverse.primaryLLMEndpoint" -}}
 {{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.apiBase -}}
 {{- .Values.runtime.primaryLLM.apiBase -}}
 {{- else -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if eq $engine "vllm" -}}
 {{- include "cogniverse.llmStudentEndpoint" . -}}
+{{- else -}}
+{{- include "cogniverse.llmEndpoint" . -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 

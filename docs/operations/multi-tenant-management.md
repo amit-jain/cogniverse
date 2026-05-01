@@ -698,8 +698,8 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
-        model="hosted_vllm/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434",
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
     ),
 )
 router = OrchestratorAgent(deps=deps)
