@@ -206,7 +206,7 @@ class TestEnsembleSearchEndToEnd:
 
         # Get actual schema name for Vespa queries
         schema_name = list(profiles.values())[0]["schema"]
-        original_search = agent._get_backend("test_tenant").search
+        original_search = agent._get_backend().search
 
         def mock_search_with_profile_mapping(query_dict):
             """Map friendly profile names to schema and simulate different results"""
@@ -236,7 +236,7 @@ class TestEnsembleSearchEndToEnd:
                 encoder.encode = Mock(return_value=np.random.rand(128))
             return encoder
 
-        agent._get_backend("test_tenant").search = mock_search_with_profile_mapping
+        agent._get_backend().search = mock_search_with_profile_mapping
 
         try:
             with patch(
@@ -257,7 +257,7 @@ class TestEnsembleSearchEndToEnd:
 
                 elapsed_ms = (time.time() - start_time) * 1000
         finally:
-            agent._get_backend("test_tenant").search = original_search
+            agent._get_backend().search = original_search
 
         # VALIDATE: Ensemble mode (result is a SearchOutput pydantic model)
         assert result.search_mode == "ensemble", "Should use ensemble mode"
@@ -306,7 +306,7 @@ class TestEnsembleSearchEndToEnd:
 
         # Get actual schema name and mock profile mapping
         schema_name = list(profiles.values())[0]["schema"]
-        original_search = agent._get_backend("test_tenant").search
+        original_search = agent._get_backend().search
 
         def mock_search_with_profile_mapping(query_dict):
             """Map friendly profile names to schema"""
@@ -317,7 +317,7 @@ class TestEnsembleSearchEndToEnd:
             except Exception:
                 return []
 
-        agent._get_backend("test_tenant").search = mock_search_with_profile_mapping
+        agent._get_backend().search = mock_search_with_profile_mapping
 
         # Mock encoders with realistic timing
         def mock_create_encoder(profile_name, model_name, config=None):
@@ -358,7 +358,7 @@ class TestEnsembleSearchEndToEnd:
                     latency_ms = (time.time() - start_time) * 1000
                     latencies.append(latency_ms)
         finally:
-            agent._get_backend("test_tenant").search = original_search
+            agent._get_backend().search = original_search
 
         avg_latency = sum(latencies) / len(latencies)
         max_latency = max(latencies)
@@ -390,7 +390,7 @@ class TestEnsembleSearchEndToEnd:
         import numpy as np
 
         # Create mock that simulates realistic profile-specific results
-        original_search = agent._get_backend("test_tenant").search
+        original_search = agent._get_backend().search
 
         def realistic_profile_search(query_dict):
             """Simulate different profiles returning overlapping results"""
@@ -422,7 +422,7 @@ class TestEnsembleSearchEndToEnd:
                     ]
                 )
 
-        agent._get_backend("test_tenant").search = realistic_profile_search
+        agent._get_backend().search = realistic_profile_search
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
@@ -479,7 +479,7 @@ class TestEnsembleSearchEndToEnd:
             )
 
         finally:
-            agent._get_backend("test_tenant").search = original_search
+            agent._get_backend().search = original_search
 
     @pytest.mark.asyncio
     async def test_e2e_ensemble_error_recovery(self, ensemble_search_agent):
@@ -494,7 +494,7 @@ class TestEnsembleSearchEndToEnd:
 
         import numpy as np
 
-        original_search = agent._get_backend("test_tenant").search
+        original_search = agent._get_backend().search
 
         def failing_profile_search(query_dict):
             """Simulate one profile failing"""
@@ -511,7 +511,7 @@ class TestEnsembleSearchEndToEnd:
                 ]
             )
 
-        agent._get_backend("test_tenant").search = failing_profile_search
+        agent._get_backend().search = failing_profile_search
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
@@ -542,7 +542,7 @@ class TestEnsembleSearchEndToEnd:
             )
 
         finally:
-            agent._get_backend("test_tenant").search = original_search
+            agent._get_backend().search = original_search
 
 
 def _create_mock_search_results(doc_scores):
