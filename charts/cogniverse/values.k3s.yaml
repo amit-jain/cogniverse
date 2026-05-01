@@ -183,6 +183,8 @@ runtime:
   # Turn on POST /admin/debug/memsnap for the dev cluster. Off in prod.
   env:
     COGNIVERSE_DEBUG_MEM: "1"
+  qualityMonitor:
+    tenantId: "flywheel_org:production"
   # Host-mode OpenShell sandbox: requires `openshell gateway start --port
   # 19091` on the host + `cogniverse sandbox sync` to copy mTLS certs.
   sandbox:

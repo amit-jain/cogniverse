@@ -492,13 +492,16 @@ spec:
       {{- if not .Values.runtime.qualityMonitor.llmModel }}
       {{- fail "runtime.qualityMonitor.llmModel must be set when qualityMonitor.enabled=true" }}
       {{- end }}
+      {{- if not .Values.runtime.qualityMonitor.tenantId }}
+      {{- fail "runtime.qualityMonitor.tenantId must be set when qualityMonitor.enabled=true (e.g. via values.k3s.yaml for the local stack)" }}
+      {{- end }}
       - name: quality-monitor
         image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
         imagePullPolicy: {{ $runtimeImage.pullPolicy }}
         command: ["python", "-m", "cogniverse_runtime.quality_monitor_cli"]
         args:
         - "--tenant-id"
-        - "default"
+        - {{ .Values.runtime.qualityMonitor.tenantId | quote }}
         - "--runtime-url"
         - "http://localhost:{{ .Values.runtime.service.port }}"
         - "--phoenix-url"
