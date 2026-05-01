@@ -9,25 +9,17 @@ Uses shared vespa_instance + config_manager + real_telemetry from conftest.
 
 import logging
 
-import httpx
 import pandas as pd
 import pytest
+
+from tests.fixtures.llm import is_test_lm_available
 
 logger = logging.getLogger(__name__)
 
 
-def _is_ollama_available() -> bool:
-    try:
-        return (
-            httpx.get("http://localhost:11434/api/tags", timeout=5.0).status_code == 200
-        )
-    except Exception:
-        return False
-
-
 skip_if_no_ollama = pytest.mark.skipif(
-    not _is_ollama_available(),
-    reason="Ollama not available for triggered optimization",
+    not is_test_lm_available(),
+    reason="Test LM not available for triggered optimization",
 )
 
 

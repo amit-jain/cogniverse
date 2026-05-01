@@ -9,7 +9,6 @@ These tests validate CORRECTNESS, not just structure.
 
 import dspy
 import pytest
-import requests
 
 from cogniverse_agents.entity_extraction_agent import (
     EntityExtractionAgent,
@@ -31,47 +30,24 @@ from cogniverse_agents.query_enhancement_agent import (
     QueryEnhancementDeps,
     QueryEnhancementInput,
 )
-
-
-def is_ollama_available():
-    """Check if Ollama server is running"""
-    try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=2)
-        return response.status_code == 200
-    except Exception:
-        return False
-
+from tests.fixtures.llm import is_test_lm_available, make_dspy_lm
 
 skip_if_no_ollama = pytest.mark.skipif(
-    not is_ollama_available(),
-    reason="Ollama server not available at localhost:11434",
+    not is_test_lm_available(),
+    reason="Test LM not available",
 )
 
 
 @pytest.fixture
 def real_dspy_lm():
-    """Real DSPy LM configured for Ollama"""
-    if not is_ollama_available():
-        pytest.skip("Ollama server not available")
+    """Real DSPy LM configured from TEST_LLM_* env vars."""
+    if not is_test_lm_available():
+        pytest.skip("Test LM not available")
 
-    from cogniverse_foundation.config.llm_factory import create_dspy_lm
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-
-    # Configure DSPy with Ollama - use smallest model for fast tests
-    lm = create_dspy_lm(
-        LLMEndpointConfig(
-            model="ollama/qwen2.5:1.5b",  # Small, fast model
-            api_base="http://localhost:11434",
-        )
-    )
-
-    # Test connection
+    lm = make_dspy_lm()
     test_response = lm("test")
     assert test_response is not None
-
-    # Set as default LM for DSPy
     dspy.settings.configure(lm=lm)
-
     return lm
 
 

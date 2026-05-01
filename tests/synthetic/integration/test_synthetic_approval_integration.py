@@ -17,8 +17,6 @@ import os
 import time
 from datetime import datetime
 
-import dspy
-import httpx
 import pytest
 
 from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
@@ -46,28 +44,10 @@ from tests.utils.async_polling import wait_for_phoenix_processing
 logger = logging.getLogger(__name__)
 
 
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-
-
-def is_ollama_available(base_url: str = OLLAMA_BASE_URL) -> bool:
-    """Check if Ollama service is available."""
-    try:
-        response = httpx.get(f"{base_url}/api/tags", timeout=5.0)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
 def is_teacher_api_available() -> bool:
     """Check if router optimizer teacher API key is available."""
     return bool(os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY"))
 
-
-# Skip markers for integration tests requiring real LMs
-skip_if_no_ollama = pytest.mark.skipif(
-    not is_ollama_available(),
-    reason="Ollama service not available at http://localhost:11434",
-)
 
 skip_if_no_teacher_api = pytest.mark.skipif(
     not is_teacher_api_available(),
@@ -85,25 +65,10 @@ def telemetry_provider(telemetry_manager):
     return telemetry_manager.get_provider(tenant_id="test-tenant1")
 
 
-@pytest.fixture(params=["ollama"])
-def dspy_lm(request):
-    """Configure DSPy with real LM following established pattern"""
-    lm_type = request.param
-
-    if lm_type == "ollama":
-        if not is_ollama_available():
-            pytest.skip(f"Ollama not available at {OLLAMA_BASE_URL}")
-        # Use dspy.LM with smallest model for tests
-        lm = dspy.LM(
-            model=os.environ.get("OLLAMA_TEST_MODEL", "ollama/gemma3:4b"),
-            api_base=OLLAMA_BASE_URL,
-        )
-    else:
-        raise ValueError(f"Unknown LM type: {lm_type}")
-
-    dspy.configure(lm=lm)
-    yield lm
-    dspy.configure(lm=None)
+@pytest.fixture
+def dspy_lm(dspy_test_lm):
+    """Reuse the shared provider-agnostic LM fixture."""
+    yield dspy_test_lm
 
 
 @pytest.fixture

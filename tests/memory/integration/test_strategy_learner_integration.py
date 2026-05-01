@@ -314,20 +314,11 @@ class TestTwoLevelScoping:
         assert calls[1].kwargs["tenant_id"] == "acme"
 
 
-def _is_ollama_available() -> bool:
-    import httpx
-
-    try:
-        return (
-            httpx.get("http://localhost:11434/api/tags", timeout=5.0).status_code == 200
-        )
-    except Exception:
-        return False
-
+from tests.fixtures.llm import is_test_lm_available
 
 skip_if_no_ollama = pytest.mark.skipif(
-    not _is_ollama_available(),
-    reason="Ollama not available for LLM distillation",
+    not is_test_lm_available(),
+    reason="Test LM not available for LLM distillation",
 )
 
 
@@ -342,10 +333,11 @@ class TestLLMDistillation:
     ):
         """Run LLM distillation with real Ollama, verify output quality."""
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model
 
         llm_config = LLMEndpointConfig(
-            model="ollama_chat/llama3.2",
-            api_base="http://localhost:11434",
+            model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
             temperature=0.1,
             max_tokens=200,
         )

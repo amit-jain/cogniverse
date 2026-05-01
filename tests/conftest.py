@@ -1,5 +1,7 @@
 """Global pytest configuration for test isolation"""
 
+pytest_plugins = ["tests.fixtures.llm"]
+
 import gc
 import importlib.util
 import json

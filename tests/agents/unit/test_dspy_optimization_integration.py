@@ -159,9 +159,11 @@ class TestDSPyOptimizerIntegration:
         """Test DSPy optimizer with real local Ollama LLM."""
         optimizer = DSPyAgentPromptOptimizer()
 
+        from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model
+
         endpoint_config = LLMEndpointConfig(
-            model="ollama/qwen2.5:1.5b",
-            api_base="http://localhost:11434",
+            model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
         )
         success = optimizer.initialize_language_model(endpoint_config)
 
@@ -178,9 +180,11 @@ class TestDSPyOptimizerIntegration:
         """Test full pipeline optimization with real DSPy LM."""
         # Initialize optimizer with real LM
         optimizer = DSPyAgentPromptOptimizer()
+        from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model
+
         endpoint_config = LLMEndpointConfig(
-            model="ollama/qwen2.5:1.5b",
-            api_base="http://localhost:11434",
+            model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
         )
         optimizer.initialize_language_model(endpoint_config)
 
