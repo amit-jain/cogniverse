@@ -123,13 +123,13 @@ class TestUpCommand:
         mock_prereq.assert_called_once_with(require_k3d=True)
         mock_values.assert_called_once_with(prod=False)
         mock_helm.assert_called_once()
-        # Builtin LLM passes no LLM overrides, but always sets the Argo
-        # sub-chart CRD opt-out so the pre-installed Argo CRDs aren't
-        # re-owned by the cogniverse release.
         call_kwargs = mock_helm.call_args
-        assert call_kwargs[1].get("set_values") == {
-            "argo-workflows.crds.install": "false"
-        }
+        set_vals = call_kwargs[1].get("set_values") or {}
+        assert set_vals["argo-workflows.crds.install"] == "false"
+        assert set_vals["runtime.backend"] in {"cpu", "cuda", "rocm"}
+        assert set_vals["dashboard.backend"] == set_vals["runtime.backend"]
+        assert "llm.builtin.enabled" not in set_vals
+        assert "llm.external.enabled" not in set_vals
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main.deploy_workflow_templates")
@@ -166,7 +166,8 @@ class TestUpCommand:
         mock_deploy_wf: MagicMock,
         mock_status: MagicMock,
     ) -> None:
-        """When auto-detect finds host LLM on k3d, LLM overrides use host.docker.internal."""
+        """When auto-detect finds host LLM on k3d, LLM overrides point at
+        the k3d-side host alias."""
         runner = CliRunner()
         result = runner.invoke(cli, ["up"])
         assert result.exit_code == 0
@@ -179,7 +180,7 @@ class TestUpCommand:
         assert set_vals is not None
         assert set_vals["llm.builtin.enabled"] == "false"
         assert set_vals["llm.external.enabled"] == "true"
-        assert "host.docker.internal" in set_vals["llm.external.url"]
+        assert "host.k3d.internal" in set_vals["llm.external.url"]
 
     @patch("cogniverse_cli.main._print_status_table")
     @patch("cogniverse_cli.main._print_status_table")

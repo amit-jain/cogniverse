@@ -180,8 +180,8 @@ def e2e_stack():
     yield
 
 
-CLUSTER_NAME = "cogniverse-test"
-NAMESPACE = "cogniverse-test"
+CLUSTER_NAME = "cogniverse-deploy-test"
+NAMESPACE = "cogniverse-deploy-test"
 
 # High ephemeral ports to avoid collision with production cluster or common services
 PORTS = {
@@ -242,54 +242,32 @@ def _cluster_exists() -> bool:
 
 @pytest.fixture(scope="session")
 def k3d_cluster():
-    """Create an isolated k3d test cluster with offset ports."""
-    # Clean up any leftover test cluster
+    """Create an isolated k3d test cluster with no LB ports + no
+    dev-convenience bind-mounts so the cluster mirrors a fresh
+    production deployment (built images, no /cogniverse-src source
+    mount, no host HF cache, no persistent host data).
+
+    Service access goes through ``kubectl port-forward`` to the host
+    ports in ``PORTS`` — see the deployed_stack fixture for the
+    forward setup — which is why ``ports=[]`` skips the loadbalancer
+    mappings (a baked ``-p`` would collide with the forward bind)."""
     if _cluster_exists():
         _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
-    # Create cluster. Widen NodePort range so the chart's >32767
-    # NodePorts (vespa 28080, runtime 28000, etc.) install — k8s
-    # default range is 30000-32767. Matches
-    # ``cogniverse_cli.cluster.create_cluster``.
-    #
-    # No ``-p`` loadbalancer mappings: this fixture accesses services
-    # via ``kubectl port-forward`` (host ports 51xxx, see ``PORTS``),
-    # which bypasses NodePort routing. Adding ``-p 51000:51000@lb``
-    # would reserve host:51000 on docker side and then collide with
-    # port-forward's bind on the same port — last incident: every
-    # ``deployed_stack`` HTTP test failed with
-    # ``httpx.RemoteProtocolError`` because port-forward died with
-    # ``bind: address already in use``.
-    cmd = [
-        "k3d",
-        "cluster",
-        "create",
-        CLUSTER_NAME,
-        "--k3s-arg",
-        "--service-node-port-range=1-65535@server:0",
-    ]
+    from cogniverse_cli.cluster import create_cluster
 
-    # GPU passthrough — k3d nodes are docker containers, so the host's
-    # GPU device files have to be mounted in for any in-cluster device
-    # plugin to find them. NVIDIA has --gpus=all; AMD has no equivalent
-    # so we mount /dev/kfd + /dev/dri explicitly when the build host
-    # detected rocm. CPU build host: no mounts.
-    from cogniverse_cli.images import detect_torch_backend
-
-    host_backend = detect_torch_backend()
-    if host_backend == "cuda":
-        cmd.append("--gpus=all")
-    elif host_backend == "rocm":
-        cmd += [
-            "--volume",
-            "/dev/kfd:/dev/kfd",
-            "--volume",
-            "/dev/dri:/dev/dri",
-        ]
-
-    result = _cmd(cmd, timeout=120, check=False)
-    if result.returncode != 0:
-        pytest.fail(f"k3d cluster creation failed: {result.stderr.strip()[:300]}")
+    try:
+        create_cluster(
+            name=CLUSTER_NAME,
+            ports=[],
+            workspace_path=None,
+            share_hf_cache=False,
+            share_host_storage=False,
+        )
+    except subprocess.CalledProcessError as exc:
+        pytest.fail(
+            f"k3d cluster creation failed: {(exc.stderr or '').strip()[:300] or exc}"
+        )
 
     yield {
         "cluster_name": CLUSTER_NAME,
@@ -297,7 +275,6 @@ def k3d_cluster():
         "ports": PORTS,
     }
 
-    # Teardown — always delete the test cluster
     _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
 
@@ -365,52 +342,23 @@ def deployed_stack(k3d_cluster):
     except Exception as e:
         pytest.fail(f"Argo controller install failed: {e}")
 
-    # Helm install. argo-workflows.crds.install=false so the sub-chart
-    # doesn't reinstall the CRDs we just laid down. runtime.backend /
-    # dashboard.backend pin the chart's image-by-backend selection to
-    # the variant we just built (matches host's torch wheel).
-    # Helm post-install hook (the schema-deployment Job in
-    # templates/init-jobs.yaml) curl-waits for runtime /health, which
-    # itself blocks on Vespa's config-server. Vespa's bundle-load + ZK
-    # replay alone is ~5 min cold; runtime startup adds 1-2 min;
-    # schema deploy itself another 1-2 min. The default helm
-    # --timeout=10m doesn't leave enough headroom — bumping to 20m so
-    # the hook chain reliably completes. The outer subprocess timeout
-    # tracks helm's window plus a small buffer for argo etc.
-    helm_install_cmd = [
-        "helm",
-        "install",
-        "cogniverse",
-        str(chart_path),
-        "--set",
-        "argo-workflows.crds.install=false",
-        "--set",
-        f"runtime.backend={backend}",
-        "--set",
-        f"dashboard.backend={backend}",
-        # Disable devMode for e2e — values.k3s.yaml turns it on for the
-        # ``cogniverse up`` flow (host source mounted at /cogniverse-src
-        # into k3d via cluster-create --volume), but this test runs
-        # against built images and never edits source live. With devMode
-        # on but no workspace volume, runtime/dashboard/ingestor pods
-        # stay ContainerCreating forever on FailedMount of /cogniverse-src/*.
-        "--set",
-        "devMode.enabled=false",
-        # Same story for the openshell sandbox configmap/secret mounts —
-        # disabled by default in values.yaml; values.k3s.yaml leaves it
-        # off too, but the helm --set keeps it explicit so a future
-        # values change doesn't silently break the e2e.
-        "--set",
-        "runtime.sandbox.enabled=false",
-        "--namespace",
-        NAMESPACE,
-        "--create-namespace",
-        "-f",
-        str(values_file),
-        *(["-f", str(device_values_file)] if device_values_file else []),
-        "--timeout",
-        "20m",
-    ]
+    # Helm timeout bumped to 20m for cold-start clusters — Vespa
+    # bundle-load + ZK replay alone is ~5 min, runtime startup adds
+    # 1-2 min, and the schema-deployment post-install hook another
+    # 1-2 min. devMode + sandbox forced off because the test cluster
+    # has no /cogniverse-src bind-mount or openshell-mtls secret.
+    from cogniverse_cli.deploy import helm_install
+
+    helm_values = [values_file]
+    if device_values_file:
+        helm_values.append(device_values_file)
+    helm_set_overrides = {
+        "argo-workflows.crds.install": "false",
+        "runtime.backend": backend,
+        "dashboard.backend": backend,
+        "devMode.enabled": "false",
+        "runtime.sandbox.enabled": "false",
+    }
 
     def _dump_pod_state() -> None:
         """Snapshot cluster state to pytest's captured stdout — runs on
@@ -455,15 +403,17 @@ def deployed_stack(k3d_cluster):
             )
         print("================================================\n", file=sys.stdout)
 
-    # Outer 30m wrapper gives helm's ``--timeout=20m`` ample headroom to
-    # raise its own error and get caught by CalledProcessError below.
-    # Earlier 22m wrapper was racing helm's own deadline and hitting
-    # TimeoutExpired without surfacing pod state.
     try:
-        _cmd(helm_install_cmd, timeout=1800)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as helm_err:
+        helm_install(
+            chart_path,
+            helm_values,
+            set_values=helm_set_overrides,
+            namespace=NAMESPACE,
+            timeout="20m",
+        )
+    except RuntimeError:
         _dump_pod_state()
-        raise helm_err
+        raise
 
     # Wait for pods
     _cmd(

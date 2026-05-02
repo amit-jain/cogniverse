@@ -26,11 +26,14 @@ def helm_install(
     set_values: dict[str, str] | None = None,
     name: str = RELEASE_NAME,
     namespace: str = NAMESPACE,
+    timeout: str = "10m",
 ) -> None:
     """Install or upgrade Helm release.
 
     ``values_file`` accepts a single Path or a list — multiple files are
-    applied in order so later overlays override earlier ones.
+    applied in order so later overlays override earlier ones. ``timeout``
+    is passed through to ``helm --timeout`` (cold-start clusters with
+    GB-scale model pulls need ``20m`` headroom).
     """
     action = "upgrade" if release_exists(name, namespace) else "install"
     if isinstance(values_file, Path):
@@ -46,7 +49,7 @@ def helm_install(
         namespace,
         "--create-namespace",
         "--timeout",
-        "10m",
+        timeout,
     ]
     for vf in values_files:
         cmd.extend(["-f", str(vf)])

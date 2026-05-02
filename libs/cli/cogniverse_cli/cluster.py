@@ -177,6 +177,8 @@ def create_cluster(
     *,
     exclude_ports: list[int] | None = None,
     workspace_path: str | None = None,
+    share_hf_cache: bool = True,
+    share_host_storage: bool = True,
 ) -> None:
     """Create a k3d cluster with port mappings and workspace volume.
 
@@ -186,9 +188,21 @@ def create_cluster(
     *workspace_path* mounts the project root into the k3d node at
     ``/cogniverse-src`` for devMode volume access.
 
+    The dev-convenience flags default ON for ``cogniverse up``. The
+    deployment-lifecycle test fixture flips them OFF so the test
+    cluster mirrors the production deployment shape (built images,
+    fresh data, no host bind-mounts):
+
+    - ``share_hf_cache``: mount ``~/.cache/huggingface`` so inference
+      pods reuse on-host model downloads instead of re-pulling.
+    - ``share_host_storage``: mount ``~/.local/share/cogniverse`` so
+      Vespa + Phoenix data survives cluster recreation.
+
     Port set resolution (highest precedence first):
 
-    - ``ports`` argument (explicit) — full override.
+    - ``ports`` argument (explicit) — full override; ``[]`` disables
+      loadbalancer mappings entirely (e.g. tests that use
+      ``kubectl port-forward`` instead).
     - ``COGNIVERSE_K3D_PORTS`` env (comma-separated ints) — full override.
     - ``DEFAULT_PORTS`` plus the env ``COGNIVERSE_K3D_EXTRA_PORTS``
       (additive).
@@ -228,23 +242,14 @@ def create_cluster(
         cmd.extend(["--volume", "/dev/kfd:/dev/kfd@server:0"])
     if os.path.isdir("/dev/dri"):
         cmd.extend(["--volume", "/dev/dri:/dev/dri@server:0"])
-    # Share host's HuggingFace cache so every inference pod reads the
-    # same on-host model directory the developer already populates with
-    # ``hf download``. Bind to the path the chart expects (its
-    # ``hfCache.path`` value, defaulting to ``/host-hf-cache``); when
-    # ``hfCache.enabled`` is true (k3s/dev overlay), the inference pod
-    # template hostPaths this directory in as ``/root/.cache/huggingface``.
-    host_hf_cache = os.path.expanduser("~/.cache/huggingface")
-    if os.path.isdir(host_hf_cache):
-        cmd.extend(["--volume", f"{host_hf_cache}:/host-hf-cache@server:0"])
-    # Pin Vespa + Phoenix data to a host-side directory so cluster
-    # recreation (``cogniverse up`` after a previous delete) does not
-    # destroy every tenant's documents, schemas, and Phoenix datasets.
-    # The chart's ``hostStorage`` block hostPaths per-service subdirs
-    # (vespa/, phoenix/) under this mount when enabled.
-    host_state = os.path.expanduser("~/.local/share/cogniverse")
-    os.makedirs(host_state, exist_ok=True)
-    cmd.extend(["--volume", f"{host_state}:/host-data@server:0"])
+    if share_hf_cache:
+        host_hf_cache = os.path.expanduser("~/.cache/huggingface")
+        if os.path.isdir(host_hf_cache):
+            cmd.extend(["--volume", f"{host_hf_cache}:/host-hf-cache@server:0"])
+    if share_host_storage:
+        host_state = os.path.expanduser("~/.local/share/cogniverse")
+        os.makedirs(host_state, exist_ok=True)
+        cmd.extend(["--volume", f"{host_state}:/host-data@server:0"])
     for port in ports:
         cmd.extend(["-p", f"{port}:{port}@loadbalancer"])
     subprocess.run(cmd, check=True, timeout=120)
