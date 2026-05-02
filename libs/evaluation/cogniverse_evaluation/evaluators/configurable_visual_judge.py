@@ -1,6 +1,4 @@
-"""
-Configurable Visual Judge that uses config to determine provider (Ollama, Modal, etc.)
-"""
+"""Visual relevance judge that calls any OpenAI-compatible vision model."""
 
 import base64
 import logging
@@ -19,9 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConfigurableVisualJudge(Evaluator):
-    """
-    Visual judge that uses configured provider (Ollama, Modal, etc.)
-    """
+    """Score query/result frame relevance via any OpenAI-compatible vision model."""
 
     def __init__(
         self,
@@ -50,7 +46,7 @@ class ConfigurableVisualJudge(Evaluator):
                 "the system-tenant 'evaluators' config section."
             )
 
-        self.provider = evaluator_config["provider"]
+        self.provider = evaluator_config.get("provider", "openai")
         self.model = evaluator_config["model"]
         self.base_url = evaluator_config["base_url"]
         self.api_key = evaluator_config.get("api_key")
@@ -62,9 +58,7 @@ class ConfigurableVisualJudge(Evaluator):
         )
 
     def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
-        """
-        Evaluate visual relevance using configured provider
-        """
+        """Score the query against frames extracted from the top results."""
         # Extract query
         query = input.get("query", "") if isinstance(input, dict) else str(input)
 
@@ -132,16 +126,8 @@ class ConfigurableVisualJudge(Evaluator):
                 explanation="No video frames could be extracted for evaluation",
             )
 
-        # Evaluate based on provider
         try:
-            if self.provider == "ollama":
-                score, reasoning = self._evaluate_with_ollama(query, frame_paths)
-            elif self.provider == "modal":
-                score, reasoning = self._evaluate_with_modal(query, frame_paths)
-            elif self.provider == "openai":
-                score, reasoning = self._evaluate_with_openai(query, frame_paths)
-            else:
-                raise ValueError(f"Unknown provider: {self.provider}")
+            score, reasoning = self._score_frames(query, frame_paths)
 
             # Determine label
             if score >= 0.8:
@@ -220,99 +206,19 @@ class ConfigurableVisualJudge(Evaluator):
         with open(image_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8")
 
-    def _evaluate_with_ollama(
-        self, query: str, frame_paths: list[str]
-    ) -> tuple[float, str]:
-        """
-        Evaluate using Ollama (supports LLaVA, Qwen2-VL via Ollama)
-        """
-        # Encode images
+    def _score_frames(self, query: str, frame_paths: list[str]) -> tuple[float, str]:
+        """Send frames + query to the vision model and parse a 0-1 score."""
         encoded_images = [self._encode_image(path) for path in frame_paths]
 
-        prompt = f"""You are evaluating video search results.
-The user searched for: "{query}"
-
-I'm showing you {len(frame_paths)} frames from the top search results.
-
-Please evaluate:
-1. Do these frames show content that matches "{query}"?
-2. How relevant is the visual content to the search query?
-3. Rate the match quality from 0 to 10.
-
-Provide your assessment in this format:
-SCORE: [0-10]
-REASONING: [Your explanation of what you see and how well it matches]"""
-
-        # Prepare Ollama API request
-        messages = [{"role": "user", "content": prompt, "images": encoded_images}]
-
-        # Call Ollama API
-        response = requests.post(
-            f"{self.base_url}/api/chat",
-            json={"model": self.model, "messages": messages, "stream": False},
-            headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
+        prompt = (
+            f"Do these video frames match the search query '{query}'? "
+            "Rate 0-10. Format: SCORE: X/10, REASONING: explanation"
         )
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Ollama API error: {response.status_code} - {response.text}"
-            )
-
-        result = response.json()
-        response_text = result.get("message", {}).get("content", "")
-
-        # Parse response
-        return self._parse_response(response_text)
-
-    def _evaluate_with_modal(
-        self, query: str, frame_paths: list[str]
-    ) -> tuple[float, str]:
-        """
-        Evaluate using Modal deployment
-        """
-        # Encode images
-        encoded_images = [self._encode_image(path) for path in frame_paths]
-
-        prompt = f"""Evaluate if these video frames match the search query: "{query}"
-Rate from 0-10 and explain what you see.
-Format: SCORE: X/10, REASONING: explanation"""
-
-        # Call Modal endpoint
-        response = requests.post(
-            self.base_url,
-            json={"prompt": prompt, "images": encoded_images, "model": self.model},
-            headers={"Authorization": f"Bearer {self.api_key}"} if self.api_key else {},
-        )
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Modal API error: {response.status_code} - {response.text}"
-            )
-
-        result = response.json()
-        response_text = result.get("response", result.get("output", ""))
-
-        # Parse response
-        return self._parse_response(response_text)
-
-    def _evaluate_with_openai(
-        self, query: str, frame_paths: list[str]
-    ) -> tuple[float, str]:
-        """
-        Evaluate using OpenAI API (GPT-4V)
-        """
-        # Encode images
-        encoded_images = [self._encode_image(path) for path in frame_paths]
 
         messages = [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Do these video frames match the search query '{query}'? Rate 0-10. Format: SCORE: X/10, REASONING: explanation",
-                    }
-                ]
+                "content": [{"type": "text", "text": prompt}]
                 + [
                     {
                         "type": "image_url",
@@ -323,27 +229,28 @@ Format: SCORE: X/10, REASONING: explanation"""
             }
         ]
 
-        # Call OpenAI API
+        base = self.base_url.rstrip("/")
+        if not base.endswith("/v1"):
+            base = f"{base}/v1"
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         response = requests.post(
-            f"{self.base_url}/v1/chat/completions",
+            f"{base}/chat/completions",
             json={"model": self.model, "messages": messages, "max_tokens": 300},
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
 
         if response.status_code != 200:
             raise RuntimeError(
-                f"OpenAI API error: {response.status_code} - {response.text}"
+                f"Vision API error: {response.status_code} - {response.text}"
             )
 
         result = response.json()
         response_text = (
             result.get("choices", [{}])[0].get("message", {}).get("content", "")
         )
-
-        # Parse response
         return self._parse_response(response_text)
 
     def _parse_response(self, response_text: str) -> tuple[float, str]:
