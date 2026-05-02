@@ -795,17 +795,19 @@ class TestProfileRoutingMetrics:
         set_tenant(page, TENANT_ID)
         click_top_tab(page, "Profile Routing Metrics")
         page.wait_for_load_state("networkidle")
-
-        body_text = page.inner_text("body").lower()
-        assert "profile routing metrics" in body_text, (
-            "Profile Routing Metrics tab must show its heading"
+        # Tab content lazy-renders after click; wait for the active panel
+        # to contain our subheader before asserting on widgets within it.
+        active_panel = page.locator(
+            '[role="tabpanel"]:not([hidden]):has-text("Profile Routing Metrics")'
         )
+        active_panel.first.wait_for(state="visible", timeout=15_000)
 
         # Lookback (hours) input is the only always-rendered widget — the
         # rest depends on whether Phoenix has profile_selection spans yet.
-        lookback_input = page.locator('[data-testid="stNumberInput"]')
+        lookback_input = active_panel.locator('[data-testid="stNumberInput"]')
         assert lookback_input.count() > 0, (
-            "Profile Routing Metrics must expose a Lookback (hours) input"
+            f"Profile Routing Metrics must expose a Lookback (hours) input; "
+            f"panel text: {active_panel.first.inner_text()[:300]}"
         )
 
         # Acceptable terminal states: empty-spans info, missing-attribute
