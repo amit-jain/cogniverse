@@ -29,63 +29,43 @@ COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 
-# Install dependencies with uv using the lockfile (default torch wheel
-# is the cu128 build on Linux, replaced below per TORCH_BACKEND).
-RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen
-
-# Install pylate for ColBERT model loading without pulling its full dep tree
-# (fast-plaid has no aarch64 wheel, and we must keep existing transformers).
-# Install missing runtime deps that --no-deps skips.
-RUN uv pip install pylate --no-deps && \
-    uv pip install datasets
-
-# Also install telemetry-phoenix into the same venv — agents discover it via entry points
-# Pin evals<3 before installing telemetry-phoenix to prevent arize-phoenix
-# from pulling evals 3.0+ which removes phoenix.evals.models namespace.
-# TODO: remove constraint when upgrading to arize-phoenix 14.x
-RUN uv pip install "arize-phoenix-evals<3" && \
-    uv pip install -e ./libs/telemetry-phoenix
-
-# Pick the torch wheel variant that matches the deployment target. Each
-# backend produces a separate image (cogniverse/runtime-cpu /-cuda /-rocm)
-# so callers don't ship NVIDIA runtime to a CPU pod or vice versa.
-# Mirrors the whisper engine-per-image pattern (whisper-fw / -wx / -cpp).
-#
-#   docker build --build-arg TORCH_BACKEND=cpu  ...   →  torch+cpu
-#   docker build --build-arg TORCH_BACKEND=cuda ...   →  torch+cu128 (default)
-#   docker build --build-arg TORCH_BACKEND=rocm ...   →  torch+rocm6.4 + pytorch-triton-rocm
-#
-# Default cuda keeps the historical wheel choice for unspecified builds;
-# the CLI (libs/cli/cogniverse_cli/images.py) detects the host backend
-# and builds the matching tag.
+# Single install layer: uv sync (pulls default cu128 torch into a
+# transient working tree), then the torch-swap + nvidia/triton cleanup
+# happen BEFORE the layer is committed so the cu128 wheel bytes never
+# land in the image. fast-plaid has no aarch64 wheel so pylate goes in
+# with --no-deps + manual datasets pull. arize-phoenix-evals pinned
+# <3 to keep phoenix.evals.models reachable until arize-phoenix 14.x.
 ARG TORCH_BACKEND
 RUN if [ -z "$TORCH_BACKEND" ]; then \
-        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm). Use libs/cli/cogniverse_cli/images.py::build_images or pass --build-arg TORCH_BACKEND=<variant> explicitly." >&2; \
+        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm)." >&2; \
         exit 1; \
     fi && \
+    uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
+    uv pip install pylate --no-deps && \
+    uv pip install datasets && \
+    uv pip install "arize-phoenix-evals<3" && \
+    uv pip install -e ./libs/telemetry-phoenix && \
     case "$TORCH_BACKEND" in \
         cpu) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/cpu \
-                torch==2.8.0 torchvision==0.23.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
-                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
-                   /app/.venv/lib/python3.12/site-packages/triton \
-                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
+                torch==2.8.0 torchvision==0.23.0 ;; \
         rocm) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/rocm6.4 \
                 torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
-                pytorch-triton-rocm==3.4.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
-                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
-                   /app/.venv/lib/python3.12/site-packages/triton \
-                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
+                pytorch-triton-rocm==3.4.0 ;; \
         cuda) \
             : ;; \
         *) \
             echo "Unknown TORCH_BACKEND=$TORCH_BACKEND (expected cpu|cuda|rocm)" >&2 && exit 1 ;; \
     esac && \
+    if [ "$TORCH_BACKEND" != "cuda" ]; then \
+        rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
+               /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
+               /app/.venv/lib/python3.12/site-packages/triton \
+               /app/.venv/lib/python3.12/site-packages/triton-*-dist-info; \
+    fi && \
     rm -rf /root/.cache/uv /root/.cache/pip
 
 # spaCy model wheel — venv-side install, not HF cache (so the chart's

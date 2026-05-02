@@ -124,7 +124,7 @@ def import_images(cluster_name: str, tags: list[str]) -> None:
     subprocess.run(
         ["k3d", "image", "import", *tags, "-c", cluster_name],
         check=True,
-        timeout=300,
+        timeout=1800,
     )
 
 

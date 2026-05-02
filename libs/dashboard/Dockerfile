@@ -29,42 +29,36 @@ COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/dashboard ./libs/dashboard
 
-# Install dependencies with uv using the lockfile (default torch wheel
-# is the cu128 build on Linux, replaced below per TORCH_BACKEND).
-RUN uv sync --package cogniverse-dashboard --no-dev --frozen
-
-# Pick the torch wheel variant that matches the deployment target.
-# Dashboard transitively pulls torch through cogniverse_agents (which
-# the dashboard imports for routing/approval tabs), so the variant
-# matters even though the dashboard process never runs inference.
+# Single install layer: uv sync + torch swap + nvidia/triton cleanup
+# all happen before the layer commits, so the default cu128 torch wheel
+# bytes never land in the image.
 ARG TORCH_BACKEND
 RUN if [ -z "$TORCH_BACKEND" ]; then \
-        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm). Use libs/cli/cogniverse_cli/images.py::build_images or pass --build-arg TORCH_BACKEND=<variant> explicitly." >&2; \
+        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm)." >&2; \
         exit 1; \
     fi && \
+    uv sync --package cogniverse-dashboard --no-dev --frozen && \
     case "$TORCH_BACKEND" in \
         cpu) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/cpu \
-                torch==2.8.0 torchvision==0.23.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
-                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
-                   /app/.venv/lib/python3.12/site-packages/triton \
-                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
+                torch==2.8.0 torchvision==0.23.0 ;; \
         rocm) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/rocm6.4 \
                 torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
-                pytorch-triton-rocm==3.4.0 && \
-            rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
-                   /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
-                   /app/.venv/lib/python3.12/site-packages/triton \
-                   /app/.venv/lib/python3.12/site-packages/triton-*-dist-info ;; \
+                pytorch-triton-rocm==3.4.0 ;; \
         cuda) \
             : ;; \
         *) \
             echo "Unknown TORCH_BACKEND=$TORCH_BACKEND (expected cpu|cuda|rocm)" >&2 && exit 1 ;; \
     esac && \
+    if [ "$TORCH_BACKEND" != "cuda" ]; then \
+        rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
+               /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
+               /app/.venv/lib/python3.12/site-packages/triton \
+               /app/.venv/lib/python3.12/site-packages/triton-*-dist-info; \
+    fi && \
     rm -rf /root/.cache/uv /root/.cache/pip
 
 # Runtime stage
