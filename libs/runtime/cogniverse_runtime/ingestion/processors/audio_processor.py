@@ -4,10 +4,13 @@ Audio Processor - Pluggable audio transcription.
 
 Transcribes audio from videos using Whisper. Two modes:
 
-- Local: loads ``openai-whisper`` in-process (default).
-- Remote: when ``endpoint`` is set, POSTs the audio multipart to the
-  vLLM Whisper pod's OpenAI-compatible ``/v1/audio/transcriptions``
-  endpoint. The pod owns model selection via its ``--model`` arg.
+- Remote (default in production): when ``endpoint`` is set, POSTs the
+  audio multipart to the vLLM Whisper pod's OpenAI-compatible
+  ``/v1/audio/transcriptions`` endpoint. The pod owns model selection
+  via its ``--model`` arg.
+- Local: loads ``openai-whisper`` in-process. Requires the
+  ``cogniverse-runtime[whisper-local]`` extra; useful only for offline
+  dev hosts without a cluster ASR sidecar.
 """
 
 import json
@@ -67,8 +70,16 @@ class AudioProcessor(BaseProcessor):
         """Lazy load Whisper model."""
         if self._whisper is None:
             try:
-                import whisper
+                import whisper  # type: ignore[import-not-found]
+            except ImportError as exc:
+                raise RuntimeError(
+                    "openai-whisper is not installed. Either install the "
+                    "in-process audio extra (`pip install "
+                    "cogniverse-runtime[whisper-local]`) or pass `endpoint=` "
+                    "so AudioProcessor POSTs to the vLLM ASR sidecar instead."
+                ) from exc
 
+            try:
                 self.logger.info(f"Loading Whisper model: {self.model}")
                 # Map our model names to actual Whisper model names
                 model_map = {

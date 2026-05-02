@@ -2,7 +2,11 @@
 """
 Audio Transcription Step
 
-Extracts and transcribes audio from videos using Faster-Whisper.
+In-process audio transcription using faster-whisper. Lives behind the
+``cogniverse-runtime[whisper-local]`` extra — production deployments
+route audio through the vLLM ASR sidecar (see AudioProcessor /
+AudioAnalysisAgent ``whisper_endpoint``). Useful only for offline dev
+hosts that lack a cluster sidecar.
 """
 
 import json
@@ -36,11 +40,17 @@ class AudioTranscriber:
         if self._model is None:
             try:
                 from faster_whisper import WhisperModel
+            except ImportError as exc:
+                raise RuntimeError(
+                    "faster-whisper is not installed. Either install the "
+                    "in-process audio extra (`pip install "
+                    "cogniverse-runtime[whisper-local]`) or route audio "
+                    "through the vLLM ASR sidecar (set whisper_endpoint on "
+                    "AudioAnalysisAgent / AudioProcessor)."
+                ) from exc
 
-                self._model = WhisperModel(self.model_size, device=self.device)
-                print(f"  📝 Loaded Whisper model: {self.model_size} on {self.device}")
-            except ImportError as e:
-                raise ImportError(f"faster-whisper import failed: {e}") from e
+            self._model = WhisperModel(self.model_size, device=self.device)
+            print(f"  📝 Loaded Whisper model: {self.model_size} on {self.device}")
 
     def transcribe_audio(
         self, video_path: Path, output_dir: Path = None

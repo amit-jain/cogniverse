@@ -22,9 +22,10 @@ dependencies = [
     "opencv-python==4.13.0.92",
     "pillow==12.2.0",
 
-    # Audio processing
-    "openai-whisper==20250625",
-    "faster-whisper==1.2.1",
+    # Audio processing — librosa stays in base (used by audio embedding).
+    # In-process Whisper (openai-whisper, faster-whisper) lives in the
+    # whisper-local extra so the default runtime image relies on the
+    # cluster vLLM ASR sidecar instead of shipping ~3 GB of model code.
     "librosa==0.11.0",
 
     # Document processing
@@ -52,6 +53,15 @@ dependencies = [
 [project.optional-dependencies]
 vespa = ["cogniverse-vespa"]
 agents = ["cogniverse-agents"]
+# Opt-in for in-process Whisper. Production deployments POST audio to
+# the vLLM ASR sidecar via AudioProcessor(endpoint=...) and never need
+# these wheels. Install with `pip install cogniverse-runtime[whisper-local]`
+# only on hosts that must run Whisper without the cluster sidecar
+# (e.g. offline dev boxes or contributors hacking on the local pipeline).
+whisper-local = [
+    "openai-whisper==20250625",
+    "faster-whisper==1.2.1",
+]
 # VideoPrism is now served by the dedicated `deploy/videoprism` sidecar
 # and addressed via `inference_services.embedding=videoprism_jax` on the
 # profile (see RemoteVideoPrismLoader). The runtime image therefore no
