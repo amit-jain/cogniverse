@@ -49,10 +49,8 @@ def vllm_colpali_url(vllm_sidecar):
     )
 
 
-def test_remote_colpali_returns_multivector_embeddings(vllm_colpali_url, tmp_path):
-    image_path = tmp_path / "frame.png"
-    Image.new("RGB", (224, 224), color=(0, 128, 255)).save(image_path)
-
+@pytest.fixture(scope="module")
+def remote_colpali_client(vllm_colpali_url):
     loader = RemoteColPaliLoader(
         model_name=COLPALI_MODEL,
         config={"remote_inference_url": vllm_colpali_url},
@@ -62,8 +60,18 @@ def test_remote_colpali_returns_multivector_embeddings(vllm_colpali_url, tmp_pat
     assert client is processor, (
         "RemoteColPaliLoader returns the client as both model and processor"
     )
+    return client
 
-    result = client.process_images([image_path], model_name=COLPALI_MODEL)
+
+def test_remote_colpali_returns_multivector_embeddings(
+    remote_colpali_client, tmp_path
+):
+    image_path = tmp_path / "frame.png"
+    Image.new("RGB", (224, 224), color=(0, 128, 255)).save(image_path)
+
+    result = remote_colpali_client.process_images(
+        [image_path], model_name=COLPALI_MODEL
+    )
     embeddings = np.asarray(result["embeddings"])
 
     assert embeddings.ndim == 2, (
@@ -74,3 +82,23 @@ def test_remote_colpali_returns_multivector_embeddings(vllm_colpali_url, tmp_pat
         f"colpali-v1.3-hf serves 128-dim embeddings; got dim {embeddings.shape[1]}"
     )
     assert embeddings.shape[0] > 0, "must have at least one patch token"
+
+
+def test_remote_colpali_query_encoding_returns_multivector_embeddings(
+    remote_colpali_client,
+):
+    """Exercise the process_queries_vllm path bound by RemoteColPaliLoader."""
+    result = remote_colpali_client.process_queries(
+        ["a doctor explaining medical procedures"],
+        model_name=COLPALI_MODEL,
+    )
+    embeddings = np.asarray(result["embeddings"])
+
+    assert embeddings.ndim == 2, (
+        f"ColPali query embeddings must be 2-D [num_query_tokens, dim]; "
+        f"got shape {embeddings.shape}"
+    )
+    assert embeddings.shape[1] == 128, (
+        f"colpali-v1.3-hf serves 128-dim embeddings; got dim {embeddings.shape[1]}"
+    )
+    assert embeddings.shape[0] > 0, "must have at least one query token"
