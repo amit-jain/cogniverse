@@ -27,7 +27,6 @@ COPY libs/synthetic ./libs/synthetic
 COPY libs/vespa ./libs/vespa
 COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
-COPY libs/runtime ./libs/runtime
 COPY libs/dashboard ./libs/dashboard
 
 # Install dependencies with uv using the lockfile (default torch wheel
@@ -35,12 +34,9 @@ COPY libs/dashboard ./libs/dashboard
 RUN uv sync --package cogniverse-dashboard --no-dev --frozen
 
 # Pick the torch wheel variant that matches the deployment target.
-# Dashboard transitively pulls torch through cogniverse_agents and
-# cogniverse_evaluation, so the variant matters even though the
-# dashboard process never runs inference itself. Same per-backend
-# pattern as libs/runtime/Dockerfile (cogniverse/dashboard-cpu /
-# -cuda / -rocm). Default cuda keeps the historical wheel choice;
-# the CLI builds the matching tag based on host detection.
+# Dashboard transitively pulls torch through cogniverse_agents (which
+# the dashboard imports for routing/approval tabs), so the variant
+# matters even though the dashboard process never runs inference.
 ARG TORCH_BACKEND
 RUN if [ -z "$TORCH_BACKEND" ]; then \
         echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm). Use libs/cli/cogniverse_cli/images.py::build_images or pass --build-arg TORCH_BACKEND=<variant> explicitly." >&2; \
@@ -100,7 +96,6 @@ COPY --chown=cogniverse:cogniverse libs/synthetic ./libs/synthetic
 COPY --chown=cogniverse:cogniverse libs/vespa ./libs/vespa
 COPY --chown=cogniverse:cogniverse libs/agents ./libs/agents
 COPY --chown=cogniverse:cogniverse libs/telemetry-phoenix ./libs/telemetry-phoenix
-COPY --chown=cogniverse:cogniverse libs/runtime ./libs/runtime
 COPY --chown=cogniverse:cogniverse libs/dashboard ./libs/dashboard
 COPY --chown=cogniverse:cogniverse configs/schemas ./configs/schemas
 COPY --chown=cogniverse:cogniverse configs/config.json ./configs/config.json
