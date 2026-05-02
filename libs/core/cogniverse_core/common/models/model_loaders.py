@@ -246,6 +246,46 @@ class RemoteInferenceClient:
             "usage": result.get("usage", {}),
         }
 
+    def process_queries_vllm(self, queries: list, **kwargs) -> Dict[str, Any]:
+        """POST one text query at a time to vLLM's ``/pooling`` endpoint
+        and return per-token multi-vector embeddings.
+
+        Mirrors ``process_images_vllm`` but with ``type=text`` content
+        for ColPali / ColQwen text-side query encoding.
+        """
+        per_query: list[np.ndarray] = []
+        result: Dict[str, Any] = {}
+        for query in queries:
+            payload = {
+                "model": kwargs.get("model_name", kwargs.get("model", "")),
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": str(query)}],
+                    }
+                ],
+            }
+            response = self.session.post(
+                f"{self.endpoint_url}/pooling",
+                json=payload,
+                timeout=1800,
+            )
+            response.raise_for_status()
+            result = response.json()
+            tokens = result.get("data", [{}])[0].get("data", [])
+            per_query.append(np.array(tokens))
+
+        embeddings = (
+            per_query[0] if len(per_query) == 1 else np.array(per_query, dtype=object)
+        )
+
+        return {
+            "embeddings": embeddings,
+            "processing_time": result.get("processing_time", 0.0),
+            "model": result.get("model"),
+            "usage": result.get("usage", {}),
+        }
+
     @retry_with_backoff(
         config=RetryConfig(
             max_attempts=3,
@@ -382,6 +422,7 @@ class RemoteColPaliLoader(ModelLoader):
         # Bind the OpenAI-compat path so callers that only see the
         # client surface (model, processor) hit the vLLM contract.
         self.client.process_images = self.client.process_images_vllm  # type: ignore[method-assign]
+        self.client.process_queries = self.client.process_queries_vllm  # type: ignore[method-assign]
 
     def load_model(self) -> Tuple[Any, Any]:
         """
