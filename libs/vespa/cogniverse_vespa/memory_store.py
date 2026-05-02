@@ -304,7 +304,10 @@ class VespaVectorStore(VectorStoreBase):
             if "data" in payload:
                 update_fields["text"] = {"assign": payload["data"]}
             if "metadata" in payload:
-                update_fields["metadata_"] = {"assign": payload["metadata"]}
+                raw = payload["metadata"]
+                update_fields["metadata_"] = {
+                    "assign": json.dumps(raw) if isinstance(raw, dict) else raw
+                }
 
         if not update_fields:
             return
