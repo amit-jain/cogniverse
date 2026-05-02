@@ -59,40 +59,42 @@ class TestDeployedServices:
         resp = httpx.get(f"{deployed_stack['phoenix_url']}/health", timeout=10)
         assert resp.status_code == 200
 
-    def test_whisper_sidecar_healthy(self, deployed_stack):
-        """Whisper ASR sidecar responds with the engine + model identifier.
+    def test_vllm_asr_sidecar_healthy(self, deployed_stack):
+        """vLLM ASR sidecar serves the configured Whisper model.
 
-        Proves three things at once:
-        - The chart's ``whisper.enabled=true`` path actually deploys the
-          pod (otherwise the port-forward at conftest:pf_specs would fail).
-        - The image cogniverse/whisper-fw:dev was built and imported into
-          the k3d cluster (otherwise: ImagePullBackOff and pod never Ready).
-        - faster-whisper loaded the configured model (model name comes
-          from /health, sourced from the WHISPER_ENGINE/MODEL_NAME envs
-          the chart sets from values.k3s.yaml).
+        Proves two things at once:
+        - The chart's ``inference.vllm_asr.enabled=true`` path actually
+          deploys the pod (otherwise the port-forward at
+          ``conftest:pf_specs`` would fail).
+        - vLLM loaded the configured model (model id comes from
+          ``/v1/models``, sourced from ``inference.vllm_asr.model`` in
+          values.k3s.yaml — the OpenAI-compatible contract the runtime's
+          ``AudioProcessor`` remote path POSTs against).
         """
-        resp = httpx.get(f"{deployed_stack['whisper_url']}/health", timeout=10)
+        resp = httpx.get(f"{deployed_stack['vllm_asr_url']}/v1/models", timeout=10)
         assert resp.status_code == 200, (
-            f"whisper /health returned {resp.status_code}: {resp.text[:200]}"
+            f"vllm-asr /v1/models returned {resp.status_code}: {resp.text[:200]}"
         )
         body = resp.json()
-        assert body["status"] == "ok", body
-        # values.k3s.yaml pins engine=faster-whisper, model=tiny.
-        assert body["engine"] == "faster-whisper", body
-        assert body["model"] == "tiny", body
+        models = body.get("data") or []
+        assert models, f"vllm-asr served no models: {body}"
+        # values.k3s.yaml pins vllm_asr.model=openai/whisper-tiny.
+        assert models[0]["id"] == "openai/whisper-tiny", models[0]
 
-    def test_runtime_pod_sees_whisper_in_inference_service_urls(self, deployed_stack):
-        """Runtime pod's ``INFERENCE_SERVICE_URLS`` env carries whisper.
+    def test_runtime_pod_sees_vllm_asr_in_inference_service_urls(self, deployed_stack):
+        """Runtime pod's ``INFERENCE_SERVICE_URLS`` env carries vllm_asr.
 
-        The chart populates that env from a ``whisper.enabled``-gated
-        template at ``charts/cogniverse/templates/all-resources.yaml:330``.
-        Profiles whose transcription strategy sets
-        ``inference_services.transcription: "whisper"`` route through the sidecar via this
-        map. This assertion locks the wiring: the runtime container must
-        receive ``whisper`` in the env, not a stale missing value, so the
-        agent and ingestion-side AudioProcessor remote paths both find
-        the pod. Reads via ``kubectl exec`` so we don't need a new
-        runtime API endpoint solely for testability.
+        The chart populates that env from the
+        ``inference.<svc>.enabled``-gated loop at
+        ``charts/cogniverse/templates/all-resources.yaml:375``. Profiles
+        whose transcription strategy sets
+        ``inference_services.transcription: "vllm_asr"`` route through
+        the sidecar via this map. This assertion locks the wiring: the
+        runtime container must receive ``vllm_asr`` in the env, not a
+        stale missing value, so the agent and ingestion-side
+        AudioProcessor remote paths both find the pod. Reads via
+        ``kubectl exec`` so we don't need a new runtime API endpoint
+        solely for testability.
         """
         from tests.e2e.deployment.conftest import NAMESPACE
 
@@ -137,7 +139,7 @@ class TestDeployedServices:
 
         urls = json.loads(env_dump.stdout)
         assert "vllm_asr" in urls, (
-            f"whisper service URL missing from runtime pod env; got keys "
+            f"vllm_asr service URL missing from runtime pod env; got keys "
             f"{sorted(urls.keys())!r}"
         )
         assert urls["vllm_asr"].startswith("http://"), urls["vllm_asr"]

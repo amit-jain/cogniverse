@@ -29,7 +29,9 @@ class TestBuildImages:
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(self, mock_run: object) -> None:
         """One docker build per image: backend-specific runtime + dashboard
-        first (TORCH_BACKEND build-arg), then inference sidecars."""
+        first (TORCH_BACKEND build-arg), then the pylate sidecar.
+        ColPali and Whisper are now served by vLLM (vllm/vllm-openai-cpu)
+        and pulled directly by k3d, so no local build is needed for them."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -41,10 +43,8 @@ class TestBuildImages:
             "cogniverse/runtime-cpu:dev",
             "cogniverse/dashboard-cpu:dev",
             "cogniverse/pylate:dev",
-            "cogniverse/colpali:dev",
-            "cogniverse/whisper-fw:dev",
         ]
-        assert mock_run.call_count == 5  # type: ignore[attr-defined]
+        assert mock_run.call_count == 3  # type: ignore[attr-defined]
 
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
             cmd = call[0][0]

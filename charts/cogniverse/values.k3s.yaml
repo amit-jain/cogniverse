@@ -58,6 +58,34 @@ inference:
       requests:
         cpu: "4"
         memory: "16Gi"
+
+  # vLLM-served ASR. Production (values.rocm.yaml / values.cuda.yaml)
+  # uses the full whisper-large-v3-turbo on GPU; the k3s laptop budget
+  # forces openai/whisper-tiny on CPU instead — the deployment-lifecycle
+  # e2e only asserts wiring (model loaded + /v1/models reachable +
+  # INFERENCE_SERVICE_URLS env carries vllm_asr), not transcription
+  # quality, so the smaller model fully satisfies the test contract.
+  vllm_asr:
+    enabled: true
+    device: cpu
+    model: openai/whisper-tiny
+    kvCacheGiB: 1
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
+      pullPolicy: IfNotPresent
+    extraArgs:
+      - "--runner"
+      - "generate"
+      - "--max-model-len"
+      - "448"
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"
   # Dev override: use locally-built pylate image for the default text pod.
   colbert_pylate:
     service:
@@ -290,29 +318,3 @@ initJobs:
     enabled: true
   modelPulling:
     enabled: false  # Handled by E2E test fixtures
-
-# Deploy the whisper ASR sidecar in dev/k3s so the deployment-lifecycle
-# e2e exercises the same chart path production uses. faster-whisper engine
-# on CPU keeps this within the 49Gi laptop budget; ROCm/Metal users
-# override engine + image via values.rocm.yaml when those Dockerfiles land.
-whisper:
-  enabled: true
-  engine: faster-whisper
-  model: tiny  # smallest stable model; ~75MB first download
-  device: cpu
-  # Override the per-engine image entry (not the legacy top-level image)
-  # so pullPolicy=Never applies — the chart picks the image from
-  # imagesByEngine[engine] when that map is set, which it is in the
-  # default values.yaml.
-  imagesByEngine:
-    faster-whisper:
-      repository: cogniverse/whisper-fw
-      tag: "dev"
-      pullPolicy: Never  # k3d-imported tag, not on a registry
-  resources:
-    limits:
-      cpu: "2"
-      memory: "1500Mi"
-    requests:
-      cpu: "500m"
-      memory: "512Mi"

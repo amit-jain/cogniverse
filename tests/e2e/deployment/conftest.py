@@ -329,7 +329,9 @@ def deployed_stack(k3d_cluster):
 
     # Build the canonical image set the chart's k3s values enable —
     # runtime + dashboard for the host's torch backend, plus the
-    # always-on inference sidecars (pylate / colpali / whisper).
+    # locally-built inference sidecars (pylate / colpali). vLLM-served
+    # ASR (inference.vllm_asr) pulls vllm/vllm-openai-cpu directly from
+    # docker hub at pod-start, so no local build is needed for it.
     # build_images() owns the docker-build invocations + the matching
     # --build-arg TORCH_BACKEND wiring; import_images() lifts them into
     # the k3d cluster so pods with pullPolicy=Never can find them.
@@ -488,7 +490,7 @@ def deployed_stack(k3d_cluster):
         ("svc/cogniverse-phoenix", f"{PORTS['phoenix']}:6006"),
         ("svc/cogniverse-phoenix", f"{PORTS['otel_grpc']}:4317"),
         ("svc/cogniverse-llm", f"{PORTS['llm']}:11434"),
-        ("svc/cogniverse-whisper", f"{PORTS['whisper']}:7998"),
+        ("svc/cogniverse-vllm-asr", f"{PORTS['vllm_asr']}:8000"),
     ]
     for svc, ports in pf_specs:
         pf_log = open(f"/tmp/pf_{svc.replace('/', '_')}_{ports}.log", "w")
@@ -534,7 +536,7 @@ def deployed_stack(k3d_cluster):
         "vespa_url": f"http://localhost:{PORTS['vespa_http']}",
         "phoenix_url": f"http://localhost:{PORTS['phoenix']}",
         "llm_url": f"http://localhost:{PORTS['llm']}",
-        "whisper_url": f"http://localhost:{PORTS['whisper']}",
+        "vllm_asr_url": f"http://localhost:{PORTS['vllm_asr']}",
     }
 
     # Cleanup port-forwards
