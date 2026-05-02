@@ -696,6 +696,7 @@ main_tabs = st.tabs(
         "🗺️ Embedding Atlas",
         "🎯 Routing Evaluation",
         "🔄 Orchestration Annotation",
+        "📈 Profile Routing Metrics",
         "🔧 Optimization",
         "🔬 Synthetic Data & Optimization",
         "✅ Approval Queue",
@@ -1990,8 +1991,13 @@ with main_tabs[4]:
             "The orchestration annotation tab provides UI for human annotation of orchestration workflows."
         )
 
-# Optimization Tab
 with main_tabs[5]:
+    from cogniverse_dashboard.tabs.profile_metrics import render_profile_metrics_tab
+
+    render_profile_metrics_tab()
+
+# Optimization Tab
+with main_tabs[6]:
     st.header("🔧 System Optimization")
     st.markdown(
         "Trigger and monitor optimization of routing, ingestion, and agent systems using your existing DSPy infrastructure."
@@ -2222,7 +2228,7 @@ with main_tabs[5]:
     )
 
 # Ingestion Testing Tab
-with main_tabs[6]:
+with main_tabs[7]:
     # Synthetic Data & Optimization (enhanced_optimization_tab)
     if enhanced_optimization_tab_available:
         try:
@@ -2238,7 +2244,7 @@ with main_tabs[6]:
             "and comprehensive optimization controls."
         )
 
-with main_tabs[7]:
+with main_tabs[8]:
     # Approval Queue (approval_queue_tab)
     if approval_queue_tab_available:
         try:
@@ -2252,7 +2258,7 @@ with main_tabs[7]:
             "and AI-generated outputs."
         )
 
-with main_tabs[8]:
+with main_tabs[9]:
     st.header("📥 Ingestion Pipeline Testing")
     st.markdown(
         "Interactive testing and configuration of video ingestion pipelines with different processing profiles."
@@ -2513,7 +2519,7 @@ with main_tabs[8]:
         st.info("📊 Upload a video and process it to see detailed analysis")
 
 # Interactive Search Tab
-with main_tabs[9]:
+with main_tabs[10]:
     st.header("🔍 Interactive Search Interface")
     st.markdown(
         "Live search testing and evaluation with multiple ranking strategies and real-time results."
@@ -2934,7 +2940,7 @@ with main_tabs[9]:
         st.metric("Coverage Rate", "76%", "2%")
 
 # Chat Tab
-with main_tabs[10]:
+with main_tabs[11]:
     st.header("💬 Multi-Modal Chat")
     st.markdown("Chat with agents via the routing layer.")
 
@@ -3008,17 +3014,17 @@ with main_tabs[10]:
         st.rerun()
 
 # Configuration Tab
-with main_tabs[11]:
+with main_tabs[12]:
     st.header("⚙️ Configuration Management")
     render_config_management_tab()
 
 # Tenant Management Tab
-with main_tabs[12]:
+with main_tabs[13]:
     st.header("👥 Tenant Management")
     render_tenant_management_tab()
 
 # Memory Management Tab
-with main_tabs[13]:
+with main_tabs[14]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
 

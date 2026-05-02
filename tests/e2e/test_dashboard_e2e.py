@@ -786,6 +786,41 @@ class TestRerankingAndProfileOptimization:
         )
 
 
+class TestProfileRoutingMetrics:
+    """Top-level Profile Routing Metrics tab — runtime observability of
+    ProfileSelectionAgent dispatches sourced from Phoenix spans."""
+
+    def test_profile_routing_metrics_tab(self, page):
+        _nav(page)
+        set_tenant(page, TENANT_ID)
+        click_top_tab(page, "Profile Routing Metrics")
+        page.wait_for_load_state("networkidle")
+
+        body_text = page.inner_text("body").lower()
+        assert "profile routing metrics" in body_text, (
+            "Profile Routing Metrics tab must show its heading"
+        )
+
+        # Lookback (hours) input is the only always-rendered widget — the
+        # rest depends on whether Phoenix has profile_selection spans yet.
+        lookback_input = page.locator('[data-testid="stNumberInput"]')
+        assert lookback_input.count() > 0, (
+            "Profile Routing Metrics must expose a Lookback (hours) input"
+        )
+
+        # Acceptable terminal states: empty-spans info, missing-attribute
+        # warning, or rendered metrics. Any error alert is a real failure.
+        error_alerts = page.locator(
+            '[data-testid="stAlert"]:has-text("Phoenix span query failed"), '
+            '[data-testid="stAlert"]:has-text("Failed to initialise telemetry")'
+        )
+        if error_alerts.count() > 0:
+            pytest.fail(
+                f"Profile Routing Metrics surfaced an error: "
+                f"{error_alerts.first.inner_text()}"
+            )
+
+
 class TestTenantLifecycleDashboard:
     """Scenario 14: Create org + tenant, verify, delete via dashboard."""
 
