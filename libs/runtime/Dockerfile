@@ -29,43 +29,11 @@ COPY libs/agents ./libs/agents
 COPY libs/telemetry-phoenix ./libs/telemetry-phoenix
 COPY libs/runtime ./libs/runtime
 
-# Single install layer: uv sync (pulls default cu128 torch into a
-# transient working tree), then the torch-swap + nvidia/triton cleanup
-# happen BEFORE the layer is committed so the cu128 wheel bytes never
-# land in the image. fast-plaid has no aarch64 wheel so pylate goes in
-# with --no-deps + manual datasets pull. arize-phoenix-evals pinned
-# <3 to keep phoenix.evals.models reachable until arize-phoenix 14.x.
-ARG TORCH_BACKEND
-RUN if [ -z "$TORCH_BACKEND" ]; then \
-        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm)." >&2; \
-        exit 1; \
-    fi && \
-    uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
+RUN uv sync --package cogniverse-runtime --extra all --no-dev --frozen && \
     uv pip install pylate --no-deps && \
     uv pip install datasets && \
     uv pip install "arize-phoenix-evals<3" && \
     uv pip install -e ./libs/telemetry-phoenix && \
-    case "$TORCH_BACKEND" in \
-        cpu) \
-            uv pip install --reinstall \
-                --index-url https://download.pytorch.org/whl/cpu \
-                torch==2.8.0 torchvision==0.23.0 ;; \
-        rocm) \
-            uv pip install --reinstall \
-                --index-url https://download.pytorch.org/whl/rocm6.4 \
-                torch==2.8.0+rocm6.4 torchvision==0.23.0+rocm6.4 \
-                pytorch-triton-rocm==3.4.0 ;; \
-        cuda) \
-            : ;; \
-        *) \
-            echo "Unknown TORCH_BACKEND=$TORCH_BACKEND (expected cpu|cuda|rocm)" >&2 && exit 1 ;; \
-    esac && \
-    if [ "$TORCH_BACKEND" != "cuda" ]; then \
-        rm -rf /app/.venv/lib/python3.12/site-packages/nvidia \
-               /app/.venv/lib/python3.12/site-packages/nvidia_*-dist-info \
-               /app/.venv/lib/python3.12/site-packages/triton \
-               /app/.venv/lib/python3.12/site-packages/triton-*-dist-info; \
-    fi && \
     rm -rf /root/.cache/uv /root/.cache/pip
 
 # spaCy model wheel — venv-side install, not HF cache (so the chart's
