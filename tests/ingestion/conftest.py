@@ -5,6 +5,11 @@ Provides common test utilities, mock objects, and fixtures
 for testing the video processing pipeline.
 """
 
+# Re-register session-scoped sidecar fixtures here because
+# tests/ingestion/pytest.ini sets this directory as the rootdir, which
+# blocks pytest from auto-loading the project-level tests/conftest.py.
+pytest_plugins = ["tests.fixtures.sidecars"]
+
 import importlib.util
 import logging
 import shutil

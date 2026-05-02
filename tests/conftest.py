@@ -1,6 +1,6 @@
 """Global pytest configuration for test isolation"""
 
-pytest_plugins = ["tests.fixtures.llm"]
+pytest_plugins = ["tests.fixtures.llm", "tests.fixtures.sidecars"]
 
 import gc
 import importlib.util
