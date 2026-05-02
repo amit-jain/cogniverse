@@ -220,6 +220,10 @@ def render_agent_configs_ui(manager, tenant_id: str):
     """Render agent configurations UI"""
     st.subheader("Agent Configurations")
 
+    if not tenant_id:
+        st.info("Select a tenant above to view or edit its agent configurations.")
+        return
+
     # List existing agents
     configs = manager.store.list_configs(tenant_id=tenant_id, scope=ConfigScope.AGENT)
 
@@ -488,6 +492,10 @@ def render_telemetry_config_ui(manager, tenant_id: str):
     """Render telemetry configuration UI"""
     st.subheader("Telemetry Configuration")
 
+    if not tenant_id:
+        st.info("Select a tenant above to view or edit its telemetry configuration.")
+        return
+
     try:
         telemetry_config = manager.get_telemetry_config(tenant_id)
     except Exception:
@@ -583,6 +591,10 @@ def render_config_history_ui(manager, tenant_id: str):
     """Render configuration history UI"""
     st.subheader("Configuration History")
 
+    if not tenant_id:
+        st.info("Select a tenant above to browse its configuration history.")
+        return
+
     # Scope and service selector
     col1, col2, col3 = st.columns(3)
 
@@ -676,6 +688,10 @@ def render_config_history_ui(manager, tenant_id: str):
 def render_import_export_ui(manager, tenant_id: str):
     """Render import/export UI"""
     st.subheader("Import/Export Configurations")
+
+    if not tenant_id:
+        st.info("Select a tenant above to import or export its configurations.")
+        return
 
     # Export section
     st.markdown("### Export Configurations")
