@@ -14,25 +14,26 @@ import time
 from pathlib import Path
 from typing import Any
 
-import torch
-
 
 class AudioTranscriber:
     """Handles audio transcription from videos"""
 
     def __init__(self, model_size: str = "base", device: str | None = None):
         self.model_size = model_size
-        # faster-whisper uses CTranslate2, which only ships NVIDIA CUDA
-        # libraries. PyTorch ROCm builds report torch.cuda.is_available()=True
-        # but device="cuda" fails at WhisperModel load with "CUDA driver
-        # version is insufficient" because CTranslate2 looks for libcudart.
-        # Guard with torch.version.hip — set on ROCm builds, None on real CUDA.
         if device is not None:
             self.device = device
-        elif torch.cuda.is_available() and torch.version.hip is None:
-            self.device = "cuda"
         else:
-            self.device = "cpu"
+            # CTranslate2 (faster-whisper backend) only ships NVIDIA CUDA libs;
+            # ROCm hosts must run on CPU even though torch reports cuda.
+            try:
+                import torch
+
+                if torch.cuda.is_available() and torch.version.hip is None:
+                    self.device = "cuda"
+                else:
+                    self.device = "cpu"
+            except ImportError:
+                self.device = "cpu"
         self._model = None
 
     def _load_model(self):

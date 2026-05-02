@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional
 
 import dspy
 import numpy as np
-import torch
 from PIL import Image
 from pydantic import Field
 
@@ -247,14 +246,14 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         Returns:
             ColPali multi-vector embedding [1024, 128]
         """
-        # Process image with ColPali (reusing existing pattern from embedding_generator)
+        import torch
+
         batch_inputs = self.colpali_processor.process_images([image]).to(
             self.colpali_model.device
         )
 
-        # Get embeddings
         with torch.no_grad():
-            embeddings = self.colpali_model(**batch_inputs)  # Returns tensor directly
+            embeddings = self.colpali_model(**batch_inputs)
 
         # Reshape to [1024, 128] format (remove batch dimension)
         embeddings_np = embeddings.squeeze(0).cpu().numpy()

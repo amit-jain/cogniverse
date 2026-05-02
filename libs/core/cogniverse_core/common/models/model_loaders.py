@@ -10,6 +10,8 @@ Remote providers allow offloading model inference to dedicated services,
 reducing memory usage and enabling better scaling.
 """
 
+from __future__ import annotations
+
 import logging
 import subprocess
 from abc import ABC, abstractmethod
@@ -18,7 +20,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import requests
-import torch
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 
@@ -49,7 +50,8 @@ class ModelLoader(ABC):
         if "device" in self.config:
             return self.config["device"]
 
-        # Auto-detect device
+        import torch
+
         if torch.cuda.is_available():
             return "cuda"
         elif torch.backends.mps.is_available():
@@ -57,8 +59,10 @@ class ModelLoader(ABC):
         else:
             return "cpu"
 
-    def get_dtype(self) -> torch.dtype:
+    def get_dtype(self) -> "torch.dtype":  # noqa: F821
         """Get appropriate dtype for the device"""
+        import torch
+
         device = self.get_device()
         if device == "cuda":
             return torch.bfloat16

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from PIL import Image
 
 
@@ -25,6 +24,8 @@ class EmbeddingProcessor:
         try:
             # Load image
             image = Image.open(image_path).convert("RGB")
+
+            import torch
 
             # Process image
             batch_images = processor.process_images([image]).to(model.device)
@@ -110,11 +111,11 @@ class EmbeddingProcessor:
                 else:
                     batch_inputs = processor.process_videos([tmp_path]).to(model.device)
 
-                # Generate embeddings
+                import torch
+
                 with torch.no_grad():
                     embeddings = model(**batch_inputs)
 
-                # Convert to numpy
                 embeddings_np = embeddings.cpu().to(torch.float32).numpy()
 
                 # Handle different output shapes

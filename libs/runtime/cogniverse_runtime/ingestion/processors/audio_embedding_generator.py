@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
-import torch
 
 from cogniverse_core.common.models.semantic_embedder import get_semantic_embedder
 
@@ -134,7 +133,8 @@ class AudioEmbeddingGenerator:
                 return_tensors="pt",
             )
 
-            # Generate embedding
+            import torch
+
             with torch.no_grad():
                 audio_embeds = self.clap_model.get_audio_features(**inputs)
 

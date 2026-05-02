@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from PIL import Image
 
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
@@ -613,6 +612,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             # Without this, the PIL Image refcount keeps the decoded RGB bytes
             # alive for the full segment loop and bloats the process by
             # 6 MB × N_frames over an ingestion run.
+            import torch
+
             with Image.open(frame_path) as image:
                 image = image.convert("RGB")
                 batch_inputs = self.processor.process_images([image]).to(
@@ -704,6 +705,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         else embeddings_arr
                     ).astype(np.float32, copy=False)
 
+                import torch
+
                 batch_inputs = self.processor.process_images(frames).to(
                     self.model.device
                 )
@@ -750,7 +753,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 return None
 
             else:
-                # Other models
+                import torch
+
                 if hasattr(self.processor, "process_videos"):
                     batch_inputs = self.processor.process_videos([str(chunk_path)]).to(
                         self.model.device
@@ -836,7 +840,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         embeddings_arr = embeddings_arr.mean(axis=0)
                     return embeddings_arr.astype(np.float32, copy=False)
 
-                # Process frames
+                import torch
+
                 batch_inputs = self.processor.process_images(frames).to(
                     self.model.device
                 )

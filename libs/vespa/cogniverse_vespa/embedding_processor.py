@@ -9,7 +9,6 @@ from binascii import hexlify
 from typing import Any, Dict, Optional
 
 import numpy as np
-import torch
 
 
 class VespaEmbeddingProcessor:
@@ -148,24 +147,23 @@ class VespaEmbeddingProcessor:
 
     def _numpy_to_hex_bfloat16(self, array: np.ndarray) -> str:
         """Convert numpy array to hex-encoded bfloat16 format"""
-        tensor = torch.tensor(array, dtype=torch.float32)
+        arr_f32 = np.asarray(array, dtype=np.float32).flatten()
 
         def float_to_bfloat16_hex(f: float) -> str:
             packed_float = struct.pack("=f", f)
             bfloat16_bits = struct.unpack("=H", packed_float[2:])[0]
             return format(bfloat16_bits, "04X")
 
-        hex_list = [float_to_bfloat16_hex(float(val)) for val in tensor.flatten()]
+        hex_list = [float_to_bfloat16_hex(float(val)) for val in arr_f32]
         return "".join(hex_list)
 
     def _numpy_to_hex_float32(self, array: np.ndarray) -> str:
         """Convert numpy array to hex-encoded 32-bit float format for tensor<float>"""
-        tensor = torch.tensor(array, dtype=torch.float32)
+        arr_f32 = np.asarray(array, dtype=np.float32).flatten()
 
         def float_to_float32_hex(f: float) -> str:
-            # Pack as 32-bit float and convert all 4 bytes to hex
             packed_float = struct.pack("=f", f)
             return hexlify(packed_float).decode("utf-8").upper()
 
-        hex_list = [float_to_float32_hex(float(val)) for val in tensor.flatten()]
+        hex_list = [float_to_float32_hex(float(val)) for val in arr_f32]
         return "".join(hex_list)

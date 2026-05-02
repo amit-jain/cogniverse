@@ -5,7 +5,6 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
-import torch
 
 from cogniverse_core.common.models import get_or_load_model
 
@@ -86,10 +85,11 @@ class ColPaliQueryEncoder(QueryEncoder):
 
     def encode(self, query: str) -> np.ndarray:
         """Encode query to multi-vector embeddings"""
+        import torch
+
         batch_queries = self.processor.process_queries([query]).to(self.device)
         with torch.no_grad():
             query_embeddings = self.model(**batch_queries)
-        # Return as numpy array [num_patches, embedding_dim]
         return query_embeddings.cpu().numpy().squeeze(0)
 
     def get_embedding_dim(self) -> int:
@@ -113,10 +113,11 @@ class ColQwenQueryEncoder(QueryEncoder):
 
     def encode(self, query: str) -> np.ndarray:
         """Encode query to multi-vector embeddings"""
+        import torch
+
         batch_queries = self.processor.process_queries([query]).to(self.device)
         with torch.no_grad():
             query_embeddings = self.model(**batch_queries)
-        # Return as numpy array [num_patches, embedding_dim]
         return query_embeddings.cpu().numpy().squeeze(0)
 
     def get_embedding_dim(self) -> int:
