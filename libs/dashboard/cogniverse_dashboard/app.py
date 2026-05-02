@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""
-Interactive Analytics Dashboard
-Standalone version that avoids videoprism dependencies
-
-Tabs:
-- 📥 Ingestion Testing: Interactive video processing with multiple profiles
-- 🔍 Interactive Search: Live search testing with relevance annotation
-- 📊 Status Monitoring: Real-time agent connectivity + telemetry
-- 📈 Multi-Modal Performance: Per-modality metrics and cross-modal patterns
-"""
+"""Interactive analytics dashboard — Streamlit UI over Phoenix telemetry."""
 
 # Fix protobuf issue - must be before other imports
 import os
