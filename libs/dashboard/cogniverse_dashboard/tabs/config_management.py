@@ -403,6 +403,10 @@ def render_routing_config_ui(manager, tenant_id: str):
     """Render routing configuration UI"""
     st.subheader("Routing Configuration")
 
+    if not tenant_id:
+        st.info("Select a tenant above to view or edit its routing configuration.")
+        return
+
     try:
         routing_config = manager.get_routing_config(tenant_id)
     except Exception:
