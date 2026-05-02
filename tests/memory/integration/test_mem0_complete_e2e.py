@@ -5,7 +5,15 @@ Uses shared session-scoped Vespa container from conftest.py.
 Tests full memory functionality with proper document cleanup.
 
 Run with: pytest tests/memory/integration/test_mem0_complete_e2e.py -v -s
+
+Tests 07/09 assert ``>= 1`` final memories by default because Mem0's
+UPDATE/DELETE/NONE pass dedups aggressively on small LLMs (gemma3:4b,
+qwen3:4b). Set ``TEST_LM_IS_STRONG=1`` to switch to the strict
+``>= len(inputs) - 2`` assertion when running against a strong vision
+or instruction model that respects topic orthogonality.
 """
+
+import os
 
 import pytest
 
@@ -17,6 +25,11 @@ from tests.utils.llm_config import (
     get_llm_base_url,
     get_llm_model,
 )
+
+
+def _strong_lm() -> bool:
+    """Operator-controlled flag: assertions get stricter when set."""
+    return os.environ.get("TEST_LM_IS_STRONG", "").lower() in ("1", "true", "yes")
 
 
 @pytest.fixture(scope="module")
@@ -258,7 +271,8 @@ class TestMemorySystemCompleteE2E:
             agent_name="get_all_test",
         )
 
-        assert len(memories) >= 1
+        threshold = 3 if _strong_lm() else 1
+        assert len(memories) >= threshold
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
@@ -325,8 +339,9 @@ class TestMemorySystemCompleteE2E:
             agent_name="stats_test",
         )
 
+        threshold = 5 if _strong_lm() else 1
         assert stats["enabled"] is True
-        assert stats["total_memories"] >= 1
+        assert stats["total_memories"] >= threshold
         assert stats["tenant_id"] == "e2e_test_tenant"
         assert stats["agent_name"] == "stats_test"
 
