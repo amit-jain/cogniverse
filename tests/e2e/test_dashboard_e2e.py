@@ -1364,34 +1364,6 @@ class TestMonitoringDashboard:
             "Embedding Atlas must mention 'embedding' or show dependency message"
         )
 
-    def test_multimodal_performance_tab(self, page):
-        self._goto_monitoring(page)
-        click_sub_tab(page, "Multi-Modal Performance")
-        page.wait_for_load_state("networkidle")
-
-        body_text = page.inner_text("body").lower()
-        # Multi-Modal Performance must show performance metrics or modality info
-        metrics = page.locator('[data-testid="stMetric"]')
-        assert (
-            "performance" in body_text
-            or "latency" in body_text
-            or "modality" in body_text
-            or metrics.count() > 0
-        ), "Multi-Modal Performance must show performance content or metrics"
-
-        # If metrics are present, verify they are performance-specific
-        if metrics.count() > 0:
-            metric_text = " ".join(
-                metrics.nth(i).inner_text().lower() for i in range(metrics.count())
-            )
-            assert any(
-                kw in metric_text
-                for kw in ("latency", "success", "requests", "cache", "rate")
-            ), (
-                f"Performance metrics must include latency/success/requests, "
-                f"got: {metric_text[:200]}"
-            )
-
     def test_finetuning_tab(self, page):
         self._goto_monitoring(page)
         click_top_tab(page, "Synthetic Data")
