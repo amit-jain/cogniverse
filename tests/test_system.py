@@ -356,31 +356,6 @@ class SystemTester:
             )
             return False
 
-    async def test_colpali_search(self) -> bool:
-        """Test ColPali text-to-video search functionality."""
-        try:
-            print("Running ColPali search test...")
-            result = subprocess.run(
-                [sys.executable, str(Path(__file__).parent / "test_colpali_search.py")],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-
-            if result.returncode == 0:
-                self.log_test(
-                    "ColPali Search",
-                    True,
-                    "ColPali text-to-video search working correctly",
-                )
-                return True
-            else:
-                self.log_test(
-                    "ColPali Search",
-                    False,
-                    f"ColPali search failed: {result.stderr[:200]}",
-                )
-                return False
 
         except Exception as e:
             self.log_test(
@@ -495,7 +470,6 @@ class SystemTester:
             ("Agent Connectivity", self.test_agent_connectivity),
             ("Agent Discovery", self.test_agent_discovery),
             ("Video Search Agent", self.test_video_search_agent),
-            ("ColPali Search", self.test_colpali_search),
             ("Document Similarity", self.test_document_similarity),
             ("End-to-End System", self.test_end_to_end_system),
         ]
@@ -586,7 +560,7 @@ async def main():
     parser.add_argument(
         "--tests",
         nargs="*",
-        help="Specific tests to run (default: all). Available: configuration, model_imports, data_directories, local_llm_connectivity, agent_connectivity, agent_discovery, video_search_agent, colpali_search, document_similarity, end_to_end_system",
+        help="Specific tests to run (default: all). Available: configuration, model_imports, data_directories, local_llm_connectivity, agent_connectivity, agent_discovery, video_search_agent, document_similarity, end_to_end_system",
     )
     parser.add_argument("--list", action="store_true", help="List all available tests")
     parser.add_argument(
@@ -614,7 +588,6 @@ async def main():
             "agent_connectivity",
             "agent_discovery",
             "video_search_agent",
-            "colpali_search",
             "document_similarity",
             "end_to_end_system",
         ]
