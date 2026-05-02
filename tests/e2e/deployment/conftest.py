@@ -290,12 +290,6 @@ def deployed_stack(k3d_cluster):
     assert chart_path.exists(), f"Chart not found: {chart_path}"
     assert values_file.exists(), f"Values not found: {values_file}"
 
-    # Build and import images matching the host's torch backend. Each
-    # backend ships its own image (cogniverse/runtime-cpu / -cuda / -rocm,
-    # same for dashboard); the chart picks the matching tag via
-    # ``runtime.imagesByBackend[backend]``. PREDOWNLOAD_MODELS is on by
-    # default so the agent pipeline starts fast; flip the env var off to
-    # save image build time when the tests don't exercise inference.
     from cogniverse_cli.config import get_device_values_file
     from cogniverse_cli.images import (
         build_images,

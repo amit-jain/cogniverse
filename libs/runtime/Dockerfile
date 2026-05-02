@@ -88,27 +88,10 @@ RUN if [ -z "$TORCH_BACKEND" ]; then \
     esac && \
     rm -rf /root/.cache/uv /root/.cache/pip
 
-# Pre-download ML models so they don't need downloading at runtime.
-# This eliminates startup delays and liveness probe timeouts in production
-# and in tests that exercise the agent pipeline.
-#
-# Adds ~1.8 GB (GLiNER + spaCy) to the image. CI paths that only verify
-# health/lifecycle (no agent queries) can skip this with
-#   docker build --build-arg PREDOWNLOAD_MODELS=false
-# to get a slim ~7 GB image instead of ~9 GB.
-ARG PREDOWNLOAD_MODELS=true
-ENV HF_HOME=/app/.cache/huggingface
-# Ensure /app/.cache exists so the runtime-stage ``COPY --from=builder
-# /app/.cache`` line works even when PREDOWNLOAD_MODELS=false (otherwise
-# BuildKit fails with "calculate checksum of ref ...: /app/.cache: not
-# found" because no step created the directory).
-RUN mkdir -p /app/.cache && \
-    if [ "$PREDOWNLOAD_MODELS" = "true" ]; then \
-        .venv/bin/python -c "from gliner import GLiNER; GLiNER.from_pretrained('urchade/gliner_large-v2.1')" && \
-        uv pip install "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"; \
-    else \
-        echo "Skipping model pre-download (PREDOWNLOAD_MODELS=false); models will fetch on first use"; \
-    fi
+# spaCy model wheel — venv-side install, not HF cache (so the chart's
+# model-cache volume mount can't shadow it). HF Hub models like GLiNER
+# load lazily into the chart-mounted HF cache instead.
+RUN uv pip install "en_core_web_sm@https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
 
 # Runtime stage
 FROM python:3.12-slim
@@ -135,9 +118,7 @@ RUN useradd -m -u 1000 cogniverse && \
 # Set working directory
 WORKDIR /app
 
-# Copy installed virtual environment and pre-downloaded models from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder --chown=cogniverse:cogniverse /app/.cache /home/cogniverse/.cache
 
 # Copy application code
 COPY --chown=cogniverse:cogniverse libs/sdk ./libs/sdk

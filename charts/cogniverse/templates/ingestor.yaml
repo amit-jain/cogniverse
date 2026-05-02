@@ -107,7 +107,7 @@ spec:
           subPath: config.json
           readOnly: true
         - name: model-cache
-          mountPath: /home/cogniverse/.cache
+          mountPath: /home/cogniverse/.cache/huggingface
         {{- if .Values.devMode.enabled }}
         - name: src
           mountPath: /app/libs
@@ -121,13 +121,14 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
-        {{- if and .Values.runtime.modelCache.persistent .Values.runtime.enabled }}
-        persistentVolumeClaim:
-          claimName: {{ $fullName }}-runtime-model-cache
-        {{- else }}
-        emptyDir:
-          sizeLimit: {{ .Values.runtime.modelCache.size | default "20Gi" }}
-        {{- end }}
+        hostPath:
+          {{- if $.Values.hfCache.enabled }}
+          path: {{ $.Values.hfCache.path }}
+          type: Directory
+          {{- else }}
+          path: /var/lib/cogniverse/hf-cache/runtime
+          type: DirectoryOrCreate
+          {{- end }}
       {{- if .Values.devMode.enabled }}
       - name: src
         hostPath:

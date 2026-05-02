@@ -306,17 +306,6 @@ runtime:
     inCluster:
       enabled: false
 
-  # HuggingFace model cache mounted at /home/cogniverse/.cache. Set
-  # `persistent: true` to back it with a PVC so ColPali / GLiNER /
-  # SentenceTransformer / Whisper survive pod restarts and helm upgrades.
-  # `false` keeps it ephemeral (emptyDir) — re-downloads on every restart,
-  # adds 60-120s of cold-start latency for the first request.
-  modelCache:
-    persistent: true
-    size: "20Gi"
-    accessMode: "ReadWriteOnce"
-    storageClass: ""
-
   # Quality monitor sidecar — continuous evaluation of all agents
   qualityMonitor:
     enabled: true
