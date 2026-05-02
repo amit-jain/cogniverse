@@ -1,0 +1,33 @@
+# Cogniverse — CPU-only overrides
+#
+# Compose this on top of values.yaml when deploying to a cluster
+# without GPUs (laptop dev, CI runners). ``cogniverse up`` does this
+# automatically when ``detect_torch_backend()`` returns ``cpu``.
+#
+# Inference services that have GPU-only defaults in values.yaml get
+# CPU-friendly model + image fallbacks here. The deployment-lifecycle
+# e2e only validates wiring (chart deploys the pod, /v1/models
+# answers, INFERENCE_SERVICE_URLS env carries the key) — not
+# transcription quality — so the smallest viable model is fine.
+
+inference:
+  vllm_asr:
+    device: cpu
+    model: openai/whisper-tiny
+    kvCacheGiB: 1
+    image:
+      repository: vllm/vllm-openai-cpu
+      tag: latest
+      pullPolicy: IfNotPresent
+    extraArgs:
+      - "--runner"
+      - "generate"
+      - "--max-model-len"
+      - "448"
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "2Gi"

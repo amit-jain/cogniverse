@@ -78,8 +78,7 @@ class TestDeployedServices:
         body = resp.json()
         models = body.get("data") or []
         assert models, f"vllm-asr served no models: {body}"
-        # values.k3s.yaml pins vllm_asr.model=openai/whisper-tiny.
-        assert models[0]["id"] == "openai/whisper-tiny", models[0]
+        assert "whisper" in models[0]["id"].lower(), models[0]
 
     def test_runtime_pod_sees_vllm_asr_in_inference_service_urls(self, deployed_stack):
         """Runtime pod's ``INFERENCE_SERVICE_URLS`` env carries vllm_asr.
