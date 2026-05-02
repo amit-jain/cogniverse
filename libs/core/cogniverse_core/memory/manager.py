@@ -174,7 +174,7 @@ class Mem0MemoryManager:
         embedder_base_url: str,
         config_manager,
         schema_loader,
-        provider: str = "ollama",
+        llm_api_key: str = "not-required",
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         auto_create_schema: bool = True,
@@ -188,16 +188,18 @@ class Mem0MemoryManager:
             llm_model: LLM model name for memory extraction
             embedding_model: Embedding model name for memory search
                 (DenseOn served by the colbert_pylate sidecar in dense mode)
-            llm_base_url: OpenAI-compatible LLM API endpoint
+            llm_base_url: LLM endpoint URL. Any OpenAI-compatible server
+                (Ollama, vLLM, OpenAI, hosted) works. ``/v1`` suffix is
+                added automatically when missing.
             embedder_base_url: OpenAI-compatible /v1/embeddings endpoint —
                 separate from the LLM endpoint because the embedder always
-                runs DenseOn on the dedicated denseon sidecar pod, while
-                the LLM runs Ollama / vLLM / external per llm.engine.
+                runs DenseOn on the dedicated denseon sidecar pod.
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
-            provider: LLM provider for Mem0 (e.g. "ollama", "openai"). Does
-                not affect the embedder, which always uses Mem0's openai
-                provider against ``embedder_base_url``.
+            llm_api_key: API key sent to ``llm_base_url``. Defaults to
+                ``"not-required"`` for local backends (Ollama, vLLM)
+                that don't authenticate; pass a real key for hosted
+                providers.
             backend_config_port: Backend config endpoint port (default: 19071)
             base_schema_name: Base schema name (default: agent_memories)
             auto_create_schema: Auto-deploy tenant schema if not exists
@@ -348,22 +350,20 @@ class Mem0MemoryManager:
             "api_key": "denseon",
         }
 
-        # Ollama exposes an OpenAI-compatible API at /v1. Using Mem0's
-        # "openai" provider avoids requiring the `ollama` pip package —
-        # the host Ollama install is just an HTTP endpoint.
-        if provider == "ollama":
-            provider = "openai"
-            base_url = llm_base_url.rstrip("/")
-            if not base_url.endswith("/v1"):
-                base_url = f"{base_url}/v1"
-            llm_provider_config["openai_base_url"] = base_url
-            llm_provider_config["api_key"] = "ollama"
-        else:
-            llm_provider_config["api_base"] = llm_base_url
+        # All supported LLM backends (Ollama, vLLM, OpenAI, hosted) speak
+        # OpenAI-compatible /v1 chat completions, so we always use Mem0's
+        # "openai" provider. Normalise the URL with a /v1 suffix when the
+        # caller hasn't included one — matches the chart's primaryLLM
+        # endpoint convention which omits /v1.
+        base_url = llm_base_url.rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+        llm_provider_config["openai_base_url"] = base_url
+        llm_provider_config["api_key"] = llm_api_key
 
         self.config = {
             "llm": {
-                "provider": provider,
+                "provider": "openai",
                 "config": llm_provider_config,
             },
             "embedder": {

@@ -65,9 +65,9 @@ class MemoryAwareMixin:
         backend_port: int = 8080,
         embedding_model: str = "lightonai/DenseOn",
         llm_base_url: str = "http://localhost:11434",
+        llm_api_key: str = "not-required",
         config_manager=None,
         schema_loader=None,
-        provider: str = "ollama",
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
     ) -> bool:
@@ -84,12 +84,12 @@ class MemoryAwareMixin:
             backend_host: Backend endpoint host
             backend_port: Backend endpoint port
             embedding_model: Embedding model name for memory search
-            llm_base_url: OpenAI-compatible LLM API endpoint
+            llm_base_url: OpenAI-compatible LLM endpoint. ``/v1`` suffix
+                added automatically when missing.
+            llm_api_key: API key sent to ``llm_base_url``; defaults to
+                ``"not-required"`` for local Ollama / vLLM.
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
-            provider: LLM provider for Mem0 (e.g. "ollama", "openai"). The
-                embedder always uses Mem0's openai provider against
-                ``embedder_base_url`` regardless.
             backend_config_port: Backend config endpoint port (default: 19071)
             auto_create_schema: Auto-deploy tenant schema if not exists
 
@@ -115,12 +115,12 @@ class MemoryAwareMixin:
                     llm_model=llm_model,
                     embedding_model=embedding_model,
                     llm_base_url=llm_base_url,
+                    llm_api_key=llm_api_key,
                     embedder_base_url=embedder_base_url,
                     base_schema_name="agent_memories",
                     auto_create_schema=auto_create_schema,
                     config_manager=config_manager,
                     schema_loader=schema_loader,
-                    provider=provider,
                     backend_config_port=backend_config_port,
                 )
 
