@@ -58,8 +58,12 @@ RUN uv pip install "arize-phoenix-evals<3" && \
 # Default cuda keeps the historical wheel choice for unspecified builds;
 # the CLI (libs/cli/cogniverse_cli/images.py) detects the host backend
 # and builds the matching tag.
-ARG TORCH_BACKEND=cuda
-RUN case "$TORCH_BACKEND" in \
+ARG TORCH_BACKEND
+RUN if [ -z "$TORCH_BACKEND" ]; then \
+        echo "ERROR: TORCH_BACKEND build-arg is required (cpu|cuda|rocm). Use libs/cli/cogniverse_cli/images.py::build_images or pass --build-arg TORCH_BACKEND=<variant> explicitly." >&2; \
+        exit 1; \
+    fi && \
+    case "$TORCH_BACKEND" in \
         cpu) \
             uv pip install --reinstall \
                 --index-url https://download.pytorch.org/whl/cpu \
@@ -80,7 +84,7 @@ RUN case "$TORCH_BACKEND" in \
         cuda) \
             : ;; \
         *) \
-            echo "Unknown TORCH_BACKEND=$TORCH_BACKEND" >&2 && exit 1 ;; \
+            echo "Unknown TORCH_BACKEND=$TORCH_BACKEND (expected cpu|cuda|rocm)" >&2 && exit 1 ;; \
     esac && \
     rm -rf /root/.cache/uv /root/.cache/pip
 
