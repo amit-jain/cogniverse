@@ -6,54 +6,22 @@ This tests the core functionality used by the multi-agent system
 
 import argparse
 import json
-import logging
 import os
 import random
 import sys
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
+import torch
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from tests.test_utils import TestResultsFormatter
-
-COLPALI_MODEL = "vidore/colpali-v1.3-hf"
-_logger = logging.getLogger(__name__)
-
-
-def _spawn_colpali_client(vllm_sidecar):
-    sidecar_url = vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
-    loader = RemoteColPaliLoader(
-        model_name=COLPALI_MODEL,
-        config={"remote_inference_url": sidecar_url},
-        logger=_logger,
-    )
-    client, _ = loader.load_model()
-    return client
-
-
-def _encode_query(client, query_text):
-    result = client.process_queries([query_text], model_name=COLPALI_MODEL)
-    embeddings_np = np.asarray(result["embeddings"]).astype(np.float32)
-    if embeddings_np.ndim == 3:
-        embeddings_np = embeddings_np.squeeze(0)
-    return embeddings_np
 
 
 def load_test_queries(num_queries=5, seed=42):
@@ -251,30 +219,59 @@ def test_colpali_search(output_format="table", save_results=False, num_queries=5
 
 
 def test_float_float_search(
-    vllm_sidecar, output_format="table", save_results=False, monkeypatch=None
+    output_format="table", save_results=False, monkeypatch=None
 ):
     """Test pure float visual search"""
 
+    # Set required environment variable for Vespa schema
     if monkeypatch:
         monkeypatch.setenv("VESPA_SCHEMA", "video_colpali_smol500_mv_frame")
     else:
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
+    # Initialize results formatter
     formatter = TestResultsFormatter("colpali_float_float")
 
+    # Load config
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
+    model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("backend_url", "http://localhost")
     vespa_port = config.get("backend_port", 8080)
 
-    print("\n\n=== Testing Float-Float Visual Search ===")
-    colpali_client = _spawn_colpali_client(vllm_sidecar)
-    print("✅ ColPali sidecar ready")
+    # Use same device detection as video agent
+    if torch.cuda.is_available():
+        device = "cuda"
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32
+    else:
+        device = "cpu"
+        dtype = torch.float32
 
+    print("\n\n=== Testing Float-Float Visual Search ===")
+    print(f"Loading ColPali model from config: {model_name}")
+    print(f"Device: {device}, dtype: {dtype}")
+
+    col_model = ColIdefics3.from_pretrained(
+        model_name, torch_dtype=dtype, device_map=device
+    ).eval()
+
+    col_processor = ColIdefics3Processor.from_pretrained(model_name)
+    print("✅ ColPali model loaded")
+
+    # Create a test query
     test_query = "doctor explaining medical procedures"
     print(f"\nTest query: '{test_query}'")
 
-    embeddings_np = _encode_query(colpali_client, test_query)
+    # Encode query
+    batch_queries = col_processor.process_queries([test_query]).to(device)
+    with torch.no_grad():
+        query_embeddings = col_model(**batch_queries)
+
+    # Convert to numpy
+    embeddings_np = query_embeddings.cpu().numpy().squeeze(0)
     print(f"Query embedding shape: {embeddings_np.shape}")
     print(f"Embeddings dtype: {embeddings_np.dtype}")
 
@@ -345,31 +342,58 @@ def test_float_float_search(
         traceback.print_exc()
 
 
-def test_hybrid_float_bm25(
-    vllm_sidecar, output_format="table", save_results=False, monkeypatch=None
-):
+def test_hybrid_float_bm25(output_format="table", save_results=False, monkeypatch=None):
     """Test hybrid search with float embeddings - exactly like video agent"""
 
+    # Set required environment variable for Vespa schema
     if monkeypatch:
         monkeypatch.setenv("VESPA_SCHEMA", "video_colpali_smol500_mv_frame")
     else:
         os.environ["VESPA_SCHEMA"] = "video_colpali_smol500_mv_frame"
 
+    # Initialize results formatter
     formatter = TestResultsFormatter("colpali_hybrid_float_bm25")
 
+    # Load config
     config_manager = create_default_config_manager()
     config = get_config(tenant_id="test_tenant", config_manager=config_manager)
+    model_name = config.get("colpali_model", "vidore/colsmol-500m")
     vespa_url = config.get("backend_url", "http://localhost")
     vespa_port = config.get("backend_port", 8080)
 
-    print("\n\n=== Testing Hybrid Float BM25 (like video agent) ===")
-    colpali_client = _spawn_colpali_client(vllm_sidecar)
-    print("✅ ColPali sidecar ready")
+    # Use same device detection as video agent
+    if torch.cuda.is_available():
+        device = "cuda"
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32
+    else:
+        device = "cpu"
+        dtype = torch.float32
 
+    print("\n\n=== Testing Hybrid Float BM25 (like video agent) ===")
+    print(f"Loading ColPali model from config: {model_name}")
+    print(f"Device: {device}, dtype: {dtype}")
+
+    col_model = ColIdefics3.from_pretrained(
+        model_name, torch_dtype=dtype, device_map=device
+    ).eval()
+
+    col_processor = ColIdefics3Processor.from_pretrained(model_name)
+    print("✅ ColPali model loaded")
+
+    # Create a test query
     test_query = "doctor explaining medical procedures"
     print(f"\nTest query: '{test_query}'")
 
-    embeddings_np = _encode_query(colpali_client, test_query)
+    # Encode query - EXACTLY like video agent does
+    batch_queries = col_processor.process_queries([test_query]).to(device)
+    with torch.no_grad():
+        query_embeddings = col_model(**batch_queries)
+
+    # Convert to numpy like video agent
+    embeddings_np = query_embeddings.cpu().numpy().squeeze(0)
     print(f"Query embedding shape: {embeddings_np.shape}")
     print(f"Embeddings dtype: {embeddings_np.dtype}")
 
@@ -477,28 +501,18 @@ if __name__ == "__main__":
     print("Running ColPali search tests...")
     print("=" * 60)
 
-    from tests.utils.vllm_sidecar import VllmSidecarFactory
+    if args.test in ["binary", "all"]:
+        print("\n🔍 Binary Search Test:")
+        test_colpali_search(
+            output_format=output_format,
+            save_results=args.save,
+            num_queries=args.num_queries,
+        )
 
-    factory = VllmSidecarFactory()
-    try:
-        if args.test in ["binary", "all"]:
-            print("\n🔍 Binary Search Test:")
-            test_colpali_search(
-                output_format=output_format,
-                save_results=args.save,
-                num_queries=args.num_queries,
-            )
+    if args.test in ["float", "all"]:
+        print("\n🔍 Float-Float Search Test:")
+        test_float_float_search(output_format=output_format, save_results=args.save)
 
-        if args.test in ["float", "all"]:
-            print("\n🔍 Float-Float Search Test:")
-            test_float_float_search(
-                factory, output_format=output_format, save_results=args.save
-            )
-
-        if args.test in ["hybrid", "all"]:
-            print("\n🔍 Hybrid Float+BM25 Test:")
-            test_hybrid_float_bm25(
-                factory, output_format=output_format, save_results=args.save
-            )
-    finally:
-        factory.teardown()
+    if args.test in ["hybrid", "all"]:
+        print("\n🔍 Hybrid Float+BM25 Test:")
+        test_hybrid_float_bm25(output_format=output_format, save_results=args.save)

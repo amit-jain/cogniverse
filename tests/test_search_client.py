@@ -12,31 +12,64 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
+import torch
 
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from colpali_engine.models import ColIdefics3, ColIdefics3Processor
+
 from cogniverse_agents.search.service import SearchService
-from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_vespa.vespa_search_client import RankingStrategy, VespaVideoSearchClient
 
+# Setup logging with more verbose output
 logging.basicConfig(
     level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout
 )
 logger = logging.getLogger(__name__)
 
-COLPALI_MODEL = "vidore/colpali-v1.3-hf"
+
+def load_colpali_model():
+    """Load ColPali model for embedding generation"""
+    config_manager = create_default_config_manager()
+    config = get_config(tenant_id="test_tenant", config_manager=config_manager)
+    model_name = config.get("colpali_model", "vidore/colsmol-500m")
+
+    # Use same device detection as video agent
+    if torch.cuda.is_available():
+        device = "cuda"
+        dtype = torch.bfloat16
+    elif torch.backends.mps.is_available():
+        device = "mps"
+        dtype = torch.float32
+    else:
+        device = "cpu"
+        dtype = torch.float32
+
+    logger.info(f"Loading ColPali model: {model_name}")
+    logger.info(f"Device: {device}, dtype: {dtype}")
+
+    col_model = ColIdefics3.from_pretrained(
+        model_name, torch_dtype=dtype, device_map=device
+    ).eval()
+
+    col_processor = ColIdefics3Processor.from_pretrained(model_name)
+    logger.info("✅ ColPali model loaded")
+
+    return col_model, col_processor, device
 
 
-def generate_test_embeddings(client, query_text):
-    """Encode a query via the remote ColPali sidecar."""
-    result = client.process_queries([query_text], model_name=COLPALI_MODEL)
-    embeddings_np = np.asarray(result["embeddings"]).astype(np.float32)
-    if embeddings_np.ndim == 3:
-        embeddings_np = embeddings_np.squeeze(0)
+def generate_test_embeddings(col_model, col_processor, device, query_text):
+    """Generate embeddings for a test query"""
+    batch_queries = col_processor.process_queries([query_text]).to(device)
+    with torch.no_grad():
+        query_embeddings = col_model(**batch_queries)
+
+    # Convert to numpy
+    embeddings_np = query_embeddings.cpu().numpy().squeeze(0)
     logger.info(f"Generated embeddings with shape: {embeddings_np.shape}")
+
     return embeddings_np
 
 
@@ -160,9 +193,7 @@ def analyze_ranking_results(results_df, strategy_performance):
                 print(f"  {strategy}: {perf['top_score']:.4f}")
 
 
-def test_ranking_strategies(
-    vllm_sidecar, query=None, table_output=False, show_analysis=True
-):
+def test_ranking_strategies(query=None, table_output=False, show_analysis=True):
     """Test all ranking strategies with appropriate inputs"""
 
     print("\n--- STARTING test_ranking_strategies ---")
@@ -269,27 +300,12 @@ def test_ranking_strategies(
                 print(error_line)
                 logger.error(error_line)
 
-    # Spawn vLLM ColPali sidecar for visual-strategy embeddings.
-    print("\n=== Spawning ColPali vLLM Sidecar for Visual Strategies ===")
-    logger.info("\n=== Spawning ColPali vLLM Sidecar for Visual Strategies ===")
-    sidecar_url = vllm_sidecar.spawn(
-        model=COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
-    colpali_loader = RemoteColPaliLoader(
-        model_name=COLPALI_MODEL,
-        config={"remote_inference_url": sidecar_url},
-        logger=logger,
-    )
-    colpali_client, _ = colpali_loader.load_model()
-    embeddings = generate_test_embeddings(colpali_client, test_query)
+    # Load ColPali model for visual strategies
+    print("\n=== Loading ColPali Model for Visual Strategies ===")
+    logger.info("\n=== Loading ColPali Model for Visual Strategies ===")
+    col_model, col_processor, device = load_colpali_model()
+    print("ColPali model loaded, generating embeddings...")
+    embeddings = generate_test_embeddings(col_model, col_processor, device, test_query)
     print(f"Embeddings generated with shape: {embeddings.shape}")
 
     # Test pure visual strategies
@@ -642,15 +658,9 @@ if __name__ == "__main__":
     logger.info("🚀 Starting comprehensive search client test...")
     print("Logger initialized, starting tests...")
 
-    from tests.utils.vllm_sidecar import VllmSidecarFactory
-
-    factory = VllmSidecarFactory()
     try:
         test_ranking_strategies(
-            factory,
-            args.query,
-            table_output=args.table,
-            show_analysis=not args.no_analysis,
+            args.query, table_output=args.table, show_analysis=not args.no_analysis
         )
         print("Ranking strategies test completed")
 
@@ -663,8 +673,6 @@ if __name__ == "__main__":
         import traceback
 
         traceback.print_exc()
-    finally:
-        factory.teardown()
 
     logger.info("\n🎉 Test completed!")
     print("ALL TESTS FINISHED")
