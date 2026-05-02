@@ -221,7 +221,7 @@ def config_manager(vespa_instance):
             profile_name="test_colpali",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="vidore/colpali-v1.3-hf",
         ),
         tenant_id="test:unit",
     )

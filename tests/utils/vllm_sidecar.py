@@ -23,6 +23,7 @@ warmed cache responds in <2 min including model load.
 
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import time
@@ -34,6 +35,7 @@ import requests
 
 DEFAULT_IMAGE = "vllm/vllm-openai-cpu:latest"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
+HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
 
 
 def _free_port() -> int:
@@ -100,17 +102,18 @@ class VllmSidecarFactory:
             "docker",
             "run",
             "-d",
-            "--rm",
             "--name",
             container,
             "-p",
             f"{port}:8000",
-            image,
-            "--model",
-            model,
         ]
-        if extra_args:
-            cmd.extend(extra_args)
+        if os.path.isdir(HOST_HF_CACHE):
+            cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])
+        cmd.extend([image, "--model", model])
+        merged_args = list(extra_args or [])
+        if not any(arg == "--gpu-memory-utilization" for arg in merged_args):
+            merged_args.extend(["--gpu-memory-utilization", "0.10"])
+        cmd.extend(merged_args)
         subprocess.run(cmd, check=True, timeout=60)
 
         base_url = f"http://127.0.0.1:{port}"
