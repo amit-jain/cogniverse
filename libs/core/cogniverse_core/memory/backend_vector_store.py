@@ -287,7 +287,10 @@ class BackendVectorStore(VectorStoreBase):
                 if "agent_id" in payload:
                     metadata["agent_id"] = payload["agent_id"]
                 if "metadata" in payload:
-                    metadata["metadata_"] = payload["metadata"]
+                    raw = payload["metadata"]
+                    metadata["metadata_"] = (
+                        json.dumps(raw) if isinstance(raw, dict) else raw
+                    )
                 if "created_at" in payload:
                     metadata["created_at"] = payload["created_at"]
 

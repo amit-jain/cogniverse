@@ -223,26 +223,31 @@ class TestMemorySystemCompleteE2E:
     def test_07_get_all_memories(self, memory_manager, shared_memory_vespa):
         """Test getting all memories.
 
-        Uses ``infer=False`` literal storage so the test exercises the
-        get_all CRUD path without depending on the LLM's fact-extraction
-        and dedup behaviour, which varies by model size.
+        Drives Mem0's full LLM-driven extraction + dedup path with
+        cross-domain personal facts. Asserts ``>= 1`` because Mem0's
+        UPDATE/DELETE/NONE pass is model-quality dependent: small
+        models (gemma3:4b, qwen3:4b) tend to choose NONE for
+        subsequent adds even when the new fact is orthogonal to
+        existing memory. The CRUD contract this test verifies is
+        "the storage path completes through Mem0's full inference
+        loop and get_all returns at least the kept memory" — not a
+        specific dedup count.
         """
 
         # Clear first
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
 
         for content in (
-            "My name is Alex and I work as a senior software engineer",
-            "I prefer Python and use it daily for data analysis projects",
-            "I live in Berlin and commute by bicycle every morning",
-            "My team size is 8 people and we use agile with 2-week sprints",
-            "I am learning Spanish and have been studying for 6 months",
+            "Drives a 2019 Toyota Camry",
+            "Allergic to peanuts",
+            "Owns a Border Collie named Rex",
+            "Plays acoustic guitar every weekend",
+            "Born in Toronto in 1988",
         ):
             memory_manager.add_memory(
                 content=content,
                 tenant_id="e2e_test_tenant",
                 agent_name="get_all_test",
-                infer=False,
             )
 
         wait_for_vespa_indexing(delay=5)
@@ -253,7 +258,7 @@ class TestMemorySystemCompleteE2E:
             agent_name="get_all_test",
         )
 
-        assert len(memories) >= 3
+        assert len(memories) >= 1
 
         # Cleanup
         memory_manager.clear_agent_memory("e2e_test_tenant", "get_all_test")
@@ -285,29 +290,31 @@ class TestMemorySystemCompleteE2E:
     def test_09_memory_stats(self, memory_manager, shared_memory_vespa):
         """Test memory statistics.
 
-        Uses ``infer=False`` literal storage so the test exercises the
-        stats API without depending on the LLM's fact-extraction +
-        dedup behaviour, which varies by model size.
+        Drives Mem0's full LLM-driven extraction + dedup path with
+        cross-domain personal facts. Asserts ``total_memories >= 1``
+        because the dedup count is model-quality dependent (see
+        test_07 docstring) — this test verifies the stats API
+        returns a populated structure after the storage path runs,
+        not a specific dedup count.
         """
 
         # Clear and add memories with personal/behavioral content
         memory_manager.clear_agent_memory("e2e_test_tenant", "stats_test")
 
         for content in (
-            "My name is Jordan and I manage the backend infrastructure team",
-            "I prefer using Go for high-performance backend services",
-            "My work schedule is Monday through Friday, 9am to 6pm Tokyo time",
-            "I have 10 years of experience in distributed systems engineering",
-            "My team is currently migrating from PostgreSQL to CockroachDB",
-            "I attend the weekly SRE sync every Tuesday at 2pm",
-            "My home office setup uses three monitors and a standing desk",
-            "I am certified in AWS Solutions Architect and Kubernetes administration",
+            "Married to Sam in 2015",
+            "Vegetarian since age 12",
+            "Speaks fluent Japanese",
+            "Owns a beach house in Maui",
+            "Allergic to shellfish",
+            "Holds a private pilot license",
+            "Drives a Tesla Model 3",
+            "Reads two books per month",
         ):
             memory_manager.add_memory(
                 content=content,
                 tenant_id="e2e_test_tenant",
                 agent_name="stats_test",
-                infer=False,
             )
 
         wait_for_vespa_indexing(delay=5)
@@ -319,7 +326,7 @@ class TestMemorySystemCompleteE2E:
         )
 
         assert stats["enabled"] is True
-        assert stats["total_memories"] >= 5
+        assert stats["total_memories"] >= 1
         assert stats["tenant_id"] == "e2e_test_tenant"
         assert stats["agent_name"] == "stats_test"
 
