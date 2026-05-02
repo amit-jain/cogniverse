@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import requests
+import torch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -26,7 +27,7 @@ eval_logger = logging.getLogger(__name__)
 
 # Path to schema JSON files
 EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
-EVAL_COLPALI_MODEL = "vidore/colpali-v1.3-hf"
+EVAL_COLPALI_MODEL = "vidore/colsmol-500m"
 # Schema name MUST match what ``VespaSearchBackend`` constructs from the
 # tenant_id used in tests. The runtime builds
 # ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` (see
@@ -545,38 +546,26 @@ def eval_vespa_instance():
 
 
 @pytest.fixture(scope="module")
-def eval_vllm_colpali_url(vllm_sidecar):
-    return vllm_sidecar.spawn(
-        model=EVAL_COLPALI_MODEL,
-        extra_args=[
-            "--runner",
-            "pooling",
-            "--convert",
-            "embed",
-            "--max-model-len",
-            "4096",
-        ],
-    )
-
-
-@pytest.fixture(scope="module")
-def eval_colpali_client(eval_vllm_colpali_url):
-    """Real vLLM-served ColPali via RemoteColPaliLoader."""
-    from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
+def eval_colpali_model():
+    """Load ColPali model once for evaluation integration tests."""
+    from cogniverse_core.common.models import get_or_load_model
     from cogniverse_core.query.encoders import QueryEncoderFactory
 
-    loader = RemoteColPaliLoader(
-        model_name=EVAL_COLPALI_MODEL,
-        config={"remote_inference_url": eval_vllm_colpali_url},
-        logger=eval_logger,
-    )
-    client, _ = loader.load_model()
-    yield client
+    config = {
+        "colpali_model": EVAL_COLPALI_MODEL,
+        "embedding_type": "multi_vector",
+        "model_loader": "colpali",
+    }
+    model, processor = get_or_load_model(EVAL_COLPALI_MODEL, config, eval_logger)
+    device = next(model.parameters()).device
+
+    yield model, processor, device
+
     QueryEncoderFactory._encoder_cache.clear()
 
 
 @pytest.fixture(scope="module")
-def eval_seeded_documents(eval_vespa_instance, eval_colpali_client):
+def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
     """Feed real ColPali-embedded documents into Vespa for evaluation tests.
 
     Documents are assembled via :class:`DocumentBuilder` with a populated
@@ -591,6 +580,7 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_client):
         DocumentMetadata,
     )
 
+    model, processor, device = eval_colpali_model
     test_videos_dir = (
         Path(__file__).resolve().parents[1] / "system" / "resources" / "videos"
     )
@@ -624,12 +614,10 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_client):
 
     for i, doc_info in enumerate(test_docs):
         img = Image.new("RGB", (224, 224), color=doc_info["color"])
-        result = eval_colpali_client.process_images(
-            [img], model_name=EVAL_COLPALI_MODEL
-        )
-        embeddings_np = np.asarray(
-            result.get("embeddings") if isinstance(result, dict) else result
-        ).astype(np.float32)
+        batch_inputs = processor.process_images([img]).to(device)
+        with torch.no_grad():
+            doc_embeddings = model(**batch_inputs)
+        embeddings_np = doc_embeddings.squeeze(0).cpu().float().numpy()
 
         float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
 
