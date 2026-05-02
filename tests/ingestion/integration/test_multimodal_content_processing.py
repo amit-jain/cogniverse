@@ -26,7 +26,7 @@ import pytest
 from vespa.application import Vespa
 from vespa.package import ApplicationPackage
 
-from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_runtime.ingestion.processors.audio_embedding_generator import (
     AudioEmbeddingGenerator,
@@ -44,11 +44,6 @@ from tests.utils.docker_utils import generate_unique_ports
 MULTIMODAL_HTTP_PORT, MULTIMODAL_CONFIG_PORT = generate_unique_ports(__name__)
 
 COLBERT_MODEL_NAME = "lightonai/Reason-ModernColBERT"
-COLBERT_CONFIG = {
-    "model_loader": "colbert",
-    "embedding_type": "multi_vector",
-    "embedding_model": COLBERT_MODEL_NAME,
-}
 
 CLAP_MODEL_NAME = "laion/clap-htsat-unfused"
 
@@ -135,9 +130,19 @@ class _BackendAdapter:
 
 
 @pytest.fixture(scope="module")
-def colbert_model():
-    """Load real ColBERT model via ModelLoaderFactory — cached across all tests in module."""
-    model, _ = get_or_load_model(COLBERT_MODEL_NAME, COLBERT_CONFIG)
+def pylate_colbert_url(pylate_sidecar):
+    return pylate_sidecar.spawn(model=COLBERT_MODEL_NAME, mode="multi_vector")
+
+
+@pytest.fixture(scope="module")
+def colbert_model(pylate_colbert_url):
+    """Real ColBERT served by the pylate sidecar; routed through
+    RemoteColBERTLoader so tests exercise the production code path."""
+    loader = RemoteColBERTLoader(
+        model_name=COLBERT_MODEL_NAME,
+        config={"remote_inference_url": pylate_colbert_url},
+    )
+    model, _ = loader.load_model()
     return model
 
 
