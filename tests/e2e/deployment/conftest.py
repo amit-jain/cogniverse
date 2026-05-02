@@ -319,6 +319,7 @@ def deployed_stack(k3d_cluster):
     # ``runtime.imagesByBackend[backend]``. PREDOWNLOAD_MODELS is on by
     # default so the agent pipeline starts fast; flip the env var off to
     # save image build time when the tests don't exercise inference.
+    from cogniverse_cli.config import get_device_values_file
     from cogniverse_cli.images import (
         build_images,
         detect_torch_backend,
@@ -326,6 +327,7 @@ def deployed_stack(k3d_cluster):
     )
 
     backend = detect_torch_backend()
+    device_values_file = get_device_values_file(backend, project_root=project_root)
 
     # Build the canonical image set the chart's k3s values enable —
     # runtime + dashboard for the host's torch backend, plus the
@@ -405,6 +407,7 @@ def deployed_stack(k3d_cluster):
         "--create-namespace",
         "-f",
         str(values_file),
+        *(["-f", str(device_values_file)] if device_values_file else []),
         "--timeout",
         "20m",
     ]
