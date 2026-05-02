@@ -53,6 +53,7 @@ dependencies = [
 [project.optional-dependencies]
 vespa = ["cogniverse-vespa"]
 agents = ["cogniverse-agents"]
+torch-local = ["cogniverse-agents[torch-local]"]
 # Opt-in for in-process Whisper. Production deployments POST audio to
 # the vLLM ASR sidecar via AudioProcessor(endpoint=...) and never need
 # these wheels. Install with `pip install cogniverse-runtime[whisper-local]`

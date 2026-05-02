@@ -17,24 +17,29 @@ dependencies = [
     # Google Agent Development Kit for composing agent
     "google-adk==1.14.1",
 
-    # Machine Learning for embeddings and models
-    "torch==2.8.0",
-    "transformers==4.56.2",
-    "colpali-engine==0.3.13",
-    "sentence-transformers==5.1.1",
-
-    # Optimization and ML
+    # Optimization and ML (xgboost gate routing — small, no torch dep).
     "xgboost==3.2.0",
     "scikit-learn==1.8.0",
     "scipy==1.17.1",
 
-    # NLP and language
+    # NLP and language (spacy + langextract pure Python, no torch).
     "spacy==3.8.14",
-    "gliner==0.2.26",
     "langextract==1.2.1",
 
     # MLflow for experiment tracking
     "mlflow==3.11.1",
+]
+
+[project.optional-dependencies]
+# Heavy ML stack for the in-process inference fallback paths.
+# Production routes through vLLM / pylate sidecars and never imports
+# these — install only for offline dev / local-path tests.
+torch-local = [
+    "torch==2.8.0",
+    "transformers==4.56.2",
+    "colpali-engine==0.3.13",
+    "sentence-transformers==5.1.1",
+    "gliner==0.2.26",
 ]
 
 [tool.uv.sources]
