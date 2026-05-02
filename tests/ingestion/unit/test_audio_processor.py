@@ -11,6 +11,7 @@ import pytest
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 
 
+@pytest.mark.requires_whisper
 class TestAudioProcessor:
     """Test cases for AudioProcessor."""
 
@@ -316,6 +317,7 @@ class TestAudioProcessor:
         assert processor.language == "en"
 
 
+@pytest.mark.requires_whisper
 class TestAudioProcessorCaching:
     """Test caching behavior of AudioProcessor."""
 

@@ -5,6 +5,7 @@ Provides common test utilities, mock objects, and fixtures
 for testing the video processing pipeline.
 """
 
+import importlib.util
 import logging
 import shutil
 import tempfile
@@ -21,6 +22,30 @@ TEST_VIDEO_WIDTH = 640
 TEST_VIDEO_HEIGHT = 480
 TEST_VIDEO_FPS = 30
 TEST_VIDEO_DURATION = 5  # seconds
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-skip ``requires_whisper`` tests when the whisper-local
+    extra isn't installed. Duplicated from ``tests/conftest.py``
+    because ``tests/ingestion/pytest.ini`` makes this the rootdir,
+    so the project-level conftest is outside the discovery boundary
+    when invoking from inside ``tests/ingestion/``."""
+    have_whisper = all(
+        importlib.util.find_spec(name) is not None
+        for name in ("whisper", "faster_whisper")
+    )
+    if have_whisper:
+        return
+    skip = pytest.mark.skip(
+        reason=(
+            "whisper-local extra not installed; install with "
+            "`uv sync --package cogniverse-runtime --extra whisper-local` "
+            "or run the e2e ASR tests against the cluster sidecar"
+        )
+    )
+    for item in items:
+        if "requires_whisper" in item.keywords:
+            item.add_marker(skip)
 
 
 @pytest.fixture

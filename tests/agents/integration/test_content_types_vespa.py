@@ -308,6 +308,7 @@ class TestContentTypeVespaSchemas:
         assert doc_data["fields"]["image_id"] == "img_test_001"
         print("✅ Image document retrieved successfully")
 
+    @pytest.mark.requires_whisper
     def test_audio_content_document_ingestion(self, test_vespa_manager):
         """Test ingesting sample audio documents with real Whisper transcription and embeddings"""
         print("\n" + "-" * 80)

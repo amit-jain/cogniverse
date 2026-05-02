@@ -87,6 +87,37 @@ except ImportError:
     pass
 
 
+def _whisper_local_installed() -> bool:
+    """True when both packages from the
+    ``cogniverse-runtime[whisper-local]`` extra are importable. The
+    extra is opt-in so production runtime images don't ship them —
+    tests that exercise the in-process Whisper loader (or patch
+    ``whisper`` / ``faster_whisper`` import targets) must skip without
+    it. The vLLM ASR sidecar handles transcription in production."""
+    return all(
+        importlib.util.find_spec(name) is not None
+        for name in ("whisper", "faster_whisper")
+    )
+
+
+def pytest_collection_modifyitems(items):
+    """Auto-skip ``requires_whisper`` tests when the whisper-local
+    extra isn't installed, mirroring the runtime image's opt-in
+    boundary."""
+    if _whisper_local_installed():
+        return
+    skip = pytest.mark.skip(
+        reason=(
+            "whisper-local extra not installed; install with "
+            "`uv sync --package cogniverse-runtime --extra whisper-local` "
+            "or run the e2e ASR tests against the cluster sidecar"
+        )
+    )
+    for item in items:
+        if "requires_whisper" in item.keywords:
+            item.add_marker(skip)
+
+
 def cleanup_background_threads():
     """
     Clean up background threads from tqdm (transformers) and posthog (mem0ai).
