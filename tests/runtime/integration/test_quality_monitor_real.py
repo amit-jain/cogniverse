@@ -17,10 +17,9 @@ import httpx
 import numpy as np
 import pytest
 import requests
-import torch
 from PIL import Image
 
-from cogniverse_core.common.models import get_or_load_model
+from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_evaluation.quality_monitor import (
     AgentType,
@@ -32,7 +31,7 @@ from tests.utils.llm_config import get_llm_model
 
 logger = logging.getLogger(__name__)
 
-COLPALI_MODEL_NAME = "vidore/colsmol-500m"
+COLPALI_MODEL_NAME = "vidore/colpali-v1.3-hf"
 TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_qm_real_test"
 
 
@@ -47,21 +46,34 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
 
 
 @pytest.fixture(scope="module")
-def colpali_model():
-    """Load ColPali model once."""
-    config = {
-        "colpali_model": COLPALI_MODEL_NAME,
-        "embedding_type": "multi_vector",
-        "model_loader": "colpali",
-    }
-    model, processor = get_or_load_model(COLPALI_MODEL_NAME, config, logger)
-    device = next(model.parameters()).device
-    yield model, processor, device
+def vllm_colpali_url(vllm_sidecar):
+    return vllm_sidecar.spawn(
+        model=COLPALI_MODEL_NAME,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
+
+
+@pytest.fixture(scope="module")
+def colpali_client(vllm_colpali_url):
+    loader = RemoteColPaliLoader(
+        model_name=COLPALI_MODEL_NAME,
+        config={"remote_inference_url": vllm_colpali_url},
+        logger=logger,
+    )
+    client, _ = loader.load_model()
+    yield client
     QueryEncoderFactory._encoder_cache.clear()
 
 
 @pytest.fixture(scope="module")
-def seeded_vespa(vespa_instance, colpali_model, config_manager, schema_loader):
+def seeded_vespa(vespa_instance, colpali_client, config_manager, schema_loader):
     """Feed test documents into Vespa with real ColPali embeddings.
 
     Deploys the tenant-scoped schema for the ``qm_real_test`` tenant via
@@ -151,7 +163,6 @@ def seeded_vespa(vespa_instance, colpali_model, config_manager, schema_loader):
     # see the schema; a small post-search buffer avoids a racy first feed.
     time.sleep(5)
 
-    model, processor, device = colpali_model
     http_port = vespa_instance["http_port"]
 
     test_docs = [
@@ -174,10 +185,10 @@ def seeded_vespa(vespa_instance, colpali_model, config_manager, schema_loader):
 
     for i, doc_info in enumerate(test_docs):
         img = Image.new("RGB", (224, 224), color=doc_info["color"])
-        batch_inputs = processor.process_images([img]).to(device)
-        with torch.no_grad():
-            doc_embeddings = model(**batch_inputs)
-        embeddings_np = doc_embeddings.squeeze(0).cpu().float().numpy()
+        result = colpali_client.process_images([img], model_name=COLPALI_MODEL_NAME)
+        embeddings_np = np.asarray(
+            result.get("embeddings") if isinstance(result, dict) else result
+        ).astype(np.float32)
         float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
 
         doc_id = f"qm_test_doc_{i}"
