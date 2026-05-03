@@ -116,6 +116,17 @@ hostStorage:
   # bind-mounted. Per-service subdirs (vespa/, phoenix/) are created
   # inside automatically.
   path: /host-data
+  # Optional MinIO DR snapshots — nightly CronWorkflows that tar the
+  # vespa + phoenix data dirs out of the live pod (kubectl exec) and
+  # upload to ``s3://<bucket>/{vespa,phoenix}/<timestamp>.tar``.
+  # Default off; not crash-consistent (uses live read while Vespa is
+  # writing) but workable for periodic disaster-recovery snapshots.
+  backup:
+    enabled: false
+    bucket: cogniverse-backups
+    existingSecret: ""
+    schedule: "0 3 * * *"
+    retainLast: 7
 
 # ===========================================
 # HuggingFace cache sharing

@@ -1,0 +1,137 @@
+{{- /*
+Nightly DR snapshots for vespa + phoenix data → MinIO. Each
+CronWorkflow runs two-step: (1) kubectl-exec into the live pod and
+tar the data dir to a workflow-scoped staging volume; (2) mc cp the
+tarball to s3://<bucket>/{vespa,phoenix}/<timestamp>.tar.
+
+Not crash-consistent — Vespa keeps writing while we tar. Acceptable
+for periodic DR snapshots; for stronger guarantees use CSI volume
+snapshots at the storage-class level.
+*/}}
+{{- if .Values.hostStorage.backup.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- $bk := .Values.hostStorage.backup -}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-backup-exec
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-backup-exec
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-backup-exec
+subjects:
+- kind: ServiceAccount
+  name: {{ include "cogniverse.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+
+{{- range $svc := list "vespa" "phoenix" }}
+{{- $dataPath := "/opt/vespa/var" }}
+{{- if eq $svc "phoenix" }}{{ $dataPath = "/mnt/data" }}{{ end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-backup-{{ $svc }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ $bk.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  workflowSpec:
+    entrypoint: snapshot
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
+    volumeClaimTemplates:
+    - metadata:
+        name: stage
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 20Gi
+    templates:
+    - name: snapshot
+      steps:
+      - - name: dump
+          template: dump
+      - - name: upload
+          template: upload
+    - name: dump
+      container:
+        image: bitnami/kubectl:latest
+        command: [sh, -c]
+        args:
+        - |
+          set -eu
+          POD=$(kubectl -n {{ $.Release.Namespace }} get pod \
+            -l app.kubernetes.io/component={{ $svc }} \
+            -o jsonpath='{.items[0].metadata.name}')
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "Snapshotting $POD:{{ $dataPath }} → /stage/{{ $svc }}-$STAMP.tar"
+          kubectl -n {{ $.Release.Namespace }} exec "$POD" -- \
+            tar -cf - -C "$(dirname {{ $dataPath }})" "$(basename {{ $dataPath }})" \
+            > /stage/{{ $svc }}-$STAMP.tar
+        volumeMounts:
+        - name: stage
+          mountPath: /stage
+    - name: upload
+      container:
+        image: minio/mc:latest
+        env:
+        - name: MINIO_ENDPOINT
+          value: "http://{{ $fullName }}-minio:9000"
+        - name: MINIO_BUCKET
+          value: {{ $bk.bucket | quote }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $bk.existingSecret | quote }}
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $bk.existingSecret | quote }}
+              key: rootPassword
+        - name: RETAIN_LAST
+          value: {{ $bk.retainLast | quote }}
+        command: [sh, -c]
+        args:
+        - |
+          set -eu
+          mc alias set dest "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+          mc mb --ignore-existing "dest/$MINIO_BUCKET"
+          mc cp /stage/{{ $svc }}-*.tar "dest/$MINIO_BUCKET/{{ $svc }}/"
+          # Retention: drop all but the most recent N snapshots.
+          mc ls "dest/$MINIO_BUCKET/{{ $svc }}/" | sort -r | \
+            awk -v keep="$RETAIN_LAST" 'NR>keep {print $NF}' | \
+            while read f; do
+              [ -n "$f" ] && mc rm "dest/$MINIO_BUCKET/{{ $svc }}/$f"
+            done
+        volumeMounts:
+        - name: stage
+          mountPath: /stage
+{{- end }}
+{{- end }}
