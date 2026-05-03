@@ -121,14 +121,18 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
+        {{- if $.Values.hfCache.enabled }}
         hostPath:
-          {{- if $.Values.hfCache.enabled }}
           path: {{ $.Values.hfCache.path }}
           type: Directory
-          {{- else }}
+        {{- else if $.Values.hfCache.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-ingestor-model-cache
+        {{- else }}
+        hostPath:
           path: /var/lib/cogniverse/hf-cache/runtime
           type: DirectoryOrCreate
-          {{- end }}
+        {{- end }}
       {{- if .Values.devMode.enabled }}
       - name: src
         hostPath:

@@ -539,14 +539,18 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
+        {{- if $.Values.hfCache.enabled }}
         hostPath:
-          {{- if $.Values.hfCache.enabled }}
           path: {{ $.Values.hfCache.path }}
           type: Directory
-          {{- else }}
+        {{- else if $.Values.hfCache.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-runtime-model-cache
+        {{- else }}
+        hostPath:
           path: /var/lib/cogniverse/hf-cache/runtime
           type: DirectoryOrCreate
-          {{- end }}
+        {{- end }}
       {{- if eq $runtimeBackend "rocm" }}
       # ROCm device passthrough. The k3d cluster must mount /dev/kfd
       # and /dev/dri from the host (deployment-e2e conftest does this
@@ -1643,23 +1647,21 @@ spec:
         {{- end }}
       volumes:
       - name: model-cache
-        # When ``hfCache.enabled`` is true (set by dev/k3s overlays),
-        # every inference pod reads from the same on-host HuggingFace
-        # cache the developer already populates with ``hf download``.
-        # The k3d cluster bind-mounts ``~/.cache/huggingface`` into the
-        # node at ``hfCache.path`` (cluster.py ``create_cluster``);
-        # pods see it at ``/root/.cache/huggingface``. Falls back to
-        # the legacy per-service hostPath when ``hfCache.enabled`` is
-        # false (production clusters where the host has no cache to
-        # share — pods download lazily into a node-local dir).
+        # Three-way: dev hostPath via hfCache.enabled (host bind-mount),
+        # prod PVC via hfCache.persistence.enabled (survives node loss),
+        # else legacy node-local hostPath (lost on node replacement).
+        {{- if $.Values.hfCache.enabled }}
         hostPath:
-          {{- if $.Values.hfCache.enabled }}
           path: {{ $.Values.hfCache.path }}
           type: Directory
-          {{- else }}
+        {{- else if $.Values.hfCache.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-{{ $name | kebabcase }}-model-cache
+        {{- else }}
+        hostPath:
           path: /var/lib/cogniverse/hf-cache/{{ $name }}
           type: DirectoryOrCreate
-          {{- end }}
+        {{- end }}
       {{- if eq $device "rocm" }}
       - name: kfd
         hostPath:

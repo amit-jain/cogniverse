@@ -134,6 +134,15 @@ hfCache:
   # Path INSIDE the k3d node where ``~/.cache/huggingface`` is
   # bind-mounted. Pods see this path as their HF_HOME.
   path: /host-hf-cache
+  # PVC-backed cache for prod where node-local hostPath would be lost
+  # on node replacement. Each inference svc + runtime + ingestor gets
+  # its own PVC. Defaults OFF — opt in for prod clusters.
+  persistence:
+    enabled: false
+    size: 50Gi
+    accessMode: ReadWriteOnce
+    storageClass: ""
+    annotations: {}
 
 # ===========================================
 # Vespa Configuration

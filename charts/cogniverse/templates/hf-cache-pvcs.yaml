@@ -1,0 +1,87 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- /*
+PVCs for HuggingFace model caches when ``hfCache.persistence.enabled``
+is true. Each Deployment/StatefulSet that mounts a model-cache volume
+gets its own PVC: runtime, ingestor, and one per enabled inference
+service. Default RWO + 50Gi; override per-cluster via
+``hfCache.persistence.{size,storageClass,accessMode,annotations}``.
+*/}}
+
+{{- if and .Values.hfCache.persistence.enabled (not .Values.hfCache.enabled) }}
+
+{{- if .Values.runtime.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-runtime-model-cache
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hf-cache
+  {{- with .Values.hfCache.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.hfCache.persistence.accessMode }}
+  {{- if .Values.hfCache.persistence.storageClass }}
+  storageClassName: {{ .Values.hfCache.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.hfCache.persistence.size }}
+{{- end }}
+
+{{- if .Values.ingestor.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-ingestor-model-cache
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hf-cache
+  {{- with .Values.hfCache.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ .Values.hfCache.persistence.accessMode }}
+  {{- if .Values.hfCache.persistence.storageClass }}
+  storageClassName: {{ .Values.hfCache.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.hfCache.persistence.size }}
+{{- end }}
+
+{{- range $name, $cfg := .Values.inference }}
+{{- if $cfg.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-{{ $name | kebabcase }}-model-cache
+  labels:
+    {{- include "cogniverse.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: hf-cache
+    app.kubernetes.io/part-of: {{ $name }}
+  {{- with $.Values.hfCache.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    - {{ $.Values.hfCache.persistence.accessMode }}
+  {{- if $.Values.hfCache.persistence.storageClass }}
+  storageClassName: {{ $.Values.hfCache.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $.Values.hfCache.persistence.size }}
+{{- end }}
+{{- end }}
+
+{{- end }}
