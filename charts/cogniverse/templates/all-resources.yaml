@@ -539,11 +539,12 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
+        {{- $persistence := ($.Values.hfCache.persistence | default dict) }}
         {{- if $.Values.hfCache.enabled }}
         hostPath:
           path: {{ $.Values.hfCache.path }}
           type: Directory
-        {{- else if $.Values.hfCache.persistence.enabled }}
+        {{- else if $persistence.enabled }}
         persistentVolumeClaim:
           claimName: {{ $fullName }}-runtime-model-cache
         {{- else }}
@@ -1319,11 +1320,13 @@ spec:
       # shm_open: Function not implemented.
       hostIPC: true
       {{- end }}
-      {{- if and $.Values.hfCache.persistence.enabled (not $.Values.hfCache.enabled) }}
+      {{- $persistence := ($.Values.hfCache.persistence | default dict) }}
+      {{- $minio := ($persistence.minio | default dict) }}
+      {{- if and $persistence.enabled (not $.Values.hfCache.enabled) }}
       # Pre-warm the model-cache PVC before main container starts.
       # Idempotent: both steps skip existing files.
       initContainers:
-      {{- if $.Values.hfCache.persistence.minio.enabled }}
+      {{- if $minio.enabled }}
       # Step 1 — pull from MinIO mirror if the bucket has the model.
       # Fast (LAN), air-gap-friendly. Skips if the bucket is empty.
       - name: model-warm-minio
@@ -1739,7 +1742,7 @@ spec:
         hostPath:
           path: {{ $.Values.hfCache.path }}
           type: Directory
-        {{- else if $.Values.hfCache.persistence.enabled }}
+        {{- else if $persistence.enabled }}
         persistentVolumeClaim:
           claimName: {{ $fullName }}-{{ $name | kebabcase }}-model-cache
         {{- else }}

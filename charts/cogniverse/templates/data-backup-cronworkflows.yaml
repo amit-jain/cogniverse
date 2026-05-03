@@ -8,9 +8,10 @@ Not crash-consistent — Vespa keeps writing while we tar. Acceptable
 for periodic DR snapshots; for stronger guarantees use CSI volume
 snapshots at the storage-class level.
 */}}
-{{- if .Values.hostStorage.backup.enabled }}
+{{- /* ``default dict`` so ``--reuse-values`` from older releases doesn't crash. */}}
+{{- $bk := (.Values.hostStorage.backup | default dict) }}
+{{- if $bk.enabled }}
 {{- $fullName := include "cogniverse.fullname" . -}}
-{{- $bk := .Values.hostStorage.backup -}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

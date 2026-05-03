@@ -9,7 +9,9 @@ Operator runs once per cluster (or after adding a new model to
 
 Job is idempotent — boto3 head_object skips already-uploaded files.
 */}}
-{{- if and .Values.hfCache.persistence.minio.enabled .Values.hfCache.persistence.minio.models }}
+{{- /* ``default dict`` so ``--reuse-values`` from older releases doesn't crash. */}}
+{{- $minio := ((.Values.hfCache.persistence | default dict).minio | default dict) }}
+{{- if and $minio.enabled $minio.models }}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- $minio := .Values.hfCache.persistence.minio -}}
 {{- $runtimeImage := .Values.runtime.image -}}

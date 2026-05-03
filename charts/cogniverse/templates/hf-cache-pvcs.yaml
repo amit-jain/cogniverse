@@ -7,7 +7,15 @@ service. Default RWO + 50Gi; override per-cluster via
 ``hfCache.persistence.{size,storageClass,accessMode,annotations}``.
 */}}
 
-{{- if and .Values.hfCache.persistence.enabled (not .Values.hfCache.enabled) }}
+{{- /*
+``default dict`` so ``helm upgrade --reuse-values`` from a release
+predating these keys doesn't crash on missing ``hfCache.persistence``.
+Plain ``.Values.hfCache.persistence.enabled`` would nil-pointer; this
+pattern leaves the new feature disabled until the operator opts in.
+``dig`` would be cleaner but rejects ``chartutil.Values`` at runtime.
+*/}}
+{{- $persistence := (.Values.hfCache.persistence | default dict) }}
+{{- if and $persistence.enabled (not .Values.hfCache.enabled) }}
 
 {{- if .Values.runtime.enabled }}
 ---

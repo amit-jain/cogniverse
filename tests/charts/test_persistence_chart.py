@@ -328,6 +328,58 @@ def test_backup_workflow_dump_step_targets_correct_data_path():
     assert "/mnt/data" in _dump_args(phoenix)
 
 
+def test_render_survives_missing_persistence_block():
+    """Regression: ``helm upgrade --reuse-values`` from a release predating
+    these keys produces values where ``hfCache.persistence`` and
+    ``hostStorage.backup`` are absent. Templates must use ``dig`` so the
+    new feature stays disabled instead of crashing the upgrade with
+    ``nil pointer evaluating interface {}.enabled``.
+
+    This simulates that case via ``-f`` with a values file that omits both
+    blocks (the chart's defaults from values.yaml are bypassed when the
+    operator supplies their own values file)."""
+    minimal = REPO_ROOT / "charts" / "cogniverse" / "values.k3s.yaml"
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "-f",
+        str(minimal),
+        # Mimic --reuse-values: erase the new keys by setting their parent
+        # blocks to objects that omit them. Plain --set won't drop the
+        # values.yaml defaults; --set-json with an explicit empty replaces
+        # the parent.
+        "--set-json",
+        'hfCache={"enabled":false,"path":""}',
+        "--set-json",
+        'hostStorage={"enabled":false,"path":"/host-data"}',
+        "--set",
+        "argo-workflows.crds.install=false",
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, (
+        f"chart must render without crash when persistence/backup blocks "
+        f"are absent (operator upgrading from older release):\n"
+        f"{result.stderr}"
+    )
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+    # Newly added resources stay absent — feature is opt-in.
+    assert (
+        _named(docs, "PersistentVolumeClaim", "cogniverse-runtime-model-cache") is None
+    )
+    assert _named(docs, "Job", "cogniverse-hf-cache-minio-populate") is None
+    backup_cws = [
+        d
+        for d in _by_kind(docs, "CronWorkflow")
+        if d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component")
+        == "backup"
+    ]
+    assert backup_cws == []
+
+
 def test_backup_grants_pods_exec_via_role():
     docs = _render(
         "hostStorage.backup.enabled=true",

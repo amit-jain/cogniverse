@@ -121,11 +121,12 @@ spec:
         configMap:
           name: {{ $fullName }}-config
       - name: model-cache
+        {{- $persistence := ($.Values.hfCache.persistence | default dict) }}
         {{- if $.Values.hfCache.enabled }}
         hostPath:
           path: {{ $.Values.hfCache.path }}
           type: Directory
-        {{- else if $.Values.hfCache.persistence.enabled }}
+        {{- else if $persistence.enabled }}
         persistentVolumeClaim:
           claimName: {{ $fullName }}-ingestor-model-cache
         {{- else }}
