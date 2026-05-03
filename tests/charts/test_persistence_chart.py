@@ -338,11 +338,10 @@ def test_backup_disabled_by_default_renders_no_workflows():
     assert cws == [], "backup CronWorkflows must not render when disabled"
 
 
-def test_backup_enabled_defaults_to_vespa_only():
-    """Phoenix is intentionally NOT in the default backup set: its
-    distroless container lacks ``tar``, so the kubectl-exec mechanism
-    can't snapshot it. Operators who need phoenix backups must layer
-    CSI VolumeSnapshots or use phoenix's export API instead."""
+def test_backup_enabled_defaults_to_vespa_and_phoenix():
+    """Default backup set covers vespa (kubectl-exec into the source pod)
+    AND phoenix (volume-mount of the hostStorage path — phoenix's
+    distroless image lacks tar so kubectl-exec doesn't work)."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
@@ -353,7 +352,77 @@ def test_backup_enabled_defaults_to_vespa_only():
         if d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component")
         == "backup"
     )
-    assert names == ["cogniverse-backup-vespa"]
+    assert names == ["cogniverse-backup-phoenix", "cogniverse-backup-vespa"]
+
+
+def test_phoenix_backup_uses_volume_mount_not_kubectl_exec():
+    """Regression: phoenix MUST use volume-mount mode (its distroless
+    container lacks tar). The dump container should mount the source
+    volume directly + run tar locally, NOT kubectl exec into phoenix."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+    )
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    assert cw is not None
+    # Source volume on the workflow spec.
+    vols = cw["spec"]["workflowSpec"].get("volumes", [])
+    source = next((v for v in vols if v["name"] == "source"), None)
+    assert source is not None, (
+        f"phoenix workflow must define a ``source`` volume, got volumes={vols}"
+    )
+    assert "hostPath" in source, (
+        f"hostStorage default uses hostPath for phoenix source, got {source}"
+    )
+    assert source["hostPath"]["path"] == "/host-data/phoenix"
+
+    dump = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "dump"
+    )
+    # Must NOT use kubectl-exec for distroless phoenix.
+    assert "kubectl" not in dump["container"].get("image", ""), (
+        f"phoenix dump container must not be kubectl image (no exec needed); "
+        f"got {dump['container']['image']}"
+    )
+    # Must mount the source volume read-only.
+    mounts = {m["name"]: m for m in dump["container"]["volumeMounts"]}
+    assert mounts["source"]["readOnly"] is True
+    assert mounts["source"]["mountPath"] == "/source"
+
+
+def test_phoenix_backup_supports_pvc_mode_for_cloud():
+    """Cloud operators set ``pvcName`` instead of ``hostPath``. The
+    workflow then mounts the PVC directly (operator must arrange RWX or
+    accept downtime / use VolumeSnapshot)."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        "hostStorage.backup.services[0].name=phoenix",
+        "hostStorage.backup.services[0].mode=volume-mount",
+        "hostStorage.backup.services[0].pvcName=data-cogniverse-phoenix-0",
+    )
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
+    assert cw is not None
+    vols = cw["spec"]["workflowSpec"]["volumes"]
+    source = next(v for v in vols if v["name"] == "source")
+    assert "persistentVolumeClaim" in source
+    assert source["persistentVolumeClaim"]["claimName"] == "data-cogniverse-phoenix-0"
+    assert source["persistentVolumeClaim"]["readOnly"] is True
+
+
+def test_role_only_renders_when_a_service_uses_kubectl_exec():
+    """If every service uses volume-mount, no pods/exec privilege is
+    needed → don't render the Role/RoleBinding (least privilege)."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        # Override services to phoenix-only (volume-mount).
+        "hostStorage.backup.services[0].name=phoenix",
+        "hostStorage.backup.services[0].mode=volume-mount",
+        "hostStorage.backup.services[0].hostPath=/host-data/phoenix",
+    )
+    role = _named(docs, "Role", "cogniverse-backup-exec")
+    assert role is None, "no service uses kubectl-exec → pods/exec Role must not render"
 
 
 def test_backup_services_list_is_configurable():

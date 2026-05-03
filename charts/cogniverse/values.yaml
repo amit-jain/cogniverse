@@ -123,12 +123,24 @@ hostStorage:
   # crash-consistent (uses live read while the source process keeps
   # writing) but workable for periodic disaster-recovery snapshots.
   #
-  # ``services`` lists the pods to back up. Each entry must point at a
-  # container that has ``tar`` and a POSIX shell on PATH — distroless
-  # images won't work with this mechanism. Vespa is the only default
-  # because its container ships full coreutils; Phoenix's distroless
-  # image lacks ``tar``, so back it up via CSI VolumeSnapshots or
-  # Phoenix's own export API instead.
+  # ``services`` lists the pods to back up. Each entry picks a ``mode``:
+  #
+  # - ``kubectl-exec`` (default): tar from inside the live source pod via
+  #   ``kubectl exec``. Requires the source container to have ``tar`` +
+  #   POSIX shell on PATH (works for vespa, fails on distroless images).
+  #   Needs ``dataPath`` + ``podLabel``. Cross-cuts hostStorage / PVC
+  #   modes since it doesn't touch the volume directly.
+  #
+  # - ``volume-mount``: mount the source volume into the workflow pod and
+  #   tar from local fs. Required for distroless source containers
+  #   (phoenix). Set ``hostPath`` for hostStorage clusters or ``pvcName``
+  #   for PVC-backed clusters. RWO PVCs cannot be mounted while the
+  #   source pod is running — for cloud deployments use RWX, take a CSI
+  #   VolumeSnapshot first, or scale the source pod to 0 during backup.
+  #
+  # Default services list backs up vespa (kubectl-exec) AND phoenix
+  # (volume-mount of the hostStorage path). When unset, both are backed
+  # up nightly per ``schedule``.
   backup:
     enabled: false
     bucket: cogniverse-backups
@@ -137,8 +149,16 @@ hostStorage:
     retainLast: 7
     services:
       - name: vespa
+        mode: kubectl-exec
         dataPath: /opt/vespa/var
         podLabel: app.kubernetes.io/component=vespa
+      - name: phoenix
+        mode: volume-mount
+        # hostStorage mode (default for dev) — phoenix data lives at
+        # ``hostStorage.path/phoenix``. For PVC-backed cloud setups,
+        # replace with ``pvcName: data-cogniverse-phoenix-0`` (and
+        # arrange RWX/snapshot/downtime per the comment above).
+        hostPath: /host-data/phoenix
     # Backup destination — single config block that switches between
     # local-dev (in-cluster MinIO, default) and cloud (R2 / B2 / AWS S3).
     # Same template, same workflow, same code path; only these values

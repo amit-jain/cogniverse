@@ -1,18 +1,31 @@
 {{- /*
 One nightly DR snapshot CronWorkflow per service in
-``hostStorage.backup.services``. Each runs two steps: (1) kubectl-exec
-into the live pod and tar the configured data path to a workflow-scoped
-staging volume; (2) mc cp the tarball to
-s3://<bucket>/<svc-name>/<timestamp>.tar and prune all but the most
+``hostStorage.backup.services``. Each runs two steps: dump a tarball of
+the service's data into a workflow-scoped staging volume, then mc cp it
+to s3://<bucket>/<svc-name>/<timestamp>.tar and prune all but the most
 recent ``retainLast`` snapshots.
 
-Limitations the operator must understand:
-- Not crash-consistent: the source process keeps writing during tar.
-  For stronger guarantees layer CSI VolumeSnapshots underneath at the
-  storage-class level.
-- Source pod must have ``tar`` and a POSIX shell on PATH. Distroless
-  images (e.g. arizephoenix/phoenix) won't work — use CSI snapshots
-  or that service's own export API instead.
+Two dump modes are supported per service:
+
+  mode: kubectl-exec   (default) — kubectl-exec into the live pod and
+    tar the configured ``dataPath`` from inside. Works only for source
+    containers that have ``tar`` and a POSIX shell on PATH (vespa).
+    Cross-cuts hostStorage / PVC — works in either mode because it
+    doesn't touch the volume directly.
+
+  mode: volume-mount   — mount the source volume directly into the
+    workflow pod, tar from local fs. Required for distroless source
+    containers (phoenix's arizephoenix/phoenix image). For hostStorage
+    setups, set ``hostPath``. For PVC-backed setups, set ``pvcName``
+    AND accept that RWO PVCs can't be backed up while the source pod is
+    running — either use ReadWriteMany / ReadOnlyMany volumes, take a
+    CSI VolumeSnapshot first, or scale the source pod to 0 during the
+    backup window.
+
+Both modes share the same upload step (mc cp + retention pruning).
+Snapshots are not crash-consistent; the source process keeps writing
+during the dump. For stronger guarantees layer CSI VolumeSnapshots at
+the storage-class level.
 */}}
 {{- /* ``default dict`` so ``--reuse-values`` from older releases doesn't
 crash. Inner subkeys also defaulted explicitly because ``--reuse-values``
@@ -23,8 +36,13 @@ values — chart defaults from values.yaml don't reapply. */}}
 {{- $bucket := ($bk.bucket | default "cogniverse-backups") }}
 {{- $schedule := ($bk.schedule | default "0 3 * * *") }}
 {{- $retainLast := ($bk.retainLast | default 7) }}
-{{- /* Default to vespa-only when --reuse-values upgrade omits services. */}}
-{{- $services := ($bk.services | default (list (dict "name" "vespa" "dataPath" "/opt/vespa/var" "podLabel" "app.kubernetes.io/component=vespa"))) }}
+{{- $hostStoragePath := ($.Values.hostStorage.path | default "/host-data") }}
+{{- /* Default services — vespa via kubectl-exec, phoenix via volume-mount
+of its hostStorage path. Operator overrides as needed. */}}
+{{- $defaultServices := list
+    (dict "name" "vespa" "mode" "kubectl-exec" "dataPath" "/opt/vespa/var" "podLabel" "app.kubernetes.io/component=vespa")
+    (dict "name" "phoenix" "mode" "volume-mount" "hostPath" (printf "%s/phoenix" $hostStoragePath)) }}
+{{- $services := ($bk.services | default $defaultServices) }}
 {{- $fullName := include "cogniverse.fullname" . -}}
 {{- /* Backup destination — single config knob to switch between dev (in-cluster
 MinIO) and cloud (R2 / B2 / AWS S3 / etc). Operator overrides:
@@ -40,6 +58,16 @@ values + nothing else — same template, same code path. */}}
 {{- /* Secret precedence: backup.s3.existingSecret (new, explicit) →
 backup.existingSecret (legacy top-level) → in-cluster MinIO secret. */}}
 {{- $s3Secret := ($s3.existingSecret | default $bk.existingSecret | default (printf "%s-minio" $fullName)) }}
+{{- /* Pick the runtime image (used by volume-mount mode for tar). */}}
+{{- $runtimeBackend := default "cuda" $.Values.runtime.backend }}
+{{- $runtimeImage := $.Values.runtime.image }}
+{{- if $.Values.runtime.imagesByBackend }}
+{{- $runtimeImage = (index $.Values.runtime.imagesByBackend $runtimeBackend) | default $.Values.runtime.image }}
+{{- end }}
+{{- /* Only render the pods/exec Role when at least one service uses kubectl-exec. */}}
+{{- $needsExec := false }}
+{{- range $svcCfg := $services }}{{- if or (eq (default "kubectl-exec" $svcCfg.mode) "kubectl-exec") (not $svcCfg.mode) }}{{- $needsExec = true }}{{- end }}{{- end }}
+{{- if $needsExec }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -71,11 +99,11 @@ subjects:
 - kind: ServiceAccount
   name: {{ include "cogniverse.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
+{{- end }}
 
 {{- range $svcCfg := $services }}
 {{- $svc := $svcCfg.name }}
-{{- $dataPath := $svcCfg.dataPath }}
-{{- $podLabel := $svcCfg.podLabel }}
+{{- $mode := default "kubectl-exec" $svcCfg.mode }}
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
@@ -94,6 +122,21 @@ spec:
   workflowSpec:
     entrypoint: snapshot
     serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
+    {{- if eq $mode "volume-mount" }}
+    volumes:
+    - name: source
+      {{- if $svcCfg.hostPath }}
+      hostPath:
+        path: {{ $svcCfg.hostPath }}
+        type: Directory
+      {{- else if $svcCfg.pvcName }}
+      persistentVolumeClaim:
+        claimName: {{ $svcCfg.pvcName }}
+        readOnly: true
+      {{- else }}
+      {{- fail (printf "service %s has mode=volume-mount but neither hostPath nor pvcName set" $svc) }}
+      {{- end }}
+    {{- end }}
     volumeClaimTemplates:
     - metadata:
         name: stage
@@ -110,6 +153,7 @@ spec:
       - - name: upload
           template: upload
     - name: dump
+      {{- if eq $mode "kubectl-exec" }}
       container:
         image: bitnami/kubectl:latest
         command: [sh, -c]
@@ -117,16 +161,43 @@ spec:
         - |
           set -eu
           POD=$(kubectl -n {{ $.Release.Namespace }} get pod \
-            -l {{ $podLabel }} \
+            -l {{ $svcCfg.podLabel }} \
             -o jsonpath='{.items[0].metadata.name}')
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          echo "Snapshotting $POD:{{ $dataPath }} → /stage/{{ $svc }}-$STAMP.tar"
+          echo "Snapshotting $POD:{{ $svcCfg.dataPath }} → /stage/{{ $svc }}-$STAMP.tar"
           kubectl -n {{ $.Release.Namespace }} exec "$POD" -- \
-            tar -cf - -C "$(dirname {{ $dataPath }})" "$(basename {{ $dataPath }})" \
+            tar -cf - -C "$(dirname {{ $svcCfg.dataPath }})" "$(basename {{ $svcCfg.dataPath }})" \
             > /stage/{{ $svc }}-$STAMP.tar
         volumeMounts:
         - name: stage
           mountPath: /stage
+      {{- else if eq $mode "volume-mount" }}
+      container:
+        # Runtime image because it ships ``tar`` and is already pulled on
+        # every cluster (the runtime pod uses it).
+        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
+        # UID 0 to traverse hostpath dirs that may have restrictive perms;
+        # the source mount is read-only so we can't damage it.
+        securityContext:
+          runAsUser: 0
+        command: [sh, -c]
+        args:
+        - |
+          set -eu
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "Snapshotting /source → /stage/{{ $svc }}-$STAMP.tar"
+          tar -cf /stage/{{ $svc }}-$STAMP.tar -C /source .
+          ls -la /stage
+        volumeMounts:
+        - name: stage
+          mountPath: /stage
+        - name: source
+          mountPath: /source
+          readOnly: true
+      {{- else }}
+      {{- fail (printf "service %s has unknown mode=%s; expected kubectl-exec or volume-mount" $svc $mode) }}
+      {{- end }}
     - name: upload
       container:
         image: minio/mc:latest

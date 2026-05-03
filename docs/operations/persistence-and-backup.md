@@ -329,17 +329,26 @@ The dance to recover a stateful component from a MinIO/S3 backup:
      | python3 -c 'import json,sys; print(json.load(sys.stdin)["root"]["fields"])'
    ```
 
-## Backup verification (the missing "0" in 3-2-1-1-0)
+## Backup verification (the "0" in 3-2-1-1-0)
 
-A backup that's never been restored is a hypothesis. Schedule a periodic
-restore test that:
-1. Pulls the latest backup tarball into an ephemeral PVC
-2. Spins up a sandbox vespa pod against that PVC
-3. Asserts a known query returns the expected result count
-4. Tears down
+A backup that's never been restored is a hypothesis. Cogniverse exercises
+restore through normal cluster lifecycle ops:
 
-This isn't wired into the chart yet — track as follow-up. For now, run a
-manual restore drill quarterly using the procedure above.
+- **Every `helm upgrade`** that touches a stateful component re-mounts
+  the same hostPath / PVC and the data must come back intact. If it
+  doesn't, the upgrade fails fast.
+- **Every `cogniverse up` / `k3d cluster delete`** cycle is implicit
+  hostStorage durability proof — pods restart against the same
+  `~/.local/share/cogniverse/{vespa,phoenix,minio}` directories.
+- **Periodic explicit restore drill** (recommended quarterly): follow
+  the [Restore procedure](#restore-procedure) above using a recent
+  backup tarball, pointed at a fresh sandbox cluster. Verify the doc
+  count + a known query match production.
+
+For cloud deployments where the backup target is offsite (R2 / B2 / AWS
+S3), this drill also exercises the network path + credentials —
+catching expired secrets, IAM mis-grants, region misconfigs that
+silently rot if never tested.
 
 ## Why these defaults
 
@@ -367,8 +376,5 @@ Drawing on:
 - **CSI VolumeSnapshots** for crash-consistent snapshots. Requires a real
   CSI provider (Longhorn, cloud SC). The current `tar` approach reads
   the live filesystem while the source process keeps writing.
-- **Phoenix backup CronWorkflow.** Phoenix's distroless container lacks
-  `tar`, so the current `kubectl exec` mechanism can't snapshot it. Need
-  either a sidecar with tar or a Phoenix application-level export job.
 - **HF model cache backup.** Explicitly NOT backed up — it's rebuildable
   from HF Hub via the populate Job (`hfCache.persistence.minio.models`).
