@@ -1348,12 +1348,13 @@ spec:
               key: rootPassword
         - name: MODEL
           value: {{ $cfg.model | quote }}
-        command: ["/bin/sh", "-c"]
+        # bash for ${MODEL//\//--}; minio/mc image lacks sed.
+        command: ["/bin/bash", "-c"]
         args:
         - |
           set -eu
           mc alias set src "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
-          DEST="/root/.cache/huggingface/hub/models--$(echo "$MODEL" | sed 's|/|--|g')"
+          DEST="/root/.cache/huggingface/hub/models--${MODEL//\//--}"
           if mc ls "src/$MINIO_BUCKET/$MODEL/" >/dev/null 2>&1; then
             echo "MinIO has $MODEL — mirroring to $DEST"
             mkdir -p "$DEST"

@@ -74,7 +74,10 @@ spec:
           endpoint = os.environ["MINIO_ENDPOINT"]
           bucket = os.environ["MINIO_BUCKET"]
           models = [m.strip() for m in os.environ["MODELS"].split(",") if m.strip()]
-          stage = Path("/tmp/hf-stage/hub")
+          # snapshot_download(cache_dir=X) writes to X/models--<owner>--<repo>/...
+          # The /hub/ subdir convention only applies when relying on HF_HOME's
+          # default layout — passing cache_dir bypasses it.
+          stage = Path("/tmp/hf-stage")
 
           s3 = boto3.client(
               "s3",

@@ -116,17 +116,29 @@ hostStorage:
   # bind-mounted. Per-service subdirs (vespa/, phoenix/) are created
   # inside automatically.
   path: /host-data
-  # Optional MinIO DR snapshots — nightly CronWorkflows that tar the
-  # vespa + phoenix data dirs out of the live pod (kubectl exec) and
-  # upload to ``s3://<bucket>/{vespa,phoenix}/<timestamp>.tar``.
-  # Default off; not crash-consistent (uses live read while Vespa is
+  # Optional MinIO DR snapshots — one nightly CronWorkflow per listed
+  # service that tars the configured data dir out of the live pod
+  # (``kubectl exec`` + tar) and uploads to
+  # ``s3://<bucket>/<svc>/<timestamp>.tar``. Default off; not
+  # crash-consistent (uses live read while the source process keeps
   # writing) but workable for periodic disaster-recovery snapshots.
+  #
+  # ``services`` lists the pods to back up. Each entry must point at a
+  # container that has ``tar`` and a POSIX shell on PATH — distroless
+  # images won't work with this mechanism. Vespa is the only default
+  # because its container ships full coreutils; Phoenix's distroless
+  # image lacks ``tar``, so back it up via CSI VolumeSnapshots or
+  # Phoenix's own export API instead.
   backup:
     enabled: false
     bucket: cogniverse-backups
     existingSecret: ""
     schedule: "0 3 * * *"
     retainLast: 7
+    services:
+      - name: vespa
+        dataPath: /opt/vespa/var
+        podLabel: app.kubernetes.io/component=vespa
 
 # ===========================================
 # HuggingFace cache sharing

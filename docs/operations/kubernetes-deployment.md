@@ -756,15 +756,27 @@ hfCache:
         - lightonai/DenseOn
 ```
 
-#### Nightly DR snapshots for Vespa + Phoenix
+#### Nightly DR snapshots via MinIO
 
-`hostStorage.backup` provisions an Argo `CronWorkflow` per stateful service
-that runs nightly: step 1 `kubectl exec`s the live pod and `tar`s the data
-dir to a workflow-scoped stage volume; step 2 `mc cp`s the tarball to a
-MinIO bucket and prunes all but the most recent N snapshots. Snapshots are
-not crash-consistent — Vespa keeps writing while we tar — but workable
-for periodic DR. For stronger guarantees, layer CSI VolumeSnapshots
-underneath at the storage-class level.
+`hostStorage.backup` provisions one Argo `CronWorkflow` per service in
+`hostStorage.backup.services`. Each workflow runs nightly: step 1
+`kubectl exec`s the live pod and `tar`s the data dir to a workflow-scoped
+stage volume; step 2 `mc cp`s the tarball to a MinIO bucket and prunes
+all but the most recent N snapshots.
+
+Limitations operators must understand:
+
+- **Not crash-consistent.** The source process keeps writing during tar.
+  Workable for periodic DR snapshots; for stronger guarantees layer CSI
+  `VolumeSnapshot`s underneath at the storage-class level.
+- **Source pod must have `tar` and a POSIX shell on PATH.** Distroless
+  images (e.g. `arizephoenix/phoenix`) won't work — back those up via
+  CSI snapshots or the service's own export API instead.
+
+The default services list is just `vespa` (its container ships full
+coreutils). Phoenix is intentionally absent because its image is
+distroless. Operators can extend the list to any pod that meets the
+`tar` requirement:
 
 ```yaml
 hostStorage:
@@ -774,6 +786,13 @@ hostStorage:
     existingSecret: "cogniverse-minio"     # keys: rootUser, rootPassword
     schedule: "0 3 * * *"                  # 03:00 UTC daily
     retainLast: 7
+    services:
+      - name: vespa
+        dataPath: /opt/vespa/var
+        podLabel: app.kubernetes.io/component=vespa
+      - name: redis
+        dataPath: /data
+        podLabel: app.kubernetes.io/component=redis
 ```
 
 ---

@@ -295,7 +295,11 @@ def test_backup_disabled_by_default_renders_no_workflows():
     assert cws == [], "backup CronWorkflows must not render when disabled"
 
 
-def test_backup_enabled_renders_vespa_and_phoenix_cronworkflows():
+def test_backup_enabled_defaults_to_vespa_only():
+    """Phoenix is intentionally NOT in the default backup set: its
+    distroless container lacks ``tar``, so the kubectl-exec mechanism
+    can't snapshot it. Operators who need phoenix backups must layer
+    CSI VolumeSnapshots or use phoenix's export API instead."""
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
@@ -306,17 +310,37 @@ def test_backup_enabled_renders_vespa_and_phoenix_cronworkflows():
         if d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component")
         == "backup"
     )
-    assert names == ["cogniverse-backup-phoenix", "cogniverse-backup-vespa"]
+    assert names == ["cogniverse-backup-vespa"]
 
 
-def test_backup_workflow_dump_step_targets_correct_data_path():
+def test_backup_services_list_is_configurable():
+    """Operator can extend the backup set to any pod that ships ``tar``."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+        "hostStorage.backup.services[0].name=vespa",
+        "hostStorage.backup.services[0].dataPath=/opt/vespa/var",
+        "hostStorage.backup.services[0].podLabel=app.kubernetes.io/component=vespa",
+        "hostStorage.backup.services[1].name=redis",
+        "hostStorage.backup.services[1].dataPath=/data",
+        "hostStorage.backup.services[1].podLabel=app.kubernetes.io/component=redis",
+    )
+    names = sorted(
+        d["metadata"]["name"]
+        for d in _by_kind(docs, "CronWorkflow")
+        if d.get("metadata", {}).get("labels", {}).get("app.kubernetes.io/component")
+        == "backup"
+    )
+    assert names == ["cogniverse-backup-redis", "cogniverse-backup-vespa"]
+
+
+def test_backup_workflow_dump_step_targets_configured_data_path_and_label():
     docs = _render(
         "hostStorage.backup.enabled=true",
         "hostStorage.backup.existingSecret=cogniverse-minio",
     )
     vespa = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
-    phoenix = _named(docs, "CronWorkflow", "cogniverse-backup-phoenix")
-    assert vespa is not None and phoenix is not None
+    assert vespa is not None
 
     def _dump_args(cw: dict) -> str:
         for tmpl in cw["spec"]["workflowSpec"]["templates"]:
@@ -324,8 +348,45 @@ def test_backup_workflow_dump_step_targets_correct_data_path():
                 return tmpl["container"]["args"][-1]
         raise AssertionError("dump template not found")
 
-    assert "/opt/vespa/var" in _dump_args(vespa)
-    assert "/mnt/data" in _dump_args(phoenix)
+    args = _dump_args(vespa)
+    assert "/opt/vespa/var" in args
+    assert "app.kubernetes.io/component=vespa" in args
+
+
+def test_backup_inner_subkeys_default_when_only_enabled_is_set():
+    """Regression: ``helm upgrade --reuse-values --set hostStorage.backup.enabled=true``
+    overlays only the operator's --set on top of stored values; chart defaults
+    from values.yaml don't reapply. The rendered CronWorkflow must therefore
+    supply its own defaults for bucket/schedule/retainLast or it ships with
+    null env vars that the upload step would reject."""
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        # Replace the entire backup block so chart defaults from values.yaml
+        # do NOT apply to inner subkeys; only ``enabled`` + ``existingSecret``
+        # are present, matching what ``--reuse-values`` from a release where
+        # the backup block didn't exist would overlay.
+        "--set-json",
+        'hostStorage.backup={"enabled":true,"existingSecret":"cogniverse-minio"}',
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, f"helm template failed:\n{result.stderr}"
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+    cw = _named(docs, "CronWorkflow", "cogniverse-backup-vespa")
+    assert cw is not None
+    assert cw["spec"]["schedule"], "schedule must default, not be empty"
+    upload = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "upload"
+    )
+    env = {e["name"]: e.get("value") for e in upload["container"]["env"]}
+    assert env["MINIO_BUCKET"], (
+        f"MINIO_BUCKET must default, got {env['MINIO_BUCKET']!r}"
+    )
+    assert env["RETAIN_LAST"], f"RETAIN_LAST must default, got {env['RETAIN_LAST']!r}"
 
 
 def test_render_survives_missing_persistence_block():
@@ -378,6 +439,56 @@ def test_render_survives_missing_persistence_block():
         == "backup"
     ]
     assert backup_cws == []
+
+
+def test_minio_mirror_init_uses_bash_and_no_sed():
+    """Regression: the minio/mc image lacks ``sed``. The mirror init script
+    must use bash parameter expansion (``${MODEL//\\//--}``) instead of
+    ``sed 's|/|--|g'``, or the init container fails on first run with
+    ``sed: command not found`` and the inference pod never starts."""
+    docs = _render(
+        "hfCache.persistence.enabled=true",
+        "hfCache.persistence.minio.enabled=true",
+        "hfCache.persistence.minio.existingSecret=cogniverse-minio",
+        "hfCache.persistence.minio.models[0]=hf-internal-testing/tiny-random-bert",
+    )
+    for name, spec in _inference_pod_specs(docs).items():
+        warm = _container(spec, "model-warm-minio")
+        assert warm is not None, f"inference {name} missing model-warm-minio init"
+        assert warm["command"] == [
+            "/bin/bash",
+            "-c",
+        ], f"mirror init for {name} must run under bash, got {warm['command']}"
+        script = warm["args"][-1]
+        assert "sed " not in script, (
+            f"mirror init for {name} must not call sed (mc image lacks it). "
+            f"Use bash parameter expansion. Got:\n{script}"
+        )
+
+
+def test_backup_upload_uses_bash_and_no_awk():
+    """Regression: same image-content reason — minio/mc lacks ``awk``. The
+    retention pruning must use bash + tail/sort, not awk, or the pruning
+    pipeline silently fails (script still exits 0 because ``while read``
+    consumes empty stdin) and snapshots accumulate forever."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=cogniverse-minio",
+    )
+    for cw_name in ("cogniverse-backup-vespa",):
+        cw = _named(docs, "CronWorkflow", cw_name)
+        assert cw is not None
+        upload = next(
+            t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "upload"
+        )
+        assert upload["container"]["command"] == [
+            "bash",
+            "-c",
+        ], f"{cw_name} upload step must run under bash"
+        script = upload["container"]["args"][-1]
+        assert "awk " not in script, (
+            f"{cw_name} retention must not call awk (mc image lacks it). Got:\n{script}"
+        )
 
 
 def test_backup_grants_pods_exec_via_role():
