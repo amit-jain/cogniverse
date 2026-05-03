@@ -30,6 +30,9 @@ pytestmark = pytest.mark.skipif(
 
 def _render(*set_args: str) -> list[dict]:
     cmd = ["helm", "template", "cogniverse", str(CHART_PATH)]
+    # The chart fail-fasts if qualityMonitor.tenantId is empty; supply a
+    # placeholder so inference wiring is the only variable under test.
+    cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
     for arg in set_args:
         cmd.extend(["--set", arg])
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)

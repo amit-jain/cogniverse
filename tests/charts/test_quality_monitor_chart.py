@@ -38,7 +38,16 @@ pytestmark = pytest.mark.skipif(
 def _render_chart() -> list:
     """Run ``helm template`` against the chart and return all parsed manifests."""
     result = subprocess.run(
-        ["helm", "template", "cogniverse", str(CHART_PATH)],
+        [
+            "helm",
+            "template",
+            "cogniverse",
+            str(CHART_PATH),
+            # The chart fail-fasts on empty qualityMonitor.tenantId; supply a
+            # placeholder so the wiring under test is the only variable.
+            "--set",
+            "runtime.qualityMonitor.tenantId=test-tenant",
+        ],
         capture_output=True,
         text=True,
         check=False,

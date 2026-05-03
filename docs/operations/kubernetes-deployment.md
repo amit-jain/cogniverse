@@ -719,6 +719,63 @@ llm:
       size: "100Gi"
 ```
 
+#### HuggingFace model cache (PVC + optional MinIO mirror)
+
+Inference pods download weights from HF Hub on cold start. In prod, persist
+each pod's `~/.cache/huggingface` to a PVC so reschedules don't re-download.
+Each pod (runtime, ingestor, every enabled `inference.<svc>`) gets its own
+RWO PVC; an init container pre-warms the cache via `snapshot_download`
+before the main container starts.
+
+```yaml
+hfCache:
+  persistence:
+    enabled: true
+    size: "100Gi"
+    accessMode: ReadWriteOnce
+    storageClass: "fast-ssd"
+```
+
+For air-gapped clusters, also enable the MinIO mirror sub-mode. A
+post-install/post-upgrade Job `snapshot_download`s each listed model and
+uploads it to a MinIO bucket; an extra init container then `mc mirror`s
+from MinIO into the PVC before the snapshot-download init runs (so it
+short-circuits when the bucket is already populated).
+
+```yaml
+hfCache:
+  persistence:
+    enabled: true
+    minio:
+      enabled: true
+      endpoint: "http://cogniverse-minio:9000"
+      bucket: "cogniverse-hf-cache"
+      existingSecret: "cogniverse-minio"   # keys: rootUser, rootPassword
+      models:
+        - lightonai/LateOn
+        - lightonai/DenseOn
+```
+
+#### Nightly DR snapshots for Vespa + Phoenix
+
+`hostStorage.backup` provisions an Argo `CronWorkflow` per stateful service
+that runs nightly: step 1 `kubectl exec`s the live pod and `tar`s the data
+dir to a workflow-scoped stage volume; step 2 `mc cp`s the tarball to a
+MinIO bucket and prunes all but the most recent N snapshots. Snapshots are
+not crash-consistent — Vespa keeps writing while we tar — but workable
+for periodic DR. For stronger guarantees, layer CSI VolumeSnapshots
+underneath at the storage-class level.
+
+```yaml
+hostStorage:
+  backup:
+    enabled: true
+    bucket: "cogniverse-backups"
+    existingSecret: "cogniverse-minio"     # keys: rootUser, rootPassword
+    schedule: "0 3 * * *"                  # 03:00 UTC daily
+    retainLast: 7
+```
+
 ---
 
 ## Operations
