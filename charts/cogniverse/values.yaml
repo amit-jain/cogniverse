@@ -139,6 +139,28 @@ hostStorage:
       - name: vespa
         dataPath: /opt/vespa/var
         podLabel: app.kubernetes.io/component=vespa
+    # Backup destination — single config block that switches between
+    # local-dev (in-cluster MinIO, default) and cloud (R2 / B2 / AWS S3).
+    # Same template, same workflow, same code path; only these values
+    # change between dev and cloud deployments.
+    #
+    # Local dev (default behaviour, no override needed):
+    #   leave both fields empty → CronWorkflow targets the chart's
+    #   in-cluster ``cogniverse-minio`` Deployment + secret. Make MinIO
+    #   itself durable via ``minio.persistence.hostPath`` so the bucket
+    #   data survives ``k3d cluster delete``.
+    #
+    # Cloud (Cloudflare R2 example):
+    #   s3.endpoint: "https://<account>.r2.cloudflarestorage.com"
+    #   s3.existingSecret: "my-r2-credentials"   # secret keys: rootUser, rootPassword
+    #
+    # The credential secret MUST hold the access key under ``rootUser``
+    # and the secret under ``rootPassword`` regardless of provider. This
+    # keeps the template provider-agnostic.
+    s3:
+      endpoint: ""              # empty → in-cluster cogniverse-minio
+      existingSecret: ""        # empty → cogniverse-minio secret
+      region: "us-east-1"       # required by some S3 clients (mc ignores it)
 
 # ===========================================
 # HuggingFace cache sharing
@@ -1522,6 +1544,14 @@ minio:
     storageClass: ""
     accessMode: ReadWriteOnce
     size: "100Gi"
+    # MinIO IS the backup destination (default config), so its data MUST
+    # outlive the cluster on dev to survive ``k3d cluster delete``. Set
+    # to a hostPath that the cluster CLI bind-mounts from the operator's
+    # laptop (e.g. ``/host-data/minio``, mapped from
+    # ``~/.local/share/cogniverse/minio``). When unset, the chart
+    # provisions a PVC via the storageClass above (cloud / multi-node
+    # prod path). When set, the PVC is NOT created.
+    hostPath: ""
   resources:
     limits:
       cpu: "2"

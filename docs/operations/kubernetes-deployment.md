@@ -695,104 +695,36 @@ llm:
 
 ### Persistent Storage
 
-Configure storage for stateful services:
+See [persistence-and-backup.md](persistence-and-backup.md) for the full
+durability matrix, per-component storage knobs, the dev/cloud config
+recipes, the backup destination switch (in-cluster MinIO vs Cloudflare
+R2 / Backblaze B2 / AWS S3), and the restore procedure.
+
+Quick reference:
 
 ```yaml
-vespa:
-  persistence:
-    enabled: true
-    storageClass: "fast-ssd"  # Your storage class
-    size: "200Gi"
-    accessMode: ReadWriteOnce
-
-phoenix:
-  persistence:
-    enabled: true
-    storageClass: "standard"
-    size: "50Gi"
-
-llm:
-  builtin:
-    persistence:
-      enabled: true
-      storageClass: "standard"
-      size: "100Gi"
-```
-
-#### HuggingFace model cache (PVC + optional MinIO mirror)
-
-Inference pods download weights from HF Hub on cold start. In prod, persist
-each pod's `~/.cache/huggingface` to a PVC so reschedules don't re-download.
-Each pod (runtime, ingestor, every enabled `inference.<svc>`) gets its own
-RWO PVC; an init container pre-warms the cache via `snapshot_download`
-before the main container starts.
-
-```yaml
-hfCache:
-  persistence:
-    enabled: true
-    size: "100Gi"
-    accessMode: ReadWriteOnce
-    storageClass: "fast-ssd"
-```
-
-For air-gapped clusters, also enable the MinIO mirror sub-mode. A
-post-install/post-upgrade Job `snapshot_download`s each listed model and
-uploads it to a MinIO bucket; an extra init container then `mc mirror`s
-from MinIO into the PVC before the snapshot-download init runs (so it
-short-circuits when the bucket is already populated).
-
-```yaml
-hfCache:
-  persistence:
-    enabled: true
-    minio:
-      enabled: true
-      endpoint: "http://cogniverse-minio:9000"
-      bucket: "cogniverse-hf-cache"
-      existingSecret: "cogniverse-minio"   # keys: rootUser, rootPassword
-      models:
-        - lightonai/LateOn
-        - lightonai/DenseOn
-```
-
-#### Nightly DR snapshots via MinIO
-
-`hostStorage.backup` provisions one Argo `CronWorkflow` per service in
-`hostStorage.backup.services`. Each workflow runs nightly: step 1
-`kubectl exec`s the live pod and `tar`s the data dir to a workflow-scoped
-stage volume; step 2 `mc cp`s the tarball to a MinIO bucket and prunes
-all but the most recent N snapshots.
-
-Limitations operators must understand:
-
-- **Not crash-consistent.** The source process keeps writing during tar.
-  Workable for periodic DR snapshots; for stronger guarantees layer CSI
-  `VolumeSnapshot`s underneath at the storage-class level.
-- **Source pod must have `tar` and a POSIX shell on PATH.** Distroless
-  images (e.g. `arizephoenix/phoenix`) won't work — back those up via
-  CSI snapshots or the service's own export API instead.
-
-The default services list is just `vespa` (its container ships full
-coreutils). Phoenix is intentionally absent because its image is
-distroless. Operators can extend the list to any pod that meets the
-`tar` requirement:
-
-```yaml
+# Cloud / multi-node prod — replicated CSI for primary, S3 for backup
+vespa:    {persistence: {storageClass: "gp3", size: "1Ti"}}
+phoenix:  {persistence: {storageClass: "gp3", size: "200Gi"}}
+minio:    {persistence: {storageClass: "gp3", size: "5Ti"}}
+hfCache:  {persistence: {enabled: true, storageClass: "gp3", size: "100Gi"}}
 hostStorage:
   backup:
     enabled: true
-    bucket: "cogniverse-backups"
-    existingSecret: "cogniverse-minio"     # keys: rootUser, rootPassword
-    schedule: "0 3 * * *"                  # 03:00 UTC daily
-    retainLast: 7
-    services:
-      - name: vespa
-        dataPath: /opt/vespa/var
-        podLabel: app.kubernetes.io/component=vespa
-      - name: redis
-        dataPath: /data
-        podLabel: app.kubernetes.io/component=redis
+    s3:
+      endpoint: "https://s3.us-east-1.amazonaws.com"
+      existingSecret: "cogniverse-aws-creds"
+```
+
+```yaml
+# Single-laptop dev — hostStorage everywhere, in-cluster MinIO is the
+# backup target. Survives ``k3d cluster delete``.
+hostStorage:
+  enabled: true
+  backup: {enabled: true}
+minio:
+  persistence:
+    hostPath: /host-data/minio
 ```
 
 ---

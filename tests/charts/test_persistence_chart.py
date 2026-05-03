@@ -587,6 +587,140 @@ def test_backup_upload_uses_bash_and_no_awk():
         )
 
 
+# ---------- MinIO durability (its own data, not the backup target) ----------
+
+
+def _minio_data_volume(docs: list[dict]) -> dict:
+    """Return the ``data`` volume from the MinIO Deployment."""
+    for d in _by_kind(docs, "Deployment"):
+        if d.get("metadata", {}).get("name") == "cogniverse-minio":
+            for v in d["spec"]["template"]["spec"]["volumes"]:
+                if v["name"] == "data":
+                    return v
+    raise AssertionError("MinIO Deployment data volume not found")
+
+
+def test_minio_default_uses_pvc_backed_storage():
+    """Default MinIO config provisions a PVC. Suitable for cloud / multi-node
+    prod where a real CSI provider gives durability."""
+    docs = _render()
+    vol = _minio_data_volume(docs)
+    assert "persistentVolumeClaim" in vol, f"default MinIO must use PVC, got {vol}"
+    assert vol["persistentVolumeClaim"]["claimName"] == "cogniverse-minio"
+    pvc = _named(docs, "PersistentVolumeClaim", "cogniverse-minio")
+    assert pvc is not None, "default MinIO must provision a PVC"
+
+
+def test_minio_hostpath_mode_skips_pvc_and_uses_bind_mount():
+    """For laptop-dev clusters, MinIO IS the backup target. Setting
+    ``minio.persistence.hostPath`` switches to a bind-mounted host
+    directory so the data survives ``k3d cluster delete``. The PVC must
+    NOT render in this mode (no point provisioning storage we don't use)."""
+    docs = _render("minio.persistence.hostPath=/host-data/minio")
+    vol = _minio_data_volume(docs)
+    assert "hostPath" in vol, f"hostPath mode must mount a host dir, got {vol}"
+    assert vol["hostPath"]["path"] == "/host-data/minio"
+    assert vol["hostPath"]["type"] == "DirectoryOrCreate"
+    pvc = _named(docs, "PersistentVolumeClaim", "cogniverse-minio")
+    assert pvc is None, "hostPath mode must NOT provision a PVC"
+
+
+def test_minio_persistence_block_missing_does_not_crash():
+    """Regression: ``--reuse-values`` from a release predating the
+    ``hostPath`` subkey leaves ``minio.persistence`` as a dict without
+    that key. Template must default safely (PVC mode)."""
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        "--set-json",
+        'minio.persistence={"size":"50Gi"}',
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, f"render failed:\n{result.stderr}"
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+    pvc = _named(docs, "PersistentVolumeClaim", "cogniverse-minio")
+    assert pvc is not None, "stripped persistence block must still default to PVC mode"
+    assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+    assert pvc["spec"]["resources"]["requests"]["storage"] == "50Gi"
+
+
+# ---------- Backup destination is configurable (single config knob) ----------
+
+
+def _backup_upload_env(docs: list[dict], cw_name: str) -> dict:
+    """Return the upload step's env vars as a name→value-or-secret dict."""
+    cw = _named(docs, "CronWorkflow", cw_name)
+    assert cw is not None, f"CronWorkflow {cw_name} not found"
+    upload = next(
+        t for t in cw["spec"]["workflowSpec"]["templates"] if t["name"] == "upload"
+    )
+    return {e["name"]: e for e in upload["container"]["env"]}
+
+
+def test_backup_default_endpoint_targets_in_cluster_minio():
+    """Default behaviour (no s3.endpoint override): backup targets the
+    chart's own MinIO Deployment + secret. This is the dev-laptop config."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+    )
+    env = _backup_upload_env(docs, "cogniverse-backup-vespa")
+    assert env["MINIO_ENDPOINT"]["value"] == "http://cogniverse-minio:9000"
+    assert (
+        env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["name"]
+        == "cogniverse-minio"
+    )
+    assert env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "rootUser"
+
+
+def test_backup_external_s3_endpoint_overrides_default():
+    """Cloud config — single values block change points the same template
+    + same code path at an external S3-compatible endpoint (R2/B2/AWS).
+    No template edits, no chart rebuild."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.s3.endpoint=https://acct.r2.cloudflarestorage.com",
+        "hostStorage.backup.s3.existingSecret=my-r2-creds",
+    )
+    env = _backup_upload_env(docs, "cogniverse-backup-vespa")
+    assert env["MINIO_ENDPOINT"]["value"] == "https://acct.r2.cloudflarestorage.com"
+    assert env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "my-r2-creds"
+    assert env["MINIO_SECRET_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "my-r2-creds"
+
+
+def test_backup_legacy_existing_secret_field_still_honored():
+    """Backward-compat: ``hostStorage.backup.existingSecret`` (legacy
+    top-level field) still wins over the chart's MinIO secret default,
+    even when the new ``s3.existingSecret`` is empty. Operators who
+    upgraded prior charts mustn't have their secret config broken."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=legacy-secret",
+    )
+    env = _backup_upload_env(docs, "cogniverse-backup-vespa")
+    assert (
+        env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["name"] == "legacy-secret"
+    )
+
+
+def test_backup_s3_secret_takes_precedence_over_legacy():
+    """When both are set, ``s3.existingSecret`` wins (it's the explicit
+    new-style override)."""
+    docs = _render(
+        "hostStorage.backup.enabled=true",
+        "hostStorage.backup.existingSecret=legacy-secret",
+        "hostStorage.backup.s3.existingSecret=new-explicit-secret",
+    )
+    env = _backup_upload_env(docs, "cogniverse-backup-vespa")
+    assert (
+        env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["name"]
+        == "new-explicit-secret"
+    )
+
+
 def test_backup_grants_pods_exec_via_role():
     docs = _render(
         "hostStorage.backup.enabled=true",

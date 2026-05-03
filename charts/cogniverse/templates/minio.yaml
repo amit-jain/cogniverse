@@ -1,5 +1,13 @@
 {{- if .Values.minio.enabled }}
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- /* MinIO IS the backup destination (default config). For dev clusters
+to survive ``k3d cluster delete`` the data must live on a hostPath
+bind-mount that's mapped from the operator's laptop fs into the k3d node.
+``minio.persistence.hostPath`` (when set) bypasses the PVC entirely and
+mounts a host directory; otherwise the chart provisions a PVC via the
+configured ``storageClass``. ``default dict`` so ``--reuse-values`` from
+older releases doesn't crash. */}}
+{{- $minioP := (.Values.minio.persistence | default dict) }}
 ---
 apiVersion: v1
 kind: Secret
@@ -12,6 +20,7 @@ type: Opaque
 stringData:
   rootUser: {{ .Values.minio.rootUser | quote }}
   rootPassword: {{ .Values.minio.rootPassword | quote }}
+{{- if not $minioP.hostPath }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -22,13 +31,14 @@ metadata:
     app.kubernetes.io/component: minio
 spec:
   accessModes:
-    - {{ .Values.minio.persistence.accessMode }}
-  {{- if .Values.minio.persistence.storageClass }}
-  storageClassName: {{ .Values.minio.persistence.storageClass }}
+    - {{ $minioP.accessMode | default "ReadWriteOnce" }}
+  {{- if $minioP.storageClass }}
+  storageClassName: {{ $minioP.storageClass }}
   {{- end }}
   resources:
     requests:
-      storage: {{ .Values.minio.persistence.size }}
+      storage: {{ $minioP.size | default "100Gi" }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -88,8 +98,14 @@ spec:
           mountPath: /data
       volumes:
       - name: data
+        {{- if $minioP.hostPath }}
+        hostPath:
+          path: {{ $minioP.hostPath }}
+          type: DirectoryOrCreate
+        {{- else }}
         persistentVolumeClaim:
           claimName: {{ $fullName }}-minio
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

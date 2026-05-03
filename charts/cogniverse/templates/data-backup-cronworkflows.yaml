@@ -26,6 +26,20 @@ values — chart defaults from values.yaml don't reapply. */}}
 {{- /* Default to vespa-only when --reuse-values upgrade omits services. */}}
 {{- $services := ($bk.services | default (list (dict "name" "vespa" "dataPath" "/opt/vespa/var" "podLabel" "app.kubernetes.io/component=vespa"))) }}
 {{- $fullName := include "cogniverse.fullname" . -}}
+{{- /* Backup destination — single config knob to switch between dev (in-cluster
+MinIO) and cloud (R2 / B2 / AWS S3 / etc). Operator overrides:
+  hostStorage.backup.s3.endpoint        — S3-compatible URL; empty = in-cluster MinIO
+  hostStorage.backup.s3.existingSecret  — secret name; empty = use cogniverse-minio
+  hostStorage.backup.s3.region          — required by some S3 clients (mc ignores)
+The chart's default targets the in-cluster MinIO Deployment + secret, which is
+fine for laptop dev IF MinIO uses ``minio.persistence.hostPath`` so its data
+survives ``k3d cluster delete``. For cloud deployments, override these three
+values + nothing else — same template, same code path. */}}
+{{- $s3 := ($bk.s3 | default dict) }}
+{{- $s3Endpoint := ($s3.endpoint | default (printf "http://%s-minio:9000" $fullName)) }}
+{{- /* Secret precedence: backup.s3.existingSecret (new, explicit) →
+backup.existingSecret (legacy top-level) → in-cluster MinIO secret. */}}
+{{- $s3Secret := ($s3.existingSecret | default $bk.existingSecret | default (printf "%s-minio" $fullName)) }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -118,18 +132,23 @@ spec:
         image: minio/mc:latest
         env:
         - name: MINIO_ENDPOINT
-          value: "http://{{ $fullName }}-minio:9000"
+          value: {{ $s3Endpoint | quote }}
         - name: MINIO_BUCKET
           value: {{ $bucket | quote }}
+        # Secret keys ``rootUser`` / ``rootPassword`` match both the
+        # chart's in-cluster MinIO secret AND the convention used by
+        # operator-supplied secrets for cloud buckets (the operator
+        # creates the secret with these key names regardless of the S3
+        # provider — keeps the template provider-agnostic).
         - name: MINIO_ACCESS_KEY
           valueFrom:
             secretKeyRef:
-              name: {{ $bk.existingSecret | quote }}
+              name: {{ $s3Secret | quote }}
               key: rootUser
         - name: MINIO_SECRET_KEY
           valueFrom:
             secretKeyRef:
-              name: {{ $bk.existingSecret | quote }}
+              name: {{ $s3Secret | quote }}
               key: rootPassword
         - name: RETAIN_LAST
           value: {{ $retainLast | quote }}
