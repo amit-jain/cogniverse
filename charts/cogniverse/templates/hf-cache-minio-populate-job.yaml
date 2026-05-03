@@ -1,19 +1,22 @@
 {{- /*
-One-shot Job that mirrors HF Hub models to the MinIO bucket so
-inference pods can pull from MinIO instead of HF Hub at cold start.
-Operator runs once per cluster (or after adding a new model to
-``hfCache.persistence.minio.models``):
+One-shot Job that populates the MinIO bucket with HF model caches so
+inference pods can hydrate from MinIO at cold start instead of HF Hub.
 
-  helm upgrade ... && kubectl create job --from=cronjob/...
-  # or simply re-run: kubectl delete job <name>; kubectl apply -f -
+Each model is uploaded as a single tarball ``<repo>.tar``. Tarball
+preserves the HF cache symlink layout (snapshots/<sha>/<file> →
+../../blobs/<hash>) — flat per-file uploads via ``mc mirror`` lose the
+symlinks and trip ``snapshot_download``'s integrity check, forcing a
+full HF Hub re-download on every cold start.
 
-Job is idempotent — boto3 head_object skips already-uploaded files.
+Operator runs after adding a new model to
+``hfCache.persistence.minio.models`` and helm-upgrading; the helm hook
+also re-runs it on every upgrade. Idempotent: skips models whose
+tarball is already in the bucket.
 */}}
 {{- /* ``default dict`` so ``--reuse-values`` from older releases doesn't crash. */}}
 {{- $minio := ((.Values.hfCache.persistence | default dict).minio | default dict) }}
 {{- if and $minio.enabled $minio.models }}
 {{- $fullName := include "cogniverse.fullname" . -}}
-{{- $minio := .Values.hfCache.persistence.minio -}}
 {{- $runtimeImage := .Values.runtime.image -}}
 {{- if .Values.runtime.imagesByBackend }}
 {{- $runtimeImage = (index .Values.runtime.imagesByBackend (default "cuda" .Values.runtime.backend)) | default .Values.runtime.image }}
@@ -57,16 +60,12 @@ spec:
               key: rootPassword
         - name: MODELS
           value: {{ join "," $minio.models | quote }}
-        - name: HF_HOME
-          value: /tmp/hf-stage
-        - name: HF_HUB_ENABLE_HF_TRANSFER
-          value: "1"
-        command: ["/bin/sh", "-c"]
+        command: ["sh", "-c"]
         args:
         - |
-          set -euo pipefail
+          set -eu
           python <<'PY'
-          import os
+          import os, subprocess
           from pathlib import Path
           import boto3
           from huggingface_hub import snapshot_download
@@ -74,10 +73,8 @@ spec:
           endpoint = os.environ["MINIO_ENDPOINT"]
           bucket = os.environ["MINIO_BUCKET"]
           models = [m.strip() for m in os.environ["MODELS"].split(",") if m.strip()]
-          # snapshot_download(cache_dir=X) writes to X/models--<owner>--<repo>/...
-          # The /hub/ subdir convention only applies when relying on HF_HOME's
-          # default layout — passing cache_dir bypasses it.
           stage = Path("/tmp/hf-stage")
+          stage.mkdir(parents=True, exist_ok=True)
 
           s3 = boto3.client(
               "s3",
@@ -91,22 +88,40 @@ spec:
               s3.create_bucket(Bucket=bucket)
 
           for repo_id in models:
+              key = f"{repo_id}.tar"
               print(f"=== {repo_id} ===")
-              snapshot_download(repo_id=repo_id, cache_dir="/tmp/hf-stage")
-              repo_dir = stage / f"models--{repo_id.replace('/', '--')}"
+              try:
+                  s3.head_object(Bucket=bucket, Key=key)
+                  print(f"  already in bucket, skipping")
+                  continue
+              except s3.exceptions.ClientError:
+                  pass
+
+              # Download into stage so symlinks are real on the local FS.
+              snapshot_download(repo_id=repo_id, cache_dir=str(stage))
+              repo_dir_name = f"models--{repo_id.replace('/', '--')}"
+              repo_dir = stage / repo_dir_name
               if not repo_dir.exists():
                   raise SystemExit(f"snapshot_download failed for {repo_id}")
-              for f in repo_dir.rglob("*"):
-                  if not f.is_file() or f.is_symlink():
-                      continue
-                  key = f"{repo_id}/{f.relative_to(repo_dir).as_posix()}"
-                  try:
-                      s3.head_object(Bucket=bucket, Key=key)
-                      continue
-                  except s3.exceptions.ClientError:
-                      pass
-                  print(f"  upload {key}  ({f.stat().st_size} bytes)")
-                  s3.upload_file(str(f), bucket, key)
+
+              # ``tar`` preserves symlinks as symlinks (Python's tarfile does
+              # too, but shelling out is faster + streams big files instead of
+              # holding them in Python memory).
+              # The tar contains the ``models--<owner>--<repo>/`` directory so
+              # the receiver extracts under ``hub/models--<owner>--<repo>``.
+              tarball = stage / "_upload.tar"
+              subprocess.run(
+                  ["tar", "-cf", str(tarball), "-C", str(stage), repo_dir_name],
+                  check=True,
+              )
+
+              size = tarball.stat().st_size
+              print(f"  upload {key}  ({size:,} bytes)")
+              # boto3 upload_file uses multipart for big files automatically.
+              s3.upload_file(str(tarball), bucket, key)
+              tarball.unlink()
+              # Free disk for the next model.
+              subprocess.run(["rm", "-rf", str(repo_dir)], check=True)
           print("populate complete")
           PY
         volumeMounts:

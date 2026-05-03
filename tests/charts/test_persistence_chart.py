@@ -205,6 +205,40 @@ def test_persistence_mode_inference_pods_use_their_own_pvc():
         )
 
 
+def test_model_warm_init_uses_runtime_image_for_consistent_deps():
+    """The init container needs python + huggingface_hub + boto3 + tar.
+    Inference images are inconsistent (pylate has tar but no boto3;
+    vllm-rocm has both but is GPU-flavored). The runtime image is the
+    only one we can pin: it ships all four and is already pulled on
+    every cluster (the runtime pod uses it)."""
+    docs = _render("hfCache.persistence.enabled=true")
+    runtime_pod = _runtime_pod_spec(docs)
+    runtime_image = runtime_pod["containers"][0]["image"]
+    for name, spec in _inference_pod_specs(docs).items():
+        warm = _container(spec, "model-warm")
+        assert warm is not None
+        assert warm["image"] == runtime_image, (
+            f"{name}: model-warm must reuse the runtime image "
+            f"({runtime_image}) to guarantee boto3+tar+hf_hub. "
+            f"Got {warm['image']}"
+        )
+
+
+def test_model_warm_init_avoids_pipefail():
+    """Regression: ``set -o pipefail`` is bash-only; vllm-rocm /bin/sh
+    is dash which rejects it (``Illegal option -o pipefail``). The init
+    script has no pipes, so plain ``set -eu`` is sufficient."""
+    docs = _render("hfCache.persistence.enabled=true")
+    for name, spec in _inference_pod_specs(docs).items():
+        warm = _container(spec, "model-warm")
+        assert warm is not None
+        script = warm["args"][-1]
+        assert "pipefail" not in script, (
+            f"inference {name}: model-warm script must not use pipefail "
+            f"(dash rejects it). Got:\n{script}"
+        )
+
+
 def test_persistence_mode_inference_pods_have_model_warm_init():
     docs = _render("hfCache.persistence.enabled=true")
     for name, spec in _inference_pod_specs(docs).items():
@@ -220,11 +254,18 @@ def test_persistence_mode_inference_pods_have_model_warm_init():
         assert mounts.get("model-cache") == "/root/.cache/huggingface"
 
 
-def test_persistence_mode_without_minio_has_no_minio_init_or_job():
+def test_persistence_mode_without_minio_omits_minio_env_and_no_job():
+    """Without minio mode, the single model-warm init must not carry MINIO_*
+    env (so the script skips the mirror branch) and the populate Job must
+    not render."""
     docs = _render("hfCache.persistence.enabled=true")
     for name, spec in _inference_pod_specs(docs).items():
-        assert _container(spec, "model-warm-minio") is None, (
-            f"inference {name} should NOT have model-warm-minio when minio disabled"
+        warm = _container(spec, "model-warm")
+        assert warm is not None
+        env_names = {e["name"] for e in warm.get("env", [])}
+        assert "MINIO_ENDPOINT" not in env_names, (
+            f"{name}: model-warm must not carry MINIO_* env when minio disabled, "
+            f"got {env_names}"
         )
     populate = _named(docs, "Job", "cogniverse-hf-cache-minio-populate")
     assert populate is None
@@ -233,7 +274,10 @@ def test_persistence_mode_without_minio_has_no_minio_init_or_job():
 # ---------- Mode 3 + MinIO mirror sub-mode ----------
 
 
-def test_minio_mode_adds_mirror_init_before_model_warm():
+def test_minio_mode_injects_minio_env_into_model_warm():
+    """A single init container handles both paths: try MinIO tarball
+    mirror, fall back to snapshot_download. When MinIO mode is on the
+    init must carry MINIO_* env so the script knows to try the mirror."""
     docs = _render(
         "hfCache.persistence.enabled=true",
         "hfCache.persistence.minio.enabled=true",
@@ -242,16 +286,15 @@ def test_minio_mode_adds_mirror_init_before_model_warm():
     )
     for name, spec in _inference_pod_specs(docs).items():
         init_names = [c["name"] for c in spec.get("initContainers", [])]
-        assert "model-warm-minio" in init_names, (
-            f"inference {name} should have model-warm-minio init when minio enabled, "
-            f"got {init_names}"
+        assert init_names == ["model-warm"], (
+            f"inference {name} should have a single ``model-warm`` init "
+            f"(combined mirror + snapshot_download), got {init_names}"
         )
-        assert "model-warm" in init_names
-        # Mirror must run before snapshot_download so HF-Hub reach-out is skipped
-        # when the bucket already has the model.
-        assert init_names.index("model-warm-minio") < init_names.index("model-warm"), (
-            f"model-warm-minio must precede model-warm for {name}, got {init_names}"
-        )
+        warm = _container(spec, "model-warm")
+        env = {e["name"]: e for e in warm.get("env", [])}
+        assert "MINIO_ENDPOINT" in env
+        assert "MINIO_BUCKET" in env
+        assert env["MINIO_ACCESS_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "rootUser"
 
 
 def test_minio_mode_creates_populate_job_with_helm_hooks():
@@ -389,6 +432,38 @@ def test_backup_inner_subkeys_default_when_only_enabled_is_set():
     assert env["RETAIN_LAST"], f"RETAIN_LAST must default, got {env['RETAIN_LAST']!r}"
 
 
+def test_pvc_inner_subkeys_default_when_only_enabled_is_set():
+    """Regression: ``helm upgrade --reuse-values --set hfCache.persistence.enabled=true``
+    overlays only the operator's --set on top of stored values; chart defaults
+    from values.yaml don't reapply. The rendered PVCs must therefore supply
+    their own defaults for accessMode/size or the apply fails with
+    ``spec.accessModes: Unsupported value: ""``."""
+    cmd = [
+        "helm",
+        "template",
+        "cogniverse",
+        str(CHART_PATH),
+        "--set",
+        "runtime.qualityMonitor.tenantId=test-tenant",
+        # Replace the entire persistence block so chart defaults from
+        # values.yaml do NOT apply to inner subkeys; only ``enabled`` is
+        # present, matching what ``--reuse-values`` would overlay.
+        "--set-json",
+        'hfCache.persistence={"enabled":true}',
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, f"helm template failed:\n{result.stderr}"
+    docs = [d for d in yaml.safe_load_all(result.stdout) if d is not None]
+    runtime_pvc = _named(
+        docs, "PersistentVolumeClaim", "cogniverse-runtime-model-cache"
+    )
+    assert runtime_pvc is not None, "PVC must render with only enabled=true"
+    assert runtime_pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+    assert runtime_pvc["spec"]["resources"]["requests"]["storage"], (
+        "size must default, not be empty"
+    )
+
+
 def test_render_survives_missing_persistence_block():
     """Regression: ``helm upgrade --reuse-values`` from a release predating
     these keys produces values where ``hfCache.persistence`` and
@@ -441,11 +516,34 @@ def test_render_survives_missing_persistence_block():
     assert backup_cws == []
 
 
-def test_minio_mirror_init_uses_bash_and_no_sed():
-    """Regression: the minio/mc image lacks ``sed``. The mirror init script
-    must use bash parameter expansion (``${MODEL//\\//--}``) instead of
-    ``sed 's|/|--|g'``, or the init container fails on first run with
-    ``sed: command not found`` and the inference pod never starts."""
+def test_model_warm_uses_runtime_image_for_boto3_and_tar():
+    """Regression: the init script downloads a tarball via boto3 and
+    extracts it via tar; both deps must be in the image. The runtime
+    image is the only one we control + ship that has all of boto3 +
+    huggingface_hub + tar (the inference images may have only some)."""
+    docs = _render(
+        "hfCache.persistence.enabled=true",
+        "hfCache.persistence.minio.enabled=true",
+        "hfCache.persistence.minio.existingSecret=cogniverse-minio",
+        "hfCache.persistence.minio.models[0]=hf-internal-testing/tiny-random-bert",
+    )
+    runtime_pod = _runtime_pod_spec(docs)
+    runtime_image = runtime_pod["containers"][0]["image"]
+    for name, spec in _inference_pod_specs(docs).items():
+        warm = _container(spec, "model-warm")
+        assert warm is not None
+        assert warm["image"] == runtime_image, (
+            f"inference {name}: model-warm must use the runtime image "
+            f"({runtime_image}) which has boto3 + tar. Got {warm['image']}"
+        )
+
+
+def test_model_warm_script_extracts_tar_not_per_file_mirror():
+    """Regression: the previous ``mc mirror`` design copied per-file
+    and lost HF cache symlinks (snapshots/<sha>/<file> →
+    blobs/<hash>), causing snapshot_download to consider the cache
+    invalid and re-download from HF Hub. The new script downloads a
+    single ``<repo>.tar`` and extracts it — tar preserves symlinks."""
     docs = _render(
         "hfCache.persistence.enabled=true",
         "hfCache.persistence.minio.enabled=true",
@@ -453,16 +551,14 @@ def test_minio_mirror_init_uses_bash_and_no_sed():
         "hfCache.persistence.minio.models[0]=hf-internal-testing/tiny-random-bert",
     )
     for name, spec in _inference_pod_specs(docs).items():
-        warm = _container(spec, "model-warm-minio")
-        assert warm is not None, f"inference {name} missing model-warm-minio init"
-        assert warm["command"] == [
-            "/bin/bash",
-            "-c",
-        ], f"mirror init for {name} must run under bash, got {warm['command']}"
+        warm = _container(spec, "model-warm")
         script = warm["args"][-1]
-        assert "sed " not in script, (
-            f"mirror init for {name} must not call sed (mc image lacks it). "
-            f"Use bash parameter expansion. Got:\n{script}"
+        assert '"tar", "-xf"' in script or "tar -xf" in script, (
+            f"{name}: script must extract a tarball with ``tar -xf`` "
+            f"(symlinks preserved). Got:\n{script}"
+        )
+        assert "mc mirror" not in script, (
+            f"{name}: must not use ``mc mirror`` (loses symlinks). Got:\n{script}"
         )
 
 

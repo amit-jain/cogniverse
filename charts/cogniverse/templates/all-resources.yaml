@@ -1307,82 +1307,78 @@ spec:
         app.kubernetes.io/component: inference-{{ $name }}
     spec:
       serviceAccountName: {{ include "cogniverse.serviceAccountName" $ }}
-      {{- if eq $device "rocm" }}
-      # /dev/kfd and /dev/dri/renderD* are owned by gid 992 (render) on
-      # Debian/Ubuntu — supplementalGroups injects that membership
-      # without changing runAsUser. Override per-service for distros
-      # with different gids.
+      {{- $persistence := ($.Values.hfCache.persistence | default dict) }}
+      {{- $minio := ($persistence.minio | default dict) }}
+      {{- $persistenceOn := and $persistence.enabled (not $.Values.hfCache.enabled) }}
+      {{- if or (eq $device "rocm") $persistenceOn }}
       securityContext:
+        {{- if eq $device "rocm" }}
+        # /dev/kfd and /dev/dri/renderD* are owned by gid 992 (render)
+        # on Debian/Ubuntu — supplementalGroups injects that membership
+        # without changing runAsUser. Override per-service for distros
+        # with different gids.
         supplementalGroups:
-          {{- toYaml (dig "rocm" "supplementalGroups" (list 992 44) $cfg) | nindent 8 }}
+          {{- toYaml (dig "rocm" "supplementalGroups" (list 992 44) $cfg) | nindent 10 }}
+        {{- end }}
+        {{- if $persistenceOn }}
+        # PVCs come up root:root with 0755. The init container runs as
+        # the runtime image's UID 1000; without ``fsGroup`` it can't
+        # write to the mount. ``fsGroup`` makes K8s chown the volume to
+        # gid 1000 + setgid so both UID 1000 (init) and root (some
+        # inference images) can write.
+        fsGroup: 1000
+        {{- end }}
+      {{- end }}
+      {{- if eq $device "rocm" }}
       # vLLM's multi-process worker uses host POSIX shm for tensor IPC;
       # without hostIPC + a /dev/shm emptyDir it crashes with
       # shm_open: Function not implemented.
       hostIPC: true
       {{- end }}
-      {{- $persistence := ($.Values.hfCache.persistence | default dict) }}
-      {{- $minio := ($persistence.minio | default dict) }}
-      {{- if and $persistence.enabled (not $.Values.hfCache.enabled) }}
-      # Pre-warm the model-cache PVC before main container starts.
-      # Idempotent: both steps skip existing files.
+      {{- if $persistenceOn }}
+      # Pre-warm the model-cache PVC. Single init container does both
+      # paths: try MinIO tarball mirror first (fast, air-gap friendly,
+      # preserves HF cache symlinks), fall back to HF Hub
+      # snapshot_download. The runtime image is used because it ships
+      # boto3 + huggingface_hub + tar — required for both paths and
+      # already pulled on every cluster (the runtime pod uses it).
+      {{- $runtimeBackendInf := default "cuda" $.Values.runtime.backend }}
+      {{- $warmImage := $.Values.runtime.image }}
+      {{- if $.Values.runtime.imagesByBackend }}
+      {{- $warmImage = (index $.Values.runtime.imagesByBackend $runtimeBackendInf) | default $.Values.runtime.image }}
+      {{- end }}
       initContainers:
-      {{- if $minio.enabled }}
-      # Step 1 — pull from MinIO mirror if the bucket has the model.
-      # Fast (LAN), air-gap-friendly. Skips if the bucket is empty.
-      - name: model-warm-minio
-        image: minio/mc:latest
+      - name: model-warm
+        image: "{{ $warmImage.repository }}:{{ $warmImage.tag }}"
+        imagePullPolicy: {{ $warmImage.pullPolicy }}
+        # UID 0 so the init can traverse ``/root`` (image default 0700,
+        # blocking UID 1000 traversal). ``fsGroup: 1000`` on the pod
+        # makes new files group-writable so the main container (which
+        # may run as UID 1000) can still read+modify them.
+        securityContext:
+          runAsUser: 0
+          runAsNonRoot: false
         env:
+        - name: MODEL
+          value: {{ $cfg.model | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $minio.enabled }}
         - name: MINIO_ENDPOINT
-          value: {{ $.Values.hfCache.persistence.minio.endpoint | quote }}
+          value: {{ $minio.endpoint | quote }}
         - name: MINIO_BUCKET
-          value: {{ $.Values.hfCache.persistence.minio.bucket | quote }}
+          value: {{ $minio.bucket | quote }}
         - name: MINIO_ACCESS_KEY
           valueFrom:
             secretKeyRef:
-              name: {{ $.Values.hfCache.persistence.minio.existingSecret | quote }}
+              name: {{ $minio.existingSecret | quote }}
               key: rootUser
         - name: MINIO_SECRET_KEY
           valueFrom:
             secretKeyRef:
-              name: {{ $.Values.hfCache.persistence.minio.existingSecret | quote }}
+              name: {{ $minio.existingSecret | quote }}
               key: rootPassword
-        - name: MODEL
-          value: {{ $cfg.model | quote }}
-        # bash for ${MODEL//\//--}; minio/mc image lacks sed.
-        command: ["/bin/bash", "-c"]
-        args:
-        - |
-          set -eu
-          mc alias set src "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
-          DEST="/root/.cache/huggingface/hub/models--${MODEL//\//--}"
-          if mc ls "src/$MINIO_BUCKET/$MODEL/" >/dev/null 2>&1; then
-            echo "MinIO has $MODEL — mirroring to $DEST"
-            mkdir -p "$DEST"
-            mc mirror --overwrite --quiet "src/$MINIO_BUCKET/$MODEL/" "$DEST/"
-          else
-            echo "MinIO bucket has no $MODEL — skipping (HF Hub fallback will fetch)"
-          fi
-        volumeMounts:
-        - name: model-cache
-          mountPath: /root/.cache/huggingface
-        resources:
-          limits:
-            cpu: "1"
-            memory: "1Gi"
-          requests:
-            cpu: "100m"
-            memory: "128Mi"
-      {{- end }}
-      # Step 2 — fall through to HF Hub for any files MinIO didn't have
-      # (or all files when MinIO mirror is disabled).
-      - name: model-warm
-        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
-        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
-        env:
-        - name: HF_HOME
-          value: /root/.cache/huggingface
-        - name: HF_HUB_ENABLE_HF_TRANSFER
-          value: "1"
+        {{- end }}
         {{- if $cfg.hfTokenSecret }}
         - name: HF_TOKEN
           valueFrom:
@@ -1390,23 +1386,64 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
-        command: ["/bin/sh", "-c"]
+        command: ["sh", "-c"]
         args:
         - |
-          set -euo pipefail
-          MODEL={{ $cfg.model | quote }}
-          python -c "from huggingface_hub import snapshot_download; \
-                     snapshot_download(repo_id='$MODEL', cache_dir='/root/.cache/huggingface')"
+          set -eu
+          python <<'PY'
+          import os, subprocess, sys
+          from pathlib import Path
+          from huggingface_hub import snapshot_download
+
+          model = os.environ["MODEL"]
+          hub = Path("/root/.cache/huggingface/hub")
+          hub.mkdir(parents=True, exist_ok=True)
+
+          endpoint = os.environ.get("MINIO_ENDPOINT")
+          if endpoint:
+              # Path 1: pull tarball from MinIO and tar-extract. Tar
+              # preserves the snapshots/<sha>/<file> → blobs/<hash>
+              # symlinks that snapshot_download's verifier requires.
+              import boto3
+              from botocore.exceptions import ClientError
+              s3 = boto3.client(
+                  "s3",
+                  endpoint_url=endpoint,
+                  aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
+                  aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
+              )
+              key = f"{model}.tar"
+              tarball = Path(f"/tmp/{model.replace('/', '--')}.tar")
+              try:
+                  s3.download_file(os.environ["MINIO_BUCKET"], key, str(tarball))
+              except ClientError as e:
+                  print(f"MinIO tarball miss for {model}: {e.response['Error']['Code']}")
+              else:
+                  print(f"MinIO hit: extracting {tarball.stat().st_size:,} bytes")
+                  subprocess.run(
+                      ["tar", "-xf", str(tarball), "-C", str(hub)],
+                      check=True,
+                  )
+                  tarball.unlink()
+
+          # Path 2: snapshot_download. No-op if the cache is already
+          # populated by the MinIO path; full HF Hub fetch otherwise.
+          snapshot_download(
+              repo_id=model,
+              cache_dir="/root/.cache/huggingface",
+          )
+          print(f"model-warm complete: {model}")
+          PY
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/huggingface
         resources:
           limits:
             cpu: "2"
-            memory: "2Gi"
+            memory: "4Gi"
           requests:
             cpu: "500m"
-            memory: "256Mi"
+            memory: "512Mi"
       {{- end }}
       containers:
       {{- if eq $engine "pylate" }}

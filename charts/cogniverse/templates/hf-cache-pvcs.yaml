@@ -16,6 +16,12 @@ pattern leaves the new feature disabled until the operator opts in.
 */}}
 {{- $persistence := (.Values.hfCache.persistence | default dict) }}
 {{- if and $persistence.enabled (not .Values.hfCache.enabled) }}
+{{- /* Default inner subkeys — ``--reuse-values`` overlays only operator
+``--set`` on stored values; chart values.yaml defaults don't reapply. */}}
+{{- $accessMode := ($persistence.accessMode | default "ReadWriteOnce") }}
+{{- $size := ($persistence.size | default "50Gi") }}
+{{- $storageClass := $persistence.storageClass }}
+{{- $annotations := ($persistence.annotations | default dict) }}
 
 {{- if .Values.runtime.enabled }}
 ---
@@ -26,19 +32,19 @@ metadata:
   labels:
     {{- include "cogniverse.labels" . | nindent 4 }}
     app.kubernetes.io/component: hf-cache
-  {{- with .Values.hfCache.persistence.annotations }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.hfCache.persistence.accessMode }}
-  {{- if .Values.hfCache.persistence.storageClass }}
-  storageClassName: {{ .Values.hfCache.persistence.storageClass }}
+    - {{ $accessMode }}
+  {{- if $storageClass }}
+  storageClassName: {{ $storageClass }}
   {{- end }}
   resources:
     requests:
-      storage: {{ .Values.hfCache.persistence.size }}
+      storage: {{ $size }}
 {{- end }}
 
 {{- if .Values.ingestor.enabled }}
@@ -50,19 +56,19 @@ metadata:
   labels:
     {{- include "cogniverse.labels" . | nindent 4 }}
     app.kubernetes.io/component: hf-cache
-  {{- with .Values.hfCache.persistence.annotations }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
   accessModes:
-    - {{ .Values.hfCache.persistence.accessMode }}
-  {{- if .Values.hfCache.persistence.storageClass }}
-  storageClassName: {{ .Values.hfCache.persistence.storageClass }}
+    - {{ $accessMode }}
+  {{- if $storageClass }}
+  storageClassName: {{ $storageClass }}
   {{- end }}
   resources:
     requests:
-      storage: {{ .Values.hfCache.persistence.size }}
+      storage: {{ $size }}
 {{- end }}
 
 {{- range $name, $cfg := .Values.inference }}
@@ -76,19 +82,19 @@ metadata:
     {{- include "cogniverse.labels" $ | nindent 4 }}
     app.kubernetes.io/component: hf-cache
     app.kubernetes.io/part-of: {{ $name }}
-  {{- with $.Values.hfCache.persistence.annotations }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
   accessModes:
-    - {{ $.Values.hfCache.persistence.accessMode }}
-  {{- if $.Values.hfCache.persistence.storageClass }}
-  storageClassName: {{ $.Values.hfCache.persistence.storageClass }}
+    - {{ $accessMode }}
+  {{- if $storageClass }}
+  storageClassName: {{ $storageClass }}
   {{- end }}
   resources:
     requests:
-      storage: {{ $.Values.hfCache.persistence.size }}
+      storage: {{ $size }}
 {{- end }}
 {{- end }}
 
