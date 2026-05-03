@@ -1,0 +1,121 @@
+{{- /*
+One-shot Job that mirrors HF Hub models to the MinIO bucket so
+inference pods can pull from MinIO instead of HF Hub at cold start.
+Operator runs once per cluster (or after adding a new model to
+``hfCache.persistence.minio.models``):
+
+  helm upgrade ... && kubectl create job --from=cronjob/...
+  # or simply re-run: kubectl delete job <name>; kubectl apply -f -
+
+Job is idempotent — boto3 head_object skips already-uploaded files.
+*/}}
+{{- if and .Values.hfCache.persistence.minio.enabled .Values.hfCache.persistence.minio.models }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- $minio := .Values.hfCache.persistence.minio -}}
+{{- $runtimeImage := .Values.runtime.image -}}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $runtimeImage = (index .Values.runtime.imagesByBackend (default "cuda" .Values.runtime.backend)) | default .Values.runtime.image }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $fullName }}-hf-cache-minio-populate
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hf-cache-populate
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: populate
+        image: "{{ $runtimeImage.repository }}:{{ $runtimeImage.tag }}"
+        imagePullPolicy: {{ $runtimeImage.pullPolicy }}
+        env:
+        - name: MINIO_ENDPOINT
+          value: {{ $minio.endpoint | quote }}
+        - name: MINIO_BUCKET
+          value: {{ $minio.bucket | quote }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $minio.existingSecret | quote }}
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $minio.existingSecret | quote }}
+              key: rootPassword
+        - name: MODELS
+          value: {{ join "," $minio.models | quote }}
+        - name: HF_HOME
+          value: /tmp/hf-stage
+        - name: HF_HUB_ENABLE_HF_TRANSFER
+          value: "1"
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          python <<'PY'
+          import os
+          from pathlib import Path
+          import boto3
+          from huggingface_hub import snapshot_download
+
+          endpoint = os.environ["MINIO_ENDPOINT"]
+          bucket = os.environ["MINIO_BUCKET"]
+          models = [m.strip() for m in os.environ["MODELS"].split(",") if m.strip()]
+          stage = Path("/tmp/hf-stage/hub")
+
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=endpoint,
+              aws_access_key_id=os.environ["MINIO_ACCESS_KEY"],
+              aws_secret_access_key=os.environ["MINIO_SECRET_KEY"],
+          )
+          try:
+              s3.head_bucket(Bucket=bucket)
+          except Exception:
+              s3.create_bucket(Bucket=bucket)
+
+          for repo_id in models:
+              print(f"=== {repo_id} ===")
+              snapshot_download(repo_id=repo_id, cache_dir="/tmp/hf-stage")
+              repo_dir = stage / f"models--{repo_id.replace('/', '--')}"
+              if not repo_dir.exists():
+                  raise SystemExit(f"snapshot_download failed for {repo_id}")
+              for f in repo_dir.rglob("*"):
+                  if not f.is_file() or f.is_symlink():
+                      continue
+                  key = f"{repo_id}/{f.relative_to(repo_dir).as_posix()}"
+                  try:
+                      s3.head_object(Bucket=bucket, Key=key)
+                      continue
+                  except s3.exceptions.ClientError:
+                      pass
+                  print(f"  upload {key}  ({f.stat().st_size} bytes)")
+                  s3.upload_file(str(f), bucket, key)
+          print("populate complete")
+          PY
+        volumeMounts:
+        - name: stage
+          mountPath: /tmp/hf-stage
+        resources:
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+      volumes:
+      - name: stage
+        emptyDir:
+          sizeLimit: 100Gi
+{{- end }}

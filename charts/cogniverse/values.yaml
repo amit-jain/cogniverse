@@ -143,6 +143,23 @@ hfCache:
     accessMode: ReadWriteOnce
     storageClass: ""
     annotations: {}
+    # Optional MinIO mirror — operator runs the populate Job once to
+    # upload models from HF Hub to MinIO; subsequent inference pod
+    # starts pull from MinIO (fast, air-gap friendly) before falling
+    # through to HF Hub via the model-warm init container.
+    minio:
+      enabled: false
+      endpoint: ""              # e.g. http://cogniverse-minio:9000
+      bucket: cogniverse-models
+      # Secret with MINIO_ACCESS_KEY + MINIO_SECRET_KEY keys (the chart
+      # already provisions one called ``<release>-minio`` when the
+      # bundled minio sub-chart is enabled — set existingSecret to
+      # ``<release>-minio`` to reuse it).
+      existingSecret: ""
+      # Models to mirror. Each entry is a HF repo id; the populate Job
+      # uploads to ``s3://<bucket>/<repo_id>/`` and the init container
+      # mirrors back to the inference svc's PVC at first cold start.
+      models: []
 
 # ===========================================
 # Vespa Configuration

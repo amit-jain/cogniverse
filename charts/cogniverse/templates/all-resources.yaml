@@ -1320,9 +1320,57 @@ spec:
       hostIPC: true
       {{- end }}
       {{- if and $.Values.hfCache.persistence.enabled (not $.Values.hfCache.enabled) }}
-      # Pre-warm the model-cache PVC from HF Hub before main container
-      # starts. Idempotent — snapshot_download skips existing files.
+      # Pre-warm the model-cache PVC before main container starts.
+      # Idempotent: both steps skip existing files.
       initContainers:
+      {{- if $.Values.hfCache.persistence.minio.enabled }}
+      # Step 1 — pull from MinIO mirror if the bucket has the model.
+      # Fast (LAN), air-gap-friendly. Skips if the bucket is empty.
+      - name: model-warm-minio
+        image: minio/mc:latest
+        env:
+        - name: MINIO_ENDPOINT
+          value: {{ $.Values.hfCache.persistence.minio.endpoint | quote }}
+        - name: MINIO_BUCKET
+          value: {{ $.Values.hfCache.persistence.minio.bucket | quote }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.hfCache.persistence.minio.existingSecret | quote }}
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.hfCache.persistence.minio.existingSecret | quote }}
+              key: rootPassword
+        - name: MODEL
+          value: {{ $cfg.model | quote }}
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eu
+          mc alias set src "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+          DEST="/root/.cache/huggingface/hub/models--$(echo "$MODEL" | sed 's|/|--|g')"
+          if mc ls "src/$MINIO_BUCKET/$MODEL/" >/dev/null 2>&1; then
+            echo "MinIO has $MODEL — mirroring to $DEST"
+            mkdir -p "$DEST"
+            mc mirror --overwrite --quiet "src/$MINIO_BUCKET/$MODEL/" "$DEST/"
+          else
+            echo "MinIO bucket has no $MODEL — skipping (HF Hub fallback will fetch)"
+          fi
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+        resources:
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+      {{- end }}
+      # Step 2 — fall through to HF Hub for any files MinIO didn't have
+      # (or all files when MinIO mirror is disabled).
       - name: model-warm
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
         imagePullPolicy: {{ $resolvedImage.pullPolicy }}
@@ -1343,7 +1391,6 @@ spec:
         - |
           set -euo pipefail
           MODEL={{ $cfg.model | quote }}
-          # Idempotent: snapshot_download skips files already present.
           python -c "from huggingface_hub import snapshot_download; \
                      snapshot_download(repo_id='$MODEL', cache_dir='/root/.cache/huggingface')"
         volumeMounts:
