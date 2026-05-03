@@ -1319,6 +1319,44 @@ spec:
       # shm_open: Function not implemented.
       hostIPC: true
       {{- end }}
+      {{- if and $.Values.hfCache.persistence.enabled (not $.Values.hfCache.enabled) }}
+      # Pre-warm the model-cache PVC from HF Hub before main container
+      # starts. Idempotent — snapshot_download skips existing files.
+      initContainers:
+      - name: model-warm
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        env:
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        - name: HF_HUB_ENABLE_HF_TRANSFER
+          value: "1"
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          MODEL={{ $cfg.model | quote }}
+          # Idempotent: snapshot_download skips files already present.
+          python -c "from huggingface_hub import snapshot_download; \
+                     snapshot_download(repo_id='$MODEL', cache_dir='/root/.cache/huggingface')"
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "256Mi"
+      {{- end }}
       containers:
       {{- if eq $engine "pylate" }}
       - name: pylate
