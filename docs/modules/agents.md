@@ -3242,6 +3242,51 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### MultiDocumentSynthesisAgent (C3.1)
+
+A2A agent that produces a coherent answer across N source documents
+(10–500) and persists it as a new memory of kind `synthesis_fact` whose
+provenance carries `derivation_kind=synthesis` and `derived_from`
+referencing every input document. RLM-capable for large document sets.
+
+```python
+from cogniverse_agents.multi_document_synthesis_agent import (
+    DocumentRef,
+    MultiDocSynthesisDeps,
+    MultiDocSynthesisInput,
+    MultiDocumentSynthesisAgent,
+)
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+agent = MultiDocumentSynthesisAgent(
+    deps=MultiDocSynthesisDeps(tenant_id="acme"),
+    llm_config=llm_config,
+)
+out = await agent._process_impl(MultiDocSynthesisInput(
+    tenant_id="acme",
+    query="What does the literature say about X?",
+    documents=[
+        DocumentRef(memory_id="m_paper_1", label="Paper #1"),
+        DocumentRef(memory_id="m_paper_2", label="Paper #2"),
+        DocumentRef(content="Inline excerpt from a third source", label="Inline"),
+    ],
+    rlm=RLMOptions(auto_detect=True, context_threshold=50_000),
+    persist=True,
+))
+print(out.answer, out.persisted_memory_id, out.used_rlm)
+```
+
+| Behaviour | Outcome |
+|---|---|
+| `documents` referenced by `memory_id` | Fetched via `Mem0.memory.get()`; rendered in the prompt with the supplied `label`. |
+| `documents` supplied as inline `content` | Rendered directly; cited as an external ref using the `label`. |
+| `rlm.enabled=True` or auto-detect over threshold | Synthesis runs through `RLMInference`; `used_rlm=True`. |
+| `persist=True` | Output written as a `synthesis_fact` memory with full provenance. |
+| `persist=False` | Read-only / audit run; nothing written. |
+
+Capability strings: `multi_document_synthesis`, `citation_preservation`.
+Default `port=8021`.
+
 ### ContradictionReconciliationAgent (C3.4)
 
 Read-only A2A agent that consumes a ConflictSet (A.3) and resolves it

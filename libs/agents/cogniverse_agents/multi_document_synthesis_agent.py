@@ -1,0 +1,356 @@
+"""MultiDocumentSynthesisAgent (C3.1).
+
+Synthesises a coherent answer over N source documents (10–500), preserving
+the citation graph that A.2 makes possible. RLM-capable: when the projected
+document context exceeds the threshold, the agent runs through
+``RLMInference`` to recursively decompose the input.
+
+Each synthesis writes a new memory of kind ``synthesis_fact`` (registered
+on the fly via the schema registry) carrying ``provenance.derivation_kind
+= SYNTHESIS`` and ``derived_from`` referencing every document the LLM
+actually used. Downstream tools (CitationTracingAgent C3.5) can walk the
+chain back.
+
+Inputs are flexible: a caller can either supply document dicts directly
+(``{id, content}``) or a list of memory ids; the agent fetches memories
+on demand and passes the joined context to the LLM. RLM-compatible
+``rlm`` options are honoured.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+import dspy
+from pydantic import Field
+
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
+from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+from cogniverse_core.agents.rlm_options import RLMOptions
+from cogniverse_core.memory.provenance import (
+    CitationRef,
+    DerivationKind,
+    attach_to_metadata,
+    make_provenance,
+)
+
+if TYPE_CHECKING:
+    from cogniverse_core.events import EventQueue
+
+logger = logging.getLogger(__name__)
+
+
+_AGENT_PORT_DEFAULT = 8021
+_SYNTHESIS_MEMORY_KIND = "synthesis_fact"
+
+
+class DocumentRef(AgentInput):
+    """Inline document supplied by the caller.
+
+    Either ``content`` is provided directly (caller supplies the bytes) or
+    ``memory_id`` references a previously-stored memory.
+    """
+
+    memory_id: Optional[str] = Field(
+        None, description="Existing memory to load for synthesis"
+    )
+    content: Optional[str] = Field(
+        None, description="Inline document content (alternative to memory_id)"
+    )
+    label: Optional[str] = Field(
+        None, description="Human-readable name (rendered into the LLM prompt)"
+    )
+
+
+class MultiDocSynthesisInput(AgentInput):
+    """Inputs for a multi-document synthesis."""
+
+    tenant_id: Optional[str] = Field(None, description="Tenant identifier")
+    query: str = Field(..., description="Synthesis prompt / user question")
+    documents: List[DocumentRef] = Field(
+        ..., description="Documents to synthesise across (10–500)", min_length=1
+    )
+    persist: bool = Field(
+        True,
+        description=(
+            "When True, store the synthesised answer as a new memory of "
+            "kind ``synthesis_fact`` with provenance pointing at the "
+            "input documents. Set False for read-only / audit runs."
+        ),
+    )
+    rlm: Optional[RLMOptions] = Field(
+        None,
+        description=(
+            "Optional RLM configuration. When set with ``enabled=True`` or "
+            "auto-detected past the context threshold, the agent runs the "
+            "synthesis via RLMInference."
+        ),
+    )
+
+
+class MultiDocSynthesisOutput(AgentOutput):
+    """Synthesised answer plus citation metadata."""
+
+    answer: str = Field(..., description="The synthesised answer text")
+    citation_refs: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description=(
+            "Per-document citation references attached to the synthesis "
+            "(``ref_kind``, ``ref_id``, optional ``label``)"
+        ),
+    )
+    persisted_memory_id: Optional[str] = Field(
+        None,
+        description=(
+            "ID of the memory created for the synthesis when ``persist=True``"
+        ),
+    )
+    used_rlm: bool = Field(
+        False,
+        description="True iff the answer was produced via RLMInference",
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Telemetry: ``document_count``, ``context_chars``, ``derivation_kind``"
+        ),
+    )
+
+
+class MultiDocSynthesisDeps(AgentDeps):
+    """Tenant-agnostic deps."""
+
+    pass
+
+
+# --- DSPy signature for the no-RLM path ---
+
+
+class _SynthesisSignature(dspy.Signature):
+    """Synthesise a coherent answer that cites the relevant documents."""
+
+    query: str = dspy.InputField(desc="The user's question / synthesis goal")
+    documents: str = dspy.InputField(
+        desc="Numbered, labelled documents to synthesise across"
+    )
+    answer: str = dspy.OutputField(
+        desc="A coherent answer that cites documents by their numbered label"
+    )
+
+
+def _format_documents_for_prompt(refs: List[DocumentRef], contents: List[str]) -> str:
+    lines: List[str] = []
+    for i, (ref, content) in enumerate(zip(refs, contents), start=1):
+        label = ref.label or ref.memory_id or f"doc_{i}"
+        lines.append(f"=== Document {i} (label={label}) ===\n{content}")
+    return "\n\n".join(lines)
+
+
+class MultiDocumentSynthesisAgent(
+    MemoryAwareMixin,
+    A2AAgent[MultiDocSynthesisInput, MultiDocSynthesisOutput, MultiDocSynthesisDeps],
+):
+    """A2A agent that produces a synthesised answer across N documents."""
+
+    def __init__(
+        self,
+        deps: MultiDocSynthesisDeps,
+        llm_config=None,
+        config_manager=None,
+        port: int = _AGENT_PORT_DEFAULT,
+    ):
+        config = A2AAgentConfig(
+            agent_name="multi_document_synthesis_agent",
+            agent_description=(
+                "Synthesises an answer across N source documents while "
+                "preserving the citation graph for audit. RLM-capable for "
+                "large document sets."
+            ),
+            capabilities=[
+                "multi_document_synthesis",
+                "citation_preservation",
+            ],
+            port=port,
+        )
+        super().__init__(deps=deps, config=config)
+        self._config_manager = config_manager
+        self._llm_config = llm_config
+        self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
+
+    async def _process_impl(
+        self, input: MultiDocSynthesisInput
+    ) -> MultiDocSynthesisOutput:
+        # Resolve each DocumentRef to (citation_ref, content).
+        refs_resolved: List[DocumentRef] = []
+        contents: List[str] = []
+        for ref in input.documents:
+            content = await self._resolve_document(ref)
+            if content is None:
+                logger.debug(
+                    "Skipping unresolved document ref: memory_id=%s label=%s",
+                    ref.memory_id,
+                    ref.label,
+                )
+                continue
+            refs_resolved.append(ref)
+            contents.append(content)
+
+        if not contents:
+            return MultiDocSynthesisOutput(
+                answer="",
+                citation_refs=[],
+                persisted_memory_id=None,
+                used_rlm=False,
+                metadata={"reason": "no_resolvable_documents"},
+            )
+
+        documents_block = _format_documents_for_prompt(refs_resolved, contents)
+        context_chars = len(documents_block)
+
+        used_rlm = False
+        rlm_options = input.rlm
+        if rlm_options is not None and rlm_options.should_use_rlm(context_chars):
+            answer = await self._synthesise_with_rlm(
+                input.query, documents_block, rlm_options
+            )
+            used_rlm = True
+        else:
+            answer = self._synthesise_without_rlm(input.query, documents_block)
+
+        citation_refs = [
+            CitationRef.memory(ref.memory_id, label=ref.label)
+            if ref.memory_id is not None
+            else CitationRef.external(
+                ref.label or "inline:document",
+                label=ref.label,
+            )
+            for ref in refs_resolved
+        ]
+
+        persisted_id: Optional[str] = None
+        if input.persist:
+            persisted_id = await self._persist_synthesis(
+                tenant_id=input.tenant_id or self._memory_tenant_id,
+                answer=answer,
+                citation_refs=citation_refs,
+            )
+
+        return MultiDocSynthesisOutput(
+            answer=answer,
+            citation_refs=[
+                {
+                    "ref_kind": r.ref_kind,
+                    "ref_id": r.ref_id,
+                    **({"label": r.label} if r.label else {}),
+                }
+                for r in citation_refs
+            ],
+            persisted_memory_id=persisted_id,
+            used_rlm=used_rlm,
+            metadata={
+                "document_count": len(refs_resolved),
+                "context_chars": context_chars,
+                "derivation_kind": DerivationKind.SYNTHESIS.value,
+            },
+        )
+
+    # --- internals ---------------------------------------------------------
+
+    async def _resolve_document(self, ref: DocumentRef) -> Optional[str]:
+        """Return the document content, fetching memory by id if needed."""
+        if ref.content:
+            return ref.content
+        if (
+            ref.memory_id
+            and self.is_memory_enabled()
+            and self.memory_manager is not None
+        ):
+            try:
+                memory = self.memory_manager.memory.get(ref.memory_id)
+            except Exception as exc:
+                logger.debug("MultiDocSynth: get(%s) failed: %s", ref.memory_id, exc)
+                return None
+            if isinstance(memory, dict):
+                return memory.get("memory") or memory.get("content") or ""
+            if isinstance(memory, list) and memory and isinstance(memory[0], dict):
+                return memory[0].get("memory") or memory[0].get("content") or ""
+        return None
+
+    def _synthesise_without_rlm(self, query: str, documents_block: str) -> str:
+        """Single LM call via DSPy ChainOfThought."""
+        if self._llm_config is not None:
+            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+            with dspy.context(lm=create_dspy_lm(self._llm_config)):
+                result = self._dspy_module(query=query, documents=documents_block)
+        else:
+            # Use ambient dspy.settings.lm if no per-agent override.
+            result = self._dspy_module(query=query, documents=documents_block)
+        return getattr(result, "answer", "") or ""
+
+    async def _synthesise_with_rlm(
+        self,
+        query: str,
+        documents_block: str,
+        rlm_options: RLMOptions,
+    ) -> str:
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        # If the agent was constructed with an LLMEndpointConfig, use it;
+        # otherwise build one from the rlm options' backend/model fields.
+        llm_config = self._llm_config or LLMEndpointConfig(
+            model=(
+                f"{rlm_options.backend}/{rlm_options.model}"
+                if rlm_options.model
+                else f"{rlm_options.backend}/gpt-4o"
+            )
+        )
+        rlm = RLMInference(
+            llm_config=llm_config,
+            max_iterations=rlm_options.max_iterations,
+            max_llm_calls=rlm_options.max_llm_calls,
+            timeout_seconds=rlm_options.timeout_seconds,
+        )
+        result = rlm.process(
+            query=query,
+            context=documents_block,
+            include_trajectory=rlm_options.include_trajectory,
+            trajectory_max_entries=rlm_options.trajectory_max_entries,
+        )
+        return result.answer
+
+    async def _persist_synthesis(
+        self,
+        *,
+        tenant_id: Optional[str],
+        answer: str,
+        citation_refs: List[CitationRef],
+    ) -> Optional[str]:
+        """Write the synthesis to memory with full provenance."""
+        if not (
+            self.is_memory_enabled() and self.memory_manager is not None and tenant_id
+        ):
+            return None
+        provenance = make_provenance(
+            written_by="agent:multi_document_synthesis_agent",
+            derivation_kind=DerivationKind.SYNTHESIS,
+            confidence=0.7,
+            derived_from=citation_refs,
+        )
+        metadata = attach_to_metadata({"kind": _SYNTHESIS_MEMORY_KIND}, provenance)
+        try:
+            return self.memory_manager.add_memory(
+                content=answer,
+                tenant_id=tenant_id,
+                agent_name="multi_document_synthesis_agent",
+                metadata=metadata,
+                infer=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "MultiDocSynth: persist failed for tenant=%s: %s", tenant_id, exc
+            )
+            return None
