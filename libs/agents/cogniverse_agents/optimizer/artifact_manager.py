@@ -540,6 +540,90 @@ class ArtifactManager:
             lineage.append(entry)
         return lineage
 
+    async def snapshot_active(self, agent_type: str) -> Optional[Dict[str, Any]]:
+        """C.4 — snapshot the current active prompts + demos as a versioned pair.
+
+        Used by ``promote_if_better`` *before* it overwrites the active
+        artefacts so a rollback CLI has something to restore. Returns a
+        dict ``{prompts_version, demos_version}`` or None when there are no
+        active artefacts to snapshot.
+        """
+        active_prompts = await self.load_prompts(agent_type)
+        active_demos = await self.load_demonstrations(agent_type)
+        if not active_prompts and not active_demos:
+            return None
+
+        snapshot: Dict[str, Any] = {}
+        if active_prompts:
+            _, v_p = await self.save_prompts_versioned(agent_type, active_prompts)
+            snapshot["prompts_version"] = v_p
+        if active_demos:
+            _, v_d = await self.save_demonstrations_versioned(agent_type, active_demos)
+            snapshot["demos_version"] = v_d
+        return snapshot
+
+    async def rollback_to_version(
+        self,
+        agent_type: str,
+        prompts_version: Optional[int] = None,
+        demos_version: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Restore active artefacts from a previously-snapshotted version.
+
+        Reads the ``dspy-prompts-{tenant}-{agent}-v{N}`` (and demos) datasets
+        and re-promotes their content as the active ones. The currently-active
+        artefacts are themselves snapshotted first so the rollback is itself
+        reversible. Returns a summary dict.
+        """
+        # Snapshot current state so the operator can undo the rollback.
+        backup_versions = await self.snapshot_active(agent_type) or {}
+
+        result: Dict[str, Any] = {
+            "agent_type": agent_type,
+            "backup_versions": backup_versions,
+            "restored": {},
+        }
+
+        if prompts_version is not None:
+            name = self._versioned_dataset_name("prompts", agent_type, prompts_version)
+            try:
+                df = await self._provider.datasets.get_dataset(name=name)
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"prompts version {prompts_version} not found for "
+                    f"{self._tenant_id}/{agent_type}"
+                ) from exc
+            prompts = self._extract_prompts_from_dataframe(df)
+            await self.save_prompts(agent_type, prompts)
+            result["restored"]["prompts_version"] = prompts_version
+
+        if demos_version is not None:
+            name = self._versioned_dataset_name("demos", agent_type, demos_version)
+            try:
+                df = await self._provider.datasets.get_dataset(name=name)
+            except (KeyError, ValueError) as exc:
+                raise ValueError(
+                    f"demos version {demos_version} not found for "
+                    f"{self._tenant_id}/{agent_type}"
+                ) from exc
+            demos = df.to_dict(orient="records")
+            await self.save_demonstrations(agent_type, demos)
+            result["restored"]["demos_version"] = demos_version
+
+        if not result["restored"]:
+            raise ValueError(
+                "rollback_to_version called with both prompts_version and "
+                "demos_version as None — nothing to restore"
+            )
+        logger.info(
+            "Rolled back %s/%s to %s (backup snapshots: %s)",
+            self._tenant_id,
+            agent_type,
+            result["restored"],
+            backup_versions,
+        )
+        return result
+
     async def promote_if_better(
         self,
         agent_type: str,
@@ -553,6 +637,7 @@ class ArtifactManager:
         train_examples: Optional[int] = None,
         run_id: Optional[str] = None,
         extra_metrics: Optional[Dict[str, Any]] = None,
+        snapshot_before_promote: bool = True,
     ) -> ExperimentMetrics:
         """Regression-reject gate (C.2) — promote a candidate only when it wins.
 
@@ -597,6 +682,23 @@ class ArtifactManager:
         extras["tolerance"] = tolerance
 
         if promoted:
+            # C.4 — snapshot the about-to-be-overwritten active artefacts as
+            # versioned datasets so a future rollback can restore them. Best
+            # effort: snapshot failures are logged and recorded in extras
+            # but never block the promotion itself.
+            if snapshot_before_promote:
+                try:
+                    snap = await self.snapshot_active(agent_type)
+                    if snap:
+                        extras["pre_promote_snapshot"] = snap
+                except Exception as exc:
+                    logger.warning(
+                        "Pre-promote snapshot failed for %s/%s: %s — promotion "
+                        "will proceed but rollback may not be available",
+                        self._tenant_id,
+                        agent_type,
+                        exc,
+                    )
             await self.save_prompts(agent_type, candidate_prompts)
             if candidate_demos is not None:
                 await self.save_demonstrations(agent_type, candidate_demos)

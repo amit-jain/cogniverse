@@ -1,5 +1,32 @@
 # The Evaluation & Optimization Loop
 
+## Snapshot + rollback (C.4)
+
+`promote_if_better` snapshots the soon-to-be-overwritten active artefacts
+into a versioned dataset before applying the new ones. The snapshot's
+version number is recorded in the `ExperimentMetrics.extra_metrics` under
+`pre_promote_snapshot`, so operators can find the rollback target by
+reading the experiment ledger.
+
+```python
+# Operator decides v3 was a regression — roll back to v2.
+out = await artifact_mgr.rollback_to_version(
+    "search_agent", prompts_version=2
+)
+# out["restored"] = {"prompts_version": 2}
+# out["backup_versions"] = {"prompts_version": <newer snapshot of the v3 we just left>}
+```
+
+The rollback itself takes a fresh snapshot of the current state before
+applying the restore, so the rollback is itself reversible. Snapshots
+live as `dspy-prompts-{tenant}-{agent}-vN` (and `dspy-demos-…-vN`)
+datasets; `list_versions` enumerates them.
+
+Hot reload note: agents call `_load_artifact` per-request (the dispatcher
+runs it after telemetry/tenant injection), so a new artefact lands without
+restart automatically — the rollback only needs to flip the active dataset
+content; the next request picks it up.
+
 ## Regression-reject gate (C.2)
 
 `ArtifactManager.promote_if_better` is the canonical write path for
