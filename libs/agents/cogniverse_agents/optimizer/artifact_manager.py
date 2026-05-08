@@ -540,6 +540,110 @@ class ArtifactManager:
             lineage.append(entry)
         return lineage
 
+    async def promote_if_better(
+        self,
+        agent_type: str,
+        candidate_prompts: Dict[str, str],
+        candidate_demos: Optional[List[Dict[str, Any]]],
+        baseline_score: float,
+        candidate_score: float,
+        *,
+        tolerance: float = 0.0,
+        optimizer: str = "unknown",
+        train_examples: Optional[int] = None,
+        run_id: Optional[str] = None,
+        extra_metrics: Optional[Dict[str, Any]] = None,
+    ) -> ExperimentMetrics:
+        """Regression-reject gate (C.2) — promote a candidate only when it wins.
+
+        Compares candidate against baseline on a held-out score. The candidate
+        is *promoted* (prompts + demos saved, becoming the active artefact)
+        only when ``candidate_score >= baseline_score - tolerance``. Otherwise
+        it is *rejected*: prompts/demos are NOT saved, and the experiment is
+        recorded with ``promoted=False`` plus a ``rejection_reason`` so
+        operators can audit why a recompile did not flip active.
+
+        Either outcome lands as a typed ``ExperimentMetrics`` row in the
+        per-agent experiments dataset, so the loop is observable end-to-end:
+        rejected runs stay in the ledger with their scores, not silently
+        discarded.
+
+        Args:
+            agent_type: Agent identifier the artefacts belong to.
+            candidate_prompts: New prompts to consider for promotion.
+            candidate_demos: Optional new demos.
+            baseline_score: Score of the currently-active artefacts.
+            candidate_score: Score of the candidate on the same eval set.
+            tolerance: Allowed regression band; defaults to 0 (strict win).
+                Pass a small positive value (e.g. 0.005) to tolerate noise.
+            optimizer: Name of the optimizer that produced the candidate.
+            train_examples: Number of examples the optimizer compiled against.
+            run_id: Caller-supplied id; auto-generated when omitted.
+            extra_metrics: Additional metrics to log under ``extra_metrics``.
+
+        Returns:
+            The ``ExperimentMetrics`` record persisted for this run. Inspect
+            ``record.promoted`` to branch on the outcome.
+        """
+        if tolerance < 0:
+            raise ValueError(f"tolerance must be >= 0; got {tolerance}")
+
+        improvement = candidate_score - baseline_score
+        threshold = baseline_score - tolerance
+        promoted = candidate_score >= threshold
+
+        rid = run_id or _generate_run_id()
+        extras: Dict[str, Any] = dict(extra_metrics or {})
+        extras["tolerance"] = tolerance
+
+        if promoted:
+            await self.save_prompts(agent_type, candidate_prompts)
+            if candidate_demos is not None:
+                await self.save_demonstrations(agent_type, candidate_demos)
+            logger.info(
+                "Promoted candidate for %s/%s: candidate=%.4f baseline=%.4f "
+                "(improvement=%.4f, tolerance=%.4f)",
+                self._tenant_id,
+                agent_type,
+                candidate_score,
+                baseline_score,
+                improvement,
+                tolerance,
+            )
+        else:
+            extras["rejection_reason"] = (
+                f"candidate_score={candidate_score:.4f} < "
+                f"baseline_score - tolerance ({threshold:.4f}); "
+                f"regression of {-improvement:.4f}"
+            )
+            logger.warning(
+                "Rejected candidate for %s/%s: candidate=%.4f baseline=%.4f "
+                "(regression=%.4f, tolerance=%.4f) — active artefacts "
+                "unchanged, experiment logged for audit",
+                self._tenant_id,
+                agent_type,
+                candidate_score,
+                baseline_score,
+                -improvement,
+                tolerance,
+            )
+
+        record = ExperimentMetrics(
+            tenant_id=self._tenant_id,
+            agent_type=agent_type,
+            run_id=rid,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            optimizer=optimizer,
+            baseline_score=baseline_score,
+            candidate_score=candidate_score,
+            improvement=improvement,
+            promoted=promoted,
+            train_examples=train_examples,
+            extra_metrics=extras,
+        )
+        await self.save_experiment(record)
+        return record
+
     async def save_experiment(self, metrics: ExperimentMetrics) -> str:
         """Persist a typed ``ExperimentMetrics`` record (C.1).
 

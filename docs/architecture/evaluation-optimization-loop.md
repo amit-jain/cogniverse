@@ -1,5 +1,37 @@
 # The Evaluation & Optimization Loop
 
+## Regression-reject gate (C.2)
+
+`ArtifactManager.promote_if_better` is the canonical write path for
+optimizer outputs. It compares the candidate against the active baseline
+and promotes the candidate only when `candidate_score >= baseline_score - tolerance`.
+Failed promotions still land in the experiment ledger with `promoted=False`
+and a `rejection_reason`, so the loop is observable end-to-end:
+
+```python
+record = await artifact_mgr.promote_if_better(
+    agent_type="search_agent",
+    candidate_prompts=compiled.prompts,
+    candidate_demos=compiled.demos,
+    baseline_score=0.62,
+    candidate_score=0.58,
+    tolerance=0.005,
+    optimizer="BootstrapFewShot",
+    train_examples=64,
+)
+if record.promoted:
+    logger.info("artefacts updated")
+else:
+    logger.warning("rejected: %s", record.extra_metrics["rejection_reason"])
+```
+
+Operators should use `tolerance` to absorb evaluation noise (typical
+golden-set noise is 0.5–1.0 pt). Set `tolerance=0` for strict-better
+promotions on stable eval sets.
+
+The rejected runs are queryable via `load_experiments(agent_type)` so the
+QualityMonitor → Argo recompile loop has full history to reason over.
+
 ## Architectural decision — the optimizer is a batch CLI, not a daemon
 
 The optimizer (`optimization_cli`, BootstrapFewShot for query analysis / agent

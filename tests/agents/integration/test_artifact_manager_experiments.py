@@ -124,6 +124,54 @@ async def test_tenant_mismatch_rejected_before_phoenix_io(artifact_manager):
 
 
 @pytest.mark.asyncio
+async def test_promote_if_better_against_real_phoenix(artifact_manager):
+    """C.2 — round-trip the regression-reject gate via real Phoenix.
+
+    Promote a winner, then attempt to promote a regression: prompts must
+    reflect the winner only, and both runs must appear in the experiments
+    history (the rejection is queryable, not silently dropped).
+    """
+    mgr = artifact_manager
+
+    promoted = await mgr.promote_if_better(
+        agent_type="c2_int_agent",
+        candidate_prompts={"system": "v1-promoted"},
+        candidate_demos=None,
+        baseline_score=0.50,
+        candidate_score=0.62,
+        optimizer="BootstrapFewShot",
+        run_id=uuid.uuid4().hex,
+    )
+    assert promoted.promoted is True
+
+    rejected = await mgr.promote_if_better(
+        agent_type="c2_int_agent",
+        candidate_prompts={"system": "v2-rejected"},
+        candidate_demos=None,
+        baseline_score=0.62,
+        candidate_score=0.40,
+        optimizer="BootstrapFewShot",
+        run_id=uuid.uuid4().hex,
+    )
+    assert rejected.promoted is False
+    assert "rejection_reason" in rejected.extra_metrics
+
+    # Active prompts must still be the winner; rejection did NOT flip them.
+    active = await mgr.load_prompts("c2_int_agent")
+    assert active is not None
+    assert active.get("system") == "v1-promoted", (
+        f"rejection must not overwrite active prompts; got {active}"
+    )
+
+    # Experiment history must contain both runs.
+    history = await mgr.load_experiments("c2_int_agent")
+    promoted_runs = [m for m in history if m.run_id == promoted.run_id]
+    rejected_runs = [m for m in history if m.run_id == rejected.run_id]
+    assert len(promoted_runs) == 1 and promoted_runs[0].promoted is True
+    assert len(rejected_runs) == 1 and rejected_runs[0].promoted is False
+
+
+@pytest.mark.asyncio
 async def test_back_compat_shim_persists_to_typed_ledger(artifact_manager):
     """log_optimization_run must land in the experiments dataset, not save_blob."""
     mgr = artifact_manager
