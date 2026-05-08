@@ -523,6 +523,54 @@ memory.delete_memory(
 )
 ```
 
+### Trust / source ranking (A.4)
+
+Each memory carries a `TrustRecord` derived at write time from the
+schema's `default_trust` and the provenance's `derivation_kind`. Trust
+ages slowly (≈0.5 pt/day above the initial baseline), is bumped by
+explicit user/admin endorsements, and is composed with relevance and
+confidence at retrieval time.
+
+```python
+from cogniverse_core.memory.trust import (
+    TrustRecord,
+    apply_endorsement,
+    attach_trust_to_metadata,
+    compute_initial_trust,
+    rank_with_trust,
+)
+
+trust = compute_initial_trust(schema, provenance=prov)
+metadata = attach_trust_to_metadata(metadata, trust)
+
+# After a tenant admin endorses the memory:
+new_trust = apply_endorsement(trust, "tenant_admin")  # +0.10
+# Persist by re-writing the memory with attach_trust_to_metadata(meta, new_trust).
+
+# Retrieval ranking: relevance × trust × confidence
+ranked = rank_with_trust(search_results)
+```
+
+| Derivation kind | Trust weight |
+|---|---|
+| `direct_ingest` | × 1.20 |
+| `user_assert` | × 1.10 |
+| `extraction` | × 1.00 |
+| `summarization` | × 0.90 |
+| `synthesis` | × 0.85 |
+| `agent_inference` | × 0.70 |
+
+| Endorser | Δ trust |
+|---|---|
+| `user` | +0.05 |
+| `tenant_admin` | +0.10 |
+| `org_admin` | +0.20 |
+
+Decay floor is `initial_score` — a memory never loses more trust than it
+had originally gained above the schema baseline. Endorsements raise the
+effective ceiling without changing the floor; A.5 (federation) and A.3
+(contradiction) will plug into this scoring loop.
+
 ### Provenance + citation graph (A.2)
 
 Every memory write carries a `Provenance` record describing where the
