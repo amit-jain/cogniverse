@@ -655,6 +655,29 @@ schema.validate_write(provenance=my_provenance, pinned_by=Pinnable.USER)
 Register custom kinds at boot — replace=True is required to overwrite an
 existing kind so accidental redefinition fails loudly.
 
+### Strategy decay (A.8)
+
+`StrategyLearner` tracks `confirmation_count` + `last_confirmed_at` on
+each strategy. When the dedup search finds a near-duplicate (Jaccard
+overlap above 0.9):
+
+1. The existing record is deleted and a fresh copy is added with
+   `confirmation_count` bumped by one and `created_at`/`last_confirmed_at`
+   reset to now.
+2. The bumped record carries an accumulated `trace_count` so retrieval
+   reflects the total weight of evidence behind the strategy.
+
+At retrieval, `StrategyLearner.rank_strategies_with_decay` downweights
+strategies with `confirmation_count < 3` AND age > 14 days by a factor of
+0.5 — they sink in the result list instead of competing equally with
+high-confirmation strategies.
+
+The schema cleanup hook (`_retire_unconfirmed_strategy`, registered for
+`learned_strategy` in `build_default_registry`) deletes records that stay
+under 3 confirmations for more than 30 days. Pinned strategies are
+filtered out by `LifecycleScheduler.pin_lookup` before the hook runs, so
+admin-promoted strategies are immune to retirement.
+
 ### Schema-driven lifecycle (A.7)
 
 By default the runtime ticks the lifecycle in schema-driven mode: each

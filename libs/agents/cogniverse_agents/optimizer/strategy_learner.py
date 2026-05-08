@@ -39,6 +39,15 @@ class Strategy:
     tenant_id: str
     trace_count: int
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    # A.8: confirmation_count starts at 1 (every strategy is its own first
+    # confirmation). On dedup, _store_strategy bumps this on the existing
+    # record by delete-and-readd. Retrieval downweights low-confirmation
+    # old strategies; the schema-driven cleanup hook (A.7) retires
+    # strategies with confirmation_count < 3 AND age > 30d.
+    confirmation_count: int = 1
+    last_confirmed_at: str = field(
+        default_factory=lambda: datetime.utcnow().isoformat()
+    )
 
     def to_memory_content(self) -> str:
         """Format as a clear preference statement for Mem0 LLM extraction.
@@ -55,6 +64,7 @@ class Strategy:
         """Metadata tags for filtering during retrieval."""
         return {
             "type": "strategy",
+            "kind": "learned_strategy",  # A.7 schema-driven lifecycle key
             "level": self.level,
             "agent": self.agent,
             "confidence": self.confidence,
@@ -62,6 +72,8 @@ class Strategy:
             "trace_count": self.trace_count,
             "applies_when": self.applies_when,
             "created_at": self.created_at,
+            "confirmation_count": self.confirmation_count,
+            "last_confirmed_at": self.last_confirmed_at,
         }
 
 
@@ -433,7 +445,16 @@ class StrategyLearner:
         )
 
     def _store_strategy(self, strategy: Strategy) -> bool:
-        """Store strategy in Vespa memory, deduplicating against existing ones."""
+        """Store strategy in Vespa memory, bumping confirmation on dedup hits.
+
+        A.8 — when a near-duplicate strategy already exists, we do NOT silently
+        drop the new one. Instead, the existing record is replaced with a
+        fresh copy whose ``confirmation_count`` is bumped by one and whose
+        ``last_confirmed_at`` resets to now. This delete-and-readd pattern
+        works around Mem0's content-only ``update()`` API while making
+        repeated rediscovery of the same strategy a *positive* signal that
+        keeps the strategy alive against the schema-driven retirement hook.
+        """
         if not self.memory_manager or self.memory_manager.memory is None:
             logger.warning("Memory manager not initialized, skipping strategy storage")
             return False
@@ -443,7 +464,9 @@ class StrategyLearner:
         # prefix so they're easy to identify, but each agent gets its own suffix.
         agent_namespace = f"{STRATEGY_AGENT_NAME}_{strategy.agent}"
 
-        # Deduplication: search for similar existing strategies
+        # Deduplication: search for similar existing strategies. On hit, bump
+        # the existing record's confirmation_count by replacing it with a
+        # fresh copy that carries the higher count.
         try:
             existing = self.memory_manager.search_memory(
                 query=strategy.to_memory_content(),
@@ -454,23 +477,84 @@ class StrategyLearner:
 
             for mem in existing:
                 mem_text = mem.get("memory", "")
-                if "strategy" in mem_text.lower():
-                    overlap = _text_overlap(strategy.to_memory_content(), mem_text)
-                    if overlap > DEDUP_SIMILARITY_THRESHOLD:
-                        logger.debug(
-                            f"Strategy dedup: '{strategy.text[:50]}...' overlaps "
-                            f"with existing ({overlap:.2f}), skipping"
+                if not mem_text:
+                    continue
+                # Filter to records actually tagged as strategies. The previous
+                # heuristic checked for the substring "strategy" in the content
+                # itself, but strategy text rarely contains that word — the
+                # check effectively disabled dedup. Switching to the metadata
+                # tag (set in Strategy.to_metadata) makes the gate honest.
+                mem_meta = mem.get("metadata") or {}
+                if isinstance(mem_meta, str):
+                    try:
+                        mem_meta = json.loads(mem_meta)
+                    except (ValueError, TypeError):
+                        mem_meta = {}
+                if mem_meta.get("type") != "strategy":
+                    continue
+                overlap = _text_overlap(strategy.to_memory_content(), mem_text)
+                if overlap <= DEDUP_SIMILARITY_THRESHOLD:
+                    continue
+
+                # Hit — bump confirmation on the existing record.
+                existing_meta = mem.get("metadata") or {}
+                if isinstance(existing_meta, str):
+                    try:
+                        existing_meta = json.loads(existing_meta)
+                    except (ValueError, TypeError):
+                        existing_meta = {}
+                prior_count = int(existing_meta.get("confirmation_count", 1))
+                bumped = Strategy(
+                    text=strategy.text,
+                    applies_when=strategy.applies_when,
+                    agent=strategy.agent,
+                    level=strategy.level,
+                    confidence=max(
+                        strategy.confidence,
+                        float(existing_meta.get("confidence", 0.0) or 0.0),
+                    ),
+                    source=strategy.source,
+                    tenant_id=strategy.tenant_id,
+                    trace_count=strategy.trace_count
+                    + int(existing_meta.get("trace_count", 0) or 0),
+                    confirmation_count=prior_count + 1,
+                )
+
+                existing_id = mem.get("id")
+                if existing_id:
+                    try:
+                        self.memory_manager.delete_memory(
+                            memory_id=existing_id,
+                            tenant_id=strategy.tenant_id,
+                            agent_name=agent_namespace,
                         )
-                        return False
+                    except Exception as exc:
+                        logger.debug(
+                            "Bump-on-dedup: delete of %s failed; will still "
+                            "add fresh copy: %s",
+                            existing_id,
+                            exc,
+                        )
+
+                self.memory_manager.add_memory(
+                    content=bumped.to_memory_content(),
+                    tenant_id=bumped.tenant_id,
+                    agent_name=agent_namespace,
+                    metadata=bumped.to_metadata(),
+                    infer=False,
+                )
+                logger.info(
+                    "Bumped strategy confirmation_count for %s: %d → %d ('%s...')",
+                    bumped.agent,
+                    prior_count,
+                    bumped.confirmation_count,
+                    bumped.text[:60],
+                )
+                return True
         except Exception as e:
             logger.debug(f"Dedup search failed (non-fatal): {e}")
 
-        # Store the strategy under the agent-specific namespace. Strategies
-        # are pre-curated fact text (output of the distillation step), so
-        # store them verbatim — no LLM re-extraction. With ``infer=True``
-        # small local models frequently refuse to extract facts from short
-        # structured text and Mem0 returns empty results, which would look
-        # like a storage failure to the caller.
+        # No dedup hit — store as a fresh strategy.
         self.memory_manager.add_memory(
             content=strategy.to_memory_content(),
             tenant_id=strategy.tenant_id,
@@ -547,7 +631,74 @@ class StrategyLearner:
             except Exception as e:
                 logger.debug(f"Org strategy retrieval failed: {e}")
 
-        return all_strategies[:top_k]
+        # A.8 — apply confirmation-aware decay so low-confirmation old
+        # strategies sink in the result list rather than continuing to
+        # appear at the same rank as high-confirmation ones.
+        ranked = self.rank_strategies_with_decay(all_strategies)
+        return ranked[:top_k]
+
+    @staticmethod
+    def rank_strategies_with_decay(
+        strategies: List[Dict[str, Any]],
+        *,
+        now_iso: Optional[str] = None,
+        low_confirmation_threshold: int = 3,
+        downweight_age_days: int = 14,
+        downweight_factor: float = 0.5,
+    ) -> List[Dict[str, Any]]:
+        """A.8 — re-rank strategies with confirmation-aware decay.
+
+        Strategies with ``confirmation_count < threshold`` AND age greater
+        than ``downweight_age_days`` are multiplied by ``downweight_factor``
+        before re-sorting. Other strategies keep their original score (or
+        confidence as a fallback when the search backend did not stamp one).
+
+        Returns a new list sorted by adjusted score descending. Pure function
+        — does not touch the backend or mutate the input dicts.
+        """
+        from datetime import datetime as _dt
+
+        now = (
+            _dt.fromisoformat(now_iso.replace("Z", "+00:00"))
+            if now_iso
+            else _dt.utcnow()
+        )
+
+        annotated: List[tuple] = []
+        for s in strategies:
+            meta = s.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except (ValueError, TypeError):
+                    meta = {}
+            confirmations = int(meta.get("confirmation_count", 1) or 1)
+            base_score = float(s.get("score", meta.get("confidence", 0.0)) or 0.0)
+
+            created_at = meta.get("created_at")
+            age_days = 0.0
+            if created_at:
+                try:
+                    cdt = _dt.fromisoformat(str(created_at).replace("Z", "+00:00"))
+                    if cdt.tzinfo is not None and now.tzinfo is None:
+                        cdt = cdt.replace(tzinfo=None)
+                    elif cdt.tzinfo is None and now.tzinfo is not None:
+                        cdt = cdt.replace(tzinfo=now.tzinfo)
+                    age_days = (now - cdt).total_seconds() / 86400.0
+                except (ValueError, TypeError):
+                    age_days = 0.0
+
+            if (
+                confirmations < low_confirmation_threshold
+                and age_days > downweight_age_days
+            ):
+                adjusted = base_score * downweight_factor
+            else:
+                adjusted = base_score
+            annotated.append((adjusted, s))
+
+        annotated.sort(key=lambda pair: pair[0], reverse=True)
+        return [s for _, s in annotated]
 
     @staticmethod
     def format_strategies_for_context(strategies: List[Dict[str, Any]]) -> str:

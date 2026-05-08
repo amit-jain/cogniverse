@@ -204,6 +204,51 @@ class KnowledgeRegistry:
             return sorted(self._state.schemas.keys())
 
 
+_LEARNED_STRATEGY_RETIRE_AGE_DAYS = 30
+_LEARNED_STRATEGY_MIN_CONFIRMATIONS = 3
+
+
+def _retire_unconfirmed_strategy(
+    memory: Dict[str, Any], schema: "KnowledgeSchema"
+) -> bool:
+    """A.8 cleanup hook: retire a learned_strategy that never gained traction.
+
+    Returns True (delete) when ``confirmation_count`` is still below the
+    minimum AND the record's ``created_at`` is older than the retire-age
+    threshold. ``last_confirmed_at`` (set in :class:`Strategy`) is reset
+    each time a duplicate is rediscovered, so the age check naturally
+    measures "time since last confirmation" — the bump-on-dedup path in
+    StrategyLearner replaces the old record with a fresh one.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    meta = memory.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = _json.loads(meta)
+        except (ValueError, TypeError):
+            return False
+    if not isinstance(meta, dict):
+        return False
+    if meta.get("kind") != "learned_strategy":
+        return False
+
+    confirmation_count = int(meta.get("confirmation_count", 1) or 1)
+    if confirmation_count >= _LEARNED_STRATEGY_MIN_CONFIRMATIONS:
+        return False
+
+    created_at = meta.get("created_at") or memory.get("created_at")
+    if not created_at:
+        return False
+    try:
+        cdt = _dt.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return False
+    age_days = (_dt.utcnow() - cdt.replace(tzinfo=None)).total_seconds() / 86400.0
+    return age_days > _LEARNED_STRATEGY_RETIRE_AGE_DAYS
+
+
 def build_default_registry() -> KnowledgeRegistry:
     """Build a registry seeded with cogniverse's known knowledge kinds.
 
@@ -239,6 +284,12 @@ def build_default_registry() -> KnowledgeRegistry:
             provenance_required=True,
             contradiction_policy=ContradictionPolicy.TRUST_RANKED,
             default_trust=0.6,
+            # A.8 retirement: a learned_strategy whose confirmation_count is
+            # still below 3 after 30 days never proved itself worth keeping.
+            # The hook reads metadata.confirmation_count + created_at on each
+            # candidate; pinned strategies are filtered out upstream by the
+            # lifecycle scheduler before this hook runs.
+            cleanup_hook=_retire_unconfirmed_strategy,
         )
     )
     registry.register(
