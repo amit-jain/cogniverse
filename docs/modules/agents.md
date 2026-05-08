@@ -3063,6 +3063,8 @@ RLM is implemented using DSPy's built-in `dspy.RLM` module (requires `dspy-ai>=3
 libs/agents/cogniverse_agents/
 ├── inference/
 │   ├── __init__.py
+│   ├── deno_check.py             # Boot probe: fail-fast if Deno missing
+│   ├── instrumented_rlm.py       # InstrumentedRLM with EventQueue + fallback marker
 │   └── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
 ├── mixins/
 │   ├── __init__.py
@@ -3071,6 +3073,14 @@ libs/agents/cogniverse_agents/
 libs/core/cogniverse_core/agents/
 └── rlm_options.py                # RLMOptions schema for query-level config
 ```
+
+**Runtime requirement — Deno.** DSPy's RLM module spawns a Deno subprocess to
+execute LLM-generated code in a sandboxed JavaScript runtime. The Deno binary
+must be reachable on `PATH` (the runtime container installs it to `/usr/local`
+in `libs/runtime/Dockerfile`). `RLMInference.__init__` probes for Deno and
+raises `DenoNotInstalledError` at construction if missing — failing fast at
+boot rather than on the first call. Set `COGNIVERSE_RLM_SKIP_DENO_CHECK=1`
+to bypass the probe (only when you are certain RLM will not be invoked).
 
 ### Key Components
 

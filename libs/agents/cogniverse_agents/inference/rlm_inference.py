@@ -29,6 +29,7 @@ import dspy
 if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
 
+from cogniverse_agents.inference.deno_check import assert_deno_available
 from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -125,6 +126,13 @@ class RLMInference:
             task_id: Task identifier for events (required if event_queue provided)
             tenant_id: Tenant identifier — required when event_queue is provided
         """
+        # Fail fast at construction when Deno is missing. DSPy's RLM module
+        # spawns a Deno subprocess on first call; if Deno is absent the failure
+        # surfaces deep inside dspy and obscures the actionable fix. We probe
+        # here so misconfigured environments fail at boot, with a clear error
+        # naming the install location.
+        assert_deno_available()
+
         self.llm_config = llm_config
         self.model = llm_config.model
         self.max_iterations = max_iterations

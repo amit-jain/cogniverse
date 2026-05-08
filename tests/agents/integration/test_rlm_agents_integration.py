@@ -1,9 +1,8 @@
 """Integration tests for RLM — real Ollama calls, no mocks on the LLM boundary."""
 
-import shutil
-
 import pytest
 
+from cogniverse_agents.inference import is_deno_available
 from tests.agents.integration.conftest import is_ollama_available
 
 pytestmark = pytest.mark.integration
@@ -13,24 +12,8 @@ skip_if_no_ollama = pytest.mark.skipif(
     reason="Ollama not available at http://localhost:11434",
 )
 
-
-def _deno_available() -> bool:
-    """Check if Deno is available, including ~/.deno/bin."""
-    import os
-    from pathlib import Path
-
-    if shutil.which("deno"):
-        return True
-    deno_home = Path.home() / ".deno" / "bin" / "deno"
-    if deno_home.exists():
-        # Add to PATH so subprocess calls also find it
-        os.environ["PATH"] = f"{deno_home.parent}:{os.environ.get('PATH', '')}"
-        return True
-    return False
-
-
 skip_if_no_deno = pytest.mark.skipif(
-    not _deno_available(),
+    not is_deno_available(),
     reason="Deno not installed — DSPy RLM REPL requires Deno for code execution",
 )
 
@@ -124,6 +107,57 @@ class TestRLMInferenceDirect:
         assert isinstance(result.total_calls, int) and result.total_calls >= 1
         assert isinstance(result.latency_ms, float) and result.latency_ms > 0
         assert isinstance(result.metadata, dict)
+
+
+class TestRLMBootProbe:
+    """B.3 — fast-fail at construction when Deno is absent.
+
+    Runs everywhere (does not require Ollama) — the point is that the boot
+    probe surfaces a clear error before any RLM call attempts to spawn Deno.
+    """
+
+    def test_construction_without_deno_raises_deno_not_installed(
+        self, tmp_path, monkeypatch
+    ):
+        """RLMInference(...) must raise DenoNotInstalledError when Deno missing."""
+        from pathlib import Path
+
+        from cogniverse_agents.inference import (
+            DenoNotInstalledError,
+            RLMInference,
+        )
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        empty_home = tmp_path / "no_deno_home"
+        empty_home.mkdir()
+        monkeypatch.setenv("HOME", str(empty_home))
+        monkeypatch.setattr(Path, "home", lambda: empty_home)
+        monkeypatch.setenv("PATH", str(tmp_path))  # no deno on PATH
+        monkeypatch.delenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", raising=False)
+
+        with pytest.raises(DenoNotInstalledError) as exc:
+            RLMInference(llm_config=LLMEndpointConfig(model="openai/gpt-4o"))
+
+        # Error must name the install URL so operators can act on it.
+        assert "deno.com" in str(exc.value).lower() or "deno" in str(exc.value).lower()
+
+    def test_construction_with_skip_env_var_succeeds(self, tmp_path, monkeypatch):
+        """Operators can bypass the probe with COGNIVERSE_RLM_SKIP_DENO_CHECK=1."""
+        from pathlib import Path
+
+        from cogniverse_agents.inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        empty_home = tmp_path / "no_deno_home"
+        empty_home.mkdir()
+        monkeypatch.setenv("HOME", str(empty_home))
+        monkeypatch.setattr(Path, "home", lambda: empty_home)
+        monkeypatch.setenv("PATH", str(tmp_path))
+        monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
+
+        # Must not raise — the bypass is documented behaviour.
+        rlm = RLMInference(llm_config=LLMEndpointConfig(model="openai/gpt-4o"))
+        assert rlm.model == "openai/gpt-4o"
 
 
 @skip_if_no_ollama
