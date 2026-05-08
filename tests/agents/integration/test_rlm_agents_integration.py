@@ -127,6 +127,77 @@ class TestRLMInferenceDirect:
 
 
 @skip_if_no_ollama
+class TestRLMFallbackMarker:
+    """B.4 — verify RLMResult.was_fallback against a real Ollama-backed RLM run.
+
+    Two arms:
+      - normal completion: max_iterations is generous; SUBMIT() should fire and
+        the result must NOT be marked as fallback.
+      - forced fallback: max_iterations=1 against a non-trivial query so the
+        first iteration cannot SUBMIT; the parent class falls back to extract
+        and the result MUST be marked as fallback.
+    """
+
+    @skip_if_no_deno
+    def test_normal_completion_is_not_fallback(self):
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        config = LLMEndpointConfig(
+            model=_OLLAMA_MODEL,
+            api_base=_OLLAMA_API_BASE,
+            max_tokens=300,
+            temperature=0.1,
+        )
+        rlm = RLMInference(llm_config=config, max_iterations=5, timeout_seconds=120)
+        result = rlm.process(
+            query="What is the capital of France?",
+            context=_FRANCE_CONTEXT,
+        )
+
+        assert "Paris" in result.answer, (
+            f"clean completion expected to mention Paris; got: {result.answer!r}"
+        )
+        assert result.was_fallback is False, (
+            "clean completion must not be marked as fallback "
+            f"(answer={result.answer!r}, depth={result.depth_reached})"
+        )
+        telemetry = result.to_telemetry_dict()
+        assert telemetry["rlm_was_fallback"] is False
+
+    @skip_if_no_deno
+    def test_forced_fallback_marks_was_fallback_true(self):
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        config = LLMEndpointConfig(
+            model=_OLLAMA_MODEL,
+            api_base=_OLLAMA_API_BASE,
+            max_tokens=200,
+            temperature=0.1,
+        )
+        # max_iterations=1 forces the parent class to bail out via
+        # _extract_fallback because the first REPL turn cannot reach SUBMIT().
+        rlm = RLMInference(llm_config=config, max_iterations=1, timeout_seconds=120)
+        result = rlm.process(
+            query=(
+                "List all programming paradigms Python supports, then describe "
+                "each one in two sentences citing the relevant section of the "
+                "context. Conclude with a comparison table."
+            ),
+            context=_PYTHON_OLD,
+        )
+
+        assert result.was_fallback is True, (
+            "max_iterations=1 with a multi-step query must surface as fallback; "
+            f"got was_fallback={result.was_fallback}, answer={result.answer!r}"
+        )
+        telemetry = result.to_telemetry_dict()
+        assert telemetry["rlm_was_fallback"] is True
+        assert telemetry["rlm_enabled"] is True
+
+
+@skip_if_no_ollama
 class TestRLMAwareMixinProcess:
     """RLMAwareMixin.process_with_rlm() called with real Ollama."""
 

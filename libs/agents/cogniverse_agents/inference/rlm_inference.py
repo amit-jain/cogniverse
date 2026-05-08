@@ -52,6 +52,10 @@ class RLMResult:
         total_calls: Number of LLM sub-calls made
         tokens_used: Total tokens across all calls
         latency_ms: End-to-end processing latency
+        was_fallback: True when answer came from _extract_fallback because
+            max_iterations was exhausted without a SUBMIT() — answer quality
+            may be lower; downstream agents may flag the result or trigger
+            a re-plan.
         metadata: Additional metadata from RLM processing
     """
 
@@ -60,6 +64,7 @@ class RLMResult:
     total_calls: int
     tokens_used: int
     latency_ms: float
+    was_fallback: bool = False
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_telemetry_dict(self) -> Dict[str, Any]:
@@ -74,6 +79,7 @@ class RLMResult:
             "rlm_total_calls": self.total_calls,
             "rlm_tokens_used": self.tokens_used,
             "rlm_latency_ms": self.latency_ms,
+            "rlm_was_fallback": self.was_fallback,
         }
 
 
@@ -225,6 +231,7 @@ class RLMInference:
             trajectory = getattr(result, "trajectory", [])
             depth_reached = len(trajectory) if trajectory else 1
             total_calls = len(trajectory) if trajectory else 1
+            was_fallback = bool(getattr(result, "was_fallback", False))
 
         except RLMTimeoutError:
             raise
@@ -236,7 +243,7 @@ class RLMInference:
 
         logger.info(
             f"RLM completed: depth={depth_reached}, calls={total_calls}, "
-            f"latency={latency_ms:.0f}ms"
+            f"latency={latency_ms:.0f}ms, was_fallback={was_fallback}"
         )
 
         return RLMResult(
@@ -245,6 +252,7 @@ class RLMInference:
             total_calls=total_calls,
             tokens_used=0,  # DSPy doesn't expose token counts easily
             latency_ms=latency_ms,
+            was_fallback=was_fallback,
             metadata={
                 "context_size_chars": len(context),
                 "query": query[:100],

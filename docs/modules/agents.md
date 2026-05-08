@@ -3175,6 +3175,7 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_total_calls` | Number of LLM sub-calls made |
 | `rlm_tokens_used` | Total tokens (if available) |
 | `rlm_latency_ms` | End-to-end RLM processing time |
+| `rlm_was_fallback` | True when answer came from fallback extraction (max iterations exhausted without SUBMIT) |
 | `context_size_chars` | Input context size |
 
 ### SearchOutput with RLM
@@ -4130,12 +4131,15 @@ Dataclass with telemetry data for A/B testing and monitoring.
 ```python
 @dataclass
 class RLMResult:
-    answer: str          # Final answer from RLM
-    depth_reached: int   # Actual recursion depth used
-    total_calls: int     # Number of LLM sub-calls
-    tokens_used: int     # Total tokens (if available)
-    latency_ms: float    # End-to-end latency
-    metadata: Dict       # Additional metadata
+    answer: str           # Final answer from RLM
+    depth_reached: int    # Actual recursion depth used
+    total_calls: int      # Number of LLM sub-calls
+    tokens_used: int      # Total tokens (if available)
+    latency_ms: float     # End-to-end latency
+    was_fallback: bool    # True when answer came from fallback extraction
+                          # because max_iterations was reached without SUBMIT().
+                          # Quality may be lower; downstream may flag/replan.
+    metadata: Dict        # Additional metadata
 
     def to_telemetry_dict(self) -> Dict:
         """Export for telemetry/Phoenix."""
@@ -4143,6 +4147,7 @@ class RLMResult:
             "rlm_enabled": True,
             "rlm_depth_reached": self.depth_reached,
             "rlm_total_calls": self.total_calls,
+            "rlm_was_fallback": self.was_fallback,
             ...
         }
 ```

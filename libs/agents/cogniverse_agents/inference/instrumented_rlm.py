@@ -52,6 +52,24 @@ class RLMCancelledError(Exception):
         super().__init__(message)
 
 
+def _mark_fallback(prediction: Prediction) -> None:
+    """Tag a Prediction returned via fallback extraction so callers can detect it.
+
+    Why: when max_iterations is exhausted without a SUBMIT(), the parent class
+    falls back to best-effort extraction. Answer quality may be lower; callers
+    (RLMInference, agents) need a signal so they can flag the response or
+    trigger a re-plan rather than treating it as a clean completion.
+    """
+    try:
+        prediction.was_fallback = True
+    except (
+        Exception
+    ):  # pragma: no cover — defensive against immutable Prediction subclasses
+        logger.debug(
+            "Could not set was_fallback on prediction; downstream defaults to False"
+        )
+
+
 class InstrumentedRLM(dspy.RLM):
     """RLM with EventQueue integration for real-time progress tracking.
 
@@ -231,6 +249,7 @@ class InstrumentedRLM(dspy.RLM):
             )
 
             result = self._extract_fallback(variables, history, output_field_names)
+            _mark_fallback(result)
 
             self._emit_sync(
                 create_status_event(
@@ -331,6 +350,7 @@ class InstrumentedRLM(dspy.RLM):
             result = await self._aextract_fallback(
                 variables, history, output_field_names
             )
+            _mark_fallback(result)
 
             if self._event_queue and self._task_id:
                 await self._event_queue.enqueue(

@@ -279,6 +279,40 @@ class TestRLMAwareMixinWithEventQueue:
         assert rlm._tenant_id == "agent_tenant"
 
 
+class TestMarkFallback:
+    """Tests for the _mark_fallback helper that tags fallback predictions."""
+
+    def test_mark_fallback_sets_attribute(self):
+        """_mark_fallback sets was_fallback=True on a Prediction."""
+        from dspy.primitives.prediction import Prediction
+
+        from cogniverse_agents.inference.instrumented_rlm import _mark_fallback
+
+        prediction = Prediction(answer="best-effort")
+        assert getattr(prediction, "was_fallback", False) is False
+
+        _mark_fallback(prediction)
+
+        assert prediction.was_fallback is True
+
+    def test_mark_fallback_swallows_immutable_target(self):
+        """_mark_fallback never raises even if the target rejects attribute writes."""
+        from cogniverse_agents.inference.instrumented_rlm import _mark_fallback
+
+        class Frozen:
+            __slots__ = ()  # rejects new attributes
+
+        # Must not raise — this is the "best-effort" contract.
+        _mark_fallback(Frozen())  # type: ignore[arg-type]
+
+    def test_clean_completion_has_no_fallback_marker(self):
+        """A normal Prediction (no _mark_fallback call) reads as not-fallback."""
+        from dspy.primitives.prediction import Prediction
+
+        prediction = Prediction(answer="clean")
+        assert getattr(prediction, "was_fallback", False) is False
+
+
 class TestEventTypes:
     """Tests verifying correct event types are used."""
 

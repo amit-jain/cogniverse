@@ -113,6 +113,36 @@ class TestRLMResult:
         assert telemetry["rlm_total_calls"] == 5
         assert telemetry["rlm_tokens_used"] == 1500
         assert telemetry["rlm_latency_ms"] == 2500.5
+        assert telemetry["rlm_was_fallback"] is False
+
+    def test_was_fallback_defaults_false(self):
+        """RLMResult.was_fallback defaults to False (clean completion)."""
+        from cogniverse_agents.inference.rlm_inference import RLMResult
+
+        result = RLMResult(
+            answer="clean",
+            depth_reached=1,
+            total_calls=1,
+            tokens_used=0,
+            latency_ms=10.0,
+        )
+        assert result.was_fallback is False
+        assert result.to_telemetry_dict()["rlm_was_fallback"] is False
+
+    def test_was_fallback_propagates_to_telemetry(self):
+        """When set True, telemetry dict reports rlm_was_fallback=True."""
+        from cogniverse_agents.inference.rlm_inference import RLMResult
+
+        result = RLMResult(
+            answer="best-effort",
+            depth_reached=10,
+            total_calls=10,
+            tokens_used=0,
+            latency_ms=5000.0,
+            was_fallback=True,
+        )
+        assert result.was_fallback is True
+        assert result.to_telemetry_dict()["rlm_was_fallback"] is True
 
     def test_result_fields(self):
         """RLMResult should store all fields correctly."""
