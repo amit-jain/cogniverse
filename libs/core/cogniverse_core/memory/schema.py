@@ -94,31 +94,40 @@ class KnowledgeSchema:
         ):
             raise ValueError("retention=EPHEMERAL_DAYS requires retention_days > 0")
 
+    def validate_provenance(
+        self, provenance: Optional["ProvenanceLike"] = None
+    ) -> None:
+        """Raise SchemaViolationError if provenance policy is violated."""
+        if not self.provenance_required:
+            return
+        if provenance is None or not getattr(provenance, "derived_from", []):
+            raise SchemaViolationError(
+                f"kind={self.kind!r} requires provenance.derived_from to be "
+                "non-empty; this write would not be auditable"
+            )
+
+    def validate_pin_authority(self, pinned_by: Pinnable) -> None:
+        """Raise SchemaViolationError if requester's role is below the floor."""
+        if not _can_pin(pinned_by, self.pinnable_by):
+            raise SchemaViolationError(
+                f"kind={self.kind!r} forbids pin from role={pinned_by.value} "
+                f"(minimum required: {self.pinnable_by.value})"
+            )
+
     def validate_write(
         self,
         provenance: Optional["ProvenanceLike"] = None,
         pinned_by: Optional[Pinnable] = None,
     ) -> None:
-        """Raise SchemaViolationError when a candidate write breaks policy.
+        """Composite check used by the write path.
 
-        Today this enforces:
-          * provenance presence when ``provenance_required`` is set;
-          * pin authority when ``pinned_by`` is supplied (the requester role
-            must be at-or-above the schema's ``pinnable_by``).
-
-        A.2 will tighten provenance to require non-empty ``derived_from``.
+        Pin-only flows (where the original write already happened earlier)
+        should use ``validate_pin_authority`` directly to avoid re-asserting
+        the provenance constraint.
         """
-        if self.provenance_required:
-            if provenance is None or not getattr(provenance, "derived_from", []):
-                raise SchemaViolationError(
-                    f"kind={self.kind!r} requires provenance.derived_from to be "
-                    "non-empty; this write would not be auditable"
-                )
-        if pinned_by is not None and not _can_pin(pinned_by, self.pinnable_by):
-            raise SchemaViolationError(
-                f"kind={self.kind!r} forbids pin from role={pinned_by.value} "
-                f"(minimum required: {self.pinnable_by.value})"
-            )
+        self.validate_provenance(provenance)
+        if pinned_by is not None:
+            self.validate_pin_authority(pinned_by)
 
 
 # Provenance is defined in A.2; for A.1 we accept any object exposing

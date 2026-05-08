@@ -523,6 +523,53 @@ memory.delete_memory(
 )
 ```
 
+### Pinning service
+
+`PinService` lets users, tenant admins, and org admins pin memories so they
+survive lifecycle cleanup, trust decay, and any future curator pass.
+
+```python
+from cogniverse_core.memory.pinning import PinQuotas, PinService
+from cogniverse_core.memory.schema import Pinnable, build_default_registry
+
+registry = build_default_registry()
+quotas = PinQuotas.from_tenant_config(tenant_config)  # honours admin overrides
+service = PinService(memory_manager, registry, quotas=quotas)
+
+# Pin a tenant_instruction memory as tenant admin.
+service.pin(
+    target_memory_id=memory_id,
+    target_kind="tenant_instruction",
+    pinned_by=Pinnable.TENANT_ADMIN,
+    actor_id="admin_alpha",
+    tenant_id="acme",
+)
+
+# Inspect.
+service.is_pinned(memory_id, "acme")        # bool
+service.list_pins("acme")                   # all PinRecord across roles
+service.quota_used(Pinnable.USER, "acme")   # int
+
+# Unpin (authority rules: user can only unpin their own; tenant admin can
+# unpin user/tenant pins; org admin can unpin anything).
+service.unpin(
+    target_memory_id=memory_id,
+    requester=Pinnable.TENANT_ADMIN,
+    actor_id="admin_alpha",
+    tenant_id="acme",
+)
+```
+
+**Quota defaults** — user 50, tenant_admin 500, org_admin unlimited. Override
+per-tenant via `TenantConfig.metadata["pin_quota"] = {"user": N, ...}`. An
+org admin can also override an existing pin from a lower role (the previous
+pin record is dropped before the new one persists).
+
+Pin records live under a sentinel `agent_name="_pinning"` so they never
+pollute normal-agent search results. The schema registry's
+`validate_pin_authority(role)` enforces the per-kind floor before any
+write hits Vespa.
+
 ### Knowledge schema registry
 
 Each kind of memory carries a `KnowledgeSchema` describing its retention,
