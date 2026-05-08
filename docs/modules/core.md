@@ -523,6 +523,41 @@ memory.delete_memory(
 )
 ```
 
+### Knowledge schema registry
+
+Each kind of memory carries a `KnowledgeSchema` describing its retention,
+sensitivity, pin authority, provenance requirement, contradiction policy,
+and default trust. The registry is the single source of truth A.6 (pinning)
+and A.7 (lifecycle) and A.2 (provenance) all read from.
+
+```python
+from cogniverse_core.memory.schema import (
+    KnowledgeRegistry,
+    KnowledgeSchema,
+    Pinnable,
+    Retention,
+    SchemaViolationError,
+    build_default_registry,
+)
+
+registry = build_default_registry()  # seeded with conversation_turn,
+                                     # learned_strategy, tenant_instruction,
+                                     # external_doc, entity_fact, kg_node, kg_edge
+
+schema = registry.get("entity_fact")
+# Defaults are conservative when the kind is unregistered:
+# permanent + tenant_private + provenance_required.
+
+# Validation gates the write before any Vespa I/O:
+schema.validate_write(provenance=my_provenance, pinned_by=Pinnable.USER)
+# Raises SchemaViolationError when:
+#   * provenance is required but missing or has empty derived_from
+#   * pin requester's role is below the schema's pinnable_by floor
+```
+
+Register custom kinds at boot — replace=True is required to overwrite an
+existing kind so accidental redefinition fails loudly.
+
 ### Scheduled lifecycle cleanup
 
 Memories accumulate; the runtime ships a `LifecycleScheduler` that runs
