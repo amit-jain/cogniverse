@@ -95,6 +95,16 @@ class TenantLRUCache(Generic[T]):
         with self._lock:
             return list(self._data.keys())
 
+    def values(self) -> list[T]:
+        """Snapshot of currently-warm values, in LRU order (oldest first).
+
+        Returned list is a snapshot — callers can iterate freely without
+        worrying about cache mutations during iteration. Eviction or new
+        inserts after this call are not reflected.
+        """
+        with self._lock:
+            return list(self._data.values())
+
     def copy(self) -> "TenantLRUCache[T]":
         """Shallow copy: same capacity + on_evict, snapshot of current data.
 

@@ -523,6 +523,24 @@ memory.delete_memory(
 )
 ```
 
+### Scheduled lifecycle cleanup
+
+Memories accumulate; the runtime ships a `LifecycleScheduler` that runs
+`cleanup_expired_memories` on each warm tenant on a periodic tick. It is
+started in the FastAPI `lifespan` and stopped on shutdown.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `COGNIVERSE_MEMORY_LIFECYCLE_DISABLED` | unset | When `1`/`true`/`yes`, the scheduler does not start. |
+| `COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL` | `3600` | Seconds between ticks. |
+| `COGNIVERSE_MEMORY_MAX_AGE_SECONDS` | `2592000` (30 days) | Age threshold for the bulk cleanup. |
+
+Per-tenant errors during a tick are recorded in the run summary but do not
+abort the run; offending tenants are visible via the scheduler's
+`last_run_summary` for operator inspection. A.7 will replace the single
+`max_age_seconds` knob with per-schema retention policies and add
+soft-delete; A.9 only ensures the existing cleanup path runs on a schedule.
+
 ---
 
 ## Configuration

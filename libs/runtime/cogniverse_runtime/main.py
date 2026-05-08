@@ -750,6 +750,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         gateway_probe.start()
         app.state.gateway_probe = gateway_probe
 
+    # 13. Start the memory lifecycle scheduler (A.9). Periodically iterates
+    # warm-tenant Mem0 managers and runs cleanup_expired_memories on each.
+    # Disabled with COGNIVERSE_MEMORY_LIFECYCLE_DISABLED=1 (e.g. for tests
+    # that don't want the loop running concurrently).
+    lifecycle_scheduler = None
+    if os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "").lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        from cogniverse_core.memory.lifecycle_scheduler import LifecycleScheduler
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+
+        lifecycle_interval = float(
+            os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL", "3600")
+        )
+        lifecycle_max_age = int(
+            os.environ.get("COGNIVERSE_MEMORY_MAX_AGE_SECONDS", str(30 * 24 * 3600))
+        )
+        lifecycle_scheduler = LifecycleScheduler(
+            get_warm_managers=Mem0MemoryManager._instances.values,
+            interval_seconds=lifecycle_interval,
+            max_age_seconds=lifecycle_max_age,
+        )
+        lifecycle_scheduler.start()
+        app.state.lifecycle_scheduler = lifecycle_scheduler
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
@@ -758,6 +785,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Shutting down Cogniverse Runtime...")
     if gateway_probe is not None:
         await gateway_probe.stop()
+    if lifecycle_scheduler is not None:
+        await lifecycle_scheduler.stop()
     await queue_manager.stop_cleanup_loop()
     logger.info("Cogniverse Runtime shut down successfully")
 
