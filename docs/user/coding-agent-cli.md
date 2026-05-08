@@ -172,6 +172,28 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
+### Sandbox lifecycle telemetry (D.4)
+
+Every call to `SandboxManager.exec_in_sandbox` emits a parent
+`sandbox.exec_in_sandbox` span plus child spans for each lifecycle phase
+(`sandbox.create_session`, `sandbox.wait_ready`, `sandbox.exec`,
+`sandbox.delete`). The `sandbox.exec` span carries:
+
+| Attribute | Meaning |
+|---|---|
+| `openshell.agent_type` | Agent name (e.g. `coding_agent`) |
+| `openshell.command_first` | First token of the command (audit aid) |
+| `openshell.timeout_seconds` | The exec timeout |
+| `openshell.exit_code` | Subprocess exit code |
+| `openshell.wall_ms` | Wall-clock duration of the exec |
+| `openshell.oom` | True when exit_code ∈ {137, 139} or stderr matches OOM markers |
+| `openshell.policy_denied` | True when stderr matches `permission denied` / `syscall denied` / `blocked by policy` |
+| `openshell.error` | Exception class name (parent span only, on hard failure) |
+
+These spans become children of whichever agent span is active when
+`exec_in_sandbox` is called, so Phoenix shows the sandbox call inline
+with the rest of the agent's processing trace.
+
 ### Application-layer egress enforcement (D.1)
 
 In addition to kernel-layer NetworkPolicy enforcement (in-cluster mode), the

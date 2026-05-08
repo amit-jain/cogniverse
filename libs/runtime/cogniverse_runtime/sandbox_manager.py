@@ -8,16 +8,23 @@ and process constraints.
 Requires an OpenShell gateway (K3s cluster). The ``SandboxPolicy`` knob
 controls behaviour when the gateway is unreachable: ``required`` refuses
 to start, ``optional`` degrades with a warning, ``disabled`` skips entirely.
+
+D.4 — every sandbox lifecycle event (create_session, wait_ready, exec,
+delete) is wrapped in an OpenTelemetry span so Phoenix can correlate
+sandbox behaviour with the parent agent span. OOM and policy-denied
+errors are surfaced as span attributes from stderr / exit_code patterns.
 """
 
 from __future__ import annotations
 
 import enum
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,30 @@ class SandboxPolicy(str, enum.Enum):
 
 class SandboxGatewayUnavailableError(RuntimeError):
     """Raised at boot when policy=required but the gateway is unreachable."""
+
+
+# D.4 — OOM / policy-denied detection from stderr + exit_code. These
+# patterns are heuristic; OpenShell's exec result does not (today) carry
+# structured failure reason. The patterns are conservative so we don't
+# false-positive on user code that happens to mention these words.
+_OOM_EXIT_CODES = {137, 139}  # SIGKILL, SIGSEGV (which OOM-killer often uses)
+_OOM_STDERR_MARKERS = ("Killed", "OOMKilled", "out of memory", "oom-kill")
+_DENIED_STDERR_MARKERS = (
+    "Operation not permitted",
+    "permission denied",
+    "syscall denied",
+    "blocked by policy",
+)
+
+
+def _classify_exec_failure(exit_code: int, stderr: str) -> Dict[str, bool]:
+    """Categorise an exec result as oom / denied / neither for span attributes."""
+    stderr_l = (stderr or "").lower()
+    oom = exit_code in _OOM_EXIT_CODES or any(
+        m.lower() in stderr_l for m in _OOM_STDERR_MARKERS
+    )
+    denied = any(m.lower() in stderr_l for m in _DENIED_STDERR_MARKERS)
+    return {"openshell.oom": oom, "openshell.policy_denied": denied}
 
 
 class SandboxManager:
@@ -251,6 +282,10 @@ class SandboxManager:
         Execute a command inside a sandbox for the given agent type.
 
         Uses the OpenShell Python SDK (SandboxClient.create_session + exec).
+        Each lifecycle phase (create_session, wait_ready, exec, delete)
+        emits an OpenTelemetry span (D.4) so Phoenix correlates sandbox
+        behaviour with the parent agent span. OOM and policy-denied
+        outcomes surface as span attributes derived from stderr/exit_code.
 
         Returns:
             Dict with stdout, stderr, exit_code. None if sandbox unavailable.
@@ -258,28 +293,82 @@ class SandboxManager:
         if not self._available or not self._client:
             return None
 
+        tracer = trace.get_tracer(__name__)
+        common_attrs = {
+            "openshell.agent_type": agent_type,
+            "openshell.command_first": command[0] if command else "",
+            "openshell.timeout_seconds": int(timeout_seconds),
+        }
+
         session = None
-        try:
-            session = self._client.create_session()
-            self._client.wait_ready(
-                session.sandbox.name,
-                timeout_seconds=120,
-            )
-            result = session.exec(
-                command,
-                timeout_seconds=timeout_seconds,
-            )
-            return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "exit_code": result.exit_code,
-            }
-        except Exception as e:
-            logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
-            return {"stdout": "", "stderr": str(e), "exit_code": -1}
-        finally:
-            if session:
-                session.delete()
+        with tracer.start_as_current_span(
+            "sandbox.exec_in_sandbox", attributes=common_attrs
+        ) as parent_span:
+            try:
+                with tracer.start_as_current_span(
+                    "sandbox.create_session", attributes=common_attrs
+                ):
+                    session = self._client.create_session()
+                    parent_span.set_attribute(
+                        "openshell.session_name",
+                        getattr(getattr(session, "sandbox", None), "name", "")
+                        or getattr(session, "id", ""),
+                    )
+
+                with tracer.start_as_current_span(
+                    "sandbox.wait_ready",
+                    attributes={**common_attrs, "openshell.wait_timeout_s": 120},
+                ):
+                    self._client.wait_ready(
+                        session.sandbox.name,
+                        timeout_seconds=120,
+                    )
+
+                with tracer.start_as_current_span(
+                    "sandbox.exec", attributes=common_attrs
+                ) as exec_span:
+                    start = time.monotonic()
+                    result = session.exec(
+                        command,
+                        timeout_seconds=timeout_seconds,
+                    )
+                    wall_ms = (time.monotonic() - start) * 1000.0
+
+                    classification = _classify_exec_failure(
+                        int(getattr(result, "exit_code", -1)),
+                        getattr(result, "stderr", "") or "",
+                    )
+                    exec_span.set_attribute(
+                        "openshell.exit_code", int(result.exit_code)
+                    )
+                    exec_span.set_attribute("openshell.wall_ms", wall_ms)
+                    for k, v in classification.items():
+                        exec_span.set_attribute(k, v)
+                    parent_span.set_attribute(
+                        "openshell.exit_code", int(result.exit_code)
+                    )
+                    for k, v in classification.items():
+                        parent_span.set_attribute(k, v)
+
+                return {
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "exit_code": result.exit_code,
+                }
+            except Exception as e:
+                logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
+                parent_span.set_attribute("openshell.error", type(e).__name__)
+                parent_span.record_exception(e)
+                return {"stdout": "", "stderr": str(e), "exit_code": -1}
+            finally:
+                if session:
+                    with tracer.start_as_current_span(
+                        "sandbox.delete", attributes=common_attrs
+                    ):
+                        try:
+                            session.delete()
+                        except Exception as exc:
+                            logger.debug("sandbox.delete failed (non-fatal): %s", exc)
 
     def list_sandboxes(self) -> list:
         """List active sandboxes."""
