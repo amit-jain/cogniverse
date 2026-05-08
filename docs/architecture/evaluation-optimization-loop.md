@@ -1,5 +1,45 @@
 # The Evaluation & Optimization Loop
 
+## Architectural decision — the optimizer is a batch CLI, not a daemon
+
+The optimizer (`optimization_cli`, BootstrapFewShot for query analysis / agent
+routing / summary / detailed report, and MIPROv2 for the agentic router) is
+**deliberately a stateless batch tool**. It is invoked from Argo CronWorkflows
+and from `QualityMonitor` trigger events; it is not a long-lived service.
+
+**Why this is correct (do not change without strong reason):**
+
+- **Idempotency.** A failed run leaves no half-written state. Retrying a CronWorkflow re-runs the whole compile cleanly.
+- **Observability.** Each Argo run has its own telemetry, logs, and lifecycle.
+  Argo's UI is the source of truth for "what optimization runs have happened
+  for this tenant." A daemon would have to reproduce all of that.
+- **Resource shape.** Compiles are bursty (heavy LLM use for ~minutes, then
+  idle for hours/days). Bursty workloads belong in batch schedulers, not in
+  always-on pods.
+- **Debuggability.** Each compile is a single, isolated process — no shared
+  state across runs, no race conditions between concurrent recompiles for
+  different tenants.
+- **Existing trigger paths already work.** `QualityMonitor` runs continuously
+  in the runtime sidecar, detects degradation, and submits Argo workflows.
+  This is the right shape: detect in the long-lived service, recompile in a
+  batch job.
+
+**Therefore:**
+
+- Do not replace `optimization_cli` with a daemon.
+- Do not add long-lived background recompile loops to the runtime pod.
+- New optimization triggers belong in `QualityMonitor` (live signal) or in a
+  CronWorkflow (schedule). Both submit Argo workflows that invoke the CLI.
+- Hot reload of compiled artefacts (when added) belongs in the **runtime**,
+  not in the optimizer — the runtime polls/SIGUSR1's for new artefacts; the
+  optimizer's job ends when it has written the artefact.
+
+If you find yourself wanting a daemon, the actual gap is more likely
+*observability* (Phoenix tile, dashboard view) or *trigger latency* (poll
+interval, threshold tuning) — fix those, not the execution model.
+
+---
+
 ## Problem Statement
 
 Static prompts and fixed routing logic degrade over time. Query distributions shift, new content types appear, and user expectations evolve. A system that was 90% accurate at launch will silently drift to 70% without a mechanism for continuous learning.
