@@ -111,6 +111,11 @@ class SandboxManager:
         self._client = None
         self._available = False
 
+        # D.5 — pooled sessions. Lazily created on first exec; uses
+        # SandboxPoolConfig.from_environment() so operators can disable or
+        # tune via env vars without code changes.
+        self._pool: Optional[Any] = None
+
         if self._policy is SandboxPolicy.DISABLED:
             logger.info("SandboxManager disabled by configuration (policy=disabled)")
             return
@@ -293,6 +298,12 @@ class SandboxManager:
         if not self._available or not self._client:
             return None
 
+        # D.5 — go through the pool when enabled. Pool reuses one session
+        # per agent_type across calls, eliminating per-call container churn.
+        pool = self._get_or_create_pool()
+        if pool is not None and pool.config.enabled:
+            return self._exec_pooled(pool, agent_type, command, timeout_seconds)
+
         tracer = trace.get_tracer(__name__)
         common_attrs = {
             "openshell.agent_type": agent_type,
@@ -370,6 +381,89 @@ class SandboxManager:
                         except Exception as exc:
                             logger.debug("sandbox.delete failed (non-fatal): %s", exc)
 
+    def _get_or_create_pool(self):
+        """Lazily build the SandboxSessionPool from env config."""
+        if self._pool is not None:
+            return self._pool
+        if not self._available or not self._client:
+            return None
+        from cogniverse_runtime.sandbox_pool import (
+            SandboxPoolConfig,
+            SandboxSessionPool,
+        )
+
+        cfg = SandboxPoolConfig.from_environment()
+        if not cfg.enabled:
+            # Cache a disabled placeholder so we don't rebuild every call.
+            self._pool = SandboxSessionPool(self._client, config=cfg)
+            return self._pool
+        self._pool = SandboxSessionPool(self._client, config=cfg)
+        logger.info(
+            "Sandbox session pool initialised (max_size=%d, idle_s=%.0f)",
+            cfg.max_pool_size,
+            cfg.max_idle_seconds,
+        )
+        return self._pool
+
+    def _exec_pooled(
+        self,
+        pool: Any,
+        agent_type: str,
+        command: list,
+        timeout_seconds: int,
+    ) -> Dict[str, Any]:
+        """Run an exec through the session pool with full span emission."""
+        tracer = trace.get_tracer(__name__)
+        common_attrs = {
+            "openshell.agent_type": agent_type,
+            "openshell.command_first": command[0] if command else "",
+            "openshell.timeout_seconds": int(timeout_seconds),
+            "openshell.pooled": True,
+        }
+        with tracer.start_as_current_span(
+            "sandbox.exec_in_sandbox", attributes=common_attrs
+        ) as parent_span:
+
+            def _run(session: Any) -> Dict[str, Any]:
+                parent_span.set_attribute(
+                    "openshell.session_name",
+                    getattr(getattr(session, "sandbox", None), "name", "")
+                    or getattr(session, "id", ""),
+                )
+                with tracer.start_as_current_span(
+                    "sandbox.exec", attributes=common_attrs
+                ) as exec_span:
+                    start = time.monotonic()
+                    result = session.exec(command, timeout_seconds=timeout_seconds)
+                    wall_ms = (time.monotonic() - start) * 1000.0
+                    classification = _classify_exec_failure(
+                        int(getattr(result, "exit_code", -1)),
+                        getattr(result, "stderr", "") or "",
+                    )
+                    exec_span.set_attribute(
+                        "openshell.exit_code", int(result.exit_code)
+                    )
+                    exec_span.set_attribute("openshell.wall_ms", wall_ms)
+                    for k, v in classification.items():
+                        exec_span.set_attribute(k, v)
+                        parent_span.set_attribute(k, v)
+                    parent_span.set_attribute(
+                        "openshell.exit_code", int(result.exit_code)
+                    )
+                    return {
+                        "stdout": result.stdout,
+                        "stderr": result.stderr,
+                        "exit_code": result.exit_code,
+                    }
+
+            try:
+                return pool.with_session(agent_type, _run)
+            except Exception as e:
+                logger.warning(f"Pooled sandbox exec failed for {agent_type}: {e}")
+                parent_span.set_attribute("openshell.error", type(e).__name__)
+                parent_span.record_exception(e)
+                return {"stdout": "", "stderr": str(e), "exit_code": -1}
+
     def list_sandboxes(self) -> list:
         """List active sandboxes."""
         if not self._available or not self._client:
@@ -381,7 +475,13 @@ class SandboxManager:
             return []
 
     def close(self) -> None:
-        """Close the gateway connection."""
+        """Close the gateway connection and tear down any pooled sessions."""
+        if self._pool is not None:
+            try:
+                self._pool.close_all()
+            except Exception as exc:
+                logger.debug("Pool close_all failed (non-fatal): %s", exc)
+            self._pool = None
         if self._client:
             self._client.close()
             self._client = None

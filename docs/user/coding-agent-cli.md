@@ -172,6 +172,29 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
+### Sandbox session pool (D.5)
+
+`SandboxManager.exec_in_sandbox` now reuses one OpenShell session per
+`agent_type` across calls. The pool is enabled by default and prunes
+sessions that have been idle longer than `max_idle_seconds`. Behaviour:
+
+- **First call for an agent**: create + wait_ready (lifecycle spans fire), exec, session retained.
+- **Subsequent calls for the same agent**: exec on the cached session (no create / no wait_ready).
+- **Different agent**: separate session.
+- **Pool full**: oldest idle session evicted before creating a new one.
+- **Idle eviction**: `pool.evict_idle()` (or runtime shutdown's `close_all`) destroys idle sessions.
+- **Callback exception**: the session is dropped from the pool; next checkout creates a fresh one.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `COGNIVERSE_SANDBOX_POOL_ENABLED` | `1` | Set to `false` to fall back to per-call create+destroy. |
+| `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Maximum pooled sessions (one per agent_type). |
+| `COGNIVERSE_SANDBOX_POOL_IDLE_S` | `60` | Seconds an entry can sit idle before eviction. |
+
+The pool emits the same D.4 telemetry spans (`sandbox.create_session`,
+`sandbox.wait_ready`, `sandbox.delete`) on its lifecycle events, so the
+trace shape stays observable — they just fire less often when reuse hits.
+
 ### Sandbox lifecycle telemetry (D.4)
 
 Every call to `SandboxManager.exec_in_sandbox` emits a parent

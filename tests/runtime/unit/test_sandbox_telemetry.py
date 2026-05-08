@@ -50,6 +50,18 @@ def _build_manager_with_fake_client(client) -> SandboxManager:
     return mgr
 
 
+@pytest.fixture(autouse=True)
+def _disable_pool_for_d4_telemetry_tests(monkeypatch):
+    """D.4 tests assert per-call create/wait/delete spans — that's the
+    un-pooled lifecycle. The session pool (D.5) reuses sessions across
+    calls so create/wait fire only on first checkout and delete fires on
+    eviction. Disable the pool here so each test sees the original
+    per-call shape; pool-specific tests live in test_sandbox_pool.py.
+    """
+    monkeypatch.setenv("COGNIVERSE_SANDBOX_POOL_ENABLED", "false")
+    yield
+
+
 class _FakeSession:
     def __init__(self, exit_code=0, stderr="", stdout="ok", name="sandbox-1"):
         self.id = name
