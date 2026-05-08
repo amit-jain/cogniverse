@@ -2,12 +2,21 @@
 Artifact Manager — save/load DSPy optimization artifacts via telemetry stores.
 
 Provides tenant-isolated, versioned artifact persistence using DatasetStore
-(for prompts and demonstrations) and ExperimentStore (for optimization metrics).
+for prompts, demonstrations, and experiment metrics.
+
+C.1: optimization metrics are now stored as a typed ``ExperimentMetrics``
+row in a dedicated dataset (``dspy-experiments-{tenant}-{agent}``). The
+previous ``save_blob`` workaround papered over PhoenixProvider's
+``save_experiment`` no-op stub and made metrics impossible to query
+historically — every run overwrote the previous one. The dedicated dataset
+appends per run so callers can fetch the latest, the full history, or
+filter by score/timestamp/baseline.
 """
 
 import json
 import logging
-from datetime import datetime
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -15,6 +24,78 @@ import pandas as pd
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ExperimentMetrics:
+    """Typed record for a single optimization run.
+
+    Stored as one row in the per-tenant per-agent experiments dataset. Fields
+    are intentionally a small fixed set so the dataset stays queryable; ad-hoc
+    metrics go under ``extra_metrics`` (serialised to JSON in storage).
+    """
+
+    tenant_id: str
+    agent_type: str
+    run_id: str  # caller-supplied ULID/UUID; used to dedupe + correlate
+    timestamp: str  # ISO-8601 UTC
+    optimizer: str  # e.g. "BootstrapFewShot", "MIPROv2"
+    baseline_score: Optional[float] = None
+    candidate_score: Optional[float] = None
+    improvement: Optional[float] = None  # candidate - baseline
+    promoted: bool = False  # True iff the candidate passed the gate
+    train_examples: Optional[int] = None
+    extra_metrics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_row(self) -> Dict[str, Any]:
+        """Flatten to a row suitable for DataFrame storage.
+
+        ``extra_metrics`` is JSON-serialised to keep the dataset schema flat;
+        consumers should ``json.loads`` it back when reading.
+        """
+        d = asdict(self)
+        d["extra_metrics"] = json.dumps(d["extra_metrics"], default=str)
+        return d
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "ExperimentMetrics":
+        extras = row.get("extra_metrics") or {}
+        if isinstance(extras, str):
+            try:
+                extras = json.loads(extras)
+            except json.JSONDecodeError:
+                extras = {}
+        return cls(
+            tenant_id=row["tenant_id"],
+            agent_type=row["agent_type"],
+            run_id=row["run_id"],
+            timestamp=row["timestamp"],
+            optimizer=row["optimizer"],
+            baseline_score=_optional_float(row.get("baseline_score")),
+            candidate_score=_optional_float(row.get("candidate_score")),
+            improvement=_optional_float(row.get("improvement")),
+            promoted=bool(row.get("promoted", False)),
+            train_examples=_optional_int(row.get("train_examples")),
+            extra_metrics=extras,
+        )
+
+
+def _optional_float(v: Any) -> Optional[float]:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_int(v: Any) -> Optional[int]:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 class ArtifactManager:
@@ -39,6 +120,10 @@ class ArtifactManager:
 
     def _experiment_name(self) -> str:
         return f"dspy-optimization-{self._tenant_id}"
+
+    def _experiments_dataset_name(self, agent_type: str) -> str:
+        """Dataset that stores typed ExperimentMetrics rows for an agent."""
+        return f"dspy-experiments-{self._tenant_id}-{agent_type}"
 
     async def save_prompts(self, agent_type: str, prompts: Dict[str, str]) -> str:
         """Persist optimized prompts as a dataset.
@@ -455,60 +540,172 @@ class ArtifactManager:
             lineage.append(entry)
         return lineage
 
+    async def save_experiment(self, metrics: ExperimentMetrics) -> str:
+        """Persist a typed ``ExperimentMetrics`` record (C.1).
+
+        Each call appends a row to ``dspy-experiments-{tenant}-{agent}``.
+        PhoenixProvider's ``append_to_dataset`` creates a versioned copy on
+        each append, so the *latest* version is always the full history; we
+        list versioned datasets to read all rows.
+
+        The previous workaround (``save_blob`` overwriting per-agent) lost
+        history every run; this implementation makes the experiment ledger
+        a real, queryable artefact comparable to prompts/demos.
+        """
+        if metrics.tenant_id != self._tenant_id:
+            raise ValueError(
+                f"ExperimentMetrics.tenant_id={metrics.tenant_id!r} does not "
+                f"match ArtifactManager.tenant_id={self._tenant_id!r}"
+            )
+        dataset_name = self._experiments_dataset_name(metrics.agent_type)
+        row_df = pd.DataFrame([metrics.to_row()])
+
+        # First run: create the dataset; subsequent runs: append.
+        try:
+            await self._provider.datasets.append_to_dataset(
+                name=dataset_name, data=row_df
+            )
+            return dataset_name
+        except (KeyError, ValueError):
+            # Dataset doesn't exist yet — create it with the first row.
+            dataset_id = await self._provider.datasets.create_dataset(
+                name=dataset_name,
+                data=row_df,
+                metadata={
+                    "artifact_type": "dspy_experiments",
+                    "agent_type": metrics.agent_type,
+                    "tenant_id": self._tenant_id,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            logger.info(
+                "Created experiments dataset for %s/%s → %s",
+                self._tenant_id,
+                metrics.agent_type,
+                dataset_id,
+            )
+            return dataset_id
+
+    async def load_experiments(self, agent_type: str) -> List[ExperimentMetrics]:
+        """Return the full experiment history for an agent in chronological order.
+
+        Reads the latest versioned dataset (Phoenix's append model creates
+        ``{name}_v{ts}`` per append; the highest timestamp suffix has the
+        complete history). Empty list when no experiments have been logged.
+        """
+        dataset_name = self._experiments_dataset_name(agent_type)
+        latest_df = await self._latest_versioned_dataset(dataset_name)
+        if latest_df is None or latest_df.empty:
+            return []
+
+        records = [
+            ExperimentMetrics.from_row(row.to_dict()) for _, row in latest_df.iterrows()
+        ]
+        # Defensive sort: timestamps are ISO-8601, so lexical sort == chronological.
+        records.sort(key=lambda m: m.timestamp)
+        return records
+
+    async def load_latest_experiment(
+        self, agent_type: str
+    ) -> Optional[ExperimentMetrics]:
+        """Return the most recent experiment record, or None if none exist."""
+        history = await self.load_experiments(agent_type)
+        return history[-1] if history else None
+
+    async def _latest_versioned_dataset(self, base_name: str) -> Optional[pd.DataFrame]:
+        """Find the most-recent ``{base_name}_v{ts}`` dataset.
+
+        Phoenix's ``append_to_dataset`` creates a versioned copy each call;
+        the highest-timestamped suffix carries the full appended history.
+        Falls back to the un-versioned dataset for a fresh first row.
+        """
+        # Try the un-versioned name first (the very first save creates it).
+        try:
+            df = await self._provider.datasets.get_dataset(name=base_name)
+            return df
+        except (KeyError, ValueError):
+            pass
+
+        # Otherwise enumerate ``base_name_vYYYYMMDD_HHMMSS`` datasets via
+        # the provider's listing API if available, fall back to a
+        # bounded scan of recent timestamps.
+        listing = getattr(self._provider.datasets, "list_datasets", None)
+        if listing is not None:
+            try:
+                names = await listing()
+            except Exception:
+                names = []
+            candidates = [n for n in names if n.startswith(f"{base_name}_v")]
+            if candidates:
+                latest = sorted(candidates)[-1]
+                return await self._provider.datasets.get_dataset(name=latest)
+        return None
+
+    # Back-compat shim: existing callers (optimization_cli) still use
+    # log_optimization_run. Route through save_experiment so the new typed
+    # ledger is the source of truth and the save_blob workaround is gone.
     async def log_optimization_run(
         self, agent_type: str, metrics: Dict[str, Any]
     ) -> str:
-        """Persist an optimization run's metrics for later inspection.
+        """[Deprecated] Use ``save_experiment(ExperimentMetrics(...))`` directly.
 
-        Stored as a single-row JSON blob via ``save_blob`` rather than the
-        provider's experiments API: the latter is currently a no-op stub
-        on PhoenixProvider, so anything written through it disappears.
-        ``save_blob`` is the same persistence path used by the xgboost
-        models, profile-selection, gateway-thresholds, etc., and is
-        verified working by their load_blob round-trips.
-
-        Each call overwrites the previous run for the same
-        ``(tenant_id, agent_type)`` — the blob holds the latest metrics
-        only. Use ``load_optimization_run`` to read it back.
-
-        Returns:
-            Dataset identifier returned by the underlying store.
+        Translates a free-form metrics dict into a typed ``ExperimentMetrics``
+        and forwards to ``save_experiment``. Kept so existing optimization_cli
+        invocations keep working while callers migrate.
         """
-        payload = json.dumps(
-            {
-                "metrics": metrics,
-                "tenant_id": self._tenant_id,
-                "agent_type": agent_type,
-                "timestamp": datetime.now().isoformat(),
+        run_id = str(metrics.get("run_id") or _generate_run_id())
+        record = ExperimentMetrics(
+            tenant_id=self._tenant_id,
+            agent_type=agent_type,
+            run_id=run_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            optimizer=str(metrics.get("optimizer") or "unknown"),
+            baseline_score=_optional_float(metrics.get("baseline_score")),
+            candidate_score=_optional_float(metrics.get("candidate_score")),
+            improvement=_optional_float(metrics.get("improvement")),
+            promoted=bool(metrics.get("promoted", False)),
+            train_examples=_optional_int(metrics.get("train_examples")),
+            extra_metrics={
+                k: v
+                for k, v in metrics.items()
+                if k
+                not in {
+                    "run_id",
+                    "optimizer",
+                    "baseline_score",
+                    "candidate_score",
+                    "improvement",
+                    "promoted",
+                    "train_examples",
+                }
             },
-            default=str,
         )
-        dataset_id = await self.save_blob("metrics", agent_type, payload)
-        logger.info(
-            "Logged optimization run for %s/%s → dataset %s",
-            self._tenant_id,
-            agent_type,
-            dataset_id,
-        )
-        return dataset_id
+        return await self.save_experiment(record)
 
     async def load_optimization_run(self, agent_type: str) -> Optional[Dict[str, Any]]:
-        """Load the latest optimization-run record for ``agent_type``.
+        """[Deprecated] Use ``load_latest_experiment`` for the typed result."""
+        latest = await self.load_latest_experiment(agent_type)
+        if latest is None:
+            return None
+        return {
+            "metrics": {
+                "optimizer": latest.optimizer,
+                "baseline_score": latest.baseline_score,
+                "candidate_score": latest.candidate_score,
+                "improvement": latest.improvement,
+                "promoted": latest.promoted,
+                "train_examples": latest.train_examples,
+                **latest.extra_metrics,
+            },
+            "tenant_id": latest.tenant_id,
+            "agent_type": latest.agent_type,
+            "timestamp": latest.timestamp,
+            "run_id": latest.run_id,
+        }
 
-        Returns the parsed payload (with ``metrics``, ``tenant_id``,
-        ``agent_type``, ``timestamp`` keys) or ``None`` if no run has
-        been logged for this tenant + agent.
-        """
-        raw = await self.load_blob("metrics", agent_type)
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "Optimization-run blob for %s/%s is not valid JSON: %s",
-                self._tenant_id,
-                agent_type,
-                exc,
-            )
-            return None
+
+def _generate_run_id() -> str:
+    """Cheap monotonic-ish run id without pulling in extra deps."""
+    import uuid
+
+    return uuid.uuid4().hex
