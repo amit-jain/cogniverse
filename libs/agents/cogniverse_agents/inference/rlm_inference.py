@@ -46,6 +46,33 @@ class RLMTimeoutError(TimeoutError):
 _TRAJECTORY_FIELD_TRUNCATE = 500
 
 
+def _sum_tracker_tokens(tracker: Any) -> int:
+    """Sum total tokens across all LMs and entries tracked by a DSPy UsageTracker.
+
+    DSPy's UsageTracker.usage_data is `{lm_name: [{prompt_tokens, completion_tokens,
+    total_tokens, ...}, ...]}`. Some backends populate ``total_tokens``; others
+    only ``prompt_tokens`` + ``completion_tokens``. We prefer the explicit total
+    when present and fall back to the sum of components.
+    """
+    if tracker is None or not hasattr(tracker, "usage_data"):
+        return 0
+
+    total = 0
+    for entries in tracker.usage_data.values():
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            explicit = entry.get("total_tokens")
+            if isinstance(explicit, int) and explicit > 0:
+                total += explicit
+                continue
+            prompt = entry.get("prompt_tokens") or 0
+            completion = entry.get("completion_tokens") or 0
+            if isinstance(prompt, int) and isinstance(completion, int):
+                total += prompt + completion
+    return total
+
+
 def _serialize_trajectory(trajectory: Any, max_entries: int) -> List[Dict[str, Any]]:
     """Convert a dspy RLM trajectory (REPLHistory) into a bounded JSON-friendly list.
 
@@ -220,13 +247,22 @@ class RLMInference:
                 )
         return self._rlm
 
-    def _execute_rlm(self, rlm, full_query: str, context: str) -> Any:
-        """Execute RLM in a thread-safe manner.
+    def _execute_rlm(self, rlm, full_query: str, context: str) -> tuple:
+        """Execute RLM and return (result, total_tokens).
 
-        This is separated for timeout handling via ThreadPoolExecutor.
+        Wraps the call in DSPy's track_usage context so we can report real
+        token counts on RLMResult.tokens_used. Separated for timeout handling
+        via ThreadPoolExecutor — the future returns both fields atomically so
+        the caller cannot accidentally drop the token count on a timeout path.
         """
-        with dspy.context(lm=self._lm):
-            return rlm(context=context, query=full_query)
+        # Local import: dspy may not expose this exact path on older versions
+        # and we want a clean ImportError surfaced rather than module-load fail.
+        from dspy.utils.usage_tracker import track_usage
+
+        with track_usage() as tracker:
+            with dspy.context(lm=self._lm):
+                result = rlm(context=context, query=full_query)
+        return result, _sum_tracker_tokens(tracker)
 
     def process(
         self,
@@ -270,14 +306,16 @@ class RLMInference:
                         self._execute_rlm, rlm, full_query, context
                     )
                     try:
-                        result = future.result(timeout=self.timeout_seconds)
+                        result, tokens_used = future.result(
+                            timeout=self.timeout_seconds
+                        )
                     except concurrent.futures.TimeoutError:
                         raise RLMTimeoutError(
                             f"RLM processing exceeded timeout of {self.timeout_seconds}s"
                         )
             else:
                 # No timeout - execute directly
-                result = self._execute_rlm(rlm, full_query, context)
+                result, tokens_used = self._execute_rlm(rlm, full_query, context)
 
             answer = result.answer if hasattr(result, "answer") else str(result)
 
@@ -302,7 +340,8 @@ class RLMInference:
         logger.info(
             f"RLM completed: depth={depth_reached}, calls={total_calls}, "
             f"latency={latency_ms:.0f}ms, was_fallback={was_fallback}, "
-            f"trajectory_entries={len(structured_trajectory)}"
+            f"trajectory_entries={len(structured_trajectory)}, "
+            f"tokens_used={tokens_used}"
         )
 
         # Always include a small trajectory summary in metadata so Phoenix
@@ -314,7 +353,7 @@ class RLMInference:
             answer=answer,
             depth_reached=depth_reached,
             total_calls=total_calls,
-            tokens_used=0,  # DSPy doesn't expose token counts easily
+            tokens_used=tokens_used,
             latency_ms=latency_ms,
             was_fallback=was_fallback,
             trajectory=structured_trajectory if include_trajectory else [],

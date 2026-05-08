@@ -3183,7 +3183,7 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_enabled` | Boolean flag indicating RLM was used |
 | `rlm_depth_reached` | Actual recursion depth achieved |
 | `rlm_total_calls` | Number of LLM sub-calls made |
-| `rlm_tokens_used` | Total tokens (if available) |
+| `rlm_tokens_used` | Total tokens consumed across the recursive run (sum across all sub-LMs, populated via DSPy `track_usage`) |
 | `rlm_latency_ms` | End-to-end RLM processing time |
 | `rlm_was_fallback` | True when answer came from fallback extraction (max iterations exhausted without SUBMIT) |
 | `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |

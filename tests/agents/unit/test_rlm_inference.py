@@ -224,6 +224,88 @@ class TestSerializeTrajectory:
         assert "observation" not in out[0]
 
 
+class TestSumTrackerTokens:
+    """Unit tests for the DSPy-tracker token aggregator used by process()."""
+
+    def test_none_tracker_returns_zero(self):
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        assert _sum_tracker_tokens(None) == 0
+
+    def test_uses_explicit_total_tokens_when_present(self):
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        class FakeTracker:
+            usage_data = {
+                "ollama/llama3.2": [
+                    {
+                        "total_tokens": 150,
+                        "prompt_tokens": 100,
+                        "completion_tokens": 50,
+                    },
+                    {
+                        "total_tokens": 220,
+                        "prompt_tokens": 150,
+                        "completion_tokens": 70,
+                    },
+                ]
+            }
+
+        assert _sum_tracker_tokens(FakeTracker()) == 370
+
+    def test_falls_back_to_prompt_plus_completion(self):
+        """When backend doesn't report total_tokens, sum prompt+completion."""
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        class FakeTracker:
+            usage_data = {
+                "openai/gpt-4o": [
+                    {"prompt_tokens": 100, "completion_tokens": 50},  # = 150
+                    {"prompt_tokens": 30, "completion_tokens": 20},  # = 50
+                ]
+            }
+
+        assert _sum_tracker_tokens(FakeTracker()) == 200
+
+    def test_sums_across_multiple_lms(self):
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        class FakeTracker:
+            usage_data = {
+                "ollama/llama3.2": [{"total_tokens": 100}],
+                "openai/gpt-4o": [
+                    {"prompt_tokens": 50, "completion_tokens": 50},
+                ],
+            }
+
+        assert _sum_tracker_tokens(FakeTracker()) == 200
+
+    def test_handles_missing_keys_gracefully(self):
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        class FakeTracker:
+            usage_data = {
+                "weird/backend": [
+                    {},  # empty entry
+                    {"prompt_tokens": None, "completion_tokens": 10},  # None handling
+                ]
+            }
+
+        # Should not raise; should add only the well-formed parts.
+        assert _sum_tracker_tokens(FakeTracker()) == 10
+
+    def test_zero_explicit_falls_back_to_components(self):
+        """An explicit total_tokens of 0 must not block component-sum fallback."""
+        from cogniverse_agents.inference.rlm_inference import _sum_tracker_tokens
+
+        class FakeTracker:
+            usage_data = {
+                "x/y": [{"total_tokens": 0, "prompt_tokens": 5, "completion_tokens": 7}]
+            }
+
+        assert _sum_tracker_tokens(FakeTracker()) == 12
+
+
 class TestRLMOptionsTrajectoryFields:
     """RLMOptions exposes the include_trajectory + trajectory_max_entries knobs."""
 
