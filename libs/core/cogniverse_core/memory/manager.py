@@ -6,10 +6,14 @@ Provides simple, persistent agent memory with multi-tenant support.
 Each tenant gets dedicated Vespa schema for memory isolation.
 """
 
+import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from cogniverse_core.memory.schema import KnowledgeRegistry
 
 # Disable Mem0's telemetry BEFORE importing mem0
 os.environ["MEM0_TELEMETRY"] = "False"
@@ -633,6 +637,142 @@ class Mem0MemoryManager:
         except Exception as e:
             logger.error(f"Failed to clear agent memory: {e}")
             return False
+
+    def cleanup_with_schema(
+        self,
+        registry: "KnowledgeRegistry",
+        pinned_memory_ids: Optional[set] = None,
+    ) -> Dict[str, int]:
+        """A.7 — schema-driven cleanup that respects per-kind retention.
+
+        Iterates every memory for this tenant; for each one, looks up its
+        ``kind`` in the registry and applies the retention policy:
+
+          * ``PERMANENT`` → never deleted.
+          * ``EPHEMERAL_SESSION`` → not handled here (session lifecycle is
+            owned by the caller's session manager).
+          * ``EPHEMERAL_DAYS(N)`` → delete when ``created_at`` is older
+            than ``N`` days.
+          * ``SCHEMA_DRIVEN`` → delegate to ``schema.cleanup_hook`` when
+            present; skip when no hook is registered.
+
+        Pinned memory ids are skipped entirely (lifecycle never overrides
+        an explicit pin). Memories with no ``kind`` metadata fall back to
+        the registry's safe default, which is permanent — they are skipped.
+
+        Args:
+            registry: ``KnowledgeRegistry`` used to look up per-kind policy.
+            pinned_memory_ids: ids that must NOT be deleted regardless of
+                policy. Typically built from
+                ``PinService.list_pins(tenant_id)`` upstream.
+
+        Returns:
+            Mapping of kind → deleted_count for the run. Useful for the
+            scheduler's audit logs.
+        """
+        from cogniverse_core.memory.schema import (
+            KnowledgeRegistry,  # noqa: F401 — runtime ref for type-checker fallback
+            Retention,
+        )
+
+        if not self.memory:
+            raise RuntimeError("Mem0MemoryManager not initialized")
+
+        pinned_ids = pinned_memory_ids or set()
+        now_epoch = int(time.time())
+        deleted_by_kind: Dict[str, int] = {}
+
+        result = self.memory.get_all(user_id=self.tenant_id)
+        memories = result.get("results", []) if isinstance(result, dict) else result
+
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            memory_id = memory.get("id")
+            if not memory_id or memory_id in pinned_ids:
+                continue
+
+            kind = self._extract_kind(memory)
+            schema = registry.get(kind)
+
+            should_delete = False
+            if schema.retention is Retention.PERMANENT:
+                continue
+            elif schema.retention is Retention.EPHEMERAL_SESSION:
+                # Session lifecycle is the session manager's concern; do not
+                # touch these from the periodic scheduler.
+                continue
+            elif schema.retention is Retention.EPHEMERAL_DAYS:
+                age_seconds = self._compute_age_seconds(memory, now_epoch)
+                if age_seconds is None:
+                    continue
+                # retention_days is validated > 0 in KnowledgeSchema.__post_init__
+                cutoff = (schema.retention_days or 0) * 86400
+                should_delete = age_seconds > cutoff
+            elif schema.retention is Retention.SCHEMA_DRIVEN:
+                hook = schema.cleanup_hook
+                if hook is None:
+                    continue
+                try:
+                    should_delete = bool(hook(memory, schema))
+                except Exception as exc:
+                    logger.warning(
+                        "cleanup_hook for kind=%s raised %s; skipping memory %s",
+                        kind,
+                        type(exc).__name__,
+                        memory_id,
+                    )
+                    continue
+
+            if should_delete:
+                self.memory.delete(memory_id)
+                deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
+                logger.debug(
+                    "Schema-driven delete: kind=%s memory_id=%s policy=%s",
+                    kind,
+                    memory_id,
+                    schema.retention.value,
+                )
+
+        if deleted_by_kind:
+            logger.info(
+                "Schema-driven cleanup for tenant %s: %s",
+                self.tenant_id,
+                deleted_by_kind,
+            )
+        return deleted_by_kind
+
+    @staticmethod
+    def _extract_kind(memory: Dict[str, Any]) -> str:
+        """Read ``metadata.kind`` from a Mem0 memory dict, tolerating shapes."""
+        meta = memory.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (ValueError, TypeError):
+                return "_unknown"
+        if isinstance(meta, dict):
+            return str(meta.get("kind") or "_unknown")
+        return "_unknown"
+
+    @staticmethod
+    def _compute_age_seconds(memory: Dict[str, Any], now_epoch: int) -> Optional[int]:
+        created_at = memory.get("created_at")
+        if not created_at:
+            return None
+        if isinstance(created_at, str):
+            from datetime import datetime as _dt
+
+            try:
+                dt = _dt.fromisoformat(created_at.replace("Z", "+00:00"))
+                created_epoch = int(dt.timestamp())
+            except (ValueError, TypeError):
+                return None
+        elif isinstance(created_at, (int, float)):
+            created_epoch = int(created_at)
+        else:
+            return None
+        return max(0, now_epoch - created_epoch)
 
     def cleanup_expired_memories(self, max_age_seconds: int) -> int:
         """

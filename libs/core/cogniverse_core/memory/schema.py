@@ -30,7 +30,7 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 class Retention(str, enum.Enum):
@@ -81,6 +81,11 @@ class KnowledgeSchema:
     default_trust: float = 0.5
     # Used only when retention == EPHEMERAL_DAYS. Ignored otherwise.
     retention_days: Optional[int] = None
+    # Used only when retention == SCHEMA_DRIVEN. Receives the candidate
+    # memory dict (with id, metadata, created_at, etc.) and returns True
+    # iff the cleanup tick should delete it. Pinned memories are filtered
+    # out before this is called, so the hook does NOT need to re-check pins.
+    cleanup_hook: Optional[Callable[[Dict[str, Any], "KnowledgeSchema"], bool]] = None
 
     def __post_init__(self) -> None:
         if not self.kind or not self.kind.strip():

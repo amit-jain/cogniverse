@@ -124,6 +124,91 @@ class TestSchedulerLifecycle:
         await scheduler.stop()
 
 
+class FakeSchemaManager:
+    """Mem0MemoryManager-shaped stub exercising the schema-driven path."""
+
+    def __init__(self, tenant_id: str, deletes_by_kind: dict):
+        self.tenant_id = tenant_id
+        self._deletes = deletes_by_kind
+        self.calls: list[tuple] = []
+
+    def cleanup_with_schema(self, registry, pinned_ids):
+        self.calls.append((registry, pinned_ids))
+        return dict(self._deletes)
+
+
+class TestSchemaDrivenMode:
+    """A.7 — when a registry is provided, ticks call cleanup_with_schema."""
+
+    @pytest.mark.asyncio
+    async def test_schema_mode_invokes_cleanup_with_schema(self):
+        from cogniverse_core.memory.schema import build_default_registry
+
+        registry = build_default_registry()
+        managers = [
+            FakeSchemaManager(
+                "t1",
+                {"conversation_turn": 3, "external_doc": 0},
+            ),
+            FakeSchemaManager(
+                "t2",
+                {"learned_strategy": 2},
+            ),
+        ]
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: managers,
+            registry=registry,
+        )
+
+        summary = await scheduler.tick_once()
+
+        assert summary["mode"] == "schema_driven"
+        assert summary["total_deleted"] == 5  # 3 + 0 + 2
+        assert summary["tenants"]["t1"] == {
+            "conversation_turn": 3,
+            "external_doc": 0,
+        }
+        assert summary["tenants"]["t2"] == {"learned_strategy": 2}
+        # Each manager was called exactly once with the registry.
+        assert all(len(m.calls) == 1 for m in managers)
+        assert all(m.calls[0][0] is registry for m in managers)
+
+    @pytest.mark.asyncio
+    async def test_pin_lookup_threaded_through(self):
+        from cogniverse_core.memory.schema import build_default_registry
+
+        registry = build_default_registry()
+        manager = FakeSchemaManager("t1", {"conversation_turn": 1})
+        captured = {}
+
+        def pin_lookup(mm):
+            captured["called_with"] = mm
+            return {"m_pinned_1", "m_pinned_2"}
+
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [manager],
+            registry=registry,
+            pin_lookup=pin_lookup,
+        )
+
+        await scheduler.tick_once()
+
+        # Manager received the pinned set the lookup returned.
+        assert manager.calls[0][1] == {"m_pinned_1", "m_pinned_2"}
+        assert captured["called_with"] is manager
+
+    @pytest.mark.asyncio
+    async def test_bulk_mode_reports_mode_in_summary(self):
+        managers = [FakeManager("t", deletes=4)]
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: managers,
+            max_age_seconds=10,
+        )
+        summary = await scheduler.tick_once()
+        assert summary["mode"] == "bulk_age"
+        assert summary["tenants"]["t"] == 4
+
+
 class TestConstructorValidation:
     def test_rejects_non_positive_interval(self):
         with pytest.raises(ValueError):

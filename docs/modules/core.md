@@ -605,6 +605,29 @@ schema.validate_write(provenance=my_provenance, pinned_by=Pinnable.USER)
 Register custom kinds at boot — replace=True is required to overwrite an
 existing kind so accidental redefinition fails loudly.
 
+### Schema-driven lifecycle (A.7)
+
+By default the runtime ticks the lifecycle in schema-driven mode: each
+memory's ``metadata["kind"]`` is looked up in the ``KnowledgeRegistry`` and
+that schema's retention policy decides whether to delete it.
+
+| `Retention` | Behaviour |
+|---|---|
+| `PERMANENT` | Never auto-deleted. |
+| `EPHEMERAL_SESSION` | Not handled by the periodic scheduler — owned by the session manager. |
+| `EPHEMERAL_DAYS(N)` | Deleted when ``created_at`` is older than `N` days. |
+| `SCHEMA_DRIVEN` | Defers to the schema's ``cleanup_hook`` callable. |
+
+Pinned memory ids (from `PinService.list_pins`) are filtered out before any
+deletion attempt — pins always win.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `COGNIVERSE_MEMORY_LIFECYCLE_MODE` | `schema_driven` | Set to `bulk_age` to fall back to the legacy single-cutoff path. |
+
+The tick summary returned by `LifecycleScheduler.tick_once()` reports
+`{tenant_id: {kind: deleted_count}}` so per-kind deletion can be charted.
+
 ### Scheduled lifecycle cleanup
 
 Memories accumulate; the runtime ships a `LifecycleScheduler` that runs
