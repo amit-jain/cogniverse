@@ -5,12 +5,14 @@ Each agent type runs inside an OpenShell sandbox with a per-agent YAML
 policy controlling network egress, filesystem access, inference routing,
 and process constraints.
 
-Requires an OpenShell gateway (K3s cluster). Gracefully degrades when
-the gateway is unavailable (logs a warning, dispatches without sandbox).
+Requires an OpenShell gateway (K3s cluster). The ``SandboxPolicy`` knob
+controls behaviour when the gateway is unreachable: ``required`` refuses
+to start, ``optional`` degrades with a warning, ``disabled`` skips entirely.
 """
 
 from __future__ import annotations
 
+import enum
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -18,6 +20,27 @@ from typing import Any, Dict, Optional
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+class SandboxPolicy(str, enum.Enum):
+    """Boot-time policy for the OpenShell sandbox.
+
+    ``required``: the runtime refuses to start unless the gateway is
+        reachable. Use for production tenants where egress isolation is a
+        compliance requirement.
+    ``optional``: best-effort connect; log a warning and continue without
+        sandbox enforcement when the gateway is missing. Default for dev.
+    ``disabled``: do not even attempt to connect; SandboxManager.available
+        is permanently False. Use when sandboxing is intentionally off.
+    """
+
+    REQUIRED = "required"
+    OPTIONAL = "optional"
+    DISABLED = "disabled"
+
+
+class SandboxGatewayUnavailableError(RuntimeError):
+    """Raised at boot when policy=required but the gateway is unreachable."""
 
 
 class SandboxManager:
@@ -32,21 +55,63 @@ class SandboxManager:
         self,
         policy_dir: Path = Path("configs/openshell"),
         cluster: str | None = None,
-        enabled: bool = True,
+        enabled: bool | None = None,
+        policy: SandboxPolicy | str | None = None,
     ):
+        """Initialize the sandbox manager.
+
+        Args:
+            policy_dir: Directory containing per-agent policy YAML files.
+            cluster: OpenShell cluster name (None = active).
+            enabled: Deprecated. ``True`` maps to ``policy=optional``,
+                ``False`` to ``policy=disabled``. Use ``policy`` for new
+                code; this kwarg remains for backwards compatibility with
+                existing tests/callers.
+            policy: New explicit policy knob; takes precedence over
+                ``enabled`` when both are passed.
+        """
         self._policy_dir = Path(policy_dir)
         self._cluster = cluster
-        self._enabled = enabled
+        self._policy = self._resolve_policy(policy=policy, enabled=enabled)
+        # Maintain ``_enabled`` as the legacy "should we try at all" flag —
+        # external callers (tests, dispatcher hot-path) read .enabled.
+        self._enabled = self._policy is not SandboxPolicy.DISABLED
         self._policies: Dict[str, Dict[str, Any]] = {}
         self._client = None
         self._available = False
 
-        if not enabled:
-            logger.info("SandboxManager disabled by configuration")
+        if self._policy is SandboxPolicy.DISABLED:
+            logger.info("SandboxManager disabled by configuration (policy=disabled)")
             return
 
         self._load_policies()
         self._connect()
+
+        if self._policy is SandboxPolicy.REQUIRED and not self._available:
+            raise SandboxGatewayUnavailableError(
+                "sandbox.policy=required but the OpenShell gateway is "
+                "unreachable. Refusing to start. Either install/start the "
+                "gateway or set sandbox.policy=optional to degrade with "
+                "a warning instead."
+            )
+
+    @staticmethod
+    def _resolve_policy(
+        policy: SandboxPolicy | str | None, enabled: bool | None
+    ) -> SandboxPolicy:
+        """Translate the (policy, enabled) inputs into a single SandboxPolicy.
+
+        ``policy`` wins when both are provided. When neither is provided,
+        default to ``OPTIONAL`` (degrade-with-warning). The legacy ``enabled``
+        kwarg keeps existing call sites working: True → optional, False → disabled.
+        """
+        if policy is not None:
+            if isinstance(policy, str):
+                policy = SandboxPolicy(policy.lower())
+            return policy
+        if enabled is None:
+            return SandboxPolicy.OPTIONAL
+        return SandboxPolicy.OPTIONAL if enabled else SandboxPolicy.DISABLED
 
     def _load_policies(self) -> None:
         """Load per-agent policy YAML files from the policy directory."""

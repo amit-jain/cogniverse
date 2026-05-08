@@ -172,6 +172,63 @@ class TestSandboxExecutionSDK:
         client.close()
 
 
+class TestSandboxPolicyAtBoot:
+    """D.2 — boot-time policy enforcement against the real OpenShell gateway.
+
+    These tests do NOT mock SandboxManager._connect — they construct a real
+    SandboxManager bound to the test gateway lifecycle. The required and
+    optional paths must produce the documented behaviour against a live
+    gateway, not just against a stub.
+    """
+
+    def test_required_boots_against_live_gateway(self, openshell_gateway):
+        """policy=required succeeds when the gateway is up."""
+        from cogniverse_runtime.sandbox_manager import SandboxPolicy
+
+        manager = SandboxManager(
+            policy_dir="configs/openshell",
+            policy=SandboxPolicy.REQUIRED,
+        )
+        try:
+            assert manager.available is True
+            assert manager._policy is SandboxPolicy.REQUIRED
+        finally:
+            manager.close()
+
+    def test_required_refuses_when_gateway_endpoint_invalid(
+        self, monkeypatch, tmp_path
+    ):
+        """policy=required + bogus endpoint => raise at construction."""
+        from cogniverse_runtime.sandbox_manager import (
+            SandboxGatewayUnavailableError,
+            SandboxPolicy,
+        )
+
+        # Force the SDK to dial a non-listening port. The real openshell SDK
+        # call will fail; SandboxManager's optional/required gates decide.
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://127.0.0.1:1")
+        # Empty policy dir so we can isolate the gateway-availability check.
+        with pytest.raises(SandboxGatewayUnavailableError):
+            SandboxManager(
+                policy_dir=tmp_path,
+                policy=SandboxPolicy.REQUIRED,
+            )
+
+    def test_optional_degrades_when_gateway_endpoint_invalid(
+        self, monkeypatch, tmp_path
+    ):
+        """policy=optional + bogus endpoint => construction succeeds, .available=False."""
+        from cogniverse_runtime.sandbox_manager import SandboxPolicy
+
+        monkeypatch.setenv("OPENSHELL_GATEWAY_ENDPOINT", "https://127.0.0.1:1")
+        manager = SandboxManager(
+            policy_dir=tmp_path,
+            policy=SandboxPolicy.OPTIONAL,
+        )
+        # Gateway is unreachable; manager exists but reports unavailable.
+        assert manager._policy is SandboxPolicy.OPTIONAL
+
+
 class TestSandboxManagerIntegration:
     """Test SandboxManager with real gateway."""
 

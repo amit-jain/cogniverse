@@ -242,16 +242,34 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     logger.info("Registries initialized")
 
-    # 5. Initialize SandboxManager (optional — gracefully degrades)
-    from cogniverse_runtime.sandbox_manager import SandboxManager
+    # 5. Initialize SandboxManager.
+    # Policy resolution order (first non-empty wins):
+    #   1. COGNIVERSE_SANDBOX_POLICY env var (required|optional|disabled)
+    #   2. config["sandbox"]["policy"]
+    #   3. Legacy COGNIVERSE_SANDBOX_ENABLED + OPENSHELL_GATEWAY_ENDPOINT
+    #      → maps to optional / disabled.
+    # Default: optional (degrade with warning if gateway is missing).
+    from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 
-    sandbox_enabled = (
-        config.get("sandbox", {}).get("enabled", False)
-        or os.environ.get("COGNIVERSE_SANDBOX_ENABLED", "").lower()
-        in ("true", "1", "yes")
-        or bool(os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"))
-    )
-    sandbox_manager = SandboxManager(enabled=sandbox_enabled)
+    sandbox_policy: SandboxPolicy
+    env_policy = os.environ.get("COGNIVERSE_SANDBOX_POLICY", "").lower().strip()
+    cfg_policy = config.get("sandbox", {}).get("policy")
+    if env_policy:
+        sandbox_policy = SandboxPolicy(env_policy)
+    elif cfg_policy:
+        sandbox_policy = SandboxPolicy(str(cfg_policy).lower())
+    else:
+        legacy_enabled = (
+            config.get("sandbox", {}).get("enabled", False)
+            or os.environ.get("COGNIVERSE_SANDBOX_ENABLED", "").lower()
+            in ("true", "1", "yes")
+            or bool(os.environ.get("OPENSHELL_GATEWAY_ENDPOINT"))
+        )
+        sandbox_policy = (
+            SandboxPolicy.OPTIONAL if legacy_enabled else SandboxPolicy.DISABLED
+        )
+    logger.info("SandboxManager booting with policy=%s", sandbox_policy.value)
+    sandbox_manager = SandboxManager(policy=sandbox_policy)
 
     # 5a. Wire agent registry and dependencies to agents router + A2A
     agents.set_agent_registry(agent_registry)

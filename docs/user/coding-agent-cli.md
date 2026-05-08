@@ -172,6 +172,24 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
+### Sandbox boot policy
+
+The runtime resolves a single `sandbox.policy` knob with three values:
+
+| Value | Behaviour at boot when gateway is unreachable |
+|---|---|
+| `required` | **Refuse to start** with `SandboxGatewayUnavailableError`. Use for production tenants where egress isolation is a compliance requirement. |
+| `optional` | Log a warning and continue without sandbox enforcement. Default; suitable for dev and staging. |
+| `disabled` | Do not even attempt to connect; `SandboxManager.available` is permanently False. Use when sandboxing is intentionally off. |
+
+Resolution order (first non-empty wins):
+
+1. `COGNIVERSE_SANDBOX_POLICY` env var — `required` / `optional` / `disabled`.
+2. `config["sandbox"]["policy"]` from `configs/config.json` (or per-tenant config).
+3. Legacy `COGNIVERSE_SANDBOX_ENABLED` + presence of `OPENSHELL_GATEWAY_ENDPOINT` → maps to `optional` (true) or `disabled` (false). Kept for backwards compatibility; new code should use `policy` directly.
+
+Default when none are set: `optional`.
+
 ### In-Cluster Mode (production)
 
 Production clusters (EKS, GKE, AKS, bare-metal k8s) don't have a "host" to run things on. For these, the gateway is deployed as a k8s StatefulSet inside the same cluster as cogniverse.
