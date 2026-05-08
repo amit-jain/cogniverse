@@ -523,6 +523,40 @@ memory.delete_memory(
 )
 ```
 
+### Contradiction detection + reconciliation (A.3)
+
+Two memories about the same subject can disagree. The
+`ContradictionDetector` groups candidate memories by `metadata.subject_key`
+(set by the writing agent) and emits a `ConflictSet` per subject_key
+that has more than one distinct content signature.
+
+```python
+from cogniverse_core.memory.contradiction import (
+    ContradictionDetector,
+    reconcile,
+)
+from cogniverse_core.memory.schema import ContradictionPolicy
+
+detector = ContradictionDetector()
+conflicts = detector.detect(memories)
+# Each ConflictSet carries subject_key + conflicting_memory_ids.
+
+# Reconcile at retrieval time per the schema's contradiction_policy:
+visible = reconcile(memories, ContradictionPolicy.TRUST_RANKED)
+```
+
+| Policy | Effect on conflicting members |
+|---|---|
+| `latest_wins` | Keep the highest `created_at` member only |
+| `trust_ranked` | Keep the highest `trust_score × confidence` member |
+| `preserve_both` | Keep all members and tag each with `metadata['disputed'] = True` |
+
+Memories without a `subject_key` pass through unchanged — the detector
+has no way to know what they are claims *about*. Conflict sets persist
+under sentinel `agent_name="_conflict_store"` (matching the A.6 pinning
+pattern) so they don't pollute normal-agent search results; a future
+`ContradictionReconciliationAgent` (C3.4) will consume them.
+
 ### Trust / source ranking (A.4)
 
 Each memory carries a `TrustRecord` derived at write time from the
