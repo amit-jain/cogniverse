@@ -172,6 +172,39 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
+### Application-layer egress enforcement (D.1)
+
+In addition to kernel-layer NetworkPolicy enforcement (in-cluster mode), the
+runtime enforces each agent's `network_policies.egress` allow-list at the
+httpx transport layer. Agents whose dispatcher path stamps a policy obtain
+their httpx client via `SandboxManager.make_http_client(agent_type)` — the
+returned client wraps every outbound request in a `PolicyEnforcingTransport`
+that raises `EgressDeniedError` for non-allow-listed `(host, port)`.
+
+This is defence-in-depth: kernel policy stops out-of-process bypass; the
+transport surfaces the violation in application logs with the offending
+endpoint and the operator-actionable allow-list.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT` | unset | Set to `disabled` to bypass the transport check (useful while iterating on policies in dev). |
+
+Today wired:
+
+| Agent | Status |
+|---|---|
+| `coding_agent` | Code execution sandboxed via the existing OpenShell SDK exec path. |
+| `orchestrator_agent` | A2A sub-agent calls flow through `make_http_client("orchestrator_agent")`. |
+| `search_agent` | Policy file in place; outbound httpx client to be migrated through the dispatcher's `make_http_client` per the same pattern as orchestrator. |
+| `summarizer_agent` | Policy file in place; LLM endpoint allow-listed via Ollama (port 11434). |
+| `routing_agent` | Policy file in place; same pattern as summarizer. |
+
+The remaining agents (search/summarizer/routing) keep the existing httpx
+clients today; `make_http_client(<agent>)` is the migration path. Adding
+the wrapper to a new agent is a one-line change at the agent's
+construction site in `agent_dispatcher.py` (mirror the `OrchestratorAgent`
+example).
+
 ### Gateway health probe
 
 When sandboxing is not disabled, the runtime starts a background probe that

@@ -101,6 +101,108 @@ class TestPolicyOptionalDegrades:
             assert mgr._available is False
 
 
+class TestMakeHttpClient:
+    """D.1 — SandboxManager.make_http_client returns a policy-aware client."""
+
+    def test_returns_enforcing_client_when_policy_registered(self, tmp_path):
+        from cogniverse_runtime.sandbox_http import PolicyEnforcingTransport
+
+        # Seed a policy file so SandboxManager._load_policies registers it.
+        (tmp_path / "demo_agent.yaml").write_text(
+            "network_policies:\n  egress: []\n  deny_all_other: true\n"
+        )
+        with patch.object(
+            SandboxManager,
+            "_connect",
+            autospec=True,
+            side_effect=_connect_sets(False),
+        ):
+            mgr = SandboxManager(
+                policy_dir=tmp_path,
+                policy=SandboxPolicy.OPTIONAL,
+            )
+            client = mgr.make_http_client("demo_agent")
+            try:
+                assert isinstance(client._transport, PolicyEnforcingTransport)
+            finally:
+                # Async client; close synchronously by using run_until_complete
+                # equivalent. httpx.AsyncClient also exposes a sync close path
+                # when never used in an async context — call .aclose() via asyncio.
+                import asyncio
+
+                asyncio.run(client.aclose())
+
+    def test_returns_plain_client_when_no_policy_registered(self, tmp_path):
+        import httpx as _httpx
+
+        from cogniverse_runtime.sandbox_http import PolicyEnforcingTransport
+
+        # No policy files in the dir.
+        with patch.object(
+            SandboxManager,
+            "_connect",
+            autospec=True,
+            side_effect=_connect_sets(False),
+        ):
+            mgr = SandboxManager(
+                policy_dir=tmp_path,
+                policy=SandboxPolicy.OPTIONAL,
+            )
+            client = mgr.make_http_client("agent_with_no_policy")
+            try:
+                assert not isinstance(client._transport, PolicyEnforcingTransport)
+                assert isinstance(client, _httpx.AsyncClient)
+            finally:
+                import asyncio
+
+                asyncio.run(client.aclose())
+
+    def test_disabled_policy_yields_plain_client(self, tmp_path, monkeypatch):
+        """policy=disabled returns a bare client even if a policy file exists."""
+        import asyncio
+
+        from cogniverse_runtime.sandbox_http import PolicyEnforcingTransport
+
+        (tmp_path / "agent.yaml").write_text(
+            "network_policies:\n  egress: []\n  deny_all_other: true\n"
+        )
+        mgr = SandboxManager(
+            policy_dir=tmp_path,
+            policy=SandboxPolicy.DISABLED,
+        )
+        client = mgr.make_http_client("agent")
+        try:
+            assert not isinstance(client._transport, PolicyEnforcingTransport)
+        finally:
+            asyncio.run(client.aclose())
+
+    def test_env_disable_overrides_policy(self, tmp_path, monkeypatch):
+        """COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT=disabled bypasses enforcement."""
+        import asyncio
+
+        from cogniverse_runtime.sandbox_http import PolicyEnforcingTransport
+
+        (tmp_path / "agent.yaml").write_text(
+            "network_policies:\n  egress: []\n  deny_all_other: true\n"
+        )
+        monkeypatch.setenv("COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT", "disabled")
+        with patch.object(
+            SandboxManager,
+            "_connect",
+            autospec=True,
+            side_effect=_connect_sets(False),
+        ):
+            mgr = SandboxManager(
+                policy_dir=tmp_path,
+                policy=SandboxPolicy.OPTIONAL,
+            )
+            client = mgr.make_http_client("agent")
+            try:
+                assert not isinstance(client._transport, PolicyEnforcingTransport)
+            finally:
+                asyncio.run(client.aclose())
+
+
 class TestPolicyRequiredRefusesToBoot:
     """policy=required must raise SandboxGatewayUnavailableError if gateway missing."""
 

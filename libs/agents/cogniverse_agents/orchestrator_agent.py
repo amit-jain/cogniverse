@@ -404,6 +404,7 @@ class OrchestratorAgent(
         checkpoint_storage: Optional["WorkflowCheckpointStorage"] = None,
         event_queue: Optional["EventQueue"] = None,
         workflow_intelligence: Optional["WorkflowIntelligence"] = None,
+        http_client: Optional[httpx.AsyncClient] = None,
     ):
         """
         Initialize OrchestratorAgent with real AgentRegistry.
@@ -417,6 +418,11 @@ class OrchestratorAgent(
             checkpoint_storage: Storage backend for checkpoints
             event_queue: Optional EventQueue for real-time notifications
             workflow_intelligence: Optional WorkflowIntelligence for template matching
+            http_client: Optional httpx client used for A2A sub-agent calls.
+                When provided (e.g. from
+                ``SandboxManager.make_http_client("orchestrator_agent")``)
+                the policy-enforcing transport applies; when omitted, the
+                loop-scoped shared client is used.
 
         Raises:
             TypeError: If deps is not OrchestratorDeps
@@ -429,6 +435,7 @@ class OrchestratorAgent(
             )
         self.registry = registry
         self._config_manager = config_manager
+        self._http_client_override = http_client
 
         # Checkpoint support
         self.checkpoint_config = checkpoint_config or CheckpointConfig(enabled=False)
@@ -1013,7 +1020,11 @@ class OrchestratorAgent(
                         "context": context,
                         **agent_input,
                     }
-                    http_client = await _get_http_client()
+                    http_client = (
+                        self._http_client_override
+                        if self._http_client_override is not None
+                        else await _get_http_client()
+                    )
                     response = await http_client.post(
                         f"{agent_endpoint.url}{agent_endpoint.process_endpoint}",
                         json=payload,

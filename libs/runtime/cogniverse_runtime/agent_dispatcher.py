@@ -702,11 +702,29 @@ class AgentDispatcher:
             except Exception as e:
                 logger.debug("WorkflowIntelligence init failed (non-fatal): %s", e)
 
+        # D.1 — when an OpenShell policy is registered for orchestrator_agent,
+        # build the A2A-call httpx client through the policy-enforcing
+        # transport so the orchestrator can only dial the endpoints declared
+        # in configs/openshell/orchestrator_agent.yaml. Falls back to the
+        # loop-shared client when no sandbox manager / no policy is present.
+        orch_http_client = None
+        if self._sandbox_manager is not None:
+            try:
+                orch_http_client = self._sandbox_manager.make_http_client(
+                    "orchestrator_agent"
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Could not build policy-enforcing client for orchestrator: %s",
+                    exc,
+                )
+
         agent = OrchestratorAgent(
             deps=deps,
             registry=self._registry,
             config_manager=self._config_manager,
             workflow_intelligence=workflow_intelligence,
+            http_client=orch_http_client,
         )
         await asyncio.to_thread(
             self._init_agent_memory, agent, "orchestrator_agent", tenant_id

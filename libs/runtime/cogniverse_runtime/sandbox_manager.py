@@ -180,6 +180,38 @@ class SandboxManager:
         """Get the policy for an agent type, or None."""
         return self._policies.get(agent_type)
 
+    def make_http_client(self, agent_type: str, **client_kwargs: Any) -> Any:
+        """Build an httpx.AsyncClient with policy enforcement for an agent.
+
+        D.1 — when an agent has a registered OpenShell policy, its outbound
+        HTTP traffic should be vetted against the policy's egress allow-list.
+        Agents that do not have a registered policy fall through to a plain
+        ``httpx.AsyncClient`` (back-compat: existing callers keep working).
+
+        Operators can disable enforcement by setting
+        ``COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT=disabled`` at boot — useful
+        in dev when iterating on policies.
+        """
+        import os as _os
+
+        import httpx as _httpx
+
+        from cogniverse_runtime.sandbox_http import (
+            make_policy_enforcing_client,
+        )
+
+        enforcement = _os.environ.get(
+            "COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT", ""
+        ).lower()
+        policy = self._policies.get(agent_type)
+        if (
+            policy is None
+            or enforcement == "disabled"
+            or self._policy is SandboxPolicy.DISABLED
+        ):
+            return _httpx.AsyncClient(**client_kwargs)
+        return make_policy_enforcing_client(policy, **client_kwargs)
+
     def reload_policies(self) -> None:
         """Hot-reload policy files from disk."""
         self._policies.clear()
