@@ -1,5 +1,54 @@
 # The Evaluation & Optimization Loop
 
+## Per-tenant signature variants (C.6)
+
+Some tenants have unusual data shapes — a legal-knowledge tenant whose
+queries always carry `jurisdiction`, an audio tenant that needs an extra
+`channel_count` field — and benefit from a variant of an agent's DSPy
+signature that exposes those fields. C.6 ships **Option B** from the
+plan: a small named-variant registry per agent. Tenants pick a variant
+via config; the artefact manager keys per `(tenant, agent, variant)`.
+
+```python
+from cogniverse_agents.optimizer.signature_variants import (
+    DEFAULT_VARIANT_ID,
+    SignatureVariantRegistry,
+    variant_qualified_agent_key,
+)
+
+registry = SignatureVariantRegistry()
+registry.register(
+    "search_agent",
+    "with_jurisdiction",
+    description="adds jurisdiction + effective_date input fields",
+)
+
+# Resolve at request time:
+variant_id = registry.selected_for_tenant(tenant_config, "search_agent")
+# → "default" or "with_jurisdiction"
+
+# Key the artefact manager dataset:
+agent_key = variant_qualified_agent_key("search_agent", variant_id)
+# default → "search_agent" (back-compat with existing datasets)
+# non-default → "search_agent::variant=with_jurisdiction"
+```
+
+Tenant selection lives under
+`TenantConfig.metadata["signature_variants"][agent_type] = "<variant_id>"`.
+Unknown variant ids fall back to `default` with a warning so operators
+catch typos without breaking serving.
+
+| Property | Behaviour |
+|---|---|
+| Re-register identical variant | Idempotent. |
+| Re-register different definition (no `replace=True`) | `ValueError`. |
+| Variant id contains `:` or `/` | Sanitised in dataset key (replaced with `_`). |
+| Tenant requests an unknown variant | Falls back to `default`, logs a warning. |
+
+The dataset-key shape (`agent::variant=<id>`) is intentionally a
+suffix on the bare agent type so existing artefacts (saved before C.6)
+map naturally onto the default variant — no migration needed.
+
 ## Per-tenant canary promotion (C.5)
 
 `ArtifactManager` exposes a small state machine for safer promotions:
