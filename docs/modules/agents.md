@@ -3242,6 +3242,39 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### ContradictionReconciliationAgent (C3.4)
+
+Read-only A2A agent that consumes a ConflictSet (A.3) and resolves it
+per the target schema's `contradiction_policy` (or an explicit per-call
+override). Returns a survivor list plus per-member outcomes for the UI.
+
+```python
+from cogniverse_agents.contradiction_reconciliation_agent import (
+    ContradictionReconciliationAgent,
+    ContradictionReconciliationDeps,
+    ContradictionReconciliationInput,
+)
+
+agent = ContradictionReconciliationAgent(
+    deps=ContradictionReconciliationDeps(tenant_id="acme"),
+)
+out = await agent._process_impl(ContradictionReconciliationInput(
+    tenant_id="acme",
+    target_kind="entity_fact",
+    conflict_member_ids=["m_a", "m_b", "m_c"],
+    policy_override=None,  # use schema's default
+))
+print(out.policy_used, out.survivors)
+for member in out.resolved:
+    print(member.memory_id, "survived" if member.survived else "dropped")
+```
+
+V1 is deterministic: it applies `reconcile()` from
+`cogniverse_core.memory.contradiction` directly. The plan reserves an
+RLM trajectory for fetching extra evidence per side; that enrichment is
+left as a follow-up. Capability strings: `contradiction_reconciliation`,
+`audit`. Default `port=8020`.
+
 ### CitationTracingAgent (C3.5)
 
 Read-only A2A agent that wraps `ProvenanceWalker` (A.2). Given a memory id,
