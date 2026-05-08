@@ -139,6 +139,93 @@ def _normalize_query_variants(
     return normalized
 
 
+# B.6 — RLM promotion thresholds. The default RLMOptions context_threshold
+# is 50_000 chars; we promote when the projected sub-agent payload exceeds
+# 75% of that. Operators can override via the env var below.
+import os as _os
+
+_RLM_PROMOTION_DEFAULT_FRACTION = 0.75
+_RLM_PROMOTION_DEFAULT_THRESHOLD = 50_000
+
+# Sub-agents whose input schema accepts an ``rlm`` field — only these are
+# eligible for promotion. Names match the AgentRegistry's agent_name keys
+# (suffix-tolerant lookups happen elsewhere; here we use the canonical names).
+_RLM_PROMOTABLE_AGENTS = frozenset(
+    {
+        "search_agent",
+        "deep_research_agent",
+        "detailed_report_agent",
+        "coding_agent",
+    }
+)
+
+
+def _projected_payload_chars(agent_input: Dict[str, Any]) -> int:
+    """Cheap upper bound on the prompt size the sub-agent will see.
+
+    Sums the lengths of stringified values across all input fields. Not
+    exact (it ignores tokenisation), but the threshold is a coarse switch
+    not a hard budget — over-counting is acceptable since false-positive
+    promotion just exercises RLM unnecessarily without breaking results.
+    """
+    total = 0
+    for v in agent_input.values():
+        try:
+            total += len(str(v))
+        except Exception:
+            continue
+    return total
+
+
+def _maybe_promote_to_rlm(agent_name: str, agent_input: Dict[str, Any]) -> None:
+    """Stamp ``agent_input["rlm"]`` to enable RLM when payload is large.
+
+    Idempotent: if the caller already supplied an ``rlm`` field (any value,
+    including ``None`` for explicit opt-out), this is a no-op. Disabled
+    entirely via ``COGNIVERSE_ORCH_RLM_PROMOTION=disabled``.
+    """
+    enforcement = _os.environ.get("COGNIVERSE_ORCH_RLM_PROMOTION", "").lower()
+    if enforcement == "disabled":
+        return
+
+    # Strip the ``_agent`` suffix for membership checks so callers can pass
+    # either form.
+    canonical = agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
+    if canonical not in _RLM_PROMOTABLE_AGENTS:
+        return
+
+    if "rlm" in agent_input:
+        # Caller's explicit choice wins.
+        return
+
+    try:
+        threshold_pct = float(
+            _os.environ.get(
+                "COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION",
+                _RLM_PROMOTION_DEFAULT_FRACTION,
+            )
+        )
+    except (TypeError, ValueError):
+        threshold_pct = _RLM_PROMOTION_DEFAULT_FRACTION
+    cutoff = int(_RLM_PROMOTION_DEFAULT_THRESHOLD * threshold_pct)
+
+    projected = _projected_payload_chars(agent_input)
+    if projected < cutoff:
+        return
+
+    agent_input["rlm"] = {
+        "enabled": True,
+        "auto_detect": True,
+        "context_threshold": _RLM_PROMOTION_DEFAULT_THRESHOLD,
+    }
+    logger.info(
+        "Orchestrator promoted %s to RLM (projected_chars=%d, cutoff=%d)",
+        canonical,
+        projected,
+        cutoff,
+    )
+
+
 def _merge_enrichment(
     agent_input: Dict[str, Any],
     dep_agent: str,
@@ -1009,6 +1096,16 @@ class OrchestratorAgent(
                         continue
                     if dep_result:
                         _merge_enrichment(agent_input, dep_agent, dep_result)
+
+                # B.6 — RLM promotion. When the projected payload size for a
+                # sub-agent exceeds a threshold, stamp ``rlm.enabled=True``
+                # in agent_input so RLM-aware sub-agents (search, deep
+                # research, detailed report, coding) recursively decompose
+                # their context instead of jamming everything into one
+                # prompt. Skips if the caller already opted in/out via an
+                # explicit ``rlm`` field, or if the agent is the orchestrator
+                # itself (no recursive promotion).
+                _maybe_promote_to_rlm(agent_name, agent_input)
 
                 # Call agent via HTTP — payload must satisfy AgentTask schema:
                 # agent_name + query required, tenant_id goes inside context.

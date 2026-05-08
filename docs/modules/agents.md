@@ -3189,6 +3189,29 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |
 | `context_size_chars` | Input context size |
 
+### Orchestrator RLM promotion (B.6)
+
+Before dispatching to a sub-agent, the orchestrator now estimates the
+projected payload size (sum of stringified field lengths). When the
+projection exceeds 75% of `RLMOptions.context_threshold` (default
+`50_000` chars × `0.75` = `37_500`), the orchestrator stamps
+`agent_input["rlm"] = {"enabled": True, "auto_detect": True, "context_threshold": 50_000}`
+so the sub-agent runs through `RLMInference` instead of stuffing
+everything into a single prompt.
+
+Eligible agents (their input schema accepts an `rlm` field):
+`search_agent`, `deep_research_agent`, `detailed_report_agent`,
+`coding_agent`.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `COGNIVERSE_ORCH_RLM_PROMOTION` | unset | Set to `disabled` to skip promotion entirely. |
+| `COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION` | `0.75` | Override the threshold fraction. |
+
+The promotion is **idempotent**: if the caller already supplied an
+`rlm` field (any value, including `None` for explicit opt-out), the
+orchestrator does not touch it.
+
 ### RLM A/B harness (B.5)
 
 `RLMABRunner` runs the same query through both arms — once without RLM
