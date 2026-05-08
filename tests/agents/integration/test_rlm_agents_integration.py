@@ -161,6 +161,82 @@ class TestRLMBootProbe:
 
 
 @skip_if_no_ollama
+class TestRLMABHarness:
+    """B.5 — RLMABRunner against real Ollama: both arms run, share ab_id."""
+
+    @skip_if_no_deno
+    def test_ab_runner_executes_both_arms_with_shared_ab_id(self):
+        from cogniverse_agents.inference.ab_harness import RLMABRunner
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        cfg = LLMEndpointConfig(
+            model=_OLLAMA_MODEL,
+            api_base=_OLLAMA_API_BASE,
+            max_tokens=200,
+            temperature=0.0,
+        )
+        runner = RLMABRunner(
+            llm_config=cfg,
+            timeout_seconds=180,
+            rlm_max_iterations=2,
+        )
+        result = runner.run(
+            query="What is the capital of France?",
+            context=_FRANCE_CONTEXT,
+        )
+
+        # Both arms answered something coherent.
+        assert "Paris" in result.without_rlm.answer or result.without_rlm.answer
+        assert result.with_rlm.answer
+
+        # Both arms share the run's ab_id for span correlation.
+        assert result.without_rlm.metadata.get("ab_id") == result.ab_id
+        assert result.with_rlm.metadata.get("ab_id") == result.ab_id
+
+        # Real latency was measured (positive non-zero).
+        assert result.without_rlm.latency_ms > 0
+        assert result.with_rlm.latency_ms > 0
+
+        # Telemetry payload carries both arms' metrics + the deltas.
+        td = result.to_telemetry_dict()
+        assert "ab_id" in td
+        assert td["ab_with_rlm_latency_ms"] > 0
+        assert td["ab_without_rlm_latency_ms"] > 0
+        assert "ab_latency_delta_ms" in td
+
+    @skip_if_no_deno
+    def test_judge_callable_scores_both_arms(self):
+        from cogniverse_agents.inference.ab_harness import RLMABRunner
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        # Simple judge: 1.0 when "Paris" appears in the answer, else 0.0.
+        def judge(query, context, answer):
+            return 1.0 if "Paris" in (answer or "") else 0.0
+
+        runner = RLMABRunner(
+            llm_config=LLMEndpointConfig(
+                model=_OLLAMA_MODEL,
+                api_base=_OLLAMA_API_BASE,
+                max_tokens=200,
+                temperature=0.0,
+            ),
+            judge=judge,
+            timeout_seconds=180,
+            rlm_max_iterations=2,
+        )
+        result = runner.run(
+            query="What is the capital of France?",
+            context=_FRANCE_CONTEXT,
+        )
+
+        # Each arm gets a judge score in {0.0, 1.0}; comparison computes delta.
+        assert result.without_rlm.judge_score in (0.0, 1.0)
+        assert result.with_rlm.judge_score in (0.0, 1.0)
+        if result.comparison.judge_delta is not None:
+            assert -1.0 <= result.comparison.judge_delta <= 1.0
+
+
+@skip_if_no_ollama
 class TestRLMTokenAccounting:
     """B.1 — verify tokens_used is populated from a real Ollama-backed run.
 

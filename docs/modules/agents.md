@@ -3189,6 +3189,36 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |
 | `context_size_chars` | Input context size |
 
+### RLM A/B harness (B.5)
+
+`RLMABRunner` runs the same query through both arms — once without RLM
+(single LM call on the raw context) and once with RLM (recursive REPL) —
+and returns a typed `ABResult` with both arms plus a side-by-side
+comparison. Both arms share an `ab_id` stamped in their result metadata
+so Phoenix spans correlate across the pair.
+
+```python
+from cogniverse_agents.inference.ab_harness import RLMABRunner
+
+runner = RLMABRunner(
+    llm_config=llm_config,
+    judge=lambda q, ctx, ans: 1.0 if "Paris" in ans else 0.0,
+    rlm_max_iterations=4,
+)
+result = runner.run(query="What is the capital of France?", context=context)
+
+# Both arms ran with the same llm_config; ab_id correlates them in Phoenix.
+print(result.ab_id)
+print(result.comparison.latency_delta_ms, result.comparison.tokens_delta)
+
+# Flattened payload for direct span attribute set:
+phoenix_attrs = result.to_telemetry_dict()
+```
+
+The `judge` parameter is optional. Without it the comparison still tracks
+latency / tokens / `was_fallback`, just not quality. With it, every arm's
+answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
+
 ### CitationTracingAgent (C3.5)
 
 Read-only A2A agent that wraps `ProvenanceWalker` (A.2). Given a memory id,
