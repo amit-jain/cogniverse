@@ -540,6 +540,220 @@ class ArtifactManager:
             lineage.append(entry)
         return lineage
 
+    # --- C.5 canary state machine ----------------------------------------
+
+    def _state_blob_key(self, agent_type: str) -> str:
+        return f"artefact_state_{agent_type}"
+
+    async def get_artefact_state(self, agent_type: str) -> Dict[str, Any]:
+        """Return the current state machine snapshot for an agent.
+
+        Schema:
+            {
+              "active":   {"version": int, "promoted_at": ISO} | None,
+              "canary":   {"version": int, "promoted_at": ISO,
+                           "traffic_pct": int} | None,
+              "retired":  [{"version": int, "retired_at": ISO,
+                            "reason": str}, ...]
+            }
+
+        Backed by ``save_blob`` for atomicity (single JSON document).
+        """
+        raw = await self.load_blob("config", self._state_blob_key(agent_type))
+        if not raw:
+            return {"active": None, "canary": None, "retired": []}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Artefact state blob for %s/%s was not JSON; resetting",
+                self._tenant_id,
+                agent_type,
+            )
+            return {"active": None, "canary": None, "retired": []}
+
+    async def _save_artefact_state(
+        self, agent_type: str, state: Dict[str, Any]
+    ) -> None:
+        await self.save_blob(
+            "config",
+            self._state_blob_key(agent_type),
+            json.dumps(state, default=str),
+        )
+
+    async def promote_to_canary(
+        self,
+        agent_type: str,
+        version: int,
+        *,
+        traffic_pct: int = 10,
+    ) -> Dict[str, Any]:
+        """Mark a versioned artefact as the canary at ``traffic_pct`` % traffic.
+
+        Replaces any existing canary (the previous canary moves to retired
+        with a synthetic ``retired_at``). The active artefact is untouched.
+        """
+        if not 1 <= traffic_pct <= 100:
+            raise ValueError(f"traffic_pct must be in [1, 100]; got {traffic_pct}")
+        state = await self.get_artefact_state(agent_type)
+        if state.get("canary"):
+            state.setdefault("retired", []).append(
+                {
+                    "version": state["canary"]["version"],
+                    "retired_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "superseded_by_new_canary",
+                }
+            )
+        state["canary"] = {
+            "version": version,
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
+            "traffic_pct": traffic_pct,
+        }
+        await self._save_artefact_state(agent_type, state)
+        return state
+
+    async def promote_canary_to_active(self, agent_type: str) -> Dict[str, Any]:
+        """Promote the current canary to active. Previous active retired."""
+        state = await self.get_artefact_state(agent_type)
+        if not state.get("canary"):
+            raise ValueError(
+                f"no canary set for {self._tenant_id}/{agent_type}; "
+                "call promote_to_canary first"
+            )
+
+        if state.get("active"):
+            state.setdefault("retired", []).append(
+                {
+                    "version": state["active"]["version"],
+                    "retired_at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "superseded_by_canary_promotion",
+                }
+            )
+
+        canary_version = state["canary"]["version"]
+        state["active"] = {
+            "version": canary_version,
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
+        }
+        state["canary"] = None
+        # Active dataset content needs to land at the un-versioned name
+        # agents read at __init__. Copy from the versioned snapshot.
+        await self._restore_active_from_version(agent_type, canary_version)
+        await self._save_artefact_state(agent_type, state)
+        return state
+
+    async def retire_canary(
+        self, agent_type: str, *, reason: str = "manual_retire"
+    ) -> Dict[str, Any]:
+        """Drop the current canary back to retired (active untouched)."""
+        state = await self.get_artefact_state(agent_type)
+        if not state.get("canary"):
+            return state
+        state.setdefault("retired", []).append(
+            {
+                "version": state["canary"]["version"],
+                "retired_at": datetime.now(timezone.utc).isoformat(),
+                "reason": reason,
+            }
+        )
+        state["canary"] = None
+        await self._save_artefact_state(agent_type, state)
+        return state
+
+    async def _restore_active_from_version(self, agent_type: str, version: int) -> None:
+        """Copy a versioned artefact pair (prompts + demos) into the active slot."""
+        prompts_name = self._versioned_dataset_name("prompts", agent_type, version)
+        demos_name = self._versioned_dataset_name("demos", agent_type, version)
+        try:
+            df = await self._provider.datasets.get_dataset(name=prompts_name)
+            prompts = self._extract_prompts_from_dataframe(df)
+            await self.save_prompts(agent_type, prompts)
+        except (KeyError, ValueError):
+            logger.warning(
+                "No versioned prompts at v%d for %s/%s; active prompts left as-is",
+                version,
+                self._tenant_id,
+                agent_type,
+            )
+        try:
+            df = await self._provider.datasets.get_dataset(name=demos_name)
+            demos = df.to_dict(orient="records")
+            await self.save_demonstrations(agent_type, demos)
+        except (KeyError, ValueError):
+            logger.debug(
+                "No versioned demos at v%d for %s/%s",
+                version,
+                self._tenant_id,
+                agent_type,
+            )
+
+    @staticmethod
+    def _route_to_canary(request_seed: str, traffic_pct: int) -> bool:
+        """Stable routing decision: hash(request_seed) → canary iff in band."""
+        import hashlib as _hashlib
+
+        digest = _hashlib.sha1(request_seed.encode("utf-8")).hexdigest()
+        bucket = int(digest[:8], 16) % 100
+        return bucket < int(traffic_pct)
+
+    async def load_for_request(
+        self,
+        agent_type: str,
+        *,
+        request_seed: str,
+    ) -> Dict[str, Any]:
+        """Choose canary vs active for a given request and return its prompts.
+
+        Returns ``{"prompts": ..., "served_from": "active|canary|default",
+        "version": int | None}``. Stable per request_seed.
+        """
+        state = await self.get_artefact_state(agent_type)
+        canary = state.get("canary")
+        active = state.get("active")
+
+        if canary and self._route_to_canary(
+            request_seed, int(canary.get("traffic_pct", 10))
+        ):
+            try:
+                df = await self._provider.datasets.get_dataset(
+                    name=self._versioned_dataset_name(
+                        "prompts", agent_type, int(canary["version"])
+                    )
+                )
+                return {
+                    "prompts": self._extract_prompts_from_dataframe(df),
+                    "served_from": "canary",
+                    "version": int(canary["version"]),
+                }
+            except (KeyError, ValueError):
+                logger.warning(
+                    "canary v%d dataset missing for %s/%s; falling back",
+                    canary["version"],
+                    self._tenant_id,
+                    agent_type,
+                )
+
+        if active is not None:
+            try:
+                df = await self._provider.datasets.get_dataset(
+                    name=self._versioned_dataset_name(
+                        "prompts", agent_type, int(active["version"])
+                    )
+                )
+                return {
+                    "prompts": self._extract_prompts_from_dataframe(df),
+                    "served_from": "active",
+                    "version": int(active["version"]),
+                }
+            except (KeyError, ValueError):
+                pass
+
+        return {
+            "prompts": await self.load_prompts(agent_type),
+            "served_from": "default",
+            "version": None,
+        }
+
     async def snapshot_active(self, agent_type: str) -> Optional[Dict[str, Any]]:
         """C.4 — snapshot the current active prompts + demos as a versioned pair.
 

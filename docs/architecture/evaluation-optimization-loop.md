@@ -1,5 +1,45 @@
 # The Evaluation & Optimization Loop
 
+## Per-tenant canary promotion (C.5)
+
+`ArtifactManager` exposes a small state machine for safer promotions:
+
+| Slot | Meaning |
+|---|---|
+| `active` | Version currently serving 90%+ traffic |
+| `canary` | Optional version serving the remaining `traffic_pct` |
+| `retired` | History of versions that were active or canary in the past |
+
+```python
+# Promote v3 to canary at 10% traffic
+await artifact_mgr.promote_to_canary("search_agent", version=3, traffic_pct=10)
+
+# QualityMonitor (or any operator) compares spans + metrics over a window,
+# then either:
+await artifact_mgr.promote_canary_to_active("search_agent")   # graduate
+# or:
+await artifact_mgr.retire_canary("search_agent", reason="judge_score_drop")
+
+# Per-request routing (use the request id / trace id as the seed):
+result = await artifact_mgr.load_for_request(
+    "search_agent", request_seed=request_id
+)
+# result["served_from"] = "active" | "canary" | "default"
+# result["version"]     = int | None
+```
+
+**Stable routing** — `request_seed` is hashed to a `[0, 100)` bucket so
+the same request always hits the same arm; a canary at 10% traffic
+serves a deterministic 10% of seeds.
+
+State is persisted as a single `save_blob` JSON document, so all four
+operations (`promote_to_canary`, `promote_canary_to_active`,
+`retire_canary`, `get_artefact_state`) are atomic at the dataset layer.
+
+The active dataset (un-versioned) is what existing agents read at
+`__init__`; promote_canary_to_active copies the versioned snapshot into
+the active dataset name, so no agent code changes are required.
+
 ## Snapshot + rollback (C.4)
 
 `promote_if_better` snapshots the soon-to-be-overwritten active artefacts
