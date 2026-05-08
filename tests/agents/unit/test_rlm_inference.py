@@ -144,6 +144,111 @@ class TestRLMResult:
         assert result.was_fallback is True
         assert result.to_telemetry_dict()["rlm_was_fallback"] is True
 
+    def test_trajectory_defaults_empty(self):
+        """RLMResult.trajectory defaults to an empty list and reports length=0."""
+        from cogniverse_agents.inference.rlm_inference import RLMResult
+
+        result = RLMResult(
+            answer="x",
+            depth_reached=1,
+            total_calls=1,
+            tokens_used=0,
+            latency_ms=1.0,
+        )
+        assert result.trajectory == []
+        assert result.to_telemetry_dict()["rlm_trajectory_length"] == 0
+
+    def test_trajectory_propagates_length_to_telemetry(self):
+        """Telemetry exposes trajectory length, useful for A/B comparison."""
+        from cogniverse_agents.inference.rlm_inference import RLMResult
+
+        result = RLMResult(
+            answer="x",
+            depth_reached=3,
+            total_calls=3,
+            tokens_used=0,
+            latency_ms=1.0,
+            trajectory=[
+                {"iteration": 1, "reasoning": "r1", "code": "c1"},
+                {"iteration": 2, "reasoning": "r2", "code": "c2"},
+                {"iteration": 3, "reasoning": "r3", "code": "c3"},
+            ],
+        )
+        assert len(result.trajectory) == 3
+        assert result.to_telemetry_dict()["rlm_trajectory_length"] == 3
+
+
+class TestSerializeTrajectory:
+    """Unit tests for the trajectory serializer used by RLMInference.process."""
+
+    def test_empty_input_returns_empty_list(self):
+        from cogniverse_agents.inference.rlm_inference import _serialize_trajectory
+
+        assert _serialize_trajectory([], 32) == []
+        assert _serialize_trajectory(None, 32) == []
+
+    def test_caps_entries_at_max(self):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.inference.rlm_inference import _serialize_trajectory
+
+        raw = [SimpleNamespace(reasoning=f"r{i}", code=f"c{i}") for i in range(50)]
+        out = _serialize_trajectory(raw, max_entries=10)
+        assert len(out) == 10
+        assert out[0]["iteration"] == 1
+        assert out[9]["iteration"] == 10
+        assert out[0]["reasoning"] == "r0"
+        assert out[0]["code"] == "c0"
+
+    def test_truncates_long_field_values(self):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.inference.rlm_inference import _serialize_trajectory
+
+        long_text = "x" * 5000
+        raw = [SimpleNamespace(reasoning=long_text, code=long_text)]
+        out = _serialize_trajectory(raw, max_entries=32)
+        assert out[0]["reasoning"].endswith("…")
+        assert len(out[0]["reasoning"]) < 5000
+        assert len(out[0]["code"]) < 5000
+
+    def test_skips_missing_fields(self):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.inference.rlm_inference import _serialize_trajectory
+
+        raw = [SimpleNamespace(reasoning="r1")]  # no code, no observation
+        out = _serialize_trajectory(raw, max_entries=32)
+        assert "reasoning" in out[0]
+        assert "code" not in out[0]
+        assert "observation" not in out[0]
+
+
+class TestRLMOptionsTrajectoryFields:
+    """RLMOptions exposes the include_trajectory + trajectory_max_entries knobs."""
+
+    def test_defaults(self):
+        from cogniverse_core.agents.rlm_options import RLMOptions
+
+        opts = RLMOptions()
+        assert opts.include_trajectory is False
+        assert opts.trajectory_max_entries == 32
+
+    def test_custom_values(self):
+        from cogniverse_core.agents.rlm_options import RLMOptions
+
+        opts = RLMOptions(include_trajectory=True, trajectory_max_entries=8)
+        assert opts.include_trajectory is True
+        assert opts.trajectory_max_entries == 8
+
+    def test_trajectory_max_entries_bounds(self):
+        from cogniverse_core.agents.rlm_options import RLMOptions
+
+        with pytest.raises(Exception):  # pydantic ValidationError
+            RLMOptions(trajectory_max_entries=0)
+        with pytest.raises(Exception):
+            RLMOptions(trajectory_max_entries=999)
+
     def test_result_fields(self):
         """RLMResult should store all fields correctly."""
         from cogniverse_agents.inference.rlm_inference import RLMResult

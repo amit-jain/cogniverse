@@ -3186,7 +3186,13 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_tokens_used` | Total tokens (if available) |
 | `rlm_latency_ms` | End-to-end RLM processing time |
 | `rlm_was_fallback` | True when answer came from fallback extraction (max iterations exhausted without SUBMIT) |
+| `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |
 | `context_size_chars` | Input context size |
+
+`RLMResult.metadata` always carries `trajectory_length` and a bounded
+`trajectory_summary` (first 8 entries) regardless of the opt-in, so Phoenix
+spans can debug recursion behaviour without forcing the full trajectory back
+to the caller.
 
 ### SearchOutput with RLM
 
@@ -4141,15 +4147,18 @@ Dataclass with telemetry data for A/B testing and monitoring.
 ```python
 @dataclass
 class RLMResult:
-    answer: str           # Final answer from RLM
-    depth_reached: int    # Actual recursion depth used
-    total_calls: int      # Number of LLM sub-calls
-    tokens_used: int      # Total tokens (if available)
-    latency_ms: float     # End-to-end latency
-    was_fallback: bool    # True when answer came from fallback extraction
-                          # because max_iterations was reached without SUBMIT().
-                          # Quality may be lower; downstream may flag/replan.
-    metadata: Dict        # Additional metadata
+    answer: str                    # Final answer from RLM
+    depth_reached: int             # Actual recursion depth used
+    total_calls: int               # Number of LLM sub-calls
+    tokens_used: int               # Total tokens (if available)
+    latency_ms: float              # End-to-end latency
+    was_fallback: bool             # True when answer came from fallback extraction
+                                   # because max_iterations was reached without SUBMIT().
+    trajectory: list[dict]         # Bounded structured trajectory snapshots,
+                                   # populated only when RLMOptions.include_trajectory=True
+                                   # (cap via trajectory_max_entries).
+    metadata: dict                 # Includes trajectory_length + trajectory_summary
+                                   # for server-side debug regardless of opt-in.
 
     def to_telemetry_dict(self) -> Dict:
         """Export for telemetry/Phoenix."""
@@ -4158,6 +4167,7 @@ class RLMResult:
             "rlm_depth_reached": self.depth_reached,
             "rlm_total_calls": self.total_calls,
             "rlm_was_fallback": self.was_fallback,
+            "rlm_trajectory_length": len(self.trajectory),
             ...
         }
 ```

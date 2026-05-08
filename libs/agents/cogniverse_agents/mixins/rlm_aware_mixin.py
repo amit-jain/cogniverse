@@ -207,6 +207,8 @@ class RLMAwareMixin:
             query=query,
             context=context,
             system_prompt=system_prompt,
+            include_trajectory=rlm_options.include_trajectory,
+            trajectory_max_entries=rlm_options.trajectory_max_entries,
         )
 
     def process_results_with_rlm(

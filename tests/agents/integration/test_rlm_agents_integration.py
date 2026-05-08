@@ -161,6 +161,78 @@ class TestRLMBootProbe:
 
 
 @skip_if_no_ollama
+class TestRLMTrajectoryCapture:
+    """B.2 — verify trajectory surfacing against real Ollama-backed RLM run.
+
+    Trajectory must be populated when callers opt in via include_trajectory,
+    and the metadata.trajectory_summary plus telemetry rlm_trajectory_length
+    must be present regardless of the opt-in (server-side debug aid).
+    """
+
+    @skip_if_no_deno
+    def test_include_trajectory_populates_result(self):
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        config = LLMEndpointConfig(
+            model=_OLLAMA_MODEL,
+            api_base=_OLLAMA_API_BASE,
+            max_tokens=300,
+            temperature=0.1,
+        )
+        rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
+        result = rlm.process(
+            query="What is the capital of France?",
+            context=_FRANCE_CONTEXT,
+            include_trajectory=True,
+            trajectory_max_entries=8,
+        )
+
+        # Trajectory entries respect the cap and carry structured per-iteration data.
+        assert isinstance(result.trajectory, list)
+        assert len(result.trajectory) <= 8
+        if result.trajectory:
+            first = result.trajectory[0]
+            assert first["iteration"] == 1
+            # at least one of these is non-empty for a real run
+            assert any(k in first for k in ("reasoning", "code", "observation"))
+
+        # Telemetry exposes trajectory length even when entries are present.
+        assert result.to_telemetry_dict()["rlm_trajectory_length"] == len(
+            result.trajectory
+        )
+
+    @skip_if_no_deno
+    def test_default_no_trajectory_but_metadata_summary_present(self):
+        from cogniverse_agents.inference.rlm_inference import RLMInference
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        config = LLMEndpointConfig(
+            model=_OLLAMA_MODEL,
+            api_base=_OLLAMA_API_BASE,
+            max_tokens=200,
+            temperature=0.1,
+        )
+        rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
+        result = rlm.process(
+            query="Name the capital city mentioned in the text.",
+            context=_FRANCE_CONTEXT,
+            # include_trajectory defaults to False
+        )
+
+        # Caller did not opt in: full trajectory list is empty.
+        assert result.trajectory == [], (
+            "trajectory must default to [] when include_trajectory is False; "
+            f"got {len(result.trajectory)} entries"
+        )
+        # ...but server-side debug aid is always populated.
+        assert "trajectory_summary" in result.metadata
+        assert "trajectory_length" in result.metadata
+        assert isinstance(result.metadata["trajectory_summary"], list)
+        assert isinstance(result.metadata["trajectory_length"], int)
+
+
+@skip_if_no_ollama
 class TestRLMFallbackMarker:
     """B.4 — verify RLMResult.was_fallback against a real Ollama-backed RLM run.
 

@@ -22,7 +22,7 @@ import concurrent.futures
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import dspy
 
@@ -43,6 +43,35 @@ class RLMTimeoutError(TimeoutError):
     pass
 
 
+_TRAJECTORY_FIELD_TRUNCATE = 500
+
+
+def _serialize_trajectory(trajectory: Any, max_entries: int) -> List[Dict[str, Any]]:
+    """Convert a dspy RLM trajectory (REPLHistory) into a bounded JSON-friendly list.
+
+    Each entry becomes a dict with iteration index plus truncated reasoning,
+    code, and observation fields. Truncation keeps the structure suitable
+    both for response payload and for Phoenix span attributes.
+    """
+    if not trajectory:
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(trajectory[:max_entries]):
+        entry: Dict[str, Any] = {"iteration": idx + 1}
+        for field_name in ("reasoning", "code", "observation", "result"):
+            value = getattr(raw, field_name, None)
+            if value is None:
+                continue
+            text = str(value)
+            if len(text) > _TRAJECTORY_FIELD_TRUNCATE:
+                text = text[:_TRAJECTORY_FIELD_TRUNCATE] + "…"
+            entry[field_name] = text
+        entries.append(entry)
+
+    return entries
+
+
 @dataclass
 class RLMResult:
     """Result from RLM inference with telemetry data.
@@ -57,7 +86,15 @@ class RLMResult:
             max_iterations was exhausted without a SUBMIT() — answer quality
             may be lower; downstream agents may flag the result or trigger
             a re-plan.
-        metadata: Additional metadata from RLM processing
+        trajectory: Bounded list of REPL iteration snapshots (when callers
+            opted in via RLMOptions.include_trajectory). Each entry is a dict
+            with 'iteration', 'reasoning', 'code' (each truncated). Always
+            empty unless include_trajectory was set; callers should NOT rely
+            on a non-empty trajectory for clean completions where the parent
+            class did not retain history.
+        metadata: Additional metadata from RLM processing. Includes a
+            'trajectory_summary' (always populated, server-side debug aid)
+            and 'trajectory_length' regardless of include_trajectory.
     """
 
     answer: str
@@ -66,6 +103,7 @@ class RLMResult:
     tokens_used: int
     latency_ms: float
     was_fallback: bool = False
+    trajectory: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_telemetry_dict(self) -> Dict[str, Any]:
@@ -81,6 +119,7 @@ class RLMResult:
             "rlm_tokens_used": self.tokens_used,
             "rlm_latency_ms": self.latency_ms,
             "rlm_was_fallback": self.was_fallback,
+            "rlm_trajectory_length": len(self.trajectory),
         }
 
 
@@ -194,6 +233,8 @@ class RLMInference:
         query: str,
         context: str,
         system_prompt: Optional[str] = None,
+        include_trajectory: bool = False,
+        trajectory_max_entries: int = 32,
     ) -> RLMResult:
         """
         Process query with potentially huge context using DSPy RLM.
@@ -202,6 +243,11 @@ class RLMInference:
             query: The user query/task
             context: Large context (can be 100K+ chars)
             system_prompt: Optional system instructions
+            include_trajectory: When True, populate RLMResult.trajectory with
+                a structured list of REPL iterations (capped at
+                trajectory_max_entries). Always-on trajectory_summary lands
+                in metadata regardless for Phoenix span attribution.
+            trajectory_max_entries: Cap on trajectory entries (1-200).
 
         Returns:
             RLMResult with answer and telemetry metadata
@@ -236,10 +282,14 @@ class RLMInference:
             answer = result.answer if hasattr(result, "answer") else str(result)
 
             # Extract trajectory info for telemetry
-            trajectory = getattr(result, "trajectory", [])
-            depth_reached = len(trajectory) if trajectory else 1
-            total_calls = len(trajectory) if trajectory else 1
+            raw_trajectory = getattr(result, "trajectory", [])
+            depth_reached = len(raw_trajectory) if raw_trajectory else 1
+            total_calls = len(raw_trajectory) if raw_trajectory else 1
             was_fallback = bool(getattr(result, "was_fallback", False))
+
+            structured_trajectory = _serialize_trajectory(
+                raw_trajectory, trajectory_max_entries
+            )
 
         except RLMTimeoutError:
             raise
@@ -251,8 +301,14 @@ class RLMInference:
 
         logger.info(
             f"RLM completed: depth={depth_reached}, calls={total_calls}, "
-            f"latency={latency_ms:.0f}ms, was_fallback={was_fallback}"
+            f"latency={latency_ms:.0f}ms, was_fallback={was_fallback}, "
+            f"trajectory_entries={len(structured_trajectory)}"
         )
+
+        # Always include a small trajectory summary in metadata so Phoenix
+        # spans carry it server-side even when callers opt out of the full
+        # trajectory in the response payload.
+        trajectory_summary = structured_trajectory[:8]
 
         return RLMResult(
             answer=answer,
@@ -261,12 +317,15 @@ class RLMInference:
             tokens_used=0,  # DSPy doesn't expose token counts easily
             latency_ms=latency_ms,
             was_fallback=was_fallback,
+            trajectory=structured_trajectory if include_trajectory else [],
             metadata={
                 "context_size_chars": len(context),
                 "query": query[:100],
                 "backend": self.model.split("/")[0] if "/" in self.model else "unknown",
                 "model": self.model,
                 "timeout_seconds": self.timeout_seconds,
+                "trajectory_length": len(structured_trajectory),
+                "trajectory_summary": trajectory_summary,
             },
         )
 

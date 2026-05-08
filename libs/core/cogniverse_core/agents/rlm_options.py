@@ -81,6 +81,25 @@ class RLMOptions(BaseModel):
     model: Optional[str] = Field(
         default=None, description="Model override for RLM (defaults to agent's model)"
     )
+    include_trajectory: bool = Field(
+        default=False,
+        description=(
+            "When true, attach a structured (bounded) trajectory list to "
+            "RLMResult.trajectory so callers can audit the recursion. The "
+            "trajectory is also written to Phoenix span attributes regardless "
+            "of this flag for server-side debugging."
+        ),
+    )
+    trajectory_max_entries: int = Field(
+        default=32,
+        ge=1,
+        le=200,
+        description=(
+            "Maximum number of REPL iteration entries to keep in the captured "
+            "trajectory. Bounds payload size when include_trajectory=True and "
+            "the size of the Phoenix span attribute always written."
+        ),
+    )
 
     def should_use_rlm(self, context_size: int) -> bool:
         """
