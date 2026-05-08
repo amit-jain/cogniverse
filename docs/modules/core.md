@@ -523,6 +523,50 @@ memory.delete_memory(
 )
 ```
 
+### Federation: org trunk + tenant overlays (A.5)
+
+`FederationService` lets multiple tenants under the same org share a
+trunk of knowledge while overlaying tenant-specific facts.
+
+```python
+from cogniverse_core.memory.federation import FederationService
+from cogniverse_core.memory.schema import Pinnable, build_default_registry
+
+svc = FederationService(
+    memory_manager_factory=Mem0MemoryManager,  # per-tenant singleton
+    registry=build_default_registry(),
+)
+
+# Read: tenant rows + org-trunk rows, deduped by metadata.subject_key
+# (tenant overlay wins on collision); each row tagged with
+# _federation_origin = "tenant" | "org_trunk".
+rows = svc.federated_get_all(tenant_id="acme:production", agent_name="search_agent")
+
+# Promote: copy a tenant memory into the org trunk so siblings see it.
+result = svc.promote_to_org_trunk(
+    source_tenant_id="acme:production",
+    source_memory=memory,
+    actor_role=Pinnable.TENANT_ADMIN,
+    actor_id="admin_alpha",
+)
+```
+
+Storage: the org trunk lives under a dedicated tenant_id
+`{org}:_org_trunk` (Mem0+Vespa already isolate per-tenant_id, so no new
+backend wiring required). Promotion stamps `promoted_from_tenant`,
+`promoted_by`, and `promoted_by_role` into the new record's metadata for
+audit.
+
+| Schema sensitivity | Promotion outcome |
+|---|---|
+| `tenant_private` | Refused (`FederationDeniedError`) — even org admins cannot escalate. |
+| `org_shared` | Promotable when actor's role is at-or-above `pinnable_by` floor. |
+| `global_shared` | Reserved for a future cross-org channel. |
+
+ACLs are enforced at query time: `federated_get_all` only ever reads
+from the caller's tenant + that tenant's org trunk, so cross-org leakage
+is structurally prevented.
+
 ### Contradiction detection + reconciliation (A.3)
 
 Two memories about the same subject can disagree. The
