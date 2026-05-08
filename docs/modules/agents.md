@@ -3189,6 +3189,38 @@ RLM results include telemetry for comparison in Phoenix dashboard:
 | `rlm_trajectory_length` | Number of REPL iterations captured in `RLMResult.trajectory` (0 unless `RLMOptions.include_trajectory=True`) |
 | `context_size_chars` | Input context size |
 
+### CitationTracingAgent (C3.5)
+
+Read-only A2A agent that wraps `ProvenanceWalker` (A.2). Given a memory id,
+returns the BFS-walked citation chain plus the structured primary-source
+list — useful for "show me the sources" UX, compliance audit, and
+debugging why a synthesised claim was promoted.
+
+```python
+from cogniverse_agents.citation_tracing_agent import (
+    CitationTracingAgent,
+    CitationTracingDeps,
+    CitationTracingInput,
+)
+
+agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id="acme"))
+out = await agent._process_impl(CitationTracingInput(
+    memory_id="m_synthesis",
+    tenant_id="acme",
+    max_depth=10,
+    max_nodes=100,
+))
+for node in out.nodes:
+    print(node.depth, node.memory_id, node.derivation_kind, node.confidence)
+for source in out.primary_sources:
+    print("primary source:", source.ref_kind, source.ref_id)
+```
+
+The agent does **not** call the LLM and does **not** write to memory; it
+is deterministic and cheap. Defaults: `max_depth=10`, `max_nodes=100`,
+`port=8019`. Capability strings: `citation_tracing`, `provenance_walk`,
+`audit`.
+
 `RLMResult.metadata` always carries `trajectory_length` and a bounded
 `trajectory_summary` (first 8 entries) regardless of the opt-in, so Phoenix
 spans can debug recursion behaviour without forcing the full trajectory back
