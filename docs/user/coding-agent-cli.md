@@ -172,6 +172,23 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
+### Gateway health probe
+
+When sandboxing is not disabled, the runtime starts a background probe that
+calls `SandboxClient.health()` every 30 s (configurable via
+`COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an OpenTelemetry span
+named `openshell.gateway_health` with attributes:
+
+| Attribute | Meaning |
+|---|---|
+| `openshell.gateway_available` | 1 when the gateway responded; 0 otherwise |
+| `openshell.gateway_latency_ms` | Round-trip probe latency |
+| `openshell.gateway_error` | Exception class name or `no_client` (only set on failure) |
+
+The Phoenix dashboard reads these spans for the gateway-status tile. The probe
+runs as part of the FastAPI lifespan; `stop()` is awaited at shutdown so the
+runtime can exit cleanly.
+
 ### Sandbox boot policy
 
 The runtime resolves a single `sandbox.policy` knob with three values:

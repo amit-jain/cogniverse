@@ -733,12 +733,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await queue_manager.start_cleanup_loop(interval_seconds=60)
     logger.info("Event queue cleanup loop started")
 
+    # 12. Start the OpenShell gateway health probe (only when sandbox is not
+    # disabled). Each probe records availability + latency as a Phoenix span
+    # (openshell.gateway_health) so the dashboard can surface gateway state.
+    gateway_probe = None
+    if sandbox_policy is not SandboxPolicy.DISABLED:
+        from cogniverse_runtime.openshell_health import GatewayHealthProbe
+
+        probe_interval = float(
+            os.environ.get("COGNIVERSE_SANDBOX_PROBE_INTERVAL", "30")
+        )
+        gateway_probe = GatewayHealthProbe(
+            sandbox_manager=sandbox_manager,
+            interval_seconds=probe_interval,
+        )
+        gateway_probe.start()
+        app.state.gateway_probe = gateway_probe
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
+    if gateway_probe is not None:
+        await gateway_probe.stop()
     await queue_manager.stop_cleanup_loop()
     logger.info("Cogniverse Runtime shut down successfully")
 

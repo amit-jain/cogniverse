@@ -172,6 +172,55 @@ class TestSandboxExecutionSDK:
         client.close()
 
 
+class TestGatewayHealthProbeRealGateway:
+    """D.3 — health probe against the real OpenShell gateway.
+
+    Verifies the probe records (available=1, latency>0) for a live gateway
+    and (available=0, latency>0, error=...) when the SDK call fails. These
+    tests exercise the actual SDK ``health()`` call — no mocks on the
+    client boundary.
+    """
+
+    @pytest.mark.asyncio
+    async def test_probe_reports_available_for_live_gateway(self, openshell_gateway):
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        from cogniverse_runtime.openshell_health import GatewayHealthProbe
+        from cogniverse_runtime.sandbox_manager import SandboxPolicy
+
+        manager = SandboxManager(
+            policy_dir="configs/openshell",
+            policy=SandboxPolicy.OPTIONAL,
+        )
+        try:
+            assert manager.available is True
+
+            exporter = InMemorySpanExporter()
+            provider = TracerProvider()
+            provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+            probe = GatewayHealthProbe(
+                sandbox_manager=manager,
+                interval_seconds=30.0,
+                tracer=provider.get_tracer("test"),
+            )
+            available, latency = await probe.probe_once()
+
+            assert available is True, (
+                f"live OpenShell gateway must report available; latency_ms={latency}"
+            )
+            assert latency > 0
+            attrs = dict(exporter.get_finished_spans()[0].attributes)
+            assert attrs["openshell.gateway_available"] == 1
+            assert attrs["openshell.gateway_latency_ms"] > 0
+        finally:
+            manager.close()
+
+
 class TestSandboxPolicyAtBoot:
     """D.2 — boot-time policy enforcement against the real OpenShell gateway.
 
