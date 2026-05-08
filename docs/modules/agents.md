@@ -3242,6 +3242,47 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### CrossTenantComparisonAgent (C3.3)
+
+A2A agent that compares per-tenant views of a subject across multiple
+tenants in the *same* org. Built on A.5 federation: each per-tenant
+fetch goes through `FederationService.federated_get_all`, so the org
+trunk is included automatically and cross-org reads are structurally
+prevented.
+
+```python
+from cogniverse_agents.cross_tenant_comparison_agent import (
+    CrossTenantComparisonAgent,
+    CrossTenantComparisonDeps,
+    CrossTenantComparisonInput,
+)
+
+agent = CrossTenantComparisonAgent(
+    deps=CrossTenantComparisonDeps(tenant_id="acme:production"),
+)
+out = await agent._process_impl(CrossTenantComparisonInput(
+    tenant_id="acme:production",
+    subject_key="france:capital",
+    tenant_ids=["acme:alpha", "acme:beta", "acme:gamma"],
+    actor_role="org_admin",
+    actor_id="oadm",
+))
+print(out.distinct_signatures_count)  # 1 = all tenants agree
+for view in out.tenant_views:
+    print(view.tenant_id, view.matching_memory_ids, view.origin_tags)
+```
+
+| ACL rule | Behaviour |
+|---|---|
+| `actor_role` < `tenant_admin` | Rejected. |
+| `actor_role` = `tenant_admin` / `org_admin` | Allowed. |
+| Any `tenant_ids[i]` outside the caller's org | Rejected — never reads cross-org. |
+
+`distinct_signatures_count` collapses tenants by content signature so
+callers can quickly tell agreement from disagreement.
+Capability strings: `cross_tenant_comparison`, `audit`,
+`federation_consumer`. Default `port=8023`.
+
 ### KnowledgeGraphTraversalAgent (C3.2)
 
 A2A agent that walks the entity/edge memories of the knowledge graph
