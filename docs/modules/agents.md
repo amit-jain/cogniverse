@@ -3242,6 +3242,50 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### KnowledgeGraphTraversalAgent (C3.2)
+
+A2A agent that walks the entity/edge memories of the knowledge graph
+from a starting subject_key (or memory id resolving to one) and returns
+a structured `(nodes, edges)` view plus an optional RLM-summarised
+narrative for large traversals.
+
+```python
+from cogniverse_agents.kg_traversal_agent import (
+    KGTraversalDeps,
+    KGTraversalInput,
+    KnowledgeGraphTraversalAgent,
+)
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+agent = KnowledgeGraphTraversalAgent(
+    deps=KGTraversalDeps(tenant_id="acme"),
+    llm_config=llm_config,
+)
+out = await agent._process_impl(KGTraversalInput(
+    tenant_id="acme",
+    start_subject_key="company:acme",
+    max_depth=3,
+    max_edges=200,
+    relation_allowlist=["depends_on", "owns"],
+    rlm=RLMOptions(auto_detect=True, context_threshold=20_000),
+))
+for node in out.nodes:
+    print(node.subject_key, node.label, node.excerpt)
+for edge in out.edges:
+    print(edge.from_subject_key, edge.relation, edge.to_subject_key)
+print(out.summary)  # populated when RLM ran
+```
+
+| Memory shape required | Metadata keys |
+|---|---|
+| Node | `kind=kg_node` (or `entity_fact`), `subject_key`, optional `label` |
+| Edge | `kind=kg_edge`, `from_subject_key`, `to_subject_key`, `relation` |
+
+The walker is deterministic (BFS over edges with depth + edge cap) and
+honours an optional `relation_allowlist` so callers can isolate a
+sub-graph. Capability strings: `kg_traversal`, `graph_walk`. Default
+`port=8022`.
+
 ### MultiDocumentSynthesisAgent (C3.1)
 
 A2A agent that produces a coherent answer across N source documents
