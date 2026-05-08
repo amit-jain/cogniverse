@@ -523,6 +523,56 @@ memory.delete_memory(
 )
 ```
 
+### Provenance + citation graph (A.2)
+
+Every memory write carries a `Provenance` record describing where the
+content came from. The schema's `provenance_required` flag (A.1) gates
+writes that omit it.
+
+```python
+from cogniverse_core.memory.provenance import (
+    CitationRef,
+    DerivationKind,
+    ProvenanceWalker,
+    attach_to_metadata,
+    make_provenance,
+)
+
+prov = make_provenance(
+    written_by="agent:search_agent",
+    derivation_kind=DerivationKind.SYNTHESIS,
+    confidence=0.85,
+    derived_from=[
+        CitationRef.external("https://wiki/source-a"),
+        CitationRef.memory("m_prior_answer"),
+    ],
+    trace_id=current_trace_id,  # optional Phoenix trace id
+)
+
+memory_manager.add_memory(
+    content="Synthesised claim citing two sources",
+    tenant_id="acme",
+    agent_name="search_agent",
+    metadata=attach_to_metadata({"kind": "synthesis_fact"}, prov),
+    infer=False,
+)
+
+# Read path: walk the citation chain back to primary sources.
+graph = ProvenanceWalker(memory_manager).walk(memory_id, tenant_id="acme")
+for node in graph.nodes:
+    print(node.depth, node.memory_id, node.content_excerpt)
+for src in graph.primary_sources:
+    print("source:", src.ref_kind, src.ref_id)
+```
+
+**Storage**: provenance lives inside `metadata["provenance"]` on the same
+memory record (no separate Vespa schema in V1). Walker traversal is O(N)
+in chain length; cycle and depth limits (`max_depth`, `max_nodes`) protect
+against runaway chains.
+
+A.3 (contradiction detection) and A.4 (trust ranking) will read this
+provenance graph to score conflicting claims.
+
 ### Pinning service
 
 `PinService` lets users, tenant admins, and org admins pin memories so they
