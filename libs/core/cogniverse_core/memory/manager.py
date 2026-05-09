@@ -691,6 +691,7 @@ class Mem0MemoryManager:
         agent_name: str,
         top_k: int = 5,
         filters: Optional[Dict[str, Any]] = None,
+        include_archived: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Search agent's memory for relevant content.
@@ -703,6 +704,9 @@ class Mem0MemoryManager:
             filters: Optional Mem0 metadata filters (e.g. {"agent": "search_agent"}).
                 Passed directly to memory.search() — supports Mem0's full filter
                 syntax including exact-match, in-list, and logical operators.
+            include_archived: A.9 — when False (default), soft-deleted memories
+                (``metadata.archived=true``) are filtered out post-fetch. Set
+                True for admin / restore tooling that needs to surface them.
 
         Returns:
             List of matching memories with scores
@@ -731,6 +735,13 @@ class Mem0MemoryManager:
                     f"Found {len(results)} memories for {tenant_id}/{agent_name}"
                 )
                 actual_results = results
+
+            if not include_archived:
+                actual_results = [
+                    r
+                    for r in actual_results
+                    if not self._read_metadata(r).get("archived")
+                ]
 
             # P2.3 — bump last_accessed on each hit so the lifecycle
             # scheduler doesn't prune actively-used memories. Best-effort:
@@ -811,6 +822,7 @@ class Mem0MemoryManager:
         self,
         tenant_id: str,
         agent_name: str,
+        include_archived: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Get all memories for an agent.
@@ -818,6 +830,9 @@ class Mem0MemoryManager:
         Args:
             tenant_id: Tenant identifier
             agent_name: Agent name
+            include_archived: A.9 — when False (default), soft-deleted
+                memories are excluded. Set True for admin restore
+                tooling that needs to surface them.
 
         Returns:
             List of all memories
@@ -833,6 +848,11 @@ class Mem0MemoryManager:
 
             # Mem0 get_all returns {"results": [...]}
             memories = result.get("results", []) if isinstance(result, dict) else result
+
+            if not include_archived:
+                memories = [
+                    m for m in memories if not self._read_metadata(m).get("archived")
+                ]
 
             logger.info(
                 f"Retrieved {len(memories)} total memories for {tenant_id}/{agent_name}"
@@ -990,9 +1010,26 @@ class Mem0MemoryManager:
                 age_seconds = self._compute_age_seconds(memory, now_epoch)
                 if age_seconds is None:
                     continue
-                # retention_days is validated > 0 in KnowledgeSchema.__post_init__
+                # A.9 — soft-delete window: at TTL flip archived=true,
+                # at 2× TTL hard-delete. Operators can restore in
+                # between via the admin endpoint. retention_days is
+                # validated > 0 in KnowledgeSchema.__post_init__.
                 cutoff = (schema.retention_days or 0) * 86400
-                should_delete = age_seconds > cutoff
+                hard_cutoff = cutoff * 2
+                meta = self._read_metadata(memory)
+                if age_seconds > hard_cutoff:
+                    should_delete = True
+                elif age_seconds > cutoff and not meta.get("archived"):
+                    # Soft-delete: flip archived flag, do not remove.
+                    self._archive_memory(
+                        memory_id,
+                        meta,
+                        existing_data=memory.get("memory") or memory.get("text") or "",
+                    )
+                    deleted_by_kind[f"{kind}:archived"] = (
+                        deleted_by_kind.get(f"{kind}:archived", 0) + 1
+                    )
+                    continue
             elif schema.retention is Retention.SCHEMA_DRIVEN:
                 hook = schema.cleanup_hook
                 if hook is None:
@@ -1038,6 +1075,90 @@ class Mem0MemoryManager:
         if isinstance(meta, dict):
             return str(meta.get("kind") or "_unknown")
         return "_unknown"
+
+    @staticmethod
+    def _read_metadata(memory: Dict[str, Any]) -> Dict[str, Any]:
+        """Defensive metadata reader — handles dict / JSON-string / None shapes."""
+        meta = memory.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except (ValueError, TypeError):
+                return {}
+        return meta if isinstance(meta, dict) else {}
+
+    def _archive_memory(
+        self,
+        memory_id: str,
+        meta: Dict[str, Any],
+        existing_data: str = "",
+    ) -> None:
+        """A.9 — soft-delete: flip metadata.archived=true with a timestamp.
+
+        The lifecycle scheduler calls this when a memory hits its TTL but
+        not yet 2*TTL. The memory remains queryable via opt-in
+        ``include_archived=True`` paths and via the admin restore
+        endpoint; default reads filter it out.
+        """
+        from datetime import datetime, timezone
+
+        new_meta = dict(meta)
+        new_meta["archived"] = True
+        new_meta["archived_at"] = datetime.now(timezone.utc).isoformat()
+        try:
+            # Mem0.update requires `data` — pass the current content so
+            # the memory text is preserved.
+            self.memory.update(
+                memory_id=memory_id,
+                data=existing_data,
+                metadata=new_meta,
+            )
+            logger.info(
+                "Soft-deleted (archived) memory %s for tenant %s",
+                memory_id,
+                self.tenant_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to archive memory %s: %s — falling through to hard-delete on next tick",
+                memory_id,
+                exc,
+            )
+
+    def restore_archived_memory(self, memory_id: str) -> bool:
+        """A.9 — admin restore: clear the archived flag on a soft-deleted memory.
+
+        Returns True when the flag was cleared; False when the memory
+        wasn't found or wasn't archived. Callers (the admin endpoint)
+        translate False into a 404/409 as appropriate.
+        """
+        if not self.memory:
+            return False
+        try:
+            blob = self.memory.get_all(user_id=self.tenant_id)
+        except Exception as exc:
+            logger.warning("restore: get_all failed: %s", exc)
+            return False
+        rows = blob.get("results", []) if isinstance(blob, dict) else (blob or [])
+        target = next((r for r in rows if str(r.get("id")) == memory_id), None)
+        if target is None:
+            return False
+        meta = self._read_metadata(target)
+        if not meta.get("archived"):
+            return False
+        meta = dict(meta)
+        meta.pop("archived", None)
+        meta.pop("archived_at", None)
+        existing_data = target.get("memory") or target.get("text") or ""
+        try:
+            self.memory.update(memory_id=memory_id, data=existing_data, metadata=meta)
+        except Exception as exc:
+            logger.warning("restore: update failed for %s: %s", memory_id, exc)
+            return False
+        logger.info(
+            "Restored archived memory %s for tenant %s", memory_id, self.tenant_id
+        )
+        return True
 
     @staticmethod
     def _compute_age_seconds(memory: Dict[str, Any], now_epoch: int) -> Optional[int]:

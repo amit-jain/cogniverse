@@ -277,12 +277,24 @@ class VespaPyClient:
             fields["text"] = doc.text_content
 
         # Add timestamp field (different schemas use different names and units)
-        # Video schemas use milliseconds, memory schemas use seconds
+        # Video schemas use milliseconds, memory schemas use seconds.
+        # Honour a caller-supplied timestamp on doc.metadata before
+        # stamping now() — A.9 lifecycle tests need to back-date
+        # ``created_at`` to age memories synthetically, and any other
+        # caller that wants a specific timestamp (re-ingest, migration,
+        # backfill) shouldn't have it silently overwritten with now().
         if "creation_timestamp" in self.schema_fields:
-            fields["creation_timestamp"] = int(time.time() * 1000)  # milliseconds
+            ts = doc.metadata.get("creation_timestamp")
+            if isinstance(ts, (int, float)):
+                fields["creation_timestamp"] = int(ts)
+            else:
+                fields["creation_timestamp"] = int(time.time() * 1000)
         elif "created_at" in self.schema_fields:
-            # Memory schemas use Unix timestamp in seconds
-            fields["created_at"] = int(time.time())  # seconds
+            ts = doc.metadata.get("created_at")
+            if isinstance(ts, (int, float)):
+                fields["created_at"] = int(ts)
+            else:
+                fields["created_at"] = int(time.time())
 
         # Only add fields that exist in the schema definition
         # This makes the code completely schema-driven

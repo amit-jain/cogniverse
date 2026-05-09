@@ -1316,6 +1316,37 @@ async def endorse_memory(
     )
 
 
+# A.9 — restore a soft-deleted memory. The lifecycle scheduler flips
+# `metadata.archived=true` when a kind hits its TTL but not yet 2*TTL,
+# giving operators a window to pull a record back. After 2*TTL the
+# scheduler hard-deletes — restore is no-op then.
+
+
+class RestoreMemoryResponse(BaseModel):
+    tenant_id: str
+    memory_id: str
+    restored: bool
+
+
+@router.post(
+    "/tenants/{tenant_id}/memories/{memory_id}/restore",
+    response_model=RestoreMemoryResponse,
+)
+async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
+    """A.9 — clear the archived flag on a soft-deleted memory."""
+    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    ok = source_mm.restore_archived_memory(memory_id)
+    if not ok:
+        raise HTTPException(
+            404,
+            f"memory {memory_id} not found or not in archived state",
+        )
+    logger.info("Restored archived memory tenant=%s memory_id=%s", tenant_id, memory_id)
+    return RestoreMemoryResponse(
+        tenant_id=tenant_id, memory_id=memory_id, restored=True
+    )
+
+
 class SignatureVariantSelectRequest(BaseModel):
     variant_id: str
 
