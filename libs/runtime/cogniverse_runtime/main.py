@@ -27,6 +27,7 @@ from cogniverse_runtime.config_loader import get_config_loader
 from cogniverse_runtime.routers import (
     admin,
     agents,
+    c3,
     debug,
     events,
     graph,
@@ -936,6 +937,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(c3.router, prefix="/admin", tags=["c3-knowledge"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])
