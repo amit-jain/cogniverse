@@ -1,11 +1,11 @@
 # The Evaluation & Optimization Loop
 
-## Per-tenant signature variants (C.6)
+## Per-tenant signature variants
 
 Some tenants have unusual data shapes — a legal-knowledge tenant whose
 queries always carry `jurisdiction`, an audio tenant that needs an extra
 `channel_count` field — and benefit from a variant of an agent's DSPy
-signature that exposes those fields. C.6 ships **Option B** from the
+signature that exposes those fields. This change ships **Option B** from the
 plan: a small named-variant registry per agent. Tenants pick a variant
 via config; the artefact manager keys per `(tenant, agent, variant)`.
 
@@ -46,10 +46,10 @@ catch typos without breaking serving.
 | Tenant requests an unknown variant | Falls back to `default`, logs a warning. |
 
 The dataset-key shape (`agent::variant=<id>`) is intentionally a
-suffix on the bare agent type so existing artefacts (saved before C.6)
+suffix on the bare agent type so existing artefacts (saved before this change)
 map naturally onto the default variant — no migration needed.
 
-## Per-tenant canary promotion (C.5)
+## Per-tenant canary promotion
 
 `ArtifactManager` exposes a small state machine for safer promotions:
 
@@ -89,7 +89,7 @@ The active dataset (un-versioned) is what existing agents read at
 `__init__`; promote_canary_to_active copies the versioned snapshot into
 the active dataset name, so no agent code changes are required.
 
-## Snapshot + rollback (C.4)
+## Snapshot + rollback
 
 `promote_if_better` snapshots the soon-to-be-overwritten active artefacts
 into a versioned dataset before applying the new ones. The snapshot's
@@ -116,7 +116,7 @@ runs it after telemetry/tenant injection), so a new artefact lands without
 restart automatically — the rollback only needs to flip the active dataset
 content; the next request picks it up.
 
-## Regression-reject gate (C.2)
+## Regression-reject gate
 
 `ArtifactManager.promote_if_better` is the canonical write path for
 optimizer outputs. It compares the candidate against the active baseline
