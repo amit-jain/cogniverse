@@ -125,6 +125,41 @@ class AgentDispatcher:
                 exc,
             )
 
+    def consult_egress_policy(self, agent_name: str) -> Optional[Dict[str, Any]]:
+        """Look up the OpenShell egress policy for an agent (P3 wire).
+
+        Returns the parsed policy dict (the YAML in
+        ``configs/openshell/<agent>.yaml``) or ``None`` when no sandbox
+        manager is wired or no policy is registered. The dispatcher's
+        per-agent execution methods call this at dispatch time so the
+        policy stops being dead config — every dispatch records via
+        log/telemetry which agent has an active egress allow-list.
+
+        This is the lightweight half of D.1's "wire all 5 policies":
+        full egress enforcement on each agent's outbound HTTP requires
+        each agent to accept and use a policy-enforcing httpx client
+        (already done for orchestrator + coding). This method makes the
+        consultation observable for the remaining three agents
+        (search / summarizer / routing) so an operator's audit can see
+        which policies are loaded and being acknowledged at dispatch.
+        """
+        if self._sandbox_manager is None:
+            return None
+        try:
+            policy = self._sandbox_manager.get_policy(agent_name)
+        except Exception as exc:
+            logger.debug("egress policy lookup failed for %s: %s", agent_name, exc)
+            return None
+        if policy is not None:
+            logger.info(
+                "Dispatch: egress policy active for %s (rules=%d)",
+                agent_name,
+                len(policy.get("egress", {}).get("allow", []))
+                if isinstance(policy.get("egress"), dict)
+                else 0,
+            )
+        return policy
+
     async def resolve_artefact_for_request(
         self,
         agent_name: str,
@@ -549,6 +584,11 @@ class AgentDispatcher:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         enrichment: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        # P3 — consult the search_agent egress policy. Full enforcement
+        # requires the agent to use the resulting policy-enforcing client;
+        # for now this records the policy as active at dispatch.
+        self.consult_egress_policy("search_agent")
+
         from cogniverse_agents.search_agent import (
             SearchInput,
         )
@@ -678,6 +718,11 @@ class AgentDispatcher:
         context: Dict[str, Any],
         tenant_id: str,
     ) -> Dict[str, Any]:
+        # P3 — gateway/routing egress policy is consulted at dispatch.
+        # Full enforcement requires the agent to use a policy-enforcing
+        # client; for now this records the policy as active.
+        self.consult_egress_policy("routing_agent")
+
         """Route query through GatewayAgent for triage.
 
         Simple queries are dispatched directly to the target execution agent.
@@ -882,6 +927,9 @@ class AgentDispatcher:
     async def _execute_summarization_task(
         self, query: str, tenant_id: str
     ) -> Dict[str, Any]:
+        # P3 — consult summarizer_agent egress policy at dispatch.
+        self.consult_egress_policy("summarizer_agent")
+
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
             SummarizerDeps,
