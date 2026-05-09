@@ -3242,6 +3242,53 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### KnowledgeSummarizationAgent (C3.8)
+
+A2A agent that distills a slice of the knowledge layer (a subject area,
+a kind, optionally a time window) into a structured summary with
+citations. Distinct from `SummarizerAgent` (which summarises retrieval
+results in-flight): C3.8 summarises the *knowledge layer itself* and
+can promote the result into the org trunk via A.5 federation.
+
+```python
+from cogniverse_agents.knowledge_summarization_agent import (
+    KnowledgeSummarizationAgent,
+    KnowledgeSummarizationDeps,
+    KnowledgeSummarizationInput,
+)
+
+agent = KnowledgeSummarizationAgent(
+    deps=KnowledgeSummarizationDeps(tenant_id="acme:production"),
+)
+out = await agent._process_impl(KnowledgeSummarizationInput(
+    tenant_id="acme:production",
+    subject_keys=["policy:refunds", "policy:returns"],
+    title="Q1 buyer-protection summary",
+    since="2026-01-01T00:00:00Z",
+    until="2026-04-01T00:00:00Z",
+    promote=True,
+    actor_role="tenant_admin",
+    actor_id="tadm",
+))
+print(out.source_count, out.summary)
+print(out.promoted_to_org_trunk, out.promoted_memory_id)
+```
+
+The agent auto-registers a `knowledge_summary` schema (permanent,
+`org_shared`, `tenant_admin` pin floor) into the supplied
+`KnowledgeRegistry` if missing — so promotion works out of the box.
+
+| Behaviour | Detail |
+|---|---|
+| No matching memories | Empty summary; `metadata.reason = no_matching_memories`; promotion skipped. |
+| `actor_role` < `tenant_admin` + `promote=True` | Promotion refused (logged warning); summary still returned. |
+| Both `subject_keys` and `kinds` empty | Pulls every memory in the agent_name namespace (cap by `max_memories`). |
+| `since` or `until` set + memory missing `written_at` | Memory excluded. |
+| RLM `enabled` AND context > threshold | RLM summariser fires; `used_rlm=True`. |
+
+Capability strings: `knowledge_summarization`, `audit`,
+`federation_promoter`. Default `port=8026`.
+
 ### TemporalReasoningAgent (C3.6)
 
 A2A agent that compares knowledge about *one* subject across *multiple*
