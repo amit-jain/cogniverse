@@ -49,10 +49,26 @@ class MemoryAwareMixin:
         # We store it separately for memory operations only if needed
         self._memory_tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
+        # A.5 — opt-in federated read. When set, get_relevant_context
+        # pulls from both tenant and the org trunk and dedups by
+        # subject_key. Off by default to keep legacy agents unchanged.
+        self._memory_federation_enabled: bool = False
 
     def set_tenant_for_context(self, tenant_id: str) -> None:
         """Set tenant_id for instruction injection without full memory init."""
         self._memory_tenant_id = tenant_id
+
+    def enable_org_trunk_federation(self, enabled: bool = True) -> None:
+        """Toggle the A.5 federated read path on this agent.
+
+        When enabled, ``get_relevant_context`` queries both the tenant
+        and the org trunk and dedups by ``subject_key`` (tenant wins).
+        Agents that should always see org-trunk knowledge in their
+        retrieval (read-shaped agents like SearchAgent, audit, etc.)
+        can flip this on at construction; write-heavy agents that
+        should stay tenant-isolated leave it off.
+        """
+        self._memory_federation_enabled = bool(enabled)
 
     def initialize_memory(
         self,
@@ -197,7 +213,19 @@ class MemoryAwareMixin:
         self, query: str, top_k: Optional[int] = 5
     ) -> Optional[str]:
         """
-        Get relevant context from memory for a query
+        Get relevant context from memory for a query.
+
+        When ``self._memory_federation_enabled`` is True (and a
+        knowledge_registry is wired on the underlying manager), the
+        retrieval queries BOTH the tenant's own memories AND the org
+        trunk, dedups by ``subject_key`` (tenant overlay wins), and
+        applies trust + reconciliation across the union. This is the
+        A.5 plan-mandated behaviour: an agent reading "what do we
+        know about X" sees both tenant-private knowledge and any
+        org-shared trunk knowledge in one pass.
+
+        When the flag is unset (default), behaviour is the legacy
+        tenant-only path so existing code is unchanged.
 
         Args:
             query: Query to search memory for
@@ -219,6 +247,16 @@ class MemoryAwareMixin:
                 agent_name=self._memory_agent_name,
                 top_k=top_k,
             )
+
+            # A.5 — federate across tenant + org trunk when enabled. We
+            # ALWAYS use search for the tenant side (so the query's
+            # semantic relevance still ranks results) but fall back to
+            # get_all_memories on the org trunk (Mem0's per-tenant
+            # search filter cannot reach a different user_id). Then
+            # dedup by subject_key with tenant winning, and let
+            # _apply_trust_and_reconcile do its thing on the union.
+            if getattr(self, "_memory_federation_enabled", False):
+                results = self._federate_with_org_trunk(results, top_k or 5)
 
             if not results:
                 return None
@@ -245,6 +283,77 @@ class MemoryAwareMixin:
         except Exception as e:
             logger.error(f"Failed to get relevant context: {e}")
             return None
+
+    def _federate_with_org_trunk(
+        self, tenant_results: List[Dict[str, Any]], top_k: int
+    ) -> List[Dict[str, Any]]:
+        """Merge tenant search hits with org-trunk memories, tenant wins on subject.
+
+        Org trunk fetched via the Mem0MemoryManager singleton for the
+        org-trunk tenant_id; that singleton must be initialised
+        elsewhere (typically by an admin bootstrap that registers the
+        org-trunk schema). When it isn't, the federation falls back to
+        tenant-only — federation is opt-in, not load-bearing.
+        """
+        registry = getattr(self.memory_manager, "_knowledge_registry", None)
+        if registry is None:
+            # Federation requires the schema layer (sensitivity gating,
+            # reconciliation policies); without it we can't honor A.5
+            # semantics. Return tenant results unchanged.
+            return tenant_results
+
+        from cogniverse_core.memory.federation import (
+            _subject_key as _fed_subject_key,
+        )
+        from cogniverse_core.memory.federation import (
+            org_trunk_tenant_id,
+        )
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+
+        trunk_tenant = org_trunk_tenant_id(self._memory_tenant_id)
+        try:
+            trunk_mm = Mem0MemoryManager(trunk_tenant)
+        except Exception as exc:
+            logger.debug("Federation: could not acquire org-trunk manager: %s", exc)
+            return tenant_results
+        if not getattr(trunk_mm, "memory", None):
+            # Org trunk not initialised in this deployment — silently
+            # degrade to tenant-only retrieval.
+            return tenant_results
+
+        try:
+            trunk_rows = trunk_mm.get_all_memories(
+                tenant_id=trunk_tenant,
+                agent_name=self._memory_agent_name,
+            )
+        except Exception as exc:
+            logger.debug("Federation: org-trunk get_all failed: %s", exc)
+            return tenant_results
+
+        # Tag origin so downstream consumers (and the audit chain) can
+        # see which side a hit came from.
+        for r in tenant_results:
+            r.setdefault("_federation_origin", "tenant")
+        for r in trunk_rows:
+            r.setdefault("_federation_origin", "org_trunk")
+
+        # Dedup: tenant hits come first, so they win on subject collision.
+        chosen: Dict[str, Dict[str, Any]] = {}
+        unsubjected: List[Dict[str, Any]] = []
+        for row in tenant_results + trunk_rows:
+            subject = _fed_subject_key(row)
+            if not subject:
+                unsubjected.append(row)
+                continue
+            if subject in chosen:
+                continue
+            chosen[subject] = row
+
+        merged = list(chosen.values()) + unsubjected
+        # Cap the union to top_k so downstream prompt budgets stay
+        # predictable; trust ranking happens after this in
+        # _apply_trust_and_reconcile.
+        return merged[: max(top_k, len(tenant_results))]
 
     def _apply_trust_and_reconcile(
         self, results: List[Dict[str, Any]]
