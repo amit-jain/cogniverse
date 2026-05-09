@@ -1128,6 +1128,99 @@ async def list_pins(tenant_id: str) -> PinListResponse:
     )
 
 
+# A.5 — Promote a tenant memory to the org trunk so every tenant in the
+# org sees it. Schema sensitivity gates which kinds are promotable;
+# Pinnable role gates which actors may promote. Org-shared by design;
+# tenant_private memories are forbidden from promotion regardless of
+# actor authority.
+
+
+class PromoteToOrgTrunkRequest(BaseModel):
+    actor_role: str  # Pinnable enum value: tenant_admin / org_admin
+    actor_id: str
+
+
+class PromoteToOrgTrunkResponse(BaseModel):
+    source_tenant_id: str
+    source_memory_id: str
+    promoted_memory_id: str
+    org_trunk_tenant_id: str
+
+
+@router.post(
+    "/tenants/{tenant_id}/memories/{memory_id}/promote_to_org_trunk",
+    response_model=PromoteToOrgTrunkResponse,
+)
+async def promote_to_org_trunk(
+    tenant_id: str, memory_id: str, body: PromoteToOrgTrunkRequest
+) -> PromoteToOrgTrunkResponse:
+    """A.5 — copy a memory into the org trunk (admin-gated)."""
+    from cogniverse_core.memory.federation import (
+        FederationDeniedError,
+        FederationService,
+    )
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.pinning import Pinnable
+    from cogniverse_core.memory.schema import build_default_registry
+
+    if not body.actor_id.strip():
+        raise HTTPException(400, "actor_id must be non-empty")
+    try:
+        actor_role = Pinnable(body.actor_role)
+    except ValueError as exc:
+        valid = ", ".join(p.value for p in Pinnable)
+        raise HTTPException(
+            400, f"invalid actor_role {body.actor_role!r}; expected one of: {valid}"
+        ) from exc
+
+    # Locate the source memory in the tenant's store. We don't know
+    # which agent_name owns it, so go through the tenant-wide get_all
+    # (Mem0 doesn't require agent_id when user_id is given).
+    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    try:
+        rows_blob = source_mm.memory.get_all(user_id=tenant_id)
+    except Exception as exc:
+        raise HTTPException(503, f"could not list tenant memories: {exc}") from exc
+    rows = (
+        rows_blob.get("results", [])
+        if isinstance(rows_blob, dict)
+        else (rows_blob or [])
+    )
+    src = next((r for r in rows if str(r.get("id")) == memory_id), None)
+    if src is None:
+        raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
+
+    svc = FederationService(
+        memory_manager_factory=lambda tid: Mem0MemoryManager(tid),
+        registry=build_default_registry(),
+    )
+    try:
+        result = svc.promote_to_org_trunk(
+            source_tenant_id=tenant_id,
+            source_memory=src,
+            actor_role=actor_role,
+            actor_id=body.actor_id,
+        )
+    except FederationDeniedError as exc:
+        raise HTTPException(403, str(exc)) from exc
+
+    logger.info(
+        "Promoted memory tenant=%s memory_id=%s by=%s/%s -> trunk=%s/%s",
+        tenant_id,
+        memory_id,
+        body.actor_role,
+        body.actor_id,
+        result.org_trunk_tenant_id,
+        result.promoted_memory_id,
+    )
+    return PromoteToOrgTrunkResponse(
+        source_tenant_id=tenant_id,
+        source_memory_id=result.source_memory_id,
+        promoted_memory_id=result.promoted_memory_id,
+        org_trunk_tenant_id=result.org_trunk_tenant_id,
+    )
+
+
 class SignatureVariantSelectRequest(BaseModel):
     variant_id: str
 
