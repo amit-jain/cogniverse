@@ -152,6 +152,94 @@
         "multi_agent_coordination"
       ],
       "timeout": 120
+    },
+    "citation_tracing_agent": {
+      "enabled": false,
+      "url": "http://localhost:8019",
+      "capabilities": [
+        "citation_tracing",
+        "audit",
+        "provenance_consumer"
+      ],
+      "modalities": []
+    },
+    "contradiction_reconciliation_agent": {
+      "enabled": false,
+      "url": "http://localhost:8020",
+      "capabilities": [
+        "contradiction_reconciliation",
+        "audit"
+      ],
+      "modalities": []
+    },
+    "multi_document_synthesis_agent": {
+      "enabled": false,
+      "url": "http://localhost:8021",
+      "capabilities": [
+        "multi_document_synthesis",
+        "citation_preservation"
+      ],
+      "modalities": [
+        "DOCUMENT"
+      ]
+    },
+    "kg_traversal_agent": {
+      "enabled": false,
+      "url": "http://localhost:8022",
+      "capabilities": [
+        "knowledge_graph_traversal",
+        "audit"
+      ],
+      "modalities": []
+    },
+    "cross_tenant_comparison_agent": {
+      "enabled": false,
+      "url": "http://localhost:8023",
+      "capabilities": [
+        "cross_tenant_comparison",
+        "audit",
+        "federation_consumer"
+      ],
+      "modalities": []
+    },
+    "federated_query_agent": {
+      "enabled": false,
+      "url": "http://localhost:8024",
+      "capabilities": [
+        "federated_query",
+        "audit",
+        "federation_consumer"
+      ],
+      "modalities": []
+    },
+    "temporal_reasoning_agent": {
+      "enabled": false,
+      "url": "http://localhost:8025",
+      "capabilities": [
+        "temporal_reasoning",
+        "audit"
+      ],
+      "modalities": []
+    },
+    "knowledge_summarization_agent": {
+      "enabled": false,
+      "url": "http://localhost:8026",
+      "capabilities": [
+        "knowledge_summarization",
+        "audit",
+        "federation_promoter"
+      ],
+      "modalities": []
+    },
+    "audit_explanation_agent": {
+      "enabled": false,
+      "url": "http://localhost:8027",
+      "capabilities": [
+        "audit_explanation",
+        "audit",
+        "provenance_consumer"
+      ],
+      "modalities": []
     }
   },
   "llm_config": {

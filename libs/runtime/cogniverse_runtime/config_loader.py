@@ -45,6 +45,38 @@ class ConfigLoader:
         "query_enhancement_agent": "cogniverse_agents.query_enhancement_agent:QueryEnhancementAgent",
         "profile_selection_agent": "cogniverse_agents.profile_selection_agent:ProfileSelectionAgent",
         "orchestrator_agent": "cogniverse_agents.orchestrator_agent:OrchestratorAgent",
+        # Knowledge-system agents (C3.1–C3.9). Off by default in config.json so
+        # operators opt in per deployment; entries here make them loadable.
+        "citation_tracing_agent": (
+            "cogniverse_agents.citation_tracing_agent:CitationTracingAgent"
+        ),
+        "contradiction_reconciliation_agent": (
+            "cogniverse_agents.contradiction_reconciliation_agent"
+            ":ContradictionReconciliationAgent"
+        ),
+        "multi_document_synthesis_agent": (
+            "cogniverse_agents.multi_document_synthesis_agent"
+            ":MultiDocumentSynthesisAgent"
+        ),
+        "kg_traversal_agent": (
+            "cogniverse_agents.kg_traversal_agent:KnowledgeGraphTraversalAgent"
+        ),
+        "cross_tenant_comparison_agent": (
+            "cogniverse_agents.cross_tenant_comparison_agent:CrossTenantComparisonAgent"
+        ),
+        "federated_query_agent": (
+            "cogniverse_agents.federated_query_agent:FederatedQueryAgent"
+        ),
+        "temporal_reasoning_agent": (
+            "cogniverse_agents.temporal_reasoning_agent:TemporalReasoningAgent"
+        ),
+        "knowledge_summarization_agent": (
+            "cogniverse_agents.knowledge_summarization_agent"
+            ":KnowledgeSummarizationAgent"
+        ),
+        "audit_explanation_agent": (
+            "cogniverse_agents.audit_explanation_agent:AuditExplanationAgent"
+        ),
     }
 
     def __init__(self):
