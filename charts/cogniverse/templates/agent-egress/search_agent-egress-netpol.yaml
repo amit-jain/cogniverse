@@ -1,0 +1,49 @@
+{{- if .Values.networkPolicy.agentEgress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cogniverse-search-agent-egress
+  namespace: cogniverse
+  labels:
+    cogniverse-agent: search_agent
+spec:
+  podSelector:
+    matchLabels:
+      app: cogniverse
+      cogniverse-agent: search_agent
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cogniverse
+      podSelector:
+        matchLabels:
+          app: vespa-service
+    ports:
+    - port: 8080
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cogniverse
+      podSelector:
+        matchLabels:
+          app: ollama-service
+    ports:
+    - port: 11434
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+{{- end }}

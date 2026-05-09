@@ -1438,6 +1438,14 @@ networkPolicy:
     - Ingress
     - Egress
 
+  # F6.1 — per-agent egress allow-listing generated from
+  # configs/agent_policies/*.yaml by `cogniverse-runtime egress-netpol`.
+  # When enabled, kernel-level enforcement (via the cluster CNI) drops
+  # any outbound from a cogniverse agent pod that isn't in the agent's
+  # declared allow-list. Independent of the legacy `enabled` flag above.
+  agentEgress:
+    enabled: false
+
 # ===========================================
 # Monitoring
 # ===========================================

@@ -1581,6 +1581,7 @@ def run_egress_netpol(
     service_map: Dict[str, str],
     namespace: str = "cogniverse",
     pod_app_label: str = "cogniverse",
+    helm_conditional: Optional[str] = None,
 ) -> Dict[str, Any]:
     """D.1 — emit one k8s NetworkPolicy CRD per agent policy YAML.
 
@@ -1741,7 +1742,16 @@ def run_egress_netpol(
 
         out_path = out / f"{agent_name}-egress-netpol.yaml"
         with open(out_path, "w") as f:
+            if helm_conditional:
+                # Wrap the resource in a helm `if` so the chart's
+                # values.yaml flag toggles whether the policy applies
+                # at install time. Without this wrapper, the YAMLs
+                # would always be active in any helm-managed cluster
+                # they're committed to.
+                f.write("{{- if " + helm_conditional + " }}\n")
             _yaml.safe_dump(netpol_doc, f, sort_keys=False, default_flow_style=False)
+            if helm_conditional:
+                f.write("{{- end }}\n")
         written.append(str(out_path))
         logger.info(
             "Wrote NetworkPolicy for %s → %s (%d egress rules)",
@@ -1931,6 +1941,16 @@ def main():
         help="Pod `app=` label that scopes the policies to cogniverse pods",
     )
     parser.add_argument(
+        "--helm-conditional",
+        default=None,
+        help=(
+            "When set, wrap each emitted YAML in `{{- if <expr> }}` ... "
+            "`{{- end }}` so the helm chart's values.yaml flag toggles "
+            "whether the NetworkPolicy applies. Example: "
+            "`.Values.networkPolicy.agentEgress.enabled`."
+        ),
+    )
+    parser.add_argument(
         "--lookback-hours",
         type=float,
         default=24.0,
@@ -2035,6 +2055,7 @@ def main():
             service_map=sm,
             namespace=args.netpol_namespace,
             pod_app_label=args.netpol_app_label,
+            helm_conditional=args.helm_conditional,
         )
     elif args.mode == "ab-compare":
         if not args.queries_dataset:
