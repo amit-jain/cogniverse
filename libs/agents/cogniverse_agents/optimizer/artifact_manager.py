@@ -719,13 +719,23 @@ class ArtifactManager:
         agent_type: str,
         *,
         request_seed: str,
+        variant_id: str = DEFAULT_VARIANT_ID,
     ) -> Dict[str, Any]:
         """Choose canary vs active for a given request and return its prompts.
 
         Returns ``{"prompts": ..., "served_from": "active|canary|default",
-        "version": int | None}``. Stable per request_seed.
+        "version": int | None, "variant_id": str}``. Stable per request_seed.
+
+        F2.2 wire — when ``variant_id`` is non-default, the dataset names
+        consulted are the variant-qualified ones
+        (``dspy-prompts-{tenant}-{agent}::variant={vid}-vN``). Two variants
+        of the same agent therefore have entirely separate canary state +
+        prompts datasets, so an operator can canary a tenant-specific
+        signature variant without disturbing the default.
         """
-        state = await self.get_artefact_state(agent_type)
+        # Apply variant qualification once; downstream lookups use this key.
+        agent_key = self.qualified_agent_key(agent_type, variant_id)
+        state = await self.get_artefact_state(agent_key)
         canary = state.get("canary")
         active = state.get("active")
 
@@ -735,41 +745,45 @@ class ArtifactManager:
             try:
                 df = await self._provider.datasets.get_dataset(
                     name=self._versioned_dataset_name(
-                        "prompts", agent_type, int(canary["version"])
+                        "prompts", agent_key, int(canary["version"])
                     )
                 )
                 return {
                     "prompts": self._extract_prompts_from_dataframe(df),
                     "served_from": "canary",
                     "version": int(canary["version"]),
+                    "variant_id": variant_id,
                 }
             except (KeyError, ValueError):
                 logger.warning(
-                    "canary v%d dataset missing for %s/%s; falling back",
+                    "canary v%d dataset missing for %s/%s (variant=%s); falling back",
                     canary["version"],
                     self._tenant_id,
                     agent_type,
+                    variant_id,
                 )
 
         if active is not None:
             try:
                 df = await self._provider.datasets.get_dataset(
                     name=self._versioned_dataset_name(
-                        "prompts", agent_type, int(active["version"])
+                        "prompts", agent_key, int(active["version"])
                     )
                 )
                 return {
                     "prompts": self._extract_prompts_from_dataframe(df),
                     "served_from": "active",
                     "version": int(active["version"]),
+                    "variant_id": variant_id,
                 }
             except (KeyError, ValueError):
                 pass
 
         return {
-            "prompts": await self.load_prompts(agent_type),
+            "prompts": await self.load_prompts(agent_key),
             "served_from": "default",
             "version": None,
+            "variant_id": variant_id,
         }
 
     async def snapshot_active(self, agent_type: str) -> Optional[Dict[str, Any]]:

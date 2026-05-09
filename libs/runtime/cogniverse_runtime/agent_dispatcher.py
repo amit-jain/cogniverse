@@ -190,16 +190,53 @@ class AgentDispatcher:
                 exc,
             )
             return None
+
+        # F3.2 — resolve the tenant's selected signature variant for this
+        # agent from the admin-runtime override dict (PUT
+        # /admin/tenants/{t}/signature_variants/{agent}). Falls back to
+        # the default variant when no admin selection exists. This is the
+        # consumer for the variant-selection admin endpoint that was
+        # previously a write-only black hole.
+        variant_id = self._resolve_signature_variant(tenant_id, agent_name)
+
         try:
-            return await am.load_for_request(agent_name, request_seed=request_seed)
+            return await am.load_for_request(
+                agent_name,
+                request_seed=request_seed,
+                variant_id=variant_id,
+            )
         except Exception as exc:
             logger.debug(
-                "load_for_request(%s, seed=%s) failed: %s",
+                "load_for_request(%s, seed=%s, variant=%s) failed: %s",
                 agent_name,
                 request_seed,
+                variant_id,
                 exc,
             )
             return None
+
+    @staticmethod
+    def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
+        """Read the tenant's selected variant for an agent from admin overrides.
+
+        Falls back to ``DEFAULT_VARIANT_ID`` when no admin PUT has set one.
+        Lazy import — admin lives in the runtime layer, this dispatcher
+        also lives there but we keep the import local so test setups
+        that don't load admin still work.
+        """
+        from cogniverse_agents.optimizer.signature_variants import (
+            DEFAULT_VARIANT_ID,
+        )
+
+        try:
+            from cogniverse_runtime.routers.admin import (
+                _signature_variant_overrides as _admin_overrides,
+            )
+        except Exception:
+            return DEFAULT_VARIANT_ID
+
+        per_tenant = _admin_overrides.get(tenant_id) or {}
+        return per_tenant.get(agent_name) or DEFAULT_VARIANT_ID
 
     async def dispatch(
         self,
