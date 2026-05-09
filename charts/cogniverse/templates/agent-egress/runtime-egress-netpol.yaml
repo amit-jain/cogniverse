@@ -2,15 +2,14 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: cogniverse-coding-agent-egress
+  name: cogniverse-runtime-egress
   namespace: cogniverse
   labels:
-    cogniverse-agent: coding_agent
+    cogniverse-component: runtime
 spec:
   podSelector:
     matchLabels:
-      app: cogniverse
-      cogniverse-agent: coding_agent
+      app.kubernetes.io/component: runtime
   policyTypes:
   - Egress
   egress:
@@ -35,5 +34,25 @@ spec:
     - port: 53
       protocol: UDP
     - port: 53
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cogniverse
+      podSelector:
+        matchLabels:
+          app: cogniverse-runtime
+    ports:
+    - port: 8000
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: cogniverse
+      podSelector:
+        matchLabels:
+          app: vespa-service
+    ports:
+    - port: 8080
       protocol: TCP
 {{- end }}

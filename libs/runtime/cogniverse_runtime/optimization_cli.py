@@ -1582,13 +1582,29 @@ def run_egress_netpol(
     namespace: str = "cogniverse",
     pod_app_label: str = "cogniverse",
     helm_conditional: Optional[str] = None,
+    unified_pod_selector: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """D.1 — emit one k8s NetworkPolicy CRD per agent policy YAML.
+    """D.1 — emit k8s NetworkPolicy CRDs from agent policy YAMLs.
 
     Reads every YAML in ``policy_dir`` whose
     ``network_policies.deny_all_other`` is true, translates the egress
-    list into a NetworkPolicy resource, and writes it under
-    ``output_dir/<agent>-egress-netpol.yaml``.
+    list into NetworkPolicy egress rules.
+
+    Two emit modes:
+      * **per-agent (default)**: writes one NetworkPolicy per agent under
+        ``output_dir/<agent>-egress-netpol.yaml`` selecting on
+        ``app=<pod_app_label>, cogniverse-agent=<agent>``. Use this when
+        each agent runs in its own Deployment so the labels match.
+      * **unified-runtime** (``unified_pod_selector`` set): emits ONE
+        NetworkPolicy named ``runtime-egress-netpol.yaml`` whose
+        ``spec.egress`` is the de-duplicated UNION of every agent's
+        allowed destinations and whose ``spec.podSelector.matchLabels``
+        come from ``unified_pod_selector``. Use this when every agent
+        runs inside a single shared runtime pod (the default helm chart
+        topology) — per-agent L4 enforcement is impossible there, but
+        cluster-wide deny-all-other-egress with a union allowlist is
+        still real defense-in-depth on top of the application-layer
+        OpenShell sandbox enforcement.
 
     Why this exists: the agent policy YAMLs declare per-agent egress
     constraints (Vespa for SearchAgent, Ollama for SummarizerAgent,
@@ -1603,7 +1619,7 @@ def run_egress_netpol(
             ``configs/agent_policies/``).
         output_dir: Where to write the generated NetworkPolicy YAMLs.
             Operators check these into the helm chart's
-            ``templates/networkpolicies/`` so helm applies them at
+            ``templates/agent-egress/`` so helm applies them at
             deploy time.
         service_map: Logical service name → ``namespace/service-name:port``
             mapping (e.g. ``vespa=cogniverse/vespa-service:8080``). The
@@ -1611,9 +1627,14 @@ def run_egress_netpol(
             against this map's values; the resulting NetworkPolicy uses
             podSelectors that target those services.
         namespace: k8s namespace the NetworkPolicy lives in.
-        pod_app_label: ``app=`` label that selects cogniverse pods.
-            Combined with ``cogniverse-agent=<agent_name>`` to scope
-            each NetworkPolicy to a single agent's pods.
+        pod_app_label: ``app=`` label that selects cogniverse pods in
+            per-agent mode. Ignored when ``unified_pod_selector`` is
+            set.
+        helm_conditional: Wrap each emitted YAML in a helm ``{{- if X }}``
+            … ``{{- end }}`` so a values flag toggles application.
+        unified_pod_selector: When provided, emit a single union policy
+            selecting on these labels (e.g.
+            ``{"app.kubernetes.io/component": "runtime"}``).
 
     Returns a summary dict suitable for the CLI's stdout JSON.
     """
@@ -1649,6 +1670,8 @@ def run_egress_netpol(
     written: List[str] = []
     skipped: List[Dict[str, str]] = []
 
+    # First pass: read every eligible policy + collect (agent, [egress_rules]).
+    per_agent_rules: List[tuple] = []  # (agent_name, [egress_rules])
     for yaml_path in sorted(_Path(policy_dir).glob("*.yaml")):
         agent_name = yaml_path.stem
         with open(yaml_path) as f:
@@ -1720,45 +1743,90 @@ def run_egress_netpol(
             }
         )
 
+        per_agent_rules.append((agent_name, egress_rules))
+
+    # Second pass: emit either one union policy (unified mode) or one
+    # policy per agent (legacy per-agent mode).
+    if unified_pod_selector:
+        # De-duplicate egress rules across agents — two agents that both
+        # need DNS or both need vespa shouldn't produce duplicate yaml
+        # entries.
+        union: List[Dict[str, Any]] = []
+        seen_keys = set()
+        for _agent, rules in per_agent_rules:
+            for rule in rules:
+                key = _yaml.safe_dump(rule, sort_keys=True)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                union.append(rule)
+
         netpol_doc = {
             "apiVersion": "networking.k8s.io/v1",
             "kind": "NetworkPolicy",
             "metadata": {
-                "name": f"cogniverse-{agent_name.replace('_', '-')}-egress",
+                "name": "cogniverse-runtime-egress",
                 "namespace": namespace,
-                "labels": {"cogniverse-agent": agent_name},
+                "labels": {"cogniverse-component": "runtime"},
             },
             "spec": {
-                "podSelector": {
-                    "matchLabels": {
-                        "app": pod_app_label,
-                        "cogniverse-agent": agent_name,
-                    }
-                },
+                "podSelector": {"matchLabels": dict(unified_pod_selector)},
                 "policyTypes": ["Egress"],
-                "egress": egress_rules,
+                "egress": union,
             },
         }
-
-        out_path = out / f"{agent_name}-egress-netpol.yaml"
+        out_path = out / "runtime-egress-netpol.yaml"
         with open(out_path, "w") as f:
             if helm_conditional:
-                # Wrap the resource in a helm `if` so the chart's
-                # values.yaml flag toggles whether the policy applies
-                # at install time. Without this wrapper, the YAMLs
-                # would always be active in any helm-managed cluster
-                # they're committed to.
                 f.write("{{- if " + helm_conditional + " }}\n")
             _yaml.safe_dump(netpol_doc, f, sort_keys=False, default_flow_style=False)
             if helm_conditional:
                 f.write("{{- end }}\n")
         written.append(str(out_path))
         logger.info(
-            "Wrote NetworkPolicy for %s → %s (%d egress rules)",
-            agent_name,
+            "Wrote unified NetworkPolicy → %s (%d egress rules from %d agents)",
             out_path,
-            len(egress_rules),
+            len(union),
+            len(per_agent_rules),
         )
+    else:
+        for agent_name, egress_rules in per_agent_rules:
+            netpol_doc = {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "NetworkPolicy",
+                "metadata": {
+                    "name": f"cogniverse-{agent_name.replace('_', '-')}-egress",
+                    "namespace": namespace,
+                    "labels": {"cogniverse-agent": agent_name},
+                },
+                "spec": {
+                    "podSelector": {
+                        "matchLabels": {
+                            "app": pod_app_label,
+                            "cogniverse-agent": agent_name,
+                        }
+                    },
+                    "policyTypes": ["Egress"],
+                    "egress": egress_rules,
+                },
+            }
+
+            out_path = out / f"{agent_name}-egress-netpol.yaml"
+            with open(out_path, "w") as f:
+                if helm_conditional:
+                    f.write("{{- if " + helm_conditional + " }}\n")
+                _yaml.safe_dump(
+                    netpol_doc, f, sort_keys=False, default_flow_style=False
+                )
+                if helm_conditional:
+                    f.write("{{- end }}\n")
+            written.append(str(out_path))
+            logger.info(
+                "Wrote NetworkPolicy for %s → %s (%d egress rules)",
+                agent_name,
+                out_path,
+                len(egress_rules),
+            )
 
     return {
         "status": "ok",
@@ -1767,6 +1835,7 @@ def run_egress_netpol(
         "written": written,
         "skipped": skipped,
         "service_map": service_map,
+        "mode": "unified" if unified_pod_selector else "per-agent",
     }
 
 
@@ -1951,6 +2020,21 @@ def main():
         ),
     )
     parser.add_argument(
+        "--unified-pod-selector",
+        action="append",
+        default=[],
+        help=(
+            "key=value (repeatable). When set, emit ONE NetworkPolicy "
+            "selecting on these labels with the de-duplicated UNION of "
+            "every agent's egress destinations. Use this for the "
+            "default unified-runtime topology where all agents run in "
+            "the same pod. Example: "
+            "`--unified-pod-selector app.kubernetes.io/component=runtime`. "
+            "When omitted, emits one NetworkPolicy per agent (legacy "
+            "per-agent-pod topology)."
+        ),
+    )
+    parser.add_argument(
         "--lookback-hours",
         type=float,
         default=24.0,
@@ -2049,6 +2133,16 @@ def main():
                 parser.error(f"--service-map {pair!r} missing '=' separator")
             k, v = pair.split("=", 1)
             sm[k.strip()] = v.strip()
+        unified_selectors: Optional[Dict[str, str]] = None
+        if args.unified_pod_selector:
+            unified_selectors = {}
+            for pair in args.unified_pod_selector:
+                if "=" not in pair:
+                    parser.error(
+                        f"--unified-pod-selector {pair!r} missing '=' separator"
+                    )
+                k, v = pair.split("=", 1)
+                unified_selectors[k.strip()] = v.strip()
         result = run_egress_netpol(
             policy_dir=args.policy_dir,
             output_dir=args.output_dir,
@@ -2056,6 +2150,7 @@ def main():
             namespace=args.netpol_namespace,
             pod_app_label=args.netpol_app_label,
             helm_conditional=args.helm_conditional,
+            unified_pod_selector=unified_selectors,
         )
     elif args.mode == "ab-compare":
         if not args.queries_dataset:
