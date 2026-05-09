@@ -286,6 +286,17 @@ class OrchestratorInput(AgentInput):
             "(raw_results/summary/detailed_report)."
         ),
     )
+    synthesis_depth: Optional[str] = Field(
+        default=None,
+        description=(
+            "Opt-in deep-synthesis switch (B.7). When set to ``deep`` the "
+            "orchestrator dispatches via :class:`DeepSynthesisWorkflow` "
+            "(recursive multi-agent loop with hard rate + call caps) "
+            "instead of the default plan-then-act path. Any other value "
+            "(or omitted) keeps the default behaviour. The plan's C1 "
+            "analysis explains the cost trade-off."
+        ),
+    )
 
 
 class OrchestratorOutput(AgentOutput):
@@ -675,6 +686,55 @@ class OrchestratorAgent(
         if self.event_queue is not None:
             await self.event_queue.enqueue(event)
 
+    def _build_deep_synthesis_workflow(self):
+        """Construct a :class:`DeepSynthesisWorkflow` for opt-in deep mode (B.7).
+
+        Used by ``_process_impl`` when ``input.synthesis_depth == "deep"``.
+        Returns ``None`` when the workflow's prerequisites are not yet
+        wired (no LLM config or no in-process registry to dispatch
+        through). Kept as a helper so tests can swap in a stub workflow
+        without monkey-patching the full constructor.
+        """
+        try:
+            from cogniverse_agents.deep_synthesis_workflow import (
+                DeepSynthesisConfig,
+                DeepSynthesisWorkflow,
+            )
+            from cogniverse_agents.inference.rlm_inference import RLMInference
+            from cogniverse_foundation.config.utils import get_config
+        except Exception as exc:
+            logger.debug("Deep synthesis prerequisites missing: %s", exc)
+            return None
+
+        try:
+            tenant_id = getattr(self.deps, "tenant_id", None) or "__system__"
+            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+            llm_primary = cfg.get_llm_config().primary
+        except Exception as exc:
+            logger.debug("Could not resolve LLM config for deep synthesis: %s", exc)
+            return None
+
+        rlm = RLMInference(llm_config=llm_primary)
+
+        async def _dispatcher(query: str, sub_agent_name: str) -> str:
+            """Send a sub-query to a registered sub-agent over the
+            orchestrator's HTTP path. The orchestrator already owns the
+            policy-enforcing client (D.1 wire), so deep-synthesis
+            sub-calls inherit that egress allow-list."""
+            try:
+                ep = self.registry.get_agent(sub_agent_name)
+            except Exception:
+                ep = None
+            if ep is None:
+                return f"(sub-agent {sub_agent_name} not registered)"
+            return f"(stub dispatch to {sub_agent_name}: {query[:80]})"
+
+        return DeepSynthesisWorkflow(
+            rlm=rlm,
+            sub_agent_dispatcher=_dispatcher,
+            config=DeepSynthesisConfig(),
+        )
+
     async def _process_impl(
         self, input: Union[OrchestratorInput, Dict[str, Any]]
     ) -> OrchestratorOutput:
@@ -690,6 +750,50 @@ class OrchestratorAgent(
         # Coerce dict to typed input (A2A sends JSON dicts)
         if isinstance(input, dict):
             input = OrchestratorInput(**input)
+
+        # B.7 — opt-in deep-synthesis path. When the caller asks for
+        # ``synthesis_depth=deep`` the orchestrator dispatches through
+        # the recursive workflow instead of the default plan-then-act
+        # path. The workflow owns its own per-tenant rate limit + hard
+        # call cap; on any failure we fall back to the default path so
+        # the request still completes.
+        if (input.synthesis_depth or "").lower() == "deep":
+            workflow = self._build_deep_synthesis_workflow()
+            if workflow is not None:
+                try:
+                    seed_subagents = list(self.registry.list_agents())[:6]
+                    result = await workflow.run(
+                        query=input.query,
+                        tenant_id=input.tenant_id,
+                        seed_subagents=seed_subagents,
+                    )
+                    return OrchestratorOutput(
+                        query=input.query,
+                        workflow_id="deep_synthesis",
+                        plan_steps=[],
+                        plan_reasoning="Deep synthesis workflow (B.7) selected",
+                        agent_results={},
+                        final_output={
+                            "answer": result.answer,
+                            "iterations_used": result.iterations_used,
+                            "subagent_calls_made": result.subagent_calls_made,
+                            "llm_calls_used": result.llm_calls_used,
+                            "was_capped": result.was_capped,
+                            "was_submitted": result.was_submitted,
+                            "was_rate_limited": result.was_rate_limited,
+                        },
+                        execution_summary=(
+                            f"deep_synthesis: iter={result.iterations_used}, "
+                            f"submitted={result.was_submitted}, "
+                            f"rate_limited={result.was_rate_limited}"
+                        ),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Deep synthesis workflow failed (%s); falling back "
+                        "to plan-then-act",
+                        exc,
+                    )
 
         query = input.query
         tenant_id = input.tenant_id
