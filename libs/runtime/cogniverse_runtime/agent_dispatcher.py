@@ -927,6 +927,24 @@ class AgentDispatcher:
         self._apply_artefact_overlay(agent, context)
 
         gateway_ctx = gateway_context or {}
+        # H10 / B.7 — propagate the synthesis_depth opt-in from the
+        # caller's context. Three precedence levels, gateway-trust > admin
+        # override > none:
+        #   1. function-arg gateway_context (set by the dispatcher's own
+        #      gateway → orchestration handoff)
+        #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
+        #      that want to mimic the gateway-classified shape)
+        #   3. context["synthesis_depth"] (plain admin / direct callers)
+        nested_gateway = context.get("gateway_context") or {}
+        synthesis_depth = (
+            gateway_ctx.get("synthesis_depth")
+            or (
+                nested_gateway.get("synthesis_depth")
+                if isinstance(nested_gateway, dict)
+                else None
+            )
+            or context.get("synthesis_depth")
+        )
         input_data = OrchestratorInput(
             query=query,
             tenant_id=tenant_id,
@@ -934,6 +952,7 @@ class AgentDispatcher:
             conversation_history=context.get("conversation_history"),
             modality=gateway_ctx.get("modality"),
             generation_type=gateway_ctx.get("generation_type"),
+            synthesis_depth=synthesis_depth,
         )
 
         result = await agent._process_impl(input_data)
