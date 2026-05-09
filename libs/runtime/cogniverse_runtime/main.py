@@ -750,6 +750,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         gateway_probe.start()
         app.state.gateway_probe = gateway_probe
 
+    # 12b. Start the OpenShell mTLS cert rotator (D.6). Watches the gateway
+    # cert directory; on detected change, calls SandboxManager.reconnect()
+    # so the next exec uses the rotated client. Disabled when the sandbox
+    # itself is disabled, or when COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED
+    # is set (operators who use a different cert-management story).
+    cert_rotator = None
+    if sandbox_policy is not SandboxPolicy.DISABLED and os.environ.get(
+        "COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED", ""
+    ).lower() not in ("1", "true", "yes"):
+        from cogniverse_runtime.openshell_cert_rotator import CertRotator
+
+        cert_rotation_interval = float(
+            os.environ.get("COGNIVERSE_SANDBOX_CERT_ROTATION_INTERVAL", "300")
+        )
+        cert_rotator = CertRotator(
+            sandbox_manager=sandbox_manager,
+            interval_seconds=cert_rotation_interval,
+        )
+        sandbox_manager.attach_cert_rotator(cert_rotator)
+        cert_rotator.start()
+        app.state.cert_rotator = cert_rotator
+        logger.info(
+            "OpenShell cert rotator started (interval=%.0fs)",
+            cert_rotation_interval,
+        )
+
     # 13. Start the memory lifecycle scheduler (A.9). Periodically iterates
     # warm-tenant Mem0 managers and runs cleanup_expired_memories on each.
     # Disabled with COGNIVERSE_MEMORY_LIFECYCLE_DISABLED=1 (e.g. for tests
@@ -822,6 +848,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Shutting down Cogniverse Runtime...")
     if gateway_probe is not None:
         await gateway_probe.stop()
+    if cert_rotator is not None:
+        await cert_rotator.stop()
     if lifecycle_scheduler is not None:
         await lifecycle_scheduler.stop()
     await queue_manager.stop_cleanup_loop()
