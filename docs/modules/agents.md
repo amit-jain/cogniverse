@@ -3242,6 +3242,55 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### FederatedQueryAgent (C3.7)
+
+A2A agent that *answers* a free-text query by aggregating federated
+reads across multiple tenants in the same org. Distinct from
+`CrossTenantComparisonAgent` (C3.3): C3.3 *compares* tenant views of one
+known subject, C3.7 *answers* a query by finding any matching memories.
+Both share the federation read path so the org trunk is included
+automatically and cross-org reads are structurally prevented.
+
+```python
+from cogniverse_agents.federated_query_agent import (
+    FederatedQueryAgent,
+    FederatedQueryDeps,
+    FederatedQueryInput,
+)
+from cogniverse_core.agents.rlm_options import RLMOptions
+
+agent = FederatedQueryAgent(
+    deps=FederatedQueryDeps(tenant_id="acme:production"),
+)
+out = await agent._process_impl(FederatedQueryInput(
+    tenant_id="acme:production",
+    query="What is our refund policy in the EU?",
+    tenant_ids=["acme:alpha", "acme:beta", "acme:gamma"],
+    actor_role="org_admin",
+    actor_id="oadm",
+    top_k_per_tenant=20,
+    rlm=RLMOptions(enabled=True),  # optional: summarise large result sets
+))
+for hit in out.hits:
+    print(hit.tenant_id, hit.origin, hit.memory_id, hit.excerpt)
+print(out.summary)  # populated when RLM ran
+```
+
+| ACL rule | Behaviour |
+|---|---|
+| `actor_role` < `tenant_admin` | Rejected. |
+| `actor_role` = `tenant_admin` / `org_admin` | Allowed. |
+| Any `tenant_ids[i]` outside caller's org | Rejected — never reads cross-org. |
+| `tenant_id=None` (admin CLI) | Cross-org check skipped. |
+
+Default `agent_name_filter="_promoted"` so the agent reads from the
+canonical promoted-knowledge namespace; pass an explicit value to scope
+to a different agent's namespace. `top_k_per_tenant` (default 20) caps
+per-tenant fan-in. The optional RLM summariser only fires when both
+`rlm.enabled` and the merged context exceeds the RLM threshold.
+Capability strings: `federated_query`, `audit`, `federation_consumer`.
+Default `port=8024`.
+
 ### CrossTenantComparisonAgent (C3.3)
 
 A2A agent that compares per-tenant views of a subject across multiple
