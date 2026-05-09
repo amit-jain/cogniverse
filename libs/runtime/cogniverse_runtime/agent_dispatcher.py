@@ -129,7 +129,7 @@ class AgentDispatcher:
         """Look up the OpenShell egress policy for an agent (P3 wire).
 
         Returns the parsed policy dict (the YAML in
-        ``configs/openshell/<agent>.yaml``) or ``None`` when no sandbox
+        ``configs/agent_policies/<agent>.yaml``) or ``None`` when no sandbox
         manager is wired or no policy is registered. The dispatcher's
         per-agent execution methods call this at dispatch time so the
         policy stops being dead config — every dispatch records via
@@ -816,7 +816,7 @@ class AgentDispatcher:
         # D.1 — when an OpenShell policy is registered for orchestrator_agent,
         # build the A2A-call httpx client through the policy-enforcing
         # transport so the orchestrator can only dial the endpoints declared
-        # in configs/openshell/orchestrator_agent.yaml. Falls back to the
+        # in configs/agent_policies/orchestrator_agent.yaml. Falls back to the
         # loop-shared client when no sandbox manager / no policy is present.
         orch_http_client = None
         if self._sandbox_manager is not None:

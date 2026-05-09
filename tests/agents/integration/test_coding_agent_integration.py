@@ -313,7 +313,7 @@ def code_search_infra(vespa_with_schema):
         check=False,
     )
 
-    sandbox = SandboxManager(policy_dir="configs/openshell", enabled=True)
+    sandbox = SandboxManager(policy_dir="configs/agent_policies", enabled=True)
     if not sandbox.available:
         pytest.skip("SandboxManager could not connect to gateway")
 

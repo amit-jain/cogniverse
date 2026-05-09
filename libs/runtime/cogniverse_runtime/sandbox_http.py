@@ -100,7 +100,7 @@ class PolicyEnforcingTransport(httpx.AsyncBaseTransport):
 
     Args:
         policy: The agent's OpenShell policy dict (from
-            ``configs/openshell/{agent}.yaml``).
+            ``configs/agent_policies/{agent}.yaml``).
         inner: The real transport to forward allowed requests to. Defaults
             to ``httpx.AsyncHTTPTransport()`` when omitted.
     """
@@ -132,7 +132,7 @@ class PolicyEnforcingTransport(httpx.AsyncBaseTransport):
         msg = (
             f"OpenShell policy denied egress to {host}:{port}. "
             f"Allow-listed: [{rules_repr or 'none'}]. "
-            f"Update configs/openshell/<agent>.yaml to add this endpoint, "
+            f"Update configs/agent_policies/<agent>.yaml to add this endpoint, "
             f"or remove the deny_all_other flag if egress should be open."
         )
         logger.warning(msg)

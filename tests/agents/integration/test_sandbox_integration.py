@@ -193,7 +193,7 @@ class TestGatewayHealthProbeRealGateway:
         from cogniverse_runtime.sandbox_manager import SandboxPolicy
 
         manager = SandboxManager(
-            policy_dir="configs/openshell",
+            policy_dir="configs/agent_policies",
             policy=SandboxPolicy.OPTIONAL,
         )
         try:
@@ -235,7 +235,7 @@ class TestSandboxPolicyAtBoot:
         from cogniverse_runtime.sandbox_manager import SandboxPolicy
 
         manager = SandboxManager(
-            policy_dir="configs/openshell",
+            policy_dir="configs/agent_policies",
             policy=SandboxPolicy.REQUIRED,
         )
         try:
@@ -283,7 +283,7 @@ class TestSandboxManagerIntegration:
 
     def test_manager_connects_and_reports_available(self, openshell_gateway):
         manager = SandboxManager(
-            policy_dir="configs/openshell",
+            policy_dir="configs/agent_policies",
             enabled=True,
         )
         assert manager.available, "SandboxManager should detect running gateway"
@@ -292,7 +292,7 @@ class TestSandboxManagerIntegration:
 
     def test_run_in_sandbox_via_manager(self, openshell_gateway):
         manager = SandboxManager(
-            policy_dir="configs/openshell",
+            policy_dir="configs/agent_policies",
             enabled=True,
         )
         assert manager.available
@@ -308,7 +308,7 @@ class TestSandboxManagerIntegration:
         manager.close()
 
     def test_policy_egress_rules(self, openshell_gateway):
-        manager = SandboxManager(policy_dir="configs/openshell", enabled=False)
+        manager = SandboxManager(policy_dir="configs/agent_policies", enabled=False)
         manager._load_policies()
 
         search_policy = manager.get_policy("search_agent")

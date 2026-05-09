@@ -1,7 +1,7 @@
 """C.4 wire — SIGUSR1 triggers config + sandbox-policy hot-reload.
 
 Without this handler, operators couldn't reload ``configs/config.json``
-or ``configs/openshell/*.yaml`` changes without restarting the
+or ``configs/agent_policies/*.yaml`` changes without restarting the
 runtime. This test verifies, against the real ``main.py`` lifespan:
 
   * the SIGUSR1 handler is registered on the running event loop;

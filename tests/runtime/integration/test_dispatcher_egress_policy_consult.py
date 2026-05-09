@@ -1,6 +1,6 @@
 """P3 — dispatcher consults egress policies for search/summarizer/routing.
 
-Without this wire, the YAMLs in ``configs/openshell/`` for these three
+Without this wire, the YAMLs in ``configs/agent_policies/`` for these three
 agents were dead config: the dispatcher loaded them at boot but never
 referenced them at dispatch. Now every dispatch path that hits one of
 those three agents calls ``consult_egress_policy`` so the lookup is
@@ -29,15 +29,15 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def sandbox_manager_with_real_policies() -> SandboxManager:
-    """Real SandboxManager loading every YAML in configs/openshell/.
+    """Real SandboxManager loading every YAML in configs/agent_policies/.
 
     Uses ``policy=OPTIONAL`` so the policies are loaded (DISABLED would
     short-circuit before the load step) but the boot gracefully degrades
     if the OpenShell gateway is unreachable — which is the expected
     state in test environments.
     """
-    policies_dir = Path("configs/openshell")
-    assert policies_dir.exists(), "configs/openshell/ must exist for this test"
+    policies_dir = Path("configs/agent_policies")
+    assert policies_dir.exists(), "configs/agent_policies/ must exist for this test"
     return SandboxManager(
         policy_dir=policies_dir,
         policy=SandboxPolicy.OPTIONAL,
@@ -79,11 +79,11 @@ class TestConsultHelper:
     def test_existing_policy_yamls_are_consulted(
         self, dispatcher_with_sandbox, agent_name: str
     ):
-        # The 3 YAMLs are shipped in configs/openshell/. The lookup must
+        # The 3 YAMLs are shipped in configs/agent_policies/. The lookup must
         # surface them rather than returning None — that was the dead
         # state before this wire.
         policy = dispatcher_with_sandbox.consult_egress_policy(agent_name)
-        if not (Path("configs/openshell") / f"{agent_name}.yaml").exists():
+        if not (Path("configs/agent_policies") / f"{agent_name}.yaml").exists():
             pytest.skip(f"{agent_name}.yaml not shipped (deployment-specific)")
         assert policy is not None, (
             f"{agent_name} has a policy YAML but the dispatcher's lookup "

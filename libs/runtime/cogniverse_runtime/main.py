@@ -843,7 +843,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # C.4 — SIGUSR1 hot-reload handler. Operators send `kill -USR1 <pid>`
     # to trigger a non-disruptive config + sandbox-policy reload (loaded
     # backends/agents are re-read from configs/config.json; OpenShell
-    # policies are re-read from configs/openshell/). The handler is
+    # policies are re-read from configs/agent_policies/). The handler is
     # registered on the running event loop so the reload runs
     # cooperatively without blocking ongoing requests.
     import signal as _signal
