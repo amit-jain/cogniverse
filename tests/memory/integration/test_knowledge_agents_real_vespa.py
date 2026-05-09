@@ -1,6 +1,6 @@
 """Knowledge agents against real Vespa-backed Mem0.
 
-The previous round shipped ``test_c3_agents_real_mem0.py`` which the
+The previous round shipped ``test_knowledge_agents_real_mem0.py (renamed)`` which the
 audit caught was misleadingly named — every test mocked the memory
 manager with ``MagicMock``, so the agents never touched a real
 backend. This file replaces the missing real-service coverage by

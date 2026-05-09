@@ -726,7 +726,7 @@ class ArtifactManager:
         Returns ``{"prompts": ..., "served_from": "active|canary|default",
         "version": int | None, "variant_id": str}``. Stable per request_seed.
 
-        F2.2 wire — when ``variant_id`` is non-default, the dataset names
+        When ``variant_id`` is non-default, the dataset names
         consulted are the variant-qualified ones
         (``dspy-prompts-{tenant}-{agent}::variant={vid}-vN``). Two variants
         of the same agent therefore have entirely separate canary state +

@@ -53,10 +53,30 @@ class MemoryAwareMixin:
         # pulls from both tenant and the org trunk and dedups by
         # subject_key. Off by default to keep legacy agents unchanged.
         self._memory_federation_enabled: bool = False
+        # Per-request session id stamped onto every write that does not
+        # already carry one. The dispatcher sets this via
+        # ``set_session_id`` for the duration of the request, then clears
+        # it. EPHEMERAL_SESSION-kind writes need this to pass schema
+        # validation; non-session kinds can ignore it (the manager only
+        # reads ``metadata.session_id`` when the kind's schema requires it).
+        self._memory_session_id: Optional[str] = None
 
     def set_tenant_for_context(self, tenant_id: str) -> None:
         """Set tenant_id for instruction injection without full memory init."""
         self._memory_tenant_id = tenant_id
+
+    def set_session_id(self, session_id: Optional[str]) -> None:
+        """Set or clear the per-request session id.
+
+        When set, ``update_memory`` auto-stamps ``metadata["session_id"]``
+        on writes that don't already carry one. Pass ``None`` to clear
+        (the dispatcher does this after each request).
+        """
+        if session_id is not None and (
+            not isinstance(session_id, str) or not session_id.strip()
+        ):
+            raise ValueError("session_id must be a non-empty string or None")
+        self._memory_session_id = session_id
 
     def enable_org_trunk_federation(self, enabled: bool = True) -> None:
         """Toggle the federated read path on this agent.
@@ -440,6 +460,13 @@ class MemoryAwareMixin:
 
         if not self._memory_agent_name or not self.memory_manager:
             return False
+
+        # Auto-stamp the per-request session id onto metadata when set,
+        # so EPHEMERAL_SESSION-kind writes don't have to pass session_id
+        # explicitly and the schema's session-membership check passes.
+        if self._memory_session_id is not None:
+            metadata = dict(metadata or {})
+            metadata.setdefault("session_id", self._memory_session_id)
 
         try:
             memory_id = self.memory_manager.add_memory(

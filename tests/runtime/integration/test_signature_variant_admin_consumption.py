@@ -1,8 +1,8 @@
-"""admin PUT /signature_variants actually changes which prompts load.
+"""Admin PUT /signature_variants actually changes which prompts load.
 
 Audit caught that the admin endpoint wrote to ``_signature_variant_overrides``
 but ``load_for_request`` never read it — variant selections were
-black-holed. F2.2 + F3.2 close the consumer wire end-to-end:
+black-holed. The consumer wire closes the loop end-to-end:
 
   * ``ArtifactManager.load_for_request`` accepts ``variant_id``
     and qualifies all dataset names through it (so two variants get

@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -900,6 +900,68 @@ async def admin_drop_session(tenant_id: str, session_id: str):
         "session_id": session_id,
         "deleted_by_kind": deleted_by_kind,
         "total_deleted": total,
+    }
+
+
+@router.post("/sessions/{session_id}/close")
+async def admin_close_session(session_id: str):
+    """Fan-out session close: drop the session across every warm tenant.
+
+    A user session can write EPHEMERAL_SESSION memories under any tenant
+    the request touched. On session close (logout, ws-disconnect, idle
+    timeout) the gateway POSTs here once and the runtime sweeps every
+    warm ``Mem0MemoryManager`` calling ``drop_session(session_id)``.
+
+    Tenants that have already been evicted from the warm LRU are skipped
+    — their next access will deserialise from Vespa and the
+    EPHEMERAL_SESSION rows still exist there. The next request that warms
+    the manager and triggers a session-close webhook will sweep them.
+    Operators who need a guaranteed sweep can call the per-tenant DELETE
+    endpoint with the known tenant id; this fan-out is best-effort over
+    the warm set.
+    """
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.schema import build_default_registry
+
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id must be non-empty")
+
+    registry = build_default_registry()
+    per_tenant: Dict[str, Dict[str, int]] = {}
+    total = 0
+    skipped: List[str] = []
+    for mgr in list(Mem0MemoryManager._instances.values()):
+        tenant_id = getattr(mgr, "tenant_id", None) or "unknown"
+        if not getattr(mgr, "memory", None):
+            skipped.append(tenant_id)
+            continue
+        try:
+            deleted = mgr.drop_session(session_id, registry)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "drop_session failed for tenant %s session %s: %s",
+                tenant_id,
+                session_id,
+                exc,
+            )
+            skipped.append(tenant_id)
+            continue
+        if deleted:
+            per_tenant[tenant_id] = deleted
+            total += sum(deleted.values())
+
+    logger.info(
+        "Admin close_session(%s) swept %d warm tenants, deleted %d memories",
+        session_id,
+        len(per_tenant),
+        total,
+    )
+    return {
+        "status": "closed",
+        "session_id": session_id,
+        "per_tenant": per_tenant,
+        "total_deleted": total,
+        "skipped_tenants": skipped,
     }
 
 

@@ -1,15 +1,16 @@
-"""admin C3 endpoints reach the read-only knowledge agents end-to-end.
+"""Admin knowledge-agent endpoints reach the read-only agents end-to-end.
 
-Audit found 8 of 9 C3 agents were orchestrator-unreachable: even with
-opt-in registration, the dispatcher's _execute_generic_agent only fills
-5 input fields and every C3 agent has additional required fields, so
-the first dispatched call Pydantic-errors.
+Audit found 8 of 9 knowledge agents were orchestrator-unreachable: even
+with opt-in registration, the dispatcher's ``_execute_generic_agent``
+only fills 5 input fields and every knowledge agent has additional
+required fields, so the first dispatched call Pydantic-errors.
 
-The new admin routes give each C3 agent a dedicated HTTP surface whose
-body matches the agent's input model exactly. This test exercises the
-3 read-only endpoints with full coverage (citation_tracing, audit,
-knowledge_summarization) against real Vespa, asserting the chain seeded
-in Vespa is actually walked / summarised through the HTTP layer.
+The admin routes give each knowledge agent a dedicated HTTP surface
+whose body matches the agent's input model exactly. This test
+exercises the 3 read-only endpoints with full coverage (citation
+tracing, audit explanation, knowledge summarization) against real
+Vespa, asserting the chain seeded in Vespa is actually walked /
+summarised through the HTTP layer.
 
 The other 6 endpoints (multi_doc_synthesis, kg_traversal, cross_tenant,
 federated_query, temporal_reasoning, contradiction_reconciliation) get
@@ -38,15 +39,17 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 def knowledge_client(memory_manager):
-    """TestClient with the c3 router mounted; memory_manager fixture
-    has already initialised the per-tenant Mem0 singleton against
+    """TestClient with the knowledge router mounted; memory_manager
+    fixture has already initialised the per-tenant Mem0 singleton against
     real Vespa, so the lazy-init path inside the router is a no-op."""
     app = FastAPI()
     app.include_router(knowledge_router.router, prefix="/admin")
     yield TestClient(app, raise_server_exceptions=False), memory_manager
     # Clean up any memories this test created.
     try:
-        memory_manager.clear_agent_memory(memory_manager.tenant_id, "c3_admin_seed")
+        memory_manager.clear_agent_memory(
+            memory_manager.tenant_id, "knowledge_admin_seed"
+        )
     except Exception:
         pass
 
@@ -54,29 +57,29 @@ def knowledge_client(memory_manager):
 def _seed_chain(mm) -> tuple[str, str]:
     """Seed a leaf + derived memory pair so audit/citation can walk it."""
     leaf_prov = make_provenance(
-        written_by="agent:c3_admin_test",
+        written_by="agent:knowledge_admin_test",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("https://wiki/c3_admin_leaf")],
+        derived_from=[CitationRef.external("https://wiki/knowledge_admin_leaf")],
     )
     leaf_id = mm.add_memory(
-        content="C3 admin: leaf source",
+        content="knowledge admin: leaf source",
         tenant_id=mm.tenant_id,
-        agent_name="c3_admin_seed",
+        agent_name="knowledge_admin_seed",
         metadata=attach_to_metadata({"kind": "entity_fact"}, leaf_prov),
         infer=False,
     )
     assert leaf_id
     derived_prov = make_provenance(
-        written_by="agent:c3_admin_synth",
+        written_by="agent:knowledge_admin_synth",
         derivation_kind=DerivationKind.SYNTHESIS,
         confidence=0.85,
         derived_from=[CitationRef.memory(leaf_id, label="leaf")],
     )
     derived_id = mm.add_memory(
-        content="C3 admin: derived synthesis",
+        content="knowledge admin: derived synthesis",
         tenant_id=mm.tenant_id,
-        agent_name="c3_admin_seed",
+        agent_name="knowledge_admin_seed",
         metadata=attach_to_metadata({"kind": "entity_fact"}, derived_prov),
         infer=False,
     )
@@ -105,7 +108,7 @@ class TestAuditExplainEndpoint:
             f"visited={visited!r}"
         )
         primary_refs = {p["ref_id"] for p in body["primary_sources"]}
-        assert "https://wiki/c3_admin_leaf" in primary_refs
+        assert "https://wiki/knowledge_admin_leaf" in primary_refs
 
     def test_missing_required_field_returns_422(self, knowledge_client):
         client, mm = knowledge_client
@@ -130,25 +133,27 @@ class TestCitationTraceEndpoint:
         assert derived_id in nodes
         assert leaf_id in nodes, f"citation chain must include leaf; nodes={nodes!r}"
         primary_refs = {p["ref_id"] for p in body["primary_sources"]}
-        assert "https://wiki/c3_admin_leaf" in primary_refs
+        assert "https://wiki/knowledge_admin_leaf" in primary_refs
 
 
 class TestKnowledgeSummarizeEndpoint:
     def test_summarises_real_subject_slice(self, knowledge_client):
         client, mm = knowledge_client
-        subject = "policy:c3_admin_summary"
+        subject = "policy:knowledge_admin_summary"
         ids: list[str] = []
         for i in range(3):
             prov = make_provenance(
                 written_by=f"agent:doc_{i}",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
                 confidence=0.8,
-                derived_from=[CitationRef.external(f"https://docs/c3_admin_{i}")],
+                derived_from=[
+                    CitationRef.external(f"https://docs/knowledge_admin_{i}")
+                ],
             )
             mid = mm.add_memory(
-                content=f"C3 admin doc {i}",
+                content=f"knowledge admin doc {i}",
                 tenant_id=mm.tenant_id,
-                agent_name="c3_admin_seed",
+                agent_name="knowledge_admin_seed",
                 metadata=attach_to_metadata(
                     {"kind": "external_doc", "subject_key": subject}, prov
                 ),
@@ -162,7 +167,7 @@ class TestKnowledgeSummarizeEndpoint:
             json={
                 "subject_keys": [subject],
                 "kinds": ["external_doc"],
-                "agent_name_filter": "c3_admin_seed",
+                "agent_name_filter": "knowledge_admin_seed",
                 "title": "B4 admin slice",
                 "actor_role": "user",
                 "actor_id": "alice",
@@ -181,10 +186,10 @@ class TestKnowledgeSummarizeEndpoint:
 
 
 class TestRouteRegistration:
-    """All 9 C3 routes must be mounted; reaching the right URL must
-    Pydantic-validate the body. No-args (empty body) requests verify
-    the route exists and rejects bad input — proving discovery without
-    requiring real-data setup for every agent.
+    """All 9 knowledge routes must be mounted; reaching the right URL
+    must Pydantic-validate the body. No-args (empty body) requests
+    verify the route exists and rejects bad input — proving discovery
+    without requiring real-data setup for every agent.
     """
 
     @pytest.mark.parametrize(

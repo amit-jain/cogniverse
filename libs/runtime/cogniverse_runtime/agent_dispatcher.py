@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_core.common.tenant_utils import require_tenant_id
@@ -339,8 +340,8 @@ class AgentDispatcher:
             )
             return None
 
-        # F3.2 — resolve the tenant's selected signature variant for this
-        # agent from the admin-runtime override dict (PUT
+        # Resolve the tenant's selected signature variant for this agent
+        # from the admin-runtime override dict (PUT
         # /admin/tenants/{t}/signature_variants/{agent}). Falls back to
         # the default variant when no admin selection exists. This is the
         # consumer for the variant-selection admin endpoint that was
@@ -367,9 +368,9 @@ class AgentDispatcher:
     def _apply_artefact_overlay(agent: Any, context: Optional[Dict[str, Any]]) -> None:
         """Inject the dispatcher's per-request artefact overlay onto an agent.
 
-        F2.1 wire — the dispatcher already produces the canary/variant
-        decision via :meth:`resolve_artefact_for_request` and stashes it
-        in ``context["_artefact_overlay"]``. This helper hands it to the
+        The dispatcher already produces the canary/variant decision via
+        :meth:`resolve_artefact_for_request` and stashes it in
+        ``context["_artefact_overlay"]``. This helper hands it to the
         agent via the ``MemoryAwareMixin.set_dispatched_artefact`` hook.
         Agents that don't inherit the mixin silently no-op (no regression).
 
@@ -389,6 +390,37 @@ class AgentDispatcher:
             setter(overlay)
         except Exception as exc:
             logger.debug("set_dispatched_artefact failed (non-fatal): %s", exc)
+
+    @staticmethod
+    @contextmanager
+    def _scoped_session(agent: Any, session_id: Optional[str]):
+        """Stamp ``session_id`` on a memory-aware agent for one request.
+
+        The mixin's ``set_session_id`` hook auto-applies the id to every
+        ``add_memory`` write so EPHEMERAL_SESSION-kind writes pass schema
+        validation without each agent threading session_id through its
+        own metadata. Cleared on exit so a long-lived agent instance
+        doesn't bleed one request's session into the next.
+
+        Agents that don't inherit MemoryAwareMixin silently no-op.
+        """
+        setter = getattr(agent, "set_session_id", None)
+        if setter is None or not session_id:
+            yield
+            return
+        try:
+            setter(session_id)
+        except Exception as exc:
+            logger.debug("set_session_id failed (non-fatal): %s", exc)
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                setter(None)
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     @staticmethod
     def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
@@ -622,12 +654,12 @@ class AgentDispatcher:
         agent._artifact_tenant_id = tenant_id
         if hasattr(agent, "_load_artifact"):
             agent._load_artifact()
-        # F2.1 — hand the per-request canary/variant overlay to the agent
-        # so its load path can prefer the dispatcher's chosen prompts
-        # over its default-loaded ones. ``set_dispatched_artefact`` lives
-        # on MemoryAwareMixin; agents that don't inherit the mixin
-        # silently no-op (the dispatch context overlay is just dropped
-        # for them — no regression vs the previous always-default path).
+        # Hand the per-request canary/variant overlay to the agent so its
+        # load path can prefer the dispatcher's chosen prompts over its
+        # default-loaded ones. ``set_dispatched_artefact`` lives on
+        # MemoryAwareMixin; agents that don't inherit the mixin silently
+        # no-op (the dispatch context overlay is just dropped for them —
+        # no regression vs the previous always-default path).
         self._apply_artefact_overlay(agent, context)
 
         # Find the Input class — convention: same module, class name ends with "Input"
@@ -659,7 +691,14 @@ class AgentDispatcher:
                 input_kwargs[key] = context[key]
 
         typed_input = input_cls(**input_kwargs)
-        result = await agent.process(typed_input)
+        # Stamp the per-request session id onto the agent for the duration
+        # of this call so EPHEMERAL_SESSION-kind writes pass schema
+        # validation without each agent having to read context["session_id"]
+        # itself. The mixin auto-stamps metadata.session_id from this
+        # field on every add_memory() call. Cleared in finally so the
+        # next request on the same agent instance doesn't inherit it.
+        with self._scoped_session(agent, context.get("session_id")):
+            result = await agent.process(typed_input)
 
         # Convert pydantic model to dict
         if hasattr(result, "model_dump"):
@@ -1103,7 +1142,8 @@ class AgentDispatcher:
             synthesis_depth=synthesis_depth,
         )
 
-        result = await agent._process_impl(input_data)
+        with self._scoped_session(agent, context.get("session_id")):
+            result = await agent._process_impl(input_data)
 
         return {
             "status": "success",

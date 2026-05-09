@@ -31,7 +31,7 @@ from cogniverse_core.memory.schema import build_default_registry
 
 pytestmark = pytest.mark.integration
 
-TENANT = "p5_int_tenant"
+TENANT = "knowledge_agents_factory_test"
 
 
 def _factory_returning(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
@@ -77,7 +77,7 @@ async def test_synthesises_across_documents():
     agent.memory_manager = fake_mm
     agent._memory_initialized = True
     agent._memory_tenant_id = TENANT
-    agent._memory_agent_name = "c31"
+    agent._memory_agent_name = "multi_doc_synth_test"
 
     out = await agent._process_impl(
         MultiDocSynthesisInput(
@@ -276,7 +276,7 @@ async def test_reconciles_real_conflict_set():
     agent.memory_manager = fake_mm
     agent._memory_initialized = True
     agent._memory_tenant_id = TENANT
-    agent._memory_agent_name = "c34"
+    agent._memory_agent_name = "contradiction_reconciliation_test"
 
     out = await agent._process_impl(
         ContradictionReconciliationInput(
@@ -388,7 +388,7 @@ async def test_walks_real_graph():
     agent.memory_manager = fake_mm
     agent._memory_initialized = True
     agent._memory_tenant_id = TENANT
-    agent._memory_agent_name = "c32"
+    agent._memory_agent_name = "kg_traversal_test"
     out = await agent._process_impl(
         KGTraversalInput(
             tenant_id=TENANT,

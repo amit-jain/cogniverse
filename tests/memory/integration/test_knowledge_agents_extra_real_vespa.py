@@ -413,7 +413,7 @@ async def test_cross_tenant_comparison_real_vespa(multitenant_setup):
             written_by="agent:policy",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=0.9,
-            derived_from=[CitationRef.external("https://docs/c33")],
+            derived_from=[CitationRef.external("https://docs/cross_tenant")],
         )
         mid = mm.add_memory(
             content=sentence,
@@ -472,14 +472,14 @@ async def test_federated_query_real_vespa(multitenant_setup):
 
     mm_a = multitenant_setup["a"]
     mm_b = multitenant_setup["b"]
-    needle = "FEDERATED_NEEDLE_C37"
+    needle = "FEDERATED_NEEDLE"
 
     for mm in (mm_a, mm_b):
         prov = make_provenance(
             written_by="agent:planner",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=0.9,
-            derived_from=[CitationRef.external("https://docs/c37")],
+            derived_from=[CitationRef.external("https://docs/federated")],
         )
         mid = mm.add_memory(
             content=f"This row contains {needle} in its body.",

@@ -56,6 +56,24 @@ class TestKnowledgeSchemaConstruction:
         # Valid
         KnowledgeSchema(kind="x", retention=Retention.EPHEMERAL_DAYS, retention_days=7)
 
+    def test_ephemeral_session_forbids_pinning(self):
+        # Pinning a session-scoped memory is a foot-gun: drop_session
+        # hard-deletes regardless of pin, so the schema gates non-NOBODY
+        # pinning at construction.
+        for role in (Pinnable.USER, Pinnable.TENANT_ADMIN, Pinnable.ORG_ADMIN):
+            with pytest.raises(ValueError, match="ephemeral_session"):
+                KnowledgeSchema(
+                    kind="x",
+                    retention=Retention.EPHEMERAL_SESSION,
+                    pinnable_by=role,
+                )
+        # NOBODY is the only allowed pin role for session memories.
+        KnowledgeSchema(
+            kind="x",
+            retention=Retention.EPHEMERAL_SESSION,
+            pinnable_by=Pinnable.NOBODY,
+        )
+
 
 class TestValidateWriteProvenance:
     def test_provenance_required_rejects_missing(self):
@@ -107,6 +125,53 @@ class TestValidateWritePinAuthority:
             assert "pin" in str(exc.value).lower()
 
 
+class TestValidateSessionMembership:
+    def test_session_kind_rejects_missing_session_id(self):
+        s = KnowledgeSchema(
+            kind="session_scratch",
+            retention=Retention.EPHEMERAL_SESSION,
+            pinnable_by=Pinnable.NOBODY,
+            provenance_required=False,
+        )
+        with pytest.raises(SchemaViolationError, match="session_id"):
+            s.validate_session_membership({})
+        with pytest.raises(SchemaViolationError, match="session_id"):
+            s.validate_session_membership({"session_id": ""})
+        with pytest.raises(SchemaViolationError, match="session_id"):
+            s.validate_session_membership({"session_id": "   "})
+        with pytest.raises(SchemaViolationError, match="session_id"):
+            s.validate_session_membership({"session_id": 42})
+
+    def test_session_kind_accepts_non_empty_session_id(self):
+        s = KnowledgeSchema(
+            kind="session_scratch",
+            retention=Retention.EPHEMERAL_SESSION,
+            pinnable_by=Pinnable.NOBODY,
+            provenance_required=False,
+        )
+        # No exception.
+        s.validate_session_membership({"session_id": "s_abc"})
+
+    def test_non_session_kind_ignores_session_id(self):
+        # Non-session kinds never gate on session_id.
+        s = KnowledgeSchema(kind="entity_fact")
+        s.validate_session_membership({})
+        s.validate_session_membership({"session_id": ""})
+
+
+class TestDefaultRegistryHasSessionScratch:
+    def test_session_scratch_is_registered_with_session_retention(self):
+        from cogniverse_core.memory.schema import build_default_registry
+
+        reg = build_default_registry()
+        assert reg.is_registered("session_scratch")
+        s = reg.get("session_scratch")
+        assert s.retention is Retention.EPHEMERAL_SESSION
+        assert s.pinnable_by is Pinnable.NOBODY
+        # Provenance not required for session scratch — it's transient.
+        assert s.provenance_required is False
+
+
 class TestKnowledgeRegistry:
     def test_register_and_get(self):
         reg = KnowledgeRegistry()
@@ -153,6 +218,7 @@ class TestDefaultRegistrySeed:
     def test_seed_includes_all_planned_kinds(self):
         reg = build_default_registry()
         expected = {
+            # User-facing knowledge kinds.
             "conversation_turn",
             "learned_strategy",
             "tenant_instruction",
@@ -160,6 +226,12 @@ class TestDefaultRegistrySeed:
             "entity_fact",
             "kg_node",
             "kg_edge",
+            "session_scratch",
+            # System-internal sentinel kinds (writes by the platform itself,
+            # not callers — registered with provenance_required=False so
+            # internal writes don't trip the schema gate).
+            "pin_record",
+            "conflict_set",
         }
         assert set(reg.all_kinds()) == expected
 

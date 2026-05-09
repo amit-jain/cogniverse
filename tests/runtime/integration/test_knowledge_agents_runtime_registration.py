@@ -95,9 +95,9 @@ class TestConfigJsonEntries:
     def test_default_disabled(self, config_json: dict):
         # Write-capable + admin-gated knowledge agents ship disabled-by-default so
         # existing deployments don't suddenly start serving new endpoints
-        # on upgrade. F7.1 carved out one exception: audit_explanation_agent
-        # is read-only, safe for production, and ships enabled=true so
-        # operators get one knowledge agent reachable out of the box.
+        # on upgrade. One exception: audit_explanation_agent is read-only,
+        # safe for production, and ships enabled=true so operators get
+        # one knowledge agent reachable out of the box.
         # Detailed default-enabled / default-disabled policy lives in
         # tests/runtime/integration/test_knowledge_agent_reachability.py.
         ALWAYS_DEFAULT_DISABLED = set(_KNOWLEDGE_AGENTS) - {"audit_explanation_agent"}

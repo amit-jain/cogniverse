@@ -533,6 +533,88 @@ memories = memory_acme.search_memory(
 # Memories are completely isolated per tenant
 ```
 
+### Session-scoped scratch memory
+
+Cogniverse ships a built-in `session_scratch` knowledge kind: any memory
+written under this kind is automatically tagged with the request's
+`session_id` and is hard-deleted when the session ends. The schema
+forbids pinning at construction time so a transient scratch row can't be
+pinned and then silently lost on session close.
+
+The wire end-to-end:
+
+1. **Caller stamps `session_id` on the request.** The gateway's HTTP
+   handler reads `session_id` from the request body / cookie / JWT and
+   puts it onto the dispatcher's per-request `context["session_id"]`.
+2. **Dispatcher propagates it to memory-aware agents.** When the agent
+   inherits `MemoryAwareMixin`, the dispatcher wraps the call in
+   `_scoped_session(agent, session_id)` which calls
+   `agent.set_session_id(session_id)` for the duration of the request
+   and clears it on exit (so a long-lived agent instance never bleeds
+   one user's session into the next).
+3. **Mixin auto-stamps `metadata.session_id` on writes.** Any
+   `update_memory()` call inside the scope automatically merges
+   `session_id` into the metadata dict — agent code never has to thread
+   it through manually. Caller-supplied `session_id` always wins (no
+   silent overwrite).
+4. **Schema validates writes.** `KnowledgeSchema.validate_session_membership`
+   rejects EPHEMERAL_SESSION-kind writes that arrive without a
+   `session_id` so a missed propagation never produces a memory the
+   cleanup path can't find.
+5. **Session close fans out cleanup.** When the session ends, the
+   gateway POSTs once to the runtime — see endpoints below.
+
+#### Admin endpoints
+
+```bash
+# Per-tenant: drop one session's scratch rows in one tenant. Use when
+# you know exactly which tenant the session touched (operator triage).
+curl -X DELETE "https://runtime/admin/tenants/${TENANT}/sessions/${SID}"
+# → 200 {"status":"dropped","tenant_id":"...","session_id":"...",
+#         "deleted_by_kind":{"session_scratch":3},"total_deleted":3}
+
+# Cross-tenant fan-out: drop one session everywhere it has rows.
+# This is the endpoint the gateway hits on logout / ws-disconnect.
+# It iterates every warm Mem0 instance in the runtime's LRU and calls
+# drop_session on each. Tenants evicted from the warm cache are
+# skipped (their rows still exist; the next request that warms the
+# manager and triggers another close webhook will sweep them).
+curl -X POST "https://runtime/admin/sessions/${SID}/close"
+# → 200 {"status":"closed","session_id":"...",
+#         "per_tenant":{"acme":{"session_scratch":3}},
+#         "total_deleted":3,"skipped_tenants":[]}
+```
+
+#### Registering custom session kinds
+
+Tenants who want their own session-scoped kind beyond the default
+`session_scratch` can register one:
+
+```python
+from cogniverse_core.memory.schema import (
+    KnowledgeSchema,
+    Pinnable,
+    Retention,
+    Sensitivity,
+)
+
+reg.register(
+    KnowledgeSchema(
+        kind="my_session_view",
+        retention=Retention.EPHEMERAL_SESSION,
+        sensitivity=Sensitivity.TENANT_PRIVATE,
+        pinnable_by=Pinnable.NOBODY,  # required: schema gates other values
+        provenance_required=False,
+    )
+)
+```
+
+The `pinnable_by=Pinnable.NOBODY` constraint is enforced in
+`KnowledgeSchema.__post_init__` — passing any other role raises a
+`ValueError` at schema construction. Pinning a session memory and then
+losing it on session close would be a foot-gun; the schema gate makes
+it unrepresentable.
+
 ### Memory Statistics per Tenant
 
 ```python

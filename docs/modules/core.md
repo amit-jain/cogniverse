@@ -830,15 +830,23 @@ to the registry's safe default (`permanent`) and is never auto-deleted.
 | `Retention` | Behaviour |
 |---|---|
 | `PERMANENT` | Never auto-deleted. |
-| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)` (or `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}`). The periodic scheduler skips these. Writes MUST carry `metadata["session_id"]` or the schema rejects them. |
+| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)`. Two HTTP endpoints reach it: `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}` (single tenant) and `POST /admin/sessions/{session_id}/close` (fan-out across every warm tenant — the gateway's logout / disconnect hook). Writes MUST carry `metadata["session_id"]` or the schema rejects them, AND the kind's `pinnable_by` must be `Pinnable.NOBODY` (the schema constructor refuses any other value, since pinning a session memory and then losing it on session close would be a foot-gun). The default registry ships `kind="session_scratch"` for this. |
 | `EPHEMERAL_DAYS(N)` | Soft-deleted (`metadata.archived=true`) when `created_at` is older than `N` days; hard-deleted at `2N` days. Restoreable via the admin restore endpoint inside the soft-delete window. |
 | `SCHEMA_DRIVEN` | Defers to the schema's `cleanup_hook` callable. |
 
 Pinned memory ids (from `PinService.list_pins`) are filtered out before any
 deletion attempt by the periodic scheduler — pins always win there.
-`drop_session`, by contrast, is the user's explicit "end my session" signal
-and ignores pins (use a non-`EPHEMERAL_SESSION` kind if you want pinning to
-outlive a session).
+`drop_session` is the user's explicit "end my session" signal and is not
+pin-gated; the `EPHEMERAL_SESSION + Pinnable.NOBODY` schema invariant
+makes the question moot — there can never be a pinned session memory.
+
+The dispatcher auto-stamps `metadata["session_id"]` on every memory-aware
+agent's writes for the duration of one request via
+`AgentDispatcher._scoped_session(agent, session_id)`, which calls
+`MemoryAwareMixin.set_session_id(...)` on entry and clears it on exit.
+Agent code never has to thread `session_id` through manually; a
+caller-supplied `session_id` in metadata always wins over the dispatcher
+stamp.
 
 The tick summary returned by `LifecycleScheduler.tick_once()` reports
 `{"tenants": {tenant_id: {kind: deleted_count}}, "total_deleted": int}`.

@@ -135,7 +135,7 @@ class TestEndToEndWire:
         # Build a fake ArtifactManager whose load_for_request returns a
         # canary decision. We don't need real Phoenix here — that's
         # covered by test_dispatcher_canary_routing.py. This test
-        # exclusively covers the F2.1 inject-into-agent step.
+        # exclusively covers the inject-into-agent step.
         class _StubAM:
             async def load_for_request(self, agent_type, *, request_seed, variant_id):
                 return {

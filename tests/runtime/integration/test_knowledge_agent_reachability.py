@@ -1,9 +1,9 @@
-"""C3 agents are reachable through the orchestrator's planner.
+"""Knowledge agents are reachable through the orchestrator's planner.
 
-Audit caught: the 9 C3 agents were registered in ``AGENT_CLASSES`` and
-appeared in ``configs/config.json`` but every one was ``enabled: false``,
-so ``ConfigLoader.load_agents`` skipped all of them. The orchestrator's
-planner queries ``registry.list_agents()`` for its
+Audit caught: the 9 knowledge agents were registered in ``AGENT_CLASSES``
+and appeared in ``configs/config.json`` but every one was
+``enabled: false``, so ``ConfigLoader.load_agents`` skipped all of them.
+The orchestrator's planner queries ``registry.list_agents()`` for its
 ``available_agents`` field — agents that never registered never appear,
 so an end-user query could not reach them.
 
@@ -11,16 +11,16 @@ This test verifies, against the real ConfigLoader + AgentRegistry +
 orchestrator-discovery path:
 
   * ``audit_explanation_agent`` ships ``enabled=true`` by default
-    (read-only, safe for production) so operators get one C3 agent
-    reachable out of the box;
+    (read-only, safe for production) so operators get one knowledge
+    agent reachable out of the box;
   * after the loader runs, ``audit_explanation_agent`` is in
     ``registry.list_agents()`` — i.e. the orchestrator's planner will
     see it as a routing target;
-  * the other 8 C3 agents stay ``enabled=false`` by default (they
-    write knowledge or require admin actor_role) — operators flip
+  * the other 8 knowledge agents stay ``enabled=false`` by default
+    (they write knowledge or require admin actor_role) — operators flip
     each individually;
-  * flipping ``enabled=true`` on a previously-disabled C3 agent in
-    config causes it to register on the next ConfigLoader.load_agents
+  * flipping ``enabled=true`` on a previously-disabled knowledge agent
+    in config causes it to register on the next ConfigLoader.load_agents
     call (proves the opt-in path works) AND it shows up in the
     orchestrator's planner's available-agents list.
 """
@@ -40,7 +40,7 @@ from cogniverse_runtime.config_loader import ConfigLoader
 pytestmark = pytest.mark.integration
 
 
-_C3_AGENTS: List[Tuple[str, bool]] = [
+_KNOWLEDGE_AGENTS: List[Tuple[str, bool]] = [
     # (name, expected_default_enabled)
     ("citation_tracing_agent", False),
     ("contradiction_reconciliation_agent", False),
@@ -68,20 +68,20 @@ class TestDefaultReachability:
         entry = config_json["agents"]["audit_explanation_agent"]
         assert entry["enabled"] is True, (
             "audit_explanation_agent must default to enabled=true so "
-            "an operator gets at least one C3 agent reachable through "
+            "an operator gets at least one knowledge agent reachable through "
             "the orchestrator without any per-agent opt-in. Without "
-            "this, every C3 agent stays orphan after the original "
+            "this, every knowledge agent stays orphan after the original "
             "registration commit."
         )
 
     def test_other_knowledge_agents_default_disabled(self, config_json: dict):
-        for name, expected_enabled in _C3_AGENTS:
+        for name, expected_enabled in _KNOWLEDGE_AGENTS:
             if name == "audit_explanation_agent":
                 continue  # covered above
             entry = config_json["agents"][name]
             assert entry["enabled"] is expected_enabled, (
                 f"{name} default enabled={entry['enabled']!r}; expected "
-                f"{expected_enabled!r}. Write-capable + admin-gated C3 "
+                f"{expected_enabled!r}. Write-capable + admin-gated knowledge "
                 "agents must stay disabled-by-default so existing "
                 "deployments don't suddenly serve new endpoints on "
                 "upgrade."
@@ -90,7 +90,7 @@ class TestDefaultReachability:
     def test_load_agents_registers_audit_agent(self, config_json: dict):
         # Use the real ConfigLoader path with the real AgentRegistry.
         cm = create_default_config_manager()
-        registry = AgentRegistry(tenant_id="f71_default", config_manager=cm)
+        registry = AgentRegistry(tenant_id="reachability_default", config_manager=cm)
         loader = ConfigLoader.__new__(ConfigLoader)
         loader.config = {"agents": dict(config_json["agents"])}
         loader.config_manager = None
@@ -104,13 +104,13 @@ class TestDefaultReachability:
 
 
 class TestOptInPattern:
-    """When an operator flips a C3 agent to enabled, registration follows."""
+    """When an operator flips a knowledge agent to enabled, registration follows."""
 
     def test_flipping_enabled_registers_the_agent(self, config_json: dict):
         # Take the shipped config and overlay enabled=true on a
-        # currently-disabled C3 agent.
+        # currently-disabled knowledge agent.
         cm = create_default_config_manager()
-        registry = AgentRegistry(tenant_id="f71_optin", config_manager=cm)
+        registry = AgentRegistry(tenant_id="reachability_optin", config_manager=cm)
         overlay = dict(config_json["agents"])
         overlay["temporal_reasoning_agent"] = dict(
             overlay["temporal_reasoning_agent"], enabled=True
@@ -132,13 +132,13 @@ class TestOptInPattern:
         self, config_json: dict
     ):
         """The orchestrator's planner builds its available_agents string
-        from registry.list_agents(). Test that an enabled C3 agent
+        from registry.list_agents(). Test that an enabled knowledge agent
         appears in that list (i.e. the planner CAN consider routing
         to it). The planner's actual routing decision is DSPy-driven
         and out of scope here — what matters is discoverability."""
         cm = create_default_config_manager()
-        registry = AgentRegistry(tenant_id="f71_planner", config_manager=cm)
-        # Enable a few C3 agents to mirror an operator who's opted in.
+        registry = AgentRegistry(tenant_id="reachability_planner", config_manager=cm)
+        # Enable a few knowledge agents to mirror an operator who's opted in.
         overlay = dict(config_json["agents"])
         for name in (
             "audit_explanation_agent",  # default-enabled
@@ -170,7 +170,7 @@ class TestOptInPattern:
 
 
 class TestEndToEndDispatch:
-    """Proof that the registration test isn't lying: a POST to the C3
+    """Proof that the registration test isn't lying: a POST to the knowledge
     admin route for the default-enabled ``audit_explanation_agent``
     reaches the agent and returns a structured response (or a 503 when
     the per-tenant Mem0 backend isn't available — never a 404 on the
@@ -197,11 +197,11 @@ class TestEndToEndDispatch:
         # dispatch reached the agent — the failure is at the lazy-init
         # boundary, not at the route layer.
         resp = client.post(
-            "/admin/tenants/m15_e2e/knowledge/audit/explain",
+            "/admin/tenants/audit_endpoint_e2e/knowledge/audit/explain",
             json={"answer_memory_id": "fake-id"},
         )
         assert resp.status_code != 404, (
-            "audit endpoint not mounted — c3 router not registered in main.py"
+            "audit endpoint not mounted — knowledge router not registered in main.py"
         )
         assert resp.status_code != 422, (
             f"audit endpoint rejected the body shape; route schema drifted "
@@ -214,7 +214,7 @@ class TestEndToEndDispatch:
 
 
 class TestDocumentationOfPattern:
-    """A test of the docstring contract: the rest of the C3 agents are
+    """A test of the docstring contract: the rest of the knowledge agents are
     opt-in by design. This makes the disabled-by-default policy
     explicit and discoverable from the test name alone, so future
     contributors don't read it as a bug."""

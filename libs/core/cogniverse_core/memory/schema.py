@@ -97,6 +97,19 @@ class KnowledgeSchema:
             self.retention_days is None or self.retention_days <= 0
         ):
             raise ValueError("retention=EPHEMERAL_DAYS requires retention_days > 0")
+        if (
+            self.retention is Retention.EPHEMERAL_SESSION
+            and self.pinnable_by is not Pinnable.NOBODY
+        ):
+            # Pinning a session-scoped memory is a foot-gun: drop_session
+            # hard-deletes every match regardless of pin, so a tenant
+            # admin pinning a session memory expecting durability would
+            # silently lose it on session end. Refuse the schema instead.
+            raise ValueError(
+                f"kind={self.kind!r} retention=ephemeral_session requires "
+                f"pinnable_by=nobody (session memories cannot be pinned — "
+                f"got pinnable_by={self.pinnable_by.value!r})"
+            )
 
     def validate_provenance(
         self, provenance: Optional["ProvenanceLike"] = None
@@ -362,6 +375,24 @@ def build_default_registry() -> KnowledgeRegistry:
             provenance_required=True,
             contradiction_policy=ContradictionPolicy.PRESERVE_BOTH,
             default_trust=0.6,
+        )
+    )
+    # Session-scoped scratch: anything an agent stores under this kind
+    # vanishes when the session closes (Mem0MemoryManager.drop_session,
+    # invoked via POST /admin/sessions/{session_id}/close or DELETE
+    # /admin/tenants/{tenant_id}/sessions/{session_id}). Writes MUST
+    # carry metadata.session_id; the schema validator rejects writes
+    # that don't. Pinning is forbidden by the EPHEMERAL_SESSION schema
+    # gate so a pinned session memory can't silently outlive its session.
+    registry.register(
+        KnowledgeSchema(
+            kind="session_scratch",
+            retention=Retention.EPHEMERAL_SESSION,
+            sensitivity=Sensitivity.TENANT_PRIVATE,
+            pinnable_by=Pinnable.NOBODY,
+            provenance_required=False,
+            contradiction_policy=ContradictionPolicy.LATEST_WINS,
+            default_trust=0.3,  # transient, low base trust
         )
     )
     # Sentinel kinds the system itself writes — no caller-supplied

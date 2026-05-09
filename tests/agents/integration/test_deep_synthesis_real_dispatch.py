@@ -265,5 +265,6 @@ class TestEndToEndWorkflowRunWithRealDispatch:
         assert "REAL_SUBAGENT_ANSWER" in subagent_entries[0]["snippet"]
         assert "stub dispatch" not in subagent_entries[0]["snippet"], (
             "the dispatcher's stub-string fallback must not appear in "
-            "trajectories anymore — F4.1 replaced it with real HTTP"
+            "trajectories anymore — the deep-synthesis workflow now goes "
+            "through real A2A HTTP dispatch"
         )

@@ -185,6 +185,67 @@ class TestMemoryAwareMixin:
         )
 
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_session_id_auto_stamped_on_metadata(self, mock_manager_class, agent):
+        """When set_session_id is active, update_memory adds session_id to metadata."""
+        mock_manager = MagicMock()
+        mock_manager.memory = MagicMock()
+        mock_manager.add_memory.return_value = "mem_456"
+        mock_manager_class.return_value = mock_manager
+
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
+        agent.set_session_id("s_session_a")
+        agent.update_memory("scratch", metadata={"kind": "session_scratch"})
+
+        call = mock_manager.add_memory.call_args
+        assert call.kwargs["metadata"] == {
+            "kind": "session_scratch",
+            "session_id": "s_session_a",
+        }
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_session_id_does_not_overwrite_caller_value(
+        self, mock_manager_class, agent
+    ):
+        """Caller-supplied session_id wins over the dispatcher-set value."""
+        mock_manager = MagicMock()
+        mock_manager.memory = MagicMock()
+        mock_manager.add_memory.return_value = "mem_xy"
+        mock_manager_class.return_value = mock_manager
+
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
+        agent.set_session_id("s_dispatcher")
+        agent.update_memory(
+            "scratch",
+            metadata={"kind": "session_scratch", "session_id": "s_caller_explicit"},
+        )
+
+        call = mock_manager.add_memory.call_args
+        assert call.kwargs["metadata"]["session_id"] == "s_caller_explicit"
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
+    def test_set_session_id_none_clears(self, mock_manager_class, agent):
+        """Clearing the session id leaves metadata untouched on subsequent writes."""
+        mock_manager = MagicMock()
+        mock_manager.memory = MagicMock()
+        mock_manager.add_memory.return_value = "mem_z"
+        mock_manager_class.return_value = mock_manager
+
+        agent.initialize_memory("test_agent", "test_tenant", **MEMORY_INIT_DEFAULTS)
+        agent.set_session_id("s_open")
+        agent.set_session_id(None)
+        agent.update_memory("after-close", metadata={"kind": "entity_fact"})
+
+        call = mock_manager.add_memory.call_args
+        assert "session_id" not in (call.kwargs["metadata"] or {})
+
+    def test_set_session_id_rejects_empty_string(self, agent):
+        """Empty / whitespace session ids never reach a write."""
+        with pytest.raises(ValueError, match="non-empty"):
+            agent.set_session_id("")
+        with pytest.raises(ValueError, match="non-empty"):
+            agent.set_session_id("   ")
+
+    @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_clear_memory(self, mock_manager_class, agent):
         """Test clearing memory"""
         # Setup mock

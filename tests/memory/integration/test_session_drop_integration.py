@@ -46,7 +46,10 @@ def _registry_for_test() -> KnowledgeRegistry:
             kind=SESSION_KIND,
             retention=Retention.EPHEMERAL_SESSION,
             provenance_required=False,
-            pinnable_by=Pinnable.USER,
+            # Session-scoped kinds forbid pinning at the schema level;
+            # the gate in KnowledgeSchema.__post_init__ rejects anything
+            # else. Use NOBODY to construct.
+            pinnable_by=Pinnable.NOBODY,
         ),
         replace=True,
     )
