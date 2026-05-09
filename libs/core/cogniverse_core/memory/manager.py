@@ -164,6 +164,11 @@ class Mem0MemoryManager:
         self.tenant_id = tenant_id
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
+        # P2.1 — knowledge schema registry. When set (via initialize),
+        # add_memory enforces schema.provenance_required and auto-attaches
+        # an initial trust score derived from the provenance + schema's
+        # default_trust. Unset = back-compat (no enforcement, no trust).
+        self._knowledge_registry: Optional[object] = None
 
         self._initialized = True
         logger.info(f"Mem0MemoryManager initialized for tenant: {tenant_id}")
@@ -182,6 +187,7 @@ class Mem0MemoryManager:
         backend_config_port: Optional[int] = None,
         base_schema_name: str = "agent_memories",
         auto_create_schema: bool = True,
+        knowledge_registry: Optional[object] = None,
     ) -> None:
         """
         Initialize Mem0 with backend using tenant-specific schema.
@@ -389,10 +395,66 @@ class Mem0MemoryManager:
         # Initialize Memory
         self.memory = Memory.from_config(self.config)
 
+        # P2.1 — stash the optional knowledge registry. When set, add_memory
+        # enforces schema.provenance_required and computes initial trust.
+        self._knowledge_registry = knowledge_registry
+
         logger.info(
             f"Mem0MemoryManager initialized for tenant {self.tenant_id} "
             f"with schema {tenant_schema_name} at {backend_host}:{backend_port}"
         )
+
+    def _enforce_schema_on_write(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate provenance + auto-attach initial trust per schema (P2.1).
+
+        Returns the (possibly-augmented) metadata dict. Pure function over
+        ``metadata``; the caller passes the result on to ``Memory.add``.
+
+        Behaviour matrix:
+          * No knowledge_registry wired → return metadata unchanged.
+          * No ``metadata.kind`` set → cannot resolve schema, return
+            unchanged. (Plan A.1's "default" schema fallback would fire
+            here in `registry.get(kind)`, but without an explicit kind we
+            don't know what was meant — better to surface than to guess.)
+          * Schema requires provenance and metadata lacks it → raise
+            :class:`SchemaViolationError`. The write never reaches Mem0.
+          * Schema has ``default_trust`` and metadata already has a
+            ``trust`` block → leave it alone (caller is overriding).
+          * Schema has ``default_trust`` and no trust block yet → compute
+            initial trust from the provenance + schema and attach it.
+        """
+        if self._knowledge_registry is None:
+            return metadata
+        kind = metadata.get("kind")
+        if not kind:
+            return metadata
+
+        from cogniverse_core.memory.provenance import extract_from_memory
+        from cogniverse_core.memory.schema import SchemaViolationError
+        from cogniverse_core.memory.trust import (
+            attach_trust_to_metadata,
+            compute_initial_trust,
+        )
+
+        try:
+            schema = self._knowledge_registry.get(kind)
+        except Exception as exc:
+            logger.debug("Schema lookup failed for kind=%r: %s", kind, exc)
+            return metadata
+
+        # Provenance is read off a synthetic memory-shaped dict because
+        # extract_from_memory expects {"metadata": …} shape.
+        provenance = extract_from_memory({"metadata": metadata})
+        if schema.provenance_required and provenance is None:
+            raise SchemaViolationError(
+                f"kind={kind!r} requires provenance but metadata is missing "
+                "the provenance block — refusing the write"
+            )
+
+        if "trust" not in metadata:
+            trust = compute_initial_trust(schema, provenance)
+            metadata = attach_trust_to_metadata(metadata, trust)
+        return metadata
 
     def add_memory(
         self,
@@ -427,11 +489,20 @@ class Mem0MemoryManager:
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
 
+        # P2.1 — schema enforcement. When a registry is wired, every write
+        # is checked against the schema for the metadata.kind:
+        #   * provenance_required=True → reject if no provenance attached
+        #   * default_trust set → compute initial trust from provenance and
+        #     attach to metadata so retrieval-time ranking has it.
+        # When no registry is wired (legacy deployments), behaviour is
+        # unchanged — the write proceeds without enforcement.
+        metadata = self._enforce_schema_on_write(metadata or {})
+
         result = self.memory.add(
             content,
             user_id=tenant_id,
             agent_id=agent_name,
-            metadata=metadata or {},
+            metadata=metadata,
             infer=infer,
         )
         logger.info(f"Mem0.add() returned: {result}")
