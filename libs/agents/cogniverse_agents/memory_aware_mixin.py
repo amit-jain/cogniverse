@@ -6,7 +6,7 @@ Handles context retrieval, memory updates, and lifecycle management.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
@@ -180,6 +180,12 @@ class MemoryAwareMixin:
             if not results:
                 return None
 
+            # P2.2 — apply trust ranking and per-schema reconciliation when
+            # a knowledge registry is wired into the manager. Legacy code
+            # paths that don't set ``_knowledge_registry`` see no behaviour
+            # change (the helpers no-op on missing trust/contradiction).
+            results = self._apply_trust_and_reconcile(results)
+
             context_parts = []
             for i, result in enumerate(results, 1):
                 memory_text = result.get("memory", result.get("text", str(result)))
@@ -196,6 +202,66 @@ class MemoryAwareMixin:
         except Exception as e:
             logger.error(f"Failed to get relevant context: {e}")
             return None
+
+    def _apply_trust_and_reconcile(
+        self, results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Re-rank by trust × confidence and reconcile per-schema (P2.2 wire).
+
+        Composes:
+          * :func:`rank_with_trust` (A.4) — moves high-trust hits to the
+            top so the agent's prompt sees them first;
+          * :class:`ContradictionDetector` + :func:`reconcile` (A.3) — when
+            two hits on the same ``subject_key`` disagree, the schema's
+            ``contradiction_policy`` decides which survive.
+
+        Behaviour matrix:
+          * No knowledge_registry on the underlying manager → return
+            ``results`` unchanged (legacy behaviour).
+          * Hits without trust → still ranked, but their trust defaults
+            to 0.5 inside ``rank_with_trust`` so they sort fairly.
+          * Hits with the same subject_key but distinct content → grouped
+            into a ConflictSet and reconciled per the schema's policy.
+        """
+        registry = getattr(self.memory_manager, "_knowledge_registry", None)
+        if registry is None:
+            return results
+
+        from cogniverse_core.memory.contradiction import (
+            ContradictionDetector,
+            reconcile,
+        )
+        from cogniverse_core.memory.schema import ContradictionPolicy
+        from cogniverse_core.memory.trust import rank_with_trust
+
+        ranked = rank_with_trust(results)
+
+        # Group hits by metadata.kind so each kind's reconciliation policy
+        # applies independently. Hits without a kind fall through.
+        by_kind: Dict[str, List[Dict[str, Any]]] = {}
+        unkinded: List[Dict[str, Any]] = []
+        for r in ranked:
+            meta = r.get("metadata") or {}
+            kind = meta.get("kind") if isinstance(meta, dict) else None
+            if kind:
+                by_kind.setdefault(kind, []).append(r)
+            else:
+                unkinded.append(r)
+
+        out: List[Dict[str, Any]] = list(unkinded)
+        detector = ContradictionDetector()
+        for kind, group in by_kind.items():
+            try:
+                schema = registry.get(kind)
+                policy = schema.contradiction_policy
+            except Exception:
+                policy = ContradictionPolicy.LATEST_WINS
+            conflicts = detector.detect(group)
+            if not conflicts:
+                out.extend(group)
+                continue
+            out.extend(reconcile(group, policy))
+        return out
 
     def update_memory(
         self,
