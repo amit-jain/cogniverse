@@ -216,6 +216,33 @@ class AgentDispatcher:
             return None
 
     @staticmethod
+    def _apply_artefact_overlay(agent: Any, context: Optional[Dict[str, Any]]) -> None:
+        """Inject the dispatcher's per-request artefact overlay onto an agent.
+
+        F2.1 wire — the dispatcher already produces the canary/variant
+        decision via :meth:`resolve_artefact_for_request` and stashes it
+        in ``context["_artefact_overlay"]``. This helper hands it to the
+        agent via the ``MemoryAwareMixin.set_dispatched_artefact`` hook.
+        Agents that don't inherit the mixin silently no-op (no regression).
+
+        Without this call, the overlay is unreachable from agent code and
+        canary traffic-split / admin variant selection have no production
+        effect.
+        """
+        if context is None:
+            return
+        overlay = context.get("_artefact_overlay")
+        if overlay is None:
+            return
+        setter = getattr(agent, "set_dispatched_artefact", None)
+        if setter is None:
+            return
+        try:
+            setter(overlay)
+        except Exception as exc:
+            logger.debug("set_dispatched_artefact failed (non-fatal): %s", exc)
+
+    @staticmethod
     def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:
         """Read the tenant's selected variant for an agent from admin overrides.
 
@@ -444,6 +471,13 @@ class AgentDispatcher:
         agent._artifact_tenant_id = tenant_id
         if hasattr(agent, "_load_artifact"):
             agent._load_artifact()
+        # F2.1 — hand the per-request canary/variant overlay to the agent
+        # so its load path can prefer the dispatcher's chosen prompts
+        # over its default-loaded ones. ``set_dispatched_artefact`` lives
+        # on MemoryAwareMixin; agents that don't inherit the mixin
+        # silently no-op (the dispatch context overlay is just dropped
+        # for them — no regression vs the previous always-default path).
+        self._apply_artefact_overlay(agent, context)
 
         # Find the Input class — convention: same module, class name ends with "Input"
         input_cls = None

@@ -159,6 +159,40 @@ class MemoryAwareMixin:
             and getattr(self, "memory_manager", None) is not None
         )
 
+    def set_dispatched_artefact(self, overlay: Optional[Dict[str, Any]]) -> None:
+        """Receive the per-request artefact overlay from the dispatcher (F2.1).
+
+        The dispatcher's :meth:`AgentDispatcher.resolve_artefact_for_request`
+        produces a dict like
+        ``{"prompts": {...}, "served_from": "canary"|"active"|"default",
+        "version": int|None, "variant_id": str}`` reflecting the canary +
+        variant decision for THIS request. Without this method, that
+        decision was stashed in the dispatch context but no agent ever
+        read it — the canary state machine and the variant-selection
+        admin endpoint were both write-only black holes.
+
+        Storing it on ``self._dispatched_artefact`` makes it observable
+        by the agent's downstream load paths (the agent can now choose
+        ``overlay["prompts"]`` over its default-loaded prompts when the
+        overlay is set). Each agent migrates to consuming it at its own
+        pace; this base method just makes the data available.
+        """
+        self._dispatched_artefact = overlay
+
+    def get_dispatched_prompts(self) -> Optional[Dict[str, str]]:
+        """Return the dispatcher-supplied prompts for this request, if any.
+
+        Returns None when no overlay was supplied (legacy path). Agents
+        that want to honor canary / variant selection call this before
+        their own ``_load_artifact()`` and prefer the overlay when set.
+        """
+        overlay = getattr(self, "_dispatched_artefact", None)
+        if isinstance(overlay, dict):
+            prompts = overlay.get("prompts")
+            if isinstance(prompts, dict):
+                return prompts
+        return None
+
     def get_relevant_context(
         self, query: str, top_k: Optional[int] = 5
     ) -> Optional[str]:
