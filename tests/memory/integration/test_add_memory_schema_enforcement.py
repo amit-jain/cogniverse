@@ -1,4 +1,4 @@
-"""P2.1 — Mem0MemoryManager.add_memory enforces schema + auto-attaches trust.
+"""Mem0MemoryManager.add_memory enforces schema + auto-attaches trust.
 
 Without this enforcement, the write path bypassed every guarantee the
 plan made about provenance and trust:
@@ -137,7 +137,7 @@ class TestEnforcement:
         # entity_fact requires provenance per the default registry.
         with pytest.raises(SchemaViolationError, match="requires provenance"):
             enforced_mm.add_memory(
-                content="P2.1 — should be rejected",
+                content="should be rejected",
                 tenant_id=TENANT_ENFORCED,
                 agent_name=AGENT_ENFORCED,
                 metadata={"kind": "entity_fact", "subject_key": "p21:no_prov"},
@@ -159,7 +159,7 @@ class TestEnforcement:
             {"kind": "entity_fact", "subject_key": "p21:with_prov"}, prov
         )
         memory_id = enforced_mm.add_memory(
-            content="P2.1 — accepted with provenance",
+            content="accepted with provenance",
             tenant_id=TENANT_ENFORCED,
             agent_name=AGENT_ENFORCED,
             metadata=meta,

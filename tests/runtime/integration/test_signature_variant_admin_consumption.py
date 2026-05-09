@@ -1,13 +1,13 @@
-"""F3.2 — admin PUT /signature_variants actually changes which prompts load.
+"""admin PUT /signature_variants actually changes which prompts load.
 
 Audit caught that the admin endpoint wrote to ``_signature_variant_overrides``
 but ``load_for_request`` never read it — variant selections were
 black-holed. F2.2 + F3.2 close the consumer wire end-to-end:
 
-  * F2.2 — ``ArtifactManager.load_for_request`` accepts ``variant_id``
+  * ``ArtifactManager.load_for_request`` accepts ``variant_id``
     and qualifies all dataset names through it (so two variants get
     distinct datasets and distinct canary state).
-  * F3.2 — ``AgentDispatcher.resolve_artefact_for_request`` reads the
+  * ``AgentDispatcher.resolve_artefact_for_request`` reads the
     admin override dict via ``_resolve_signature_variant`` and passes
     the variant_id to ``load_for_request``.
 

@@ -1,4 +1,4 @@
-"""Unit tests for KnowledgeSummarizationAgent (C3.8)."""
+"""Unit tests for KnowledgeSummarizationAgent."""
 
 from __future__ import annotations
 

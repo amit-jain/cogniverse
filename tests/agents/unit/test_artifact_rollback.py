@@ -1,4 +1,4 @@
-"""Unit tests for C.4 — snapshot-on-promote and rollback to a prior version."""
+"""Unit tests for snapshot-on-promote and rollback to a prior version."""
 
 from __future__ import annotations
 

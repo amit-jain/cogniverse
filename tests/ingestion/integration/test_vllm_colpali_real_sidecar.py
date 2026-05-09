@@ -63,9 +63,7 @@ def remote_colpali_client(vllm_colpali_url):
     return client
 
 
-def test_remote_colpali_returns_multivector_embeddings(
-    remote_colpali_client, tmp_path
-):
+def test_remote_colpali_returns_multivector_embeddings(remote_colpali_client, tmp_path):
     image_path = tmp_path / "frame.png"
     Image.new("RGB", (224, 224), color=(0, 128, 255)).save(image_path)
 

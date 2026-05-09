@@ -1,7 +1,7 @@
-"""CitationTracingAgent (C3.5).
+"""CitationTracingAgent.
 
 Read-only agent that walks a memory's provenance chain back to its primary
-sources. Wraps :class:`ProvenanceWalker` (A.2) inside the standard A2A +
+sources. Wraps :class:`ProvenanceWalker` inside the standard A2A +
 MemoryAware harness so the orchestrator can dispatch citation queries the
 same way it dispatches search.
 

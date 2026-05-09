@@ -1444,7 +1444,7 @@ async def run_ab_compare(
     rlm_max_iterations: int = 10,
     rlm_max_llm_calls: int = 30,
 ) -> Dict[str, Any]:
-    """B.5 wire — run RLMABRunner over a Phoenix queries dataset.
+    """run RLMABRunner over a Phoenix queries dataset.
 
     The dataset must contain rows with at least ``query`` and ``context``
     columns (Phoenix wraps these under ``input``/``output`` dicts when
@@ -1584,7 +1584,7 @@ def run_egress_netpol(
     helm_conditional: Optional[str] = None,
     unified_pod_selector: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """D.1 — emit k8s NetworkPolicy CRDs from agent policy YAMLs.
+    """emit k8s NetworkPolicy CRDs from agent policy YAMLs.
 
     Reads every YAML in ``policy_dir`` whose
     ``network_policies.deny_all_other`` is true, translates the egress
@@ -1871,7 +1871,7 @@ async def run_rollback(
     prompts_version: Optional[int] = None,
     demos_version: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """C.4 — restore active artefacts to a previously-snapshotted version.
+    """restore active artefacts to a previously-snapshotted version.
 
     Wraps :meth:`ArtifactManager.rollback_to_version` so an operator can
     run e.g. ``cogniverse-optim --mode rollback --tenant-id acme
@@ -1932,7 +1932,7 @@ def main():
     )
     parser.add_argument("--log-retention-days", type=int, default=7)
     parser.add_argument("--memory-retention-days", type=int, default=30)
-    # C.4 — rollback mode args. Operators run e.g.
+    # rollback mode args. Operators run e.g.
     #   cogniverse-optim --mode rollback --tenant-id acme \
     #       --agent search_agent --prompts-version 3
     # to restore search_agent's active prompts to v3. Demos rollback is
@@ -1951,7 +1951,7 @@ def main():
         type=int,
         help="Demonstrations version to restore (rollback mode)",
     )
-    # B.5 — ab-compare mode args. Operators run e.g.
+    # ab-compare mode args. Operators run e.g.
     #   cogniverse-optim --mode ab-compare --tenant-id acme \
     #       --queries-dataset golden_eval_v1 [--judge-substring 'Paris']
     parser.add_argument(
@@ -1974,7 +1974,7 @@ def main():
         default=30,
         help="Per-arm RLM total LLM call cap (ab-compare mode)",
     )
-    # D.1 — egress-netpol mode args. Generates k8s NetworkPolicy CRDs from
+    # egress-netpol mode args. Generates k8s NetworkPolicy CRDs from
     # the agent policy YAMLs in configs/agent_policies/. Operators run e.g.
     #   cogniverse-optim --mode egress-netpol \
     #       --policy-dir configs/agent_policies/ \

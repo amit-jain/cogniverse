@@ -1,4 +1,4 @@
-"""H8 / A.9 — soft-delete lifecycle: archive at TTL, restore, hard-delete at 2x TTL.
+"""soft-delete lifecycle: archive at TTL, restore, hard-delete at 2x TTL.
 
 Audit found A.9 was missing soft-delete entirely: the lifecycle
 scheduler hard-deleted at TTL with no restore window. The plan

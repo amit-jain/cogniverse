@@ -1,4 +1,4 @@
-"""Policy-enforcing httpx transport (D.1).
+"""Policy-enforcing httpx transport.
 
 Wraps a real ``httpx.AsyncBaseTransport`` so every outbound request is
 checked against the agent's OpenShell policy ``network_policies.egress``

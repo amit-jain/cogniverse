@@ -1,4 +1,4 @@
-"""Unit tests for the OpenShell policy-enforcing httpx transport (D.1)."""
+"""Unit tests for the OpenShell policy-enforcing httpx transport."""
 
 from __future__ import annotations
 

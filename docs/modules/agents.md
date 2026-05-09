@@ -3314,7 +3314,7 @@ records every step (`subagent`, `rlm_step`, `cap_reached`,
 `stalled_no_asks`, `iteration_cap_exhausted`) so callers can audit
 exactly how the answer was produced.
 
-### AuditExplanationAgent (C3.9)
+### AuditExplanationAgent
 
 Read-only A2A agent that explains *why* a system answer was produced.
 Walks the provenance chain (A.2) to surface every source memory the
@@ -3358,13 +3358,14 @@ be rendered as-is in audit UIs without further LLM post-processing.
 Capability strings: `audit_explanation`, `audit`, `provenance_consumer`.
 Default `port=8027`.
 
-### KnowledgeSummarizationAgent (C3.8)
+### KnowledgeSummarizationAgent
 
 A2A agent that distills a slice of the knowledge layer (a subject area,
 a kind, optionally a time window) into a structured summary with
 citations. Distinct from `SummarizerAgent` (which summarises retrieval
-results in-flight): C3.8 summarises the *knowledge layer itself* and
-can promote the result into the org trunk via A.5 federation.
+results in-flight): `KnowledgeSummarizationAgent` summarises the
+*knowledge layer itself* and can promote the result into the org trunk
+via A.5 federation.
 
 ```python
 from cogniverse_agents.knowledge_summarization_agent import (
@@ -3405,7 +3406,7 @@ The agent auto-registers a `knowledge_summary` schema (permanent,
 Capability strings: `knowledge_summarization`, `audit`,
 `federation_promoter`. Default `port=8026`.
 
-### TemporalReasoningAgent (C3.6)
+### TemporalReasoningAgent
 
 A2A agent that compares knowledge about *one* subject across *multiple*
 time windows. Useful for "how has our refund policy evolved" or
@@ -3451,14 +3452,15 @@ exceeds the RLM threshold.
 
 Capability strings: `temporal_reasoning`, `audit`. Default `port=8025`.
 
-### FederatedQueryAgent (C3.7)
+### FederatedQueryAgent
 
 A2A agent that *answers* a free-text query by aggregating federated
 reads across multiple tenants in the same org. Distinct from
-`CrossTenantComparisonAgent` (C3.3): C3.3 *compares* tenant views of one
-known subject, C3.7 *answers* a query by finding any matching memories.
-Both share the federation read path so the org trunk is included
-automatically and cross-org reads are structurally prevented.
+`CrossTenantComparisonAgent`: that one *compares* tenant views of a
+single known subject; this one *answers* a query by finding any
+matching memories. Both share the federation read path so the org
+trunk is included automatically and cross-org reads are structurally
+prevented.
 
 ```python
 from cogniverse_agents.federated_query_agent import (
@@ -3500,7 +3502,7 @@ per-tenant fan-in. The optional RLM summariser only fires when both
 Capability strings: `federated_query`, `audit`, `federation_consumer`.
 Default `port=8024`.
 
-### CrossTenantComparisonAgent (C3.3)
+### CrossTenantComparisonAgent
 
 A2A agent that compares per-tenant views of a subject across multiple
 tenants in the *same* org. Built on A.5 federation: each per-tenant
@@ -3541,7 +3543,7 @@ callers can quickly tell agreement from disagreement.
 Capability strings: `cross_tenant_comparison`, `audit`,
 `federation_consumer`. Default `port=8023`.
 
-### KnowledgeGraphTraversalAgent (C3.2)
+### KnowledgeGraphTraversalAgent
 
 A2A agent that walks the entity/edge memories of the knowledge graph
 from a starting subject_key (or memory id resolving to one) and returns
@@ -3585,7 +3587,7 @@ honours an optional `relation_allowlist` so callers can isolate a
 sub-graph. Capability strings: `kg_traversal`, `graph_walk`. Default
 `port=8022`.
 
-### MultiDocumentSynthesisAgent (C3.1)
+### MultiDocumentSynthesisAgent
 
 A2A agent that produces a coherent answer across N source documents
 (10–500) and persists it as a new memory of kind `synthesis_fact` whose
@@ -3630,7 +3632,7 @@ print(out.answer, out.persisted_memory_id, out.used_rlm)
 Capability strings: `multi_document_synthesis`, `citation_preservation`.
 Default `port=8021`.
 
-### ContradictionReconciliationAgent (C3.4)
+### ContradictionReconciliationAgent
 
 Read-only A2A agent that consumes a ConflictSet (A.3) and resolves it
 per the target schema's `contradiction_policy` (or an explicit per-call
@@ -3663,7 +3665,7 @@ RLM trajectory for fetching extra evidence per side; that enrichment is
 left as a follow-up. Capability strings: `contradiction_reconciliation`,
 `audit`. Default `port=8020`.
 
-### CitationTracingAgent (C3.5)
+### CitationTracingAgent
 
 Read-only A2A agent that wraps `ProvenanceWalker` (A.2). Given a memory id,
 returns the BFS-walked citation chain plus the structured primary-source

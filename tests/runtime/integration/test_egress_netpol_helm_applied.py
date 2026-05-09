@@ -1,4 +1,4 @@
-"""B3 — helm chart applies a runtime-egress NetworkPolicy that selects
+"""helm chart applies a runtime-egress NetworkPolicy that selects
 the actual runtime pod.
 
 Audit caught: the previous emit-mode generated 5 per-agent

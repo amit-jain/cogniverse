@@ -1,12 +1,12 @@
-"""FederatedQueryAgent (C3.7).
+"""FederatedQueryAgent.
 
 Issues a single user query against multiple tenants under the same org and
-merges the results, with org-trunk records included via A.5 federation.
-Differs from CrossTenantComparisonAgent (C3.3): C3.3 *compares* tenant
-views of one subject; C3.7 *answers* a free-text query by aggregating
+merges the results, with org-trunk records included via federation.
+Differs from CrossTenantComparisonAgent: that agent *compares* tenant
+views of one subject; this agent *answers* a free-text query by aggregating
 matches across tenants.
 
-ACL contract (mirrors C3.3):
+ACL contract (mirrors CrossTenantComparisonAgent):
   * caller's role must be ``tenant_admin`` or ``org_admin``
   * every queried tenant must belong to the caller's org
 
@@ -154,7 +154,7 @@ class FederatedQueryAgent(
         self._llm_config = llm_config
 
     async def _process_impl(self, input: FederatedQueryInput) -> FederatedQueryOutput:
-        # ACL: role + cross-org checks (mirror C3.3).
+        # ACL: role + cross-org checks (mirror CrossTenantComparisonAgent).
         try:
             actor_role = Pinnable(input.actor_role.lower())
         except ValueError:

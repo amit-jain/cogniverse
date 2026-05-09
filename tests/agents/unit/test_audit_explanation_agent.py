@@ -1,4 +1,4 @@
-"""Unit tests for AuditExplanationAgent (C3.9)."""
+"""Unit tests for AuditExplanationAgent."""
 
 from __future__ import annotations
 

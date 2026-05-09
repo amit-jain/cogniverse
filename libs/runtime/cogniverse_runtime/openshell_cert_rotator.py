@@ -1,4 +1,4 @@
-"""OpenShell mTLS cert rotation (D.6).
+"""OpenShell mTLS cert rotation.
 
 The OpenShell SDK loads its mTLS material from the active gateway's
 metadata directory at boot (``~/.config/openshell/gateways/<name>``).

@@ -1,4 +1,4 @@
-"""Unit tests for the C.2 regression-reject gate (``promote_if_better``)."""
+"""Unit tests for the regression-reject gate (``promote_if_better``)."""
 
 from __future__ import annotations
 

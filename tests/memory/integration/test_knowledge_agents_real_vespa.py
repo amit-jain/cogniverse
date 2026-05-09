@@ -1,19 +1,19 @@
-"""F5.1 — C3 agents against real Vespa-backed Mem0.
+"""Knowledge agents against real Vespa-backed Mem0.
 
 The previous round shipped ``test_c3_agents_real_mem0.py`` which the
 audit caught was misleadingly named — every test mocked the memory
 manager with ``MagicMock``, so the agents never touched a real
 backend. This file replaces the missing real-service coverage by
-exercising the C3 agents that are USEFUL to test against real
+exercising the knowledge agents that are USEFUL to test against real
 Vespa+Mem0:
 
-  * C3.5 CitationTracingAgent — already covered by the existing
+  * CitationTracingAgent — already covered by the existing
     ``test_citation_tracing_agent_integration.py`` (kept as-is).
-  * C3.9 AuditExplanationAgent — composes ProvenanceWalker + trust
-    + contradiction; needs real persisted provenance + trust.
-  * C3.4 ContradictionReconciliationAgent — reconciles real ConflictSets
+  * AuditExplanationAgent — composes ProvenanceWalker + trust +
+    contradiction; needs real persisted provenance + trust.
+  * ContradictionReconciliationAgent — reconciles real ConflictSets
     written by the detector against real memories.
-  * C3.8 KnowledgeSummarizationAgent — reads a real subject slice and
+  * KnowledgeSummarizationAgent — reads a real subject slice and
     optionally promotes to org trunk via real FederationService.
 
 The other 4 (multi_doc_synth, kg_traversal, cross_tenant, federated_query,
@@ -60,13 +60,13 @@ logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
 TENANT = "test_tenant"
-AGENT = "f51_c3"
+AGENT = "knowledge_agents_real"
 
 
 @pytest.fixture(scope="module")
 def real_mm(shared_memory_vespa, shared_denseon):
     """Real Mem0+Vespa manager wired with the schema registry so add_memory
-    enforces provenance and auto-attaches trust (F1.1)."""
+    enforces provenance and auto-attaches trust."""
     Mem0MemoryManager._instances.clear()
     config_store = VespaConfigStore(
         backend_url="http://localhost",
@@ -103,11 +103,11 @@ def real_mm(shared_memory_vespa, shared_denseon):
     Mem0MemoryManager._instances.clear()
 
 
-# ----- C3.9 AuditExplanationAgent against real Mem0+Vespa --------------------
+# ----- AuditExplanationAgent against real Mem0+Vespa --------------------
 
 
 @pytest.mark.asyncio
-async def test_c39_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager):
+async def test_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager):
     """Write a real chain to Vespa: leaf → derived. AuditExplanationAgent
     must walk it back via the real ProvenanceWalker."""
     # Leaf: direct ingest from an external source.
@@ -115,10 +115,10 @@ async def test_c39_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager)
         written_by="agent:ingest",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("https://wiki/c39_leaf")],
+        derived_from=[CitationRef.external("https://wiki/audit_leaf")],
     )
     leaf_id = real_mm.add_memory(
-        content="C3.9 leaf — primary source",
+        content="leaf — primary source",
         tenant_id=TENANT,
         agent_name=AGENT,
         metadata=attach_to_metadata({"kind": "entity_fact"}, leaf_prov),
@@ -134,7 +134,7 @@ async def test_c39_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager)
         derived_from=[CitationRef.memory(leaf_id, label="primary")],
     )
     derived_id = real_mm.add_memory(
-        content="C3.9 derived synthesis from leaf",
+        content="derived synthesis from leaf",
         tenant_id=TENANT,
         agent_name=AGENT,
         metadata=attach_to_metadata({"kind": "entity_fact"}, derived_prov),
@@ -163,17 +163,17 @@ async def test_c39_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager)
         "round-trip dropped provenance.derived_from on the read path."
     )
     primary_refs = {p["ref_id"] for p in out.primary_sources}
-    assert "https://wiki/c39_leaf" in primary_refs, (
+    assert "https://wiki/audit_leaf" in primary_refs, (
         "the external citation on the leaf must surface as a primary "
         f"source after the walk reaches it; got primary_refs={primary_refs!r}"
     )
 
 
-# ----- C3.8 KnowledgeSummarizationAgent against real Mem0+Vespa --------------
+# ----- KnowledgeSummarizationAgent against real Mem0+Vespa --------------
 
 
 @pytest.mark.asyncio
-async def test_c38_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
+async def test_knowledge_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
     """Write 3 memories on the same subject_key + kind to real Vespa,
     then ask the summarisation agent to distill them. With the DSPy
     module stubbed (no LLM inference required for the wire test) the
@@ -181,7 +181,7 @@ async def test_c38_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
     persistence and grouped citation refs over the 3 source ids."""
     from unittest.mock import MagicMock
 
-    subject = "policy:f51_refunds"
+    subject = "policy:refunds_summary"
     written_ids = []
     for i in range(3):
         prov = make_provenance(
@@ -219,7 +219,7 @@ async def test_c38_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
             subject_keys=[subject],
             kinds=["external_doc"],
             agent_name_filter=AGENT,
-            title="F5.1 refunds slice",
+            title="refunds slice",
             actor_role="user",
             actor_id="alice",
             promote=False,
@@ -242,15 +242,17 @@ async def test_c38_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
         )
 
 
-# ----- C3.4 ContradictionReconciliationAgent on real conflicting memories ---
+# ----- ContradictionReconciliationAgent on real conflicting memories ---
 
 
 @pytest.mark.asyncio
-async def test_c34_reconciles_real_conflicting_memories(real_mm: Mem0MemoryManager):
+async def test_contradiction_reconciles_real_conflicting_memories(
+    real_mm: Mem0MemoryManager,
+):
     """Write two real memories disagreeing on the same subject_key,
     then ask the reconciliation agent to resolve them. The detector +
     reconciler operate over real Mem0 reads, not synthetic dicts."""
-    subject = "france:capital_f51"
+    subject = "france:capital"
 
     prov_a = make_provenance(
         written_by="agent:doc_a",

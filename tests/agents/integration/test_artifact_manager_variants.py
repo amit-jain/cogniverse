@@ -1,4 +1,4 @@
-"""C.6 wiring — variant_qualified_agent_key reaches the dataset wire.
+"""variant_qualified_agent_key reaches the dataset wire.
 
 Without this test, the SignatureVariantRegistry was orphan: ``variant_id``
 was registered in metadata but never reached the artefact storage layer,
@@ -13,9 +13,9 @@ This test verifies, against a real Phoenix instance:
   * round-tripping prompts through real Phoenix using the qualified key
     lands in two distinct datasets — a non-default variant cannot read
     a default-variant's prompts and vice versa;
-  * back-compat: callers that pass the bare agent_type (the existing
-    behaviour, pre-C.6) continue to read/write the *same* dataset as
-    callers who explicitly pass ``variant_id="default"``.
+  * back-compat: callers that pass the bare agent_type (the original
+    behaviour) continue to read/write the *same* dataset as callers who
+    explicitly pass ``variant_id="default"``.
 """
 
 from __future__ import annotations
@@ -55,8 +55,8 @@ class TestQualifiedKeyHelper:
     """Pure-function checks; no Phoenix required."""
 
     def test_default_variant_returns_bare_agent_type(self):
-        # Back-compat invariant — datasets saved before C.6 must keep
-        # working when the loader switches to qualified_agent_key.
+        # Back-compat invariant — pre-existing datasets must keep working
+        # when the loader switches to qualified_agent_key.
         assert (
             ArtifactManager.qualified_agent_key("search_agent", DEFAULT_VARIANT_ID)
             == "search_agent"
@@ -110,8 +110,8 @@ class TestVariantDatasetIsolation:
         loaded = await manager.load_prompts(qualified_default)
         assert loaded == {"system": "BARE_WRITE"}, (
             "qualified_agent_key with default variant must read the same "
-            "dataset as the bare agent_type — otherwise pre-C.6 datasets "
-            "are silently abandoned on upgrade"
+            "dataset as the bare agent_type — otherwise pre-existing "
+            "datasets are silently abandoned on upgrade"
         )
 
     async def test_third_variant_independent_of_first_two(

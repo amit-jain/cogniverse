@@ -1,6 +1,6 @@
-"""F1.1 — MemoryAwareMixin.initialize_memory wires knowledge_registry.
+"""MemoryAwareMixin.initialize_memory wires knowledge_registry.
 
-The previous P2.1/P2.2 commits added enforcement (provenance,
+The previous commits added enforcement (provenance,
 auto-trust, retrieval ranking, reconciliation) but every check was
 gated by ``if self._knowledge_registry is None: return``. Production
 paths never set the registry, so the checks were dead.
@@ -62,7 +62,7 @@ def test_initialize_memory_passes_knowledge_registry_to_manager(monkeypatch):
     assert ok is True
     assert "knowledge_registry" in captured, (
         "initialize_memory must pass knowledge_registry to "
-        "Mem0MemoryManager.initialize — without it the P2.1/P2.2 "
+        "Mem0MemoryManager.initialize — without it the "
         "enforcement code is gated off in production"
     )
     registry = captured["knowledge_registry"]
@@ -82,7 +82,7 @@ def test_initialize_memory_passes_knowledge_registry_to_manager(monkeypatch):
     # in add_memory + get_relevant_context evaluates False.
     assert host.memory_manager._knowledge_registry is not None, (
         "after initialize_memory, the manager's _knowledge_registry "
-        "must be set so P2.1 enforcement and P2.2 ranking actually fire"
+        "must be set so enforcement and P2.2 ranking actually fire"
     )
 
 

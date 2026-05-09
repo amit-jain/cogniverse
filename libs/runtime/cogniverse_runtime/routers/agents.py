@@ -110,7 +110,7 @@ class AgentTask(BaseModel):
     relationships: List[Dict[str, Any]] = []
     query_variants: List[Dict[str, str]] = []
     profiles: Optional[List[str]] = None
-    # H10 / B.7 — opt-in deep-synthesis switch propagated down to the
+    # opt-in deep-synthesis switch propagated down to the
     # OrchestratorInput. Kept top-level so HTTP callers don't have to
     # nest it under context. Any value other than "deep" is ignored.
     synthesis_depth: Optional[str] = None

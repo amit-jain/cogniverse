@@ -102,7 +102,7 @@ class TestMemoryAwareMixin:
         assert success is True
         mock_manager.initialize.assert_called_once()
         kwargs = mock_manager.initialize.call_args.kwargs
-        # F1.1 wired knowledge_registry into the mixin's initialize call so
+        # MemoryAwareMixin wires knowledge_registry into initialize so
         # the schema layer (provenance + trust + contradiction) actually
         # runs in production. The instance type is what matters; the
         # registry contents are validated elsewhere.

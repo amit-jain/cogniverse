@@ -1,4 +1,4 @@
-"""C.4 wire — `cogniverse-optim --mode rollback` against real Phoenix.
+"""`cogniverse-optim --mode rollback` against real Phoenix.
 
 Without this CLI, the rollback API existed only in Python — operators
 had no way to revert an artefact promotion without writing custom code.

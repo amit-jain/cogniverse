@@ -164,7 +164,7 @@ class Mem0MemoryManager:
         self.tenant_id = tenant_id
         self.memory: Optional[Memory] = None
         self.config: Optional[Dict[str, Any]] = None
-        # P2.1 — knowledge schema registry. When set (via initialize),
+        # knowledge schema registry. When set (via initialize),
         # add_memory enforces schema.provenance_required and auto-attaches
         # an initial trust score derived from the provenance + schema's
         # default_trust. Unset = back-compat (no enforcement, no trust).
@@ -410,7 +410,7 @@ class Mem0MemoryManager:
         # Initialize Memory
         self.memory = Memory.from_config(self.config)
 
-        # P2.1 — stash the optional knowledge registry. When set, add_memory
+        # stash the optional knowledge registry. When set, add_memory
         # enforces schema.provenance_required and computes initial trust.
         self._knowledge_registry = knowledge_registry
 
@@ -439,7 +439,7 @@ class Mem0MemoryManager:
         return self._provenance_store
 
     def _enforce_schema_on_write(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate provenance + auto-attach initial trust per schema (P2.1).
+        """Validate provenance + auto-attach initial trust per schema.
 
         Returns the (possibly-augmented) metadata dict. Pure function over
         ``metadata``; the caller passes the result on to ``Memory.add``.
@@ -447,9 +447,9 @@ class Mem0MemoryManager:
         Behaviour matrix:
           * No knowledge_registry wired → return metadata unchanged.
           * No ``metadata.kind`` set → cannot resolve schema, return
-            unchanged. (Plan A.1's "default" schema fallback would fire
-            here in `registry.get(kind)`, but without an explicit kind we
-            don't know what was meant — better to surface than to guess.)
+            unchanged. (The registry's safe default would fire here in
+            ``registry.get(kind)``, but without an explicit kind we don't
+            know what was meant — better to surface than to guess.)
           * Schema requires provenance and metadata lacks it → raise
             :class:`SchemaViolationError`. The write never reaches Mem0.
           * Schema has ``default_trust`` and metadata already has a
@@ -484,6 +484,10 @@ class Mem0MemoryManager:
                 f"kind={kind!r} requires provenance but metadata is missing "
                 "the provenance block — refusing the write"
             )
+
+        # EPHEMERAL_SESSION writes need session_id so drop_session can
+        # find them at session-end. Schema raises SchemaViolationError.
+        schema.validate_session_membership(metadata)
 
         if "trust" not in metadata:
             trust = compute_initial_trust(schema, provenance)
@@ -523,7 +527,7 @@ class Mem0MemoryManager:
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
 
-        # P2.1 — schema enforcement. When a registry is wired, every write
+        # schema enforcement. When a registry is wired, every write
         # is checked against the schema for the metadata.kind:
         #   * provenance_required=True → reject if no provenance attached
         #   * default_trust set → compute initial trust from provenance and
@@ -580,13 +584,12 @@ class Mem0MemoryManager:
         # rather than silently dropping a citation edge.
         self._attach_indexed_provenance(memory_id, metadata)
 
-        # A.3 — detect contradictions on the write. Plan-mandated: the
-        # detector runs on every knowledge write, persisting a
-        # ``conflict_set`` memory when the new write disagrees with an
-        # existing same-subject memory. This is what gives the C3.4
-        # ContradictionReconciliationAgent something to consume in
-        # production. Best-effort: detection failure must not block the
-        # write that already succeeded.
+        # detect contradictions on the write. The detector runs on every
+        # knowledge write, persisting a ``conflict_set`` memory when the
+        # new write disagrees with an existing same-subject memory. This
+        # is what ContradictionReconciliationAgent consumes in production.
+        # Best-effort: detection failure must not block the write that
+        # already succeeded.
         try:
             self._detect_and_persist_contradictions(
                 memory_id=memory_id,
@@ -769,7 +772,7 @@ class Mem0MemoryManager:
             filters: Optional Mem0 metadata filters (e.g. {"agent": "search_agent"}).
                 Passed directly to memory.search() — supports Mem0's full filter
                 syntax including exact-match, in-list, and logical operators.
-            include_archived: A.9 — when False (default), soft-deleted memories
+            include_archived: when False (default), soft-deleted memories
                 (``metadata.archived=true``) are filtered out post-fetch. Set
                 True for admin / restore tooling that needs to surface them.
 
@@ -808,7 +811,7 @@ class Mem0MemoryManager:
                     if not self._read_metadata(r).get("archived")
                 ]
 
-            # P2.3 — bump last_accessed on each hit so the lifecycle
+            # bump last_accessed on each hit so the lifecycle
             # scheduler doesn't prune actively-used memories. Best-effort:
             # logged-not-raised on backend failure (the search itself
             # succeeded, returning a stale recency signal is better than
@@ -821,7 +824,7 @@ class Mem0MemoryManager:
             return []
 
     def _bump_last_accessed_for_hits(self, hits: List[Dict[str, Any]]) -> None:
-        """Update each hit's ``last_accessed`` ISO timestamp (P2.3 wire).
+        """Update each hit's ``last_accessed`` ISO timestamp.
 
         Best-effort: any failure (Mem0 store doesn't expose update,
         backend rejects the partial-update, network blip) is logged at
@@ -895,9 +898,9 @@ class Mem0MemoryManager:
         Args:
             tenant_id: Tenant identifier
             agent_name: Agent name
-            include_archived: A.9 — when False (default), soft-deleted
-                memories are excluded. Set True for admin restore
-                tooling that needs to surface them.
+            include_archived: when False (default), soft-deleted memories
+                are excluded. Set True for admin restore tooling that
+                needs to surface them.
 
         Returns:
             List of all memories
@@ -1012,7 +1015,7 @@ class Mem0MemoryManager:
         registry: "KnowledgeRegistry",
         pinned_memory_ids: Optional[set] = None,
     ) -> Dict[str, int]:
-        """A.7 — schema-driven cleanup that respects per-kind retention.
+        """schema-driven cleanup that respects per-kind retention.
 
         Iterates every memory for this tenant; for each one, looks up its
         ``kind`` in the registry and applies the retention policy:
@@ -1068,14 +1071,15 @@ class Mem0MemoryManager:
             if schema.retention is Retention.PERMANENT:
                 continue
             elif schema.retention is Retention.EPHEMERAL_SESSION:
-                # Session lifecycle is the session manager's concern; do not
-                # touch these from the periodic scheduler.
+                # Session lifecycle is event-driven (drop_session at session
+                # end) not time-driven; the periodic scheduler does not
+                # touch EPHEMERAL_SESSION memories.
                 continue
             elif schema.retention is Retention.EPHEMERAL_DAYS:
                 age_seconds = self._compute_age_seconds(memory, now_epoch)
                 if age_seconds is None:
                     continue
-                # A.9 — soft-delete window: at TTL flip archived=true,
+                # soft-delete window: at TTL flip archived=true,
                 # at 2× TTL hard-delete. Operators can restore in
                 # between via the admin endpoint. retention_days is
                 # validated > 0 in KnowledgeSchema.__post_init__.
@@ -1128,6 +1132,72 @@ class Mem0MemoryManager:
             )
         return deleted_by_kind
 
+    def drop_session(
+        self,
+        session_id: str,
+        registry: "KnowledgeRegistry",
+    ) -> Dict[str, int]:
+        """Hard-delete every EPHEMERAL_SESSION memory tagged with this session.
+
+        Walks the tenant's memories, matches on
+        ``metadata.session_id == session_id`` AND
+        ``schema.retention is EPHEMERAL_SESSION``, hard-deletes each match.
+
+        Pinned memories ARE deleted by this call (a session-end cleanup is
+        the user's explicit signal to drop their session state). Operators
+        who want pinning to outlive a session should not pin
+        EPHEMERAL_SESSION kinds in the first place — the schema's
+        ``pinnable_by`` field is the right gate for that.
+
+        Args:
+            session_id: identifier passed in at write time. Required;
+                empty string raises ValueError.
+            registry: KnowledgeRegistry resolving each memory's kind to
+                its schema. Required — no fallback "delete anything with
+                this session_id" behaviour.
+
+        Returns:
+            ``{kind: deleted_count}`` for the run.
+        """
+        from cogniverse_core.memory.schema import Retention
+
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("drop_session requires a non-empty session_id")
+        if not self.memory:
+            raise RuntimeError("Mem0MemoryManager not initialized")
+
+        deleted_by_kind: Dict[str, int] = {}
+        result = self.memory.get_all(user_id=self.tenant_id)
+        memories = result.get("results", []) if isinstance(result, dict) else result
+
+        for memory in memories:
+            if not isinstance(memory, dict):
+                continue
+            memory_id = memory.get("id")
+            if not memory_id:
+                continue
+
+            meta = self._read_metadata(memory)
+            if meta.get("session_id") != session_id:
+                continue
+
+            kind = self._extract_kind(memory)
+            schema = registry.get(kind)
+            if schema.retention is not Retention.EPHEMERAL_SESSION:
+                continue
+
+            self.memory.delete(memory_id)
+            deleted_by_kind[kind] = deleted_by_kind.get(kind, 0) + 1
+
+        if deleted_by_kind:
+            logger.info(
+                "drop_session(%s) for tenant %s: %s",
+                session_id,
+                self.tenant_id,
+                deleted_by_kind,
+            )
+        return deleted_by_kind
+
     @staticmethod
     def _extract_kind(memory: Dict[str, Any]) -> str:
         """Read ``metadata.kind`` from a Mem0 memory dict, tolerating shapes."""
@@ -1158,7 +1228,7 @@ class Mem0MemoryManager:
         meta: Dict[str, Any],
         existing_data: str = "",
     ) -> None:
-        """A.9 — soft-delete: flip metadata.archived=true with a timestamp.
+        """soft-delete: flip metadata.archived=true with a timestamp.
 
         The lifecycle scheduler calls this when a memory hits its TTL but
         not yet 2*TTL. The memory remains queryable via opt-in
@@ -1191,7 +1261,7 @@ class Mem0MemoryManager:
             )
 
     def restore_archived_memory(self, memory_id: str) -> bool:
-        """A.9 — admin restore: clear the archived flag on a soft-deleted memory.
+        """admin restore: clear the archived flag on a soft-deleted memory.
 
         Returns True when the flag was cleared; False when the memory
         wasn't found or wasn't archived. Callers (the admin endpoint)

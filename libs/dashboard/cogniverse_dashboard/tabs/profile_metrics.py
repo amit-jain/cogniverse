@@ -161,7 +161,7 @@ def render_profile_metrics_tab() -> None:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### Latency by modality (P95)")
+    st.markdown("### Latency by modality")
     fig_latency = px.bar(
         aggregated,
         x="modality",

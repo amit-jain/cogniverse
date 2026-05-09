@@ -1,4 +1,4 @@
-"""Unit tests for RLMABRunner (B.5)."""
+"""Unit tests for RLMABRunner."""
 
 from __future__ import annotations
 

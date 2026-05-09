@@ -110,7 +110,7 @@ class TestRLMInferenceDirect:
 
 
 class TestRLMBootProbe:
-    """B.3 — fast-fail at construction when Deno is absent.
+    """fast-fail at construction when Deno is absent.
 
     Runs everywhere (does not require Ollama) — the point is that the boot
     probe surfaces a clear error before any RLM call attempts to spawn Deno.
@@ -162,7 +162,7 @@ class TestRLMBootProbe:
 
 @skip_if_no_ollama
 class TestRLMABHarness:
-    """B.5 — RLMABRunner against real Ollama: both arms run, share ab_id."""
+    """RLMABRunner against real Ollama: both arms run, share ab_id."""
 
     @skip_if_no_deno
     def test_ab_runner_executes_both_arms_with_shared_ab_id(self):
@@ -238,7 +238,7 @@ class TestRLMABHarness:
 
 @skip_if_no_ollama
 class TestRLMTokenAccounting:
-    """B.1 — verify tokens_used is populated from a real Ollama-backed run.
+    """verify tokens_used is populated from a real Ollama-backed run.
 
     Ollama's API reports prompt_tokens / completion_tokens for every call;
     DSPy's track_usage forwards these into the UsageTracker. After a real
@@ -311,7 +311,7 @@ class TestRLMTokenAccounting:
 
 @skip_if_no_ollama
 class TestRLMTrajectoryCapture:
-    """B.2 — verify trajectory surfacing against real Ollama-backed RLM run.
+    """verify trajectory surfacing against real Ollama-backed RLM run.
 
     Trajectory must be populated when callers opt in via include_trajectory,
     and the metadata.trajectory_summary plus telemetry rlm_trajectory_length
@@ -383,7 +383,7 @@ class TestRLMTrajectoryCapture:
 
 @skip_if_no_ollama
 class TestRLMFallbackMarker:
-    """B.4 — verify RLMResult.was_fallback against a real Ollama-backed RLM run.
+    """verify RLMResult.was_fallback against a real Ollama-backed RLM run.
 
     Two arms:
       - normal completion: max_iterations is generous; SUBMIT() should fire and

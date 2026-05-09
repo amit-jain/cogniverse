@@ -1,4 +1,4 @@
-"""Unit tests for TemporalReasoningAgent (C3.6)."""
+"""Unit tests for TemporalReasoningAgent."""
 
 from __future__ import annotations
 

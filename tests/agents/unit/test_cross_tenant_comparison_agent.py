@@ -1,4 +1,4 @@
-"""Unit tests for CrossTenantComparisonAgent (C3.3)."""
+"""Unit tests for CrossTenantComparisonAgent."""
 
 from __future__ import annotations
 

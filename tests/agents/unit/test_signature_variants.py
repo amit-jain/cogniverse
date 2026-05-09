@@ -1,4 +1,4 @@
-"""Unit tests for C.6 — signature variant registry + tenant-driven selection."""
+"""Unit tests for the signature variant registry + tenant-driven selection."""
 
 from __future__ import annotations
 

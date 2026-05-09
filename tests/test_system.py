@@ -356,7 +356,6 @@ class SystemTester:
             )
             return False
 
-
         except Exception as e:
             self.log_test(
                 "ColPali Search", False, f"ColPali search test error: {str(e)}"

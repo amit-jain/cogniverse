@@ -1,4 +1,4 @@
-"""Contradiction detection + reconciliation (A.3).
+"""Contradiction detection + reconciliation.
 
 Two memories about the same *subject* can disagree. The
 ``ContradictionDetector`` groups candidate memories by a
@@ -18,8 +18,8 @@ swapping ``_content_signature``.
 
 Conflict sets are themselves first-class memories of kind
 ``conflict_set`` (sentinel agent_name ``_conflict_store``) so a future
-ContradictionReconciliationAgent (C3.4) can read them without polluting
-normal-agent search results — the same pattern PinService (A.6) uses.
+ContradictionReconciliationAgent can read them without polluting
+normal-agent search results — the same pattern PinService uses.
 """
 
 from __future__ import annotations

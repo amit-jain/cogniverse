@@ -1,4 +1,4 @@
-"""Unit tests for C.5 — per-tenant canary promotion state machine."""
+"""Unit tests for the per-tenant canary promotion state machine."""
 
 from __future__ import annotations
 

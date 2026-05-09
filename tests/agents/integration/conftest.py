@@ -1,5 +1,10 @@
 """
 Shared fixtures and utilities for agent integration tests.
+
+Re-exports ``shared_memory_vespa`` from tests/memory/conftest.py so agent
+integration tests that need a real Mem0+Vespa backend can request the
+same module-scoped Vespa instance the memory tests use, without spinning
+up a duplicate.
 """
 
 import logging
@@ -12,6 +17,11 @@ import pytest
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+
+# Re-export the canonical shared_memory_vespa fixture so it's discoverable
+# by tests under tests/agents/integration/ (pytest only walks UP from a
+# test file's directory, not laterally into siblings).
+from tests.memory.conftest import shared_memory_vespa  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

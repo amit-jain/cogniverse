@@ -1,4 +1,4 @@
-"""C.4 wire — SIGUSR1 triggers config + sandbox-policy hot-reload.
+"""SIGUSR1 triggers config + sandbox-policy hot-reload.
 
 Without this handler, operators couldn't reload ``configs/config.json``
 or ``configs/agent_policies/*.yaml`` changes without restarting the

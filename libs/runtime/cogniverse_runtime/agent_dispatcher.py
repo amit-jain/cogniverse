@@ -50,10 +50,10 @@ class AgentDispatcher:
         self._config_manager = config_manager
         self._schema_loader = schema_loader
         self._sandbox_manager = sandbox_manager
-        # C.5 wire — when this factory is provided, dispatch consults
+        # Canary wire — when this factory is provided, dispatch consults
         # the per-tenant canary state machine before calling the agent.
-        # Without it, the dispatcher behaves exactly as it did pre-C.5
-        # (no canary routing — every request gets the active artefacts).
+        # Without it, no canary routing — every request gets the active
+        # artefacts.
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
 
@@ -248,9 +248,9 @@ class AgentDispatcher:
         dict plus a ``reason`` field. Empty list means every endpoint is
         on the allowlist (or no policy is registered for the agent).
 
-        H12 — application-layer half of D.1 enforcement for shared-runtime
-        agents. The CNI-level NetworkPolicy (B3) is the actual deny
-        mechanism in production; this dispatch-time check catches the
+        Application-layer half of egress enforcement for shared-runtime
+        agents. The CNI-level NetworkPolicy is the actual deny mechanism
+        in production; this dispatch-time check catches the
         common case where an operator updated a backend port without
         updating the policy YAML, surfacing the drift as a logged
         warning before a single request runs.
@@ -314,7 +314,7 @@ class AgentDispatcher:
         tenant_id: str,
         request_seed: str,
     ) -> Optional[Dict[str, Any]]:
-        """Per-request canary-aware artefact resolution (C.5 wire).
+        """Per-request canary-aware artefact resolution.
 
         Returns ``{"served_from": "active|canary|default", "version": int|None,
         "prompts": {...}|None}`` when an ``artifact_manager_factory`` was
@@ -436,7 +436,7 @@ class AgentDispatcher:
             context.get("tenant_id"), source="AgentTask.context"
         )
 
-        # C.5 wire — consult the canary state machine for this request.
+        # Consult the canary state machine for this request.
         # The result is stashed in context for downstream agent constructors
         # that opt into per-request artefact loading; agents that ignore it
         # see no behaviour change.
@@ -807,10 +807,10 @@ class AgentDispatcher:
         enrichment: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # H12 — consult the egress policy AND verify the agent's known
-        # outbound destinations (Vespa, LLM endpoint) are on the allow
-        # list. Drift surfaces as a logged warning here; cluster-level
-        # CNI enforcement (B3) is the kernel deny.
+        # Consult the egress policy AND verify the agent's known outbound
+        # destinations (Vespa, LLM endpoint) are on the allow list. Drift
+        # surfaces as a logged warning here; cluster-level CNI enforcement
+        # is the kernel deny.
         self.consult_egress_policy("search_agent")
         self._verify_search_egress(tenant_id)
 
@@ -947,7 +947,7 @@ class AgentDispatcher:
         context: Dict[str, Any],
         tenant_id: str,
     ) -> Dict[str, Any]:
-        # H12 — consult + verify routing_agent egress policy at dispatch.
+        # Consult + verifyrouting_agent egress policy at dispatch.
         self.consult_egress_policy("routing_agent")
         self._verify_routing_egress(tenant_id)
 
@@ -1076,9 +1076,8 @@ class AgentDispatcher:
         self._apply_artefact_overlay(agent, context)
 
         gateway_ctx = gateway_context or {}
-        # H10 / B.7 — propagate the synthesis_depth opt-in from the
-        # caller's context. Three precedence levels, gateway-trust > admin
-        # override > none:
+        # Propagate the synthesis_depth opt-in from the caller's context.
+        # Three precedence levels, gateway-trust > admin override > none:
         #   1. function-arg gateway_context (set by the dispatcher's own
         #      gateway → orchestration handoff)
         #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
@@ -1180,7 +1179,7 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # H12 — consult + verify summarizer_agent egress policy at dispatch.
+        # Consult + verifysummarizer_agent egress policy at dispatch.
         self.consult_egress_policy("summarizer_agent")
         self._verify_summarizer_egress(tenant_id)
 

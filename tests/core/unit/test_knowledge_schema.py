@@ -1,4 +1,4 @@
-"""Unit tests for the knowledge schema registry (A.1)."""
+"""Unit tests for the knowledge schema registry."""
 
 from __future__ import annotations
 

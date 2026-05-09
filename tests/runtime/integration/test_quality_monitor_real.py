@@ -569,7 +569,7 @@ class TestPhoenixReachabilityProbe:
         )
 
         class _BrokenManager:
-            config = _broken_cfg  # noqa: F821 — assigned in enclosing scope above
+            config = _broken_cfg  # noqa: assigned in enclosing scope above
 
             def span(self, *args, **kwargs):
                 raise ConnectionRefusedError("Phoenix not reachable")

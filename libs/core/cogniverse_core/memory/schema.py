@@ -1,4 +1,4 @@
-"""Knowledge schema registry — A.1 of the harness plan.
+"""Knowledge schema registry.
 
 Cogniverse's memory layer is the spine of a knowledge management system, not
 enrichment for retrieval. Every write is a fact-shaped artefact whose lifetime,
@@ -20,9 +20,8 @@ Defaults are conservative: a kind that has not been explicitly registered is
 treated as ``permanent`` + ``tenant_private`` + ``provenance_required=True``
 (no auto-cleanup, no leakage, must cite a source).
 
-A.6 (pinning), A.7 (schema-driven lifecycle), A.2 (provenance), and A.3
-(contradiction handling) all read this registry at validation time. A.1 just
-ships the registry and the seed schemas.
+The pinning service, lifecycle scheduler, provenance store, and contradiction
+detector all read this registry at validation time.
 """
 
 from __future__ import annotations
@@ -68,8 +67,8 @@ class KnowledgeSchema:
     """Per-kind policy applied at write/read time.
 
     Frozen dataclass — schemas are registered once at boot and never mutated.
-    A.7 will load these from configs/knowledge_schemas/ rather than relying
-    only on the seed defaults below.
+    A future loader will read these from ``configs/knowledge_schemas/``
+    rather than relying only on the seed defaults below.
     """
 
     kind: str
@@ -119,6 +118,24 @@ class KnowledgeSchema:
                 f"(minimum required: {self.pinnable_by.value})"
             )
 
+    def validate_session_membership(self, metadata: Dict[str, Any]) -> None:
+        """Reject EPHEMERAL_SESSION writes that don't carry session_id.
+
+        EPHEMERAL_SESSION memories are cleaned by an explicit session-end
+        event (Mem0MemoryManager.drop_session). Without a session_id the
+        cleanup path has nothing to match — the memory would silently
+        outlive its session. Refuse the write.
+        """
+        if self.retention is not Retention.EPHEMERAL_SESSION:
+            return
+        sid = (metadata or {}).get("session_id")
+        if not isinstance(sid, str) or not sid.strip():
+            raise SchemaViolationError(
+                f"kind={self.kind!r} retention=ephemeral_session requires "
+                "metadata.session_id (non-empty string) so session-end "
+                "cleanup can find and drop it"
+            )
+
     def validate_write(
         self,
         provenance: Optional["ProvenanceLike"] = None,
@@ -135,8 +152,8 @@ class KnowledgeSchema:
             self.validate_pin_authority(pinned_by)
 
 
-# Provenance is defined in A.2; for A.1 we accept any object exposing
-# `derived_from`. Using a runtime-checkable Protocol via duck typing.
+# Provenance is defined in cogniverse_core.memory.provenance; here we
+# accept any object exposing `derived_from` via duck typing.
 class ProvenanceLike:  # pragma: no cover — typing helper
     derived_from: list
 
@@ -211,7 +228,7 @@ _LEARNED_STRATEGY_MIN_CONFIRMATIONS = 3
 def _retire_unconfirmed_strategy(
     memory: Dict[str, Any], schema: "KnowledgeSchema"
 ) -> bool:
-    """A.8 cleanup hook: retire a learned_strategy that never gained traction.
+    """Cleanup hook: retire a learned_strategy that never gained traction.
 
     Returns True (delete) when ``confirmation_count`` is still below the
     minimum AND the record's ``created_at`` is older than the retire-age
@@ -284,7 +301,7 @@ def build_default_registry() -> KnowledgeRegistry:
             provenance_required=True,
             contradiction_policy=ContradictionPolicy.TRUST_RANKED,
             default_trust=0.6,
-            # A.8 retirement: a learned_strategy whose confirmation_count is
+            # Retirement: a learned_strategy whose confirmation_count is
             # still below 3 after 30 days never proved itself worth keeping.
             # The hook reads metadata.confirmation_count + created_at on each
             # candidate; pinned strategies are filtered out upstream by the

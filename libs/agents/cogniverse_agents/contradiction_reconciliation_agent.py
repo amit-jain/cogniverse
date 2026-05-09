@@ -1,6 +1,6 @@
-"""ContradictionReconciliationAgent (C3.4).
+"""ContradictionReconciliationAgent.
 
-Consumes ConflictSets produced by :class:`ContradictionDetector` (A.3) and
+Consumes ConflictSets produced by :class:`ContradictionDetector` and
 resolves them per the target schema's ``contradiction_policy``. V1 is
 deterministic — it does not call out to an LLM. The plan reserves an RLM
 trajectory for fetching extra evidence per side; that enrichment is left
@@ -14,7 +14,7 @@ Workflow:
      view: which member(s) survive and the rationale.
 
 The agent is read-only — it does not mutate the underlying memories. A
-follow-up commit can wire it to write ``conflict_set`` records (A.3
+follow-up commit can wire it to write ``conflict_set`` records (the
 sentinel kind) when policy = ``preserve_both`` so audit history persists.
 """
 

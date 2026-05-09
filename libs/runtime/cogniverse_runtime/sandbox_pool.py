@@ -1,4 +1,4 @@
-"""SandboxSessionPool (D.5) — reuse OpenShell sessions across exec calls.
+"""SandboxSessionPool — reuse OpenShell sessions across exec calls.
 
 The original ``SandboxManager.exec_in_sandbox`` created and destroyed a
 sandbox session per call. With D.1 wiring every non-coding agent's

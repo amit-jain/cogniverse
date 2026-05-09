@@ -1,4 +1,4 @@
-"""Unit tests for MultiDocumentSynthesisAgent (C3.1)."""
+"""Unit tests for MultiDocumentSynthesisAgent."""
 
 from __future__ import annotations
 

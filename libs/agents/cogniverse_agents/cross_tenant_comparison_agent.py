@@ -1,7 +1,7 @@
-"""CrossTenantComparisonAgent (C3.3).
+"""CrossTenantComparisonAgent.
 
 Compares knowledge across multiple tenants within the *same* org. Built on
-top of A.5 federation: each per-tenant read goes through
+top of the federation read path: each per-tenant read goes through
 ``FederationService.federated_get_all`` so the org trunk is included
 automatically and ACLs are enforced (the agent never reaches across orgs).
 

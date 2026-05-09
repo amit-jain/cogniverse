@@ -1,4 +1,4 @@
-"""Unit tests for KnowledgeGraphTraversalAgent (C3.2)."""
+"""Unit tests for KnowledgeGraphTraversalAgent."""
 
 from __future__ import annotations
 

@@ -173,7 +173,7 @@ class TestSandboxExecutionSDK:
 
 
 class TestGatewayHealthProbeRealGateway:
-    """D.3 — health probe against the real OpenShell gateway.
+    """health probe against the real OpenShell gateway.
 
     Verifies the probe records (available=1, latency>0) for a live gateway
     and (available=0, latency>0, error=...) when the SDK call fails. These
@@ -222,7 +222,7 @@ class TestGatewayHealthProbeRealGateway:
 
 
 class TestSandboxPolicyAtBoot:
-    """D.2 — boot-time policy enforcement against the real OpenShell gateway.
+    """boot-time policy enforcement against the real OpenShell gateway.
 
     These tests do NOT mock SandboxManager._connect — they construct a real
     SandboxManager bound to the test gateway lifecycle. The required and

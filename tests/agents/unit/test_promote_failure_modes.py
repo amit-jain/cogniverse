@@ -1,4 +1,4 @@
-"""C.3 — failure-mode coverage for ``promote_if_better`` and friends.
+"""failure-mode coverage for ``promote_if_better`` and friends.
 
 Real optimization runs hit transient failures: LM 5xx, Phoenix outage,
 process kill mid-write. These tests pin the contract around partial state.

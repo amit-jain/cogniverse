@@ -1,4 +1,4 @@
-"""F3.1 — admin PUT /pin_quotas actually changes the effective PinQuotas.
+"""admin PUT /pin_quotas actually changes the effective PinQuotas.
 
 The previous fix-up shipped the admin endpoint that wrote into
 ``_pin_quota_overrides`` (a process-local module dict). The audit

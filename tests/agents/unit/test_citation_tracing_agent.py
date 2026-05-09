@@ -1,4 +1,4 @@
-"""Unit tests for CitationTracingAgent (C3.5)."""
+"""Unit tests for CitationTracingAgent."""
 
 from __future__ import annotations
 

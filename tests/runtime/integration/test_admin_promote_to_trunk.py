@@ -1,10 +1,9 @@
-"""H7 / A.5 — admin promote-to-org-trunk endpoint.
+"""Admin promote-to-org-trunk endpoint.
 
-Audit found A.5 missing an admin endpoint: only the disabled-and-
-unreachable C3.8 KnowledgeSummarizationAgent called
-FederationService.promote_to_org_trunk. The plan explicitly required
-operators to promote a tenant memory back to the trunk via a CLI or
-admin endpoint.
+Federation was missing an admin endpoint: only the disabled-and-
+unreachable KnowledgeSummarizationAgent called
+FederationService.promote_to_org_trunk. Operators need to promote a
+tenant memory back to the trunk via a CLI or admin endpoint.
 
 This test exercises the new POST .../memories/{id}/promote_to_org_trunk
 endpoint end-to-end against real Vespa: tenant admin promotes a

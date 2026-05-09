@@ -1,4 +1,4 @@
-"""F7.1 — C3 agents are reachable through the orchestrator's planner.
+"""C3 agents are reachable through the orchestrator's planner.
 
 Audit caught: the 9 C3 agents were registered in ``AGENT_CLASSES`` and
 appeared in ``configs/config.json`` but every one was ``enabled: false``,
@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import pytest
 
@@ -50,7 +50,7 @@ _C3_AGENTS: List[Tuple[str, bool]] = [
     ("federated_query_agent", False),
     ("temporal_reasoning_agent", False),
     ("knowledge_summarization_agent", False),
-    ("audit_explanation_agent", True),  # F7.1 — default enabled
+    ("audit_explanation_agent", True),  # default enabled
 ]
 
 
@@ -74,7 +74,7 @@ class TestDefaultReachability:
             "registration commit."
         )
 
-    def test_other_c3_agents_default_disabled(self, config_json: dict):
+    def test_other_knowledge_agents_default_disabled(self, config_json: dict):
         for name, expected_enabled in _C3_AGENTS:
             if name == "audit_explanation_agent":
                 continue  # covered above
@@ -128,7 +128,9 @@ class TestOptInPattern:
         # And the disabled ones stay out — opt-in is per-agent.
         assert "knowledge_summarization_agent" not in registered
 
-    def test_planner_sees_enabled_c3_in_available_agents(self, config_json: dict):
+    def test_planner_sees_enabled_knowledge_agent_in_available_agents(
+        self, config_json: dict
+    ):
         """The orchestrator's planner builds its available_agents string
         from registry.list_agents(). Test that an enabled C3 agent
         appears in that list (i.e. the planner CAN consider routing
@@ -167,13 +169,59 @@ class TestOptInPattern:
             )
 
 
+class TestEndToEndDispatch:
+    """Proof that the registration test isn't lying: a POST to the C3
+    admin route for the default-enabled ``audit_explanation_agent``
+    reaches the agent and returns a structured response (or a 503 when
+    the per-tenant Mem0 backend isn't available — never a 404 on the
+    route itself).
+    """
+
+    def test_audit_endpoint_reaches_agent(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from cogniverse_runtime.routers import knowledge as knowledge_router
+
+        app = FastAPI()
+        app.include_router(knowledge_router.router, prefix="/admin")
+        client = TestClient(app, raise_server_exceptions=False)
+
+        # No Mem0 instance is initialised in this in-process test, so the
+        # agent's factory call raises and the agent re-wraps it. The
+        # body must Pydantic-validate (no 422), the route must be
+        # mounted (no 404), and the failure mode must be the
+        # backend-init-error chain (503 surfaced as 500 because the
+        # AuditExplanationAgent re-raises the factory's HTTPException
+        # as a ValueError before FastAPI sees it). Any of those proves
+        # dispatch reached the agent — the failure is at the lazy-init
+        # boundary, not at the route layer.
+        resp = client.post(
+            "/admin/tenants/m15_e2e/knowledge/audit/explain",
+            json={"answer_memory_id": "fake-id"},
+        )
+        assert resp.status_code != 404, (
+            "audit endpoint not mounted — c3 router not registered in main.py"
+        )
+        assert resp.status_code != 422, (
+            f"audit endpoint rejected the body shape; route schema drifted "
+            f"from AuditExplanationInput. Got: {resp.text[:200]}"
+        )
+        assert resp.status_code in (200, 500, 503), (
+            f"audit endpoint returned unexpected status {resp.status_code}: "
+            f"{resp.text[:200]}"
+        )
+
+
 class TestDocumentationOfPattern:
     """A test of the docstring contract: the rest of the C3 agents are
     opt-in by design. This makes the disabled-by-default policy
     explicit and discoverable from the test name alone, so future
     contributors don't read it as a bug."""
 
-    def test_write_capable_c3_agents_require_explicit_opt_in(self, config_json: dict):
+    def test_write_capable_knowledge_agents_require_explicit_opt_in(
+        self, config_json: dict
+    ):
         # These four are write-capable / admin-gated and must NEVER ship
         # default-enabled — they would change tenant or org-trunk state
         # the moment the runtime starts.

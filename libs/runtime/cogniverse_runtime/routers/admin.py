@@ -866,15 +866,52 @@ async def admin_clear_memories(
     return {"status": "cleared", "type": "all"}
 
 
+@router.delete("/tenants/{tenant_id}/sessions/{session_id}")
+async def admin_drop_session(tenant_id: str, session_id: str):
+    """End a session: hard-delete every EPHEMERAL_SESSION memory tagged with it.
+
+    Schema-driven — only memories whose kind is registered with
+    ``retention=EPHEMERAL_SESSION`` are eligible. Other kinds tagged with
+    the same session_id are untouched. Returns per-kind deletion counts.
+    """
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.schema import build_default_registry
+
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id must be non-empty")
+
+    mgr = Mem0MemoryManager(tenant_id)
+    if not mgr.memory:
+        raise HTTPException(status_code=503, detail="Memory backend not initialised")
+
+    registry = build_default_registry()
+    deleted_by_kind = mgr.drop_session(session_id, registry)
+    total = sum(deleted_by_kind.values())
+    logger.info(
+        "Admin drop_session(%s) for tenant %s: deleted %d memories %s",
+        session_id,
+        tenant_id,
+        total,
+        deleted_by_kind,
+    )
+    return {
+        "status": "dropped",
+        "tenant_id": tenant_id,
+        "session_id": session_id,
+        "deleted_by_kind": deleted_by_kind,
+        "total_deleted": total,
+    }
+
+
 # ---------------------------------------------------------------------------
-# P4.3 — Operability admin endpoints (pin quota / variant select / canary)
+# Operability admin endpoints (pin quota / variant select / canary)
 #
 # These three groups of endpoints close the audit's "operator can't reach
-# this" gap for A.6 pinning quotas, C.6 signature variants, and C.5 canary
-# promotion. Pin quotas + variant selections live in a process-local
-# override dict (good enough for the admin loop until a TenantConfig
-# persistence layer for these specific keys exists). Canary actions go
-# straight to ArtifactManager which persists them to Phoenix.
+# this" gap for pinning quotas, signature variants, and canary promotion.
+# Pin quotas + variant selections live in a process-local override dict
+# (good enough for the admin loop until a TenantConfig persistence layer
+# for these specific keys exists). Canary actions go straight to
+# ArtifactManager which persists them to Phoenix.
 # ---------------------------------------------------------------------------
 
 
@@ -906,7 +943,7 @@ _signature_variant_overrides: Dict[str, Dict[str, str]] = {}
 
 @router.get("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
 async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
-    """A.6 — return effective pin quotas for a tenant."""
+    """return effective pin quotas for a tenant."""
     blob = _pin_quota_overrides.get(tenant_id) or _default_pin_quotas()
     return PinQuotasResponse(tenant_id=tenant_id, quotas=blob)
 
@@ -915,7 +952,7 @@ async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
 async def set_pin_quotas(
     tenant_id: str, body: PinQuotasUpdateRequest
 ) -> PinQuotasResponse:
-    """A.6 — set per-role pin quotas for a tenant.
+    """set per-role pin quotas for a tenant.
 
     Only non-None fields are updated. Negative values (other than
     org_admin's unlimited sentinel of -1) are rejected.
@@ -936,7 +973,7 @@ async def set_pin_quotas(
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
 
-# A.6 — Memory pin / unpin / list endpoints. PinService was already wired
+# Memory pin / unpin / list endpoints. PinService was already wired
 # into the lifecycle scheduler (so pinned memories survive cleanup), but the
 # only way to actually pin a memory used to be the in-process Python API —
 # meaning a tenant admin had no operational path to pin anything. These
@@ -1025,7 +1062,7 @@ def _parse_pinnable(value: str) -> "object":
 async def pin_memory(
     tenant_id: str, memory_id: str, body: PinCreateRequest
 ) -> PinRecordResponse:
-    """A.6 — pin a memory so the lifecycle scheduler skips it.
+    """pin a memory so the lifecycle scheduler skips it.
 
     Authority and quota are enforced via the schema registry + PinQuotas.
     Returns the persisted PinRecord on success.
@@ -1074,7 +1111,7 @@ async def pin_memory(
 async def unpin_memory(
     tenant_id: str, memory_id: str, body: PinUnpinRequest
 ) -> PinUnpinResponse:
-    """A.6 — remove pin records for a memory.
+    """remove pin records for a memory.
 
     Org admin can unpin anything; tenant admin can unpin tenant_admin+user
     pins; users can only unpin their own. Authority violations return 403.
@@ -1110,7 +1147,7 @@ async def unpin_memory(
 
 @router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
 async def list_pins(tenant_id: str) -> PinListResponse:
-    """A.6 — list all pin records for a tenant (audit + UI)."""
+    """list all pin records for a tenant (audit + UI)."""
     svc = _get_pin_service(tenant_id)
     records = svc.list_pins(tenant_id)
     return PinListResponse(
@@ -1128,7 +1165,7 @@ async def list_pins(tenant_id: str) -> PinListResponse:
     )
 
 
-# A.5 — Promote a tenant memory to the org trunk so every tenant in the
+# Promote a tenant memory to the org trunk so every tenant in the
 # org sees it. Schema sensitivity gates which kinds are promotable;
 # Pinnable role gates which actors may promote. Org-shared by design;
 # tenant_private memories are forbidden from promotion regardless of
@@ -1154,7 +1191,7 @@ class PromoteToOrgTrunkResponse(BaseModel):
 async def promote_to_org_trunk(
     tenant_id: str, memory_id: str, body: PromoteToOrgTrunkRequest
 ) -> PromoteToOrgTrunkResponse:
-    """A.5 — copy a memory into the org trunk (admin-gated)."""
+    """copy a memory into the org trunk (admin-gated)."""
     from cogniverse_core.memory.federation import (
         FederationDeniedError,
         FederationService,
@@ -1221,10 +1258,10 @@ async def promote_to_org_trunk(
     )
 
 
-# A.4 — Endorse a memory: bumps its trust score by a role-specific
+# Endorse a memory: bumps its trust score by a role-specific
 # delta (user +0.05, tenant_admin +0.10, org_admin +0.20) and persists
 # the new TrustRecord back to the memory's metadata. The audit endpoint
-# (C3.9) reads endorsement counts off these records — without this
+# reads endorsement counts off these records — without this
 # write path they would always read zero.
 
 
@@ -1246,7 +1283,7 @@ class EndorseResponse(BaseModel):
 async def endorse_memory(
     tenant_id: str, memory_id: str, body: EndorseRequest
 ) -> EndorseResponse:
-    """A.4 — record an endorsement on a memory's trust record."""
+    """record an endorsement on a memory's trust record."""
     from cogniverse_core.memory.trust import (
         _ENDORSEMENT_DELTA,
         apply_endorsement,
@@ -1316,7 +1353,7 @@ async def endorse_memory(
     )
 
 
-# A.9 — restore a soft-deleted memory. The lifecycle scheduler flips
+# restore a soft-deleted memory. The lifecycle scheduler flips
 # `metadata.archived=true` when a kind hits its TTL but not yet 2*TTL,
 # giving operators a window to pull a record back. After 2*TTL the
 # scheduler hard-deletes — restore is no-op then.
@@ -1333,7 +1370,7 @@ class RestoreMemoryResponse(BaseModel):
     response_model=RestoreMemoryResponse,
 )
 async def restore_memory(tenant_id: str, memory_id: str) -> RestoreMemoryResponse:
-    """A.9 — clear the archived flag on a soft-deleted memory."""
+    """clear the archived flag on a soft-deleted memory."""
     source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
     ok = source_mm.restore_archived_memory(memory_id)
     if not ok:
@@ -1361,7 +1398,7 @@ class SignatureVariantResponse(BaseModel):
     response_model=SignatureVariantResponse,
 )
 async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
-    """C.6 — list per-agent variant selections for a tenant."""
+    """list per-agent variant selections for a tenant."""
     return SignatureVariantResponse(
         tenant_id=tenant_id,
         selections=dict(_signature_variant_overrides.get(tenant_id, {})),
@@ -1377,7 +1414,7 @@ async def set_signature_variant(
     agent_type: str,
     body: SignatureVariantSelectRequest,
 ) -> SignatureVariantResponse:
-    """C.6 — pick the variant id this tenant uses for an agent."""
+    """pick the variant id this tenant uses for an agent."""
     if not body.variant_id.strip():
         raise HTTPException(400, "variant_id must be non-empty")
     selections = dict(_signature_variant_overrides.get(tenant_id, {}))
@@ -1407,7 +1444,7 @@ def _build_artifact_manager(tenant_id: str):
     """Construct an ArtifactManager for an admin canary action.
 
     Uses ``PHOENIX_HTTP_ENDPOINT`` / ``PHOENIX_GRPC_ENDPOINT`` env vars
-    so admin endpoints work the same way the rollback CLI does (P4.1):
+    so admin endpoints work the same way the rollback CLI does:
     cluster-default Phoenix in production, docker-managed Phoenix in
     integration tests.
     """
@@ -1436,7 +1473,7 @@ def _build_artifact_manager(tenant_id: str):
 async def promote_canary(
     tenant_id: str, agent_type: str, body: CanaryPromoteRequest
 ) -> CanaryActionResponse:
-    """C.5 — promote a versioned artefact to canary at a traffic_pct."""
+    """promote a versioned artefact to canary at a traffic_pct."""
     am = _build_artifact_manager(tenant_id)
     try:
         state = await am.promote_to_canary(
@@ -1463,7 +1500,7 @@ async def retire_canary(
     agent_type: str,
     reason: str = Query("admin_retire"),
 ) -> CanaryActionResponse:
-    """C.5 — retire the active canary, returning to active-only routing."""
+    """retire the active canary, returning to active-only routing."""
     am = _build_artifact_manager(tenant_id)
     state = await am.retire_canary(agent_type, reason=reason)
     logger.info(

@@ -1,4 +1,4 @@
-"""C.1 integration — ArtifactManager.save_experiment against real Phoenix.
+"""ArtifactManager.save_experiment against real Phoenix (integration).
 
 Skip-guarded behind Phoenix availability. When Phoenix is up, this verifies:
   * a typed ExperimentMetrics record persists as a row in the dedicated
@@ -125,7 +125,7 @@ async def test_tenant_mismatch_rejected_before_phoenix_io(artifact_manager):
 
 @pytest.mark.asyncio
 async def test_promote_if_better_against_real_phoenix(artifact_manager):
-    """C.2 — round-trip the regression-reject gate via real Phoenix.
+    """Round-trip the regression-reject gate via real Phoenix.
 
     Promote a winner, then attempt to promote a regression: prompts must
     reflect the winner only, and both runs must appear in the experiments

@@ -480,17 +480,24 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 memory = Mem0MemoryManager(tenant_id="acme")
 
 # Initialize with required parameters
+from cogniverse_core.memory.schema import build_default_registry
+
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8000",  # Required: DenseOn /v1 endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
-    backend_config_port=19071,  # Optional, defaults to 19071
-    base_schema_name="agent_memories",  # Optional
-    auto_create_schema=True,  # Optional
+    backend_config_port=19071,                  # Optional, defaults to 19071
+    base_schema_name="agent_memories",          # Optional
+    auto_create_schema=True,                    # Optional
+    # Optional but load-bearing: when set, add_memory enforces schema
+    # provenance + auto-attaches initial trust; get_relevant_context
+    # applies trust ranking and per-schema contradiction reconciliation.
+    knowledge_registry=build_default_registry(),
 )
 
 # Add memories
@@ -599,7 +606,7 @@ Memories without a `subject_key` pass through unchanged — the detector
 has no way to know what they are claims *about*. Conflict sets persist
 under sentinel `agent_name="_conflict_store"` (matching the A.6 pinning
 pattern) so they don't pollute normal-agent search results; a future
-`ContradictionReconciliationAgent` (C3.4) will consume them.
+`ContradictionReconciliationAgent` will consume them.
 
 ### Trust / source ranking (A.4)
 
@@ -746,6 +753,14 @@ pollute normal-agent search results. The schema registry's
 `validate_pin_authority(role)` enforces the per-kind floor before any
 write hits Vespa.
 
+> **Note on the `actor_id` kwarg.** The public API takes `actor_id`, but the
+> persisted metadata key is `pin_actor_id`. Mem0 treats `actor_id` as a
+> promoted-payload key (it's lifted out of `metadata` and into the top-level
+> payload on insert), which would erase the pin's audit trail on round-trip.
+> Other writers storing per-actor identifiers in memory metadata should
+> avoid the bare key `actor_id` for the same reason — pick a namespaced key
+> (`pin_actor_id`, `endorsement_actor_id`, etc.).
+
 ### Knowledge schema registry
 
 Each kind of memory carries a `KnowledgeSchema` describing its retention,
@@ -804,46 +819,46 @@ under 3 confirmations for more than 30 days. Pinned strategies are
 filtered out by `LifecycleScheduler.pin_lookup` before the hook runs, so
 admin-promoted strategies are immune to retirement.
 
-### Schema-driven lifecycle (A.7)
+### Schema-driven lifecycle
 
-By default the runtime ticks the lifecycle in schema-driven mode: each
-memory's ``metadata["kind"]`` is looked up in the ``KnowledgeRegistry`` and
-that schema's retention policy decides whether to delete it.
+The runtime ticks the lifecycle in schema-driven mode only — every
+memory's ``metadata["kind"]`` is looked up in the ``KnowledgeRegistry``
+and that schema's retention policy decides whether to delete it. There
+is no bulk-age fallback; a memory without a registered kind falls back
+to the registry's safe default (`permanent`) and is never auto-deleted.
 
 | `Retention` | Behaviour |
 |---|---|
 | `PERMANENT` | Never auto-deleted. |
-| `EPHEMERAL_SESSION` | Not handled by the periodic scheduler — owned by the session manager. |
-| `EPHEMERAL_DAYS(N)` | Deleted when ``created_at`` is older than `N` days. |
-| `SCHEMA_DRIVEN` | Defers to the schema's ``cleanup_hook`` callable. |
+| `EPHEMERAL_SESSION` | Event-driven: cleared by `Mem0MemoryManager.drop_session(session_id, registry)` (or `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}`). The periodic scheduler skips these. Writes MUST carry `metadata["session_id"]` or the schema rejects them. |
+| `EPHEMERAL_DAYS(N)` | Soft-deleted (`metadata.archived=true`) when `created_at` is older than `N` days; hard-deleted at `2N` days. Restoreable via the admin restore endpoint inside the soft-delete window. |
+| `SCHEMA_DRIVEN` | Defers to the schema's `cleanup_hook` callable. |
 
 Pinned memory ids (from `PinService.list_pins`) are filtered out before any
-deletion attempt — pins always win.
-
-| Env var | Default | Effect |
-|---|---|---|
-| `COGNIVERSE_MEMORY_LIFECYCLE_MODE` | `schema_driven` | Set to `bulk_age` to fall back to the legacy single-cutoff path. |
+deletion attempt by the periodic scheduler — pins always win there.
+`drop_session`, by contrast, is the user's explicit "end my session" signal
+and ignores pins (use a non-`EPHEMERAL_SESSION` kind if you want pinning to
+outlive a session).
 
 The tick summary returned by `LifecycleScheduler.tick_once()` reports
-`{tenant_id: {kind: deleted_count}}` so per-kind deletion can be charted.
+`{"tenants": {tenant_id: {kind: deleted_count}}, "total_deleted": int}`.
+Soft-delete events appear under the `{kind}:archived` key; hard-deletes
+appear under `{kind}` directly.
 
 ### Scheduled lifecycle cleanup
 
 Memories accumulate; the runtime ships a `LifecycleScheduler` that runs
-`cleanup_expired_memories` on each warm tenant on a periodic tick. It is
+schema-driven cleanup on each warm tenant on a periodic tick. It is
 started in the FastAPI `lifespan` and stopped on shutdown.
 
 | Env var | Default | Effect |
 |---|---|---|
 | `COGNIVERSE_MEMORY_LIFECYCLE_DISABLED` | unset | When `1`/`true`/`yes`, the scheduler does not start. |
 | `COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL` | `3600` | Seconds between ticks. |
-| `COGNIVERSE_MEMORY_MAX_AGE_SECONDS` | `2592000` (30 days) | Age threshold for the bulk cleanup. |
 
 Per-tenant errors during a tick are recorded in the run summary but do not
 abort the run; offending tenants are visible via the scheduler's
-`last_run_summary` for operator inspection. A.7 will replace the single
-`max_age_seconds` knob with per-schema retention policies and add
-soft-delete; A.9 only ensures the existing cleanup path runs on a schedule.
+`last_run_summary` for operator inspection.
 
 ---
 

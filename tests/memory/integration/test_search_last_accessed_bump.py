@@ -1,4 +1,4 @@
-"""P2.3 — search_memory bumps last_accessed on every returned hit.
+"""search_memory bumps last_accessed on every returned hit.
 
 Without this wire, the lifecycle scheduler can prune an actively-queried
 memory because its ``last_accessed`` (or fallback ``updated_at``) never
@@ -83,7 +83,7 @@ class TestBumpHelper:
             "b",
             "c",
         ]
-        # F1.2 — every update call must carry a metadata dict with
+        # every update call must carry a metadata dict with
         # last_accessed populated. The previous bug built the metadata
         # then dropped it on the floor; without this assertion the bump
         # was a no-op against the persistence layer.
@@ -205,7 +205,7 @@ class TestRealVespaSchemaIntegration:
 
         try:
             memory_id = mm.add_memory(
-                content="P2.3 — actively-queried fact about X",
+                content="actively-queried fact about X",
                 tenant_id="test_tenant",
                 agent_name="p23_real_agent",
                 metadata={"kind": "external_doc"},

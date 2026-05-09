@@ -1,7 +1,7 @@
-"""Pinning service — A.6 of the harness plan.
+"""Pinning service.
 
 Pinned memories are immune to lifecycle cleanup, trust decay, and any future
-curator pass. The user-confirmed semantics:
+curator pass. Quota semantics:
 
   * ``pin_quota.user`` (default 50) — per-user limit for end-user pins.
   * ``pin_quota.tenant_admin`` (default 500) — tenant-admin limit for
@@ -16,8 +16,8 @@ the target by id. This composes cleanly with the existing search/cleanup
 plumbing — no metadata-update workaround needed — and gives the future
 curator (and audit) a real history of pin actions per role.
 
-A.7 will read pin records when building the per-schema cleanup batch so
-pinned targets are skipped.
+The schema-driven lifecycle reads pin records when building the per-schema
+cleanup batch so pinned targets are skipped.
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ class PinQuotas:
     ) -> "PinQuotas":
         """Resolve effective quotas, checking the admin runtime override first.
 
-        F3.1 wire — the admin endpoint ``PUT /admin/tenants/{t}/pin_quotas``
+        the admin endpoint ``PUT /admin/tenants/{t}/pin_quotas``
         writes into a process-local override dict. This factory consults
         that dict before falling back to ``TenantConfig.metadata['pin_quota']``
         and finally to the dataclass defaults. Without this consultation,
@@ -300,8 +300,8 @@ class PinService:
         return bool(self._find_pin_records(target_memory_id, tenant_id))
 
     def list_pins(self, tenant_id: str) -> List[PinRecord]:
-        """Return all pin records for a tenant — used by A.7 cleanup to skip
-        pinned targets, and by admins for audit."""
+        """Return all pin records for a tenant — used by the schema-driven
+        cleanup to skip pinned targets, and by admins for audit."""
         return self._all_pin_records(tenant_id)
 
     def quota_used(self, role: Pinnable, tenant_id: str) -> int:

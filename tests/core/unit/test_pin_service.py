@@ -1,4 +1,4 @@
-"""Unit tests for PinService — quotas, authority, override semantics (A.6)."""
+"""Unit tests for PinService — quotas, authority, override semantics."""
 
 from __future__ import annotations
 

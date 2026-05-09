@@ -1,4 +1,4 @@
-"""C3 agent tests with the memory manager injected via MagicMock.
+"""Knowledge-agent tests with the memory manager injected via MagicMock.
 
 Each agent's ``memory_manager_factory`` (or mixin attribute) is given a
 MagicMock that returns canned rows in the shape Mem0 produces. These
@@ -6,15 +6,15 @@ tests exercise the agent's own logic — input validation, walk
 semantics, reconciliation policy choice, summary composition — without
 paying the full Vespa + LLM cost of a real backend.
 
-Real-backend coverage for every C3 agent lives in:
+Real-backend coverage for every knowledge agent lives in:
 
-  * ``tests/memory/integration/test_c3_agents_real_vespa.py`` — C3.4
-    ContradictionReconciliation, C3.8 KnowledgeSummarization, C3.9
-    AuditExplanation against live Mem0 + Vespa.
-  * ``tests/memory/integration/test_c3_remaining_agents_real_vespa.py``
-    — C3.1 MultiDoc, C3.2 KGTraversal, C3.3 CrossTenant, C3.6
-    TemporalReasoning, C3.7 FederatedQuery against live Mem0 + Vespa
-    (multi-tenant fixture for the federation-shaped agents).
+  * ``tests/memory/integration/test_knowledge_agents_real_vespa.py`` —
+    ContradictionReconciliation, KnowledgeSummarization, AuditExplanation
+    against live Mem0 + Vespa.
+  * ``tests/memory/integration/test_knowledge_agents_extra_real_vespa.py``
+    — MultiDoc, KGTraversal, CrossTenant, TemporalReasoning, FederatedQuery
+    against live Mem0 + Vespa (multi-tenant fixture for the
+    federation-shaped agents).
 
 This file complements those: same agents, lower cost per test, used
 to drive policy-branch coverage that doesn't need a real backend.
@@ -35,7 +35,7 @@ TENANT = "p5_int_tenant"
 
 
 def _factory_returning(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
-    """For multi-tenant agents (C3.3, C3.7) — inject per-tenant memories
+    """For multi-tenant agents (cross-tenant + federated) — inject per-tenant memories
     via the agent's memory_manager_factory seam. The factory returns a
     Mem0-shaped object with the right rows for each requested tenant."""
 
@@ -49,17 +49,17 @@ def _factory_returning(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
     return _factory
 
 
-# ----- C3.1 MultiDocumentSynthesisAgent --------------------------------------
+# ----- MultiDocumentSynthesisAgent --------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c31_synthesises_across_documents():
+async def test_synthesises_across_documents():
     """Two memory_ids → agent fetches via injected manager → cites both."""
     from cogniverse_agents.multi_document_synthesis_agent import (
         DocumentRef,
-        MultiDocumentSynthesisAgent,
         MultiDocSynthesisDeps,
         MultiDocSynthesisInput,
+        MultiDocumentSynthesisAgent,
     )
 
     rows_by_id = {
@@ -101,11 +101,11 @@ async def test_c31_synthesises_across_documents():
     assert {"doc_a", "doc_b"}.issubset(cited_ids)
 
 
-# ----- C3.6 TemporalReasoningAgent -------------------------------------------
+# ----- TemporalReasoningAgent -------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c36_memories_bucketed_by_window():
+async def test_memories_bucketed_by_window():
     from cogniverse_agents.temporal_reasoning_agent import (
         TemporalReasoningAgent,
         TemporalReasoningDeps,
@@ -166,11 +166,11 @@ async def test_c36_memories_bucketed_by_window():
     assert out.distinct_signatures_count == 2
 
 
-# ----- C3.7 FederatedQueryAgent ----------------------------------------------
+# ----- FederatedQueryAgent ----------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c37_aggregates_across_two_tenants():
+async def test_aggregates_across_two_tenants():
     from cogniverse_agents.federated_query_agent import (
         FederatedQueryAgent,
         FederatedQueryDeps,
@@ -199,11 +199,11 @@ async def test_c37_aggregates_across_two_tenants():
     assert {h.memory_id for h in out.hits} == {"a1", "b1"}
 
 
-# ----- C3.3 CrossTenantComparisonAgent ---------------------------------------
+# ----- CrossTenantComparisonAgent ---------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c33_compares_distinct_subject_signatures_across_tenants():
+async def test_compares_distinct_subject_signatures_across_tenants():
     from cogniverse_agents.cross_tenant_comparison_agent import (
         CrossTenantComparisonAgent,
         CrossTenantComparisonDeps,
@@ -245,11 +245,11 @@ async def test_c33_compares_distinct_subject_signatures_across_tenants():
     assert out.distinct_signatures_count == 2
 
 
-# ----- C3.4 ContradictionReconciliationAgent ---------------------------------
+# ----- ContradictionReconciliationAgent ---------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c34_reconciles_real_conflict_set():
+async def test_reconciles_real_conflict_set():
     from cogniverse_agents.contradiction_reconciliation_agent import (
         ContradictionReconciliationAgent,
         ContradictionReconciliationDeps,
@@ -289,11 +289,11 @@ async def test_c34_reconciles_real_conflict_set():
     assert hasattr(out, "metadata")
 
 
-# ----- C3.8 KnowledgeSummarizationAgent --------------------------------------
+# ----- KnowledgeSummarizationAgent --------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c38_summarises_real_subject_slice():
+async def test_summarises_real_subject_slice():
     from cogniverse_agents.knowledge_summarization_agent import (
         KnowledgeSummarizationAgent,
         KnowledgeSummarizationDeps,
@@ -331,11 +331,11 @@ async def test_c38_summarises_real_subject_slice():
     assert out.source_count == 3
 
 
-# ----- C3.2 KnowledgeGraphTraversalAgent -------------------------------------
+# ----- KnowledgeGraphTraversalAgent -------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c32_walks_real_graph():
+async def test_walks_real_graph():
     from cogniverse_agents.kg_traversal_agent import (
         KGTraversalDeps,
         KGTraversalInput,
@@ -401,18 +401,26 @@ async def test_c32_walks_real_graph():
     assert {"a", "b", "c"}.issubset(visited)
 
 
-# ----- C3.9 AuditExplanationAgent --------------------------------------------
+# ----- AuditExplanationAgent --------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c39_explains_real_provenance_chain():
+async def test_explains_real_provenance_chain():
     from cogniverse_agents.audit_explanation_agent import (
         AuditExplanationAgent,
         AuditExplanationDeps,
         AuditExplanationInput,
     )
+    from cogniverse_core.memory.provenance import (
+        CitationRef,
+        DerivationKind,
+        Provenance,
+    )
+    from cogniverse_core.memory.provenance_store import ProvenanceRecord
 
-    # Provide a memory factory that returns the chain by id.
+    # Provide a memory factory that returns the chain by id AND a
+    # provenance_store stub that satisfies the indexed walker's contract:
+    # walk(root, max_depth, max_nodes) → (ordered, primary_sources, truncated).
     rows_by_id = {
         "answer": {
             "id": "answer",
@@ -438,10 +446,41 @@ async def test_c39_explains_real_provenance_chain():
         },
     }
 
+    answer_prov = Provenance(
+        written_by="agent:test",
+        written_at="2026-05-09T00:00:00+00:00",
+        derived_from=[CitationRef.memory("src_a")],
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.8,
+    )
+    answer_record = ProvenanceRecord.from_provenance("answer", TENANT, answer_prov)
+
+    class _StubStore:
+        """Minimal in-memory stand-in for ProvenanceStore.
+
+        Implements the (root, max_depth, max_nodes) → (ordered,
+        primary_sources, truncated) contract the indexed walker uses,
+        plus the per-node ``get`` lookup. src_a has no provenance row
+        (it's a primary source), so the walk terminates after one hop.
+        """
+
+        def __init__(self):
+            self._records = {"answer": answer_record}
+
+        def walk(self, root: str, *, max_depth: int, max_nodes: int):
+            del max_depth, max_nodes  # not exercised by this stub
+            ordered = [("answer", 0), ("src_a", 1)]
+            primary_sources = [CitationRef.memory("src_a")]
+            return ordered, primary_sources, False
+
+        def get(self, memory_id: str):
+            return self._records.get(memory_id)
+
     def _factory(tenant_id: str):
         m = MagicMock()
         m.memory = MagicMock()
         m.memory.get = lambda memory_id: rows_by_id.get(memory_id)
+        m.provenance_store = _StubStore()
         return m
 
     agent = AuditExplanationAgent(

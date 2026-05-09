@@ -27,12 +27,12 @@ from cogniverse_runtime.config_loader import get_config_loader
 from cogniverse_runtime.routers import (
     admin,
     agents,
-    c3,
     debug,
     events,
     graph,
     health,
     ingestion,
+    knowledge,
     search,
     tenant,
     wiki,
@@ -751,7 +751,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         gateway_probe.start()
         app.state.gateway_probe = gateway_probe
 
-    # 12b. Start the OpenShell mTLS cert rotator (D.6). Watches the gateway
+    # 12b. Start the OpenShell mTLS cert rotator. Watches the gateway
     # cert directory; on detected change, calls SandboxManager.reconnect()
     # so the next exec uses the rotated client. Disabled when the sandbox
     # itself is disabled, or when COGNIVERSE_SANDBOX_CERT_ROTATION_DISABLED
@@ -836,7 +836,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lifecycle_interval,
         )
 
-    # C.4 — SIGUSR1 hot-reload handler. Operators send `kill -USR1 <pid>`
+    # SIGUSR1 hot-reload handler. Operators send `kill -USR1 <pid>`
     # to trigger a non-disruptive config + sandbox-policy reload (loaded
     # backends/agents are re-read from configs/config.json; OpenShell
     # policies are re-read from configs/agent_policies/). The handler is
@@ -922,7 +922,7 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(c3.router, prefix="/admin", tags=["c3-knowledge"])
+app.include_router(knowledge.router, prefix="/admin", tags=["knowledge-agents"])
 app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])

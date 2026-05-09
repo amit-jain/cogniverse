@@ -45,8 +45,8 @@ class ConfigLoader:
         "query_enhancement_agent": "cogniverse_agents.query_enhancement_agent:QueryEnhancementAgent",
         "profile_selection_agent": "cogniverse_agents.profile_selection_agent:ProfileSelectionAgent",
         "orchestrator_agent": "cogniverse_agents.orchestrator_agent:OrchestratorAgent",
-        # Knowledge-system agents (C3.1–C3.9). Off by default in config.json so
-        # operators opt in per deployment; entries here make them loadable.
+        # Knowledge-system agents. Off by default in config.json so operators
+        # opt in per deployment; entries here make them loadable.
         "citation_tracing_agent": (
             "cogniverse_agents.citation_tracing_agent:CitationTracingAgent"
         ),

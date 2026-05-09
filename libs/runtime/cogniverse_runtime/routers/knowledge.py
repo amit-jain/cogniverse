@@ -1,20 +1,19 @@
-"""C3 admin endpoints — direct HTTP access to the 9 knowledge-system agents.
+"""Direct HTTP access to the knowledge-system agents.
 
-Audit found that 8 of 9 C3 agents were orchestrator-unreachable: even
-with ``enabled: true`` in config, the dispatcher's
-``_execute_generic_agent`` only fills 5 input fields (query, tenant_id,
-entities, relationships, enhanced_query) so any agent requiring extra
-fields (memory_id, subject_key, conflict_member_ids, …) Pydantic-errors
-on first call. The orchestrator's planner cannot synthesise these
-fields from a free-form user query.
+The orchestrator's planner can only fill a generic 5-field input
+(query, tenant_id, entities, relationships, enhanced_query) on dispatch.
+Knowledge agents take richer inputs — memory_id (audit, citation),
+subject_key (KG traversal, temporal), conflict_member_ids
+(reconciliation), tenant_ids + actor_role (cross-tenant, federated),
+documents (multi-document synthesis), windows (temporal). Without
+dedicated routes these agents would Pydantic-error on the first
+dispatched call.
 
-These endpoints close the gap: each C3 agent gets a dedicated admin
-route under ``/admin/tenants/{t}/c3/...`` whose request body matches the
-agent's input model exactly. Operators (and audit / compliance UIs)
-get a documented HTTP surface; the orchestrator-routing path remains
-available for the agents that can be filled from a generic query
-(future work — see ``test_c3_agent_reachability.py`` for the planner
-discovery contract).
+Each agent gets its own route under ``/admin/tenants/{t}/knowledge/...``
+whose request body matches the agent's input model exactly. Operators,
+audit / compliance UIs, and admin scripts use these routes; the
+orchestrator-routing path stays available for the agents whose input
+shape can be filled from a generic query.
 """
 
 from __future__ import annotations
@@ -62,10 +61,10 @@ def _inject_memory(agent, tenant_id: str, agent_name: str):
     """Wire a per-tenant Mem0MemoryManager onto an agent that takes no
     memory_manager_factory in its constructor.
 
-    Several C3 agents (citation_tracing, kg_traversal, multi_document_synthesis)
-    have no factory parameter — they're meant to receive the manager via
-    the MemoryAwareMixin attributes that the runtime usually populates.
-    The admin path needs the same wiring.
+    Several knowledge agents (citation_tracing, kg_traversal,
+    multi_document_synthesis) have no factory parameter — they receive
+    the manager via the MemoryAwareMixin attributes that the runtime
+    usually populates. The admin path needs the same wiring.
     """
     mm = _build_factory(tenant_id)
     agent.memory_manager = mm
@@ -75,7 +74,7 @@ def _inject_memory(agent, tenant_id: str, agent_name: str):
     return mm
 
 
-# --- C3.9 AuditExplanationAgent --------------------------------------------
+# --- AuditExplanationAgent --------------------------------------------
 
 
 class AuditExplainRequest(BaseModel):
@@ -86,9 +85,9 @@ class AuditExplainRequest(BaseModel):
     max_chain_nodes: int = Field(100, ge=1, le=500)
 
 
-@router.post("/tenants/{tenant_id}/c3/audit/explain")
+@router.post("/tenants/{tenant_id}/knowledge/audit/explain")
 async def audit_explain(tenant_id: str, body: AuditExplainRequest) -> Dict[str, Any]:
-    """C3.9 — explain why a system answer was produced (read-only)."""
+    """explain why a system answer was produced (read-only)."""
     from cogniverse_agents.audit_explanation_agent import (
         AuditExplanationAgent,
         AuditExplanationDeps,
@@ -105,7 +104,7 @@ async def audit_explain(tenant_id: str, body: AuditExplainRequest) -> Dict[str, 
     return out.model_dump()
 
 
-# --- C3.5 CitationTracingAgent ---------------------------------------------
+# --- CitationTracingAgent ---------------------------------------------
 
 
 class CitationTraceRequest(BaseModel):
@@ -114,9 +113,9 @@ class CitationTraceRequest(BaseModel):
     max_nodes: int = Field(100, ge=1, le=500)
 
 
-@router.post("/tenants/{tenant_id}/c3/citations/trace")
+@router.post("/tenants/{tenant_id}/knowledge/citations/trace")
 async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str, Any]:
-    """C3.5 — walk the provenance chain back to primary sources (read-only)."""
+    """walk the provenance chain back to primary sources (read-only)."""
     from cogniverse_agents.citation_tracing_agent import (
         CitationTracingAgent,
         CitationTracingDeps,
@@ -131,7 +130,7 @@ async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str
     return out.model_dump()
 
 
-# --- C3.8 KnowledgeSummarizationAgent --------------------------------------
+# --- KnowledgeSummarizationAgent --------------------------------------
 
 
 class KnowledgeSummarizeRequest(BaseModel):
@@ -144,11 +143,11 @@ class KnowledgeSummarizeRequest(BaseModel):
     promote: bool = False
 
 
-@router.post("/tenants/{tenant_id}/c3/knowledge/summarize")
+@router.post("/tenants/{tenant_id}/knowledge/summarize")
 async def knowledge_summarize(
     tenant_id: str, body: KnowledgeSummarizeRequest
 ) -> Dict[str, Any]:
-    """C3.8 — distill a subject slice into a structured summary."""
+    """distill a subject slice into a structured summary."""
     from cogniverse_agents.knowledge_summarization_agent import (
         KnowledgeSummarizationAgent,
         KnowledgeSummarizationDeps,
@@ -166,7 +165,7 @@ async def knowledge_summarize(
     return out.model_dump()
 
 
-# --- C3.4 ContradictionReconciliationAgent ---------------------------------
+# --- ContradictionReconciliationAgent ---------------------------------
 
 
 class ContradictionReconcileRequest(BaseModel):
@@ -175,11 +174,11 @@ class ContradictionReconcileRequest(BaseModel):
     policy_override: Optional[str] = None
 
 
-@router.post("/tenants/{tenant_id}/c3/contradictions/reconcile")
+@router.post("/tenants/{tenant_id}/knowledge/contradictions/reconcile")
 async def contradiction_reconcile(
     tenant_id: str, body: ContradictionReconcileRequest
 ) -> Dict[str, Any]:
-    """C3.4 — apply schema policy to a conflict set (write-capable)."""
+    """apply schema policy to a conflict set (write-capable)."""
     from cogniverse_agents.contradiction_reconciliation_agent import (
         ContradictionReconciliationAgent,
         ContradictionReconciliationDeps,
@@ -203,7 +202,7 @@ async def contradiction_reconcile(
     return out.model_dump()
 
 
-# --- C3.1 MultiDocumentSynthesisAgent --------------------------------------
+# --- MultiDocumentSynthesisAgent --------------------------------------
 
 
 class MultiDocSynthesizeRequest(BaseModel):
@@ -213,11 +212,11 @@ class MultiDocSynthesizeRequest(BaseModel):
     actor_id: str = Field("admin")
 
 
-@router.post("/tenants/{tenant_id}/c3/synthesis/multi_doc")
+@router.post("/tenants/{tenant_id}/knowledge/synthesis/multi_doc")
 async def multi_doc_synthesize(
     tenant_id: str, body: MultiDocSynthesizeRequest
 ) -> Dict[str, Any]:
-    """C3.1 — synthesise an answer across N documents with citations."""
+    """synthesise an answer across N documents with citations."""
     from cogniverse_agents.multi_document_synthesis_agent import (
         MultiDocSynthesisAgent,
         MultiDocSynthesisDeps,
@@ -232,7 +231,7 @@ async def multi_doc_synthesize(
     return out.model_dump()
 
 
-# --- C3.2 KGTraversalAgent -------------------------------------------------
+# --- KGTraversalAgent -------------------------------------------------
 
 
 class KGTraverseRequest(BaseModel):
@@ -242,9 +241,9 @@ class KGTraverseRequest(BaseModel):
     max_nodes: int = Field(50, ge=1, le=500)
 
 
-@router.post("/tenants/{tenant_id}/c3/kg/traverse")
+@router.post("/tenants/{tenant_id}/knowledge/kg/traverse")
 async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]:
-    """C3.2 — walk the entity / kg graph from a starting subject (read-only)."""
+    """walk the entity / kg graph from a starting subject (read-only)."""
     from cogniverse_agents.kg_traversal_agent import (
         KGTraversalAgent,
         KGTraversalDeps,
@@ -259,7 +258,7 @@ async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]
     return out.model_dump()
 
 
-# --- C3.3 CrossTenantComparisonAgent ---------------------------------------
+# --- CrossTenantComparisonAgent ---------------------------------------
 
 
 class CrossTenantCompareRequest(BaseModel):
@@ -269,11 +268,11 @@ class CrossTenantCompareRequest(BaseModel):
     actor_id: str = Field("admin")
 
 
-@router.post("/tenants/{tenant_id}/c3/cross_tenant/compare")
+@router.post("/tenants/{tenant_id}/knowledge/cross_tenant/compare")
 async def cross_tenant_compare(
     tenant_id: str, body: CrossTenantCompareRequest
 ) -> Dict[str, Any]:
-    """C3.3 — compare knowledge across org tenants for a subject (admin)."""
+    """compare knowledge across org tenants for a subject (admin)."""
     from cogniverse_agents.cross_tenant_comparison_agent import (
         CrossTenantComparisonAgent,
         CrossTenantComparisonDeps,
@@ -291,7 +290,7 @@ async def cross_tenant_compare(
     return out.model_dump()
 
 
-# --- C3.7 FederatedQueryAgent ----------------------------------------------
+# --- FederatedQueryAgent ----------------------------------------------
 
 
 class FederatedQueryRequest(BaseModel):
@@ -302,11 +301,11 @@ class FederatedQueryRequest(BaseModel):
     top_k: int = Field(10, ge=1, le=200)
 
 
-@router.post("/tenants/{tenant_id}/c3/federated/query")
+@router.post("/tenants/{tenant_id}/knowledge/federated/query")
 async def federated_query(
     tenant_id: str, body: FederatedQueryRequest
 ) -> Dict[str, Any]:
-    """C3.7 — issue a single query against multiple tenants (admin, read-only)."""
+    """issue a single query against multiple tenants (admin, read-only)."""
     from cogniverse_agents.federated_query_agent import (
         FederatedQueryAgent,
         FederatedQueryDeps,
@@ -324,7 +323,7 @@ async def federated_query(
     return out.model_dump()
 
 
-# --- C3.6 TemporalReasoningAgent -------------------------------------------
+# --- TemporalReasoningAgent -------------------------------------------
 
 
 class TemporalReasonRequest(BaseModel):
@@ -332,11 +331,11 @@ class TemporalReasonRequest(BaseModel):
     windows: List[Dict[str, Any]] = Field(..., min_length=1)
 
 
-@router.post("/tenants/{tenant_id}/c3/temporal/reason")
+@router.post("/tenants/{tenant_id}/knowledge/temporal/reason")
 async def temporal_reason(
     tenant_id: str, body: TemporalReasonRequest
 ) -> Dict[str, Any]:
-    """C3.6 — compare knowledge of a subject across time windows (read-only)."""
+    """compare knowledge of a subject across time windows (read-only)."""
     from cogniverse_agents.temporal_reasoning_agent import (
         TemporalReasoningAgent,
         TemporalReasoningDeps,

@@ -1,10 +1,11 @@
-"""H5 / A.3 — ContradictionDetector runs on every write, persists conflict_set.
+"""ContradictionDetector runs on every write, persists conflict_set.
 
-Audit found A.3 was half-shipped: the detector existed and ran at READ
-time inside MemoryAwareMixin._apply_trust_and_reconcile, but the plan
-explicitly required it to run on every WRITE so a conflict_set memory
-gets persisted for downstream agents (C3.4 ContradictionReconciliation)
-to consume. Without this, C3.4 had nothing to reconcile in production.
+The detector existed and ran at READ time inside
+MemoryAwareMixin._apply_trust_and_reconcile, but the contract requires
+it to run on every WRITE so a conflict_set memory gets persisted for
+downstream agents (ContradictionReconciliationAgent) to consume.
+Without this, ContradictionReconciliationAgent had nothing to reconcile
+in production.
 
 This test verifies, against real Vespa:
 

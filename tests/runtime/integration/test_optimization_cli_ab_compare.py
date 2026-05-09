@@ -1,4 +1,4 @@
-"""B.5 wire — `cogniverse-optim --mode ab-compare` invokes RLMABRunner.
+"""`cogniverse-optim --mode ab-compare` invokes RLMABRunner.
 
 Without this CLI, ``RLMABRunner`` was an orphan class — no production
 code path ever ran the harness, so no Phoenix spans tied by

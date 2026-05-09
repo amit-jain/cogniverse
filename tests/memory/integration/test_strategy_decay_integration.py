@@ -170,8 +170,7 @@ async def test_unconfirmed_aged_strategies_retired_via_lifecycle(memory_env):
         get_warm_managers=Mem0MemoryManager._instances.values,
         registry=build_default_registry(),
     )
-    summary = await scheduler.tick_once()
-    assert summary["mode"] == "schema_driven"
+    await scheduler.tick_once()
 
     # Old one is gone, fresh one remains.
     surviving = {

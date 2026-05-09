@@ -1,4 +1,4 @@
-"""B2 — admin pin/unpin/list endpoints (A.6 wiring).
+"""admin pin/unpin/list endpoints.
 
 Audit caught: PinService was reachable only via direct Python API. The
 runtime exposed pin-quota CRUD but no way to actually pin a memory.

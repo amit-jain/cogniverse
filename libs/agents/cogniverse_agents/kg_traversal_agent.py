@@ -1,4 +1,4 @@
-"""KnowledgeGraphTraversalAgent (C3.2).
+"""KnowledgeGraphTraversalAgent.
 
 Walks the entity-fact / kg_node / kg_edge memories starting from an entity
 or specific node id, returning a structured graph view (nodes + edges)
@@ -18,7 +18,7 @@ Node memories are expected to carry:
   * ``subject_key`` (canonical entity id)
 
 Memories without those tags are ignored — the walker is a structural
-graph reader, not a free-text searcher. (C3.1 covers free-text synthesis.)
+graph reader, not a free-text searcher. (MultiDocumentSynthesisAgent covers free-text synthesis.)
 """
 
 from __future__ import annotations

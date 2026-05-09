@@ -139,7 +139,7 @@ def _normalize_query_variants(
     return normalized
 
 
-# B.6 — RLM promotion thresholds. The default RLMOptions context_threshold
+# RLM promotion thresholds. The default RLMOptions context_threshold
 # is 50_000 chars; we promote when the projected sub-agent payload exceeds
 # 75% of that. Operators can override via the env var below.
 import os as _os
@@ -289,7 +289,7 @@ class OrchestratorInput(AgentInput):
     synthesis_depth: Optional[str] = Field(
         default=None,
         description=(
-            "Opt-in deep-synthesis switch (B.7). When set to ``deep`` the "
+            "Opt-in deep-synthesis switch. When set to ``deep`` the "
             "orchestrator dispatches via :class:`DeepSynthesisWorkflow` "
             "(recursive multi-agent loop with hard rate + call caps) "
             "instead of the default plan-then-act path. Any other value "
@@ -687,7 +687,7 @@ class OrchestratorAgent(
             await self.event_queue.enqueue(event)
 
     def _build_deep_synthesis_workflow(self):
-        """Construct a :class:`DeepSynthesisWorkflow` for opt-in deep mode (B.7).
+        """Construct a :class:`DeepSynthesisWorkflow` for opt-in deep mode.
 
         Used by ``_process_impl`` when ``input.synthesis_depth == "deep"``.
         Returns ``None`` when the workflow's prerequisites are not yet
@@ -718,7 +718,7 @@ class OrchestratorAgent(
 
         async def _dispatcher(query: str, sub_agent_name: str) -> str:
             """Send a sub-query to a registered sub-agent over the
-            orchestrator's HTTP path (F4.1).
+            orchestrator's HTTP path.
 
             Uses the orchestrator's existing http_client (which carries
             the OpenShell policy-enforcing transport when D.1 is wired)
@@ -796,7 +796,7 @@ class OrchestratorAgent(
         if isinstance(input, dict):
             input = OrchestratorInput(**input)
 
-        # B.7 — opt-in deep-synthesis path. When the caller asks for
+        # opt-in deep-synthesis path. When the caller asks for
         # ``synthesis_depth=deep`` the orchestrator dispatches through
         # the recursive workflow instead of the default plan-then-act
         # path. The workflow owns its own per-tenant rate limit + hard
@@ -816,7 +816,7 @@ class OrchestratorAgent(
                         query=input.query,
                         workflow_id="deep_synthesis",
                         plan_steps=[],
-                        plan_reasoning="Deep synthesis workflow (B.7) selected",
+                        plan_reasoning="Deep synthesis workflow selected",
                         agent_results={},
                         final_output={
                             "answer": result.answer,
@@ -1246,7 +1246,7 @@ class OrchestratorAgent(
                     if dep_result:
                         _merge_enrichment(agent_input, dep_agent, dep_result)
 
-                # B.6 — RLM promotion. When the projected payload size for a
+                # RLM promotion. When the projected payload size for a
                 # sub-agent exceeds a threshold, stamp ``rlm.enabled=True``
                 # in agent_input so RLM-aware sub-agents (search, deep
                 # research, detailed report, coding) recursively decompose

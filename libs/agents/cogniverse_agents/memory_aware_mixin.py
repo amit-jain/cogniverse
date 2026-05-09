@@ -49,7 +49,7 @@ class MemoryAwareMixin:
         # We store it separately for memory operations only if needed
         self._memory_tenant_id: Optional[str] = None
         self._memory_initialized: bool = False
-        # A.5 — opt-in federated read. When set, get_relevant_context
+        # opt-in federated read. When set, get_relevant_context
         # pulls from both tenant and the org trunk and dedups by
         # subject_key. Off by default to keep legacy agents unchanged.
         self._memory_federation_enabled: bool = False
@@ -59,7 +59,7 @@ class MemoryAwareMixin:
         self._memory_tenant_id = tenant_id
 
     def enable_org_trunk_federation(self, enabled: bool = True) -> None:
-        """Toggle the A.5 federated read path on this agent.
+        """Toggle the federated read path on this agent.
 
         When enabled, ``get_relevant_context`` queries both the tenant
         and the org trunk and dedups by ``subject_key`` (tenant wins).
@@ -125,11 +125,11 @@ class MemoryAwareMixin:
             self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 
             if self.memory_manager.memory is None:
-                # F1.1 — wire the knowledge_registry so add_memory enforces
+                # wire the knowledge_registry so add_memory enforces
                 # provenance_required + auto-attaches initial trust, AND
                 # get_relevant_context applies trust ranking + per-schema
                 # contradiction reconciliation. Without this kwarg the
-                # P2.1/P2.2 enforcement code is gated off in production
+                # schema enforcement code is gated off in production
                 # (the registry stays None and every check short-circuits).
                 from cogniverse_core.memory.schema import build_default_registry
 
@@ -176,7 +176,7 @@ class MemoryAwareMixin:
         )
 
     def set_dispatched_artefact(self, overlay: Optional[Dict[str, Any]]) -> None:
-        """Receive the per-request artefact overlay from the dispatcher (F2.1).
+        """Receive the per-request artefact overlay from the dispatcher.
 
         The dispatcher's :meth:`AgentDispatcher.resolve_artefact_for_request`
         produces a dict like
@@ -219,10 +219,9 @@ class MemoryAwareMixin:
         knowledge_registry is wired on the underlying manager), the
         retrieval queries BOTH the tenant's own memories AND the org
         trunk, dedups by ``subject_key`` (tenant overlay wins), and
-        applies trust + reconciliation across the union. This is the
-        A.5 plan-mandated behaviour: an agent reading "what do we
-        know about X" sees both tenant-private knowledge and any
-        org-shared trunk knowledge in one pass.
+        applies trust + reconciliation across the union: an agent
+        reading "what do we know about X" sees both tenant-private
+        knowledge and any org-shared trunk knowledge in one pass.
 
         When the flag is unset (default), behaviour is the legacy
         tenant-only path so existing code is unchanged.
@@ -248,7 +247,7 @@ class MemoryAwareMixin:
                 top_k=top_k,
             )
 
-            # A.5 — federate across tenant + org trunk when enabled. We
+            # federate across tenant + org trunk when enabled. We
             # ALWAYS use search for the tenant side (so the query's
             # semantic relevance still ranks results) but fall back to
             # get_all_memories on the org trunk (Mem0's per-tenant
@@ -261,7 +260,7 @@ class MemoryAwareMixin:
             if not results:
                 return None
 
-            # P2.2 — apply trust ranking and per-schema reconciliation when
+            # apply trust ranking and per-schema reconciliation when
             # a knowledge registry is wired into the manager. Legacy code
             # paths that don't set ``_knowledge_registry`` see no behaviour
             # change (the helpers no-op on missing trust/contradiction).
@@ -298,8 +297,8 @@ class MemoryAwareMixin:
         registry = getattr(self.memory_manager, "_knowledge_registry", None)
         if registry is None:
             # Federation requires the schema layer (sensitivity gating,
-            # reconciliation policies); without it we can't honor A.5
-            # semantics. Return tenant results unchanged.
+            # reconciliation policies); without it we can't honor
+            # federation semantics. Return tenant results unchanged.
             return tenant_results
 
         from cogniverse_core.memory.federation import (
@@ -358,12 +357,12 @@ class MemoryAwareMixin:
     def _apply_trust_and_reconcile(
         self, results: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Re-rank by trust × confidence and reconcile per-schema (P2.2 wire).
+        """Re-rank by trust × confidence and reconcile per-schema.
 
         Composes:
-          * :func:`rank_with_trust` (A.4) — moves high-trust hits to the
+          * :func:`rank_with_trust` — moves high-trust hits to the
             top so the agent's prompt sees them first;
-          * :class:`ContradictionDetector` + :func:`reconcile` (A.3) — when
+          * :class:`ContradictionDetector` + :func:`reconcile` — when
             two hits on the same ``subject_key`` disagree, the schema's
             ``contradiction_policy`` decides which survive.
 

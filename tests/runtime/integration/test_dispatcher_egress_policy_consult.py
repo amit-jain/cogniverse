@@ -1,4 +1,4 @@
-"""P3 — dispatcher consults egress policies for search/summarizer/routing.
+"""dispatcher consults egress policies for search/summarizer/routing.
 
 Without this wire, the YAMLs in ``configs/agent_policies/`` for these three
 agents were dead config: the dispatcher loaded them at boot but never

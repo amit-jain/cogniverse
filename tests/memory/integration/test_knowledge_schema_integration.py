@@ -1,4 +1,4 @@
-"""A.1 integration — knowledge schema validation gates real Mem0 writes.
+"""Knowledge-schema validation gates real Mem0 writes (integration).
 
 The unit tests cover schema validation in isolation. This integration test
 proves the validation gate composes with the real Mem0+Vespa write path:

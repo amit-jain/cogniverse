@@ -736,15 +736,19 @@ memory_mgr = Mem0MemoryManager(tenant_id="acme")
 
 # Initialize with backend configuration (only needed once per tenant)
 # All parameters are required — no vendor-specific defaults
+from cogniverse_core.memory.schema import build_default_registry
+
 memory_mgr.initialize(
     backend_host=system_config["backend_url"],
     backend_port=system_config["backend_port"],
     llm_model=memory_config["llm_model"],
-    embedding_model=memory_config["embedding_model"],
+    embedding_model="lightonai/DenseOn",
     llm_base_url=memory_config["llm_base_url"],
+    embedder_base_url=memory_config["embedder_base_url"],  # DenseOn /v1
     base_schema_name="agent_memories",  # Base schema (becomes agent_memories_acme)
     config_manager=config_manager,
     schema_loader=schema_loader,
+    knowledge_registry=build_default_registry(),  # Enables provenance + trust + reconciliation
 )
 
 # Add memory (stored in agent_memories_acme schema)

@@ -47,16 +47,20 @@ config_manager.set_system_config(tenant_config)
 
 # 3. Initialize tenant memory
 from cogniverse_core.memory.manager import Mem0MemoryManager  # Core layer
+from cogniverse_core.memory.schema import build_default_registry
 
 memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 memory_manager.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8000",  # Required: DenseOn /v1 endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
+    # Enables schema enforcement (provenance + trust + reconciliation)
+    knowledge_registry=build_default_registry(),
 )
 
 print(f"✅ Tenant {tenant_id} created successfully")

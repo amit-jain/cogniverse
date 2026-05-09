@@ -1,4 +1,4 @@
-"""D.1 wire — `cogniverse-optim --mode egress-netpol` emits k8s NetworkPolicy.
+"""`cogniverse-optim --mode egress-netpol` emits k8s NetworkPolicy.
 
 Closes the audit's per-agent egress enforcement gap by translating the
 agent policy YAMLs (the source of truth declaring per-agent egress

@@ -50,7 +50,7 @@ class SandboxGatewayUnavailableError(RuntimeError):
     """Raised at boot when policy=required but the gateway is unreachable."""
 
 
-# D.4 — OOM / policy-denied detection from stderr + exit_code. These
+# OOM / policy-denied detection from stderr + exit_code. These
 # patterns are heuristic; OpenShell's exec result does not (today) carry
 # structured failure reason. The patterns are conservative so we don't
 # false-positive on user code that happens to mention these words.
@@ -127,12 +127,12 @@ class SandboxManager:
         self._client = None
         self._available = False
 
-        # D.5 — pooled sessions. Lazily created on first exec; uses
+        # pooled sessions. Lazily created on first exec; uses
         # SandboxPoolConfig.from_environment() so operators can disable or
         # tune via env vars without code changes.
         self._pool: Optional[Any] = None
 
-        # D.6 — optional cert-rotation watcher. Operators wire one in via
+        # optional cert-rotation watcher. Operators wire one in via
         # ``attach_cert_rotator()`` so an external poller can call
         # ``trigger_on_auth_failure()`` from the exec error path. Kept
         # optional so unit tests + non-mTLS deployments don't pay for it.
@@ -336,7 +336,7 @@ class SandboxManager:
 
         Uses the OpenShell Python SDK (SandboxClient.create_session + exec).
         Each lifecycle phase (create_session, wait_ready, exec, delete)
-        emits an OpenTelemetry span (D.4) so Phoenix correlates sandbox
+        emits an OpenTelemetry span so Phoenix correlates sandbox
         behaviour with the parent agent span. OOM and policy-denied
         outcomes surface as span attributes derived from stderr/exit_code.
 
@@ -346,7 +346,7 @@ class SandboxManager:
         if not self._available or not self._client:
             return None
 
-        # D.5 — go through the pool when enabled. Pool reuses one session
+        # go through the pool when enabled. Pool reuses one session
         # per agent_type across calls, eliminating per-call container churn.
         pool = self._get_or_create_pool()
         if pool is not None and pool.config.enabled:
@@ -431,7 +431,7 @@ class SandboxManager:
                             logger.debug("sandbox.delete failed (non-fatal): %s", exc)
 
     def attach_cert_rotator(self, rotator: Any) -> None:
-        """Wire a :class:`CertRotator` into the exec error path (D.6).
+        """Wire a :class:`CertRotator` into the exec error path.
 
         Once attached, any exec failure that looks like an auth/TLS
         problem (matched by class name or stderr substring) eagerly

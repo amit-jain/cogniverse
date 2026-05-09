@@ -1,4 +1,4 @@
-"""Unit tests for FederatedQueryAgent (C3.7)."""
+"""Unit tests for FederatedQueryAgent."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Unit tests for OpenShell mTLS cert rotation (D.6)."""
+"""Unit tests for OpenShell mTLS cert rotation."""
 
 from __future__ import annotations
 

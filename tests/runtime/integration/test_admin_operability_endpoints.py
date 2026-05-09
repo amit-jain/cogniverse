@@ -1,8 +1,8 @@
-"""P4.3 — admin endpoints for pin quota / signature variant / canary.
+"""Admin endpoints for pin quota / signature variant / canary.
 
-Without these endpoints, operators had no way to reach A.6 (pin
-quotas), C.6 (signature variants), or C.5 (canary promote/retire)
-without writing custom Python. The audit flagged this gap directly.
+Without these endpoints, operators had no way to reach pin quotas,
+signature variants, or canary promote/retire without writing custom
+Python. The audit flagged this gap directly.
 
 This test mounts the real `admin` router on a FastAPI TestClient and
 hits each endpoint. The canary endpoints round-trip through real
@@ -78,7 +78,7 @@ class TestPinQuotaEndpoints:
         assert "must be >= 0" in resp.text
 
 
-# ----- C.6 signature-variant endpoints --------------------------------------
+# ----- signature-variant endpoints ------------------------------------------
 
 
 class TestSignatureVariantEndpoints:
@@ -121,7 +121,7 @@ class TestSignatureVariantEndpoints:
         assert resp.status_code == 400
 
 
-# ----- C.5 canary endpoints (real Phoenix) ----------------------------------
+# ----- canary endpoints (real Phoenix) --------------------------------------
 
 
 class TestCanaryEndpoints:

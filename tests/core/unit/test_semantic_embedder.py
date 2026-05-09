@@ -134,7 +134,7 @@ def test_remote_encode_normalizes_when_requested():
     mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
         norm = embedder.encode("hello", normalize_embeddings=True)
-    # L2-normalized [3,4] = [0.6, 0.8]
+    # normalized [3,4] = [0.6, 0.8]
     assert norm.shape == (2,)
     np.testing.assert_allclose(norm, [0.6, 0.8], rtol=1e-5)
 

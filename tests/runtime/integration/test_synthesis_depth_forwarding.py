@@ -1,4 +1,4 @@
-"""H10 / B.7 — synthesis_depth field reaches OrchestratorInput end-to-end.
+"""synthesis_depth field reaches OrchestratorInput end-to-end.
 
 Audit found B.7 unreachable: ``synthesis_depth`` was a field on
 OrchestratorInput but no upstream caller (gateway, A2A,

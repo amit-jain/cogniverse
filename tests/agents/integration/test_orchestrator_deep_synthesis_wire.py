@@ -1,4 +1,4 @@
-"""B.7 wire — OrchestratorAgent dispatches via DeepSynthesisWorkflow on opt-in.
+"""OrchestratorAgent dispatches via DeepSynthesisWorkflow on opt-in.
 
 Without this wire, ``DeepSynthesisWorkflow`` was an orphan class —
 defined and unit-tested, but no caller ever instantiated it. This test

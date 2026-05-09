@@ -1,14 +1,14 @@
-"""MultiDocumentSynthesisAgent (C3.1).
+"""MultiDocumentSynthesisAgent.
 
 Synthesises a coherent answer over N source documents (10–500), preserving
-the citation graph that A.2 makes possible. RLM-capable: when the projected
+the citation graph that the provenance layer makes possible. RLM-capable: when the projected
 document context exceeds the threshold, the agent runs through
 ``RLMInference`` to recursively decompose the input.
 
 Each synthesis writes a new memory of kind ``synthesis_fact`` (registered
 on the fly via the schema registry) carrying ``provenance.derivation_kind
 = SYNTHESIS`` and ``derived_from`` referencing every document the LLM
-actually used. Downstream tools (CitationTracingAgent C3.5) can walk the
+actually used. Downstream tools (CitationTracingAgent) can walk the
 chain back.
 
 Inputs are flexible: a caller can either supply document dicts directly
@@ -37,7 +37,7 @@ from cogniverse_core.memory.provenance import (
 )
 
 if TYPE_CHECKING:
-    from cogniverse_core.events import EventQueue
+    pass
 
 logger = logging.getLogger(__name__)
 

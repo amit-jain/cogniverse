@@ -1,4 +1,4 @@
-"""Trust / source ranking (A.4) over the knowledge layer.
+"""Trust / source ranking over the knowledge layer.
 
 Each memory carries a ``trust_score`` derived at write time from:
 
@@ -13,8 +13,8 @@ the one whose source we trust more wins.
 
 Storage: trust lives inside ``metadata["trust"]`` as a small dict
 (``score``, ``decayed_at``, ``endorsements`` count). Endorsements use the
-delete-and-readd pattern (matching A.6 pinning + A.8 strategy decay)
-since Mem0's ``update`` only changes content, not metadata.
+delete-and-readd pattern (matching pinning + strategy decay) since
+Mem0's ``update`` only changes content, not metadata.
 """
 
 from __future__ import annotations

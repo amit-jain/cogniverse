@@ -1,4 +1,4 @@
-"""Federation: org trunk + tenant overlays (A.5).
+"""Federation: org trunk + tenant overlays.
 
 Multi-tenant orgs need to share a "trunk" of knowledge while letting each
 tenant overlay tenant-specific facts. This module gives:
@@ -13,13 +13,13 @@ Storage: a separate tenant_id ``<org>:_org_trunk`` stands in for the
 "org trunk" Vespa schema. Mem0+Vespa already isolate per-tenant_id, so
 no new backend wiring is required — the trunk just looks like a tenant
 that no end-user owns directly. The convention is enforced here so that
-``KnowledgeSchema.sensitivity`` rules (A.1) line up:
+``KnowledgeSchema.sensitivity`` rules line up:
 
   * ``tenant_private`` memories never get promoted (refused)
   * ``org_shared`` memories are eligible for promotion
   * ``global_shared`` is reserved for a future cross-org channel
 
-ACLs: A.5's read path only ever reads from the caller's tenant + that
+ACLs: the read path only ever reads from the caller's tenant + that
 tenant's org trunk, so leakage across orgs is prevented at query time.
 The promotion path requires a ``tenant_admin`` or ``org_admin`` actor
 (checked against schema's ``pinnable_by`` floor — admins who can pin can
@@ -31,7 +31,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from cogniverse_core.common.tenant_utils import parse_tenant_id
 from cogniverse_core.memory.schema import (
@@ -42,7 +42,7 @@ from cogniverse_core.memory.schema import (
 )
 
 if TYPE_CHECKING:
-    from cogniverse_core.memory.manager import Mem0MemoryManager
+    pass
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-"""H12 / M16 — dispatch-time egress policy enforcement for shared agents.
+"""dispatch-time egress policy enforcement for shared agents.
 
 Audit found search/summarizer/routing only logged the egress policy at
 dispatch; nothing actually verified that the destinations the agent
@@ -9,7 +9,7 @@ For agents that go through DSPy / pyvespa rather than their own httpx
 client, runtime per-call enforcement is impractical (those libraries
 don't expose hookable transports). The honest two-layer story:
 
-  * **L4 / kernel**: B3's unified-runtime NetworkPolicy is the actual
+  * **L4 / kernel**: the plan's unified-runtime NetworkPolicy is the actual
     deny mechanism in production — calls to off-allowlist destinations
     are denied by the CNI before the packet leaves the pod.
   * **Dispatch-time validation** (this test): the dispatcher checks

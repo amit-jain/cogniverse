@@ -1,4 +1,4 @@
-"""RLM A/B harness (B.5).
+"""RLM A/B harness.
 
 Runs the same query through both arms — once without RLM (a single LM call
 on the raw context), once with RLM (recursive REPL) — and returns a

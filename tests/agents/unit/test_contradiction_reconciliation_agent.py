@@ -1,4 +1,4 @@
-"""Unit tests for ContradictionReconciliationAgent (C3.4)."""
+"""Unit tests for ContradictionReconciliationAgent."""
 
 from __future__ import annotations
 

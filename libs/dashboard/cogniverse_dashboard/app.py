@@ -902,7 +902,7 @@ with tabs[0]:
         # Show key metrics in a more compact format
         metrics_col1, metrics_col2 = st.columns(2)
         with metrics_col1:
-            st.metric("Median (P50)", f"{rt.get('median', 0):.1f} ms")
+            st.metric("Median", f"{rt.get('median', 0):.1f} ms")
             st.metric("P95", f"{rt.get('p95', 0):.1f} ms")
         with metrics_col2:
             st.metric("P90", f"{rt.get('p90', 0):.1f} ms")

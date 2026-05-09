@@ -1,4 +1,4 @@
-"""Per-tenant signature variants (C.6).
+"""Per-tenant signature variants.
 
 Today every tenant compiles against the *same* DSPy signature for an agent
 (prompts and demos vary, but the input/output shape is fixed). Some

@@ -1,4 +1,4 @@
-"""Unit tests for DeepSynthesisWorkflow (B.7)."""
+"""Unit tests for DeepSynthesisWorkflow."""
 
 from __future__ import annotations
 

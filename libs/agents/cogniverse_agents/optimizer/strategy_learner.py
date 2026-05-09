@@ -39,10 +39,10 @@ class Strategy:
     tenant_id: str
     trace_count: int
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    # A.8: confirmation_count starts at 1 (every strategy is its own first
+    # confirmation_count starts at 1 (every strategy is its own first
     # confirmation). On dedup, _store_strategy bumps this on the existing
     # record by delete-and-readd. Retrieval downweights low-confirmation
-    # old strategies; the schema-driven cleanup hook (A.7) retires
+    # old strategies; the schema-driven cleanup hook retires
     # strategies with confirmation_count < 3 AND age > 30d.
     confirmation_count: int = 1
     last_confirmed_at: str = field(
@@ -64,7 +64,7 @@ class Strategy:
         """Metadata tags for filtering during retrieval."""
         return {
             "type": "strategy",
-            "kind": "learned_strategy",  # A.7 schema-driven lifecycle key
+            "kind": "learned_strategy",  # schema-driven lifecycle key
             "level": self.level,
             "agent": self.agent,
             "confidence": self.confidence,
@@ -447,7 +447,7 @@ class StrategyLearner:
     def _store_strategy(self, strategy: Strategy) -> bool:
         """Store strategy in Vespa memory, bumping confirmation on dedup hits.
 
-        A.8 — when a near-duplicate strategy already exists, we do NOT silently
+        When a near-duplicate strategy already exists, we do NOT silently
         drop the new one. Instead, the existing record is replaced with a
         fresh copy whose ``confirmation_count`` is bumped by one and whose
         ``last_confirmed_at`` resets to now. This delete-and-readd pattern
@@ -631,7 +631,7 @@ class StrategyLearner:
             except Exception as e:
                 logger.debug(f"Org strategy retrieval failed: {e}")
 
-        # A.8 — apply confirmation-aware decay so low-confirmation old
+        # apply confirmation-aware decay so low-confirmation old
         # strategies sink in the result list rather than continuing to
         # appear at the same rank as high-confirmation ones.
         ranked = self.rank_strategies_with_decay(all_strategies)
@@ -646,7 +646,7 @@ class StrategyLearner:
         downweight_age_days: int = 14,
         downweight_factor: float = 0.5,
     ) -> List[Dict[str, Any]]:
-        """A.8 — re-rank strategies with confirmation-aware decay.
+        """re-rank strategies with confirmation-aware decay.
 
         Strategies with ``confirmation_count < threshold`` AND age greater
         than ``downweight_age_days`` are multiplied by ``downweight_factor``

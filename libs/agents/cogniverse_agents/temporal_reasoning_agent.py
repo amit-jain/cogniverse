@@ -1,12 +1,12 @@
-"""TemporalReasoningAgent (C3.6).
+"""TemporalReasoningAgent.
 
 Compares knowledge about one subject across multiple time windows.
 Useful for "what did we know about X in Q2 vs Q4" or
 "how has our refund policy evolved over the last year." Read-only.
 
 The agent does not require a Vespa-side time-versioned read path: time
-windows are applied client-side over the ``written_at`` field that A.2
-provenance attaches to every memory's metadata. Memories without a
+windows are applied client-side over the ``written_at`` field that the
+provenance layer attaches to every memory's metadata. Memories without a
 parseable ``written_at`` are placed in an ``"undated"`` bucket so the
 caller can decide what to do with them.
 

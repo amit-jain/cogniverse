@@ -102,7 +102,7 @@ class TestPolicyOptionalDegrades:
 
 
 class TestMakeHttpClient:
-    """D.1 — SandboxManager.make_http_client returns a policy-aware client."""
+    """SandboxManager.make_http_client returns a policy-aware client."""
 
     def test_returns_enforcing_client_when_policy_registered(self, tmp_path):
         from cogniverse_runtime.sandbox_http import PolicyEnforcingTransport

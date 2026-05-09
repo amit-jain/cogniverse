@@ -1,26 +1,26 @@
-"""Real-Vespa integration tests for the C3 agents that previously had
-only factory-injected MagicMock coverage.
+"""Real-Vespa integration tests for the knowledge agents that previously
+had only factory-injected MagicMock coverage.
 
-The first F5.1 file (``test_c3_agents_real_vespa.py``) covered C3.4
-ContradictionReconciliation, C3.8 KnowledgeSummarization, and C3.9
-AuditExplanation against real Mem0 + Vespa. This file fills in:
+A companion file (``test_knowledge_agents_real_vespa.py``) covers
+ContradictionReconciliation, KnowledgeSummarization, and AuditExplanation
+against real Mem0 + Vespa. This file fills in:
 
-  * C3.1 MultiDocumentSynthesisAgent — input documents pulled from
-    real Vespa via memory_id refs; agent persists synthesis with
-    provenance back to the same store.
-  * C3.2 KGTraversalAgent — kg_node + kg_edge memories seeded with
-    subject_keys; agent walks the graph by querying real Vespa.
-  * C3.3 CrossTenantComparisonAgent — two tenants under the same org;
-    agent reads from both via the federation path.
-  * C3.6 TemporalReasoningAgent — same subject_key with three
-    different ``written_at`` stamps; agent slices by time windows.
-  * C3.7 FederatedQueryAgent — two tenants, query string matches in
-    both; agent merges the hits.
+  * MultiDocumentSynthesisAgent — input documents pulled from real Vespa
+    via memory_id refs; agent persists synthesis with provenance back to
+    the same store.
+  * KnowledgeGraphTraversalAgent — kg_node + kg_edge memories seeded
+    with subject_keys; agent walks the graph by querying real Vespa.
+  * CrossTenantComparisonAgent — two tenants under the same org; agent
+    reads from both via the federation path.
+  * TemporalReasoningAgent — same subject_key with three different
+    ``written_at`` stamps; agent slices by time windows.
+  * FederatedQueryAgent — two tenants, query string matches in both;
+    agent merges the hits.
 
 The DSPy LLM modules are stubbed where each agent uses one — these
-tests assert the persistence + traversal wires, not the LLM
-synthesis quality (which is already covered in the agent unit tests
-and dashboard A/B suites).
+tests assert the persistence + traversal wires, not the LLM synthesis
+quality (which is already covered in the agent unit tests and dashboard
+A/B suites).
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
 TENANT = "test_tenant"
-AGENT = "c3_remaining"
+AGENT = "knowledge_agents_extra"
 
 
 def _build_manager(
@@ -113,11 +113,11 @@ def _inject_memory(agent, mm, agent_name: str) -> None:
     agent._memory_agent_name = agent_name
 
 
-# ----- C3.1 MultiDocumentSynthesisAgent --------------------------------------
+# ----- MultiDocumentSynthesisAgent --------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c31_multi_doc_synthesis_real_vespa(primary_mm):
+async def test_multi_doc_synthesis_real_vespa(primary_mm):
     """Seed 3 docs, ask the agent to synthesise across them, assert the
     persisted synthesis carries citations to all three input ids."""
     from cogniverse_agents.multi_document_synthesis_agent import (
@@ -134,10 +134,10 @@ async def test_c31_multi_doc_synthesis_real_vespa(primary_mm):
             written_by=f"agent:doc_{i}",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=0.9,
-            derived_from=[CitationRef.external(f"https://docs/c31_{i}")],
+            derived_from=[CitationRef.external(f"https://docs/multi_doc_{i}")],
         )
         mid = mm.add_memory(
-            content=f"C3.1 fact {i}: refunds policy detail",
+            content=f"fact {i}: refunds policy detail",
             tenant_id=TENANT,
             agent_name=AGENT,
             metadata=attach_to_metadata({"kind": "external_doc"}, prov),
@@ -194,11 +194,11 @@ async def test_c31_multi_doc_synthesis_real_vespa(primary_mm):
         )
 
 
-# ----- C3.2 KGTraversalAgent -------------------------------------------------
+# ----- KGTraversalAgent -------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c32_kg_traversal_real_vespa(primary_mm):
+async def test_kg_traversal_real_vespa(primary_mm):
     """Seed a tiny knowledge graph (3 nodes + 2 edges) and assert the
     walker reaches every node from the start_subject_key."""
     from cogniverse_agents.kg_traversal_agent import (
@@ -284,11 +284,11 @@ async def test_c32_kg_traversal_real_vespa(primary_mm):
     assert ("entity:b", "entity:c", "depends_on") in edge_pairs
 
 
-# ----- C3.6 TemporalReasoningAgent -------------------------------------------
+# ----- TemporalReasoningAgent -------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c36_temporal_reasoning_real_vespa(primary_mm):
+async def test_temporal_reasoning_real_vespa(primary_mm):
     """Seed three memories on the same subject_key with distinct
     ``written_at`` stamps; assert the agent slices each window correctly."""
     from cogniverse_agents.temporal_reasoning_agent import (
@@ -299,7 +299,7 @@ async def test_c36_temporal_reasoning_real_vespa(primary_mm):
     )
 
     mm = primary_mm
-    subject = "policy:c36_evolving"
+    subject = "policy:evolving"
 
     now = datetime.now(timezone.utc)
     times = [
@@ -361,7 +361,7 @@ async def test_c36_temporal_reasoning_real_vespa(primary_mm):
     )
 
 
-# ----- C3.3 + C3.7: multi-tenant fixtures ------------------------------------
+# ----- multi-tenant fixtures (cross-tenant + federated agents) -----------
 
 
 @pytest.fixture(scope="module")
@@ -391,11 +391,11 @@ def multitenant_setup(shared_memory_vespa, shared_denseon):
     Mem0MemoryManager._instances.clear()
 
 
-# ----- C3.3 CrossTenantComparisonAgent ---------------------------------------
+# ----- CrossTenantComparisonAgent ---------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c33_cross_tenant_comparison_real_vespa(multitenant_setup):
+async def test_cross_tenant_comparison_real_vespa(multitenant_setup):
     """Two tenants assert different content for the same subject_key;
     agent surfaces both views."""
     from cogniverse_agents.cross_tenant_comparison_agent import (
@@ -406,7 +406,7 @@ async def test_c33_cross_tenant_comparison_real_vespa(multitenant_setup):
 
     mm_a = multitenant_setup["a"]
     mm_b = multitenant_setup["b"]
-    subject = "policy:c33_jurisdiction"
+    subject = "policy:jurisdiction"
 
     for mm, sentence in [(mm_a, "Cell A says rule X"), (mm_b, "Cell B says rule Y")]:
         prov = make_provenance(
@@ -457,11 +457,11 @@ async def test_c33_cross_tenant_comparison_real_vespa(multitenant_setup):
     )
 
 
-# ----- C3.7 FederatedQueryAgent ----------------------------------------------
+# ----- FederatedQueryAgent ----------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_c37_federated_query_real_vespa(multitenant_setup):
+async def test_federated_query_real_vespa(multitenant_setup):
     """Both tenants carry a memory matching the query string; agent
     merges hits from both."""
     from cogniverse_agents.federated_query_agent import (

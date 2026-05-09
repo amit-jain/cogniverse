@@ -4,7 +4,7 @@ Artifact Manager — save/load DSPy optimization artifacts via telemetry stores.
 Provides tenant-isolated, versioned artifact persistence using DatasetStore
 for prompts, demonstrations, and experiment metrics.
 
-C.1: optimization metrics are now stored as a typed ``ExperimentMetrics``
+Optimization metrics are stored as a typed ``ExperimentMetrics``
 row in a dedicated dataset (``dspy-experiments-{tenant}-{agent}``). The
 previous ``save_blob`` workaround papered over PhoenixProvider's
 ``save_experiment`` no-op stub and made metrics impossible to query
@@ -125,8 +125,8 @@ class ArtifactManager:
         The dataset-name builders treat their ``agent_type`` argument as
         already-qualified, so callers that want per-variant artefacts
         compute this key first and pass it through. Default variant
-        round-trips to the bare agent_type for back-compat with datasets
-        saved before C.6 existed.
+        round-trips to the bare agent_type for back-compat with pre-existing
+        single-variant datasets.
         """
         return variant_qualified_agent_key(agent_type, variant_id)
 
@@ -558,7 +558,7 @@ class ArtifactManager:
             lineage.append(entry)
         return lineage
 
-    # --- C.5 canary state machine ----------------------------------------
+    # --- canary state machine ---------------------------------------------
 
     def _state_blob_key(self, agent_type: str) -> str:
         return f"artefact_state_{agent_type}"
@@ -787,7 +787,7 @@ class ArtifactManager:
         }
 
     async def snapshot_active(self, agent_type: str) -> Optional[Dict[str, Any]]:
-        """C.4 — snapshot the current active prompts + demos as a versioned pair.
+        """Snapshot the current active prompts + demos as a versioned pair.
 
         Used by ``promote_if_better`` *before* it overwrites the active
         artefacts so a rollback CLI has something to restore. Returns a
@@ -885,7 +885,7 @@ class ArtifactManager:
         extra_metrics: Optional[Dict[str, Any]] = None,
         snapshot_before_promote: bool = True,
     ) -> ExperimentMetrics:
-        """Regression-reject gate (C.2) — promote a candidate only when it wins.
+        """Regression-reject gate — promote a candidate only when it wins.
 
         Compares candidate against baseline on a held-out score. The candidate
         is *promoted* (prompts + demos saved, becoming the active artefact)
@@ -928,7 +928,7 @@ class ArtifactManager:
         extras["tolerance"] = tolerance
 
         if promoted:
-            # C.4 — snapshot the about-to-be-overwritten active artefacts as
+            # Snapshot the about-to-be-overwritten active artefacts as
             # versioned datasets so a future rollback can restore them. Best
             # effort: snapshot failures are logged and recorded in extras
             # but never block the promotion itself.
@@ -993,7 +993,7 @@ class ArtifactManager:
         return record
 
     async def save_experiment(self, metrics: ExperimentMetrics) -> str:
-        """Persist a typed ``ExperimentMetrics`` record (C.1).
+        """Persist a typed ``ExperimentMetrics`` record.
 
         Each call appends a row to ``dspy-experiments-{tenant}-{agent}``.
         PhoenixProvider's ``append_to_dataset`` creates a versioned copy on

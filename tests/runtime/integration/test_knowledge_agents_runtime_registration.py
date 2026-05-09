@@ -1,7 +1,6 @@
-"""C3.x runtime registration — real ConfigLoader.load_agents round-trip.
+"""Knowledge-agent runtime registration — real ConfigLoader.load_agents round-trip.
 
-This is the wire-up test for the 9 knowledge-system agents
-(C3.1–C3.9). It verifies that:
+This is the wire-up test for the 9 knowledge-system agents. It verifies that:
 
   * each agent's class path is resolvable from ``ConfigLoader.AGENT_CLASSES``
     using the *real* importlib path (not a stubbed mapping);
@@ -12,7 +11,7 @@ This is the wire-up test for the 9 knowledge-system agents
   * the registered URL matches the documented per-agent port (8019–8027)
     so an A2A caller hitting that port reaches the right agent.
 
-Without this test, the C3 agents were shipped as orphan classes —
+Without this test, the knowledge agents were shipped as orphan classes —
 present in the source tree, never reachable through the runtime.
 """
 
@@ -31,7 +30,7 @@ from cogniverse_runtime.config_loader import ConfigLoader
 pytestmark = pytest.mark.integration
 
 
-_C3_AGENTS: Dict[str, Tuple[int, str]] = {
+_KNOWLEDGE_AGENTS: Dict[str, Tuple[int, str]] = {
     # name -> (port, primary_capability)
     "citation_tracing_agent": (8019, "citation_tracing"),
     "contradiction_reconciliation_agent": (8020, "contradiction_reconciliation"),
@@ -53,7 +52,7 @@ def config_json() -> dict:
 
 
 class TestAgentClassesMapping:
-    @pytest.mark.parametrize("agent_name", sorted(_C3_AGENTS))
+    @pytest.mark.parametrize("agent_name", sorted(_KNOWLEDGE_AGENTS))
     def test_class_path_present_and_importable(self, agent_name: str):
         # AGENT_CLASSES must list the agent.
         class_path = ConfigLoader.AGENT_CLASSES.get(agent_name)
@@ -73,7 +72,7 @@ class TestAgentClassesMapping:
 
 
 class TestConfigJsonEntries:
-    @pytest.mark.parametrize("agent_name,port_cap", sorted(_C3_AGENTS.items()))
+    @pytest.mark.parametrize("agent_name,port_cap", sorted(_KNOWLEDGE_AGENTS.items()))
     def test_entry_present_with_correct_port_and_capability(
         self, config_json: dict, agent_name: str, port_cap: Tuple[int, str]
     ):
@@ -94,14 +93,14 @@ class TestConfigJsonEntries:
         )
 
     def test_default_disabled(self, config_json: dict):
-        # Write-capable + admin-gated C3 agents ship disabled-by-default so
+        # Write-capable + admin-gated knowledge agents ship disabled-by-default so
         # existing deployments don't suddenly start serving new endpoints
         # on upgrade. F7.1 carved out one exception: audit_explanation_agent
         # is read-only, safe for production, and ships enabled=true so
-        # operators get one C3 agent reachable out of the box.
+        # operators get one knowledge agent reachable out of the box.
         # Detailed default-enabled / default-disabled policy lives in
-        # tests/runtime/integration/test_c3_agent_reachability.py.
-        ALWAYS_DEFAULT_DISABLED = set(_C3_AGENTS) - {"audit_explanation_agent"}
+        # tests/runtime/integration/test_knowledge_agent_reachability.py.
+        ALWAYS_DEFAULT_DISABLED = set(_KNOWLEDGE_AGENTS) - {"audit_explanation_agent"}
         for agent_name in ALWAYS_DEFAULT_DISABLED:
             entry = config_json["agents"][agent_name]
             assert entry.get("enabled") is False, (
@@ -125,33 +124,33 @@ class TestLoadAgentsRoundTrip:
     def test_disabled_agents_skipped(self, config_json: dict):
         # When all 9 are disabled (the default), none get registered.
         registry = AgentRegistry(
-            tenant_id="c3_runtime_registration_test",
+            tenant_id="knowledge_agents_runtime_registration",
             config_manager=create_default_config_manager(),
         )
         loader = self._build_loader_with_overlay(
             {
                 name: {**config_json["agents"][name], "enabled": False}
-                for name in _C3_AGENTS
+                for name in _KNOWLEDGE_AGENTS
             }
         )
         loader.load_agents(agent_registry=registry)
-        for name in _C3_AGENTS:
+        for name in _KNOWLEDGE_AGENTS:
             assert registry.get_agent(name) is None
 
     def test_enabled_agents_registered_with_correct_metadata(self, config_json: dict):
         registry = AgentRegistry(
-            tenant_id="c3_runtime_registration_test",
+            tenant_id="knowledge_agents_runtime_registration",
             config_manager=create_default_config_manager(),
         )
         loader = self._build_loader_with_overlay(
             {
                 name: {**config_json["agents"][name], "enabled": True}
-                for name in _C3_AGENTS
+                for name in _KNOWLEDGE_AGENTS
             }
         )
         loader.load_agents(agent_registry=registry)
 
-        for name, (port, primary_cap) in _C3_AGENTS.items():
+        for name, (port, primary_cap) in _KNOWLEDGE_AGENTS.items():
             ep = registry.get_agent(name)
             assert ep is not None, (
                 f"{name} was enabled in config but ConfigLoader.load_agents "
@@ -164,18 +163,18 @@ class TestLoadAgentsRoundTrip:
     def test_all_nine_register_in_one_pass(self, config_json: dict):
         """Single-shot: enable all 9, verify list_agents returns them."""
         registry = AgentRegistry(
-            tenant_id="c3_runtime_registration_test",
+            tenant_id="knowledge_agents_runtime_registration",
             config_manager=create_default_config_manager(),
         )
         loader = self._build_loader_with_overlay(
             {
                 name: {**config_json["agents"][name], "enabled": True}
-                for name in _C3_AGENTS
+                for name in _KNOWLEDGE_AGENTS
             }
         )
         loader.load_agents(agent_registry=registry)
         registered = set(registry.list_agents())
-        missing = set(_C3_AGENTS) - registered
+        missing = set(_KNOWLEDGE_AGENTS) - registered
         assert not missing, (
-            f"After enabling all 9 C3 agents, these did not register: {missing}"
+            f"After enabling all 9 knowledge agents, these did not register: {missing}"
         )

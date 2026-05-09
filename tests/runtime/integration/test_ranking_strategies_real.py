@@ -179,10 +179,10 @@ def vespa_search_client(vespa_instance):
 
 def _assert_results_well_formed(results, strategy):
     """Common shape/order assertions on a strategy's search results."""
-    assert isinstance(results, list), f"{strategy} must return list, got {type(results)}"
-    assert len(results) > 0, (
-        f"{strategy} returned 0 results from seeded ranking corpus"
+    assert isinstance(results, list), (
+        f"{strategy} must return list, got {type(results)}"
     )
+    assert len(results) > 0, f"{strategy} returned 0 results from seeded ranking corpus"
     scores = [r["relevance"] for r in results]
     assert scores == sorted(scores, reverse=True), (
         f"{strategy} results not in descending relevance order: {scores}"

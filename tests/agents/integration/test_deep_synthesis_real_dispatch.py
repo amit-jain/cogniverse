@@ -1,4 +1,4 @@
-"""F4.1 — DeepSynthesisWorkflow's sub-agent dispatcher makes real HTTP calls.
+"""DeepSynthesisWorkflow's sub-agent dispatcher makes real HTTP calls.
 
 Audit caught: the dispatcher in ``OrchestratorAgent._build_deep_synthesis_workflow``
 returned the stub string ``f"(stub dispatch to {sub_agent_name}: …)"``
@@ -24,14 +24,11 @@ hits a process and returns real JSON. No mocking of the HTTP layer.
 
 from __future__ import annotations
 
-import asyncio
-from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import httpx
 import pytest
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent,

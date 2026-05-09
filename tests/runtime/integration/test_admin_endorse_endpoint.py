@@ -1,4 +1,4 @@
-"""H9 / A.4 — admin endorse endpoint records a trust delta on a memory.
+"""admin endorse endpoint records a trust delta on a memory.
 
 Audit found apply_endorsement was a public API with no caller. The
 audit/explanation agent reads endorsement counts off TrustRecords but
@@ -57,7 +57,7 @@ def _seed_with_trust(mm) -> str:
         derived_from=[CitationRef.external("https://wiki/h9")],
     )
     return mm.add_memory(
-        content="H9 endorse target",
+        content="endorse target",
         tenant_id=mm.tenant_id,
         agent_name="h9_endorse",
         metadata=attach_to_metadata({"kind": "entity_fact"}, prov),

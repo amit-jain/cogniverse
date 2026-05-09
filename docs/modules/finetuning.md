@@ -1208,7 +1208,7 @@ output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 
 - SmolLM-135M: 2-4GB (any GPU)
 - Qwen2.5-3B: 12-16GB (RTX 3090, A10G)
-- Llama-3.1-8B: 24-40GB (A100)
+- Llama-3.1-8B: 24-40GB
 
 **DPO Considerations**:
 

@@ -1,4 +1,4 @@
-"""DeepSynthesisWorkflow (B.7).
+"""DeepSynthesisWorkflow.
 
 Opt-in entry point for queries that need recursive multi-agent
 orchestration over a knowledge subgraph that doesn't fit in a normal
@@ -8,13 +8,13 @@ fan out to sub-agents, let the RLM summariser decide whether it has
 enough material, and either submit an answer or request another
 fan-out round.
 
-This is **not** the default execution path — see the C1 analysis in
+This is **not** the default execution path — see the discussion in
 the plan. The default Orchestrator stays plan-then-act with parallel
 sub-agent fan-out. ``DeepSynthesisWorkflow`` is a separate class so:
 
   * its cost (rate limit, hard call cap) is local and explicit
   * the default path's Phoenix trace shape stays clean (parent → children)
-  * A/B (B.5) can compare deep-synthesis vs flat orchestration on a
+  * A/B can compare deep-synthesis vs flat orchestration on a
     curated benchmark before promoting it broadly
 
 Invariants enforced in V1:

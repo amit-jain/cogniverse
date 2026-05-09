@@ -1,6 +1,6 @@
 """Unit tests for the typed ExperimentMetrics + ArtifactManager save/load.
 
-C.1 ships a typed experiment ledger. These tests cover:
+The typed experiment ledger covers:
   * dataclass round-trip via ``to_row`` / ``from_row``;
   * back-compat shim ``log_optimization_run`` translates dict → typed record;
   * tenant_id mismatch is rejected at write time.

@@ -1,4 +1,4 @@
-"""C.5 wiring — AgentDispatcher consults ArtifactManager.load_for_request.
+"""AgentDispatcher consults ArtifactManager.load_for_request (canary wiring).
 
 Without this test, the canary state machine in :class:`ArtifactManager`
 was unreachable from the live dispatch path: every request loaded the

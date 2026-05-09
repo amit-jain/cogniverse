@@ -1,4 +1,4 @@
-"""H6 / A.5 — MemoryAwareMixin.get_relevant_context federates over org trunk.
+"""MemoryAwareMixin.get_relevant_context federates over org trunk.
 
 Audit found A.5 was half-shipped: FederationService existed but
 MemoryAwareMixin.get_relevant_context never called it. Org-trunk

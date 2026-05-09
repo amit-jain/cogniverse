@@ -138,8 +138,7 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
 
     passed_config = mock_get_model.call_args[0][1]
     assert (
-        passed_config["remote_inference_url"]
-        == "http://cogniverse-colbert-pylate:8000"
+        passed_config["remote_inference_url"] == "http://cogniverse-colbert-pylate:8000"
     )
 
 

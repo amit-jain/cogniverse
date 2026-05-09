@@ -1,4 +1,4 @@
-"""Unit tests for the Provenance + ProvenanceWalker (A.2)."""
+"""Unit tests for the Provenance + ProvenanceWalker."""
 
 from __future__ import annotations
 

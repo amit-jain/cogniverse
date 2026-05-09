@@ -1,4 +1,4 @@
-"""B1 / F2.1 — dispatcher overlay reaches the agent AND shapes the DSPy call.
+"""dispatcher overlay reaches the agent AND shapes the DSPy call.
 
 Two halves verified end-to-end:
 
@@ -174,7 +174,7 @@ class TestEndToEndWire:
 
 
 class TestPromptOverlayShapesDSPyCall:
-    """B1 — the overlay must change what the LM actually sees, not just
+    """the overlay must change what the LM actually sees, not just
     what's stored on the agent. Without this assertion, the entire
     canary + variant pipeline is a write-only black hole even after
     the wire reaches the agent.

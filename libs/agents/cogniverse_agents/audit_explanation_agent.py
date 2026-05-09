@@ -1,4 +1,4 @@
-"""AuditExplanationAgent (C3.9).
+"""AuditExplanationAgent.
 
 Given an answer the system produced (identified by its memory id),
 explains *why* — which memories it was derived from (via the
@@ -7,9 +7,9 @@ contradiction sets touching the same subject, and a short structured
 explanation block. Read-only.
 
 Composes:
-  * :class:`ProvenanceWalker` (A.2) for the citation chain
-  * :func:`extract_trust` / :func:`apply_decay` (A.4) for trust scoring
-  * :class:`ContradictionDetector` (A.3) for conflict awareness
+  * :class:`ProvenanceWalker` for the citation chain
+  * :func:`extract_trust` / :func:`apply_decay` for trust scoring
+  * :class:`ContradictionDetector` for conflict awareness
 
 This agent ships the audit-explanation surface that compliance
 deployments need: every claim traceable to its sources, with the trust

@@ -9,7 +9,6 @@ are never deleted regardless of policy.
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 
 import pytest
@@ -125,21 +124,27 @@ def _registry_for_test() -> KnowledgeRegistry:
 
 
 def _seed(mm, kind: str, content: str, age_days: int = 0) -> str:
-    """Seed a memory under TENANT/AGENT with manipulated created_at."""
-    real_time = time.time
+    """Seed a memory under TENANT/AGENT with optional back-dated created_at.
+
+    mem0 stamps ``created_at`` on add via ``datetime.now(timezone.utc)`` —
+    a C-level clock that doesn't respect a Python-level ``time.time``
+    monkeypatch. The only reliable way to back-date a memory is to inject
+    ``created_at`` into the metadata so mem0 honours it directly
+    (mem0/memory/main.py respects a pre-set ``created_at`` in metadata).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    metadata = {"kind": kind}
     if age_days > 0:
-        target = float(int(real_time()) - age_days * 24 * 3600)
-        time.time = lambda: target  # type: ignore[assignment]
-    try:
-        return mm.add_memory(
-            content=content,
-            tenant_id=TENANT,
-            agent_name=AGENT,
-            metadata={"kind": kind},
-            infer=False,
-        )
-    finally:
-        time.time = real_time  # type: ignore[assignment]
+        backdated = datetime.now(timezone.utc) - timedelta(days=age_days)
+        metadata["created_at"] = backdated.isoformat()
+    return mm.add_memory(
+        content=content,
+        tenant_id=TENANT,
+        agent_name=AGENT,
+        metadata=metadata,
+        infer=False,
+    )
 
 
 @pytest.mark.asyncio
@@ -161,14 +166,14 @@ async def test_schema_driven_tick_per_kind_against_real_vespa(lifecycle_env):
     )
     summary = await scheduler.tick_once()
 
-    assert summary["mode"] == "schema_driven"
     per_kind = summary["tenants"][TENANT]
-    # Exactly 2 deletions: ephemeral_old + hook_delete.
-    assert per_kind.get("ephemeral_test_kind", 0) == 1, summary
+    # Soft-delete: age 10d is in the (cutoff, 2×cutoff] window → archived.
+    # schema_driven hook returns True for DELETE_ME → hard-deleted.
+    assert per_kind.get("ephemeral_test_kind:archived", 0) == 1, summary
     assert per_kind.get("schema_driven_test_kind", 0) == 1, summary
     assert "permanent_test_kind" not in per_kind, summary
 
-    # Verify the surviving set against Vespa.
+    # Default get_all_memories filters archived; ephemeral_old_id must not appear.
     surviving = mm.get_all_memories(TENANT, AGENT)
     surviving_ids = {m["id"] for m in surviving}
     assert permanent_id in surviving_ids
@@ -176,6 +181,13 @@ async def test_schema_driven_tick_per_kind_against_real_vespa(lifecycle_env):
     assert hook_keep_id in surviving_ids
     assert ephemeral_old_id not in surviving_ids
     assert hook_delete_id not in surviving_ids
+
+    # With include_archived=True, the soft-deleted memory is still present.
+    with_archived = mm.get_all_memories(TENANT, AGENT, include_archived=True)
+    with_archived_ids = {m["id"] for m in with_archived}
+    assert ephemeral_old_id in with_archived_ids, (
+        "soft-deleted memory must be retrievable via include_archived=True"
+    )
 
 
 @pytest.mark.asyncio

@@ -1,11 +1,11 @@
-"""KnowledgeSummarizationAgent (C3.8).
+"""KnowledgeSummarizationAgent.
 
 Distills a knowledge subgraph (a subject area, a kind, optionally a time
 window) into a structured summary suitable for org-trunk promotion. This
 is distinct from `SummarizerAgent` (which summarises retrieval results
-in-flight): C3.8 summarises the knowledge layer *itself*, with optional
-admin-gated promotion of the summary into the org trunk via A.5
-federation.
+in-flight): this agent summarises the knowledge layer *itself*, with optional
+admin-gated promotion of the summary into the org trunk via the
+federation read path.
 
 The agent:
 
