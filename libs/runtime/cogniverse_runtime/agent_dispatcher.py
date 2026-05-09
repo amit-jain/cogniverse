@@ -130,18 +130,23 @@ class AgentDispatcher:
 
         Returns the parsed policy dict (the YAML in
         ``configs/agent_policies/<agent>.yaml``) or ``None`` when no sandbox
-        manager is wired or no policy is registered. The dispatcher's
-        per-agent execution methods call this at dispatch time so the
-        policy stops being dead config — every dispatch records via
-        log/telemetry which agent has an active egress allow-list.
+        manager is wired or no policy is registered.
 
-        This is the lightweight half of D.1's "wire all 5 policies":
-        full egress enforcement on each agent's outbound HTTP requires
-        each agent to accept and use a policy-enforcing httpx client
-        (already done for orchestrator + coding). This method makes the
-        consultation observable for the remaining three agents
-        (search / summarizer / routing) so an operator's audit can see
-        which policies are loaded and being acknowledged at dispatch.
+        Two-layer enforcement story for the agents that don't own their
+        own httpx client (search / summarizer / routing — they go through
+        DSPy / pyvespa):
+
+          * **L4 / kernel**: the unified-runtime NetworkPolicy generated
+            by the egress-netpol CLI (B3) covers the union of every
+            agent's egress allowlist at the cluster boundary. A call to
+            an off-allowlist destination is denied by the CNI before it
+            leaves the pod.
+          * **Dispatch-time validation** (this method, when paired with
+            ``validate_dispatch_endpoints``): for the destinations the
+            dispatcher KNOWS the agent will use (Vespa, LLM endpoint,
+            etc.), confirm they're in the policy's egress allow-list
+            before dispatching. Catches misconfiguration at boot/test
+            time, before a runtime call hits L4 enforcement.
         """
         if self._sandbox_manager is None:
             return None
@@ -159,6 +164,149 @@ class AgentDispatcher:
                 else 0,
             )
         return policy
+
+    def _system_endpoints(self, tenant_id: str) -> Dict[str, Dict[str, Any]]:
+        """Return host/port for the runtime's standard outbound services.
+
+        These are the destinations the dispatcher already knows the
+        agents will reach (Vespa for retrieval, the LLM endpoint for
+        DSPy calls, denseon for embeddings). Used by the per-agent
+        ``_verify_*_egress`` helpers below to drift-check policies.
+        Best-effort: missing config keys return an empty dict and the
+        verification step is skipped silently.
+        """
+        from urllib.parse import urlparse
+
+        try:
+            sys_cfg = self._config_manager.get_system_config()
+        except Exception:
+            return {}
+
+        out: Dict[str, Dict[str, Any]] = {}
+
+        def _add(name: str, url: Optional[str], default_port: int) -> None:
+            if not url:
+                return
+            parsed = urlparse(url if "://" in url else f"http://{url}")
+            host = parsed.hostname or "localhost"
+            port = parsed.port or default_port
+            out[name] = {"host": host, "port": int(port), "protocol": "tcp"}
+
+        _add(
+            "vespa",
+            f"{sys_cfg.backend_url}:{sys_cfg.backend_port}",
+            sys_cfg.backend_port or 8080,
+        )
+        try:
+            from cogniverse_foundation.config.utils import get_config
+
+            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
+            llm_primary = cfg.get_llm_config().primary
+            if llm_primary.api_base:
+                _add("llm", llm_primary.api_base, 11434)
+        except Exception:
+            pass
+        denseon_url = (sys_cfg.inference_service_urls or {}).get("denseon")
+        if denseon_url:
+            _add("denseon", denseon_url, 8000)
+        return out
+
+    def _verify_search_egress(self, tenant_id: str) -> None:
+        sysep = self._system_endpoints(tenant_id)
+        # SearchAgent reaches Vespa for retrieval and (via DSPy) the LLM
+        # for query rewriting. Denseon embeddings are pulled by Mem0 in
+        # this runtime, not the agent itself, so they're not flagged here.
+        endpoints = [v for k, v in sysep.items() if k in {"vespa", "llm"}]
+        if endpoints:
+            self.validate_dispatch_endpoints("search_agent", endpoints)
+
+    def _verify_summarizer_egress(self, tenant_id: str) -> None:
+        sysep = self._system_endpoints(tenant_id)
+        # SummarizerAgent reaches the LLM endpoint via DSPy.
+        endpoints = [v for k, v in sysep.items() if k == "llm"]
+        if endpoints:
+            self.validate_dispatch_endpoints("summarizer_agent", endpoints)
+
+    def _verify_routing_egress(self, tenant_id: str) -> None:
+        sysep = self._system_endpoints(tenant_id)
+        # RoutingAgent (gateway) classifies via the LLM and may dispatch
+        # to in-cluster agent peers; the in-cluster A2A endpoints aren't
+        # listed in agent policies (they're loopback within the unified
+        # runtime pod), so only the LLM hop is verified.
+        endpoints = [v for k, v in sysep.items() if k == "llm"]
+        if endpoints:
+            self.validate_dispatch_endpoints("routing_agent", endpoints)
+
+    def validate_dispatch_endpoints(
+        self,
+        agent_name: str,
+        endpoints: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Verify each (host, port) endpoint matches the agent's egress policy.
+
+        Returns a list of violations: each entry is the original endpoint
+        dict plus a ``reason`` field. Empty list means every endpoint is
+        on the allowlist (or no policy is registered for the agent).
+
+        H12 — application-layer half of D.1 enforcement for shared-runtime
+        agents. The CNI-level NetworkPolicy (B3) is the actual deny
+        mechanism in production; this dispatch-time check catches the
+        common case where an operator updated a backend port without
+        updating the policy YAML, surfacing the drift as a logged
+        warning before a single request runs.
+
+        Each ``endpoint`` dict must carry ``host`` and ``port`` keys; an
+        optional ``protocol`` (default ``tcp``) is matched case-insensitively.
+        """
+        if self._sandbox_manager is None:
+            return []
+        policy = self._sandbox_manager.get_policy(agent_name)
+        if not policy:
+            return []
+        net = policy.get("network_policies") or policy.get("egress") or {}
+        if isinstance(net, dict):
+            allowed = net.get("egress") or net.get("allow") or []
+        else:
+            allowed = net or []
+        # Normalise the allowlist to a set of (host, port, protocol).
+        allow_set: set = set()
+        for rule in allowed:
+            if not isinstance(rule, dict):
+                continue
+            allow_set.add(
+                (
+                    str(rule.get("host", "")).lower(),
+                    int(rule.get("port", 0) or 0),
+                    str(rule.get("protocol", "tcp")).lower(),
+                )
+            )
+
+        violations: List[Dict[str, Any]] = []
+        for ep in endpoints:
+            key = (
+                str(ep.get("host", "")).lower(),
+                int(ep.get("port", 0) or 0),
+                str(ep.get("protocol", "tcp")).lower(),
+            )
+            if key not in allow_set:
+                violations.append(
+                    {
+                        **ep,
+                        "reason": (
+                            f"host={key[0]} port={key[1]} protocol={key[2]} "
+                            f"not in egress allowlist for agent={agent_name}"
+                        ),
+                    }
+                )
+        if violations:
+            logger.warning(
+                "egress policy DRIFT for %s: %d endpoint(s) outside allowlist; "
+                "first violation: %s",
+                agent_name,
+                len(violations),
+                violations[0]["reason"],
+            )
+        return violations
 
     async def resolve_artefact_for_request(
         self,
@@ -659,10 +807,12 @@ class AgentDispatcher:
         enrichment: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # P3 — consult the search_agent egress policy. Full enforcement
-        # requires the agent to use the resulting policy-enforcing client;
-        # for now this records the policy as active at dispatch.
+        # H12 — consult the egress policy AND verify the agent's known
+        # outbound destinations (Vespa, LLM endpoint) are on the allow
+        # list. Drift surfaces as a logged warning here; cluster-level
+        # CNI enforcement (B3) is the kernel deny.
         self.consult_egress_policy("search_agent")
+        self._verify_search_egress(tenant_id)
 
         from cogniverse_agents.search_agent import (
             SearchInput,
@@ -797,10 +947,9 @@ class AgentDispatcher:
         context: Dict[str, Any],
         tenant_id: str,
     ) -> Dict[str, Any]:
-        # P3 — gateway/routing egress policy is consulted at dispatch.
-        # Full enforcement requires the agent to use a policy-enforcing
-        # client; for now this records the policy as active.
+        # H12 — consult + verify routing_agent egress policy at dispatch.
         self.consult_egress_policy("routing_agent")
+        self._verify_routing_egress(tenant_id)
 
         """Route query through GatewayAgent for triage.
 
@@ -1031,8 +1180,9 @@ class AgentDispatcher:
         tenant_id: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # P3 — consult summarizer_agent egress policy at dispatch.
+        # H12 — consult + verify summarizer_agent egress policy at dispatch.
         self.consult_egress_policy("summarizer_agent")
+        self._verify_summarizer_egress(tenant_id)
 
         from cogniverse_agents.summarizer_agent import (
             SummarizerAgent,
