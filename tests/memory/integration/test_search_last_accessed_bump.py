@@ -23,17 +23,26 @@ pytestmark = pytest.mark.integration
 
 
 class _SpyMemory:
-    """Mem0 stand-in that records every search + update call."""
+    """Mem0 stand-in that records every search + update call.
+
+    Tracks ``metadata`` passed to update so the test can verify
+    last_accessed actually rides through, not just that update was
+    called. The previous version of the test only recorded
+    ``(memory_id, data)`` and missed the bug where the metadata dict
+    was built then discarded.
+    """
 
     def __init__(self, hits: List[Dict[str, Any]]):
         self._hits = hits
-        self.update_calls: List[tuple] = []
+        self.update_calls: List[Dict[str, Any]] = []
 
     def search(self, query, *, user_id, agent_id, limit, filters):
         return {"results": list(self._hits)}
 
-    def update(self, memory_id, data=None):
-        self.update_calls.append((memory_id, data))
+    def update(self, memory_id, data=None, metadata=None):
+        self.update_calls.append(
+            {"memory_id": memory_id, "data": data, "metadata": metadata}
+        )
 
 
 def _fresh_mm(monkeypatch) -> Mem0MemoryManager:
@@ -69,7 +78,28 @@ class TestBumpHelper:
             top_k=5,
         )
         assert len(out) == 3
-        assert sorted(call[0] for call in spy.update_calls) == ["a", "b", "c"]
+        assert sorted(call["memory_id"] for call in spy.update_calls) == [
+            "a",
+            "b",
+            "c",
+        ]
+        # F1.2 — every update call must carry a metadata dict with
+        # last_accessed populated. The previous bug built the metadata
+        # then dropped it on the floor; without this assertion the bump
+        # was a no-op against the persistence layer.
+        for call in spy.update_calls:
+            md = call["metadata"]
+            assert isinstance(md, dict), (
+                f"metadata must be a dict; got {type(md)!r}. The bump "
+                "helper must pass the augmented metadata so last_accessed "
+                "actually persists."
+            )
+            assert "last_accessed" in md, (
+                "metadata must contain a fresh last_accessed timestamp; "
+                f"got keys {sorted(md.keys())}. Without this, the lifecycle "
+                "scheduler cannot distinguish recently-accessed memories "
+                "from stale ones and prunes active rows."
+            )
 
     def test_skips_hits_without_id(self, monkeypatch):
         mm = _fresh_mm(monkeypatch)
@@ -87,12 +117,12 @@ class TestBumpHelper:
             top_k=5,
         )
         assert len(spy.update_calls) == 1
-        assert spy.update_calls[0][0] == "a"
+        assert spy.update_calls[0]["memory_id"] == "a"
 
     def test_search_succeeds_when_update_raises(self, monkeypatch):
         # Best-effort contract: update failure must not break the search.
         class _BrokenSpy(_SpyMemory):
-            def update(self, memory_id, data=None):
+            def update(self, memory_id, data=None, metadata=None):
                 raise RuntimeError("simulated mem0 update failure")
 
         mm = _fresh_mm(monkeypatch)

@@ -632,21 +632,31 @@ class Mem0MemoryManager:
             if not mid:
                 continue
             try:
-                # Mem0's update signature is content-only in current versions;
-                # we attempt a metadata-aware update first, fall through to
-                # content-only when the kwarg is rejected. Either path
-                # advances the underlying record's updated_at, which the
-                # scheduler can use as a recency proxy when ``last_accessed``
-                # is unavailable in the schema.
+                # Build the augmented metadata: copy existing keys, stamp
+                # last_accessed=now. Mem0's update signature accepts
+                # ``metadata`` as a kwarg (mem0/memory/main.py:1101) which
+                # the previous version of this code built but threw away.
                 metadata = hit.get("metadata") or {}
                 if isinstance(metadata, dict):
                     metadata = dict(metadata)
-                    metadata["last_accessed"] = now_iso
+                else:
+                    metadata = {}
+                metadata["last_accessed"] = now_iso
                 try:
-                    memory.update(memory_id=mid, data=hit.get("memory", ""))
+                    memory.update(
+                        memory_id=mid,
+                        data=hit.get("memory", ""),
+                        metadata=metadata,
+                    )
                 except TypeError:
-                    # Older Mem0 signature — try minimal call.
-                    memory.update(mid)
+                    # Older Mem0 signature without metadata kwarg — fall
+                    # back to data-only. Recency timestamp won't persist
+                    # but the bump still advances Mem0's updated_at field
+                    # which the scheduler treats as a fallback signal.
+                    try:
+                        memory.update(memory_id=mid, data=hit.get("memory", ""))
+                    except TypeError:
+                        memory.update(mid)
             except Exception as exc:
                 logger.debug(
                     "last_accessed bump failed for memory_id=%s: %s",
