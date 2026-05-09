@@ -22,8 +22,8 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1436,6 +1436,144 @@ async def run_synthetic_generation(
     }
 
 
+async def run_ab_compare(
+    *,
+    tenant_id: str,
+    queries_dataset: str,
+    judge_substring: Optional[str] = None,
+    rlm_max_iterations: int = 10,
+    rlm_max_llm_calls: int = 30,
+) -> Dict[str, Any]:
+    """B.5 wire — run RLMABRunner over a Phoenix queries dataset.
+
+    The dataset must contain rows with at least ``query`` and ``context``
+    columns (Phoenix wraps these under ``input``/``output`` dicts when
+    saved with input_keys; we flatten on load). For each row we run both
+    arms and emit a Phoenix span (``rlm.ab_compare``) with the harness's
+    ``to_telemetry_dict()`` as attributes — that's what the dashboard
+    tile will read.
+
+    Optional ``judge_substring`` enables a deterministic substring-match
+    judge (1.0 if the substring appears in the answer, 0.0 otherwise).
+    Real eval-time judges should be wired by the caller; this is the
+    minimum viable judge for getting a `judge_delta` populated in CI.
+
+    Returns aggregated stats so the operator can see per-dataset trends
+    without tailing Phoenix.
+    """
+    from opentelemetry import trace
+    from phoenix.client import Client as PhoenixSyncClient
+
+    from cogniverse_agents.inference.ab_harness import RLMABRunner
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+
+    config_manager = create_default_config_manager()
+    cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    llm_primary = cfg.get_llm_config().primary
+
+    phoenix_http = os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006")
+    sync_client = PhoenixSyncClient(base_url=phoenix_http)
+
+    try:
+        dataset = sync_client.datasets.get_dataset(dataset=queries_dataset)
+        df = dataset.to_dataframe()
+    except Exception as exc:
+        logger.error("ab-compare: dataset %r not loadable: %s", queries_dataset, exc)
+        return {"status": "failed", "error": str(exc)}
+
+    # Flatten input/output dicts the way run_triggered_optimization does.
+    if "input" in df.columns and "query" not in df.columns:
+        import pandas as _pd
+
+        flat = []
+        for _, row in df.iterrows():
+            inp = row.get("input", {}) or {}
+            out = row.get("output", {}) or {}
+            flat.append({**inp, **out})
+        df = _pd.DataFrame(flat)
+
+    if "query" not in df.columns or "context" not in df.columns:
+        return {
+            "status": "failed",
+            "error": (
+                f"dataset {queries_dataset!r} must expose 'query' and 'context' "
+                f"columns; got {list(df.columns)}"
+            ),
+        }
+
+    judge = None
+    if judge_substring:
+        token = judge_substring
+
+        def _substring_judge(_q: str, _ctx: str, ans: str) -> float:
+            return 1.0 if token.lower() in (ans or "").lower() else 0.0
+
+        judge = _substring_judge
+
+    runner = RLMABRunner(
+        llm_config=llm_primary,
+        judge=judge,
+        rlm_max_iterations=rlm_max_iterations,
+        rlm_max_llm_calls=rlm_max_llm_calls,
+    )
+
+    tracer = trace.get_tracer("cogniverse.ab_compare")
+
+    rows: list = []
+    for _, r in df.iterrows():
+        query = str(r["query"])
+        context = str(r["context"])
+        try:
+            result = runner.run(query=query, context=context)
+        except Exception as exc:
+            logger.warning("ab-compare: arm failure on query=%r: %s", query[:60], exc)
+            continue
+
+        # Emit a Phoenix span with the comparison attributes — the dashboard
+        # tile (when added) will aggregate over these.
+        with tracer.start_as_current_span("rlm.ab_compare") as span:
+            for k, v in result.to_telemetry_dict().items():
+                if v is None:
+                    continue
+                span.set_attribute(f"openinference.{k}", v)
+            span.set_attribute("openinference.tenant_id", tenant_id)
+            span.set_attribute("openinference.queries_dataset", queries_dataset)
+        rows.append(result)
+
+    if not rows:
+        return {
+            "status": "failed",
+            "error": "no rows produced both arms successfully",
+            "queries_dataset": queries_dataset,
+        }
+
+    n = len(rows)
+    avg_latency_delta = sum(r.comparison.latency_delta_ms for r in rows) / n
+    avg_tokens_delta = sum(r.comparison.tokens_delta for r in rows) / n
+    judge_deltas = [
+        r.comparison.judge_delta for r in rows if r.comparison.judge_delta is not None
+    ]
+    avg_judge_delta = sum(judge_deltas) / len(judge_deltas) if judge_deltas else None
+    fallback_count = sum(1 for r in rows if r.with_rlm.was_fallback)
+
+    summary = {
+        "status": "ok",
+        "queries_dataset": queries_dataset,
+        "tenant_id": tenant_id,
+        "rows_compared": n,
+        "avg_latency_delta_ms": avg_latency_delta,
+        "avg_tokens_delta": avg_tokens_delta,
+        "avg_judge_delta": avg_judge_delta,
+        "rlm_fallback_rate": fallback_count / n,
+        "ab_ids": [r.ab_id for r in rows],
+    }
+    logger.info("A/B compare complete: %s", summary)
+    return summary
+
+
 def _build_phoenix_provider_for_cli(tenant_id: str):
     """Construct a PhoenixProvider directly from env vars for CLI runs.
 
@@ -1513,6 +1651,7 @@ def main():
             "entity-extraction",
             "synthetic",
             "rollback",
+            "ab-compare",
         ],
         required=True,
     )
@@ -1545,6 +1684,29 @@ def main():
         "--demos-version",
         type=int,
         help="Demonstrations version to restore (rollback mode)",
+    )
+    # B.5 — ab-compare mode args. Operators run e.g.
+    #   cogniverse-optim --mode ab-compare --tenant-id acme \
+    #       --queries-dataset golden_eval_v1 [--judge-substring 'Paris']
+    parser.add_argument(
+        "--queries-dataset",
+        help="Phoenix dataset of (query, context) rows (ab-compare mode)",
+    )
+    parser.add_argument(
+        "--judge-substring",
+        help="Optional substring judge for ab-compare mode (1.0 if present)",
+    )
+    parser.add_argument(
+        "--rlm-max-iterations",
+        type=int,
+        default=10,
+        help="Per-arm RLM iteration cap (ab-compare mode)",
+    )
+    parser.add_argument(
+        "--rlm-max-llm-calls",
+        type=int,
+        default=30,
+        help="Per-arm RLM total LLM call cap (ab-compare mode)",
     )
     parser.add_argument(
         "--lookback-hours",
@@ -1629,6 +1791,18 @@ def main():
                 agent_type=args.agent,
                 prompts_version=args.prompts_version,
                 demos_version=args.demos_version,
+            )
+        )
+    elif args.mode == "ab-compare":
+        if not args.queries_dataset:
+            parser.error("--queries-dataset is required for ab-compare mode")
+        result = asyncio.run(
+            run_ab_compare(
+                tenant_id=args.tenant_id,
+                queries_dataset=args.queries_dataset,
+                judge_substring=args.judge_substring,
+                rlm_max_iterations=args.rlm_max_iterations,
+                rlm_max_llm_calls=args.rlm_max_llm_calls,
             )
         )
     elif args.mode == "synthetic":
