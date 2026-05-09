@@ -126,6 +126,95 @@ class AgentValidationError(Exception):
         self.validation_error = validation_error
 
 
+class _DispatchedPromptOverlayContext:
+    """Context manager that swaps a DSPy module's predictor instructions
+    for the duration of a single ``call_dspy`` invocation, then restores.
+
+    The overlay's ``prompts`` is a dict keyed by predictor attribute name
+    on the module (e.g. ``"search_optimizer"`` matches
+    ``module.search_optimizer``). Values replace the matching predictor's
+    ``signature.instructions``. Keys that don't match any predictor are
+    silently skipped — older overlays that ship extra keys are forward
+    compatible.
+
+    The whole class no-ops gracefully when:
+      * no overlay is in scope (most calls);
+      * the agent doesn't expose ``get_dispatched_prompts`` (no mixin);
+      * the module has no predictors with the named attributes;
+      * mutating ``signature.instructions`` raises (defensive — we'd
+        rather run with the original prompt than crash the request).
+    """
+
+    def __init__(self, agent: Any, module: Any) -> None:
+        self._agent = agent
+        self._module = module
+        self._restore: Dict[str, Any] = {}
+        self._prompts: Dict[str, str] = {}
+
+    def __enter__(self):
+        getter = getattr(self._agent, "get_dispatched_prompts", None)
+        if not callable(getter):
+            return self
+        try:
+            prompts = getter()
+        except Exception as exc:  # noqa: BLE001 — defensive
+            logger.debug("get_dispatched_prompts raised; ignoring: %s", exc)
+            return self
+        if not isinstance(prompts, dict) or not prompts:
+            return self
+
+        self._prompts = prompts
+        for name, value in prompts.items():
+            predictor = getattr(self._module, name, None)
+            if predictor is None or not hasattr(predictor, "signature"):
+                continue
+            sig = predictor.signature
+            try:
+                self._restore[name] = sig.instructions
+                # Newer DSPy returns a new Signature class from
+                # with_instructions; fall back to in-place mutation when
+                # the helper isn't available.
+                if hasattr(sig, "with_instructions"):
+                    predictor.signature = sig.with_instructions(value)
+                else:
+                    sig.instructions = value
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.debug("Failed to apply prompt overlay for %s: %s", name, exc)
+                # Drop the half-applied entry so __exit__ doesn't try to
+                # restore something we never overwrote.
+                self._restore.pop(name, None)
+
+        if self._restore:
+            logger.debug(
+                "Applied dispatched prompt overlay to %d predictor(s): %s",
+                len(self._restore),
+                sorted(self._restore),
+            )
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        for name, original in self._restore.items():
+            predictor = getattr(self._module, name, None)
+            if predictor is None:
+                continue
+            try:
+                sig = predictor.signature
+                if hasattr(sig, "with_instructions"):
+                    predictor.signature = sig.with_instructions(original)
+                else:
+                    sig.instructions = original
+            except Exception as exc:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "Failed to restore predictor %s after overlay: %s", name, exc
+                )
+        return False
+
+
+def _dispatched_prompt_overlay(agent: Any, module: Any):
+    """Build the per-call overlay context manager for ``call_dspy``."""
+    return _DispatchedPromptOverlayContext(agent, module)
+
+
 class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
     """
     Generic type-safe agent base class with streaming support.
@@ -320,6 +409,13 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         When streaming, wraps with dspy.streamify() to emit token-by-token
         progress events for the specified output_field.
 
+        If a per-request artefact overlay is in scope (set on the agent via
+        ``MemoryAwareMixin.set_dispatched_artefact``), its prompts are
+        applied to the module's predictors for the duration of THIS call
+        only — they're restored before this method returns. That's what
+        makes per-tenant canary + variant selection actually shape agent
+        behavior end-to-end.
+
         Args:
             module: DSPy module (must have forward() method)
             output_field: Name of the output field to stream tokens for
@@ -330,31 +426,32 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         """
         import asyncio
 
-        if self._progress_queue is not None:
-            import dspy
+        with _dispatched_prompt_overlay(self, module):
+            if self._progress_queue is not None:
+                import dspy
 
-            streaming_fn = dspy.streamify(
-                module,
-                stream_listeners=[
-                    dspy.streaming.StreamListener(output_field),
-                ],
-                include_final_prediction_in_output_stream=True,
-            )
-            accumulated = ""
-            prediction = None
-            async for chunk in streaming_fn(**kwargs):
-                if isinstance(chunk, dspy.Prediction):
-                    prediction = chunk
-                else:
-                    accumulated += str(chunk)
-                    self.emit_progress(
-                        "token", str(chunk), data={"accumulated": accumulated}
-                    )
-            if prediction is None:
-                prediction = await asyncio.to_thread(module.forward, **kwargs)
-            return prediction
-        else:
-            return await asyncio.to_thread(module.forward, **kwargs)
+                streaming_fn = dspy.streamify(
+                    module,
+                    stream_listeners=[
+                        dspy.streaming.StreamListener(output_field),
+                    ],
+                    include_final_prediction_in_output_stream=True,
+                )
+                accumulated = ""
+                prediction = None
+                async for chunk in streaming_fn(**kwargs):
+                    if isinstance(chunk, dspy.Prediction):
+                        prediction = chunk
+                    else:
+                        accumulated += str(chunk)
+                        self.emit_progress(
+                            "token", str(chunk), data={"accumulated": accumulated}
+                        )
+                if prediction is None:
+                    prediction = await asyncio.to_thread(module.forward, **kwargs)
+                return prediction
+            else:
+                return await asyncio.to_thread(module.forward, **kwargs)
 
     def validate_input(self, raw_input: Dict[str, Any]) -> InputT:
         """

@@ -328,6 +328,7 @@ class AgentDispatcher:
                 top_k,
                 conversation_history=conversation_history,
                 enrichment=enrichment or None,
+                context=context,
             )
         elif capabilities & {"image_search", "visual_analysis"}:
             result = await self._execute_image_search_task(query, tenant_id, top_k)
@@ -338,7 +339,9 @@ class AgentDispatcher:
         elif capabilities & {"detailed_report"}:
             result = await self._execute_detailed_report_task(query, tenant_id)
         elif capabilities & {"summarization", "text_generation"}:
-            result = await self._execute_summarization_task(query, tenant_id)
+            result = await self._execute_summarization_task(
+                query, tenant_id, context=context
+            )
         elif capabilities & {"text_analysis", "sentiment", "classification"}:
             result = await self._execute_text_analysis_task(query, context, tenant_id)
         elif "deep_research" in capabilities:
@@ -654,6 +657,7 @@ class AgentDispatcher:
         top_k: int,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         enrichment: Optional[Dict[str, Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # P3 — consult the search_agent egress policy. Full enforcement
         # requires the agent to use the resulting policy-enforcing client;
@@ -680,6 +684,10 @@ class AgentDispatcher:
         profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
 
         search_agent = self._get_search_agent(profile)
+        # B1 — apply the dispatcher's per-request artefact overlay so the
+        # canary/variant prompts shape the SearchAgent's DSPy call. Without
+        # this, the overlay sits in context unread.
+        self._apply_artefact_overlay(search_agent, context)
 
         enrichment = enrichment or {}
         input_data = SearchInput(
@@ -914,6 +922,9 @@ class AgentDispatcher:
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
+        # B1 — apply per-request artefact overlay so OrchestratorAgent's
+        # planner DSPy module honors the canary/variant decision.
+        self._apply_artefact_overlay(agent, context)
 
         gateway_ctx = gateway_context or {}
         input_data = OrchestratorInput(
@@ -996,7 +1007,10 @@ class AgentDispatcher:
         return f"{system_config.backend_url}:{system_config.backend_port}"
 
     async def _execute_summarization_task(
-        self, query: str, tenant_id: str
+        self,
+        query: str,
+        tenant_id: str,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # P3 — consult summarizer_agent egress policy at dispatch.
         self.consult_egress_policy("summarizer_agent")
@@ -1012,6 +1026,9 @@ class AgentDispatcher:
         await asyncio.to_thread(
             self._init_agent_memory, agent, "summarizer_agent", tenant_id
         )
+        # B1 — apply per-request artefact overlay to SummarizerAgent's
+        # DSPy module(s) for canary/variant prompts.
+        self._apply_artefact_overlay(agent, context)
 
         request = SummaryRequest(
             query=query,

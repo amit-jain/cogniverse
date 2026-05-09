@@ -1,26 +1,22 @@
-"""F2.1 — dispatcher hands the per-request artefact overlay to the agent.
+"""B1 / F2.1 — dispatcher overlay reaches the agent AND shapes the DSPy call.
 
-The previous audit caught: dispatcher computes the canary/variant
-decision, stashes it in ``context["_artefact_overlay"]``, but no agent
-ever reads that key — the overlay was a write-only black hole.
+Two halves verified end-to-end:
 
-This test verifies the consumer wire (in two halves):
-  * ``MemoryAwareMixin.set_dispatched_artefact`` is the public hook
-    every memory-aware agent now exposes;
-  * ``AgentDispatcher._apply_artefact_overlay`` calls that hook with
-    the context overlay; the generic agent execution path invokes it
-    after constructing the agent.
-
-End result: an agent dispatched with a canary-on or variant-selected
-context now has ``self._dispatched_artefact`` populated, and
-``self.get_dispatched_prompts()`` returns the overlay's prompts.
-Agents migrate from default-only to overlay-aware loading at their
-own pace; the wire is observable today.
+  * **Wire** — ``MemoryAwareMixin.set_dispatched_artefact`` /
+    ``get_dispatched_prompts`` plumb the overlay; the dispatcher's
+    ``_apply_artefact_overlay`` calls the setter from search /
+    orchestration / summarization paths (not just the generic path).
+  * **Consumer** — ``AgentBase.call_dspy`` consults
+    ``get_dispatched_prompts()`` and applies the overlay's
+    instructions to the matching predictor for the duration of the
+    call, then restores. This is what makes per-tenant canary +
+    signature-variant selection actually shape agent output instead
+    of sitting in a context dict no one reads.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import pytest
 
@@ -175,3 +171,180 @@ class TestEndToEndWire:
         assert agent._dispatched_artefact["version"] == 7
         assert agent._dispatched_artefact["variant_id"] == DEFAULT_VARIANT_ID
         assert agent.get_dispatched_prompts() == {"system": "FROM_RESOLVED_CANARY"}
+
+
+class TestPromptOverlayShapesDSPyCall:
+    """B1 — the overlay must change what the LM actually sees, not just
+    what's stored on the agent. Without this assertion, the entire
+    canary + variant pipeline is a write-only black hole even after
+    the wire reaches the agent.
+    """
+
+    @pytest.mark.asyncio
+    async def test_overlay_swaps_predictor_instructions_during_call(self):
+        """A real DSPy module + a recording fake LM proves the overlay
+        instructions land in the prompt sent to the LM, and that the
+        original instructions are restored after the call.
+        """
+        import dspy
+
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class _Sig(dspy.Signature):
+            """ORIGINAL_INSTRUCTIONS"""
+
+            query: str = dspy.InputField()
+            answer: str = dspy.OutputField()
+
+        class _Module(dspy.Module):
+            def __init__(self):
+                super().__init__()
+                self.predictor = dspy.Predict(_Sig)
+
+            def forward(self, query: str):
+                return self.predictor(query=query)
+
+        class _RecordingLM(dspy.LM):
+            """Captures every prompt sent to it; returns a stub answer."""
+
+            def __init__(self):
+                super().__init__(model="stub/test", api_base="none", api_key="none")
+                self.captured_messages: list = []
+
+            def __call__(self, prompt=None, messages=None, **kwargs):
+                if messages is not None:
+                    self.captured_messages.append(messages)
+                else:
+                    self.captured_messages.append(prompt)
+                return ["[[ ## answer ## ]]\nstub_answer\n[[ ## completed ## ]]"]
+
+        class _NullDeps(AgentDeps):
+            pass
+
+        class _NullInput(AgentInput):
+            pass
+
+        class _NullOutput(AgentOutput):
+            pass
+
+        class _OverlayAgent(AgentBase[_NullInput, _NullOutput, _NullDeps]):
+            _input_type = _NullInput
+            _output_type = _NullOutput
+
+            async def _process_impl(self, input_data: _NullInput) -> _NullOutput:
+                raise NotImplementedError
+
+            # Stand in for MemoryAwareMixin's hook so call_dspy can find it.
+            def get_dispatched_prompts(self):
+                return self._overlay
+
+            def __init__(self, deps):
+                super().__init__(deps=deps)
+                self._overlay = None
+
+        agent = _OverlayAgent(deps=_NullDeps())
+        module = _Module()
+        lm = _RecordingLM()
+
+        # Sanity: pre-overlay, the predictor's instructions are the original.
+        assert module.predictor.signature.instructions == "ORIGINAL_INSTRUCTIONS"
+
+        # Set the overlay so the call sees it.
+        agent._overlay = {"predictor": "OVERLAY_INSTRUCTIONS_FOR_CANARY"}
+
+        with dspy.context(lm=lm):
+            await agent.call_dspy(module, output_field="answer", query="hello")
+
+        # 1) The LM must have received the overlay text in its prompt.
+        assert lm.captured_messages, "fake LM was never called"
+        seen_text = ""
+        for msgs in lm.captured_messages:
+            if isinstance(msgs, list):
+                for m in msgs:
+                    if isinstance(m, dict):
+                        seen_text += str(m.get("content", ""))
+                    else:
+                        seen_text += str(m)
+            else:
+                seen_text += str(msgs)
+        assert "OVERLAY_INSTRUCTIONS_FOR_CANARY" in seen_text, (
+            "overlay instructions did not appear in the LM prompt; the "
+            "consumer wire from get_dispatched_prompts() to "
+            "predictor.signature.instructions is broken. "
+            f"Captured text head: {seen_text[:500]!r}"
+        )
+        assert "ORIGINAL_INSTRUCTIONS" not in seen_text, (
+            "original instructions still in the LM prompt — the swap "
+            "didn't take effect for this call. "
+            f"Captured text head: {seen_text[:500]!r}"
+        )
+
+        # 2) After the call, the predictor's instructions must be restored.
+        assert module.predictor.signature.instructions == "ORIGINAL_INSTRUCTIONS", (
+            "predictor instructions were not restored after the overlay "
+            "call — subsequent requests on this module would leak the "
+            "canary prompt instead of returning to the active artefact."
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_overlay_leaves_predictor_untouched(self):
+        """When no overlay is in scope, call_dspy must not mutate anything."""
+        import dspy
+
+        from cogniverse_core.agents.base import (
+            AgentBase,
+            AgentDeps,
+            AgentInput,
+            AgentOutput,
+        )
+
+        class _Sig(dspy.Signature):
+            """BASELINE"""
+
+            q: str = dspy.InputField()
+            a: str = dspy.OutputField()
+
+        class _Module(dspy.Module):
+            def __init__(self):
+                super().__init__()
+                self.p = dspy.Predict(_Sig)
+
+            def forward(self, q):
+                return self.p(q=q)
+
+        class _LM(dspy.LM):
+            def __init__(self):
+                super().__init__(model="stub/test", api_base="none", api_key="none")
+
+            def __call__(self, prompt=None, messages=None, **kwargs):
+                return ["[[ ## a ## ]]\nx\n[[ ## completed ## ]]"]
+
+        class _D(AgentDeps):
+            pass
+
+        class _I(AgentInput):
+            pass
+
+        class _O(AgentOutput):
+            pass
+
+        class _A(AgentBase[_I, _O, _D]):
+            _input_type = _I
+            _output_type = _O
+
+            async def _process_impl(self, input_data):
+                raise NotImplementedError
+
+            def get_dispatched_prompts(self):
+                return None
+
+        agent = _A(deps=_D())
+        module = _Module()
+        with dspy.context(lm=_LM()):
+            await agent.call_dspy(module, output_field="a", q="x")
+        assert module.p.signature.instructions == "BASELINE"
