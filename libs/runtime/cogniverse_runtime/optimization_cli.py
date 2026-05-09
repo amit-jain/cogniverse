@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import sys
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -1435,6 +1436,69 @@ async def run_synthetic_generation(
     }
 
 
+def _build_phoenix_provider_for_cli(tenant_id: str):
+    """Construct a PhoenixProvider directly from env vars for CLI runs.
+
+    Operators (and integration tests) set ``PHOENIX_HTTP_ENDPOINT`` and
+    ``PHOENIX_GRPC_ENDPOINT`` to point at the Phoenix instance the CLI
+    should talk to. We build the provider directly here rather than
+    going through ``get_telemetry_manager()`` so a CLI invocation can
+    target a specific Phoenix without the global telemetry config (which
+    is loaded from ConfigManager and pinned to the cluster's primary).
+    """
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+    http_endpoint = os.environ.get("PHOENIX_HTTP_ENDPOINT", "http://localhost:6006")
+    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317")
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": http_endpoint,
+            "grpc_endpoint": grpc_endpoint,
+        }
+    )
+    return provider
+
+
+async def run_rollback(
+    *,
+    tenant_id: str,
+    agent_type: str,
+    prompts_version: Optional[int] = None,
+    demos_version: Optional[int] = None,
+) -> Dict[str, Any]:
+    """C.4 — restore active artefacts to a previously-snapshotted version.
+
+    Wraps :meth:`ArtifactManager.rollback_to_version` so an operator can
+    run e.g. ``cogniverse-optim --mode rollback --tenant-id acme
+    --agent search_agent --prompts-version 3``.
+
+    The current active artefacts are themselves snapshotted before the
+    rollback (the manager method does this) so the rollback is itself
+    reversible — the returned ``backup_versions`` dict contains the
+    versions you'd pass to ``rollback`` again to undo this operation.
+    """
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+    telemetry_provider = _build_phoenix_provider_for_cli(tenant_id)
+    am = ArtifactManager(telemetry_provider, tenant_id)
+    logger.info(
+        "Rollback: tenant=%s agent=%s prompts_v=%s demos_v=%s",
+        tenant_id,
+        agent_type,
+        prompts_version,
+        demos_version,
+    )
+    summary = await am.rollback_to_version(
+        agent_type=agent_type,
+        prompts_version=prompts_version,
+        demos_version=demos_version,
+    )
+    logger.info("Rollback complete: %s", summary)
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cogniverse Optimization CLI")
     parser.add_argument(
@@ -1448,6 +1512,7 @@ def main():
             "profile",
             "entity-extraction",
             "synthetic",
+            "rollback",
         ],
         required=True,
     )
@@ -1462,6 +1527,25 @@ def main():
     )
     parser.add_argument("--log-retention-days", type=int, default=7)
     parser.add_argument("--memory-retention-days", type=int, default=30)
+    # C.4 — rollback mode args. Operators run e.g.
+    #   cogniverse-optim --mode rollback --tenant-id acme \
+    #       --agent search_agent --prompts-version 3
+    # to restore search_agent's active prompts to v3. Demos rollback is
+    # independent so a caller can roll back just one or both.
+    parser.add_argument(
+        "--agent",
+        help="Single agent name (rollback mode)",
+    )
+    parser.add_argument(
+        "--prompts-version",
+        type=int,
+        help="Prompts version to restore (rollback mode)",
+    )
+    parser.add_argument(
+        "--demos-version",
+        type=int,
+        help="Demonstrations version to restore (rollback mode)",
+    )
     parser.add_argument(
         "--lookback-hours",
         type=float,
@@ -1529,6 +1613,22 @@ def main():
             run_entity_extraction_optimization(
                 tenant_id=args.tenant_id,
                 lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "rollback":
+        if not args.agent or (
+            args.prompts_version is None and args.demos_version is None
+        ):
+            parser.error(
+                "--agent is required for rollback mode, plus at least one of "
+                "--prompts-version or --demos-version"
+            )
+        result = asyncio.run(
+            run_rollback(
+                tenant_id=args.tenant_id,
+                agent_type=args.agent,
+                prompts_version=args.prompts_version,
+                demos_version=args.demos_version,
             )
         )
     elif args.mode == "synthetic":
