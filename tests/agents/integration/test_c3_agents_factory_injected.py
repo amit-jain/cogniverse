@@ -1,27 +1,23 @@
-"""P5 — integration tests for the 8 C3 agents that previously had none.
+"""C3 agent tests with the memory manager injected via MagicMock.
 
-Pre-existing real-service coverage:
-  * C3.5 CitationTracingAgent    — test_citation_tracing_agent_integration.py
+Each agent's ``memory_manager_factory`` (or mixin attribute) is given a
+MagicMock that returns canned rows in the shape Mem0 produces. These
+tests exercise the agent's own logic — input validation, walk
+semantics, reconciliation policy choice, summary composition — without
+paying the full Vespa + LLM cost of a real backend.
 
-This file fills in the remaining 8:
-  * C3.1 MultiDocumentSynthesisAgent
-  * C3.2 KnowledgeGraphTraversalAgent
-  * C3.3 CrossTenantComparisonAgent
-  * C3.4 ContradictionReconciliationAgent
-  * C3.6 TemporalReasoningAgent
-  * C3.7 FederatedQueryAgent
-  * C3.8 KnowledgeSummarizationAgent
-  * C3.9 AuditExplanationAgent
+Real-backend coverage for every C3 agent lives in:
 
-Each test exercises the real agent code against the data shapes
-production uses (real Provenance, real ConflictSet, real subject_key
-metadata). Memory access is injected via the agent's
-``memory_manager_factory`` seam so this file doesn't depend on the
-cross-tree ``shared_memory_vespa`` fixture (which lives under
-``tests/memory/`` and is not visible elsewhere). The Mem0+Vespa
-end-to-end coverage for the *manager* layer lives in
-``tests/memory/integration/`` — these tests cover the *agent* layer
-above it.
+  * ``tests/memory/integration/test_c3_agents_real_vespa.py`` — C3.4
+    ContradictionReconciliation, C3.8 KnowledgeSummarization, C3.9
+    AuditExplanation against live Mem0 + Vespa.
+  * ``tests/memory/integration/test_c3_remaining_agents_real_vespa.py``
+    — C3.1 MultiDoc, C3.2 KGTraversal, C3.3 CrossTenant, C3.6
+    TemporalReasoning, C3.7 FederatedQuery against live Mem0 + Vespa
+    (multi-tenant fixture for the federation-shaped agents).
+
+This file complements those: same agents, lower cost per test, used
+to drive policy-branch coverage that doesn't need a real backend.
 """
 
 from __future__ import annotations
