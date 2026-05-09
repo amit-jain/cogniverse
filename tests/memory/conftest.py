@@ -329,7 +329,13 @@ def shared_memory_vespa():
         wiki_schema_json["document"]["name"] = "wiki_pages_test_tenant"
         wiki_schema = parser.parse_schema(wiki_schema_json)
 
-        all_schemas = metadata_schemas + [memory_schema, wiki_schema]
+        with open(Path("configs/schemas/provenance_schema.json")) as f:
+            provenance_schema_json = json.load(f)
+        provenance_schema_json["name"] = "provenance_test_tenant"
+        provenance_schema_json["document"]["name"] = "provenance_test_tenant"
+        provenance_schema = parser.parse_schema(provenance_schema_json)
+
+        all_schemas = metadata_schemas + [memory_schema, wiki_schema, provenance_schema]
         app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
 
         schema_mgr = VespaSchemaManager(
@@ -375,10 +381,12 @@ def shared_memory_vespa():
         # test_tenant.
         tenant_schema_name = "agent_memories_test_tenant"
         wiki_schema_name = "wiki_pages_test_tenant"
+        provenance_schema_name = "provenance_test_tenant"
 
         for schema_name, base_name, schema_dict in [
             (tenant_schema_name, "agent_memories", memory_schema_json),
             (wiki_schema_name, "wiki_pages", wiki_schema_json),
+            (provenance_schema_name, "provenance", provenance_schema_json),
         ]:
             config_manager.set_config_value(
                 tenant_id="test_tenant",

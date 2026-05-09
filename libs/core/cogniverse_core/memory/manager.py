@@ -322,6 +322,10 @@ class Mem0MemoryManager:
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
+        # Keep a handle so the provenance store + future side-stores can
+        # talk to Vespa directly without going through Mem0's vector
+        # store wrapper.
+        self._backend = backend
 
         # Get tenant-specific schema name
         tenant_schema_name = backend.get_tenant_schema_name(
@@ -334,6 +338,17 @@ class Mem0MemoryManager:
                 tenant_id=self.tenant_id, base_schema_name=base_schema_name
             )
             logger.info(f"Ensured tenant schema exists: {tenant_schema_name}")
+            # Deploy the per-tenant provenance schema alongside the
+            # memory schema. The walker reads from this schema only;
+            # a deploy failure here breaks every audit / citation
+            # path so it must surface, not be swallowed.
+            backend.schema_registry.deploy_schema(
+                tenant_id=self.tenant_id, base_schema_name="provenance"
+            )
+            logger.info(
+                "Ensured tenant provenance schema exists: provenance_%s",
+                self.tenant_id,
+            )
 
         # Strip any litellm-style "provider/" prefix from model names — the
         # OpenAI-compatible endpoint (Ollama, vLLM, etc.) expects the bare
@@ -399,10 +414,29 @@ class Mem0MemoryManager:
         # enforces schema.provenance_required and computes initial trust.
         self._knowledge_registry = knowledge_registry
 
+        # Indexed provenance store (built lazily on first use). Per-tenant
+        # provenance documents land in their own Vespa schema so chain
+        # walks can batch each BFS level into one query.
+        self._provenance_store: Optional[object] = None
+
         logger.info(
             f"Mem0MemoryManager initialized for tenant {self.tenant_id} "
             f"with schema {tenant_schema_name} at {backend_host}:{backend_port}"
         )
+
+    @property
+    def provenance_store(self):
+        """Lazy per-tenant ProvenanceStore wrapping the Vespa backend."""
+        if (
+            self._provenance_store is None
+            and getattr(self, "_backend", None) is not None
+        ):
+            from cogniverse_core.memory.provenance_store import ProvenanceStore
+
+            self._provenance_store = ProvenanceStore(
+                backend=self._backend, tenant_id=self.tenant_id
+            )
+        return self._provenance_store
 
     def _enforce_schema_on_write(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Validate provenance + auto-attach initial trust per schema (P2.1).
@@ -540,6 +574,12 @@ class Mem0MemoryManager:
 
         logger.info(f"Added memory for {tenant_id}/{agent_name}: {memory_id}")
 
+        # Persist provenance to the indexed Vespa store. The walker
+        # reads from this store exclusively — a failure here means
+        # this memory is unreachable from any chain walk, so raise
+        # rather than silently dropping a citation edge.
+        self._attach_indexed_provenance(memory_id, metadata)
+
         # A.3 — detect contradictions on the write. Plan-mandated: the
         # detector runs on every knowledge write, persisting a
         # ``conflict_set`` memory when the new write disagrees with an
@@ -565,6 +605,31 @@ class Mem0MemoryManager:
             )
 
         return memory_id
+
+    def _attach_indexed_provenance(
+        self, memory_id: str, metadata: Optional[Dict[str, Any]]
+    ) -> None:
+        """Persist the in-band provenance to the indexed Vespa store."""
+        if not isinstance(metadata, dict):
+            return
+        prov_payload = metadata.get("provenance")
+        if not isinstance(prov_payload, dict):
+            return
+        store = self.provenance_store
+        if store is None:
+            return
+        from cogniverse_core.memory.provenance import Provenance
+
+        try:
+            provenance = Provenance.from_metadata_payload(prov_payload)
+        except (KeyError, ValueError) as exc:
+            logger.debug(
+                "Skipping provenance attach for %s — malformed payload: %s",
+                memory_id,
+                exc,
+            )
+            return
+        store.attach(memory_id, provenance)
 
     def _detect_and_persist_contradictions(
         self,

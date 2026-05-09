@@ -1,22 +1,21 @@
-"""Provenance + citation graph (A.2).
+"""Provenance + citation graph data model and walker.
 
 Every knowledge write carries a ``Provenance`` record describing where the
 content came from: the writing agent, the time, the source citations
 (``derived_from``), the derivation kind, a confidence score, and an optional
-trace id. The schema's ``provenance_required`` flag (A.1) gates writes that
+trace id. The schema's ``provenance_required`` flag gates writes that
 omit provenance.
 
-Design decision (V1): provenance lives **in the memory's own metadata** under
-the ``provenance`` key, JSON-encoded. A separate Vespa schema for the
-citation graph is deferred to A.3/A.4 (contradiction + trust ranking) where
-the indexable graph buys real query value. For V1, citation walks happen by
-fetching memories by id and following the in-band ``derived_from`` list —
-O(N) for chain length N, which is acceptable given typical chains are short
-(~3–5 hops).
+Provenance is persisted in a per-tenant ``provenance`` Vespa schema (see
+``provenance_store.ProvenanceStore``) so citation chains can be walked
+with one Vespa query per BFS level instead of one Mem0 fetch per node.
+A copy is also written into the memory's own metadata under the
+``provenance`` key for direct inspection of a single memory dict.
 
 The ``ProvenanceWalker`` is the read API: walk a knowledge node back to its
 primary sources, return the full chain plus a structured graph view for
-downstream auditing or citation rendering.
+downstream auditing or citation rendering. The walker requires the
+indexed store; without it, ``walk()`` raises.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from cogniverse_core.memory.manager import Mem0MemoryManager
@@ -223,10 +222,23 @@ class CitationGraph:
 class ProvenanceWalker:
     """Walks the citation graph backwards from a root memory.
 
+    Walking is performed against the indexed
+    :class:`provenance_store.ProvenanceStore` (one Vespa query per BFS
+    level). Memory content is fetched per visited node so each
+    ``CitationNode`` carries an excerpt; the indexed store does the
+    graph traversal in constant queries per level.
+
     Args:
-        memory_manager: Live Mem0 manager for the tenant.
+        memory_manager: Live Mem0 manager for the tenant. Must have its
+            ``provenance_store`` initialised (it is, by default, on any
+            manager constructed via ``Mem0MemoryManager.initialize``).
         max_depth: Stop walking past this depth (cycle / runaway protection).
         max_nodes: Stop walking after visiting this many nodes total.
+
+    Raises:
+        ValueError: When ``memory_manager.provenance_store`` is missing —
+            the walker has no fallback path. Operators must run with a
+            backend that has the per-tenant ``provenance`` schema deployed.
     """
 
     def __init__(
@@ -239,98 +251,65 @@ class ProvenanceWalker:
             raise ValueError("max_depth must be >= 1")
         if max_nodes < 1:
             raise ValueError("max_nodes must be >= 1")
+        store = getattr(memory_manager, "provenance_store", None)
+        if store is None:
+            raise ValueError(
+                "ProvenanceWalker requires memory_manager.provenance_store; "
+                "the per-tenant provenance Vespa schema is missing or the "
+                "manager was constructed without a backend"
+            )
         self._mm = memory_manager
+        self._store = store
         self._max_depth = max_depth
         self._max_nodes = max_nodes
 
     def walk(self, root_memory_id: str, tenant_id: str) -> CitationGraph:
         """Build a ``CitationGraph`` for ``root_memory_id``.
 
-        Performs a BFS over ``derived_from`` references of kind
-        ``memory``. Non-memory refs (URLs, external docs) are surfaced as
-        ``primary_sources`` without further traversal. Cycles are detected
-        via a visited-set.
+        Delegates the BFS traversal to the indexed
+        :class:`ProvenanceStore`, then fetches each visited memory's
+        content for the per-node excerpt. ``tenant_id`` is accepted for
+        signature compatibility with older callers but the store is
+        already tenant-scoped.
         """
-        visited: Set[str] = set()
+        del tenant_id  # tenant scoping lives on the store
+        ordered, primary_sources, truncated = self._store.walk(
+            root_memory_id,
+            max_depth=self._max_depth,
+            max_nodes=self._max_nodes,
+        )
+
         nodes: List[CitationNode] = []
-        primary_sources: List[CitationRef] = []
-        truncated = False
-
-        # BFS frontier: list of (memory_id, depth)
-        frontier: List[tuple] = [(root_memory_id, 0)]
-
-        while frontier:
-            if len(nodes) >= self._max_nodes:
-                truncated = True
-                break
-            memory_id, depth = frontier.pop(0)
-            if memory_id in visited:
-                continue
-            visited.add(memory_id)
-
-            memory = self._fetch_memory(memory_id, tenant_id)
+        for memory_id, depth in ordered:
+            memory = self._fetch_memory(memory_id)
             if memory is None:
-                # Memory referenced but not in the store — record as a
-                # primary source (the chain terminates at an unknown).
-                primary_sources.append(
-                    CitationRef.memory(memory_id, label="unknown_or_deleted")
-                )
-                continue
+                content_excerpt = ""
+            else:
+                content = memory.get("memory") or memory.get("content") or ""
+                content_excerpt = str(content)[:200]
 
-            prov = extract_from_memory(memory)
-            content = memory.get("memory") or memory.get("content") or ""
-            excerpt = str(content)[:200]
+            rec = self._store.get(memory_id)
+            prov = rec.to_provenance() if rec is not None else None
+
             nodes.append(
                 CitationNode(
                     memory_id=memory_id,
                     provenance=prov,
-                    content_excerpt=excerpt,
+                    content_excerpt=content_excerpt,
                     depth=depth,
                 )
             )
 
-            if prov is None or not prov.derived_from:
-                # No further refs — this node is itself a primary source.
-                primary_sources.append(CitationRef.memory(memory_id))
-                continue
-
-            if depth + 1 > self._max_depth:
-                truncated = True
-                # Surface remaining refs as primary sources rather than
-                # silently dropping them.
-                for ref in prov.derived_from:
-                    primary_sources.append(ref)
-                continue
-
-            for ref in prov.derived_from:
-                if ref.ref_kind != "memory":
-                    primary_sources.append(ref)
-                    continue
-                if ref.ref_id not in visited:
-                    frontier.append((ref.ref_id, depth + 1))
-
-        # Dedup primary sources by (kind, id) preserving first-seen order.
-        seen_ps: Set[tuple] = set()
-        deduped_ps: List[CitationRef] = []
-        for r in primary_sources:
-            key = (r.ref_kind, r.ref_id)
-            if key in seen_ps:
-                continue
-            seen_ps.add(key)
-            deduped_ps.append(r)
-
         return CitationGraph(
             root_memory_id=root_memory_id,
             nodes=nodes,
-            primary_sources=deduped_ps,
+            primary_sources=primary_sources,
             truncated_at_max_depth=truncated,
         )
 
-    def _fetch_memory(self, memory_id: str, tenant_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch a memory by id, tolerating Mem0's varying return shapes."""
+    def _fetch_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a memory by id for excerpt rendering; None when missing."""
         try:
-            # Mem0.get returns a dict or None; we go through the manager so
-            # tenant scoping stays explicit.
             mem_obj = self._mm.memory.get(memory_id)  # type: ignore[union-attr]
         except Exception as exc:
             logger.debug("ProvenanceWalker: get(%s) failed: %s", memory_id, exc)
@@ -339,7 +318,6 @@ class ProvenanceWalker:
             return None
         if isinstance(mem_obj, dict):
             return mem_obj
-        # Some Mem0 backends return list[result]; take first.
         if isinstance(mem_obj, list) and mem_obj:
             return mem_obj[0] if isinstance(mem_obj[0], dict) else None
         return None

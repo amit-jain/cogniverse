@@ -1,0 +1,76 @@
+{
+  "name": "provenance",
+  "document": {
+    "name": "provenance",
+    "fields": [
+      {
+        "name": "id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "memory_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "tenant_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "written_by",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "written_at",
+        "type": "long",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "derivation_kind",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "confidence",
+        "type": "double",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "derived_from_ids",
+        "type": "array<string>",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "derived_from_other",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "trace_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"]
+      }
+    ]
+  },
+  "fieldsets": [
+    {
+      "name": "default",
+      "fields": ["written_by", "derivation_kind"]
+    }
+  ],
+  "rank_profiles": [
+    {
+      "name": "by_memory",
+      "first_phase": {
+        "expression": "1.0"
+      }
+    }
+  ]
+}
