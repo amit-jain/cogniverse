@@ -718,16 +718,61 @@ class OrchestratorAgent(
 
         async def _dispatcher(query: str, sub_agent_name: str) -> str:
             """Send a sub-query to a registered sub-agent over the
-            orchestrator's HTTP path. The orchestrator already owns the
-            policy-enforcing client (D.1 wire), so deep-synthesis
-            sub-calls inherit that egress allow-list."""
+            orchestrator's HTTP path (F4.1).
+
+            Uses the orchestrator's existing http_client (which carries
+            the OpenShell policy-enforcing transport when D.1 is wired)
+            to POST the sub-query to the agent's process_endpoint. The
+            response's ``answer``/``output``/``content``/``result`` field
+            is returned as the snippet — DeepSynthesisWorkflow appends
+            these per-round to its trajectory.
+
+            The previous version of this dispatcher returned a STUB
+            string ("stub dispatch to ...") regardless of registration —
+            the deep-synthesis loop ran but synthesised against placeholder
+            content, never real sub-agent output. Audit caught it.
+            """
             try:
                 ep = self.registry.get_agent(sub_agent_name)
             except Exception:
                 ep = None
             if ep is None:
                 return f"(sub-agent {sub_agent_name} not registered)"
-            return f"(stub dispatch to {sub_agent_name}: {query[:80]})"
+
+            try:
+                client = self._http_client_override or await _get_http_client()
+                process_url = ep.url.rstrip("/") + (
+                    ep.process_endpoint or f"/agents/{sub_agent_name}/process"
+                )
+                tenant_id_for_call = (
+                    getattr(self.deps, "tenant_id", None) or "__system__"
+                )
+                resp = await client.post(
+                    process_url,
+                    json={
+                        "query": query,
+                        "context": {"tenant_id": tenant_id_for_call},
+                    },
+                    timeout=getattr(ep, "timeout", 30),
+                )
+                resp.raise_for_status()
+                payload = resp.json() if resp.content else {}
+            except Exception as exc:
+                logger.debug(
+                    "deep-synth sub-dispatch %s failed: %s", sub_agent_name, exc
+                )
+                return f"(sub-agent {sub_agent_name} call failed: {type(exc).__name__})"
+
+            if isinstance(payload, dict):
+                for key in ("answer", "output", "content", "result", "summary"):
+                    val = payload.get(key)
+                    if isinstance(val, str) and val:
+                        return val
+                # No known answer field — surface the JSON so the RLM
+                # step can still extract something, rather than dropping
+                # the response entirely.
+                return json.dumps(payload, default=str)[:2000]
+            return str(payload)[:2000]
 
         return DeepSynthesisWorkflow(
             rlm=rlm,
