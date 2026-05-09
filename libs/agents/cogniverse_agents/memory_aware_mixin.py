@@ -109,6 +109,14 @@ class MemoryAwareMixin:
             self.memory_manager = Mem0MemoryManager(tenant_id=tenant_id)
 
             if self.memory_manager.memory is None:
+                # F1.1 — wire the knowledge_registry so add_memory enforces
+                # provenance_required + auto-attaches initial trust, AND
+                # get_relevant_context applies trust ranking + per-schema
+                # contradiction reconciliation. Without this kwarg the
+                # P2.1/P2.2 enforcement code is gated off in production
+                # (the registry stays None and every check short-circuits).
+                from cogniverse_core.memory.schema import build_default_registry
+
                 self.memory_manager.initialize(
                     backend_host=backend_host,
                     backend_port=backend_port,
@@ -122,6 +130,7 @@ class MemoryAwareMixin:
                     config_manager=config_manager,
                     schema_loader=schema_loader,
                     backend_config_port=backend_config_port,
+                    knowledge_registry=build_default_registry(),
                 )
 
             self._memory_initialized = True
