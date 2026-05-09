@@ -936,6 +936,198 @@ async def set_pin_quotas(
     return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
 
 
+# A.6 — Memory pin / unpin / list endpoints. PinService was already wired
+# into the lifecycle scheduler (so pinned memories survive cleanup), but the
+# only way to actually pin a memory used to be the in-process Python API —
+# meaning a tenant admin had no operational path to pin anything. These
+# endpoints close that gap. The requester's role + actor_id ride in the
+# request body; auth middleware (out of scope here) is responsible for
+# rejecting requests whose claimed role does not match the caller's
+# authenticated identity.
+
+
+class PinCreateRequest(BaseModel):
+    target_kind: str
+    pinned_by: str  # Pinnable enum value: user / tenant_admin / org_admin
+    actor_id: str
+
+
+class PinUnpinRequest(BaseModel):
+    requester_role: str  # Pinnable enum value
+    actor_id: str
+
+
+class PinRecordResponse(BaseModel):
+    memory_id: str
+    target_memory_id: str
+    target_kind: str
+    pinned_by: str
+    pinned_by_actor: str
+
+
+class PinListResponse(BaseModel):
+    tenant_id: str
+    pins: list[PinRecordResponse]
+
+
+class PinUnpinResponse(BaseModel):
+    tenant_id: str
+    target_memory_id: str
+    removed: int
+
+
+def _get_pin_service(tenant_id: str):
+    """Build a PinService bound to the tenant's Mem0 manager + registry.
+
+    Constructs the registry from the default schema set so authority +
+    quota checks fire correctly even when the underlying memory manager
+    was lazily initialised without one.
+    """
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.pinning import PinQuotas, PinService
+    from cogniverse_core.memory.schema import build_default_registry
+
+    mgr = Mem0MemoryManager(tenant_id)
+    if not mgr.memory:
+        # Defer to the same lazy-init path the tenant router uses — keeps
+        # admin pinning workable on k3d setups where memory isn't pre-wired.
+        from cogniverse_runtime.routers import tenant as _tenant_router
+
+        _tenant_router._lazy_init_memory(mgr, tenant_id)
+    if not mgr.memory:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Memory backend not initialised for tenant {tenant_id}",
+        )
+    return PinService(
+        mgr,
+        build_default_registry(),
+        quotas=PinQuotas.for_tenant(tenant_id),
+    )
+
+
+def _parse_pinnable(value: str) -> "object":
+    from cogniverse_core.memory.pinning import Pinnable
+
+    try:
+        return Pinnable(value)
+    except ValueError as exc:
+        valid = ", ".join(p.value for p in Pinnable)
+        raise HTTPException(
+            400, f"invalid role {value!r}; expected one of: {valid}"
+        ) from exc
+
+
+@router.post(
+    "/tenants/{tenant_id}/memories/{memory_id}/pin",
+    response_model=PinRecordResponse,
+)
+async def pin_memory(
+    tenant_id: str, memory_id: str, body: PinCreateRequest
+) -> PinRecordResponse:
+    """A.6 — pin a memory so the lifecycle scheduler skips it.
+
+    Authority and quota are enforced via the schema registry + PinQuotas.
+    Returns the persisted PinRecord on success.
+    """
+    from cogniverse_core.memory.pinning import (
+        PinAuthorityError,
+        PinQuotaExceededError,
+    )
+
+    pinned_by = _parse_pinnable(body.pinned_by)
+    if not body.actor_id.strip():
+        raise HTTPException(400, "actor_id must be non-empty")
+    svc = _get_pin_service(tenant_id)
+    try:
+        record = svc.pin(
+            target_memory_id=memory_id,
+            target_kind=body.target_kind,
+            pinned_by=pinned_by,
+            actor_id=body.actor_id,
+            tenant_id=tenant_id,
+        )
+    except PinAuthorityError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except PinQuotaExceededError as exc:
+        raise HTTPException(429, str(exc)) from exc
+    logger.info(
+        "Pinned memory tenant=%s memory_id=%s by=%s/%s",
+        tenant_id,
+        memory_id,
+        body.pinned_by,
+        body.actor_id,
+    )
+    return PinRecordResponse(
+        memory_id=record.memory_id,
+        target_memory_id=record.target_memory_id,
+        target_kind=record.target_kind,
+        pinned_by=record.pinned_by.value,
+        pinned_by_actor=record.pinned_by_actor,
+    )
+
+
+@router.delete(
+    "/tenants/{tenant_id}/memories/{memory_id}/pin",
+    response_model=PinUnpinResponse,
+)
+async def unpin_memory(
+    tenant_id: str, memory_id: str, body: PinUnpinRequest
+) -> PinUnpinResponse:
+    """A.6 — remove pin records for a memory.
+
+    Org admin can unpin anything; tenant admin can unpin tenant_admin+user
+    pins; users can only unpin their own. Authority violations return 403.
+    """
+    from cogniverse_core.memory.pinning import PinAuthorityError, PinNotFoundError
+
+    requester = _parse_pinnable(body.requester_role)
+    if not body.actor_id.strip():
+        raise HTTPException(400, "actor_id must be non-empty")
+    svc = _get_pin_service(tenant_id)
+    try:
+        removed = svc.unpin(
+            target_memory_id=memory_id,
+            requester=requester,
+            actor_id=body.actor_id,
+            tenant_id=tenant_id,
+        )
+    except PinNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except PinAuthorityError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    logger.info(
+        "Unpinned memory tenant=%s memory_id=%s requester=%s removed=%d",
+        tenant_id,
+        memory_id,
+        body.requester_role,
+        removed,
+    )
+    return PinUnpinResponse(
+        tenant_id=tenant_id, target_memory_id=memory_id, removed=removed
+    )
+
+
+@router.get("/tenants/{tenant_id}/pins", response_model=PinListResponse)
+async def list_pins(tenant_id: str) -> PinListResponse:
+    """A.6 — list all pin records for a tenant (audit + UI)."""
+    svc = _get_pin_service(tenant_id)
+    records = svc.list_pins(tenant_id)
+    return PinListResponse(
+        tenant_id=tenant_id,
+        pins=[
+            PinRecordResponse(
+                memory_id=r.memory_id,
+                target_memory_id=r.target_memory_id,
+                target_kind=r.target_kind,
+                pinned_by=r.pinned_by.value,
+                pinned_by_actor=r.pinned_by_actor,
+            )
+            for r in records
+        ],
+    )
+
+
 class SignatureVariantSelectRequest(BaseModel):
     variant_id: str
 
