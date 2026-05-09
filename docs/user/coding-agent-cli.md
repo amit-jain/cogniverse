@@ -267,6 +267,51 @@ The Phoenix dashboard reads these spans for the gateway-status tile. The probe
 runs as part of the FastAPI lifespan; `stop()` is awaited at shutdown so the
 runtime can exit cleanly.
 
+### mTLS cert rotation (D.6)
+
+Production clusters that rotate the OpenShell client certs (cert-manager,
+Vault PKI, manual `openshell auth refresh`) need cogniverse to pick up the
+new TLS material without a process restart. The runtime ships an opt-in
+:class:`CertRotator` that watches the active gateway's cert directory:
+
+| Watched file | Purpose |
+|---|---|
+| `~/.config/openshell/gateways/<name>/metadata.json` | Endpoint + name |
+| `~/.config/openshell/gateways/<name>/mtls/ca.crt` | Gateway CA bundle |
+| `~/.config/openshell/gateways/<name>/mtls/tls.crt` | Client cert |
+| `~/.config/openshell/gateways/<name>/mtls/tls.key` | Client key |
+
+```python
+from cogniverse_runtime.openshell_cert_rotator import CertRotator
+
+rotator = CertRotator(sandbox_manager=mgr, interval_seconds=300)
+mgr.attach_cert_rotator(rotator)
+rotator.start()
+# … later, on shutdown:
+await rotator.stop()
+```
+
+The rotator polls mtimes on `interval_seconds` (default 300 s — slow
+enough to be free, fast enough to catch rotations inside typical cert
+grace windows). When any watched file changes, it calls
+`SandboxManager.reconnect()` so the next exec uses the new client.
+
+The rotator is also wired into the exec error path: an auth/TLS-shaped
+error from `exec_in_sandbox` (matched on `auth`, `x509`, `tls`, `ssl`,
+`certificate`, `permission`, `unauthenticated`, `unauthorized`) eagerly
+calls `rotator.trigger_on_auth_failure()` so rotation visibility doesn't
+have to wait for the next polling tick. The trigger is rate-limited
+(one reconnect per 5 s) so a burst of failing requests can't thrash
+the gateway with handshake attempts.
+
+The rotator emits `openshell.cert_rotation` spans with attributes
+`openshell.cert_rotation_detected` (0/1),
+`openshell.cert_rotation_reason` (one of `baseline_capture`,
+`unchanged`, `rotation_detected`, `auth_failure_reconnect`,
+`auth_trigger_rate_limited`, `no_gateway_dir`), and
+`openshell.cert_rotation_changed_paths` (comma-separated when
+`detected=1`).
+
 ### Sandbox boot policy
 
 The runtime resolves a single `sandbox.policy` knob with three values:

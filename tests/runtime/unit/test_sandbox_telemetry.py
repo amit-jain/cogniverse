@@ -20,22 +20,26 @@ from cogniverse_runtime.sandbox_manager import (
 
 
 @pytest.fixture
-def captured_spans():
+def captured_spans(monkeypatch):
     """Install a TracerProvider that captures spans for assertion.
 
-    The SandboxManager uses ``trace.get_tracer(__name__)`` which reads the
-    global TracerProvider, so we have to swap it for the duration of the
-    test and restore the original afterwards.
+    The SandboxManager calls ``trace.get_tracer(__name__)`` which reads
+    the global TracerProvider. Earlier versions of this fixture mutated
+    ``trace._TRACER_PROVIDER`` directly, but that left the global in a
+    state that could confuse other test files importing the OTel
+    tracer (causing a ``RecursionError`` in ``ProxyTracerProvider``
+    when a subsequent test re-entered ``get_tracer``). Instead, patch
+    ``trace.get_tracer`` for the duration of the test — monkeypatch
+    cleans it up automatically and never touches the underlying
+    proxy chain.
     """
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
-    original_provider = trace.get_tracer_provider()
-    trace._TRACER_PROVIDER = provider  # noqa: SLF001 — test-time override
-    try:
-        yield exporter
-    finally:
-        trace._TRACER_PROVIDER = original_provider  # noqa: SLF001
+    monkeypatch.setattr(
+        trace, "get_tracer", lambda *_a, **_kw: provider.get_tracer("test")
+    )
+    yield exporter
 
 
 def _build_manager_with_fake_client(client) -> SandboxManager:

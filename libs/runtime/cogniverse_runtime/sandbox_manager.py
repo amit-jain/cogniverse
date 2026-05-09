@@ -116,6 +116,12 @@ class SandboxManager:
         # tune via env vars without code changes.
         self._pool: Optional[Any] = None
 
+        # D.6 — optional cert-rotation watcher. Operators wire one in via
+        # ``attach_cert_rotator()`` so an external poller can call
+        # ``trigger_on_auth_failure()`` from the exec error path. Kept
+        # optional so unit tests + non-mTLS deployments don't pay for it.
+        self._cert_rotator: Optional[Any] = None
+
         if self._policy is SandboxPolicy.DISABLED:
             logger.info("SandboxManager disabled by configuration (policy=disabled)")
             return
@@ -370,6 +376,7 @@ class SandboxManager:
                 logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
                 parent_span.set_attribute("openshell.error", type(e).__name__)
                 parent_span.record_exception(e)
+                self._maybe_trigger_cert_rotator(e)
                 return {"stdout": "", "stderr": str(e), "exit_code": -1}
             finally:
                 if session:
@@ -380,6 +387,41 @@ class SandboxManager:
                             session.delete()
                         except Exception as exc:
                             logger.debug("sandbox.delete failed (non-fatal): %s", exc)
+
+    def attach_cert_rotator(self, rotator: Any) -> None:
+        """Wire a :class:`CertRotator` into the exec error path (D.6).
+
+        Once attached, any exec failure that looks like an auth/TLS
+        problem (matched by class name or stderr substring) eagerly
+        triggers a reconnect via ``rotator.trigger_on_auth_failure()`` —
+        rotation is then visible to the next request without waiting for
+        the rotator's polling tick. The rotator's own rate-limit
+        prevents thrashing.
+        """
+        self._cert_rotator = rotator
+
+    def _maybe_trigger_cert_rotator(self, err: BaseException) -> None:
+        """Eager reconnect on auth/TLS-shaped exec failures."""
+        if self._cert_rotator is None:
+            return
+        marker = f"{type(err).__name__}:{str(err)[:120]}".lower()
+        if any(
+            tag in marker
+            for tag in (
+                "auth",
+                "x509",
+                "tls",
+                "ssl",
+                "certificate",
+                "permission",
+                "unauthenticated",
+                "unauthorized",
+            )
+        ):
+            try:
+                self._cert_rotator.trigger_on_auth_failure(repr(err))
+            except Exception as exc:
+                logger.debug("cert rotator trigger raised (non-fatal): %s", exc)
 
     def _get_or_create_pool(self):
         """Lazily build the SandboxSessionPool from env config."""
