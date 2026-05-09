@@ -864,3 +864,207 @@ async def admin_clear_memories(
         mgr.clear_agent_memory(tenant_id=tenant_id, agent_name=ns)
     logger.info("Admin cleared all memories for tenant %s", tenant_id)
     return {"status": "cleared", "type": "all"}
+
+
+# ---------------------------------------------------------------------------
+# P4.3 — Operability admin endpoints (pin quota / variant select / canary)
+#
+# These three groups of endpoints close the audit's "operator can't reach
+# this" gap for A.6 pinning quotas, C.6 signature variants, and C.5 canary
+# promotion. Pin quotas + variant selections live in a process-local
+# override dict (good enough for the admin loop until a TenantConfig
+# persistence layer for these specific keys exists). Canary actions go
+# straight to ArtifactManager which persists them to Phoenix.
+# ---------------------------------------------------------------------------
+
+
+class PinQuotasUpdateRequest(BaseModel):
+    user: Optional[int] = None
+    tenant_admin: Optional[int] = None
+    org_admin: Optional[int] = None
+
+
+class PinQuotasResponse(BaseModel):
+    tenant_id: str
+    quotas: Dict[str, int]
+
+
+def _default_pin_quotas() -> Dict[str, int]:
+    from cogniverse_core.memory.pinning import PinQuotas
+
+    d = PinQuotas()
+    return {
+        "user": d.user,
+        "tenant_admin": d.tenant_admin,
+        "org_admin": -1 if d.org_admin is None else d.org_admin,
+    }
+
+
+_pin_quota_overrides: Dict[str, Dict[str, int]] = {}
+_signature_variant_overrides: Dict[str, Dict[str, str]] = {}
+
+
+@router.get("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
+async def get_pin_quotas(tenant_id: str) -> PinQuotasResponse:
+    """A.6 — return effective pin quotas for a tenant."""
+    blob = _pin_quota_overrides.get(tenant_id) or _default_pin_quotas()
+    return PinQuotasResponse(tenant_id=tenant_id, quotas=blob)
+
+
+@router.put("/tenants/{tenant_id}/pin_quotas", response_model=PinQuotasResponse)
+async def set_pin_quotas(
+    tenant_id: str, body: PinQuotasUpdateRequest
+) -> PinQuotasResponse:
+    """A.6 — set per-role pin quotas for a tenant.
+
+    Only non-None fields are updated. Negative values (other than
+    org_admin's unlimited sentinel of -1) are rejected.
+    """
+    current = dict(_pin_quota_overrides.get(tenant_id) or _default_pin_quotas())
+    if body.user is not None:
+        if body.user < 0:
+            raise HTTPException(400, "user quota must be >= 0")
+        current["user"] = body.user
+    if body.tenant_admin is not None:
+        if body.tenant_admin < 0:
+            raise HTTPException(400, "tenant_admin quota must be >= 0")
+        current["tenant_admin"] = body.tenant_admin
+    if body.org_admin is not None:
+        current["org_admin"] = body.org_admin
+    _pin_quota_overrides[tenant_id] = current
+    logger.info("Updated pin quotas for tenant=%s: %s", tenant_id, current)
+    return PinQuotasResponse(tenant_id=tenant_id, quotas=current)
+
+
+class SignatureVariantSelectRequest(BaseModel):
+    variant_id: str
+
+
+class SignatureVariantResponse(BaseModel):
+    tenant_id: str
+    selections: Dict[str, str]
+
+
+@router.get(
+    "/tenants/{tenant_id}/signature_variants",
+    response_model=SignatureVariantResponse,
+)
+async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
+    """C.6 — list per-agent variant selections for a tenant."""
+    return SignatureVariantResponse(
+        tenant_id=tenant_id,
+        selections=dict(_signature_variant_overrides.get(tenant_id, {})),
+    )
+
+
+@router.put(
+    "/tenants/{tenant_id}/signature_variants/{agent_type}",
+    response_model=SignatureVariantResponse,
+)
+async def set_signature_variant(
+    tenant_id: str,
+    agent_type: str,
+    body: SignatureVariantSelectRequest,
+) -> SignatureVariantResponse:
+    """C.6 — pick the variant id this tenant uses for an agent."""
+    if not body.variant_id.strip():
+        raise HTTPException(400, "variant_id must be non-empty")
+    selections = dict(_signature_variant_overrides.get(tenant_id, {}))
+    selections[agent_type] = body.variant_id
+    _signature_variant_overrides[tenant_id] = selections
+    logger.info(
+        "Tenant=%s now using variant=%r for agent=%s",
+        tenant_id,
+        body.variant_id,
+        agent_type,
+    )
+    return SignatureVariantResponse(tenant_id=tenant_id, selections=selections)
+
+
+class CanaryPromoteRequest(BaseModel):
+    version: int
+    traffic_pct: int = 10
+
+
+class CanaryActionResponse(BaseModel):
+    tenant_id: str
+    agent_type: str
+    state: Dict[str, Any]
+
+
+def _build_artifact_manager(tenant_id: str):
+    """Construct an ArtifactManager for an admin canary action.
+
+    Uses ``PHOENIX_HTTP_ENDPOINT`` / ``PHOENIX_GRPC_ENDPOINT`` env vars
+    so admin endpoints work the same way the rollback CLI does (P4.1):
+    cluster-default Phoenix in production, docker-managed Phoenix in
+    integration tests.
+    """
+    import os as _os
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+    from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": _os.environ.get(
+                "PHOENIX_HTTP_ENDPOINT", "http://localhost:6006"
+            ),
+            "grpc_endpoint": _os.environ.get("PHOENIX_GRPC_ENDPOINT", "localhost:4317"),
+        }
+    )
+    return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+
+
+@router.post(
+    "/tenants/{tenant_id}/canary/{agent_type}/promote",
+    response_model=CanaryActionResponse,
+)
+async def promote_canary(
+    tenant_id: str, agent_type: str, body: CanaryPromoteRequest
+) -> CanaryActionResponse:
+    """C.5 — promote a versioned artefact to canary at a traffic_pct."""
+    am = _build_artifact_manager(tenant_id)
+    try:
+        state = await am.promote_to_canary(
+            agent_type, version=body.version, traffic_pct=body.traffic_pct
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    logger.info(
+        "Promoted canary tenant=%s agent=%s v%d at %d%%",
+        tenant_id,
+        agent_type,
+        body.version,
+        body.traffic_pct,
+    )
+    return CanaryActionResponse(tenant_id=tenant_id, agent_type=agent_type, state=state)
+
+
+@router.post(
+    "/tenants/{tenant_id}/canary/{agent_type}/retire",
+    response_model=CanaryActionResponse,
+)
+async def retire_canary(
+    tenant_id: str,
+    agent_type: str,
+    reason: str = Query("admin_retire"),
+) -> CanaryActionResponse:
+    """C.5 — retire the active canary, returning to active-only routing."""
+    am = _build_artifact_manager(tenant_id)
+    state = await am.retire_canary(agent_type, reason=reason)
+    logger.info(
+        "Retired canary tenant=%s agent=%s reason=%s",
+        tenant_id,
+        agent_type,
+        reason,
+    )
+    return CanaryActionResponse(tenant_id=tenant_id, agent_type=agent_type, state=state)
+
+
+def _reset_admin_overrides_for_tests() -> None:
+    """Reset the in-memory override dicts. Called by integration tests."""
+    _pin_quota_overrides.clear()
+    _signature_variant_overrides.clear()
