@@ -3242,6 +3242,52 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### TemporalReasoningAgent (C3.6)
+
+A2A agent that compares knowledge about *one* subject across *multiple*
+time windows. Useful for "how has our refund policy evolved" or
+"what did we know about X in Q2 vs Q4." Read-only.
+
+```python
+from cogniverse_agents.temporal_reasoning_agent import (
+    TemporalReasoningAgent,
+    TemporalReasoningDeps,
+    TemporalReasoningInput,
+    TimeWindow,
+)
+
+agent = TemporalReasoningAgent(deps=TemporalReasoningDeps(tenant_id="acme"))
+out = await agent._process_impl(TemporalReasoningInput(
+    tenant_id="acme",
+    subject_key="policy:refunds",
+    windows=[
+        TimeWindow(label="Q1", start="2026-01-01T00:00:00Z",
+                   end="2026-04-01T00:00:00Z"),
+        TimeWindow(label="Q2", start="2026-04-01T00:00:00Z",
+                   end="2026-07-01T00:00:00Z"),
+        TimeWindow(label="from_q3", start="2026-07-01T00:00:00Z"),  # open-ended
+    ],
+))
+print(out.distinct_signatures_count)  # 1 = unchanged, >1 = evolved
+print(out.undated_count)  # memories on the subject lacking written_at
+```
+
+The agent uses the `written_at` field that A.2 provenance stamps onto
+every metadata block — no Vespa-side time-version index is required.
+Each window emits a stable content-hash signature so a caller can detect
+whether knowledge actually changed without invoking an LLM. The
+optional RLM summariser narrates the deltas when the per-window context
+exceeds the RLM threshold.
+
+| Property | Behaviour |
+|---|---|
+| Memories without `written_at` | Counted in `undated_count`, excluded from windows. |
+| `windows[i].end` is `None` | Open-ended (matches everything ≥ `start`). |
+| Same content in two windows | One distinct signature (knowledge unchanged). |
+| Subject filter | Strict `metadata.subject_key == subject_key` match. |
+
+Capability strings: `temporal_reasoning`, `audit`. Default `port=8025`.
+
 ### FederatedQueryAgent (C3.7)
 
 A2A agent that *answers* a free-text query by aggregating federated
