@@ -840,12 +840,59 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             lifecycle_interval,
         )
 
+    # C.4 — SIGUSR1 hot-reload handler. Operators send `kill -USR1 <pid>`
+    # to trigger a non-disruptive config + sandbox-policy reload (loaded
+    # backends/agents are re-read from configs/config.json; OpenShell
+    # policies are re-read from configs/openshell/). The handler is
+    # registered on the running event loop so the reload runs
+    # cooperatively without blocking ongoing requests.
+    import signal as _signal
+
+    _reload_count = {"n": 0}
+
+    def _on_sigusr1():
+        # Defer to a task — the signal handler must return immediately;
+        # the reload itself can be slow (Vespa round-trip for config).
+        _reload_count["n"] += 1
+        logger.info(
+            "SIGUSR1 received — hot-reloading configuration (count=%d)",
+            _reload_count["n"],
+        )
+        try:
+            config_loader.reload_config()
+        except Exception as exc:
+            logger.warning("Config hot-reload failed: %s", exc)
+        if sandbox_manager is not None:
+            try:
+                sandbox_manager.reload_policies()
+            except Exception as exc:
+                logger.warning("Sandbox policy hot-reload failed: %s", exc)
+        logger.info("Hot-reload complete")
+
+    try:
+        asyncio.get_running_loop().add_signal_handler(_signal.SIGUSR1, _on_sigusr1)
+        app.state.sigusr1_registered = True
+        app.state.hot_reload_count = _reload_count
+        logger.info(
+            "SIGUSR1 hot-reload handler registered "
+            "(send `kill -USR1 <pid>` to reload config + sandbox policies)"
+        )
+    except (NotImplementedError, ValueError) as exc:
+        # add_signal_handler is unavailable on Windows and inside some
+        # nested event-loop contexts (test runners). Fall back gracefully.
+        logger.info("SIGUSR1 hot-reload not available in this loop: %s", exc)
+        app.state.sigusr1_registered = False
+
     logger.info("Cogniverse Runtime started successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down Cogniverse Runtime...")
+    try:
+        asyncio.get_running_loop().remove_signal_handler(_signal.SIGUSR1)
+    except (NotImplementedError, ValueError, RuntimeError):
+        pass
     if gateway_probe is not None:
         await gateway_probe.stop()
     if cert_rotator is not None:
