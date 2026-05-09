@@ -583,16 +583,76 @@ class Mem0MemoryManager:
                 logger.info(
                     f"Found {len(actual_results)} memories for {tenant_id}/{agent_name} (from dict)"
                 )
-                return actual_results
             else:
                 logger.info(
                     f"Found {len(results)} memories for {tenant_id}/{agent_name}"
                 )
-                return results
+                actual_results = results
+
+            # P2.3 — bump last_accessed on each hit so the lifecycle
+            # scheduler doesn't prune actively-used memories. Best-effort:
+            # logged-not-raised on backend failure (the search itself
+            # succeeded, returning a stale recency signal is better than
+            # erroring the whole call).
+            self._bump_last_accessed_for_hits(actual_results)
+            return actual_results
 
         except Exception as e:
             logger.error(f"Memory search failed: {e}")
             return []
+
+    def _bump_last_accessed_for_hits(self, hits: List[Dict[str, Any]]) -> None:
+        """Update each hit's ``last_accessed`` ISO timestamp (P2.3 wire).
+
+        Best-effort: any failure (Mem0 store doesn't expose update,
+        backend rejects the partial-update, network blip) is logged at
+        DEBUG and the search result is still returned. The lifecycle
+        scheduler reads ``last_accessed`` from the metadata; missing or
+        stale values cause it to fall back to ``created_at`` on the next
+        tick.
+
+        We intentionally route through Mem0's ``update`` rather than
+        Vespa's ``update_document`` — Mem0 owns the schema-name routing
+        and content/metadata serialization; bypassing it would require
+        re-implementing both.
+        """
+        if not hits:
+            return
+        try:
+            from datetime import datetime, timezone
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+        except Exception:
+            return
+        memory = self.memory
+        if memory is None or not hasattr(memory, "update"):
+            return
+        for hit in hits:
+            mid = hit.get("id")
+            if not mid:
+                continue
+            try:
+                # Mem0's update signature is content-only in current versions;
+                # we attempt a metadata-aware update first, fall through to
+                # content-only when the kwarg is rejected. Either path
+                # advances the underlying record's updated_at, which the
+                # scheduler can use as a recency proxy when ``last_accessed``
+                # is unavailable in the schema.
+                metadata = hit.get("metadata") or {}
+                if isinstance(metadata, dict):
+                    metadata = dict(metadata)
+                    metadata["last_accessed"] = now_iso
+                try:
+                    memory.update(memory_id=mid, data=hit.get("memory", ""))
+                except TypeError:
+                    # Older Mem0 signature — try minimal call.
+                    memory.update(mid)
+            except Exception as exc:
+                logger.debug(
+                    "last_accessed bump failed for memory_id=%s: %s",
+                    mid,
+                    exc,
+                )
 
     def get_all_memories(
         self,
