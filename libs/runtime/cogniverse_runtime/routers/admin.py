@@ -1221,6 +1221,101 @@ async def promote_to_org_trunk(
     )
 
 
+# A.4 — Endorse a memory: bumps its trust score by a role-specific
+# delta (user +0.05, tenant_admin +0.10, org_admin +0.20) and persists
+# the new TrustRecord back to the memory's metadata. The audit endpoint
+# (C3.9) reads endorsement counts off these records — without this
+# write path they would always read zero.
+
+
+class EndorseRequest(BaseModel):
+    endorser_role: str  # user / tenant_admin / org_admin
+    actor_id: str
+
+
+class EndorseResponse(BaseModel):
+    memory_id: str
+    new_score: float
+    endorsements: int
+
+
+@router.post(
+    "/tenants/{tenant_id}/memories/{memory_id}/endorse",
+    response_model=EndorseResponse,
+)
+async def endorse_memory(
+    tenant_id: str, memory_id: str, body: EndorseRequest
+) -> EndorseResponse:
+    """A.4 — record an endorsement on a memory's trust record."""
+    from cogniverse_core.memory.trust import (
+        _ENDORSEMENT_DELTA,
+        apply_endorsement,
+        attach_trust_to_metadata,
+        extract_trust,
+    )
+
+    if not body.actor_id.strip():
+        raise HTTPException(400, "actor_id must be non-empty")
+    # Role validation up-front so a bad input fails fast before we hit
+    # the memory backend.
+    if body.endorser_role not in _ENDORSEMENT_DELTA:
+        valid = ", ".join(sorted(_ENDORSEMENT_DELTA))
+        raise HTTPException(
+            400,
+            f"unknown endorser_role={body.endorser_role!r}; valid: {valid}",
+        )
+
+    source_mm = _get_pin_service(tenant_id)._mm  # reuse the lazy-init path
+    try:
+        rows_blob = source_mm.memory.get_all(user_id=tenant_id)
+    except Exception as exc:
+        raise HTTPException(503, f"could not list tenant memories: {exc}") from exc
+    rows = (
+        rows_blob.get("results", [])
+        if isinstance(rows_blob, dict)
+        else (rows_blob or [])
+    )
+    src = next((r for r in rows if str(r.get("id")) == memory_id), None)
+    if src is None:
+        raise HTTPException(404, f"memory {memory_id} not found in tenant {tenant_id}")
+
+    trust = extract_trust(src)
+    if trust is None:
+        raise HTTPException(
+            422,
+            f"memory {memory_id} has no trust record; the schema enforcement "
+            "path must run on the original write to attach one before "
+            "endorsement is meaningful",
+        )
+
+    new_trust = apply_endorsement(trust, body.endorser_role)
+
+    new_metadata = attach_trust_to_metadata(src.get("metadata") or {}, new_trust)
+    try:
+        source_mm.memory.update(
+            memory_id=memory_id,
+            data=src.get("memory") or src.get("text") or "",
+            metadata=new_metadata,
+        )
+    except Exception as exc:
+        raise HTTPException(503, f"trust update failed: {exc}") from exc
+
+    logger.info(
+        "Endorsed memory tenant=%s memory_id=%s by=%s/%s -> score=%.3f n=%d",
+        tenant_id,
+        memory_id,
+        body.endorser_role,
+        body.actor_id,
+        new_trust.score,
+        new_trust.endorsements,
+    )
+    return EndorseResponse(
+        memory_id=memory_id,
+        new_score=new_trust.score,
+        endorsements=new_trust.endorsements,
+    )
+
+
 class SignatureVariantSelectRequest(BaseModel):
     variant_id: str
 
