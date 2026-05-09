@@ -232,7 +232,7 @@
       "modalities": []
     },
     "audit_explanation_agent": {
-      "enabled": false,
+      "enabled": true,
       "url": "http://localhost:8027",
       "capabilities": [
         "audit_explanation",
