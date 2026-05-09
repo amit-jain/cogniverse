@@ -196,12 +196,8 @@ class TestLifecycleSurvival:
 
         scheduler = LifecycleScheduler(
             get_warm_managers=lambda: [mm],
-            interval_seconds=3600,  # never auto-fires; we drive the tick.
-            # Schema-driven mode (registry set) ignores max_age_seconds —
-            # per-kind retention from the registry drives cleanup. Pass a
-            # positive value just to satisfy the validator.
-            max_age_seconds=1,
             registry=registry,
+            interval_seconds=3600,  # never auto-fires; we drive the tick.
             pin_lookup=_pin_lookup,
         )
         asyncio.run(scheduler.tick_once())

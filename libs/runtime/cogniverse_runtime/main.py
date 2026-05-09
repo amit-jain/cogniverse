@@ -777,10 +777,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             cert_rotation_interval,
         )
 
-    # 13. Start the memory lifecycle scheduler (A.9). Periodically iterates
-    # warm-tenant Mem0 managers and runs cleanup_expired_memories on each.
-    # Disabled with COGNIVERSE_MEMORY_LIFECYCLE_DISABLED=1 (e.g. for tests
-    # that don't want the loop running concurrently).
+    # 13. Start the memory lifecycle scheduler. Periodically iterates
+    # warm-tenant Mem0 managers and runs schema-driven cleanup on each.
+    # Disabled with COGNIVERSE_MEMORY_LIFECYCLE_DISABLED=1 for tests that
+    # don't want the loop running concurrently.
     lifecycle_scheduler = None
     if os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_DISABLED", "").lower() not in (
         "1",
@@ -795,29 +795,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         lifecycle_interval = float(
             os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL", "3600")
         )
-        lifecycle_max_age = int(
-            os.environ.get("COGNIVERSE_MEMORY_MAX_AGE_SECONDS", str(30 * 24 * 3600))
-        )
-        # Use schema-driven mode by default (A.7). Operators can opt out
-        # with COGNIVERSE_MEMORY_LIFECYCLE_MODE=bulk_age to fall back to the
-        # legacy single max-age cutoff.
-        mode = (
-            os.environ.get("COGNIVERSE_MEMORY_LIFECYCLE_MODE", "schema_driven")
-            .strip()
-            .lower()
-        )
-        knowledge_registry = (
-            build_default_registry() if mode == "schema_driven" else None
-        )
+        knowledge_registry = build_default_registry()
 
         def _pin_lookup(mm: object) -> set:
             """Build the pinned-id set for a single tenant's Mem0 manager."""
             tenant_id = getattr(mm, "tenant_id", None)
-            if not tenant_id or knowledge_registry is None:
+            if not tenant_id:
                 return set()
             try:
-                # F3.1 — honor admin PinService quota overrides set via
-                # `PUT /admin/tenants/{t}/pin_quotas`. ``PinQuotas.for_tenant``
+                # Honor admin PinService quota overrides set via
+                # PUT /admin/tenants/{t}/pin_quotas. PinQuotas.for_tenant
                 # checks the admin runtime dict first, then TenantConfig
                 # metadata, then defaults.
                 from cogniverse_core.memory.pinning import PinQuotas
@@ -838,16 +825,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         lifecycle_scheduler = LifecycleScheduler(
             get_warm_managers=Mem0MemoryManager._instances.values,
-            interval_seconds=lifecycle_interval,
-            max_age_seconds=lifecycle_max_age,
             registry=knowledge_registry,
-            pin_lookup=_pin_lookup if knowledge_registry is not None else None,
+            interval_seconds=lifecycle_interval,
+            pin_lookup=_pin_lookup,
         )
         lifecycle_scheduler.start()
         app.state.lifecycle_scheduler = lifecycle_scheduler
         logger.info(
-            "Lifecycle scheduler started in mode=%s (interval=%.0fs)",
-            mode,
+            "Lifecycle scheduler started (interval=%.0fs)",
             lifecycle_interval,
         )
 

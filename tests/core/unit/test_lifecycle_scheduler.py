@@ -1,4 +1,4 @@
-"""Unit tests for the memory lifecycle scheduler."""
+"""Unit tests for the schema-driven memory lifecycle scheduler."""
 
 from __future__ import annotations
 
@@ -7,178 +7,99 @@ import asyncio
 import pytest
 
 from cogniverse_core.memory.lifecycle_scheduler import LifecycleScheduler
+from cogniverse_core.memory.schema import build_default_registry
 
 
 class FakeManager:
-    """Mem0MemoryManager-shaped stub for scheduler tests."""
+    """Mem0MemoryManager-shaped stub exercising cleanup_with_schema."""
 
-    def __init__(self, tenant_id: str, deletes: int, raise_on_call: bool = False):
+    def __init__(
+        self,
+        tenant_id: str,
+        deletes_by_kind: dict | None = None,
+        raise_on_call: bool = False,
+    ):
         self.tenant_id = tenant_id
-        self._deletes = deletes
+        self._deletes = deletes_by_kind or {}
         self._raise = raise_on_call
-        self.calls: list[int] = []
-
-    def cleanup_expired_memories(self, max_age_seconds: int) -> int:
-        self.calls.append(max_age_seconds)
-        if self._raise:
-            raise RuntimeError("simulated cleanup failure")
-        return self._deletes
-
-
-class TestTickOnce:
-    @pytest.mark.asyncio
-    async def test_runs_cleanup_for_every_warm_manager(self):
-        managers = [
-            FakeManager("tenant-a", deletes=3),
-            FakeManager("tenant-b", deletes=0),
-            FakeManager("tenant-c", deletes=12),
-        ]
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: managers,
-            interval_seconds=60.0,
-            max_age_seconds=86400,
-        )
-
-        summary = await scheduler.tick_once()
-
-        assert [m.calls for m in managers] == [[86400], [86400], [86400]]
-        assert summary["total_deleted"] == 15
-        assert summary["tenants"] == {
-            "tenant-a": 3,
-            "tenant-b": 0,
-            "tenant-c": 12,
-        }
-        assert summary["max_age_seconds"] == 86400
-
-    @pytest.mark.asyncio
-    async def test_per_tenant_failure_does_not_abort_run(self):
-        managers = [
-            FakeManager("ok-tenant", deletes=2),
-            FakeManager("bad-tenant", deletes=0, raise_on_call=True),
-            FakeManager("late-tenant", deletes=5),
-        ]
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: managers,
-            interval_seconds=60.0,
-            max_age_seconds=120,
-        )
-
-        summary = await scheduler.tick_once()
-
-        # Both surviving tenants ran; failed one is recorded.
-        assert summary["tenants"]["ok-tenant"] == 2
-        assert summary["tenants"]["late-tenant"] == 5
-        assert "RuntimeError" in summary["tenants"]["bad-tenant"]
-        assert summary["total_deleted"] == 7
-
-    @pytest.mark.asyncio
-    async def test_unnamed_manager_recorded_as_unknown(self):
-        class Anon:
-            tenant_id = ""  # falsy → "unknown"
-
-            def cleanup_expired_memories(self, _):
-                return 1
-
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: [Anon()],
-            interval_seconds=60.0,
-        )
-        summary = await scheduler.tick_once()
-        assert summary["tenants"]["unknown"] == 1
-
-
-class TestSchedulerLifecycle:
-    @pytest.mark.asyncio
-    async def test_start_runs_periodic_ticks_and_stop_cleanly(self):
-        managers = [FakeManager("t", deletes=1)]
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: managers,
-            interval_seconds=0.05,
-            max_age_seconds=10,
-        )
-        scheduler.start()
-
-        await asyncio.sleep(0.18)
-        await scheduler.stop()
-
-        # Each tick increments managers[0].calls by one.
-        assert len(managers[0].calls) >= 2
-
-    @pytest.mark.asyncio
-    async def test_stop_safe_when_never_started(self):
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: [],
-        )
-        await scheduler.stop()  # must not raise
-
-    @pytest.mark.asyncio
-    async def test_double_start_is_idempotent(self):
-        scheduler = LifecycleScheduler(
-            get_warm_managers=lambda: [],
-            interval_seconds=0.1,
-        )
-        scheduler.start()
-        first = scheduler._task
-        scheduler.start()
-        assert scheduler._task is first
-        await scheduler.stop()
-
-
-class FakeSchemaManager:
-    """Mem0MemoryManager-shaped stub exercising the schema-driven path."""
-
-    def __init__(self, tenant_id: str, deletes_by_kind: dict):
-        self.tenant_id = tenant_id
-        self._deletes = deletes_by_kind
         self.calls: list[tuple] = []
 
     def cleanup_with_schema(self, registry, pinned_ids):
         self.calls.append((registry, pinned_ids))
+        if self._raise:
+            raise RuntimeError("simulated cleanup failure")
         return dict(self._deletes)
 
 
-class TestSchemaDrivenMode:
-    """A.7 — when a registry is provided, ticks call cleanup_with_schema."""
+@pytest.fixture
+def registry():
+    return build_default_registry()
 
+
+class TestTickOnce:
     @pytest.mark.asyncio
-    async def test_schema_mode_invokes_cleanup_with_schema(self):
-        from cogniverse_core.memory.schema import build_default_registry
-
-        registry = build_default_registry()
+    async def test_runs_cleanup_for_every_warm_manager(self, registry):
         managers = [
-            FakeSchemaManager(
-                "t1",
-                {"conversation_turn": 3, "external_doc": 0},
-            ),
-            FakeSchemaManager(
-                "t2",
-                {"learned_strategy": 2},
-            ),
+            FakeManager("tenant-a", {"conversation_turn": 3}),
+            FakeManager("tenant-b", {"learned_strategy": 0}),
+            FakeManager("tenant-c", {"external_doc": 12}),
         ]
         scheduler = LifecycleScheduler(
             get_warm_managers=lambda: managers,
             registry=registry,
+            interval_seconds=60.0,
         )
 
         summary = await scheduler.tick_once()
 
-        assert summary["mode"] == "schema_driven"
-        assert summary["total_deleted"] == 5  # 3 + 0 + 2
-        assert summary["tenants"]["t1"] == {
-            "conversation_turn": 3,
-            "external_doc": 0,
-        }
-        assert summary["tenants"]["t2"] == {"learned_strategy": 2}
-        # Each manager was called exactly once with the registry.
-        assert all(len(m.calls) == 1 for m in managers)
-        assert all(m.calls[0][0] is registry for m in managers)
+        assert summary["total_deleted"] == 15
+        assert summary["tenants"]["tenant-a"] == {"conversation_turn": 3}
+        assert summary["tenants"]["tenant-b"] == {"learned_strategy": 0}
+        assert summary["tenants"]["tenant-c"] == {"external_doc": 12}
+        # Each manager called once with the same registry instance.
+        for m in managers:
+            assert len(m.calls) == 1
+            assert m.calls[0][0] is registry
 
     @pytest.mark.asyncio
-    async def test_pin_lookup_threaded_through(self):
-        from cogniverse_core.memory.schema import build_default_registry
+    async def test_per_tenant_failure_does_not_abort_run(self, registry):
+        managers = [
+            FakeManager("ok-tenant", {"conversation_turn": 2}),
+            FakeManager("bad-tenant", raise_on_call=True),
+            FakeManager("late-tenant", {"external_doc": 5}),
+        ]
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: managers,
+            registry=registry,
+            interval_seconds=60.0,
+        )
 
-        registry = build_default_registry()
-        manager = FakeSchemaManager("t1", {"conversation_turn": 1})
+        summary = await scheduler.tick_once()
+
+        assert summary["tenants"]["ok-tenant"] == {"conversation_turn": 2}
+        assert summary["tenants"]["late-tenant"] == {"external_doc": 5}
+        assert "RuntimeError" in summary["tenants"]["bad-tenant"]
+        assert summary["total_deleted"] == 7
+
+    @pytest.mark.asyncio
+    async def test_unnamed_manager_recorded_as_unknown(self, registry):
+        class Anon:
+            tenant_id = ""  # falsy → "unknown"
+
+            def cleanup_with_schema(self, _registry, _pinned):
+                return {"conversation_turn": 1}
+
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [Anon()],
+            registry=registry,
+            interval_seconds=60.0,
+        )
+        summary = await scheduler.tick_once()
+        assert summary["tenants"]["unknown"] == {"conversation_turn": 1}
+
+    @pytest.mark.asyncio
+    async def test_pin_lookup_threaded_through(self, registry):
+        manager = FakeManager("t1", {"conversation_turn": 1})
         captured = {}
 
         def pin_lookup(mm):
@@ -193,27 +114,65 @@ class TestSchemaDrivenMode:
 
         await scheduler.tick_once()
 
-        # Manager received the pinned set the lookup returned.
         assert manager.calls[0][1] == {"m_pinned_1", "m_pinned_2"}
         assert captured["called_with"] is manager
 
     @pytest.mark.asyncio
-    async def test_bulk_mode_reports_mode_in_summary(self):
-        managers = [FakeManager("t", deletes=4)]
+    async def test_pin_lookup_default_is_empty_set(self, registry):
+        manager = FakeManager("t1", {"conversation_turn": 1})
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [manager],
+            registry=registry,
+        )
+        await scheduler.tick_once()
+        assert manager.calls[0][1] == set()
+
+
+class TestSchedulerLifecycle:
+    @pytest.mark.asyncio
+    async def test_start_runs_periodic_ticks_and_stop_cleanly(self, registry):
+        managers = [FakeManager("t", {"conversation_turn": 1})]
         scheduler = LifecycleScheduler(
             get_warm_managers=lambda: managers,
-            max_age_seconds=10,
+            registry=registry,
+            interval_seconds=0.05,
         )
-        summary = await scheduler.tick_once()
-        assert summary["mode"] == "bulk_age"
-        assert summary["tenants"]["t"] == 4
+        scheduler.start()
+
+        await asyncio.sleep(0.18)
+        await scheduler.stop()
+
+        assert len(managers[0].calls) >= 2
+
+    @pytest.mark.asyncio
+    async def test_stop_safe_when_never_started(self, registry):
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [],
+            registry=registry,
+        )
+        await scheduler.stop()  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_double_start_is_idempotent(self, registry):
+        scheduler = LifecycleScheduler(
+            get_warm_managers=lambda: [],
+            registry=registry,
+            interval_seconds=0.1,
+        )
+        scheduler.start()
+        first = scheduler._task
+        scheduler.start()
+        assert scheduler._task is first
+        await scheduler.stop()
 
 
 class TestConstructorValidation:
-    def test_rejects_non_positive_interval(self):
+    def test_rejects_non_positive_interval(self, registry):
         with pytest.raises(ValueError):
-            LifecycleScheduler(get_warm_managers=lambda: [], interval_seconds=0)
+            LifecycleScheduler(
+                get_warm_managers=lambda: [], registry=registry, interval_seconds=0
+            )
 
-    def test_rejects_non_positive_max_age(self):
-        with pytest.raises(ValueError):
-            LifecycleScheduler(get_warm_managers=lambda: [], max_age_seconds=0)
+    def test_rejects_missing_registry(self):
+        with pytest.raises(ValueError, match="requires a KnowledgeRegistry"):
+            LifecycleScheduler(get_warm_managers=lambda: [], registry=None)

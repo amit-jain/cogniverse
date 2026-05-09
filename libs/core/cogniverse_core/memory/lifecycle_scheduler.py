@@ -1,39 +1,32 @@
 """Scheduled memory lifecycle maintenance.
 
-A.9 — runs cleanup_expired_memories on a periodic tick. Per-tenant cleanup
-is initiated for every tenant whose Mem0 instance is currently warm in the
-process LRU. Tenants that are evicted from the cache will be cleaned up the
-next time they are accessed (which warms the instance back).
+Per-tenant cleanup is initiated for every tenant whose Mem0 instance is
+currently warm in the process LRU. Tenants that are evicted from the
+cache will be cleaned up the next time they are accessed (which warms
+the instance back).
 
-This is a thin scheduler; the actual deletion logic lives in
-``Mem0MemoryManager.cleanup_expired_memories``. A.7 will replace the bulk
-``max_age_seconds`` knob with per-schema policies and add soft-delete
-semantics; A.9 just makes sure the existing cleanup runs on a schedule.
+Cleanup is **schema-driven only**: each tick consults the
+``KnowledgeRegistry`` for the per-kind retention policy. There is no
+bulk-age fallback — every memory must declare its kind, and every kind's
+schema decides whether it expires. Pinned memories are skipped via the
+``pin_lookup`` callable.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Callable, Iterable, Optional
+from typing import Callable, Iterable, Optional
 
-if TYPE_CHECKING:
-    from cogniverse_core.memory.schema import KnowledgeRegistry
+from cogniverse_core.memory.schema import KnowledgeRegistry
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INTERVAL_SECONDS = 3600.0  # 1 hour
-_DEFAULT_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
 
 
 class LifecycleScheduler:
-    """Periodic cleanup runner across warm tenant Mem0 instances.
-
-    A.9 wired the bulk-age scheduler; A.7 adds the per-schema mode. When a
-    ``KnowledgeRegistry`` is provided, each tick runs ``cleanup_with_schema``
-    instead of the bulk ``cleanup_expired_memories(max_age)`` path. Pinned
-    memories are skipped via the optional ``pin_lookup`` callable, which
-    receives a Mem0 manager and returns the set of pinned memory ids.
+    """Periodic schema-driven cleanup runner across warm tenant Mem0 instances.
 
     Args:
         get_warm_managers: Callable returning the currently-warm
@@ -41,12 +34,10 @@ class LifecycleScheduler:
             tenant cache — it asks the cache for the current set on each
             tick. This keeps the contract narrow and avoids holding stale
             references across LRU evictions.
+        registry: Knowledge schema registry. Required — every tick uses
+            per-kind retention from this registry. Soft-delete at TTL,
+            hard-delete at 2× TTL (see Mem0MemoryManager.cleanup_with_schema).
         interval_seconds: Tick cadence. Default 1 hour.
-        max_age_seconds: Used only by the legacy bulk path (when no
-            registry is provided). Default 30 days.
-        registry: Optional knowledge schema registry. When supplied, ticks
-            use the schema-driven cleanup path; otherwise the bulk-age
-            path is used.
         pin_lookup: Optional callable that returns the set of pinned
             memory ids for a given Mem0 manager. Called once per warm
             manager per tick. When omitted, no memories are treated as
@@ -56,18 +47,19 @@ class LifecycleScheduler:
     def __init__(
         self,
         get_warm_managers: Callable[[], Iterable],
+        registry: KnowledgeRegistry,
         interval_seconds: float = _DEFAULT_INTERVAL_SECONDS,
-        max_age_seconds: int = _DEFAULT_MAX_AGE_SECONDS,
-        registry: "Optional[KnowledgeRegistry]" = None,
         pin_lookup: Optional[Callable[[object], set]] = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
-        if max_age_seconds <= 0:
-            raise ValueError("max_age_seconds must be positive")
+        if registry is None:
+            raise ValueError(
+                "LifecycleScheduler requires a KnowledgeRegistry — schema-driven "
+                "retention is the only supported mode"
+            )
         self._get_warm = get_warm_managers
         self._interval = interval_seconds
-        self._max_age = max_age_seconds
         self._registry = registry
         self._pin_lookup = pin_lookup
         self._task: Optional[asyncio.Task] = None
@@ -86,35 +78,23 @@ class LifecycleScheduler:
         single tenant do not abort the run — the offending tenant is
         recorded in the summary so operators can investigate.
 
-        When a registry is configured, the per-schema path is used and the
-        per-tenant entry is a ``{kind: deleted}`` dict instead of an int.
+        Per-tenant entries are ``{kind: deleted_count}`` dicts (with
+        ``{kind}:archived`` keys for soft-delete events).
         """
         per_tenant: dict[str, object] = {}
         total = 0
-        mode = "schema_driven" if self._registry is not None else "bulk_age"
 
         for manager in list(self._get_warm()):
             tenant_id = getattr(manager, "tenant_id", None) or "unknown"
             try:
-                if self._registry is not None:
-                    pinned_ids = (
-                        self._pin_lookup(manager) if self._pin_lookup else set()
-                    )
-                    deleted_by_kind = await asyncio.to_thread(
-                        manager.cleanup_with_schema,
-                        self._registry,
-                        pinned_ids,
-                    )
-                    per_tenant[tenant_id] = deleted_by_kind
-                    total += sum(
-                        v for v in deleted_by_kind.values() if isinstance(v, int)
-                    )
-                else:
-                    deleted = await asyncio.to_thread(
-                        manager.cleanup_expired_memories, self._max_age
-                    )
-                    per_tenant[tenant_id] = deleted
-                    total += deleted
+                pinned_ids = self._pin_lookup(manager) if self._pin_lookup else set()
+                deleted_by_kind = await asyncio.to_thread(
+                    manager.cleanup_with_schema,
+                    self._registry,
+                    pinned_ids,
+                )
+                per_tenant[tenant_id] = deleted_by_kind
+                total += sum(v for v in deleted_by_kind.values() if isinstance(v, int))
             except Exception as exc:
                 logger.warning(
                     "Lifecycle cleanup failed for tenant %s: %s", tenant_id, exc
@@ -124,13 +104,10 @@ class LifecycleScheduler:
         summary = {
             "tenants": per_tenant,
             "total_deleted": total,
-            "mode": mode,
-            "max_age_seconds": self._max_age,
         }
         self._last_run_summary = summary
         logger.info(
-            "Lifecycle tick complete (mode=%s): %d memories deleted across %d tenants",
-            mode,
+            "Lifecycle tick complete: %d memories deleted across %d tenants",
             total,
             len(per_tenant),
         )
@@ -147,9 +124,8 @@ class LifecycleScheduler:
             self._run_loop(), name="memory_lifecycle_scheduler"
         )
         logger.info(
-            "Memory lifecycle scheduler started (interval=%.0fs, max_age=%ds)",
+            "Memory lifecycle scheduler started (interval=%.0fs)",
             self._interval,
-            self._max_age,
         )
 
     async def stop(self) -> None:
