@@ -23,7 +23,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -1574,6 +1574,192 @@ async def run_ab_compare(
     return summary
 
 
+def run_egress_netpol(
+    *,
+    policy_dir: str,
+    output_dir: str,
+    service_map: Dict[str, str],
+    namespace: str = "cogniverse",
+    pod_app_label: str = "cogniverse",
+) -> Dict[str, Any]:
+    """D.1 — emit one k8s NetworkPolicy CRD per agent policy YAML.
+
+    Reads every YAML in ``policy_dir`` whose
+    ``network_policies.deny_all_other`` is true, translates the egress
+    list into a NetworkPolicy resource, and writes it under
+    ``output_dir/<agent>-egress-netpol.yaml``.
+
+    Why this exists: the agent policy YAMLs declare per-agent egress
+    constraints (Vespa for SearchAgent, Ollama for SummarizerAgent,
+    etc.) but in-process Python enforcement is fundamentally weak — a
+    compromised process can ``socket.connect`` past any httpx wrapper.
+    NetworkPolicy is enforced in the kernel by the cluster's CNI
+    plugin (Cilium / Calico / etc.), so it's process-bypass-proof and
+    independent of which HTTP library the agent uses.
+
+    Args:
+        policy_dir: Where the agent policy YAMLs live (default
+            ``configs/agent_policies/``).
+        output_dir: Where to write the generated NetworkPolicy YAMLs.
+            Operators check these into the helm chart's
+            ``templates/networkpolicies/`` so helm applies them at
+            deploy time.
+        service_map: Logical service name → ``namespace/service-name:port``
+            mapping (e.g. ``vespa=cogniverse/vespa-service:8080``). The
+            policy YAML's ``localhost:N`` entries are matched by port
+            against this map's values; the resulting NetworkPolicy uses
+            podSelectors that target those services.
+        namespace: k8s namespace the NetworkPolicy lives in.
+        pod_app_label: ``app=`` label that selects cogniverse pods.
+            Combined with ``cogniverse-agent=<agent_name>`` to scope
+            each NetworkPolicy to a single agent's pods.
+
+    Returns a summary dict suitable for the CLI's stdout JSON.
+    """
+    from pathlib import Path as _Path
+
+    import yaml as _yaml
+
+    out = _Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Build a port → (svc-namespace, svc-name, svc-port) lookup so the
+    # localhost:N entries in the YAMLs can be resolved to the right
+    # in-cluster service.
+    port_to_service: Dict[int, Dict[str, Any]] = {}
+    for logical, target in service_map.items():
+        # Format: "namespace/service-name:port"
+        try:
+            ns_part, port_str = target.rsplit(":", 1)
+            svc_namespace, svc_name = ns_part.split("/", 1)
+            port = int(port_str)
+        except (ValueError, IndexError) as exc:
+            raise ValueError(
+                f"--service-map {logical}={target!r} is malformed; expected "
+                "'namespace/service:port'"
+            ) from exc
+        port_to_service[port] = {
+            "logical": logical,
+            "namespace": svc_namespace,
+            "service": svc_name,
+            "port": port,
+        }
+
+    written: List[str] = []
+    skipped: List[Dict[str, str]] = []
+
+    for yaml_path in sorted(_Path(policy_dir).glob("*.yaml")):
+        agent_name = yaml_path.stem
+        with open(yaml_path) as f:
+            policy_blob = _yaml.safe_load(f) or {}
+
+        netpols = policy_blob.get("network_policies") or {}
+        if not netpols.get("deny_all_other"):
+            skipped.append({"agent": agent_name, "reason": "deny_all_other not set"})
+            continue
+
+        egress_rules: List[Dict[str, Any]] = []
+        unmapped_ports: List[int] = []
+        for rule in netpols.get("egress") or []:
+            port = int(rule.get("port", 0))
+            svc = port_to_service.get(port)
+            if svc is None:
+                unmapped_ports.append(port)
+                continue
+            egress_rules.append(
+                {
+                    "to": [
+                        {
+                            "namespaceSelector": {
+                                "matchLabels": {
+                                    "kubernetes.io/metadata.name": svc["namespace"]
+                                }
+                            },
+                            "podSelector": {"matchLabels": {"app": svc["service"]}},
+                        }
+                    ],
+                    "ports": [
+                        {
+                            "port": svc["port"],
+                            "protocol": str(rule.get("protocol", "tcp")).upper(),
+                        }
+                    ],
+                }
+            )
+
+        if unmapped_ports:
+            skipped.append(
+                {
+                    "agent": agent_name,
+                    "reason": (
+                        f"egress ports {sorted(set(unmapped_ports))} not in "
+                        "--service-map"
+                    ),
+                }
+            )
+            continue
+
+        # DNS is mandatory for any egress to resolve service names.
+        egress_rules.append(
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                    }
+                ],
+                "ports": [
+                    {"port": 53, "protocol": "UDP"},
+                    {"port": 53, "protocol": "TCP"},
+                ],
+            }
+        )
+
+        netpol_doc = {
+            "apiVersion": "networking.k8s.io/v1",
+            "kind": "NetworkPolicy",
+            "metadata": {
+                "name": f"cogniverse-{agent_name.replace('_', '-')}-egress",
+                "namespace": namespace,
+                "labels": {"cogniverse-agent": agent_name},
+            },
+            "spec": {
+                "podSelector": {
+                    "matchLabels": {
+                        "app": pod_app_label,
+                        "cogniverse-agent": agent_name,
+                    }
+                },
+                "policyTypes": ["Egress"],
+                "egress": egress_rules,
+            },
+        }
+
+        out_path = out / f"{agent_name}-egress-netpol.yaml"
+        with open(out_path, "w") as f:
+            _yaml.safe_dump(netpol_doc, f, sort_keys=False, default_flow_style=False)
+        written.append(str(out_path))
+        logger.info(
+            "Wrote NetworkPolicy for %s → %s (%d egress rules)",
+            agent_name,
+            out_path,
+            len(egress_rules),
+        )
+
+    return {
+        "status": "ok",
+        "policy_dir": str(policy_dir),
+        "output_dir": str(output_dir),
+        "written": written,
+        "skipped": skipped,
+        "service_map": service_map,
+    }
+
+
 def _build_phoenix_provider_for_cli(tenant_id: str):
     """Construct a PhoenixProvider directly from env vars for CLI runs.
 
@@ -1652,6 +1838,7 @@ def main():
             "synthetic",
             "rollback",
             "ab-compare",
+            "egress-netpol",
         ],
         required=True,
     )
@@ -1707,6 +1894,41 @@ def main():
         type=int,
         default=30,
         help="Per-arm RLM total LLM call cap (ab-compare mode)",
+    )
+    # D.1 — egress-netpol mode args. Generates k8s NetworkPolicy CRDs from
+    # the agent policy YAMLs in configs/agent_policies/. Operators run e.g.
+    #   cogniverse-optim --mode egress-netpol \
+    #       --policy-dir configs/agent_policies/ \
+    #       --output-dir charts/cogniverse/templates/networkpolicies/ \
+    #       --service-map vespa=cogniverse/vespa-service:8080 \
+    #       --service-map ollama=cogniverse/ollama-service:11434
+    parser.add_argument(
+        "--policy-dir",
+        default="configs/agent_policies",
+        help="Source directory of agent policy YAMLs (egress-netpol mode)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Where to write generated NetworkPolicy YAMLs (egress-netpol mode)",
+    )
+    parser.add_argument(
+        "--service-map",
+        action="append",
+        default=[],
+        help=(
+            "Logical service mapping `name=namespace/service:port` "
+            "(repeatable; egress-netpol mode)"
+        ),
+    )
+    parser.add_argument(
+        "--netpol-namespace",
+        default="cogniverse",
+        help="k8s namespace for the generated NetworkPolicies",
+    )
+    parser.add_argument(
+        "--netpol-app-label",
+        default="cogniverse",
+        help="Pod `app=` label that scopes the policies to cogniverse pods",
     )
     parser.add_argument(
         "--lookback-hours",
@@ -1792,6 +2014,27 @@ def main():
                 prompts_version=args.prompts_version,
                 demos_version=args.demos_version,
             )
+        )
+    elif args.mode == "egress-netpol":
+        if not args.output_dir:
+            parser.error("--output-dir is required for egress-netpol mode")
+        if not args.service_map:
+            parser.error(
+                "at least one --service-map is required for egress-netpol mode"
+            )
+        # Parse `name=ns/svc:port` pairs into a dict.
+        sm: Dict[str, str] = {}
+        for pair in args.service_map:
+            if "=" not in pair:
+                parser.error(f"--service-map {pair!r} missing '=' separator")
+            k, v = pair.split("=", 1)
+            sm[k.strip()] = v.strip()
+        result = run_egress_netpol(
+            policy_dir=args.policy_dir,
+            output_dir=args.output_dir,
+            service_map=sm,
+            namespace=args.netpol_namespace,
+            pod_app_label=args.netpol_app_label,
         )
     elif args.mode == "ab-compare":
         if not args.queries_dataset:
