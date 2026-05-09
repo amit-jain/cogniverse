@@ -23,6 +23,11 @@ if TYPE_CHECKING:
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,11 +44,17 @@ class AgentDispatcher:
         config_manager: ConfigManager,
         schema_loader: SchemaLoader,
         sandbox_manager: "SandboxManager | None" = None,
+        artifact_manager_factory: Optional["Callable[[str], ArtifactManager]"] = None,
     ) -> None:
         self._registry = agent_registry
         self._config_manager = config_manager
         self._schema_loader = schema_loader
         self._sandbox_manager = sandbox_manager
+        # C.5 wire — when this factory is provided, dispatch consults
+        # the per-tenant canary state machine before calling the agent.
+        # Without it, the dispatcher behaves exactly as it did pre-C.5
+        # (no canary routing — every request gets the active artefacts).
+        self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
 
     def _init_agent_memory(self, agent: Any, agent_name: str, tenant_id: str) -> None:
@@ -114,6 +125,47 @@ class AgentDispatcher:
                 exc,
             )
 
+    async def resolve_artefact_for_request(
+        self,
+        agent_name: str,
+        tenant_id: str,
+        request_seed: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Per-request canary-aware artefact resolution (C.5 wire).
+
+        Returns ``{"served_from": "active|canary|default", "version": int|None,
+        "prompts": {...}|None}`` when an ``artifact_manager_factory`` was
+        provided to the dispatcher; otherwise returns ``None``. The caller
+        passes the result down to the agent constructor (or stashes it in
+        the dispatch context) so the agent uses the chosen variant of the
+        compiled prompts.
+
+        Without this method, every request hit the active artefacts and the
+        canary state machine in :class:`ArtifactManager` was unreachable
+        from the live dispatch path — a P1.4 wiring gap.
+        """
+        if self._artifact_manager_factory is None:
+            return None
+        try:
+            am = self._artifact_manager_factory(tenant_id)
+        except Exception as exc:
+            logger.debug(
+                "Artefact factory failed for tenant=%s: %s",
+                tenant_id,
+                exc,
+            )
+            return None
+        try:
+            return await am.load_for_request(agent_name, request_seed=request_seed)
+        except Exception as exc:
+            logger.debug(
+                "load_for_request(%s, seed=%s) failed: %s",
+                agent_name,
+                request_seed,
+                exc,
+            )
+            return None
+
     async def dispatch(
         self,
         agent_name: str,
@@ -136,6 +188,20 @@ class AgentDispatcher:
         tenant_id = require_tenant_id(
             context.get("tenant_id"), source="AgentTask.context"
         )
+
+        # C.5 wire — consult the canary state machine for this request.
+        # The result is stashed in context for downstream agent constructors
+        # that opt into per-request artefact loading; agents that ignore it
+        # see no behaviour change.
+        request_seed = str(
+            context.get("request_id") or context.get("request_seed") or ""
+        )
+        if request_seed and self._artifact_manager_factory is not None:
+            artefact = await self.resolve_artefact_for_request(
+                agent_name, tenant_id, request_seed
+            )
+            if artefact is not None:
+                context["_artefact_overlay"] = artefact
         capabilities = set(agent.capabilities)
 
         conversation_history = context.get("conversation_history", [])
