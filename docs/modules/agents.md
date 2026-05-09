@@ -3242,6 +3242,50 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### AuditExplanationAgent (C3.9)
+
+Read-only A2A agent that explains *why* a system answer was produced.
+Walks the provenance chain (A.2) to surface every source memory the
+answer was derived from, attaches the decayed trust score per source
+(A.4), and flags any contradictions touching those sources' subjects
+(A.3). Compliance deployments need this surface for every answer.
+
+```python
+from cogniverse_agents.audit_explanation_agent import (
+    AuditExplanationAgent,
+    AuditExplanationDeps,
+    AuditExplanationInput,
+)
+
+agent = AuditExplanationAgent(deps=AuditExplanationDeps(tenant_id="acme"))
+out = await agent._process_impl(AuditExplanationInput(
+    tenant_id="acme",
+    answer_memory_id="answer:42",
+    include_trust=True,
+    include_contradictions=True,
+    max_chain_depth=10,
+    max_chain_nodes=100,
+))
+print(out.explanation)         # ready-to-render structured text
+for src in out.sources:
+    print(src.memory_id, src.depth, src.trust_score, src.derivation_kind)
+for c in out.contradictions_touched:
+    print(c.subject_key, c.conflicting_memory_ids)
+```
+
+| Property | Behaviour |
+|---|---|
+| Answer with no provenance | Returns one source (the answer itself, depth 0). |
+| Chain exceeds `max_chain_depth` / `max_chain_nodes` | `truncated_chain=True`; remaining refs surfaced as primary sources. |
+| `include_trust=False` | Skips per-source `extract_trust` / `apply_decay`. |
+| `include_contradictions=False` | Skips ContradictionDetector pass. |
+| Source memory missing trust metadata | `trust_score` is `None`. |
+
+The `explanation` field is human-readable structured text, intended to
+be rendered as-is in audit UIs without further LLM post-processing.
+Capability strings: `audit_explanation`, `audit`, `provenance_consumer`.
+Default `port=8027`.
+
 ### KnowledgeSummarizationAgent (C3.8)
 
 A2A agent that distills a slice of the knowledge layer (a subject area,
