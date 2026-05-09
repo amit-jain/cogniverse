@@ -21,6 +21,10 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from cogniverse_agents.optimizer.signature_variants import (
+    DEFAULT_VARIANT_ID,
+    variant_qualified_agent_key,
+)
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -111,6 +115,20 @@ class ArtifactManager:
             raise ValueError("tenant_id is required")
         self._provider = telemetry_provider
         self._tenant_id = tenant_id
+
+    @staticmethod
+    def qualified_agent_key(
+        agent_type: str, variant_id: str = DEFAULT_VARIANT_ID
+    ) -> str:
+        """Public helper: build the per-(agent, variant) dataset key.
+
+        The dataset-name builders treat their ``agent_type`` argument as
+        already-qualified, so callers that want per-variant artefacts
+        compute this key first and pass it through. Default variant
+        round-trips to the bare agent_type for back-compat with datasets
+        saved before C.6 existed.
+        """
+        return variant_qualified_agent_key(agent_type, variant_id)
 
     def _prompt_dataset_name(self, agent_type: str) -> str:
         return f"dspy-prompts-{self._tenant_id}-{agent_type}"
