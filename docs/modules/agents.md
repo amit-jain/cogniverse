@@ -3242,6 +3242,78 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+### Deep synthesis workflow (B.7)
+
+Opt-in entry point for queries that need recursive multi-agent
+orchestration over a knowledge subgraph that doesn't fit in a normal
+plan ("compare these 50 documents across 5 tenants and produce a
+unified report"). Distinct from the default `OrchestratorAgent` plan-
+then-act path: this workflow runs Orchestrator *inside* an RLM-style
+trajectory so partial results inform the next round of fan-out.
+
+This is **not** the default execution path — see the C1 analysis in the
+plan. Default Orchestrator stays plan-then-act with parallel sub-agent
+fan-out. `DeepSynthesisWorkflow` is a separate class so its cost is
+local and explicit, the default trace shape stays clean, and B.5 A/B
+can compare the two paths on a curated benchmark before promotion.
+
+```python
+from cogniverse_agents.deep_synthesis_workflow import (
+    DeepSynthesisConfig,
+    DeepSynthesisWorkflow,
+)
+from cogniverse_agents.inference.rlm_inference import RLMInference
+
+rlm = RLMInference(llm_config=llm_config, max_iterations=8)
+
+async def dispatch(query: str, sub_agent_name: str) -> str:
+    """Caller-supplied: route the sub-query to the right A2A sub-agent."""
+    out = await registry.send(sub_agent_name, query)
+    return out.answer or ""
+
+workflow = DeepSynthesisWorkflow(
+    rlm=rlm,
+    sub_agent_dispatcher=dispatch,
+    config=DeepSynthesisConfig(
+        rate_limit_per_hour=5,            # per-tenant ceiling
+        hard_call_cap=200,                # total LLM + sub-agent calls
+        max_iterations=8,
+        max_subagent_calls_per_round=6,
+    ),
+)
+result = await workflow.run(
+    query="Compare refund policies across all subsidiaries",
+    tenant_id="acme:production",
+    seed_subagents=["search_agent", "document_agent", "kg_traversal_agent"],
+)
+print(result.answer, result.was_submitted, result.was_capped, result.was_rate_limited)
+print(result.iterations_used, result.subagent_calls_made, result.llm_calls_used)
+```
+
+The RLM step controls each iteration. Two protocol tokens:
+
+| Token | Meaning |
+|---|---|
+| `SUBMIT()` anywhere in the answer | Workflow returns the answer (token stripped). |
+| `ASK(<subagent>: <subquery>)` | Workflow dispatches that sub-agent next round. |
+
+Anything else terminates the trajectory (`was_capped=True`, kind
+`stalled_no_asks` in the trajectory log) — a runaway never silently
+spends budget.
+
+| Bound | Default | Behaviour at limit |
+|---|---|---|
+| Per-tenant rate limit / hour | 5 | `was_rate_limited=True`, RLM never consulted. |
+| Total LLM + sub-agent calls | 200 | `was_capped=True`, returns gathered evidence. |
+| Iterations | 8 | `was_capped=True`, returns gathered evidence. |
+| Sub-agent calls per round | 6 | Excess `ASK()`s for this round are dropped. |
+
+Sub-agent failures are non-fatal — the dispatcher's exception is logged
+at debug and that name is dropped from the round's evidence. The trajectory
+records every step (`subagent`, `rlm_step`, `cap_reached`,
+`stalled_no_asks`, `iteration_cap_exhausted`) so callers can audit
+exactly how the answer was produced.
+
 ### AuditExplanationAgent (C3.9)
 
 Read-only A2A agent that explains *why* a system answer was produced.
