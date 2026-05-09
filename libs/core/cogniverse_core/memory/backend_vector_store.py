@@ -32,6 +32,89 @@ class BackendRecord:
         self.payload = payload
 
 
+# Mem0's _create_memory inlines these bookkeeping fields into the payload it
+# hands to vector_store.insert; everything else is the caller's metadata and
+# must round-trip via Vespa's metadata_ JSON column.
+_MEM0_RESERVED = frozenset(
+    {"data", "hash", "created_at", "updated_at", "user_id", "agent_id"}
+)
+
+
+def _extract_caller_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return caller-supplied metadata from a Mem0 payload.
+
+    Mem0 places metadata at the top level of the payload alongside its
+    bookkeeping fields. Some older callers nest a ``metadata`` dict inside
+    the payload — both shapes work; the nested values win on key collision
+    because they represent an explicit caller intent.
+    """
+    caller_metadata: Dict[str, Any] = {
+        k: v for k, v in payload.items() if k not in _MEM0_RESERVED
+    }
+    nested = caller_metadata.pop("metadata", None)
+    if isinstance(nested, dict):
+        caller_metadata.update(nested)
+    return caller_metadata
+
+
+def _deserialize_metadata(raw: Any) -> Dict[str, Any]:
+    """Decode Vespa's ``metadata_`` field back into a dict.
+
+    Insert serialises caller metadata as a JSON string into Vespa's
+    ``metadata_`` column; every read path must reverse that so the
+    fields are real Python values again.
+    """
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(
+                "metadata_ string is not valid JSON; returning empty dict. "
+                "raw_prefix=%r",
+                raw[:120],
+            )
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    logger.warning("metadata_ has unexpected type %s; returning empty dict", type(raw))
+    return {}
+
+
+def _build_read_payload(
+    *,
+    data: str,
+    user_id: str,
+    agent_id: str,
+    metadata_raw: Any,
+    created_at: Any,
+) -> Dict[str, Any]:
+    """Assemble the payload Mem0 expects from a backend list/search/get.
+
+    Mem0's ``_get_all_from_vector_store`` (and its search counterpart)
+    iterate ``mem.payload`` and treat any key outside its core+promoted
+    set as caller metadata, collecting them into the user-facing
+    ``record["metadata"]`` itself. So the payload must be FLAT — caller
+    metadata at the top level alongside ``data``/``user_id``/etc.
+    Wrapping caller metadata under a nested ``"metadata"`` key causes
+    Mem0 to double-nest it as ``record["metadata"]["metadata"]``.
+    """
+    payload: Dict[str, Any] = {
+        "data": data or "",
+        "user_id": user_id or "",
+        "agent_id": agent_id or "",
+        "created_at": created_at,
+    }
+    extra = _deserialize_metadata(metadata_raw)
+    for k, v in extra.items():
+        if k in _MEM0_RESERVED:
+            continue
+        payload[k] = v
+    return payload
+
+
 class BackendVectorStore(VectorStoreBase):
     """
     Backend-agnostic vector store for mem0.
@@ -111,7 +194,7 @@ class BackendVectorStore(VectorStoreBase):
 
         documents = []
         for vec_id, vector, payload in zip(ids, vectors, payloads):
-            metadata = payload.get("metadata", {})
+            metadata = _extract_caller_metadata(payload)
             created_at = payload.get("created_at")
 
             # Convert created_at to Unix timestamp
@@ -235,13 +318,13 @@ class BackendVectorStore(VectorStoreBase):
                     BackendSearchResult(
                         id=doc.id,
                         score=search_result.score,
-                        payload={
-                            "data": doc.text_content or "",
-                            "user_id": doc.metadata.get("user_id", ""),
-                            "agent_id": doc.metadata.get("agent_id", ""),
-                            "metadata": doc.metadata.get("metadata_", {}),
-                            "created_at": created_at,
-                        },
+                        payload=_build_read_payload(
+                            data=doc.text_content,
+                            user_id=doc.metadata.get("user_id", ""),
+                            agent_id=doc.metadata.get("agent_id", ""),
+                            metadata_raw=doc.metadata.get("metadata_"),
+                            created_at=created_at,
+                        ),
                     )
                 )
 
@@ -286,11 +369,9 @@ class BackendVectorStore(VectorStoreBase):
                     metadata["user_id"] = payload["user_id"]
                 if "agent_id" in payload:
                     metadata["agent_id"] = payload["agent_id"]
-                if "metadata" in payload:
-                    raw = payload["metadata"]
-                    metadata["metadata_"] = (
-                        json.dumps(raw) if isinstance(raw, dict) else raw
-                    )
+                caller_metadata = _extract_caller_metadata(payload)
+                if caller_metadata:
+                    metadata["metadata_"] = json.dumps(caller_metadata)
                 if "created_at" in payload:
                     metadata["created_at"] = payload["created_at"]
 
@@ -348,13 +429,13 @@ class BackendVectorStore(VectorStoreBase):
             return BackendRecord(
                 id=doc.id,
                 vector=vector,
-                payload={
-                    "data": doc.text_content or "",
-                    "user_id": doc.metadata.get("user_id", ""),
-                    "agent_id": doc.metadata.get("agent_id", ""),
-                    "metadata": doc.metadata.get("metadata_", {}),
-                    "created_at": created_at,
-                },
+                payload=_build_read_payload(
+                    data=doc.text_content,
+                    user_id=doc.metadata.get("user_id", ""),
+                    agent_id=doc.metadata.get("agent_id", ""),
+                    metadata_raw=doc.metadata.get("metadata_"),
+                    created_at=created_at,
+                ),
             )
         except Exception as e:
             logger.error(f"Failed to get {vector_id}: {e}")
@@ -413,13 +494,13 @@ class BackendVectorStore(VectorStoreBase):
                     BackendSearchResult(
                         id=result.get("id"),
                         score=0.0,
-                        payload={
-                            "data": result.get("text", result.get("content", "")),
-                            "user_id": result.get("user_id", ""),
-                            "agent_id": result.get("agent_id", ""),
-                            "metadata": result.get("metadata_", {}),
-                            "created_at": created_at,
-                        },
+                        payload=_build_read_payload(
+                            data=result.get("text", result.get("content", "")),
+                            user_id=result.get("user_id", ""),
+                            agent_id=result.get("agent_id", ""),
+                            metadata_raw=result.get("metadata_"),
+                            created_at=created_at,
+                        ),
                     )
                 )
 

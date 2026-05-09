@@ -238,7 +238,11 @@ class PinService:
             "target_memory_id": target_memory_id,
             "target_kind": target_kind,
             "pinned_by": pinned_by.value,
-            "actor_id": actor_id,
+            # Mem0 treats ``actor_id`` as a promoted payload key (lifted to
+            # the row top-level on read), so storing the actor under that
+            # name loses it from the round-trip metadata. Use a
+            # non-reserved key so it stays inside ``metadata`` end-to-end.
+            "pin_actor_id": actor_id,
         }
         memory_id = self._mm.add_memory(
             content=content,
@@ -341,7 +345,7 @@ class PinService:
                 target_memory_id=meta["target_memory_id"],
                 pinned_by=Pinnable(meta["pinned_by"]),
                 target_kind=meta.get("target_kind", "unknown"),
-                pinned_by_actor=meta.get("actor_id", "unknown"),
+                pinned_by_actor=meta.get("pin_actor_id", "unknown"),
             )
         except (KeyError, ValueError):
             logger.warning(

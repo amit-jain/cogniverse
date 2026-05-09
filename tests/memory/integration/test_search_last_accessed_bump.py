@@ -154,17 +154,19 @@ class TestBumpHelper:
 
 
 class TestRealVespaSchemaIntegration:
-    """Real Vespa: prove the bump helper runs against live retrieval.
+    """Real Vespa: prove search bumps last_accessed and the value persists.
 
-    We seed via the spy seam (Mem0 strips arbitrary metadata in this
-    env — see P2.1 boundary-spy rationale), then invoke search_memory
-    against the real Vespa-backed manager and assert update was called.
+    Seed a memory, capture the baseline timestamp from Vespa, run a
+    search, then re-read from Vespa and assert ``last_accessed`` advanced.
+    Anything weaker (spying on update) only proves the wire fired, not
+    that Mem0 + the BackendVectorStore actually persisted the new value.
     """
 
-    def test_real_vespa_search_invokes_bump_for_each_hit(
+    def test_real_vespa_search_persists_last_accessed_bump(
         self, shared_memory_vespa, shared_denseon
     ):
         # Reuse the test_tenant pre-deployed schema.
+        import time
         from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -201,30 +203,41 @@ class TestRealVespaSchemaIntegration:
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )
 
-        # Write one memory, then count update() invocations on search.
-        memory_id = mm.add_memory(
-            content="P2.3 — actively-queried fact about X",
-            tenant_id="test_tenant",
-            agent_name="p23_real_agent",
-            metadata={},
-            infer=False,
-        )
-        assert memory_id is not None
-
-        update_count = {"n": 0}
-        real_update = mm.memory.update
-
-        def _spy_update(*args, **kwargs):
-            update_count["n"] += 1
-            try:
-                return real_update(*args, **kwargs)
-            except Exception:
-                # Some Mem0 builds reject minimal calls; still counts as
-                # an attempted bump for wire-coverage.
-                return None
-
-        mm.memory.update = _spy_update  # type: ignore[method-assign]
         try:
+            memory_id = mm.add_memory(
+                content="P2.3 — actively-queried fact about X",
+                tenant_id="test_tenant",
+                agent_name="p23_real_agent",
+                metadata={"kind": "external_doc"},
+                infer=False,
+            )
+            assert memory_id is not None
+
+            # Baseline: read what the write actually persisted.
+            pre = mm.get_all_memories(
+                tenant_id="test_tenant", agent_name="p23_real_agent"
+            )
+            seeded = next((r for r in pre if str(r.get("id")) == memory_id), None)
+            assert seeded is not None, (
+                f"seeded memory {memory_id} not visible via get_all_memories — "
+                "the write didn't reach the read path"
+            )
+            seeded_md = seeded.get("metadata") or {}
+            assert isinstance(seeded_md, dict), (
+                f"metadata round-trip broken: expected dict, got {type(seeded_md)!r}. "
+                "BackendVectorStore must deserialize metadata_ on read."
+            )
+            assert seeded_md.get("kind") == "external_doc", (
+                "kind written at add_memory time must round-trip through Vespa; "
+                f"got metadata={seeded_md!r}"
+            )
+            baseline_last_accessed = seeded_md.get("last_accessed")
+
+            # Sleep just long enough that any bump produces a strictly
+            # greater timestamp than the baseline (which add_memory writes
+            # via the same mechanism).
+            time.sleep(1.1)
+
             hits = mm.search_memory(
                 query="P2.3",
                 tenant_id="test_tenant",
@@ -234,12 +247,49 @@ class TestRealVespaSchemaIntegration:
             assert len(hits) >= 1, (
                 "real Vespa search must return at least the seeded memory"
             )
-            assert update_count["n"] == len(hits), (
-                "search_memory must bump last_accessed once per returned hit; "
-                f"got {update_count['n']} updates for {len(hits)} hits"
+
+            # Round-trip assertion: last_accessed must be present AND
+            # strictly newer than the baseline. This is what proves
+            # search → bump-helper → mem0.update → BackendVectorStore.update
+            # → Vespa actually wrote the new timestamp.
+            post = mm.get_all_memories(
+                tenant_id="test_tenant", agent_name="p23_real_agent"
             )
+            updated = next((r for r in post if str(r.get("id")) == memory_id), None)
+            assert updated is not None, (
+                f"memory {memory_id} disappeared after search bump"
+            )
+            md = updated.get("metadata") or {}
+            assert isinstance(md, dict), (
+                f"metadata round-trip broken on re-read: got {type(md)!r}"
+            )
+            assert "last_accessed" in md, (
+                "search must persist a fresh last_accessed in Vespa metadata; "
+                f"got keys {sorted(md.keys())}. Without persistence, the "
+                "lifecycle scheduler still sees a stale recency signal."
+            )
+            from datetime import datetime
+
+            def _to_dt(value):
+                if value is None:
+                    return None
+                if isinstance(value, (int, float)):
+                    return datetime.fromtimestamp(value)
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+
+            new_dt = _to_dt(md["last_accessed"])
+            assert new_dt is not None, (
+                f"could not parse last_accessed={md['last_accessed']!r}"
+            )
+            base_dt = _to_dt(baseline_last_accessed)
+            if base_dt is not None:
+                assert new_dt > base_dt, (
+                    f"last_accessed did not advance: baseline={baseline_last_accessed!r}, "
+                    f"after-search={md['last_accessed']!r}. The bump was "
+                    "wired but the persisted value didn't change — likely "
+                    "metadata round-trip is dropping the field."
+                )
         finally:
-            mm.memory.update = real_update  # type: ignore[method-assign]
             try:
                 mm.clear_agent_memory("test_tenant", "p23_real_agent")
             except Exception:

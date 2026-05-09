@@ -362,14 +362,23 @@ def shared_memory_vespa():
             )
         )
 
-        # Register deployed schemas in ConfigStore so any SchemaRegistry created
-        # by downstream fixtures finds them and doesn't attempt redeployment.
+        # Register deployed schemas in ConfigStore so any SchemaRegistry
+        # created by downstream fixtures finds them and doesn't attempt
+        # redeployment.
+        #
+        # The schema_definition MUST be the real, parseable JSON. Storing a
+        # stub like "{}" causes downstream redeploys to crash: backend.py's
+        # merge path walks every registry entry, parses it, and includes
+        # it in the merged ApplicationPackage. A stub fails parse_schema
+        # with KeyError('document') and the deploy aborts, taking out
+        # every other test that triggers schema deployment under
+        # test_tenant.
         tenant_schema_name = "agent_memories_test_tenant"
         wiki_schema_name = "wiki_pages_test_tenant"
 
-        for schema_name, base_name in [
-            (tenant_schema_name, "agent_memories"),
-            (wiki_schema_name, "wiki_pages"),
+        for schema_name, base_name, schema_dict in [
+            (tenant_schema_name, "agent_memories", memory_schema_json),
+            (wiki_schema_name, "wiki_pages", wiki_schema_json),
         ]:
             config_manager.set_config_value(
                 tenant_id="test_tenant",
@@ -380,7 +389,7 @@ def shared_memory_vespa():
                     "tenant_id": "test_tenant",
                     "base_schema_name": base_name,
                     "full_schema_name": schema_name,
-                    "schema_definition": "{}",
+                    "schema_definition": json.dumps(schema_dict),
                     "config": {},
                     "deployment_time": "2026-04-06T00:00:00",
                     "deleted": False,

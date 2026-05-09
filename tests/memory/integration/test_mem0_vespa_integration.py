@@ -11,7 +11,7 @@ import pytest
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from tests.utils.async_polling import wait_for_vespa_indexing
-from tests.utils.llm_config import get_llm_model
+from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 
 @pytest.fixture(scope="module")
@@ -52,7 +52,7 @@ def memory_manager(shared_memory_vespa, shared_denseon):
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
         embedding_model="lightonai/DenseOn",
-        llm_base_url="http://localhost:11434/v1",
+        llm_base_url=get_llm_base_url(),
         embedder_base_url=shared_denseon,
         auto_create_schema=False,  # Schema already deployed
         config_manager=config_manager,
@@ -451,7 +451,7 @@ class TestMem0MemoryAwareMixinIntegration:
             backend_config_port=shared_memory_vespa["config_port"],
             llm_model=get_llm_model(),
             embedding_model="lightonai/DenseOn",
-            llm_base_url="http://localhost:11434/v1",
+            llm_base_url=get_llm_base_url(),
             embedder_base_url=shared_denseon,
             config_manager=config_manager,
             schema_loader=schema_loader,
@@ -578,7 +578,7 @@ class TestMem0ProfileRegistrationIntegration:
             base_schema_name="agent_memories",
             llm_model=get_llm_model(),
             embedding_model="lightonai/DenseOn",
-            llm_base_url="http://localhost:11434/v1",
+            llm_base_url=get_llm_base_url(),
             embedder_base_url=shared_denseon,
             auto_create_schema=False,  # fixture pre-deployed the schema
             config_manager=config_manager,

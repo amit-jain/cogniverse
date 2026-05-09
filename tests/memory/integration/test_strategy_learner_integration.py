@@ -331,13 +331,18 @@ class TestLLMDistillation:
     async def test_llm_distillation_produces_strategies(
         self, memory_manager, trigger_df
     ):
-        """Run LLM distillation with real Ollama, verify output quality."""
+        """Run LLM distillation with real test LM, verify output quality."""
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-        from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model
+        from tests.fixtures.llm import (
+            resolve_api_key,
+            resolve_base_url,
+            resolve_prefixed_model,
+        )
 
         llm_config = LLMEndpointConfig(
             model=resolve_prefixed_model(),
             api_base=resolve_base_url(),
+            api_key=resolve_api_key(),
             temperature=0.1,
             max_tokens=200,
         )

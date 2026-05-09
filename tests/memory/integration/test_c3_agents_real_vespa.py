@@ -157,26 +157,16 @@ async def test_c39_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager)
     )
     visited = {s.memory_id for s in out.sources}
     assert derived_id in visited, "audit must include the answer node"
-    # Mem0's Vespa adapter strips arbitrary metadata fields on round-trip
-    # in this env (same issue documented in F1.2 / F2.1 boundary-spy
-    # patterns) — provenance.derived_from may not survive the read.
-    # When it does survive, the walker reaches the leaf; when it
-    # doesn't, the walker stops at the answer node. Both paths exercise
-    # real Vespa; the tighter assertion is gated on metadata persistence.
+    assert leaf_id in visited, (
+        "the walker must follow derived_from from the synthesis to the "
+        f"leaf; visited={visited!r}. If the leaf is missing, metadata "
+        "round-trip dropped provenance.derived_from on the read path."
+    )
     primary_refs = {p["ref_id"] for p in out.primary_sources}
-    if leaf_id in visited:
-        # Metadata persisted — full chain walked.
-        assert "https://wiki/c39_leaf" in primary_refs, (
-            "the external citation on the leaf must surface as a primary "
-            "source after the walk reaches it"
-        )
-    else:
-        # Metadata stripped — answer node alone is a valid primary source
-        # (the walker terminates at unknown derivation).
-        assert any(p["ref_id"] == derived_id for p in out.primary_sources), (
-            f"answer node {derived_id} must be its own primary source "
-            "when no derived_from chain survived the round-trip"
-        )
+    assert "https://wiki/c39_leaf" in primary_refs, (
+        "the external citation on the leaf must surface as a primary "
+        f"source after the walk reaches it; got primary_refs={primary_refs!r}"
+    )
 
 
 # ----- C3.8 KnowledgeSummarizationAgent against real Mem0+Vespa --------------
@@ -235,25 +225,20 @@ async def test_c38_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
             promote=False,
         )
     )
-    # The agent ran end-to-end against real Vespa and produced a result.
-    # Mem0's metadata-stripping in this env may erase the subject_key
-    # used for filtering — when that happens, source_count is 0 and
-    # the agent returns an empty summary (the no-matching-memories
-    # branch). Both outcomes exercise the real read path.
-    if out.source_count >= 3:
-        assert out.summary == "STUB_SUMMARY_OF_REAL_SLICE"
-        cited = {ref.ref_id for ref in out.citation_refs}
-        for mid in written_ids:
-            assert mid in cited, (
-                f"memory {mid} written to real Vespa was not cited; the "
-                "agent's get_all_memories slice missed it"
-            )
-    else:
-        # Subject_key didn't survive — agent correctly fell through to
-        # the empty-result branch with a clear reason in metadata.
-        assert out.metadata.get("reason") == "no_matching_memories", (
-            "when the slice is empty, the agent must surface "
-            f"reason=no_matching_memories; got metadata={out.metadata!r}"
+    # subject_key + kind must round-trip through Vespa metadata for the
+    # subject-slice filter to find what we wrote. With the metadata
+    # round-trip fix in BackendVectorStore, all 3 must surface.
+    assert out.source_count >= 3, (
+        f"agent should see all 3 seeded memories on the real subject "
+        f"slice; got source_count={out.source_count}. If this is < 3, "
+        "metadata round-trip is dropping subject_key/kind on the read."
+    )
+    assert out.summary == "STUB_SUMMARY_OF_REAL_SLICE"
+    cited = {ref.ref_id for ref in out.citation_refs}
+    for mid in written_ids:
+        assert mid in cited, (
+            f"memory {mid} written to real Vespa was not cited; the "
+            f"agent's get_all_memories slice missed it. cited={cited!r}"
         )
 
 
@@ -324,16 +309,24 @@ async def test_c34_reconciles_real_conflicting_memories(real_mm: Mem0MemoryManag
             conflict_member_ids=[id_a, id_b],
         )
     )
-    # The agent must produce SOME resolved view — the exact policy depends
-    # on the schema; the key wire assertion is "the agent loaded both
-    # members from real Mem0 and ran the policy", surfaced by the
-    # presence of resolved members in metadata.
+    # The agent must produce a resolved view over the real conflict set.
     assert out is not None
-    assert hasattr(out, "metadata")
-    # The resolved IDs must be a subset of what we wrote.
-    if hasattr(out, "resolved_members"):
-        resolved_ids = {m.memory_id for m in out.resolved_members}
-        assert resolved_ids.issubset({id_a, id_b}), (
-            "reconciliation must only return members of the original "
-            f"conflict set; got {resolved_ids}"
-        )
+    resolved_ids = {m.memory_id for m in out.resolved}
+    assert resolved_ids == {id_a, id_b}, (
+        "reconciliation must process both members of the conflict set; "
+        f"got resolved_ids={resolved_ids!r}, expected={{{id_a!r}, {id_b!r}}}"
+    )
+    # trust_ranked policy: doc_a (DIRECT_INGEST conf=0.9) must outrank
+    # doc_b (AGENT_INFERENCE conf=0.4). The high-trust member survives;
+    # the low-trust one is excluded.
+    assert out.policy_used == "trust_ranked", (
+        f"entity_fact schema policy is trust_ranked; got {out.policy_used!r}"
+    )
+    assert out.survivors == [id_a], (
+        "trust_ranked must keep the higher-trust DIRECT_INGEST source "
+        f"({id_a}) and drop the lower-trust AGENT_INFERENCE source "
+        f"({id_b}); got survivors={out.survivors!r}"
+    )
+    survived_by_id = {m.memory_id: m.survived for m in out.resolved}
+    assert survived_by_id[id_a] is True
+    assert survived_by_id[id_b] is False

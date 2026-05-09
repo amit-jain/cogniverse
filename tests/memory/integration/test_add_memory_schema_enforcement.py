@@ -144,53 +144,56 @@ class TestEnforcement:
                 infer=False,
             )
 
-    def test_write_with_provenance_attaches_trust_at_the_boundary(self, enforced_mm):
-        """The wire we own: the metadata reaching ``memory.add`` carries
-        trust auto-attached by ``_enforce_schema_on_write``.
+    def test_write_with_provenance_persists_trust_round_trip(self, enforced_mm):
+        """Real round-trip: write through add_memory, then read back from
+        Vespa via get_all_memories and assert the auto-attached trust +
+        the original provenance both survive.
 
-        We observe at the boundary because the local Vespa-backed Mem0
-        in this test environment strips arbitrary metadata fields on
-        round-trip — but the wire ``add_memory → memory.add`` is what
-        this commit is responsible for.
+        Anything weaker (boundary-spy on ``memory.add``) only proves that
+        ``_enforce_schema_on_write`` injected trust into the dict it
+        handed Mem0 — it does not prove that Vespa persisted it or that
+        downstream retrieval-time ranking has anything to rank by.
         """
-        captured: list = []
-        real_add = enforced_mm.memory.add
+        prov = _good_provenance()
+        meta = attach_to_metadata(
+            {"kind": "entity_fact", "subject_key": "p21:with_prov"}, prov
+        )
+        memory_id = enforced_mm.add_memory(
+            content="P2.1 — accepted with provenance",
+            tenant_id=TENANT_ENFORCED,
+            agent_name=AGENT_ENFORCED,
+            metadata=meta,
+            infer=False,
+        )
+        assert memory_id, "memory must persist when provenance is present"
 
-        def spy_add(content, *, user_id, agent_id, metadata, infer):
-            captured.append(metadata)
-            return real_add(
-                content,
-                user_id=user_id,
-                agent_id=agent_id,
-                metadata=metadata,
-                infer=infer,
-            )
+        rows = enforced_mm.get_all_memories(
+            tenant_id=TENANT_ENFORCED, agent_name=AGENT_ENFORCED
+        )
+        round_tripped = next((r for r in rows if str(r.get("id")) == memory_id), None)
+        assert round_tripped is not None, (
+            f"memory {memory_id} not visible via get_all_memories — write "
+            "didn't reach the read path"
+        )
+        md = round_tripped.get("metadata") or {}
+        assert isinstance(md, dict), (
+            f"metadata round-trip broken: expected dict, got {type(md)!r}. "
+            "BackendVectorStore must deserialize metadata_ on read."
+        )
+        assert md.get("kind") == "entity_fact", (
+            f"kind did not round-trip; got metadata={md!r}"
+        )
+        assert md.get("subject_key") == "p21:with_prov", (
+            f"subject_key did not round-trip; got metadata={md!r}"
+        )
+        assert "provenance" in md, (
+            f"provenance was stripped on round-trip; got metadata={md!r}"
+        )
 
-        enforced_mm.memory.add = spy_add  # type: ignore[method-assign]
-        try:
-            prov = _good_provenance()
-            meta = attach_to_metadata(
-                {"kind": "entity_fact", "subject_key": "p21:with_prov"}, prov
-            )
-            memory_id = enforced_mm.add_memory(
-                content="P2.1 — accepted with provenance",
-                tenant_id=TENANT_ENFORCED,
-                agent_name=AGENT_ENFORCED,
-                metadata=meta,
-                infer=False,
-            )
-            assert memory_id, "memory must persist when provenance is present"
-        finally:
-            enforced_mm.memory.add = real_add  # type: ignore[method-assign]
-
-        assert len(captured) == 1
-        sent_metadata = captured[0]
-        # extract_trust expects ``{"metadata": ...}`` shape.
-        trust = extract_trust({"metadata": sent_metadata})
+        trust = extract_trust(round_tripped)
         assert trust is not None, (
-            "trust must be in the metadata reaching memory.add — that's "
-            "the wire boundary _enforce_schema_on_write owns. "
-            f"Captured metadata: {sent_metadata!r}"
+            "trust auto-attached by _enforce_schema_on_write must survive "
+            f"the Vespa round-trip; got metadata={md!r}"
         )
         # entity_fact default_trust=0.5 × DIRECT_INGEST weight 1.20 = 0.60.
         # Allow a small tolerance in case the schema defaults shift later.
@@ -199,8 +202,6 @@ class TestEnforcement:
             "entity_fact + DIRECT_INGEST"
         )
         assert trust.endorsements == 0
-        # And provenance must still be there — we did not strip it.
-        assert "provenance" in sent_metadata
 
 
 class TestLegacyDeployments:

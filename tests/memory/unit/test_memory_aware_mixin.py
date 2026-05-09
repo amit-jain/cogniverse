@@ -78,12 +78,12 @@ class TestMemoryAwareMixin:
     @patch("cogniverse_agents.memory_aware_mixin.Mem0MemoryManager")
     def test_initialize_memory_with_vespa_config(self, mock_manager_class, agent):
         """Test memory initialization with Vespa configuration"""
-        # Setup mock
+        from cogniverse_core.memory.schema import KnowledgeRegistry
+
         mock_manager = MagicMock()
         mock_manager.memory = None  # Not initialized yet
         mock_manager_class.return_value = mock_manager
 
-        # Initialize memory with custom backend config
         mock_cm = MagicMock()
         mock_sl = MagicMock()
         success = agent.initialize_memory(
@@ -100,20 +100,31 @@ class TestMemoryAwareMixin:
         )
 
         assert success is True
-        mock_manager.initialize.assert_called_once_with(
-            backend_host="backend.local",
-            backend_port=9090,
-            llm_model="test-llm",
-            embedding_model="lightonai/DenseOn",
-            llm_base_url="http://localhost:11434/v1",
-            llm_api_key="not-required",
-            embedder_base_url="http://denseon.local:8000",
-            config_manager=mock_cm,
-            schema_loader=mock_sl,
-            backend_config_port=None,
-            base_schema_name="agent_memories",
-            auto_create_schema=True,
+        mock_manager.initialize.assert_called_once()
+        kwargs = mock_manager.initialize.call_args.kwargs
+        # F1.1 wired knowledge_registry into the mixin's initialize call so
+        # the schema layer (provenance + trust + contradiction) actually
+        # runs in production. The instance type is what matters; the
+        # registry contents are validated elsewhere.
+        registry = kwargs.pop("knowledge_registry", None)
+        assert isinstance(registry, KnowledgeRegistry), (
+            "MemoryAwareMixin.initialize_memory must pass a KnowledgeRegistry "
+            f"to Mem0MemoryManager.initialize; got {type(registry)!r}"
         )
+        assert kwargs == {
+            "backend_host": "backend.local",
+            "backend_port": 9090,
+            "llm_model": "test-llm",
+            "embedding_model": "lightonai/DenseOn",
+            "llm_base_url": "http://localhost:11434/v1",
+            "llm_api_key": "not-required",
+            "embedder_base_url": "http://denseon.local:8000",
+            "config_manager": mock_cm,
+            "schema_loader": mock_sl,
+            "backend_config_port": None,
+            "base_schema_name": "agent_memories",
+            "auto_create_schema": True,
+        }
 
     def test_get_relevant_context_without_initialization(self, agent):
         """Test getting context without initialization"""

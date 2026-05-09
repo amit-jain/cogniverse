@@ -21,7 +21,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.routers import tenant
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.async_polling import wait_for_vespa_indexing
-from tests.utils.llm_config import get_llm_model
+from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def tenant_api_client(shared_memory_vespa, shared_denseon):
         base_schema_name="agent_memories",
         llm_model=get_llm_model(),
         embedding_model="lightonai/DenseOn",
-        llm_base_url="http://localhost:11434",
+        llm_base_url=get_llm_base_url(),
         embedder_base_url=shared_denseon,
         auto_create_schema=False,
         config_manager=cm,

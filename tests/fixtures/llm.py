@@ -43,12 +43,32 @@ def resolve_base_url() -> str:
 
 
 def resolve_bare_model() -> str:
+    """Return the model name without a litellm provider prefix.
+
+    Some configs ship the model with a prefix that names the litellm
+    provider (``ollama/qwen3:4b``, ``openai/gpt-4o``); only those
+    leading tokens are providers we should strip. HF-style namespaced
+    names (``google/gemma-4-e4b-it``, ``meta-llama/Llama-3-8B``) are
+    the actual model identifier and must be preserved verbatim.
+    """
     raw = (
         os.environ.get("TEST_LLM_MODEL")
         or os.environ.get("OLLAMA_TEST_MODEL")
         or "gemma3:4b"
     )
-    if "/" in raw:
+    _LITELLM_PROVIDERS = (
+        "ollama",
+        "openai",
+        "anthropic",
+        "azure",
+        "bedrock",
+        "vertex_ai",
+        "groq",
+        "mistral",
+        "cohere",
+    )
+    head, _, _ = raw.partition("/")
+    if head in _LITELLM_PROVIDERS:
         return raw.split("/", 1)[1]
     return raw
 
@@ -76,8 +96,15 @@ def is_test_lm_available() -> bool:
     Probes ``GET /api/tags`` for Ollama-compatible servers and falls
     back to ``GET /v1/models`` for pure OAI-compat endpoints. Either
     returning HTTP 200 is enough — both are cheap, idempotent.
+
+    Strips a trailing ``/v1`` from the base before probing so callers
+    can pass the full endpoint URL (with or without the suffix) and
+    the OAI probe still resolves to ``/v1/models`` rather than the
+    nonsensical ``/v1/v1/models``.
     """
     base = resolve_base_url().rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
     for path in ("/api/tags", "/v1/models"):
         try:
             r = httpx.get(f"{base}{path}", timeout=5.0)

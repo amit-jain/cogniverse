@@ -331,7 +331,10 @@ def _entry_to_item(entry: dict, agent_name: str) -> Optional[MemoryItem]:
     """Convert a raw Mem0 result dict to a MemoryItem with type/owned."""
     if not isinstance(entry, dict):
         return None
-    meta = entry.get("metadata", {})
+    # Mem0 may emit ``metadata: None`` (or omit it) when the row has no
+    # caller-set metadata. ``entry.get("metadata", {})`` returns None in
+    # the explicit-None case and crashes the next ``.get("category")``.
+    meta = entry.get("metadata") or {}
     return MemoryItem(
         id=str(entry.get("id", "")),
         memory=entry.get("memory", entry.get("text", "")),
