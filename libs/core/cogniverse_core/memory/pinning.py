@@ -99,6 +99,49 @@ class PinQuotas:
             org_admin=overrides.get("org_admin", None),
         )
 
+    @classmethod
+    def for_tenant(
+        cls,
+        tenant_id: str,
+        tenant_config: Optional[Any] = None,
+    ) -> "PinQuotas":
+        """Resolve effective quotas, checking the admin runtime override first.
+
+        F3.1 wire — the admin endpoint ``PUT /admin/tenants/{t}/pin_quotas``
+        writes into a process-local override dict. This factory consults
+        that dict before falling back to ``TenantConfig.metadata['pin_quota']``
+        and finally to the dataclass defaults. Without this consultation,
+        admin PUTs were a write-only black hole.
+
+        Order of precedence (highest first):
+          1. Admin runtime override (``PUT`` in this process / replica).
+          2. ``TenantConfig.metadata['pin_quota']`` (persisted overrides).
+          3. Dataclass defaults.
+        """
+        # Lazy import — pinning is loaded by core, the admin router lives in
+        # the runtime layer; static imports would create a circular dep.
+        try:
+            from cogniverse_runtime.routers.admin import (
+                _pin_quota_overrides as _admin_overrides,
+            )
+        except Exception:
+            _admin_overrides = {}
+
+        admin_blob = _admin_overrides.get(tenant_id)
+        if admin_blob:
+            org_admin_raw = admin_blob.get("org_admin")
+            return cls(
+                user=admin_blob.get("user", _DEFAULT_USER_QUOTA),
+                tenant_admin=admin_blob.get(
+                    "tenant_admin", _DEFAULT_TENANT_ADMIN_QUOTA
+                ),
+                # Admin endpoint stores -1 as the "unlimited" sentinel
+                # because JSON has no None/null distinction at the form
+                # level; translate back to None for the dataclass.
+                org_admin=None if org_admin_raw == -1 else org_admin_raw,
+            )
+        return cls.from_tenant_config(tenant_config)
+
 
 @dataclass(frozen=True)
 class PinRecord:

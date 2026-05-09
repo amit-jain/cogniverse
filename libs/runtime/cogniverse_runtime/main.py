@@ -815,7 +815,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if not tenant_id or knowledge_registry is None:
                 return set()
             try:
-                pin_svc = PinService(mm, knowledge_registry)
+                # F3.1 — honor admin PinService quota overrides set via
+                # `PUT /admin/tenants/{t}/pin_quotas`. ``PinQuotas.for_tenant``
+                # checks the admin runtime dict first, then TenantConfig
+                # metadata, then defaults.
+                from cogniverse_core.memory.pinning import PinQuotas
+
+                pin_svc = PinService(
+                    mm,
+                    knowledge_registry,
+                    quotas=PinQuotas.for_tenant(tenant_id),
+                )
                 return {rec.target_memory_id for rec in pin_svc.list_pins(tenant_id)}
             except Exception as exc:
                 logger.debug(
