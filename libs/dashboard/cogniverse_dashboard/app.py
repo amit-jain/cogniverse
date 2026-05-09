@@ -706,6 +706,7 @@ main_tabs = st.tabs(
         "⚙️ Configuration",
         "👥 Tenant Management",
         "🧠 Memory",
+        "🅰️🅱️ RLM A/B Compare",
     ]
 )
 
@@ -3027,6 +3028,15 @@ with main_tabs[13]:
 with main_tabs[14]:
     st.header("🧠 Memory Management")
     render_memory_management_tab()
+
+# RLM A/B Compare Tab — reads spans emitted by `cogniverse-optim --mode
+# ab-compare` and surfaces per-row + aggregate latency / token / judge
+# deltas. Imported lazily so the dashboard still loads when the
+# telemetry-phoenix package is unavailable in the dev env.
+with main_tabs[15]:
+    from cogniverse_dashboard.tabs.rlm_ab_compare import render_rlm_ab_compare_tab
+
+    render_rlm_ab_compare_tab()
 
 # Auto-refresh logic
 if st.session_state.auto_refresh:
