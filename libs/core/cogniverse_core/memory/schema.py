@@ -347,4 +347,30 @@ def build_default_registry() -> KnowledgeRegistry:
             default_trust=0.6,
         )
     )
+    # Sentinel kinds the system itself writes — no caller-supplied
+    # provenance is possible (the system IS the provenance). Without
+    # explicit registration, the registry's default returns
+    # provenance_required=True and every internal write blows up.
+    registry.register(
+        KnowledgeSchema(
+            kind="pin_record",
+            retention=Retention.PERMANENT,
+            sensitivity=Sensitivity.TENANT_PRIVATE,
+            pinnable_by=Pinnable.NOBODY,  # users don't pin pin_records
+            provenance_required=False,
+            contradiction_policy=ContradictionPolicy.LATEST_WINS,
+            default_trust=1.0,
+        )
+    )
+    registry.register(
+        KnowledgeSchema(
+            kind="conflict_set",
+            retention=Retention.PERMANENT,
+            sensitivity=Sensitivity.TENANT_PRIVATE,
+            pinnable_by=Pinnable.NOBODY,
+            provenance_required=False,
+            contradiction_policy=ContradictionPolicy.LATEST_WINS,
+            default_trust=1.0,
+        )
+    )
     return registry

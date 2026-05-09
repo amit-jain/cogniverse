@@ -539,7 +539,150 @@ class Mem0MemoryManager:
             return None
 
         logger.info(f"Added memory for {tenant_id}/{agent_name}: {memory_id}")
+
+        # A.3 — detect contradictions on the write. Plan-mandated: the
+        # detector runs on every knowledge write, persisting a
+        # ``conflict_set`` memory when the new write disagrees with an
+        # existing same-subject memory. This is what gives the C3.4
+        # ContradictionReconciliationAgent something to consume in
+        # production. Best-effort: detection failure must not block the
+        # write that already succeeded.
+        try:
+            self._detect_and_persist_contradictions(
+                memory_id=memory_id,
+                tenant_id=tenant_id,
+                agent_name=agent_name,
+                metadata=metadata,
+                content=content,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Contradiction detection failed for %s/%s/%s: %s",
+                tenant_id,
+                agent_name,
+                memory_id,
+                exc,
+            )
+
         return memory_id
+
+    def _detect_and_persist_contradictions(
+        self,
+        *,
+        memory_id: str,
+        tenant_id: str,
+        agent_name: str,
+        metadata: Optional[Dict[str, Any]],
+        content: str,
+    ) -> None:
+        """Run ContradictionDetector against the new write + same-subject peers.
+
+        Persists a ``conflict_set`` sentinel memory under
+        ``_conflict_store`` for every distinct conflict surfaced. Skips
+        the recursion case (the new write itself IS a conflict_set
+        record) and the no-context cases (no registry, no subject_key).
+        """
+        if self._knowledge_registry is None:
+            return  # legacy mode — detector is opt-in via registry wiring
+        if not isinstance(metadata, dict):
+            return
+        kind = metadata.get("kind")
+        if kind == "conflict_set":
+            return  # writing a conflict_set itself — don't recurse
+        subject_key = metadata.get("subject_key")
+        if not subject_key:
+            return
+
+        from cogniverse_core.memory.contradiction import (
+            CONFLICT_AGENT_NAME,
+            CONFLICT_RECORD_KIND,
+            ContradictionDetector,
+        )
+
+        # Pull every memory for this tenant, then filter to the same
+        # subject_key client-side. Mem0's filter syntax for nested metadata
+        # keys differs across backends, so we do the filter in Python to
+        # keep the contract backend-agnostic.
+        try:
+            raw = self.memory.get_all(user_id=tenant_id)
+        except Exception as exc:
+            logger.warning("get_all for contradiction scan failed: %s", exc)
+            return
+        peers = raw.get("results", []) if isinstance(raw, dict) else (raw or [])
+
+        candidates: List[Dict[str, Any]] = []
+        for row in peers:
+            if not isinstance(row, dict):
+                continue
+            row_meta = row.get("metadata") or {}
+            if not isinstance(row_meta, dict):
+                continue
+            if row_meta.get("subject_key") != subject_key:
+                continue
+            if row_meta.get("kind") == CONFLICT_RECORD_KIND:
+                continue  # never include conflict_set records as peers
+            candidates.append(row)
+
+        # Add the just-written memory to the candidate list — Mem0's
+        # get_all may not be read-after-write consistent across all
+        # backends, so include it explicitly.
+        if not any(str(r.get("id")) == memory_id for r in candidates):
+            candidates.append(
+                {
+                    "id": memory_id,
+                    "memory": content,
+                    "metadata": dict(metadata),
+                }
+            )
+
+        detector = ContradictionDetector()
+        new_conflicts = detector.detect(candidates)
+        if not new_conflicts:
+            return
+
+        # Walk existing conflict_set memories for this subject so we don't
+        # write a duplicate every time the same conflict re-surfaces.
+        try:
+            existing_blob = self.memory.get_all(
+                user_id=tenant_id, agent_id=CONFLICT_AGENT_NAME
+            )
+        except Exception:
+            existing_blob = {}
+        existing_rows = (
+            existing_blob.get("results", [])
+            if isinstance(existing_blob, dict)
+            else (existing_blob or [])
+        )
+        # One conflict_set per subject_key: the existing record already
+        # says "this subject is disputed". Subsequent writes that grow the
+        # member list shouldn't spam the audit log — operators fetch
+        # current members on demand from the live memories.
+        subject_already_flagged = any(
+            isinstance(row, dict)
+            and isinstance(row.get("metadata"), dict)
+            and row["metadata"].get("subject_key") == subject_key
+            for row in existing_rows
+        )
+        if subject_already_flagged:
+            return
+
+        for conflict in new_conflicts:
+            try:
+                self.memory.add(
+                    conflict.to_memory_content(),
+                    user_id=tenant_id,
+                    agent_id=CONFLICT_AGENT_NAME,
+                    metadata=conflict.to_metadata_payload(),
+                    infer=False,
+                )
+                logger.info(
+                    "Persisted conflict_set for tenant=%s subject=%s members=%s",
+                    tenant_id,
+                    subject_key,
+                    list(conflict.conflicting_memory_ids),
+                )
+            except Exception as exc:
+                logger.warning("Failed to persist conflict_set: %s", exc)
 
     def search_memory(
         self,
