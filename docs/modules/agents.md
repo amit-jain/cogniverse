@@ -29,7 +29,8 @@
 7. [Streaming API](#streaming-api)
 8. [RLM Inference (Recursive Language Models)](#rlm-inference-recursive-language-models)
 9. [Testing](#testing)
-10. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
+10. [Audit Checklist](#audit-checklist)
+11. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
 11. [Real-Time Event Notifications](#real-time-event-notifications)
 12. [Approval Workflow System](#approval-workflow-system)
 13. [Tools Subsystem](#tools-subsystem)
@@ -3925,6 +3926,126 @@ def cleanup_tenant_schemas(test_tenant_id):
     )
     schema_manager.delete_tenant_schemas(test_tenant_id)
 ```
+
+---
+
+## Audit Checklist
+
+The criteria below are what every audit pass must check before accepting
+a planned feature as "done." The list combines the user-stated criteria
+and the failure modes prior audits surfaced; expand it as new failure
+patterns are found.
+
+### A. Plan completeness
+
+  * Every plan item is either WIRED with a real-service integration
+    test, or SCOPED OUT with an entry in the plan's
+    "Scoping decisions" section.
+  * No silent skips. If a planned feature was deferred, it is
+    documented in the plan, not just in commit messages.
+  * Per-item verification (round-trip / integration test / A/B / adversarial)
+    described in the plan was run and recorded.
+
+### B. Test integrity (real-service flushes plumbing breaks)
+
+  * Tests claiming "real Vespa" / "real Mem0" / "real DSPy" actually
+    construct against the live fixture, not a `MagicMock`.
+  * No `_dspy_module = MagicMock(...)` followed by an assertion on the
+    stub's return value (`assert out.answer == "STUB-..."`).
+  * No constructor-acceptance tests masquerading as integration tests
+    (the test must call the method whose wire it claims to verify).
+  * No substring-only assertions that pass on garbage output. LM tests
+    assert content + length bounds + sentence structure, not just
+    "non-empty string."
+  * No silent fallbacks accepted by the test (e.g., if the agent
+    catches DSPy exceptions and returns `[FALLBACK: ...]`, the test
+    must reject that prefix).
+  * Tests assert the exact primary outcome of the method (the row in
+    Vespa, the response body, the captured HTTP payload), not just
+    that the call returned a non-None value.
+
+### C. Production code quality
+
+  * No `TODO`, `FIXME`, `NotImplementedError` (except in deliberate
+    "not supported" rejections), `STUB`, or hard-coded placeholder
+    return values in production paths.
+  * No silent `try/except` blocks returning a sentinel that masks a
+    real failure.
+  * No backwards-compat shims left after the migration they cover
+    has been completed.
+  * No dead code: classes / files / methods with no production
+    callers. (Prior audits caught one dead Mem0 vector-store
+    adapter; recheck periodically.)
+  * No half-finished implementations gated behind a flag that is
+    never flipped.
+
+### D. Comment / label hygiene
+
+  * No plan-internal labels in any form — `A.1`, `B.5`, `C.6`,
+    `C3.4`, `D.1`, `F2.x`, `F3.x`, `F4.x`, `F5.x`, `F7.x`,
+    `H5–H12`, `M13–M17`, `L18–L22` — anywhere in source tree:
+    docstrings, comments, class names, method names, variable
+    names, constants, fixture data, file names, URLs, doc cross-
+    references, commit messages.
+  * No multi-paragraph comment blocks (3+ consecutive comment lines
+    beyond a one-line WHY annotation).
+  * No comments that explain WHAT instead of WHY ("# delete the
+    row" above `delete(row)`).
+  * No phase markers (`Phase 1`, `Step N`, `for now`, `temporary`,
+    `placeholder`, `this commit`).
+  * No silly variable names: `data`, `result`, `temp`, `foo`,
+    `helper`, single-letter outside narrow loops.
+  * Test failure messages preserved (don't strip the assertion's
+    `f"...; got {actual!r}"` payload during a comment cleanup).
+
+### E. Code duplication
+
+  * Vespa client construction is in one factory, not repeated
+    across files.
+  * Memory write paths route through one adapter (the SDK Backend
+    interface), not bypassed via raw HTTP.
+  * Knowledge-agent boilerplate (Deps + Input + Output Pydantic
+    classes, `memory_manager_factory` constructor parameter,
+    default-lambda `_resolve_mm`) lives in a shared base, not
+    copy-pasted across each agent.
+  * Test fixtures shared across files via re-export from a common
+    `conftest.py`, not re-implemented per file.
+
+### F. Auth + session contract (added when auth lands)
+
+  * Every public-facing request type (`AgentTask`, `SearchRequest`,
+    future `IngestionRequest` variants that touch memory) takes
+    `session_id` as a top-level optional field, AND the handler
+    merges it into `dispatch_context["session_id"]` before
+    `dispatcher.dispatch`.
+  * The auth middleware / dependency populates `session_id` from
+    the auth context (token, cookie, JWT claim) on the path the
+    plan picks (trust-server vs trust-client).
+  * One end-to-end test posts a real HTTP request through the
+    middleware and asserts the resulting Mem0 row in Vespa carries
+    the auth-derived `session_id`. Today this hop is exercised
+    only with client-supplied `session_id`; the auth integration
+    point is the gap that will move this from
+    "session_id propagation works" to "auth produces session_id."
+
+### G. User-flow integrity
+
+  * The chain `HTTP entry → router → dispatcher → agent → memory write/read → cleanup`
+    has no missing link and no inconsistent contract between
+    routers (e.g., `routers/search.py` and `routers/agents.py`
+    must agree on whether `session_id` is top-level or context-bag).
+  * Cleanup endpoints (per-tenant DELETE, cross-tenant POST close)
+    each have a real-Vespa test that proves the right rows are
+    deleted and unrelated rows survive.
+
+### H. Documentation
+
+  * Public docs (under `docs/`) do not reference plan-internal
+    labels. Cross-references use class/method names, not plan IDs.
+  * Architecture decisions (S1, S2, future S-numbers) are recorded
+    in the plan's "Scoping decisions" section AND mirrored in the
+    relevant operations doc, so an operator sees the rationale
+    without reading the plan.
 
 ---
 
