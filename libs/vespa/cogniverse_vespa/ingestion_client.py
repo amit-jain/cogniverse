@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import Document
+from cogniverse_vespa._vespa_factory import make_vespa_app
 
 from .embedding_processor import VespaEmbeddingProcessor
 from .strategy_aware_processor import StrategyAwareProcessor
@@ -170,10 +171,7 @@ class VespaPyClient:
     def connect(self) -> bool:
         """Connect to Vespa using pyvespa with retry logic"""
         try:
-            from vespa.application import Vespa
-
-            # Create Vespa application instance
-            self.app = Vespa(url=self.backend_url, port=self.backend_port)
+            self.app = make_vespa_app(url=self.backend_url, port=self.backend_port)
 
             # Test connection
             health = self.app.get_application_status()

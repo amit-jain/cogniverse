@@ -13,6 +13,7 @@ from cogniverse_core.registries.exceptions import BackendDeploymentError
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend
 
+from ._vespa_factory import make_vespa_app
 from .config_utils import calculate_config_port
 from .ingestion_client import VespaPyClient
 from .search_backend import VespaSearchBackend
@@ -1246,11 +1247,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Import Vespa client for metadata operations
-            from vespa.application import Vespa
-
-            # Create Vespa client for metadata operations
-            vespa_client = Vespa(url=f"{self._url}:{self._port}")
+            vespa_client = make_vespa_app(url=self._url, port=self._port)
 
             # Feed metadata document
             response = vespa_client.feed_data_point(
@@ -1288,11 +1285,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Import Vespa client for metadata operations
-            from vespa.application import Vespa
-
-            # Create Vespa client for metadata operations
-            vespa_client = Vespa(url=f"{self._url}:{self._port}")
+            vespa_client = make_vespa_app(url=self._url, port=self._port)
 
             # Get metadata document
             response = vespa_client.get_data(schema=schema, data_id=doc_id)
@@ -1329,11 +1322,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Import Vespa client for metadata operations
-            from vespa.application import Vespa
-
-            # Create Vespa client for metadata operations
-            vespa_client = Vespa(url=f"{self._url}:{self._port}")
+            vespa_client = make_vespa_app(url=self._url, port=self._port)
 
             # Build query parameters
             query_params = {
@@ -1386,11 +1375,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            # Import Vespa client for metadata operations
-            from vespa.application import Vespa
-
-            # Create Vespa client for metadata operations
-            vespa_client = Vespa(url=f"{self._url}:{self._port}")
+            vespa_client = make_vespa_app(url=self._url, port=self._port)
 
             # Delete metadata document
             vespa_client.delete_data(schema=schema, data_id=doc_id)

@@ -15,6 +15,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigScope,
     ConfigStore,
 )
+from cogniverse_vespa._vespa_factory import make_vespa_app
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,7 @@ class VespaConfigStore(ConfigStore):
         if vespa_app is not None:
             self.vespa_app = vespa_app
         else:
-            from vespa.application import Vespa
-
-            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
+            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
 
         self.schema_name = schema_name
         logger.info(

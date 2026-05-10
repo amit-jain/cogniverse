@@ -11,7 +11,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
-from vespa.application import Vespa
+
+from cogniverse_vespa._vespa_factory import make_vespa_app
 
 
 class RankingStrategy(Enum):
@@ -233,7 +234,7 @@ class VespaVideoSearchClient:
             self._init_query_encoder()
 
         try:
-            self.vespa_app = Vespa(url=f"{backend_url}:{backend_port}")
+            self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
             self.logger.info(f"Connected to Vespa at {backend_url}:{backend_port}")
         except Exception as e:
             self.logger.error(f"Failed to connect to Vespa: {e}")

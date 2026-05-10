@@ -22,7 +22,6 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import requests
-from vespa.application import Vespa
 
 from cogniverse_core.common.utils.output_manager import OutputManager
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
@@ -33,6 +32,7 @@ from cogniverse_sdk.document import (
     SearchResult,
 )
 from cogniverse_sdk.interfaces.backend import SearchBackend
+from cogniverse_vespa._vespa_factory import make_vespa_app
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class VespaConnection:
     def __init__(self, url: str, connection_id: str):
         self.url = url
         self.connection_id = connection_id
-        self.vespa = Vespa(url=url)
+        self.vespa = make_vespa_app(url=url)
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
@@ -324,7 +324,7 @@ class VespaSearchBackend(SearchBackend):
             self.pool = ConnectionPool(full_url, pool_config or ConnectionPoolConfig())
         else:
             self.pool = None
-            self.vespa = Vespa(url=self.backend_url, port=self.backend_port)
+            self.vespa = make_vespa_app(url=self.backend_url, port=self.backend_port)
 
         self.retry_config = retry_config or RetryConfig(
             max_attempts=3, initial_delay=0.5, exceptions=(Exception,)
