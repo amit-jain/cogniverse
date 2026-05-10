@@ -42,6 +42,13 @@ def dispatcher():
     """Create an AgentDispatcher with mock dependencies."""
     registry = MagicMock()
     config_manager = MagicMock()
+    # Production dispatch reads backend_url + backend_port from
+    # get_system_config() to build URLs; bare MagicMocks would yield
+    # a MagicMock port that urllib.parse can't cast to int.
+    sys_cfg = MagicMock()
+    sys_cfg.backend_url = "http://localhost"
+    sys_cfg.backend_port = 8080
+    config_manager.get_system_config.return_value = sys_cfg
     schema_loader = MagicMock()
     return AgentDispatcher(
         agent_registry=registry,
@@ -303,7 +310,12 @@ class TestAgentDispatcherCapabilityRouting:
             )
 
         mock_search.assert_called_once_with(
-            "find cats", "t1", 10, conversation_history=[], enrichment=None
+            "find cats",
+            "t1",
+            10,
+            conversation_history=[],
+            enrichment=None,
+            context={"tenant_id": "t1"},
         )
         assert result["status"] == "success"
 

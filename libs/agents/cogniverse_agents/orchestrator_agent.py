@@ -139,91 +139,9 @@ def _normalize_query_variants(
     return normalized
 
 
-# RLM promotion thresholds. The default RLMOptions context_threshold
-# is 50_000 chars; we promote when the projected sub-agent payload exceeds
-# 75% of that. Operators can override via the env var below.
-import os as _os
-
-_RLM_PROMOTION_DEFAULT_FRACTION = 0.75
-_RLM_PROMOTION_DEFAULT_THRESHOLD = 50_000
-
-# Sub-agents whose input schema accepts an ``rlm`` field — only these are
-# eligible for promotion. Names match the AgentRegistry's agent_name keys
-# (suffix-tolerant lookups happen elsewhere; here we use the canonical names).
-_RLM_PROMOTABLE_AGENTS = frozenset(
-    {
-        "search_agent",
-        "deep_research_agent",
-        "detailed_report_agent",
-        "coding_agent",
-    }
+from cogniverse_agents._rlm_promotion import (
+    maybe_promote_to_rlm as _maybe_promote_to_rlm,
 )
-
-
-def _projected_payload_chars(agent_input: Dict[str, Any]) -> int:
-    """Cheap upper bound on the prompt size the sub-agent will see.
-
-    Sums the lengths of stringified values across all input fields. Not
-    exact (it ignores tokenisation), but the threshold is a coarse switch
-    not a hard budget — over-counting is acceptable since false-positive
-    promotion just exercises RLM unnecessarily without breaking results.
-    """
-    total = 0
-    for v in agent_input.values():
-        try:
-            total += len(str(v))
-        except Exception:
-            continue
-    return total
-
-
-def _maybe_promote_to_rlm(agent_name: str, agent_input: Dict[str, Any]) -> None:
-    """Stamp ``agent_input["rlm"]`` to enable RLM when payload is large.
-
-    Idempotent: if the caller already supplied an ``rlm`` field (any value,
-    including ``None`` for explicit opt-out), this is a no-op. Disabled
-    entirely via ``COGNIVERSE_ORCH_RLM_PROMOTION=disabled``.
-    """
-    enforcement = _os.environ.get("COGNIVERSE_ORCH_RLM_PROMOTION", "").lower()
-    if enforcement == "disabled":
-        return
-
-    # Strip the ``_agent`` suffix for membership checks so callers can pass
-    # either form.
-    canonical = agent_name if agent_name.endswith("_agent") else f"{agent_name}_agent"
-    if canonical not in _RLM_PROMOTABLE_AGENTS:
-        return
-
-    if "rlm" in agent_input:
-        # Caller's explicit choice wins.
-        return
-
-    try:
-        threshold_pct = float(
-            _os.environ.get(
-                "COGNIVERSE_ORCH_RLM_PROMOTION_FRACTION",
-                _RLM_PROMOTION_DEFAULT_FRACTION,
-            )
-        )
-    except (TypeError, ValueError):
-        threshold_pct = _RLM_PROMOTION_DEFAULT_FRACTION
-    cutoff = int(_RLM_PROMOTION_DEFAULT_THRESHOLD * threshold_pct)
-
-    projected = _projected_payload_chars(agent_input)
-    if projected < cutoff:
-        return
-
-    agent_input["rlm"] = {
-        "enabled": True,
-        "auto_detect": True,
-        "context_threshold": _RLM_PROMOTION_DEFAULT_THRESHOLD,
-    }
-    logger.info(
-        "Orchestrator promoted %s to RLM (projected_chars=%d, cutoff=%d)",
-        canonical,
-        projected,
-        cutoff,
-    )
 
 
 def _merge_enrichment(
@@ -796,12 +714,8 @@ class OrchestratorAgent(
         if isinstance(input, dict):
             input = OrchestratorInput(**input)
 
-        # opt-in deep-synthesis path. When the caller asks for
-        # ``synthesis_depth=deep`` the orchestrator dispatches through
-        # the recursive workflow instead of the default plan-then-act
-        # path. The workflow owns its own per-tenant rate limit + hard
-        # call cap; on any failure we fall back to the default path so
-        # the request still completes.
+        # Workflow owns its own per-tenant rate limit + hard call cap; on
+        # any failure fall back to plan-then-act so the request still completes.
         if (input.synthesis_depth or "").lower() == "deep":
             workflow = self._build_deep_synthesis_workflow()
             if workflow is not None:
@@ -858,10 +772,6 @@ class OrchestratorAgent(
                 execution_summary="No execution performed",
             )
 
-        # Bound concurrent orchestrations — each fans out to 5+ sub-agent
-        # calls, and unrestricted concurrency saturates the shared httpx
-        # pool, the FastAPI worker pool, and the event loop. Waiters queue
-        # here instead of stacking load on downstream services.
         sem = _get_orchestration_semaphore()
         async with sem:
             return await self._process_impl_locked(
@@ -1246,14 +1156,8 @@ class OrchestratorAgent(
                     if dep_result:
                         _merge_enrichment(agent_input, dep_agent, dep_result)
 
-                # RLM promotion. When the projected payload size for a
-                # sub-agent exceeds a threshold, stamp ``rlm.enabled=True``
-                # in agent_input so RLM-aware sub-agents (search, deep
-                # research, detailed report, coding) recursively decompose
-                # their context instead of jamming everything into one
-                # prompt. Skips if the caller already opted in/out via an
-                # explicit ``rlm`` field, or if the agent is the orchestrator
-                # itself (no recursive promotion).
+                # Skips if caller set explicit ``rlm`` field, or if the agent
+                # is the orchestrator itself (no recursive promotion).
                 _maybe_promote_to_rlm(agent_name, agent_input)
 
                 # Call agent via HTTP — payload must satisfy AgentTask schema:

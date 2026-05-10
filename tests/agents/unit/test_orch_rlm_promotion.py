@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from cogniverse_agents.orchestrator_agent import (
+from cogniverse_agents._rlm_promotion import (
     _RLM_PROMOTION_DEFAULT_THRESHOLD,
-    _maybe_promote_to_rlm,
     _projected_payload_chars,
+)
+from cogniverse_agents._rlm_promotion import (
+    maybe_promote_to_rlm as _maybe_promote_to_rlm,
 )
 
 

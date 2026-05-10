@@ -51,10 +51,7 @@ class AgentDispatcher:
         self._config_manager = config_manager
         self._schema_loader = schema_loader
         self._sandbox_manager = sandbox_manager
-        # Canary wire — when this factory is provided, dispatch consults
-        # the per-tenant canary state machine before calling the agent.
-        # Without it, no canary routing — every request gets the active
-        # artefacts.
+        # When None, no canary routing — every request gets active artefacts.
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
 
@@ -80,12 +77,10 @@ class AgentDispatcher:
             logger.debug("set_tenant_for_context failed for %s: %s", agent_name, exc)
 
         sys_cfg = self._config_manager.get_system_config()
-        # Prefer llm_config.primary.model (authoritative, set via chart
-        # values) over SystemConfig.llm_model (dataclass default that drifts
-        # from the chart — was a config drift between in-process model id and chart-deployed model).
-        # Strip the provider prefix: Mem0's openai provider expects just
-        # the model name ("gemma4:e2b"), and the OAI-compat /v1 endpoint adds
-        # its own routing.
+        # Prefer llm_config.primary.model over SystemConfig.llm_model — the
+        # latter is a dataclass default that drifts from the chart.
+        # Strip provider prefix: Mem0's openai provider wants just the model
+        # name; the OAI-compat /v1 endpoint adds its own routing.
         from cogniverse_foundation.config.utils import get_config
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
@@ -340,12 +335,8 @@ class AgentDispatcher:
             )
             return None
 
-        # Resolve the tenant's selected signature variant for this agent
-        # from the admin-runtime override dict (PUT
-        # /admin/tenants/{t}/signature_variants/{agent}). Falls back to
-        # the default variant when no admin selection exists. This is the
-        # consumer for the variant-selection admin endpoint that was
-        # previously a write-only black hole.
+        # Consumer for PUT /admin/tenants/{t}/signature_variants/{agent};
+        # falls back to default when no admin selection exists.
         variant_id = self._resolve_signature_variant(tenant_id, agent_name)
 
         try:
@@ -468,10 +459,6 @@ class AgentDispatcher:
             context.get("tenant_id"), source="AgentTask.context"
         )
 
-        # Consult the canary state machine for this request.
-        # The result is stashed in context for downstream agent constructors
-        # that opt into per-request artefact loading; agents that ignore it
-        # see no behaviour change.
         request_seed = str(
             context.get("request_id") or context.get("request_seed") or ""
         )
@@ -529,11 +516,6 @@ class AgentDispatcher:
         elif "coding" in capabilities:
             result = await self._execute_coding_task(query, tenant_id, context)
         else:
-            # Generic A2A dispatch — any registered agent can be called.
-            # Import the agent class from its registered path, instantiate,
-            # and call _process_impl. This is how preprocessing agents
-            # (entity_extraction, query_enhancement, profile_selection)
-            # are executed when the OrchestratorAgent calls them via HTTP.
             result = await self._execute_generic_agent(
                 agent_name, query, context, tenant_id
             )
@@ -654,12 +636,8 @@ class AgentDispatcher:
         agent._artifact_tenant_id = tenant_id
         if hasattr(agent, "_load_artifact"):
             agent._load_artifact()
-        # Hand the per-request canary/variant overlay to the agent so its
-        # load path can prefer the dispatcher's chosen prompts over its
-        # default-loaded ones. ``set_dispatched_artefact`` lives on
-        # MemoryAwareMixin; agents that don't inherit the mixin silently
-        # no-op (the dispatch context overlay is just dropped for them —
-        # no regression vs the previous always-default path).
+        # ``set_dispatched_artefact`` lives on MemoryAwareMixin; non-mixin
+        # agents silently no-op (overlay dropped, falling back to defaults).
         self._apply_artefact_overlay(agent, context)
 
         # Find the Input class — convention: same module, class name ends with "Input"
@@ -691,12 +669,9 @@ class AgentDispatcher:
                 input_kwargs[key] = context[key]
 
         typed_input = input_cls(**input_kwargs)
-        # Stamp the per-request session id onto the agent for the duration
-        # of this call so EPHEMERAL_SESSION-kind writes pass schema
-        # validation without each agent having to read context["session_id"]
-        # itself. The mixin auto-stamps metadata.session_id from this
-        # field on every add_memory() call. Cleared in finally so the
-        # next request on the same agent instance doesn't inherit it.
+        # EPHEMERAL_SESSION writes need metadata.session_id to pass schema
+        # validation; mixin auto-stamps it from this field. Cleared on exit
+        # so the next request on the same agent instance doesn't inherit it.
         with self._scoped_session(agent, context.get("session_id")):
             result = await agent.process(typed_input)
 
@@ -846,10 +821,7 @@ class AgentDispatcher:
         enrichment: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        # Consult the egress policy AND verify the agent's known outbound
-        # destinations (Vespa, LLM endpoint) are on the allow list. Drift
-        # surfaces as a logged warning here; cluster-level CNI enforcement
-        # is the kernel deny.
+        # Drift surfaces as a logged warning here; CNI is the kernel deny.
         self.consult_egress_policy("search_agent")
         self._verify_search_egress(tenant_id)
 
@@ -1080,10 +1052,8 @@ class AgentDispatcher:
             except Exception as e:
                 logger.debug("WorkflowIntelligence init failed (non-fatal): %s", e)
 
-        # When an OpenShell policy is registered for orchestrator_agent,
-        # build the A2A-call httpx client through the policy-enforcing
-        # transport so the orchestrator can only dial endpoints declared in
-        # configs/agent_policies/orchestrator_agent.yaml. Falls back to the
+        # Policy-enforcing client restricts outbound A2A calls to endpoints in
+        # configs/agent_policies/orchestrator_agent.yaml; falls back to the
         # loop-shared client when no sandbox manager / no policy is present.
         orch_http_client = None
         if self._sandbox_manager is not None:
