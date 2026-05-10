@@ -89,7 +89,16 @@ def wired_app(
     config_manager.set_profile_change_listener(None)
 
 
-def _wait_for_vespa_schema(vespa_url: str, schema: str, timeout: float = 30.0) -> None:
+def _wait_for_vespa_schema(vespa_url: str, schema: str, timeout: float = 120.0) -> None:
+    """Poll until ``schema`` is queryable.
+
+    The 30s default that was here before regularly missed the deadline on
+    sessions where the test container had served many earlier writes; the
+    content cluster's prepareandactivate cycle for a freshly-pushed schema
+    routinely runs 45-60s under load. 120s gives the round-trip room
+    without making the green path noticeably slower (it returns as soon
+    as the first query succeeds).
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         resp = requests.get(
