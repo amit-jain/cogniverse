@@ -237,11 +237,16 @@ class TestMem0VespaIntegration:
 
         wait_for_vespa_indexing(delay=1)
 
-        # Add memory with factual content that Mem0 will store
+        # CRUD test: store the literal content (infer=False) so the result
+        # doesn't depend on whether the configured LM decides the input is
+        # memorable enough to extract. Small models occasionally return an
+        # empty results list under infer=True for short inputs, which makes
+        # this delete-path test flaky for reasons unrelated to delete.
         memory_id = memory_manager.add_memory(
             content="User actively plays chess on Sundays and has an Elo rating of 1800",
             tenant_id="test_tenant",
             agent_name="delete_test_agent",
+            infer=False,
         )
 
         assert memory_id is not None

@@ -46,6 +46,15 @@ requires_vllm_colpali = pytest.mark.skipif(
     reason="vllm_colpali inference pod not configured (set INFERENCE_SERVICE_URLS)",
 )
 
+requires_videoprism_jax = pytest.mark.skipif(
+    not _service_configured("videoprism_jax"),
+    reason=(
+        "videoprism_jax inference pod not configured — build with "
+        "`docker build -t cogniverse/videoprism:dev deploy/videoprism/` "
+        "and the conftest will spawn the sidecar at session start"
+    ),
+)
+
 
 @pytest.mark.integration
 @pytest.mark.requires_cv2
@@ -320,6 +329,7 @@ class TestVespaBackendIngestion:
 
     @pytest.mark.local_only
     @pytest.mark.requires_videoprism
+    @requires_videoprism_jax
     @skip_heavy_models_in_ci
     @skip_if_low_memory
     @pytest.mark.asyncio
