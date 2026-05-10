@@ -55,11 +55,85 @@ def _row(
     return {"id": mid, "memory": content, "metadata": meta}
 
 
+class _StubProvenanceStore:
+    """In-memory ProvenanceStore that walks rows_by_id's provenance chains.
+
+    Implements the contract ProvenanceWalker depends on:
+      ``walk(root, max_depth, max_nodes) → (ordered, primary_sources, truncated)``
+      ``get(memory_id) → ProvenanceRecord | None``
+    """
+
+    def __init__(self, rows_by_id: Dict[str, Dict[str, Any]]):
+        self._rows = rows_by_id
+
+    def _record(self, mid: str):
+        from cogniverse_core.memory.provenance import (
+            CitationRef,
+            DerivationKind,
+            Provenance,
+        )
+        from cogniverse_core.memory.provenance_store import ProvenanceRecord
+
+        row = self._rows.get(mid)
+        if row is None:
+            return None
+        prov_meta = (row.get("metadata") or {}).get("provenance")
+        if not prov_meta:
+            return None
+        derived_from = [
+            CitationRef.memory(d["ref_id"]) for d in prov_meta.get("derived_from") or []
+        ]
+        provenance = Provenance(
+            written_by=prov_meta["written_by"],
+            written_at=prov_meta["written_at"],
+            derived_from=derived_from,
+            derivation_kind=DerivationKind(prov_meta["derivation_kind"]),
+            confidence=prov_meta.get("confidence", 0.5),
+            trace_id=prov_meta.get("trace_id"),
+        )
+        return ProvenanceRecord.from_provenance(mid, "acme", provenance)
+
+    def get(self, memory_id: str):
+        return self._record(memory_id)
+
+    def walk(self, root: str, *, max_depth: int = 10, max_nodes: int = 100):
+        from cogniverse_core.memory.provenance import CitationRef
+
+        ordered: List = []
+        visited = set()
+        primary: List = []
+        truncated = False
+        frontier = [(root, 0)]
+        while frontier:
+            mid, depth = frontier.pop(0)
+            if mid in visited:
+                continue
+            if len(ordered) >= max_nodes:
+                truncated = True
+                break
+            visited.add(mid)
+            ordered.append((mid, depth))
+            rec = self._record(mid)
+            if rec is None or not rec.derived_from_memory_ids:
+                primary.append(CitationRef.memory(mid))
+                continue
+            if depth >= max_depth:
+                truncated = True
+                # Children not walked, but the current node still in
+                # primary list since its children were not explored.
+                primary.append(CitationRef.memory(mid))
+                continue
+            for child_id in rec.derived_from_memory_ids:
+                frontier.append((child_id, depth + 1))
+        return ordered, primary, truncated
+
+
 def _factory_for(rows_by_id: Dict[str, Dict[str, Any]]):
     def _factory(tenant_id: str):
         mm = MagicMock()
         mm.memory = MagicMock()
         mm.memory.get = lambda memory_id: rows_by_id.get(memory_id)
+        mm.provenance_store = _StubProvenanceStore(rows_by_id)
         return mm
 
     return _factory
