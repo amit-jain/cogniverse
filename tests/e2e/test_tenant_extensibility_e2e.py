@@ -1,7 +1,7 @@
 """E2E tests for tenant extensibility on k3d.
 
 Tests instructions, memories, jobs, search, and agent behavior against
-the live runtime stack with real Vespa, Ollama, and agents. All
+the live runtime stack with real Vespa, LM, and agents. All
 assertions verify actual behavior, not just HTTP status codes.
 """
 

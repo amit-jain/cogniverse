@@ -156,7 +156,7 @@ class TestDSPyOptimizerIntegration:
 
     @pytest.mark.unit
     def test_optimizer_with_local_llm(self):
-        """Test DSPy optimizer with real local Ollama LLM."""
+        """Test DSPy optimizer against the configured LM."""
         optimizer = DSPyAgentPromptOptimizer()
 
         from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model

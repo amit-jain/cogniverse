@@ -98,7 +98,7 @@ class TestAllowList:
         async with httpx.AsyncClient(transport=transport) as client:
             with pytest.raises(EgressDeniedError):
                 await client.get("http://localhost:8080/")
-            # Ollama still allowed.
+            # local LM endpoint still allowed.
             resp = await client.get("http://localhost:11434/")
             assert resp.status_code == 200
 

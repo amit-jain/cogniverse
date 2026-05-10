@@ -1,7 +1,7 @@
 """Unit tests for the tenant extensibility router.
 
 All external dependencies (ConfigManager, Mem0MemoryManager) are mocked
-so the tests run without a live Vespa or Ollama instance.
+so the tests run without live Vespa or LM instances.
 """
 
 from datetime import datetime

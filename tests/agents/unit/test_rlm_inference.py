@@ -237,7 +237,7 @@ class TestSumTrackerTokens:
 
         class FakeTracker:
             usage_data = {
-                "ollama/llama3.2": [
+                "openai/test-model": [
                     {
                         "total_tokens": 150,
                         "prompt_tokens": 100,
@@ -272,7 +272,7 @@ class TestSumTrackerTokens:
 
         class FakeTracker:
             usage_data = {
-                "ollama/llama3.2": [{"total_tokens": 100}],
+                "openai/test-model": [{"total_tokens": 100}],
                 "openai/gpt-4o": [
                     {"prompt_tokens": 50, "completion_tokens": 50},
                 ],
@@ -434,13 +434,13 @@ class TestRLMInference:
         assert rlm.max_llm_calls == 20
         assert rlm._rlm is None  # Lazy initialization
 
-    def test_configure_lm_ollama(self):
-        """Should configure DSPy LM for Ollama backend."""
+    def test_configure_lm_litellm_provider(self):
+        """Should configure DSPy LM for any litellm provider prefix."""
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
-        rlm = RLMInference(llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"))
+        rlm = RLMInference(llm_config=LLMEndpointConfig(model="openai/test-model"))
 
-        assert rlm.model == "ollama/qwen2.5:1.5b"
+        assert rlm.model == "openai/test-model"
 
 
 class TestSearchInputWithRLM:

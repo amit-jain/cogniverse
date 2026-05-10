@@ -266,7 +266,7 @@ def _kubectl_main_container_log(workflow_name: str) -> str:
 @pytest.mark.slow
 class TestManualOptimizationDeepE2E:
     """Deep integration: submit a Workflow, wait for it to run to completion
-    against real Phoenix/Vespa/Ollama, and assert on the real artifact.
+    against real Phoenix/Vespa/LM, and assert on the real artifact.
 
     Runs optimization_cli --mode gateway-thresholds end-to-end inside the
     k3d cluster. The optimizer queries Phoenix for real gateway spans,
@@ -287,7 +287,7 @@ class TestManualOptimizationDeepE2E:
         assert submit.status_code == 200, submit.text
         workflow_name = submit.json()["workflow_name"]
 
-        # On CPU Ollama (laptop), the optimizer makes 80+ DSPy LM calls
+        # On CPU-served LM (laptop), the optimizer makes 80+ DSPy LM calls
         # while computing thresholds — each ~30-60s. 1800s covers the
         # worst case; 600s consistently saw the workflow still Running
         # at the deadline.

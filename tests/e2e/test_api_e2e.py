@@ -2,7 +2,7 @@
 E2E API tests exercising routing, search, tenant CRUD, agent registry,
 A2A protocol, profile CRUD, ingestion, synthetic data, and event streaming.
 
-Requires live runtime at http://localhost:28000 with Ollama + Vespa + Phoenix.
+Requires live runtime at http://localhost:28000 with LM + Vespa + Phoenix.
 Uses flywheel_org:production tenant which has ingested data.
 
 Architecture note (A2A gateway):
@@ -241,7 +241,7 @@ class TestQueryEnhancementViaGateway:
 
         This query is classified 'complex' by the gateway and hands off to the
         OrchestratorAgent, which fires 5+ ChainOfThought LLM calls through
-        local Ollama on CPU. End-to-end latency on a dev k3d cluster regularly
+        the local LM on CPU. End-to-end latency on a dev k3d cluster regularly
         lands north of 10 minutes. The default 300s httpx timeout tripped
         before the orchestration could return a 200, so the test failed on
         ReadTimeout instead of surfacing the actual confidence score. Give

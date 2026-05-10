@@ -8,7 +8,7 @@ golden dataset, synthetic data, module optimization), and monitoring tabs.
 Requires:
 - Dashboard running at http://localhost:28501
 - Runtime at http://localhost:28000
-- Ollama, Vespa, Phoenix running
+- LM, Vespa, Phoenix running
 - flywheel_org:production tenant with ingested data
 """
 

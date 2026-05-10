@@ -5,7 +5,7 @@ Requires live k3d stack via `cogniverse up` with:
 - Runtime at localhost:28000 (Service NodePort, exposed via k3d loadbalancer)
 - Vespa at localhost:8080 (Service port directly)
 - Phoenix at localhost:26006 (Service NodePort)
-- Ollama at localhost:11434
+- the configured LM endpoint
 - Argo controller deployed
 
 Verifies:

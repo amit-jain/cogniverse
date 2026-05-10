@@ -111,7 +111,7 @@ class TestLearnedRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             reranker = LearnedReranker(
-                model="ollama/qwen2.5:3b",
+                model="openai/test-reranker",
                 config_manager=mock_config_manager,
                 tenant_id="test:unit",
             )
@@ -127,7 +127,7 @@ class TestLearnedRerankingIntegration:
 
             # Verify metadata
             assert reranked[0].metadata["reranking_score"] == 0.95
-            assert reranked[0].metadata["reranker_model"] == "ollama/qwen2.5:3b"
+            assert reranked[0].metadata["reranker_model"] == "openai/test-reranker"
 
     @pytest.mark.asyncio
     async def test_learned_reranker_with_local_model(
@@ -146,7 +146,7 @@ class TestLearnedRerankingIntegration:
             mock_arerank.return_value = mock_response
 
             reranker = LearnedReranker(
-                model="ollama/qwen2.5:3b",
+                model="openai/test-reranker",
                 config_manager=mock_config_manager,
                 tenant_id="test:unit",
             )
@@ -286,18 +286,18 @@ class TestHybridRerankingIntegration:
 
 
 @pytest.mark.unit
-class TestOllamaReranking:
-    """Test Ollama reranking via OpenAI-compatible API"""
+class TestRerankingOAICompat:
+    """Test reranking via OpenAI-compatible local LM API"""
 
     @pytest.mark.asyncio
-    async def test_ollama_reranker_with_mock_api(
+    async def test_reranker_with_mock_oai_api(
         self, sample_results, mock_config_manager
     ):
-        """Test Ollama reranking using LiteLLM OpenAI compatibility"""
+        """Test reranking using LiteLLM OpenAI-compat with a custom api_base"""
         from unittest.mock import Mock, patch
 
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
-            # Mock LiteLLM response with Ollama model
+            # Mock LiteLLM response with the configured model
             mock_response = Mock()
             mock_items = [
                 Mock(index=1, relevance_score=0.92),  # doc-2 first
@@ -306,7 +306,7 @@ class TestOllamaReranking:
             mock_response.results = mock_items
             mock_arerank.return_value = mock_response
 
-            # Initialize with Ollama model using OpenAI compatibility
+            # Initialize with the configured model using OpenAI compatibility
             reranker = LearnedReranker(
                 model="openai/bge-reranker-v2-m3",
                 config_manager=mock_config_manager,
@@ -317,7 +317,7 @@ class TestOllamaReranking:
             query = "machine learning tutorial"
             reranked = await reranker.rerank(query, sample_results, top_n=2)
 
-            # Verify LiteLLM was called with api_base for Ollama
+            # Verify LiteLLM was called with api_base for the local LM
             mock_arerank.assert_called_once()
             call_kwargs = mock_arerank.call_args.kwargs
             assert call_kwargs["model"] == "openai/bge-reranker-v2-m3"

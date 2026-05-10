@@ -374,7 +374,7 @@ class TestPhoenixExperimentPluginUtilities:
             "evaluator_name": "visual_judge",
             "evaluators": {
                 "visual_judge": {
-                    "provider": "ollama",
+                    "provider": "openai",
                     "model": "test_model",
                     "base_url": "http://localhost",
                     "api_key": "test_key",

@@ -1,7 +1,7 @@
 """
 E2E tests for multi-turn conversation support via REST and A2A protocols.
 
-Requires live runtime at http://localhost:28000 with Ollama + Vespa.
+Requires live runtime at http://localhost:28000 with LM + Vespa.
 Uses flywheel_org:production tenant which has ingested data.
 
 Tests validate:

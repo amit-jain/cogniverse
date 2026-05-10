@@ -346,7 +346,7 @@ class TestCliIndexWithGraph:
             (root / "guide.md").write_text(
                 "# System Overview\n\n"
                 "The ColPali model powers video retrieval in Cogniverse. "
-                "It uses Vespa as the storage backend and runs on Ollama for embeddings. "
+                "It uses Vespa as the storage backend and runs on the configured LM for embeddings. "
                 "The SearchAgent orchestrates queries across multiple profiles.\n\n"
                 "## Architecture\n\n"
                 "ColPali and VideoPrism are the two main encoders supported.\n"

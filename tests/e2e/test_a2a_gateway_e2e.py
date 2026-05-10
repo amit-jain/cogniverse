@@ -227,7 +227,7 @@ class TestGatewayComplexRouting:
         by the gateway regardless of whether the orchestrator succeeds.
 
         This test asserts only on the gateway classification, which does not
-        depend on Ollama or the orchestrator being healthy.  The query spans
+        depend on the LM or the orchestrator being healthy.  The query spans
         both video and document modalities which forces complexity regardless
         of GLiNER confidence.
         """
@@ -244,7 +244,7 @@ class TestGatewayComplexRouting:
 
         assert resp.status_code == 200, (
             f"Complex query failed with {resp.status_code}. "
-            f"E2E tests require orchestrator (Ollama) running."
+            f"E2E tests require orchestrator + LM running."
         )
         data = resp.json()
         assert data["status"] == "success"
@@ -255,7 +255,7 @@ class TestGatewayComplexRouting:
 
     def test_complex_query_triggers_orchestration(self):
         """A clearly complex query should route to the orchestrator when it is
-        healthy.  If the orchestrator returns 500 (e.g. Ollama not loaded),
+        healthy.  If the orchestrator returns 500 (e.g. LM not loaded),
         we still verify the gateway classification was correct.
         """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
@@ -274,7 +274,7 @@ class TestGatewayComplexRouting:
 
         assert resp.status_code == 200, (
             f"Complex query failed with {resp.status_code}. "
-            f"E2E tests require orchestrator (Ollama) running."
+            f"E2E tests require orchestrator + LM running."
         )
         data = resp.json()
         assert data["status"] == "success"

@@ -4,7 +4,7 @@ Integration tests for messaging gateway with real services.
 Tests the full flow: mock Telegram updates → gateway handler → real runtime API.
 Real Mem0 for conversation history. Real invite token flow.
 
-Requires: Runtime at localhost:28000, Ollama at localhost:11434.
+Requires: Runtime at localhost:28000, the configured LM endpoint.
 """
 
 import logging

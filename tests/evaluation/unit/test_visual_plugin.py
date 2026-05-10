@@ -96,7 +96,7 @@ class TestVisualEvaluatorPlugin:
         ):
             mock_config.return_value = {
                 "evaluators": {
-                    "test_judge": {"provider": "ollama", "model": "test_model"}
+                    "test_judge": {"provider": "openai", "model": "test_model"}
                 }
             }
 

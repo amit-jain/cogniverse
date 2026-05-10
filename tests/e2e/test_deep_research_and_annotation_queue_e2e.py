@@ -1,7 +1,7 @@
 """
 E2E tests for new features against the live runtime.
 
-Requires live runtime at http://localhost:28000 with Ollama + Vespa + Phoenix.
+Requires live runtime at http://localhost:28000 with LM + Vespa + Phoenix.
 Each test exercises the full HTTP round-trip through the actual ASGI app.
 
 Features tested:
@@ -24,7 +24,7 @@ class TestDeepResearchE2E:
     def test_deep_research_returns_structured_report(self):
         """POST /agents/deep_research_agent/process → structured research output."""
         # Deep research chains 3 DSPy calls (decompose → evaluate → synthesize)
-        # and each is 60-80s on CPU Ollama, so the 180s default was tight.
+        # and each is 60-80s on CPU-served LM, so the 180s default was tight.
         with httpx.Client(base_url=RUNTIME, timeout=600.0) as client:
             resp = client.post(
                 "/agents/deep_research_agent/process",

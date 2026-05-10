@@ -12,7 +12,7 @@ Requires live k3d stack via `cogniverse up` with:
 - kubectl context: k3d-cogniverse
 
 MARKED AS SLOW: the module fixture seeds ~80 DSPy spans via real agent calls
-(each is ~60-80s on CPU Ollama — the entire fixture takes ~2 hours). Run
+(each is ~60-80s on a CPU-served LM — the entire fixture takes ~2 hours). Run
 explicitly with `pytest -m slow tests/e2e/test_batch_optimization_e2e.py` on
 machines where the LLM is backed by a GPU or faster inference service.
 """
@@ -195,7 +195,7 @@ def generate_spans_for_batch_jobs():
 
     # Per-agent span count. BootstrapFewShot samples demos from these; the
     # project originally generated 100 per agent which takes ~9 hours on CPU
-    # Ollama. 20 per agent is enough to bootstrap 3-4 demos while keeping the
+    # the local LM. 20 per agent is enough to bootstrap 3-4 demos while keeping the
     # fixture under ~2 hours on CPU. Override via BATCH_SPAN_COUNT for
     # GPU-backed runs where 100+ is cheap.
     import os as _os
@@ -1230,7 +1230,7 @@ class TestArtifactLoadingRoundTrip:
         #    on the threshold value. Either path proves the agent started correctly.
         #    What we're testing: artifact loading didn't crash the agent.
         # Cold-started runtime: first gateway call walks the full
-        # GLiNER load + DSPy module compile + Ollama inference path,
+        # GLiNER load + DSPy module compile + LM inference path,
         # 60-180s on CPU. 120s timeout was too tight after the pod
         # delete; 600s gives margin without masking real hangs.
         resp = httpx.post(

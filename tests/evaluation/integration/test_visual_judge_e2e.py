@@ -57,7 +57,7 @@ def visual_judge(llm_endpoint, tmp_path, monkeypatch):
                 "model": model,
                 "base_url": llm_endpoint["base_url"],
                 # Leave api_key unset; provider SDKs (litellm, openai,
-                # anthropic, ollama) auto-resolve from their standard env
+                # anthropic, openai) auto-resolve from their standard env
                 # vars (OPENAI_API_KEY, ANTHROPIC_API_KEY, ...).
                 "api_key": None,
                 "frames_per_video": 3,

@@ -3,17 +3,17 @@ plus the provider-agnostic ``llm_endpoint`` fixture used by Inspect-AI-driven
 tests.
 
 The eval framework runs Inspect AI tasks via ``inspect_ai.eval(task,
-model=<provider_uri>)``. The provider URI (e.g. ``ollama/qwen3:4b``,
+model=<provider_uri>)``. The provider URI (e.g. ``openai/gpt-4o``,
 ``openai/gpt-4o``, ``vllm/...``) is configuration, not test code: tests must
 not hard-code one. ``llm_endpoint`` resolves it from, in order:
 
 1. Env vars ``COGNIVERSE_TEST_LLM_PROVIDER_URI`` (required) and
    ``COGNIVERSE_TEST_LLM_BASE_URL`` (optional, sets ``OPENAI_BASE_URL`` /
-   ``OLLAMA_HOST`` etc. for the chosen provider).
+   ``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY`` etc. for the chosen provider).
 2. JSON file at ``tests/evaluation/integration/resources/test_llm.json``
    (same keys as the env vars, lower-cased).
 3. ``llm_config.primary`` from ``configs/config.json`` — the same model the
-   rest of the project uses (typically ``ollama/qwen3:4b`` at
+   rest of the project uses (typically ``openai/gpt-4o`` at
    ``http://localhost:11434``). Skipping was the historical default but
    the project's other LLM tests all default to this same source, so
    diverging here just buried the suite behind an env var nobody set.
@@ -51,9 +51,9 @@ def _load_from_project_config() -> dict[str, Any] | None:
     into the same ``{provider_uri, base_url}`` dict the env-var path returns.
 
     The project config carries ``model`` as the LiteLLM-style provider URI
-    (``ollama/qwen3:4b``) and ``api_base`` as the endpoint. Inspect AI's
+    (``openai/gpt-4o``) and ``api_base`` as the endpoint. Inspect AI's
     provider plugins read base URLs from per-provider env vars
-    (``OLLAMA_HOST``, ``OPENAI_BASE_URL``, ...), which the ``llm_endpoint``
+    (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, ...), which the ``llm_endpoint``
     fixture already wires up downstream — same plumbing, lower friction."""
     if not _PROJECT_CONFIG.exists():
         return None
@@ -84,7 +84,7 @@ def _load_llm_config() -> dict[str, Any] | None:
     test_api_base = os.environ.get("TEST_LLM_API_BASE")
     if test_model and test_api_base:
         bare = test_model.split("/", 1)[1] if "/" in test_model else test_model
-        prefix = "openai" if test_api_base.rstrip("/").endswith("/v1") else "ollama"
+        prefix = "openai"
         return {"provider_uri": f"{prefix}/{bare}", "base_url": test_api_base}
 
     if _TEST_LLM_CONFIG.exists():
@@ -124,7 +124,6 @@ def llm_endpoint(monkeypatch_module):
         provider_prefix = config["provider_uri"].split("/", 1)[0].lower()
         env_var = {
             "openai": "OPENAI_BASE_URL",
-            "ollama": "OLLAMA_HOST",
             "vllm": "OPENAI_BASE_URL",
             "anthropic": "ANTHROPIC_BASE_URL",
         }.get(provider_prefix)

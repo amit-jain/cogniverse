@@ -10,7 +10,7 @@ Tests exercise the full path against the k3d cluster:
 Uses API for data setup (ingestion is slow), Playwright for UI verification
 (search results, annotation controls, tenant switching).
 
-Requires: k3d cluster running with Vespa, Runtime, and Ollama.
+Requires: k3d cluster running with Vespa, Runtime, and the configured LM.
 """
 
 import json
@@ -160,7 +160,7 @@ def _restart_runtime_if_unhealthy():
     busy with a long LLM call). The earlier implementation here issued a
     `kubectl rollout restart` whenever /health timed out within 5s, which
     created a new ReplicaSet mid-suite and cascaded dozens of subsequent
-    tests into 500/connection-refused. With OLLAMA_KEEP_ALIVE=-1 the model
+    tests into 500/connection-refused. With long keep-alive on the LM the model
     stays resident, so there's no longer any accumulated-model-load cost
     that would justify an in-suite pod restart.
     """
@@ -821,7 +821,7 @@ class TestLoadTesting:
     def test_burst_routing_requests(self):
         """Send 3 concurrent routing requests (laptop CPU can't sustain 5).
 
-        Originally 5 concurrent — but on CPU Ollama with k3d's nginx
+        Originally 5 concurrent — but on a CPU-served LM with k3d nginx
         loadbalancer in front of one runtime pod, ~3 of 5 connections
         were dropped with httpx.RemoteProtocolError before reaching
         uvicorn. Three concurrent fits comfortably; the test still
@@ -835,7 +835,7 @@ class TestLoadTesting:
         n_requests = len(queries)
 
         def _route(query: str) -> dict:
-            # Concurrent routing calls serialise through one CPU Ollama
+            # Concurrent routing calls serialise through one CPU-served LM
             # worker. Each call is 90-180s; the queued tail can sit for
             # ~10 min on a laptop. 1800s timeout covers the worst case.
             with httpx.Client(base_url=RUNTIME, timeout=1800.0) as client:

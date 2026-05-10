@@ -4,7 +4,7 @@ Reads values from the active config (``COGNIVERSE_CONFIG`` env var when set,
 else ``configs/config.json``) so tests use whatever the test session's
 materialised config dictates. The ``cogniverse_test_config`` autouse
 fixture in tests/conftest.py rewrites ``llm_config.primary`` to point at
-local Ollama (or whatever ``TEST_LLM_*`` envs override to) and exports
+the configured local LM (driven by ``TEST_LLM_*`` envs) and exports
 ``COGNIVERSE_CONFIG``; this module honours that.
 
 Never hardcode model / base URL in test fixtures — pass through here.
@@ -31,20 +31,20 @@ def _load_config() -> Dict[str, Any]:
 
 
 def get_llm_model() -> str:
-    """Return the Ollama-native LLM model name (no provider prefix)."""
-    model = (
-        _load_config()
-        .get("llm_config", {})
-        .get("primary", {})
-        .get("model", "ollama/qwen3:4b")
-    )
+    """Return the LM model id without litellm provider prefix."""
+    model = _load_config().get("llm_config", {}).get("primary", {}).get("model")
+    if not model:
+        raise RuntimeError(
+            "llm_config.primary.model missing from configs/config.json — "
+            "tests must source the LM model id from config, not a fallback default"
+        )
     if "/" in model:
         model = model.split("/", 1)[1]
     return model
 
 
 def get_llm_base_url() -> str:
-    """Return the Ollama API base URL with /v1 suffix for OpenAI compatibility."""
+    """Return the LM base URL with /v1 suffix for OpenAI compatibility."""
     api_base = (
         _load_config()
         .get("llm_config", {})
