@@ -74,6 +74,48 @@ def get_backend(vespa_instance, temp_config_manager, schema_loader):
     return _get_backend
 
 
+_KNOWN_BASE_SCHEMAS = (
+    "video_colpali_smol500_mv_frame",
+    "video_videoprism_base_mv_chunk_30s",
+    "agent_memories",
+    "knowledge_graph",
+    "wiki",
+)
+
+
+@pytest.fixture
+def wipe_non_protected_schemas(get_backend):
+    """Per-test fixture: wipes non-protected, tenant-scoped schemas before yield.
+
+    The conftest's ``vespa_instance`` hashes the conftest's ``__name__`` for
+    its port, so every module sharing this conftest lands on the same
+    container name. Schemas leaked by an earlier module (e.g.
+    ``agent_memories_dyn_roundtrip_*`` from
+    ``test_dynamic_profile_search_visibility.py``) survive into later
+    modules. The 4 tests below then hit the deploy safety check because
+    the registry singleton is fresh but Vespa still holds those schemas.
+    Tests opt in by requesting this fixture.
+    """
+    backend = get_backend("__bootstrap_cleanup__")
+    sm = backend.schema_manager
+    try:
+        deployed = sm.list_deployed_document_types()
+    except Exception:
+        return
+
+    for full_name in deployed:
+        if full_name in sm._PROTECTED_SCHEMAS:
+            continue
+        for base in _KNOWN_BASE_SCHEMAS:
+            if full_name.startswith(base + "_"):
+                tenant_id = full_name[len(base) + 1 :]
+                try:
+                    sm.delete_schema(tenant_id, base)
+                except Exception as e:
+                    logger.warning(f"per-test cleanup failed for {full_name}: {e}")
+                break
+
+
 @pytest.mark.integration
 @pytest.mark.ci_fast
 class TestSchemaRegistryDeployment:
@@ -461,7 +503,11 @@ class TestSharedSchemaRegistry:
     """
 
     def test_two_ingestion_backends_share_registry(
-        self, vespa_instance, temp_config_manager, schema_loader
+        self,
+        vespa_instance,
+        temp_config_manager,
+        schema_loader,
+        wipe_non_protected_schemas,
     ):
         """Two ingestion backends for different tenants share one registry.
 
@@ -540,7 +586,7 @@ class TestDeleteSchemaDirect:
         with pytest.raises(ValueError, match="base_schema_name is required"):
             backend.schema_manager.delete_schema("guard_empty", "")
 
-    def test_delete_schema_round_trip(self, get_backend):
+    def test_delete_schema_round_trip(self, get_backend, wipe_non_protected_schemas):
         """Deploy → delete_schema → schema gone from Vespa AND tombstoned."""
         backend = get_backend("single_delete")
         backend.schema_registry.deploy_schema(
@@ -576,7 +622,9 @@ class TestDeleteFailureSemantics:
     is aspirational.
     """
 
-    def test_vespa_failure_leaves_registry_untouched(self, get_backend, monkeypatch):
+    def test_vespa_failure_leaves_registry_untouched(
+        self, get_backend, monkeypatch, wipe_non_protected_schemas
+    ):
         """Inject a ``_deploy_package`` failure during delete_tenant_schemas.
 
         After the failure the registry must STILL have the schema entry —
@@ -613,7 +661,7 @@ class TestDeleteFailureSemantics:
         backend.schema_manager.delete_tenant_schemas("vespa_fail")
 
     def test_registry_tombstone_failure_does_not_block_vespa_removal(
-        self, get_backend, monkeypatch
+        self, get_backend, monkeypatch, wipe_non_protected_schemas
     ):
         """When ``unregister_schema`` fails AFTER Vespa removal, the
         schema must still be gone from Vespa (Vespa is authoritative).
