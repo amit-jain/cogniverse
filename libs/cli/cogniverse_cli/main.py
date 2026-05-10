@@ -101,13 +101,24 @@ _SERVICE_KUBECTL_RESOURCE: dict[str, str] = {
 }
 
 
-def _probe_host_llm(url: str = "http://localhost:11434/api/tags") -> bool:
-    """Return True if a local LLM endpoint responds at *url* within 3 seconds."""
-    try:
-        resp = httpx.get(url, timeout=3)
-        return resp.status_code == 200
-    except (httpx.HTTPError, OSError):
-        return False
+def _probe_host_llm(base: str = "http://localhost:11434") -> bool:
+    """Return True if any OAI-compatible LM endpoint responds at *base*.
+
+    Probes the native ``/api/tags`` listing endpoint (common on local LM
+    servers) and falls back to ``/v1/models`` (pure OAI-compat). Either
+    returning HTTP 200 within 3 seconds is treated as "local LM is up".
+    """
+    base = base.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    for path in ("/api/tags", "/v1/models"):
+        try:
+            resp = httpx.get(f"{base}{path}", timeout=3)
+            if resp.status_code == 200:
+                return True
+        except (httpx.HTTPError, OSError):
+            continue
+    return False
 
 
 def _llm_statefulset_exists() -> bool:
@@ -275,7 +286,9 @@ def up(
             set_values["llm.external.enabled"] = "true"
             set_values["llm.external.url"] = external_url
         else:
-            console.print("[cyan]No local Ollama detected, using builtin LLM.[/cyan]")
+            console.print(
+                "[cyan]No local LM detected on :11434, using builtin LLM.[/cyan]"
+            )
     elif llm_mode == "external":
         if llm_url:
             resolved_url = llm_url

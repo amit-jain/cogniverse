@@ -234,7 +234,7 @@ class DocumentAgent(
         """Lazy-resolve the shared semantic embedder.
 
         Delegates to the module-level factory so document and audio
-        agents share a single embedder — remote Ollama when
+        agents share a single embedder — the remote LM provider when
         ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
         in-process ``all-mpnet-base-v2``.
         """

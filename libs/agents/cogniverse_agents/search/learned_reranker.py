@@ -3,12 +3,12 @@ Learned Reranking using LiteLLM
 
 Provides unified interface for learned reranking models:
 - LiteLLM: Cohere, Together AI, Jina AI, Azure AI, AWS Bedrock, HuggingFace, etc.
-- Ollama: Local reranking models via OpenAI-compatible API (bge-reranker-v2-m3, mxbai-rerank-large-v2, etc.)
+- Local reranking models via any OpenAI-compatible endpoint (bge-reranker-v2-m3, mxbai-rerank-large-v2, etc.)
 - Model-agnostic: works with both cross-encoder and ColBERT style models
 - Simple configuration through config.json
 
 LiteLLM handles all models through unified API.
-For Ollama models, use "openai/<model_name>" with api_base set to Ollama endpoint.
+For local OAI-compat reranker servers, use "openai/<model_name>" with the api_base pointed at the server.
 """
 
 import logging
@@ -48,7 +48,7 @@ class LearnedReranker:
 
         Args:
             model: Model name (e.g., "cohere/rerank-english-v3.0", "openai/bge-reranker-v2-m3")
-                   For Ollama models, use "openai/<model_name>" with api_base set
+                   For local OAI-compat reranker servers, use "openai/<model_name>" with api_base set
                    If None, loads from config.json
             tenant_id: Tenant identifier for config scoping (required)
             config_manager: ConfigManager instance (required for dependency injection)
@@ -82,7 +82,7 @@ class LearnedReranker:
                 raise ValueError(
                     "LearnedReranker requires a learned model. "
                     "Set reranking.model in config.json to a supported model "
-                    "(cohere, together_ai, jina, ollama, etc.)"
+                    "(cohere, together_ai, jina, OAI-compat local servers, etc.)"
                 )
 
             self.model = supported_models.get(model_key)
@@ -96,7 +96,7 @@ class LearnedReranker:
         self.default_top_n = rerank_config.get("top_n")
         self.max_results_to_rerank = rerank_config.get("max_results_to_rerank", 100)
 
-        # Get api_base for OpenAI-compatible endpoints (Ollama)
+        # Get api_base for OpenAI-compatible endpoints
         self.api_base = rerank_config.get("api_base", None)
 
         logger.info(f"Initialized LearnedReranker with model: {self.model}")
@@ -134,7 +134,7 @@ class LearnedReranker:
 
         try:
             # Call LiteLLM rerank
-            # For Ollama models, LiteLLM uses OpenAI-compatible API with custom api_base
+            # For local OAI-compat reranker servers, LiteLLM uses the OpenAI-compatible API with a custom api_base
             kwargs = {
                 "model": self.model,
                 "query": query,
@@ -142,7 +142,7 @@ class LearnedReranker:
                 "top_n": effective_top_n,
             }
 
-            # Add api_base for OpenAI-compatible endpoints (Ollama)
+            # Add api_base for OpenAI-compatible endpoints
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
@@ -205,7 +205,7 @@ class LearnedReranker:
                 "top_n": effective_top_n,
             }
 
-            # Add api_base for OpenAI-compatible endpoints (Ollama)
+            # Add api_base for OpenAI-compatible endpoints
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 

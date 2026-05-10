@@ -1,8 +1,8 @@
-"""Pluggable semantic text embedder: local SentenceTransformer or remote Ollama.
+"""Pluggable semantic text embedder: local SentenceTransformer or remote OAI-compat embedder.
 
 `get_semantic_embedder()`:
 
-* Delegates to Ollama (or any OpenAI-compatible `/v1/embeddings`
+* Delegates to any OpenAI-compatible `/v1/embeddings`
   endpoint) when `COGNIVERSE_SEMANTIC_EMBED_URL` is set. Inference
   runs out of process; the runtime only holds a lightweight HTTP
   wrapper.
@@ -76,10 +76,10 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
     """HTTP client targeting an OpenAI-compatible ``/v1/embeddings`` endpoint.
 
     Works against any server that speaks the OpenAI embeddings API shape:
-    vLLM (continuous batching, parallel requests), Ollama 0.5+,
+    vLLM (continuous batching, parallel requests), OAI-compat embedding servers,
     text-embeddings-inference, Infinity. We default to this rather than
-    Ollama's native ``/api/embed`` so the same client works whether the
-    runtime points at a dedicated vLLM embed pod or a shared Ollama.
+    the same OAI-compat client works whether the
+    runtime points at a dedicated vLLM embed pod or a shared embedding service.
     """
 
     def __init__(self, base_url: str, model: str, timeout: float = 60.0):

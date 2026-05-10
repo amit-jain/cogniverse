@@ -184,7 +184,7 @@ def create_cluster(
 
     Each port gets a ``-p`` flag mapping it through the load balancer.
     Use *exclude_ports* to skip ports that are already in use on the host
-    (e.g., 11434 when host Ollama is running).
+    (e.g., 11434 when host LM is running).
     *workspace_path* mounts the project root into the k3d node at
     ``/cogniverse-src`` for devMode volume access.
 

@@ -123,7 +123,7 @@ class MemoryAwareMixin:
             llm_base_url: OpenAI-compatible LLM endpoint. ``/v1`` suffix
                 added automatically when missing.
             llm_api_key: API key sent to ``llm_base_url``; defaults to
-                ``"not-required"`` for local Ollama / vLLM.
+                ``"not-required"`` for OAI-compat local LM servers.
             config_manager: ConfigManager instance (REQUIRED for dependency injection)
             schema_loader: SchemaLoader instance (REQUIRED for dependency injection)
             backend_config_port: Backend config endpoint port (default: 19071)

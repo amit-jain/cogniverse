@@ -19,7 +19,7 @@ _KNOWN_PREFIXES = frozenset({"ollama", "ollama_chat", "hosted_vllm", "openai"})
 def bare_model_name(model: str) -> str:
     """Strip a leading known litellm provider prefix from ``model``.
 
-    ``ollama/qwen3:4b`` → ``qwen3:4b``
+    ``openai/gpt-4o`` → ``gpt-4o``
     ``hosted_vllm/Qwen/Qwen2.5-7B-Instruct`` → ``Qwen/Qwen2.5-7B-Instruct``
     ``Qwen/Qwen2.5-7B-Instruct`` → unchanged (HF org, not a known prefix)
     ``qwen3:4b`` → unchanged (no slash)

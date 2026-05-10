@@ -8,10 +8,14 @@ Provides three types of LLM-based evaluation:
 """
 
 import asyncio
+import base64
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+
+import httpx
 
 from .base import Evaluator, create_evaluation_result
 
@@ -32,98 +36,114 @@ class VideoMetadata:
 
 
 class LLMJudgeBase:
-    """Base class for LLM judge evaluators"""
+    """Base class for LLM judge evaluators.
+
+    Posts to any OAI-compatible ``/v1/chat/completions`` endpoint via
+    ``httpx`` — provider-agnostic. Multimodal images are encoded as
+    OpenAI-format ``image_url`` parts with ``data:image/...;base64,`` URIs,
+    which all major OAI-compat servers (vLLM, LM Studio, llama.cpp's
+    server, etc.) accept.
+    """
 
     def __init__(
         self,
         model_name: str,
         base_url: str = "http://localhost:11434",
+        api_key: str = "not-required",
     ):
         """
-        Initialize LLM judge
+        Initialize LLM judge.
 
         Args:
-            model_name: Model to use for evaluation. Must come from config —
-                callers must not rely on a hardcoded default, which would
-                silently mask `evaluators.llm_judge.model` being out of sync.
-            base_url: Base URL for LLM API (Ollama default)
+            model_name: Model id to send in the chat-completions request.
+                Must come from config — callers must not rely on a
+                hardcoded default, which would silently mask
+                ``evaluators.llm_judge.model`` being out of sync.
+            base_url: Base URL for the OAI-compat LM endpoint. The
+                ``/v1/chat/completions`` path is appended automatically;
+                a trailing ``/v1`` on the base is stripped first so callers
+                can pass either form.
+            api_key: Bearer token sent as ``Authorization: Bearer ...``.
+                Local LM servers ignore the value but most OAI clients
+                refuse to construct without one — pass the cogniverse
+                convention sentinel ``"not-required"`` for local servers.
         """
         self.model_name = model_name
-        self.base_url = base_url
-        self._client = None
+        normalized = base_url.rstrip("/")
+        if normalized.endswith("/v1"):
+            normalized = normalized[: -len("/v1")]
+        self.base_url = normalized
+        self.api_key = api_key
 
-    def _get_client(self):
-        """Get or create Ollama client"""
-        if self._client is None:
-            try:
-                from ollama import Client
-
-                self._client = Client(host=self.base_url)
-            except ImportError:
-                logger.warning("Ollama client not available, using mock responses")
-                self._client = None
-        return self._client
+    def _build_messages(
+        self,
+        prompt: str,
+        system_prompt: str | None,
+        encoded_images: list[str],
+    ) -> list[dict]:
+        messages: list[dict] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        if encoded_images:
+            content: list[dict] = [{"type": "text", "text": prompt}]
+            for img_b64 in encoded_images:
+                content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                    }
+                )
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": prompt})
+        return messages
 
     async def _call_llm(
-        self, prompt: str, system_prompt: str = None, images: list = None
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        images: list | None = None,
     ) -> str:
-        """
-        Call LLM with prompt and optional images for multimodal evaluation
+        """Call the configured LM via OAI-compat chat-completions.
 
         Args:
             prompt: User prompt
             system_prompt: System prompt for context
-            images: List of image file paths to load and encode
+            images: List of image file paths to load and encode for
+                multimodal evaluation. Files that don't exist are
+                logged and skipped.
 
         Returns:
-            LLM response text
+            LLM response text (empty string on transport failure — the
+            error is logged but doesn't propagate so a single judge
+            failure doesn't abort the whole evaluation batch).
         """
-        client = self._get_client()
+        encoded_images: list[str] = []
+        if images:
+            for img_path in images:
+                if isinstance(img_path, str) and Path(img_path).exists():
+                    with open(img_path, "rb") as img_file:
+                        encoded_images.append(
+                            base64.b64encode(img_file.read()).decode("utf-8")
+                        )
+                else:
+                    logger.warning(f"Image not found or invalid: {img_path}")
 
-        if client is None:
-            # Fail properly if Ollama not available
-            raise RuntimeError(
-                "Ollama client not available. Please install ollama and start the service."
-            )
+        messages = self._build_messages(prompt, system_prompt, encoded_images)
+        url = f"{self.base_url}/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        body = {"model": self.model_name, "messages": messages}
 
         try:
-            # Load and encode images if provided
-            encoded_images = []
-            if images:
-                import base64
-                from pathlib import Path
-
-                for img_path in images:
-                    if isinstance(img_path, str) and Path(img_path).exists():
-                        with open(img_path, "rb") as img_file:
-                            # Read and base64 encode the image
-                            img_data = base64.b64encode(img_file.read()).decode("utf-8")
-                            encoded_images.append(img_data)
-                    else:
-                        logger.warning(f"Image not found or invalid: {img_path}")
-
-            # For async compatibility, run in executor
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-
-            messages = []
-            if system_prompt:
-                messages.append({"role": "system", "content": system_prompt})
-
-            # Add images if provided (for multimodal models like llava, bakllava)
-            user_message = {"role": "user", "content": prompt}
-            if encoded_images:
-                user_message["images"] = encoded_images
-            messages.append(user_message)
-
-            response = await loop.run_in_executor(
-                None, lambda: client.chat(model=self.model_name, messages=messages)
-            )
-
-            return response["message"]["content"]
-
-        except Exception as e:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                resp = await client.post(url, json=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+            return data["choices"][0]["message"]["content"]
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as e:
             logger.error(f"LLM call failed: {e}")
             return f"Evaluation failed: {str(e)}"
 
@@ -182,7 +202,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
 
         Args:
             model_name: Multimodal model id from `evaluators.visual_judge.model`.
-            base_url: Ollama API URL
+            base_url: OAI-compat LM endpoint base URL
         """
         LLMJudgeBase.__init__(self, model_name, base_url)
 

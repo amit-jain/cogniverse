@@ -81,7 +81,7 @@ class AudioEmbeddingGenerator:
     def semantic_model(self):
         """Lazy-resolve the shared semantic embedder.
 
-        Returns a cached embedder — remote Ollama or local
+        Returns a cached embedder — remote LM provider or local
         SentenceTransformer — from the module-level factory. Every
         agent that calls this shares one backend instance instead of
         loading an independent ~400MB model per call site.

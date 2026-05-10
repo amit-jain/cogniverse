@@ -1607,7 +1607,7 @@ def run_egress_netpol(
         OpenShell sandbox enforcement.
 
     Why this exists: the agent policy YAMLs declare per-agent egress
-    constraints (Vespa for SearchAgent, Ollama for SummarizerAgent,
+    constraints (Vespa for SearchAgent, the configured LM for SummarizerAgent,
     etc.) but in-process Python enforcement is fundamentally weak — a
     compromised process can ``socket.connect`` past any httpx wrapper.
     NetworkPolicy is enforced in the kernel by the cluster's CNI
@@ -1980,7 +1980,7 @@ def main():
     #       --policy-dir configs/agent_policies/ \
     #       --output-dir charts/cogniverse/templates/networkpolicies/ \
     #       --service-map vespa=cogniverse/vespa-service:8080 \
-    #       --service-map ollama=cogniverse/ollama-service:11434
+    #       --service-map llm=cogniverse/llm-service:11434
     parser.add_argument(
         "--policy-dir",
         default="configs/agent_policies",

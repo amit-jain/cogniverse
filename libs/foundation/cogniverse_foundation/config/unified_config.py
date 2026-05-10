@@ -21,11 +21,11 @@ class LLMEndpointConfig:
     """
     Configuration for a single LLM endpoint.
 
-    Provider prefix is always explicit in model string (e.g., "ollama/smollm3:3b",
+    Provider prefix is always explicit in model string (e.g., "openai/gpt-4o",
     "openai/gpt-4o", "anthropic/claude-3-5-sonnet-20241022"). No auto-detection.
     Matches DSPy/LiteLLM convention.
 
-    api_key=None means no key needed (e.g., local Ollama).
+    api_key=None means no key needed (e.g., local OAI-compat servers).
     """
 
     model: str

@@ -82,9 +82,9 @@ class AgentDispatcher:
         sys_cfg = self._config_manager.get_system_config()
         # Prefer llm_config.primary.model (authoritative, set via chart
         # values) over SystemConfig.llm_model (dataclass default that drifts
-        # from the chart — was 'ollama/gemma3:4b' while chart used gemma4).
+        # from the chart — was a config drift between in-process model id and chart-deployed model).
         # Strip the provider prefix: Mem0's openai provider expects just
-        # the model name ("gemma4:e2b"), and the Ollama /v1 endpoint adds
+        # the model name ("gemma4:e2b"), and the OAI-compat /v1 endpoint adds
         # its own routing.
         from cogniverse_foundation.config.utils import get_config
 

@@ -199,7 +199,7 @@ class Mem0MemoryManager:
             embedding_model: Embedding model name for memory search
                 (DenseOn served by the colbert_pylate sidecar in dense mode)
             llm_base_url: LLM endpoint URL. Any OpenAI-compatible server
-                (Ollama, vLLM, OpenAI, hosted) works. ``/v1`` suffix is
+                (OAI-compat local servers, OpenAI, hosted) works. ``/v1`` suffix is
                 added automatically when missing.
             embedder_base_url: OpenAI-compatible /v1/embeddings endpoint —
                 separate from the LLM endpoint because the embedder always
@@ -207,7 +207,7 @@ class Mem0MemoryManager:
             config_manager: ConfigManager instance
             schema_loader: SchemaLoader instance
             llm_api_key: API key sent to ``llm_base_url``. Defaults to
-                ``"not-required"`` for local backends (Ollama, vLLM)
+                ``"not-required"`` for local OAI-compat backends
                 that don't authenticate; pass a real key for hosted
                 providers.
             backend_config_port: Backend config endpoint port (default: 19071)
@@ -351,9 +351,9 @@ class Mem0MemoryManager:
             )
 
         # Strip any litellm-style "provider/" prefix from model names — the
-        # OpenAI-compatible endpoint (Ollama, vLLM, etc.) expects the bare
-        # model name. Leaving "ollama/qwen3:4b" would make Ollama reply with
-        # "model 'ollama/qwen3:4b' not found". Use the foundation helper so
+        # OpenAI-compatible endpoint expects the bare
+        # model name. Leaving the litellm-prefixed model id would make the OAI-compat endpoint reply with
+        # "model not found". Use the foundation helper so
         # HuggingFace ``Org/Name`` ids (e.g. Qwen/Qwen2.5-7B-Instruct) keep
         # their org segment — only known DSPy provider prefixes are stripped.
         from cogniverse_foundation.dspy import bare_model_name
@@ -375,7 +375,7 @@ class Mem0MemoryManager:
             "api_key": "denseon",
         }
 
-        # All supported LLM backends (Ollama, vLLM, OpenAI, hosted) speak
+        # All supported LLM backends (OAI-compat local servers, OpenAI, hosted) speak
         # OpenAI-compatible /v1 chat completions, so we always use Mem0's
         # "openai" provider. Normalise the URL with a /v1 suffix when the
         # caller hasn't included one — matches the chart's primaryLLM

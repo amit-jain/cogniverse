@@ -636,7 +636,7 @@ class OrchestratorAgent(
             backend_url = bootstrap.backend_url
             backend_port = bootstrap.backend_port
 
-            # Extract provider from model string (e.g., "ollama/smollm3:3b" -> "ollama")
+            # Extract provider from model string (e.g., "openai/gpt-4o" -> "openai")
             provider = (
                 resolved.model.split("/")[0] if "/" in resolved.model else "local"
             )
