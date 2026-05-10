@@ -35,12 +35,12 @@ import httpx
 import pytest
 
 from cogniverse_agents.orchestrator_agent import (
+    _RLM_PROMOTION_DEFAULT_FRACTION,
+    _RLM_PROMOTION_DEFAULT_THRESHOLD,
     AgentStep,
     OrchestrationPlan,
     OrchestratorAgent,
     OrchestratorDeps,
-    _RLM_PROMOTION_DEFAULT_FRACTION,
-    _RLM_PROMOTION_DEFAULT_THRESHOLD,
 )
 from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry

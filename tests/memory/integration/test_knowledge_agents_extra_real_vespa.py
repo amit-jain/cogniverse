@@ -188,10 +188,16 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
         )
 
     answer_lower = answer_text.lower()
-    hits = [token for _content, token in seed_docs if token in answer_lower]
-    assert len(hits) >= 2, (
-        f"answer covered {hits!r} of expected {[t for _, t in seed_docs]!r}"
-        f"\nfull: {answer_text!r}"
+    assert "30 days" in answer_lower, answer_text
+    assert "14 days" in answer_lower or "14 additional" in answer_lower, answer_text
+    assert "digital" in answer_lower, answer_text
+    assert 150 <= len(answer_text) <= 1500, (
+        f"answer length {len(answer_text)} chars outside prose range "
+        f"[150, 1500]. answer={answer_text!r}"
+    )
+    assert answer_text.count(".") >= 2, (
+        f"answer has < 2 sentence terminators; fragment, not a synthesis. "
+        f"answer={answer_text!r}"
     )
     cited_ids = {
         ref["ref_id"] for ref in out.citation_refs if ref.get("ref_kind") == "memory"

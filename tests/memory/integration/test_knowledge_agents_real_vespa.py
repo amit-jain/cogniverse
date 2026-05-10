@@ -252,10 +252,24 @@ async def test_knowledge_summarises_real_subject_slice(
         )
 
     summary_lower = summary_text.lower()
-    hits = [token for _content, token in seed_facts if token in summary_lower]
-    assert len(hits) >= 2, (
-        f"summary covered {hits!r} of expected tokens "
-        f"{[t for _, t in seed_facts]!r}\nfull summary: {summary_text!r}"
+    # Each source's distinguishing fact appears in the summary, AND
+    # surrounded by enough context to prove it isn't word-salad.
+    # (token-only checks pass on garbage like "30 days 14 days digital".)
+    assert "30 days" in summary_lower, summary_text
+    assert "14 days" in summary_lower or "14 additional" in summary_lower, summary_text
+    assert "digital" in summary_lower, summary_text
+    # The summary is prose: long enough to contain the 3 facts in
+    # context, bounded so we catch a runaway repetition. Three short
+    # facts → ~150-1500 chars of natural prose.
+    assert 150 <= len(summary_text) <= 1500, (
+        f"summary length {len(summary_text)} chars outside the prose range "
+        f"[150, 1500]; either truncated/garbage or runaway. "
+        f"summary={summary_text!r}"
+    )
+    # Multi-sentence — a real synthesis of 3 facts is not one sentence.
+    assert summary_text.count(".") >= 2, (
+        f"summary has < 2 sentence terminators; likely a fragment, not a "
+        f"synthesis. summary={summary_text!r}"
     )
     cited = {ref.ref_id for ref in out.citation_refs}
     for mid in written_ids:
