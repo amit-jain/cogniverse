@@ -721,7 +721,7 @@ class OrchestratorAgent(
             orchestrator's HTTP path.
 
             Uses the orchestrator's existing http_client (which carries
-            the OpenShell policy-enforcing transport when D.1 is wired)
+            the OpenShell policy-enforcing transport when configured)
             to POST the sub-query to the agent's process_endpoint. The
             response's ``answer``/``output``/``content``/``result`` field
             is returned as the snippet — DeepSynthesisWorkflow appends
@@ -893,7 +893,7 @@ class OrchestratorAgent(
             input.conversation_history
         )
 
-        # Phase 1: Planning — fold gateway classification + workflow template
+        # Planning: fold gateway classification + workflow template
         # matches into a single hints string for the DSPy planner.
         self.emit_progress("planning", "Creating execution plan...")
         gateway_hints: List[str] = []
@@ -917,7 +917,7 @@ class OrchestratorAgent(
         self.active_workflows[workflow_id] = plan
 
         try:
-            # Phase 2: Action -- execute via A2A HTTP, passing tenant_id/session_id
+            # Action: execute via A2A HTTP, passing tenant_id/session_id.
             self.emit_progress("execution", "Executing agent plan...")
             agent_results = await self._execute_plan(
                 plan,

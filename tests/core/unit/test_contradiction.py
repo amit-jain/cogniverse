@@ -1,4 +1,4 @@
-"""Unit tests for A.3 — ContradictionDetector + reconciliation policies."""
+"""Unit tests for ContradictionDetector + reconciliation policies."""
 
 from __future__ import annotations
 
@@ -218,7 +218,7 @@ class TestReconcilePreserveBoth:
 
 class TestSentinelConstants:
     def test_sentinel_kind_and_agent_name(self):
-        # Pin matches A.6 pattern: a sentinel agent_name keeps these
+        # Pin matches the pin-record pattern: a sentinel agent_name keeps these
         # records out of normal-agent search results.
         assert CONFLICT_RECORD_KIND == "conflict_set"
         assert CONFLICT_AGENT_NAME == "_conflict_store"

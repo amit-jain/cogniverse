@@ -1080,10 +1080,10 @@ class AgentDispatcher:
             except Exception as e:
                 logger.debug("WorkflowIntelligence init failed (non-fatal): %s", e)
 
-        # D.1 — when an OpenShell policy is registered for orchestrator_agent,
+        # When an OpenShell policy is registered for orchestrator_agent,
         # build the A2A-call httpx client through the policy-enforcing
-        # transport so the orchestrator can only dial the endpoints declared
-        # in configs/agent_policies/orchestrator_agent.yaml. Falls back to the
+        # transport so the orchestrator can only dial endpoints declared in
+        # configs/agent_policies/orchestrator_agent.yaml. Falls back to the
         # loop-shared client when no sandbox manager / no policy is present.
         orch_http_client = None
         if self._sandbox_manager is not None:

@@ -53,8 +53,12 @@ def _factory_returning(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
 
 
 @pytest.mark.asyncio
-async def test_synthesises_across_documents():
-    """Two memory_ids → agent fetches via injected manager → cites both."""
+async def test_multi_doc_citation_refs_assembled_from_input_doc_ids():
+    """Verifies citation-refs assembly given fetched documents.
+    The DSPy LM is stubbed (no LM configured in this fixture); real-LM
+    + real-Vespa coverage lives in
+    test_knowledge_agents_extra_real_vespa.py::test_multi_doc_synthesis_real_vespa.
+    """
     from cogniverse_agents.multi_document_synthesis_agent import (
         DocumentRef,
         MultiDocSynthesisDeps,
@@ -73,7 +77,9 @@ async def test_synthesises_across_documents():
     agent = MultiDocumentSynthesisAgent(
         deps=MultiDocSynthesisDeps(tenant_id=TENANT),
     )
-    agent._dspy_module = MagicMock(return_value=MagicMock(answer="STUB-SYNTHESIS-OK"))
+    # LM is stubbed because this fixture has no real LM wired; the test
+    # asserts citation assembly, not synthesis quality.
+    agent._dspy_module = MagicMock(return_value=MagicMock(answer="x"))
     agent.memory_manager = fake_mm
     agent._memory_initialized = True
     agent._memory_tenant_id = TENANT
@@ -90,15 +96,12 @@ async def test_synthesises_across_documents():
             persist=False,
         )
     )
-    assert out.answer == "STUB-SYNTHESIS-OK"
 
-    # citation_refs is a list of dicts (Pydantic-serialized) at the agent
-    # output boundary; in-memory it's CitationRef. Handle both shapes.
     def _ref_id(r):
         return r.get("ref_id") if isinstance(r, dict) else r.ref_id
 
     cited_ids = {_ref_id(r) for r in out.citation_refs}
-    assert {"doc_a", "doc_b"}.issubset(cited_ids)
+    assert cited_ids == {"doc_a", "doc_b"}, cited_ids
 
 
 # ----- TemporalReasoningAgent -------------------------------------------
@@ -293,7 +296,12 @@ async def test_reconciles_real_conflict_set():
 
 
 @pytest.mark.asyncio
-async def test_summarises_real_subject_slice():
+async def test_summarisation_subject_slice_filters_and_counts():
+    """Verifies the subject-slice filter selects the right rows.
+    The DSPy LM is stubbed (no LM configured in this fixture); real-LM
+    + real-Vespa coverage lives in
+    test_knowledge_agents_real_vespa.py::test_knowledge_summarises_real_subject_slice.
+    """
     from cogniverse_agents.knowledge_summarization_agent import (
         KnowledgeSummarizationAgent,
         KnowledgeSummarizationDeps,
@@ -308,15 +316,22 @@ async def test_summarises_real_subject_slice():
         }
         for i in range(3)
     ]
+    # One off-subject row that must NOT appear in source_count.
+    rows.append(
+        {
+            "id": "off",
+            "memory": "off-subject fact",
+            "metadata": {"kind": "external_doc", "subject_key": "policy:other"},
+        }
+    )
     factory = _factory_returning({TENANT: rows})
     agent = KnowledgeSummarizationAgent(
         deps=KnowledgeSummarizationDeps(tenant_id=TENANT),
         memory_manager_factory=factory,
         registry=build_default_registry(),
     )
-    agent._dspy_module = MagicMock(
-        return_value=MagicMock(summary="STUB-SUMMARY-FROM-REAL-CTX")
-    )
+    # LM stubbed because no LM is wired in this fixture.
+    agent._dspy_module = MagicMock(return_value=MagicMock(summary="x"))
     out = await agent._process_impl(
         KnowledgeSummarizationInput(
             tenant_id=TENANT,
@@ -327,8 +342,11 @@ async def test_summarises_real_subject_slice():
             promote=False,
         )
     )
-    assert out.summary == "STUB-SUMMARY-FROM-REAL-CTX"
-    assert out.source_count == 3
+    assert out.source_count == 3, out.source_count
+    cited = {
+        r.ref_id if hasattr(r, "ref_id") else r.get("ref_id") for r in out.citation_refs
+    }
+    assert cited == {"k0", "k1", "k2"}, cited
 
 
 # ----- KnowledgeGraphTraversalAgent -------------------------------------

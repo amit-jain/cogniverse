@@ -2,7 +2,7 @@
 
 Without this CLI, ``RLMABRunner`` was an orphan class — no production
 code path ever ran the harness, so no Phoenix spans tied by
-``ab_id`` were ever emitted, and the dashboard tile envisioned in B.5
+``ab_id`` were ever emitted, and the dashboard tile envisioned in the dashboard
 had nothing to read.
 
 This test verifies, against a real Phoenix container:

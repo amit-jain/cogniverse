@@ -281,7 +281,7 @@ class TestProvenanceWalker:
 
 
 class TestSchemaIntegration:
-    """Provenance objects must satisfy A.1 schema's validate_provenance."""
+    """Provenance objects must satisfy the schema's validate_provenance."""
 
     def test_provenance_with_derived_from_passes_schema_check(self):
         from cogniverse_core.memory.schema import (

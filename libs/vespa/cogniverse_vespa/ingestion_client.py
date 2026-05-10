@@ -279,7 +279,7 @@ class VespaPyClient:
         # Add timestamp field (different schemas use different names and units)
         # Video schemas use milliseconds, memory schemas use seconds.
         # Honour a caller-supplied timestamp on doc.metadata before
-        # stamping now() — A.9 lifecycle tests need to back-date
+        # stamping now() — lifecycle tests need to back-date
         # ``created_at`` to age memories synthetically, and any other
         # caller that wants a specific timestamp (re-ingest, migration,
         # backfill) shouldn't have it silently overwritten with now().

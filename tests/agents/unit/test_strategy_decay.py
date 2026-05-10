@@ -1,4 +1,4 @@
-"""A.8 unit tests — bump-on-dedup, retrieval downweighting, retirement hook."""
+"""Unit tests — bump-on-dedup, retrieval downweighting, retirement hook."""
 
 from __future__ import annotations
 

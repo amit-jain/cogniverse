@@ -1,4 +1,4 @@
-"""A.7 integration — schema-driven lifecycle against real Mem0 + Vespa.
+"""schema-driven lifecycle against real Mem0 + Vespa.
 
 Seeds memories of three different kinds (one permanent, one ephemeral_days,
 one schema_driven) with manipulated ``created_at`` so the scheduler's tick

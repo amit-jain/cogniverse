@@ -39,7 +39,7 @@ def phoenix_env(phoenix_container, monkeypatch):
     yield
 
 
-# ----- A.6 pin-quota endpoints ----------------------------------------------
+# ----- pin-quota endpoints ----------------------------------------------
 
 
 class TestPinQuotaEndpoints:

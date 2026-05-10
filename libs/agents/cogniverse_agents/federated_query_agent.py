@@ -148,9 +148,11 @@ class FederatedQueryAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
+        from cogniverse_agents._mm_factory import make_mm_factory
+
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()
-        self._mm_factory = memory_manager_factory
+        self._mm_factory = make_mm_factory(memory_manager_factory)
         self._llm_config = llm_config
 
     async def _process_impl(self, input: FederatedQueryInput) -> FederatedQueryOutput:
@@ -178,11 +180,6 @@ class FederatedQueryAgent(
                         f"caller is in org={caller_org!r}; cross-org query "
                         "is forbidden"
                     )
-
-        if self._mm_factory is None:
-            from cogniverse_core.memory.manager import Mem0MemoryManager
-
-            self._mm_factory = lambda tid: Mem0MemoryManager(tenant_id=tid)
 
         federation = FederationService(self._mm_factory, self._registry)
         agent_filter = input.agent_name_filter or "_promoted"

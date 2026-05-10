@@ -9,10 +9,10 @@ Requires an OpenShell gateway (K3s cluster). The ``SandboxPolicy`` knob
 controls behaviour when the gateway is unreachable: ``required`` refuses
 to start, ``optional`` degrades with a warning, ``disabled`` skips entirely.
 
-D.4 — every sandbox lifecycle event (create_session, wait_ready, exec,
-delete) is wrapped in an OpenTelemetry span so Phoenix can correlate
-sandbox behaviour with the parent agent span. OOM and policy-denied
-errors are surfaced as span attributes from stderr / exit_code patterns.
+Every sandbox lifecycle event (create_session, wait_ready, exec, delete)
+is wrapped in an OpenTelemetry span so Phoenix can correlate sandbox
+behaviour with the parent agent span. OOM and policy-denied errors are
+surfaced as span attributes from stderr / exit_code patterns.
 """
 
 from __future__ import annotations
@@ -267,8 +267,8 @@ class SandboxManager:
     def make_http_client(self, agent_type: str, **client_kwargs: Any) -> Any:
         """Build an httpx.AsyncClient with policy enforcement for an agent.
 
-        D.1 — when an agent has a registered OpenShell policy, its outbound
-        HTTP traffic should be vetted against the policy's egress allow-list.
+        When an agent has a registered OpenShell policy, its outbound HTTP
+        traffic is vetted against the policy's egress allow-list.
         Agents that do not have a registered policy fall through to a plain
         ``httpx.AsyncClient`` (back-compat: existing callers keep working).
 

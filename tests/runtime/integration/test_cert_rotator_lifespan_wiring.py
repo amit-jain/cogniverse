@@ -1,4 +1,4 @@
-"""D.6 wiring — CertRotator is started by main.py lifespan and reacts to changes.
+"""CertRotator wiring — CertRotator is started by main.py lifespan and reacts to changes.
 
 Without this test, ``CertRotator`` was a class nobody instantiated. The
 test boots the real ``main.py`` lifespan (skipping the sandbox connect

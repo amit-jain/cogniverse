@@ -1,4 +1,4 @@
-"""B.5 dashboard tile — `load_ab_compare_data` reads real Phoenix spans.
+"""Dashboard tile — `load_ab_compare_data` reads real Phoenix spans.
 
 Tests the data path the Streamlit tile depends on. Streamlit's render
 layer is exercised in manual UI testing; this file covers the pure

@@ -1,8 +1,9 @@
 """
 Tenant Management API
 
-Provides CRUD operations for organizations and tenants.
-NO auth required in Phase 7.8 - auth integration deferred to Phase 8.
+Provides CRUD operations for organizations and tenants. Auth
+integration is not yet wired; the runtime currently trusts callers
+to pass tenant_id and actor identity in request bodies.
 
 Architecture:
 - org:tenant format ("acme:production")
@@ -55,7 +56,7 @@ router = APIRouter()
 # Standalone app (for running tenant_manager independently)
 app = FastAPI(
     title="Tenant Management API",
-    description="Organization and tenant CRUD operations (Phase 7.8 - no auth)",
+    description="Organization and tenant CRUD operations (auth not yet integrated)",
     version="1.0.0",
 )
 

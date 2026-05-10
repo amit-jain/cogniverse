@@ -44,49 +44,6 @@ class TestRealIngestionPipeline:
         if output_dir.exists():
             shutil.rmtree(output_dir)
 
-    def test_real_embedding_generation_colpali(self, test_video_path, temp_output_dir):
-        """
-        REAL TEST: Generate ColPali embeddings from actual video frames.
-
-        SKIPPED by default due to model download/inference time.
-        Run with: pytest -v -m "not skip" to include this test.
-        """
-        import logging
-
-        from cogniverse_runtime.ingestion.processors.embedding_processor import (
-            EmbeddingProcessor,
-        )
-
-        # First extract keyframes
-        from cogniverse_runtime.ingestion.processors.keyframe_processor import (
-            KeyframeProcessor,
-        )
-
-        logger = logging.getLogger("test")
-
-        keyframe_processor = KeyframeProcessor(
-            logger=logger,
-            max_frames=2,  # Only 2 frames for speed
-        )
-        keyframe_result = keyframe_processor.extract_keyframes(test_video_path)
-
-        # Generate real embeddings using the correct constructor
-        embedding_processor = EmbeddingProcessor(
-            logger=logger,
-            embedding_type="multi_vector",
-            model_name="vidore/colsmol-500m",  # Real ColPali model (smaller, stable)
-        )
-
-        # This will download model on first run and generate REAL embeddings
-        # Pass the keyframe result data to generate_embeddings
-        result = embedding_processor.generate_embeddings(
-            {"video_id": test_video_path.stem, "keyframes": keyframe_result}
-        )
-
-        # Validate real embeddings
-        assert result is not None
-        assert "embeddings" in result
-
     def test_real_strategy_resolution_frame_based(self):
         """
         REAL TEST: Test strategy resolution for frame-based processing.

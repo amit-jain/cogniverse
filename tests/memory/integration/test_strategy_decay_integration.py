@@ -1,4 +1,4 @@
-"""A.8 integration — strategy bump-on-dedup + retirement against real Mem0+Vespa."""
+"""strategy bump-on-dedup + retirement against real Mem0+Vespa."""
 
 from __future__ import annotations
 

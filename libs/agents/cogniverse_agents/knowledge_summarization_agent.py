@@ -194,7 +194,9 @@ class KnowledgeSummarizationAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
-        self._mm_factory = memory_manager_factory
+        from cogniverse_agents._mm_factory import make_mm_factory
+
+        self._mm_factory = make_mm_factory(memory_manager_factory)
         self._registry = registry or build_default_registry()
         self._llm_config = llm_config
         self._dspy_module = dspy.ChainOfThought(_SummarizationSignature)
@@ -232,16 +234,9 @@ class KnowledgeSummarizationAgent(
     async def _process_impl(
         self, input: KnowledgeSummarizationInput
     ) -> KnowledgeSummarizationOutput:
-        if self._mm_factory is None:
-            from cogniverse_core.memory.manager import Mem0MemoryManager
+        from cogniverse_agents._mm_factory import require_tenant_id
 
-            self._mm_factory = lambda tid: Mem0MemoryManager(tenant_id=tid)
-
-        tenant_id = input.tenant_id or getattr(self.deps, "tenant_id", None)
-        if not tenant_id:
-            raise ValueError(
-                "KnowledgeSummarizationAgent: no tenant_id on input or deps"
-            )
+        tenant_id = require_tenant_id(input, self.deps, "KnowledgeSummarizationAgent")
 
         rows = self._fetch_filtered(
             tenant_id,

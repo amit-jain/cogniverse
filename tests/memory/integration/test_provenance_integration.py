@@ -1,4 +1,4 @@
-"""A.2 integration — Provenance round-trips through real Mem0 + Vespa.
+"""Provenance round-trips through real Mem0 + Vespa.
 
 Verifies:
   * a Provenance attached via ``attach_to_metadata`` survives a Mem0 add /

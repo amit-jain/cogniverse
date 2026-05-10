@@ -1,6 +1,6 @@
 """soft-delete lifecycle: archive at TTL, restore, hard-delete at 2x TTL.
 
-Audit found A.9 was missing soft-delete entirely: the lifecycle
+Audit found this was missing soft-delete entirely: the lifecycle
 scheduler hard-deleted at TTL with no restore window. The plan
 required ``archived: bool`` with a 90-day undelete window before hard
 delete; default reads filter archived; admin restore endpoint surfaces

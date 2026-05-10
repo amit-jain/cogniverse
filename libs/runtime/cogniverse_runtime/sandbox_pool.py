@@ -1,9 +1,9 @@
 """SandboxSessionPool — reuse OpenShell sessions across exec calls.
 
 The original ``SandboxManager.exec_in_sandbox`` created and destroyed a
-sandbox session per call. With D.1 wiring every non-coding agent's
-outbound HTTP through the sandbox, that becomes a per-request container
-churn — unacceptable cost for a hot path.
+sandbox session per call. With every non-coding agent's outbound HTTP
+wired through the sandbox, that becomes a per-request container churn —
+unacceptable cost for a hot path.
 
 This pool keeps one ``(agent_type, session)`` slot per agent type, reuses
 it for subsequent calls, and destroys the session when it has been idle
@@ -261,7 +261,7 @@ class SandboxSessionPool:
             logger.debug("Pool destroy session failed (non-fatal): %s", exc)
 
     def _create_with_spans(self) -> Any:
-        """Create a session + wait for ready, emitting D.4-style spans."""
+        """Create a session + wait for ready, emitting sandbox lifecycle spans."""
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("sandbox.create_session"):
             session = self._client.create_session()

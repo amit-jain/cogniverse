@@ -252,7 +252,7 @@ class TestDefaultRegistrySeed:
         assert s.contradiction_policy is ContradictionPolicy.PRESERVE_BOTH
 
     def test_learned_strategy_uses_schema_driven_retention(self):
-        # A.7 will hook into this — strategies decay based on confirmation_count,
+        # The schema-driven lifecycle hook reads this — strategies decay based on confirmation_count,
         # not simple age, so retention is schema-driven.
         s = build_default_registry().get("learned_strategy")
         assert s.retention is Retention.SCHEMA_DRIVEN

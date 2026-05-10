@@ -1,4 +1,4 @@
-"""Unit tests for A.4 — TrustRecord, decay, endorsement, retrieval ranking."""
+"""Unit tests for TrustRecord, decay, endorsement, retrieval ranking."""
 
 from __future__ import annotations
 

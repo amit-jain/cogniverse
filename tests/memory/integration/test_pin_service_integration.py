@@ -1,4 +1,4 @@
-"""A.6 integration — PinService against real Mem0 + real Vespa.
+"""PinService against real Mem0 + real Vespa.
 
 Verifies pinning composes with the actual storage backend: pin records
 persist, list_pins reads them back, unpin removes them, and quota

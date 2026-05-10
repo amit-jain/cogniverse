@@ -51,7 +51,7 @@ AGENT = "h5_writer"
 
 @pytest.fixture(scope="module")
 def manager_with_registry(shared_memory_vespa, shared_denseon):
-    """Mem0 manager wired with the schema registry — enables A.3 detection."""
+    """Mem0 manager wired with the schema registry — enables contradiction detection."""
     Mem0MemoryManager._instances.clear()
     config_store = VespaConfigStore(
         backend_url="http://localhost",

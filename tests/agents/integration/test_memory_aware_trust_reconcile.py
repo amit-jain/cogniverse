@@ -1,6 +1,6 @@
 """get_relevant_context applies trust ranking + contradiction reconciliation.
 
-Without this wiring, A.4 (trust ranker) and A.3 (contradiction detector)
+Without this wiring, the trust ranker and contradiction detector
 were unreachable from the live retrieval path. Every query saw an
 unranked, unreconciled list.
 

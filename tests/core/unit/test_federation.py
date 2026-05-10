@@ -1,4 +1,4 @@
-"""Unit tests for A.5 — federation read + admin-gated promote."""
+"""Unit tests for federation read + admin-gated promote."""
 
 from __future__ import annotations
 

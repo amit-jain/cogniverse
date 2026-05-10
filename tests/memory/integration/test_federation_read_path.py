@@ -1,6 +1,6 @@
 """MemoryAwareMixin.get_relevant_context federates over org trunk.
 
-Audit found A.5 was half-shipped: FederationService existed but
+Audit found federation was half-shipped: FederationService existed but
 MemoryAwareMixin.get_relevant_context never called it. Org-trunk
 knowledge was invisible to every agent's normal read path. The plan
 explicitly required get_relevant_context to query both tenant and org

@@ -1,4 +1,4 @@
-"""Unit tests for D.5 — SandboxSessionPool reuses sessions across calls."""
+"""Unit tests for SandboxSessionPool reuses sessions across calls."""
 
 from __future__ import annotations
 

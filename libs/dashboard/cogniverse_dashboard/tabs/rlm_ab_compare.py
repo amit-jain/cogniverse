@@ -1,4 +1,4 @@
-"""B.5 dashboard tile — RLM A/B comparison spans.
+"""Dashboard tile — RLM A/B comparison spans.
 
 Reads ``rlm.ab_compare`` spans (emitted by ``cogniverse-optim --mode
 ab-compare``) from Phoenix and renders the per-row + aggregate view.

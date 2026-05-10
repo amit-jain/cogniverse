@@ -1,4 +1,4 @@
-"""Unit tests for B.6 — Orchestrator's RLM promotion of sub-agent payloads."""
+"""Unit tests for Orchestrator's RLM promotion of sub-agent payloads."""
 
 from __future__ import annotations
 

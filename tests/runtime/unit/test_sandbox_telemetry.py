@@ -1,4 +1,4 @@
-"""Unit tests for D.4 — sandbox lifecycle event telemetry."""
+"""Unit tests for sandbox lifecycle event telemetry."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def _build_manager_with_fake_client(client) -> SandboxManager:
 
 @pytest.fixture(autouse=True)
 def _disable_pool_for_d4_telemetry_tests(monkeypatch):
-    """D.4 tests assert per-call create/wait/delete spans — that's the
+    """These tests assert per-call create/wait/delete spans — that's the
     un-pooled lifecycle. The session pool reuses sessions across
     calls so create/wait fire only on first checkout and delete fires on
     eviction. Disable the pool here so each test sees the original
