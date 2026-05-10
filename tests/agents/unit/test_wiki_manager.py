@@ -459,6 +459,13 @@ class TestWikiLint:
 
     def test_clean_wiki_returns_zero_issues(self):
         # Fresh page, referenced, long content, recent timestamp.
+        # updated_at must be relative-to-now so the test doesn't go stale
+        # as the calendar advances past lint()'s 30-day threshold.
+        from datetime import datetime, timedelta, timezone
+
+        recent_iso = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        ).isoformat()
         topic_id = "wiki_topic_acme_production_healthy"
         results = [
             _make_mock_result(
@@ -466,7 +473,7 @@ class TestWikiLint:
                 "Healthy Topic",
                 "This page has plenty of content and is nicely up to date.",
                 page_type="topic",
-                updated_at="2026-04-04T00:00:00+00:00",
+                updated_at=recent_iso,
             ),
             _make_mock_result(
                 "session_001",

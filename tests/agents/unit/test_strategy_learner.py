@@ -253,12 +253,18 @@ class TestDeduplication:
         assert stored is True
         mock_memory_manager.add_memory.assert_called_once()
 
-    def test_skips_when_duplicate_exists(self, learner, mock_memory_manager):
-        # Simulate existing strategy with high overlap
+    def test_bumps_confirmation_when_duplicate_exists(self, learner, mock_memory_manager):
+        # Simulate existing strategy with high overlap and confirmation_count=1
         mock_memory_manager.search_memory.return_value = [
             {
+                "id": "mem_existing",
                 "memory": "I prefer the following approach for search: New unique strategy here I use this when always.",
-                "metadata": {"type": "strategy"},
+                "metadata": {
+                    "type": "strategy",
+                    "confirmation_count": 1,
+                    "trace_count": 5,
+                    "confidence": 0.7,
+                },
             }
         ]
         strategy = Strategy(
@@ -272,8 +278,18 @@ class TestDeduplication:
             trace_count=10,
         )
         stored = learner._store_strategy(strategy)
-        assert stored is False
-        mock_memory_manager.add_memory.assert_not_called()
+        # Production contract: dedup hit replaces the existing record with a
+        # bumped copy (delete-and-readd). Returns True; add_memory is called
+        # exactly once with confirmation_count = prior + 1 = 2.
+        assert stored is True
+        mock_memory_manager.delete_memory.assert_called_once()
+        mock_memory_manager.add_memory.assert_called_once()
+        readd_meta = mock_memory_manager.add_memory.call_args.kwargs["metadata"]
+        assert readd_meta["confirmation_count"] == 2, readd_meta
+        # trace_count accumulates: prior 5 + new 10 = 15
+        assert readd_meta["trace_count"] == 15, readd_meta
+        # confidence takes the max of the two
+        assert readd_meta["confidence"] == 0.8, readd_meta
 
     def test_text_overlap_identical(self):
         assert _text_overlap("hello world foo", "hello world foo") == 1.0
@@ -305,9 +321,14 @@ class TestStrategyRetrieval:
         )
         strategies = learner.get_strategies_for_agent("find the car", "search")
 
+        # Production contract: user + org results are merged then re-ranked
+        # by adjusted score (rank_strategies_with_decay). Org wins here
+        # because its score (0.9) > user's score (0.8); level is metadata
+        # for downstream display, not the ordering key.
         assert len(strategies) == 2
-        assert strategies[0]["_level"] == "user"
-        assert strategies[1]["_level"] == "org"
+        assert {s["_level"] for s in strategies} == {"user", "org"}
+        assert strategies[0]["_level"] == "org"
+        assert strategies[1]["_level"] == "user"
 
     def test_results_without_metadata_pass_filter(self, mock_memory_manager):
         """Backward compat: items stored without metadata.agent (e.g. legacy

@@ -150,6 +150,80 @@ class TestAttachExtract:
         assert extract_from_memory(memory) is None
 
 
+class _StubProvenanceStore:
+    """In-memory ProvenanceStore that walks memories[mid].metadata.provenance."""
+
+    def __init__(self, memories: Dict[str, Dict[str, Any]]):
+        self._memories = memories
+
+    def _record(self, mid: str):
+        from cogniverse_core.memory.provenance import (
+            DerivationKind,
+            Provenance,
+        )
+        from cogniverse_core.memory.provenance_store import ProvenanceRecord
+
+        row = self._memories.get(mid)
+        if row is None:
+            return None
+        prov_meta = (row.get("metadata") or {}).get("provenance")
+        if not prov_meta:
+            return None
+        derived_from = []
+        for d in prov_meta.get("derived_from") or []:
+            if d.get("ref_kind") == "memory":
+                derived_from.append(CitationRef.memory(d["ref_id"]))
+            else:
+                derived_from.append(CitationRef.external(d["ref_id"]))
+        provenance = Provenance(
+            written_by=prov_meta["written_by"],
+            written_at=prov_meta["written_at"],
+            derived_from=derived_from,
+            derivation_kind=DerivationKind(prov_meta["derivation_kind"]),
+            confidence=prov_meta.get("confidence", 0.5),
+            trace_id=prov_meta.get("trace_id"),
+        )
+        return ProvenanceRecord.from_provenance(mid, "t1", provenance)
+
+    def get(self, memory_id: str):
+        return self._record(memory_id)
+
+    def walk(self, root: str, *, max_depth: int = 10, max_nodes: int = 100):
+        ordered = []
+        visited = set()
+        primary = []
+        truncated = False
+        frontier = [(root, 0)]
+        while frontier:
+            mid, depth = frontier.pop(0)
+            if mid in visited:
+                continue
+            if len(ordered) >= max_nodes:
+                truncated = True
+                break
+            visited.add(mid)
+            ordered.append((mid, depth))
+            rec = self._record(mid)
+            if rec is None:
+                # Unknown memory_id: surface as a primary memory ref.
+                primary.append(CitationRef.memory(mid))
+                continue
+            # External refs surface as primary sources.
+            for ref_dict in rec.derived_from_other:
+                primary.append(CitationRef.from_dict(ref_dict))
+            if not rec.derived_from_memory_ids:
+                # Terminal memory node — also a primary source.
+                primary.append(CitationRef.memory(mid))
+                continue
+            if depth >= max_depth:
+                truncated = True
+                primary.append(CitationRef.memory(mid))
+                continue
+            for child_id in rec.derived_from_memory_ids:
+                frontier.append((child_id, depth + 1))
+        return ordered, primary, truncated
+
+
 class FakeManager:
     """In-memory Mem0 stub for walker tests."""
 
@@ -157,6 +231,7 @@ class FakeManager:
         self.memory = MagicMock()
         # Configure get() to return from the dict.
         self.memory.get.side_effect = lambda mid: memories.get(mid)
+        self.provenance_store = _StubProvenanceStore(memories)
 
 
 def _seed(

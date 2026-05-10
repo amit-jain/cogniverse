@@ -300,6 +300,9 @@ class TestDSPyOptimizerIntegration:
         mock_provider.datasets.get_dataset = AsyncMock(
             side_effect=KeyError("not found")
         )
+        # save_experiment now routes through append_to_dataset (creates the
+        # dataset on first call when get raises KeyError).
+        mock_provider.datasets.append_to_dataset = AsyncMock(return_value="ds-exp-123")
         mock_provider.experiments = Mock()
         mock_provider.experiments.create_experiment = AsyncMock(return_value="exp-123")
         mock_provider.experiments.log_run = AsyncMock(return_value="run-123")
