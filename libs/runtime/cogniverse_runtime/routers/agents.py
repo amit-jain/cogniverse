@@ -114,6 +114,7 @@ class AgentTask(BaseModel):
     # OrchestratorInput. Kept top-level so HTTP callers don't have to
     # nest it under context. Any value other than "deep" is ignored.
     synthesis_depth: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class AgentRegistrationData(BaseModel):
@@ -345,6 +346,8 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         dispatch_context["profiles"] = task.profiles
     if task.synthesis_depth is not None:
         dispatch_context["synthesis_depth"] = task.synthesis_depth
+    if task.session_id is not None:
+        dispatch_context["session_id"] = task.session_id
 
     try:
         return await dispatcher.dispatch(

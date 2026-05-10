@@ -222,3 +222,109 @@ async def test_two_dispatches_with_different_sessions_get_different_metadata(
     assert meta_a is not None and meta_b is not None
     assert meta_a["session_id"] == "s_alpha", meta_a
     assert meta_b["session_id"] == "s_beta", meta_b
+
+
+# ---- HTTP-handler hop ------------------------------------------------------
+
+
+@pytest.fixture
+def http_session_app(session_dispatcher, config_manager, schema_loader):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from cogniverse_runtime.routers import agents as agents_router
+
+    dispatcher, mm = session_dispatcher
+
+    app = FastAPI()
+    app.include_router(agents_router.router, prefix="/agents")
+    agents_router.set_agent_registry(dispatcher._registry)
+    agents_router.set_agent_dependencies(config_manager, schema_loader)
+    # The setter resets _dispatcher; replace it with the test dispatcher
+    # so we share the policy/sandbox stub the fixture configured.
+    agents_router._dispatcher = dispatcher
+    yield TestClient(app), mm
+    agents_router._dispatcher = None
+    agents_router._agent_registry = None
+
+
+def test_http_post_top_level_session_id_reaches_vespa(http_session_app):
+    client, mm = http_session_app
+    content = "http top-level session note"
+
+    resp = client.post(
+        "/agents/session_writer_agent/process",
+        json={
+            "agent_name": "session_writer_agent",
+            "query": content,
+            "session_id": "s_http_top",
+            "context": {"tenant_id": mm.tenant_id},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True, body
+
+    meta = _read_metadata_by_content(mm, content)
+    assert meta is not None, content
+    assert meta["session_id"] == "s_http_top", meta
+
+
+def test_http_post_session_id_inside_context_reaches_vespa(http_session_app):
+    client, mm = http_session_app
+    content = "http context-bag session note"
+
+    resp = client.post(
+        "/agents/session_writer_agent/process",
+        json={
+            "agent_name": "session_writer_agent",
+            "query": content,
+            "context": {"tenant_id": mm.tenant_id, "session_id": "s_http_ctx"},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+
+    meta = _read_metadata_by_content(mm, content)
+    assert meta is not None, content
+    assert meta["session_id"] == "s_http_ctx", meta
+
+
+def test_http_post_top_level_overrides_context_session_id(http_session_app):
+    client, mm = http_session_app
+    content = "http top-level overrides context"
+
+    resp = client.post(
+        "/agents/session_writer_agent/process",
+        json={
+            "agent_name": "session_writer_agent",
+            "query": content,
+            "session_id": "s_top_wins",
+            "context": {"tenant_id": mm.tenant_id, "session_id": "s_ctx_loses"},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    meta = _read_metadata_by_content(mm, content)
+    assert meta is not None, content
+    assert meta["session_id"] == "s_top_wins", meta
+
+
+def test_http_post_with_no_session_id_fails_session_kind_write(http_session_app):
+    client, mm = http_session_app
+    content = "http no session note"
+
+    resp = client.post(
+        "/agents/session_writer_agent/process",
+        json={
+            "agent_name": "session_writer_agent",
+            "query": content,
+            "context": {"tenant_id": mm.tenant_id},
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is False, (
+        f"HTTP POST with no session_id must propagate ok=False from the "
+        f"schema gate; got {resp.json()!r}"
+    )
+    assert _read_metadata_by_content(mm, content) is None
