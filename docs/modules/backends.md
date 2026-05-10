@@ -69,7 +69,6 @@ libs/vespa/cogniverse_vespa/
 ├── ingestion_client.py             # Ingestion client (VespaPyClient class)
 ├── json_schema_parser.py           # JSON schema parsing
 ├── memory_config.py                # Memory configuration
-├── memory_store.py                 # Memory storage (Mem0 backend)
 ├── metadata_schemas.py             # Metadata schema definitions
 ├── ranking_strategy_extractor.py   # Ranking strategy extraction
 ├── registry/
@@ -2391,63 +2390,60 @@ binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 
 ---
 
-## VespaVectorStore (Mem0 Backend)
+## BackendVectorStore (Mem0 Backend)
 
-**Location:** `memory_store.py`
+**Location:** `libs/core/cogniverse_core/memory/backend_vector_store.py`
 
-Implements Mem0's `VectorStoreBase` interface for agent memory persistence.
+Implements Mem0's `VectorStoreBase` interface for agent memory persistence,
+routing every operation through the SDK's `Backend` interface
+(`cogniverse_sdk.interfaces.backend.Backend`) instead of talking to Vespa
+directly. Registered in `Mem0MemoryManager._register_backend_provider()` as
+the `"backend"` provider, so any Mem0 config with `vector_store.provider:
+"backend"` lands here.
+
+### Why through the Backend interface
+
+A direct Vespa client (the previous `VespaVectorStore` in
+`cogniverse_vespa/memory_store.py`) bypassed every Backend-level concern:
+the SDK's typed `Document`, the per-tenant schema scoping, the egress
+policy that the dispatcher's `make_http_client(agent_type)` enforces, and
+the telemetry spans backends emit on every call. Going through `Backend`
+inherits all of those for free.
 
 ### Capabilities
 
-- Multi-tenant isolation (user_id)
+- Multi-tenant isolation (user_id → tenant scoping on the backend)
 - Per-agent namespacing (agent_id)
 - Semantic search via embeddings
 - Metadata filtering
+- Telemetry spans on every operation (inherited from the Backend impl)
 
-### Key Methods
+### Key methods
 
 ```python
-from cogniverse_vespa.memory_store import VespaVectorStore
+from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 
-store = VespaVectorStore(
-    collection_name="agent_memories",
-    host="localhost",
-    port=8080
+# In production this is constructed by Mem0's VectorStoreFactory after
+# Mem0MemoryManager._register_backend_provider() registers "backend".
+# Direct construction is only used in tests.
+store = BackendVectorStore(
+    backend=vespa_backend,           # an SDK Backend implementation
+    collection_name="agent_memories_acme",
+    embedding_model_dims=768,
 )
 
-# Create collection (schema must be pre-deployed)
-store.create_col(
-    name="agent_memories",
-    vector_size=1536,
-    distance="cosine"
-)
-
-# Insert memories
-ids = store.insert(
+# Insert (routes to backend.ingest_documents)
+store.insert(
     vectors=[[0.1, 0.2, ...]],
-    payloads=[{
-        "data": "User prefers visual explanations",
-        "user_id": "user123",
-        "agent_id": "search_agent",
-        "metadata": {"topic": "preferences"}
-    }],
-    ids=["memory-001"]
+    payloads=[{"data": "...", "user_id": "alice", "agent_id": "search"}],
+    ids=["mem_001"],
 )
 
-# Search memories
-results = store.search(
-    query=[0.1, 0.2, ...],  # Query embedding
-    limit=5,
-    filters={"user_id": "user123", "agent_id": "search_agent"}
-)
-# Returns: List[VespaSearchResult] with id, score, payload
+# Search (routes to backend.query_metadata_documents)
+hits = store.search(query="...", vectors=[[0.1, ...]], limit=5)
 
-# Get memory by ID
-record = store.get(id="memory-001")
-# Returns: VespaRecord with id, vector, payload
-
-# Delete memory
-store.delete(id="memory-001")
+# Delete (routes to backend.delete_document)
+store.delete(vector_id="mem_001")
 ```
 
 ---
