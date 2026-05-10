@@ -55,7 +55,16 @@ def knowledge_client(memory_manager):
 
 
 def _seed_chain(mm) -> tuple[str, str]:
-    """Seed a leaf + derived memory pair so audit/citation can walk it."""
+    """Seed a leaf + derived memory pair so audit/citation can walk it.
+
+    Waits for Vespa indexing after each write — ``ProvenanceStore.fetch``
+    queries via YQL (eventually consistent), so an immediate read after
+    ``add_memory`` can return zero rows even though the write succeeded.
+    Without the wait the BFS walker terminates at the entry node and
+    never reaches the leaf, which is exactly what the assertions check.
+    """
+    from tests.utils.async_polling import wait_for_vespa_indexing
+
     leaf_prov = make_provenance(
         written_by="agent:knowledge_admin_test",
         derivation_kind=DerivationKind.DIRECT_INGEST,
@@ -84,6 +93,7 @@ def _seed_chain(mm) -> tuple[str, str]:
         infer=False,
     )
     assert derived_id
+    wait_for_vespa_indexing(delay=3, description="provenance chain seed")
     return leaf_id, derived_id
 
 

@@ -20,6 +20,15 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     # Clear Mem0 singleton to ensure fresh state
     Mem0MemoryManager._instances.clear()
 
+    # BackendRegistry is keyed by (name, tenant) and earlier test modules
+    # may have cached a backend for tenant "test_tenant" pointing at a
+    # vespa_instance container that's now gone. Without this clear, the
+    # first deploy_schemas call here reuses that stale backend and fails
+    # with connection-refused on the dead port.
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+
+    BackendRegistry._backend_instances.clear()
+
     from pathlib import Path
 
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
