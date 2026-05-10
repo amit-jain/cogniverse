@@ -230,13 +230,36 @@ async def test_knowledge_summarises_real_subject_slice(
         f"slice; got source_count={out.source_count}. If this is < 3, "
         "metadata round-trip is dropping subject_key/kind on the read."
     )
-    # Real LM contract — output is non-deterministic, but it must be a
-    # non-empty string (the LM ran and the agent surfaced the result).
-    assert isinstance(out.summary, str) and out.summary.strip(), (
+    # Tight assertions on the real LM output:
+    #   1. Non-empty string (LM ran, agent surfaced result).
+    #   2. NOT the agent's silent fallback string. KnowledgeSummarizationAgent
+    #      catches DSPy exceptions in _summarise_without_rlm and returns
+    #      "[FALLBACK: synthesis failed] ...". If we let that pass, a
+    #      broken LM endpoint would silently turn this test into "the
+    #      source text contains the word 'refund'" — which it always
+    #      does, because the fallback emits the source block.
+    #   3. Must reference seeded doc content ('refund') — confirms the
+    #      agent passed the slice into the prompt and the LM grounded
+    #      its synthesis in it.
+    summary_text = out.summary or ""
+    assert isinstance(summary_text, str) and summary_text.strip(), (
         f"DSPy summary must be a non-empty string from the real LM; got "
-        f"{out.summary!r}. If this is empty, the dspy_lm fixture did not "
-        f"configure dspy.settings.lm OR the agent's _dspy_module returned "
-        f"a malformed prediction."
+        f"{summary_text!r}. If empty, dspy_lm did not configure "
+        f"dspy.settings.lm OR the agent's _dspy_module returned a "
+        f"malformed prediction."
+    )
+    assert not summary_text.startswith("[FALLBACK:"), (
+        f"KnowledgeSummarizationAgent fell back to its [FALLBACK: ...] "
+        f"path — DSPy threw an exception inside _summarise_without_rlm. "
+        f"This means the LM call failed (auth, endpoint, model name) "
+        f"and the test would otherwise silently 'pass' on the source "
+        f"text echoed by the fallback. Got: {summary_text[:300]!r}"
+    )
+    assert "refund" in summary_text.lower(), (
+        f"Real LM summary must reference the seeded doc content "
+        f"('Refund fact ...'); got summary={summary_text!r}. If 'refund' "
+        f"is missing, the agent likely didn't pass doc content into the "
+        f"prompt (broken slice assembly), or the LM ignored its prompt."
     )
     cited = {ref.ref_id for ref in out.citation_refs}
     for mid in written_ids:

@@ -28,7 +28,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -149,8 +148,7 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
 
     agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=TENANT))
     _inject_memory(agent, mm, "multi_document_synthesis_agent")
-    # Stub the DSPy module so the test doesn't require an LLM.
-    agent._dspy_module = MagicMock(return_value=MagicMock(answer="STUB-SYNTH"))
+    # No DSPy stub — exercise the real LM via the dspy_lm fixture.
 
     out = await agent._process_impl(
         MultiDocSynthesisInput(
@@ -160,7 +158,26 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
             persist=True,
         )
     )
-    assert out.answer == "STUB-SYNTH"
+    # Tight assertions on the real LM output:
+    #   1. It must be a non-empty string (LM ran, agent surfaced result).
+    #   2. It must reference content from the seeded docs — every seeded
+    #      doc says "refunds policy detail" and is numbered fact 0/1/2.
+    #      A real LM grounded in those docs MUST mention "refund" (or
+    #      "refunds") somewhere; if it does not, either the agent did
+    #      not pass doc content to the LM or the LM ignored the prompt.
+    answer_text = out.answer or ""
+    assert isinstance(answer_text, str) and answer_text.strip(), (
+        f"DSPy synthesis must return a non-empty string from the real LM; "
+        f"got {answer_text!r}. If empty, dspy_lm did not configure "
+        f"dspy.settings.lm OR the agent's _dspy_module returned a "
+        f"malformed prediction."
+    )
+    assert "refund" in answer_text.lower(), (
+        f"Real LM synthesis must reference the seeded doc content "
+        f"('refunds policy detail'); got answer={answer_text!r}. "
+        f"If 'refund' is missing the agent likely didn't pass doc content "
+        f"to the LM (broken prompt assembly), or the LM ignored its prompt."
+    )
     cited_ids = {
         ref["ref_id"] for ref in out.citation_refs if ref.get("ref_kind") == "memory"
     }

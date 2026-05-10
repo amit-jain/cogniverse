@@ -100,6 +100,13 @@ def _dspy_lm_instance():
     endpoint = LLMEndpointConfig(
         model=model,
         api_base=llm_cfg.get("api_base"),
+        # Local LM endpoints (Ollama, vLLM) accept any bearer token but
+        # litellm refuses to construct an OpenAI client without an
+        # api_key set, so it falls back to the OPENAI_API_KEY env var
+        # and raises AuthenticationError when neither is present. The
+        # test endpoints don't validate the key — pass the cogniverse
+        # convention sentinel.
+        api_key=llm_cfg.get("api_key") or "not-required",
         temperature=0.1,
         max_tokens=200,
         extra_body=extra_body,
