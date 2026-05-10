@@ -51,6 +51,11 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 - Fix implementation to satisfy tests, never weaken tests
 - 100% pass rate required before commit — 0 failed AND 0 skipped (infra skips = bugs)
 - NEVER dismiss failures as "pre-existing", "LLM-dependent", "transient", or "infrastructure" — every failure must be investigated and fixed
+- Specifically forbidden dismissal moves (each is a violation, not a triage step):
+  - `git stash` + rerun to claim "pre-existing on HEAD" — stash only reverts uncommitted changes, so any of the session's prior commits are still in place; the comparison proves nothing. To actually compare against pre-session state, checkout the commit BEFORE the session's first commit, run the test there, then return.
+  - "passes in isolation, fails in the sweep" used to absolve cross-test pollution — if the sweep fails, the sweep fails; the right fix is to make the test robust to whatever pollution exists, not to declare the sweep environment broken.
+  - "environmental" / "LM endpoint down" / "service not deployed" used to skip a failure — if a test depends on infrastructure, the test (or its fixture) is responsible for managing that infrastructure (per the "Tests must manage their own isolated infrastructure" rule above). An unmet dependency is a test bug, not an excuse.
+  - "deferred to a separate audit" used to leave a known failure on the floor — if the failure was uncovered during the current change, it gets fixed before the change ships, regardless of whether the change introduced it.
 - No shortcuts: no mocking away failures, no disabling, no hardcoding
 - Always use `--tb=long` — short tracebacks hide root causes and force re-runs
 - Never pipe test output through `tail` — it buffers everything and hides progress. Redirect to a log file instead: `uv run pytest ... --tb=long -v 2>&1 > /tmp/test_run.log` and monitor with `tail -f` or `grep PASSED\|FAILED`
