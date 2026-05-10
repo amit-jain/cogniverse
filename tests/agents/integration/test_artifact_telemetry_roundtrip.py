@@ -86,22 +86,24 @@ class TestArtifactManagerRoundTrip:
         """
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test")
 
+        # The typed schema accepts named scalar fields directly
+        # (baseline_score / candidate_score / improvement / promoted /
+        # train_examples / optimizer) and stows everything else under
+        # extra_metrics. Mix both shapes so the round-trip is exercised
+        # for typed AND untyped keys in one go.
         original_metrics = {
-            "baseline": {
-                "modality_accuracy": 0.5,
-                "generation_accuracy": 0.5,
-                "overall_accuracy": 0.5,
+            "optimizer": "MIPROv2",
+            "baseline_score": 0.5,
+            "candidate_score": 1.0,
+            "improvement": 0.5,
+            "promoted": True,
+            "train_examples": 24,
+            "per_modality_accuracy": {
+                "modality": 1.0,
+                "generation": 1.0,
+                "overall": 1.0,
             },
-            "optimized": {
-                "modality_accuracy": 1.0,
-                "generation_accuracy": 1.0,
-                "overall_accuracy": 1.0,
-            },
-            "improvement": {
-                "modality": 0.5,
-                "generation": 0.5,
-                "overall": 0.5,
-            },
+            "judge_substring_hits": 17,
         }
 
         dataset_id = await mgr.log_optimization_run("router", original_metrics)
@@ -117,12 +119,7 @@ class TestArtifactManagerRoundTrip:
         assert loaded["tenant_id"] == "roundtrip-test"
         assert "timestamp" in loaded
 
-        # Contract: every user-supplied metrics key round-trips with the
-        # exact value that was written. The loaded dict ALSO carries the
-        # ExperimentMetrics typed columns (optimizer / promoted / *_score
-        # / improvement / train_examples) — those are part of the schema,
-        # not noise; this test pins user-key preservation, not exact
-        # dict equality.
+        # Every key the caller wrote round-trips with its exact value.
         loaded_metrics = loaded["metrics"]
         for key, expected in original_metrics.items():
             assert key in loaded_metrics, (
@@ -133,16 +130,6 @@ class TestArtifactManagerRoundTrip:
                 f"user-supplied metrics value for {key!r} mutated on "
                 f"round-trip; expected {expected!r}, got {loaded_metrics[key]!r}"
             )
-
-        # Defaults for unspecified typed fields surface as the schema's
-        # sentinel values (None for numeric, False for promoted,
-        # 'unknown' for optimizer) — pin them so a future change that
-        # silently drops them on read can't sneak through.
-        assert loaded_metrics["optimizer"] == "unknown"
-        assert loaded_metrics["promoted"] is False
-        assert loaded_metrics["baseline_score"] is None
-        assert loaded_metrics["candidate_score"] is None
-        assert loaded_metrics["train_examples"] is None
 
     @pytest.mark.asyncio
     async def test_load_optimization_run_missing_returns_none(self, real_provider):

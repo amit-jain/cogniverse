@@ -1171,20 +1171,6 @@ class ArtifactManager:
         invocations keep working while callers migrate.
         """
         run_id = str(metrics.get("run_id") or _generate_run_id())
-        # Typed numeric fields: only consume when the value parses as a
-        # number — otherwise leave the original (potentially nested) value
-        # in extra_metrics so the round-trip preserves it. Older callers
-        # pass nested dicts (``"improvement": {"overall": 0.5, ...}``)
-        # under the typed names; we honour both shapes.
-        typed_fields = (
-            "baseline_score",
-            "candidate_score",
-            "improvement",
-            "train_examples",
-        )
-        consumed_typed = {
-            k for k in typed_fields if _optional_float(metrics.get(k)) is not None
-        }
         record = ExperimentMetrics(
             tenant_id=self._tenant_id,
             agent_type=agent_type,
@@ -1199,7 +1185,16 @@ class ArtifactManager:
             extra_metrics={
                 k: v
                 for k, v in metrics.items()
-                if k not in {"run_id", "optimizer", "promoted"} | consumed_typed
+                if k
+                not in {
+                    "run_id",
+                    "optimizer",
+                    "baseline_score",
+                    "candidate_score",
+                    "improvement",
+                    "promoted",
+                    "train_examples",
+                }
             },
         )
         return await self.save_experiment(record)
