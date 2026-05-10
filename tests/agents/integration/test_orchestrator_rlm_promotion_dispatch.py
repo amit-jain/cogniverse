@@ -11,9 +11,11 @@ from typing import Any, Dict, List
 import httpx
 import pytest
 
-from cogniverse_agents.orchestrator_agent import (
+from cogniverse_agents._rlm_promotion import (
     _RLM_PROMOTION_DEFAULT_FRACTION,
     _RLM_PROMOTION_DEFAULT_THRESHOLD,
+)
+from cogniverse_agents.orchestrator_agent import (
     AgentStep,
     OrchestrationPlan,
     OrchestratorAgent,

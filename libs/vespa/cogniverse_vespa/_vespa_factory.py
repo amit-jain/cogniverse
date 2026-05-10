@@ -17,14 +17,19 @@ from vespa.application import Vespa
 def make_vespa_app(*, url: str, port: Optional[int] = None) -> Vespa:
     """Construct a pyvespa ``Vespa`` client from cogniverse backend params.
 
-    Two call shapes accepted, matching the two pre-existing patterns:
+    Always returns a Vespa whose ``.url`` attribute carries the port
+    inline (``http://host:port``) — downstream callsites read
+    ``self.vespa_app.url`` directly when building Document v1 visit URLs
+    (see e.g. ``VespaConfigStore.list_all_configs``), so passing
+    ``url`` and ``port`` separately to pyvespa would leave ``.url`` as
+    just ``http://host`` and the visit URL would default to port 80.
 
-    * ``url`` only — when the caller already has a fully-formed
-      ``http://host:port`` string (e.g. a connection-pool entry whose
-      URL was composed upstream).
-    * ``url`` + ``port`` — the more common shape; both are forwarded
-      to pyvespa, which handles joining itself.
+    Two call shapes accepted:
+
+    * ``url`` only — caller already has a fully-formed
+      ``http://host:port`` string (e.g. connection-pool entry).
+    * ``url`` + ``port`` — combined here before handing to pyvespa.
     """
-    if port is None:
-        return Vespa(url=url)
-    return Vespa(url=url, port=port)
+    if port is not None:
+        url = f"{url.rstrip('/')}:{port}"
+    return Vespa(url=url)
