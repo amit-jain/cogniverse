@@ -65,8 +65,14 @@ def vespa_instance(request):
 
     # Clear stale singleton state from other test modules so the test gets
     # a fresh backend pointing at the isolated Vespa, not a cached one.
+    # ``_shared_schema_registry`` is a process-wide singleton that
+    # ``get_ingestion_backend`` falls back to when no registry is passed —
+    # without clearing it here, module B's backend creation inherits
+    # module A's torn-down container's registry and every deploy goes to
+    # the dead port.
     BackendRegistry._instance = None
     BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
 
     try:
         # Use unique ports derived from module name hash to avoid collisions
@@ -187,10 +193,17 @@ def vespa_instance(request):
     finally:
         manager.stop_container()
 
-        # Clear singleton state to avoid interference with other test modules
+        # Clear singleton state to avoid interference with other test modules.
+        # ``_shared_schema_registry`` MUST be cleared here too — it holds a
+        # reference to this module's backend which is now pointing at a
+        # stopped container; the next module's ``get_ingestion_backend``
+        # would otherwise reuse it via the
+        # ``effective_registry = schema_registry or _shared_schema_registry``
+        # fallback in BackendRegistry.
         try:
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
+            BackendRegistry._shared_schema_registry = None
         except Exception as cleanup_err:
             logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
 

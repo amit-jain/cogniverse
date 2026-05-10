@@ -24,10 +24,14 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     # may have cached a backend for tenant "test_tenant" pointing at a
     # vespa_instance container that's now gone. Without this clear, the
     # first deploy_schemas call here reuses that stale backend and fails
-    # with connection-refused on the dead port.
+    # with connection-refused on the dead port. ``_shared_schema_registry``
+    # is a process-wide singleton that ``get_ingestion_backend`` falls
+    # back to when no registry is passed — must be cleared too or the
+    # fresh backend inherits the dead-port registry.
     from cogniverse_core.registries.backend_registry import BackendRegistry
 
     BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
 
     from pathlib import Path
 
