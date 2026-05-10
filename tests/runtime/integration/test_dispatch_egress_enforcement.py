@@ -5,19 +5,32 @@ dispatch; nothing actually verified that the destinations the agent
 would reach are on the allowlist. The plan's verification was: "(b) a
 non-allow-listed outbound is denied at the sandbox boundary."
 
-For agents that go through DSPy / pyvespa rather than their own httpx
-client, runtime per-call enforcement is impractical (those libraries
-don't expose hookable transports). The honest two-layer story:
+Per-agent enforcement matrix today:
 
-  * **L4 / kernel**: the plan's unified-runtime NetworkPolicy is the actual
-    deny mechanism in production — calls to off-allowlist destinations
-    are denied by the CNI before the packet leaves the pod.
-  * **Dispatch-time validation** (this test): the dispatcher checks
-    that the configured backend URLs (Vespa, LLM endpoint) for each
-    agent are on the policy's egress allowlist. Catches operator
-    misconfiguration where a backend port moved without a policy
-    update — surfaces it as a logged warning before the runtime call
-    runs into the L4 deny.
+  * **CodingAgent** → container isolation (``exec_in_sandbox``). The
+    only agent that runs LLM-generated code; container is the right
+    boundary regardless of egress policy.
+  * **OrchestratorAgent** → application-layer egress check via
+    ``SandboxManager.make_http_client("orchestrator_agent")`` →
+    ``PolicyEnforcingTransport``. Wired and tested in
+    ``test_orchestrator_egress_enforcement.py``.
+  * **Search / Summarizer / Gateway** → egress goes through
+    ``pyvespa.Vespa()`` and DSPy's LM client. Both expose hookable
+    transports (``Vespa(client=httpx.AsyncClient(...))``,
+    ``litellm`` accepts a custom client) but the cogniverse-vespa
+    backend factory and the dspy.LM construction sites do not yet
+    plumb them through. Until they do, CNI NetworkPolicy is the
+    only enforcement layer for these agents at runtime.
+  * **All agents** → dispatch-time validation (this test) catches
+    operator config drift at boot regardless of the runtime layer.
+
+The CNI / kernel layer (the plan's unified-runtime NetworkPolicy) is
+the real deny mechanism in production for any agent — packets leaving
+the pod are dropped by Cilium / Calico before the destination is
+reached. The application layer is defence-in-depth: it catches dev /
+test misconfiguration (where NetworkPolicy doesn't apply) and produces
+sub-millisecond ``EgressDeniedError`` exceptions with the policy file
+named, instead of 30-second TCP timeouts.
 
 This test exercises ``validate_dispatch_endpoints`` directly with two
 realistic policies: one where the endpoints align (no violations)

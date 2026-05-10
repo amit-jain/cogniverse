@@ -733,6 +733,68 @@ rollback_tenant_config("acme_corp", version=5)
 
 ## Security & Isolation
 
+### Egress enforcement: per-agent matrix
+
+Cogniverse defends agent egress at three layers. The right layer for
+each agent depends on whether it executes code, makes direct HTTP
+calls, or only goes through hookable libraries.
+
+| Agent | Container isolation | App-layer egress check | CNI NetworkPolicy | Dispatch-time validation |
+|---|---|---|---|---|
+| **CodingAgent** | ✅ ``exec_in_sandbox`` | n/a | ✅ | ✅ |
+| **OrchestratorAgent** (A2A subagent dispatch) | n/a | ✅ ``PolicyEnforcingTransport`` | ✅ | ✅ |
+| **SearchAgent / SummarizerAgent / GatewayAgent** | n/a | ⚠️ not yet wired (egress goes through ``pyvespa.Vespa()`` and DSPy's LM client; both expose hookable transports but the cogniverse-vespa backend factory and the ``dspy.LM`` construction sites do not yet plumb a custom httpx client through) | ✅ | ✅ |
+
+**What "wired" means**:
+
+  * `exec_in_sandbox`: the agent's outbound process runs inside an
+    OpenShell-managed container with syscall filtering, OOM caps, and
+    network egress restricted to the policy's allowlist. Required for
+    any agent that executes user-supplied code.
+  * `PolicyEnforcingTransport`: an httpx transport that intercepts
+    every outbound request and raises `EgressDeniedError` (sub-ms,
+    structured) when `(host, port)` is not on the agent's policy
+    allowlist. Wired through `SandboxManager.make_http_client(agent_type)`
+    and consumed by the dispatcher when constructing the agent.
+  * **CNI NetworkPolicy**: kernel-level packet drop by Cilium / Calico
+    based on pod labels. Generated from the agent policy YAMLs by
+    `cogniverse admin egress-netpol` and applied to the Helm release.
+    The actual production deny mechanism — works regardless of what
+    library the agent uses (httpx, pyvespa, DSPy, raw socket).
+  * **Dispatch-time validation**: at boot, the dispatcher cross-checks
+    every agent's *configured* backend URLs against the policy YAML's
+    egress allowlist. Catches operator config drift (someone moved the
+    Vespa port without updating the policy) as a logged warning before
+    the first request runs into a CNI deny or an `EgressDeniedError`.
+
+**Why the gap on Search / Summarizer / Gateway**: those agents don't
+construct httpx clients directly — their egress goes through pyvespa
+(`Vespa(url=...)`) and DSPy's LM client. Both libraries DO accept a
+custom httpx client (`Vespa(client=httpx.AsyncClient(...))`,
+litellm's `client=` parameter), but the cogniverse-vespa backend
+factory (`BackendRegistry.get_*_backend`) and the per-agent DSPy LM
+construction sites do not yet plumb the policy-enforcing client
+through. Until that plumbing lands, **CNI NetworkPolicy is the only
+runtime enforcement layer for these agents** — and that's a real
+boundary in production, not a stub.
+
+**For dev / test environments** (where NetworkPolicy doesn't apply —
+local k3d, pytest CI), drift in those agents' egress is invisible
+until prod. A typo in a Vespa port that points the agent at a wrong
+tenant's data would not be caught at the application layer today.
+
+**Operator opt-out**:
+
+```bash
+# Disable application-layer enforcement entirely (CNI still enforces
+# in production). Useful for dev iteration on a new policy YAML.
+COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT=disabled
+
+# Disable the sandbox manager entirely (also disables exec_in_sandbox
+# for CodingAgent — only safe in trusted dev environments).
+COGNIVERSE_SANDBOX_POLICY=disabled
+```
+
 ### Tenant Isolation Verification
 
 ```python
