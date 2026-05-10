@@ -743,7 +743,7 @@ calls, or only goes through hookable libraries.
 |---|---|---|---|---|
 | **CodingAgent** | ✅ ``exec_in_sandbox`` | n/a | ✅ | ✅ |
 | **OrchestratorAgent** (A2A subagent dispatch) | n/a | ✅ ``PolicyEnforcingTransport`` | ✅ | ✅ |
-| **SearchAgent / SummarizerAgent / GatewayAgent** | n/a | ⚠️ not yet wired (egress goes through ``pyvespa.Vespa()`` and DSPy's LM client; both expose hookable transports but the cogniverse-vespa backend factory and the ``dspy.LM`` construction sites do not yet plumb a custom httpx client through) | ✅ | ✅ |
+| **SearchAgent / SummarizerAgent / GatewayAgent** | n/a | ◯ deliberately not wired (see "Why no app-layer enforcement on Vespa egress" below) | ✅ | ✅ |
 
 **What "wired" means**:
 
@@ -767,21 +767,52 @@ calls, or only goes through hookable libraries.
     Vespa port without updating the policy) as a logged warning before
     the first request runs into a CNI deny or an `EgressDeniedError`.
 
-**Why the gap on Search / Summarizer / Gateway**: those agents don't
-construct httpx clients directly — their egress goes through pyvespa
-(`Vespa(url=...)`) and DSPy's LM client. Both libraries DO accept a
-custom httpx client (`Vespa(client=httpx.AsyncClient(...))`,
-litellm's `client=` parameter), but the cogniverse-vespa backend
-factory (`BackendRegistry.get_*_backend`) and the per-agent DSPy LM
-construction sites do not yet plumb the policy-enforcing client
-through. Until that plumbing lands, **CNI NetworkPolicy is the only
-runtime enforcement layer for these agents** — and that's a real
-boundary in production, not a stub.
+### Why no app-layer enforcement on Vespa / LLM egress
+
+App-layer egress checks for SearchAgent / SummarizerAgent /
+GatewayAgent would protect against **unintended URLs being requested
+at runtime**. For these agents that scenario doesn't exist:
+
+  * The Vespa endpoint is set ONCE in `BackendConfig.url:port` and
+    read by `VespaBackend.__init__`. It never changes per request.
+  * The LLM endpoint is similarly one configured value per agent.
+  * Neither URL is ever sourced from a prompt, from user input, or
+    from the agent registry — i.e. there is no path by which an LLM
+    injection or a registry corruption could redirect the call.
+
+The realistic threats reduce to:
+
+  * **Config drift** (policy YAML and `BackendConfig` disagree on the
+    port) — caught by `validate_dispatch_endpoints` at boot, before
+    any request runs.
+  * **Code drift** (a new hard-coded URL slips into the data-plane
+    code) — caught by code review; if it slips through, CNI catches
+    it at the kernel.
+  * **CNI misconfiguration** — the fix is in CNI policy, not in a
+    redundant app-layer check.
+
+The OrchestratorAgent is different: it dispatches A2A subagent calls
+to URLs *resolved per request from the agent registry*. That registry
+is dynamic (operators add agents, canary endpoints come and go) so
+the agent code can request a URL it has never seen before. The
+app-layer transport is meaningful there — it's the only layer that
+can deny a registered-but-not-allowlisted peer at the moment of call.
+
+The CodingAgent is even more different: it runs LLM-generated code
+that can call ANY URL. Container isolation + egress allowlist is the
+only feasible defence.
+
+In short: **app-layer enforcement scales with how dynamic the URL
+choice is**. CodingAgent (anything) and OrchestratorAgent (registry)
+need it; Search/Summarizer/Gateway (one fixed config value) get
+nothing useful from it on top of dispatch-time validation + CNI.
 
 **For dev / test environments** (where NetworkPolicy doesn't apply —
-local k3d, pytest CI), drift in those agents' egress is invisible
-until prod. A typo in a Vespa port that points the agent at a wrong
-tenant's data would not be caught at the application layer today.
+local k3d, pytest CI), the same reasoning holds: the agent code
+cannot request a wrong URL because the URL doesn't come from
+anywhere unsafe. A typo in `BackendConfig.url:port` would point the
+agent at a non-existent or wrong port and produce an immediate
+connection error or a 4xx — the failure is loud, not silent.
 
 **Operator opt-out**:
 
