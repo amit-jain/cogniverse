@@ -117,21 +117,9 @@ def _inject_memory(agent, mm, agent_name: str) -> None:
 
 @pytest.mark.asyncio
 async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
-    """Seed 3 docs with DISJOINT content covering distinct refund-policy
-    facts, query the agent through a real DSPy LM, and assert the
-    answer synthesises across multiple documents (not just one).
-
-    The agent's contract: take N ``DocumentRef`` ids → fetch each from
-    Vespa → build a documents block → ``dspy.ChainOfThought`` answers
-    the query using the block → persist the answer with provenance
-    pointing back to every input doc.
-
-    Prior version of the test used uniform filler ("fact i: refunds
-    policy detail") which made it impossible to tell whether the LM
-    actually consumed each document. This version puts a unique
-    distinguishing token in each doc and asserts the answer references
-    at least 2 of them — proving multi-document synthesis, not echo.
-    """
+    """Real multi-doc synthesis must (a) not be a verbatim copy of any
+    one doc, (b) reference content from ≥2 docs, (c) cite all input ids
+    in citation_refs, (d) persist provenance.derived_from with all input ids."""
     from cogniverse_agents.multi_document_synthesis_agent import (
         DocumentRef,
         MultiDocSynthesisDeps,
@@ -140,9 +128,6 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
     )
 
     mm = primary_mm
-    # Three documents, disjoint distinguishing tokens. The synthesis
-    # MUST reference content from at least two of them; otherwise the
-    # agent (or its prompt assembly) only saw a subset.
     seed_docs = [
         (
             "Standard refund window: customers may request a refund within "
@@ -180,8 +165,6 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
 
     agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=TENANT))
     _inject_memory(agent, mm, "multi_document_synthesis_agent")
-    # No DSPy stub — exercise the real LM via the dspy_lm fixture.
-
     out = await agent._process_impl(
         MultiDocSynthesisInput(
             tenant_id=TENANT,
@@ -195,38 +178,20 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
     )
 
     answer_text = out.answer or ""
+    assert answer_text.strip(), f"empty answer: {answer_text!r}"
 
-    # 1. Output is a non-empty string (LM ran, agent surfaced result).
-    assert isinstance(answer_text, str) and answer_text.strip(), (
-        f"DSPy synthesis must return a non-empty string from the real LM; "
-        f"got {answer_text!r}."
-    )
-
-    # 2. Answer must NOT be a verbatim echo of any single source. A
-    # multi-document SYNTHESIS combines content; copying one input is
-    # a contract violation.
     answer_norm = " ".join(answer_text.split())
     for content, _ in seed_docs:
         source_norm = " ".join(content.split())
         assert source_norm not in answer_norm, (
-            f"answer is a verbatim copy of one input doc — multi-doc "
-            f"synthesis must SYNTHESISE, not echo. Echoed source: "
-            f"{source_norm!r}. Full answer: {answer_text!r}."
+            f"answer echoes doc verbatim: {source_norm!r}\nfull: {answer_text!r}"
         )
 
-    # 3. Coverage: the answer must reference distinguishing content from
-    # at least 2 of the 3 docs. Three docs all in the prompt block →
-    # a real synthesis pulls from multiple. Hitting only 1 token would
-    # mean the agent passed one doc to the LM (broken prompt assembly)
-    # or the LM ignored the rest of the block.
     answer_lower = answer_text.lower()
     hits = [token for _content, token in seed_docs if token in answer_lower]
     assert len(hits) >= 2, (
-        f"answer must reference distinguishing content from at least 2 "
-        f"of the 3 input docs (proving multi-document synthesis, not "
-        f"single-source echo). Expected tokens: "
-        f"{[t for _, t in seed_docs]!r}. Found: {hits!r}. Full answer: "
-        f"{answer_text!r}."
+        f"answer covered {hits!r} of expected {[t for _, t in seed_docs]!r}"
+        f"\nfull: {answer_text!r}"
     )
     cited_ids = {
         ref["ref_id"] for ref in out.citation_refs if ref.get("ref_kind") == "memory"
