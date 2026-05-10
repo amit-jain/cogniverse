@@ -1,15 +1,5 @@
-"""Admin session-cleanup endpoints — round-trip through real Vespa.
-
-Wire-up coverage for the EPHEMERAL_SESSION lifecycle:
-
-  * Per-tenant DELETE /admin/tenants/{tenant_id}/sessions/{session_id}
-    drops only the matching session's EPHEMERAL_SESSION rows for that
-    one tenant.
-  * Cross-tenant POST /admin/sessions/{session_id}/close fans the drop
-    out across every warm Mem0 instance.
-  * Both endpoints honour the schema gate (a non-EPHEMERAL_SESSION
-    memory tagged with the same session_id is left alone).
-"""
+"""Admin session-cleanup endpoints (per-tenant DELETE + cross-tenant POST close)
+through real FastAPI → real Mem0 → real Vespa."""
 
 from __future__ import annotations
 
@@ -26,7 +16,6 @@ pytestmark = pytest.mark.integration
 def _seed_session_memory(
     mm: Mem0MemoryManager, *, session_id: str, content: str = "scratch"
 ) -> str:
-    """Write a session_scratch row tagged with session_id."""
     return mm.add_memory(
         content=content,
         tenant_id=mm.tenant_id,
@@ -39,11 +28,8 @@ def _seed_session_memory(
 def _seed_permanent_memory(
     mm: Mem0MemoryManager, *, session_id: str, content: str = "permanent"
 ) -> str:
-    """Write a permanent memory tagged with the SAME session_id.
-
-    The schema gate must NOT delete this on session close — only
-    EPHEMERAL_SESSION-kind rows are eligible.
-    """
+    # Permanent kind tagged with the same session_id — schema gate must
+    # NOT delete this; only EPHEMERAL_SESSION rows are eligible.
     return mm.add_memory(
         content=content,
         tenant_id=mm.tenant_id,
@@ -55,12 +41,10 @@ def _seed_permanent_memory(
 
 @pytest.fixture
 def admin_session_client(memory_manager):
-    """TestClient with the admin router mounted on a real Mem0 manager."""
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     admin._reset_admin_overrides_for_tests()
     yield TestClient(app), memory_manager
-    # Clean up any rows this test wrote so the next test starts empty.
     try:
         memory_manager.clear_agent_memory(
             memory_manager.tenant_id, "session_scratch_writer"
@@ -89,9 +73,6 @@ class TestPerTenantDeleteEndpoint:
         assert body["deleted_by_kind"] == {"session_scratch": 3}
         assert body["total_deleted"] == 3
 
-        # session_a's scratch rows must be gone; session_b's untouched;
-        # the permanent row tagged with session_a must survive (only
-        # EPHEMERAL_SESSION-kind rows are eligible).
         surviving = {
             m["id"] for m in mm.get_all_memories(tenant, "session_scratch_writer")
         }
@@ -105,8 +86,8 @@ class TestPerTenantDeleteEndpoint:
 
     def test_empty_session_id_returns_400(self, admin_session_client):
         client, mm = admin_session_client
-        # Path-level empty string is treated as a 404 by FastAPI; a single
-        # space hits the body-level validator.
+        # FastAPI 404s on a path-level empty segment; a single space
+        # hits the body-level non-empty validator instead.
         resp = client.delete(f"/admin/tenants/{mm.tenant_id}/sessions/%20")
         assert resp.status_code == 400
         assert "non-empty" in resp.text.lower()
@@ -135,7 +116,6 @@ class TestFanoutCloseEndpoint:
         body = resp.json()
         assert body["status"] == "closed"
         assert body["session_id"] == session_id
-        # The warm-set sweep must have caught this tenant.
         assert tenant in body["per_tenant"], body
         assert body["per_tenant"][tenant] == {"session_scratch": 2}
         assert body["total_deleted"] == 2
