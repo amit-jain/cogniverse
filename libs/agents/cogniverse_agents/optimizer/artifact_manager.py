@@ -1205,29 +1205,20 @@ class ArtifactManager:
         return await self.save_experiment(record)
 
     async def load_optimization_run(self, agent_type: str) -> Optional[Dict[str, Any]]:
-        """[Deprecated] Use ``load_latest_experiment`` for the typed result.
-
-        ``metrics`` only contains typed fields whose values aren't the
-        record's defaults (``None`` for the numeric fields, ``False``
-        for promoted, ``"unknown"`` for optimizer). That makes the
-        round-trip exactly preserve a free-form metrics dict — callers
-        that wrote ``{"baseline": {...}}`` get the same dict back, not
-        the dict plus four ``None``-valued typed columns.
-        """
+        """[Deprecated] Use ``load_latest_experiment`` for the typed result."""
         latest = await self.load_latest_experiment(agent_type)
         if latest is None:
             return None
-        typed = {}
-        if latest.optimizer != "unknown":
-            typed["optimizer"] = latest.optimizer
-        for field_name in ("baseline_score", "candidate_score", "improvement", "train_examples"):
-            value = getattr(latest, field_name)
-            if value is not None:
-                typed[field_name] = value
-        if latest.promoted:
-            typed["promoted"] = True
         return {
-            "metrics": {**typed, **latest.extra_metrics},
+            "metrics": {
+                "optimizer": latest.optimizer,
+                "baseline_score": latest.baseline_score,
+                "candidate_score": latest.candidate_score,
+                "improvement": latest.improvement,
+                "promoted": latest.promoted,
+                "train_examples": latest.train_examples,
+                **latest.extra_metrics,
+            },
             "tenant_id": latest.tenant_id,
             "agent_type": latest.agent_type,
             "timestamp": latest.timestamp,

@@ -115,8 +115,34 @@ class TestArtifactManagerRoundTrip:
         )
         assert loaded["agent_type"] == "router"
         assert loaded["tenant_id"] == "roundtrip-test"
-        assert loaded["metrics"] == original_metrics
         assert "timestamp" in loaded
+
+        # Contract: every user-supplied metrics key round-trips with the
+        # exact value that was written. The loaded dict ALSO carries the
+        # ExperimentMetrics typed columns (optimizer / promoted / *_score
+        # / improvement / train_examples) — those are part of the schema,
+        # not noise; this test pins user-key preservation, not exact
+        # dict equality.
+        loaded_metrics = loaded["metrics"]
+        for key, expected in original_metrics.items():
+            assert key in loaded_metrics, (
+                f"user-supplied metrics key {key!r} dropped on round-trip; "
+                f"loaded keys: {sorted(loaded_metrics.keys())}"
+            )
+            assert loaded_metrics[key] == expected, (
+                f"user-supplied metrics value for {key!r} mutated on "
+                f"round-trip; expected {expected!r}, got {loaded_metrics[key]!r}"
+            )
+
+        # Defaults for unspecified typed fields surface as the schema's
+        # sentinel values (None for numeric, False for promoted,
+        # 'unknown' for optimizer) — pin them so a future change that
+        # silently drops them on read can't sneak through.
+        assert loaded_metrics["optimizer"] == "unknown"
+        assert loaded_metrics["promoted"] is False
+        assert loaded_metrics["baseline_score"] is None
+        assert loaded_metrics["candidate_score"] is None
+        assert loaded_metrics["train_examples"] is None
 
     @pytest.mark.asyncio
     async def test_load_optimization_run_missing_returns_none(self, real_provider):
