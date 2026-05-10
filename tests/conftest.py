@@ -538,25 +538,22 @@ def backend_config_env():
 
 @pytest.fixture(scope="session", autouse=True)
 def cogniverse_test_config(backend_config_env, tmp_path_factory):
-    """
-    Materialize a test-shaped ``configs/config.json`` and point the
-    config-discovery path at it via ``COGNIVERSE_CONFIG``.
+    """Point ``COGNIVERSE_CONFIG`` at a tmp clone of ``configs/config.json``
+    with ``llm_config.primary`` / ``.teacher`` rewritten to the local Ollama
+    endpoint integration tests use by default.
 
     Production ``configs/config.json`` carries vLLM-served LLM endpoints
-    (``openai/google/gemma-4-e4b-it`` at ``http://...:8101/v1``) that
-    match the chart's vllm_llm_student/teacher pods. Local test runs
-    typically have only a local LM running, so loading the prod config
-    surfaces 404s for the unknown HF model id.
+    (``openai/google/gemma-4-e4b-it`` at ``http://localhost:8101/v1``) that
+    match the chart's vllm_llm_student/teacher pods. Local test runs hit a
+    host Ollama instead; the ``ensure_host_ollama`` fixture below
+    auto-installs / auto-starts Ollama and pulls the test model so
+    ``http://localhost:11434`` actually answers.
 
-    This fixture clones prod ``configs/config.json`` into a tmpdir,
-    overrides ``llm_config.primary`` and ``llm_config.teacher`` to
-    whatever the test machine actually has serving (defaults to local
-    the configured local LM), and sets ``COGNIVERSE_CONFIG`` to the clone.
-    Tests that need a different LLM target can override via env vars
-    ``TEST_LLM_MODEL`` / ``TEST_LLM_API_BASE`` before pytest starts.
+    Defaults are overridable via env vars ``TEST_LLM_MODEL`` /
+    ``TEST_LLM_API_BASE`` for operators who want a different LM target.
 
-    Skipped when ``COGNIVERSE_CONFIG`` is already set externally — that
-    means the operator wants their own config (e.g. CI matrix runs).
+    Skipped when ``COGNIVERSE_CONFIG`` is already set externally — the
+    operator wants their own config (e.g. CI matrix runs).
     """
     if os.environ.get("COGNIVERSE_CONFIG"):
         yield None
@@ -569,13 +566,9 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
 
     blob = json.loads(src_path.read_text())
 
-    test_model = os.environ.get("TEST_LLM_MODEL", "qwen3:4b")
+    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:1.5b")
     test_api_base = os.environ.get("TEST_LLM_API_BASE", "http://localhost:11434")
 
-    # Single litellm provider prefix for every test backend; chart and
-    # runtime emit the same. See cogniverse.llmProviderPrefix in the
-    # chart helpers — prefix is decoupled from the serving topology
-    # because vLLM, SaaS providers, and local LM servers all speak OAI-compat.
     prefixed = f"openai/{test_model}"
 
     llm_cfg = blob.setdefault("llm_config", {})
@@ -603,6 +596,231 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
         os.environ["COGNIVERSE_CONFIG"] = original
     elif "COGNIVERSE_CONFIG" in os.environ:
         del os.environ["COGNIVERSE_CONFIG"]
+
+
+_OLLAMA_RELEASE_BASE = "https://github.com/ollama/ollama/releases/latest/download"
+
+
+def _resolve_ollama_artefact() -> str:
+    import platform as _pl
+
+    system = _pl.system()
+    machine = _pl.machine().lower()
+    if system == "Linux" and machine in ("x86_64", "amd64"):
+        return "ollama-linux-amd64.tar.zst"
+    if system == "Linux" and machine in ("aarch64", "arm64"):
+        return "ollama-linux-arm64.tar.zst"
+    raise RuntimeError(f"Unsupported platform for Ollama install: {system}/{machine}")
+
+
+def _install_ollama_to_home() -> Path:
+    """Download the Ollama binary archive into ``~/.ollama/bin/ollama``.
+
+    No sudo required — drops the binary into the user's home so the
+    ``ollama serve`` and ``ollama pull`` calls below can find it via
+    ``shutil.which`` after we prepend ``~/.ollama/bin`` to ``PATH``.
+    """
+    import shutil as _sh
+    import subprocess as _sp
+    import tempfile as _tmp
+    import urllib.request as _ur
+
+    home_root = Path.home() / ".ollama"
+    home_bin = home_root / "bin"
+    home_bin.mkdir(parents=True, exist_ok=True)
+    bin_path = home_bin / "ollama"
+    if bin_path.exists():
+        return bin_path
+
+    artefact = _resolve_ollama_artefact()
+    url = f"{_OLLAMA_RELEASE_BASE}/{artefact}"
+    with _tmp.TemporaryDirectory() as td:
+        archive_path = Path(td) / artefact
+        with _ur.urlopen(url, timeout=600) as resp, open(archive_path, "wb") as f:
+            _sh.copyfileobj(resp, f)
+        # Ollama ships .tar.zst; needs --zstd (tar 1.31+) or zstd | tar.
+        extract_dir = Path(td) / "extracted"
+        extract_dir.mkdir()
+        _sp.run(
+            ["tar", "--zstd", "-xf", str(archive_path), "-C", str(extract_dir)],
+            check=True,
+            capture_output=True,
+        )
+        src_bin = extract_dir / "bin" / "ollama"
+        if not src_bin.exists():
+            raise RuntimeError(
+                f"ollama archive extracted but bin/ollama missing under "
+                f"{extract_dir}; archive layout may have changed"
+            )
+        _sh.copy2(src_bin, bin_path)
+        # Copy bundled libs (CUDA shims, llama.cpp shared libs) alongside the binary.
+        src_lib = extract_dir / "lib"
+        if src_lib.exists():
+            dst_lib = home_root / "lib"
+            if dst_lib.exists():
+                _sh.rmtree(dst_lib)
+            _sh.copytree(src_lib, dst_lib)
+
+    bin_path.chmod(bin_path.stat().st_mode | 0o755)
+    return bin_path
+
+
+def _probe_ollama(base_url: str, timeout: float = 2.0) -> bool:
+    import httpx
+
+    try:
+        return (
+            httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=timeout).status_code
+            == 200
+        )
+    except (httpx.HTTPError, OSError):
+        return False
+
+
+def _ollama_has_model(base_url: str, model: str) -> bool:
+    import httpx
+
+    try:
+        resp = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5.0)
+        if resp.status_code != 200:
+            return False
+        names = {
+            m.get("name", "").split(":")[0] for m in resp.json().get("models") or []
+        }
+        return model.split(":")[0] in names
+    except (httpx.HTTPError, OSError, ValueError):
+        return False
+
+
+def _claim_free_port() -> int:
+    """Bind a socket to port 0, read back the OS-assigned port, then close."""
+    import socket as _sock
+
+    with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_host_ollama(cogniverse_test_config):
+    """Guarantee an Ollama LM endpoint is reachable and has the test model.
+
+    Integration tests default to ``http://localhost:11434`` (Ollama).
+    Local dev environments often have other listeners on 11434 (e.g.
+    a k3d cluster's serverlb forwarding into the cluster), so this
+    fixture:
+      1. If ``cogniverse_test_config`` is rewritable and 11434 is
+         already taken by something that ISN'T Ollama, claims a free
+         port and rewrites ``llm_config.primary``/``.teacher`` in the
+         tmp-config to point at it.
+      2. Installs the Ollama binary into ``~/.ollama/bin`` if missing
+         (no sudo — single-file binary download).
+      3. Starts ``ollama serve`` on the chosen port (via ``OLLAMA_HOST``)
+         and waits for ``/api/tags`` to answer.
+      4. Pulls the test model (``TEST_LLM_MODEL`` env, default
+         ``qwen2.5:1.5b``) if missing.
+
+    Skipped when ``cogniverse_test_config`` is None (external
+    ``COGNIVERSE_CONFIG``) — that operator owns their own LM provisioning.
+    """
+    import shutil
+    import subprocess as _sp
+    import time as _t
+
+    if cogniverse_test_config is None:
+        yield
+        return
+
+    cfg_path = Path(cogniverse_test_config)
+    cfg = json.loads(cfg_path.read_text())
+    primary = cfg.get("llm_config", {}).get("primary", {})
+    configured_base = primary.get("api_base") or "http://localhost:11434"
+    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:1.5b")
+
+    if _probe_ollama(configured_base) and _ollama_has_model(
+        configured_base, test_model
+    ):
+        yield
+        return
+
+    if shutil.which("ollama") is None:
+        home_bin = Path.home() / ".ollama" / "bin"
+        if not (home_bin / "ollama").exists():
+            _install_ollama_to_home()
+        os.environ["PATH"] = f"{home_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        if shutil.which("ollama") is None:
+            raise RuntimeError(
+                f"installed Ollama at {home_bin}/ollama but PATH update did not take effect"
+            )
+
+    # Pick a port we can actually bind to. The configured 11434 is often held
+    # by the k3d serverlb on dev machines.
+    from urllib.parse import urlparse
+
+    configured_port = urlparse(configured_base).port or 11434
+    if _port_bindable(configured_port):
+        chosen_port = configured_port
+    else:
+        chosen_port = _claim_free_port()
+        new_base = f"http://localhost:{chosen_port}"
+        primary["api_base"] = new_base
+        teacher = cfg.setdefault("llm_config", {}).setdefault("teacher", {})
+        teacher["api_base"] = new_base
+        cfg_path.write_text(json.dumps(cfg))
+
+    chosen_base = f"http://localhost:{chosen_port}"
+    serve_env = {**os.environ, "OLLAMA_HOST": f"127.0.0.1:{chosen_port}"}
+    serve_proc = _sp.Popen(
+        ["ollama", "serve"],
+        env=serve_env,
+        stdout=_sp.DEVNULL,
+        stderr=_sp.DEVNULL,
+    )
+    try:
+        ready = False
+        for _ in range(30):
+            if _probe_ollama(chosen_base, timeout=1.0):
+                ready = True
+                break
+            _t.sleep(1)
+        if not ready:
+            raise RuntimeError(
+                f"`ollama serve` did not start answering at {chosen_base} within 30s"
+            )
+
+        if not _ollama_has_model(chosen_base, test_model):
+            pull = _sp.run(
+                ["ollama", "pull", test_model],
+                env=serve_env,
+                capture_output=True,
+                timeout=900,
+            )
+            if pull.returncode != 0:
+                raise RuntimeError(
+                    f"`ollama pull {test_model}` failed: "
+                    f"{pull.stderr.decode(errors='replace')[:500]}"
+                )
+
+        yield
+
+    finally:
+        serve_proc.terminate()
+        try:
+            serve_proc.wait(timeout=5)
+        except _sp.TimeoutExpired:
+            serve_proc.kill()
+
+
+def _port_bindable(port: int) -> bool:
+    import socket as _sock
+
+    try:
+        with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as s:
+            s.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+            s.bind(("127.0.0.1", port))
+            return True
+    except OSError:
+        return False
 
 
 @pytest.fixture
