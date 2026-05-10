@@ -132,6 +132,37 @@ class TestArtifactManagerRoundTrip:
             )
 
     @pytest.mark.asyncio
+    async def test_unspecified_typed_fields_surface_as_schema_defaults(
+        self, real_provider
+    ):
+        """Caller writes ZERO typed fields → every typed slot comes back as
+        the schema's documented sentinel (None for the numeric fields,
+        False for promoted, "unknown" for optimizer). Pins the sentinel
+        contract so a future change that silently drops them on read or
+        substitutes a different sentinel can't sneak through.
+        """
+        mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test-defaults")
+
+        await mgr.log_optimization_run(
+            "router",
+            {"per_modality_accuracy": {"overall": 1.0}},
+        )
+
+        loaded = await mgr.load_optimization_run("router")
+        assert loaded is not None
+        loaded_metrics = loaded["metrics"]
+
+        assert loaded_metrics["optimizer"] == "unknown"
+        assert loaded_metrics["promoted"] is False
+        assert loaded_metrics["baseline_score"] is None
+        assert loaded_metrics["candidate_score"] is None
+        assert loaded_metrics["improvement"] is None
+        assert loaded_metrics["train_examples"] is None
+
+        # The free-form key still round-trips alongside the defaulted typed slots.
+        assert loaded_metrics["per_modality_accuracy"] == {"overall": 1.0}
+
+    @pytest.mark.asyncio
     async def test_load_optimization_run_missing_returns_none(self, real_provider):
         """No prior log_optimization_run for this agent → None."""
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test-2")
