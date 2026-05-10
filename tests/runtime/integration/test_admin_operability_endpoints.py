@@ -142,7 +142,7 @@ class TestCanaryEndpoints:
         am = ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             am.save_prompts_versioned("search_agent", {"system": "CANARY_VIA_ADMIN"})
         )
 

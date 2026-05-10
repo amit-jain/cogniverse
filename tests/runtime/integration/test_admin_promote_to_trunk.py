@@ -33,6 +33,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.routers import admin
 from cogniverse_vespa.config.config_store import VespaConfigStore
+from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 pytestmark = pytest.mark.integration
@@ -147,6 +148,23 @@ class TestPromoteToOrgTrunk:
         assert body["org_trunk_tenant_id"] == TRUNK_TENANT
         promoted_id = body["promoted_memory_id"]
         assert promoted_id
+
+        # Vespa search/YQL is eventually consistent. Mem0's get_all goes
+        # through that path, so reading immediately after the promotion's
+        # internal feed can race the indexer and return zero rows. Wait
+        # for indexing to settle before asserting visibility.
+        from urllib.parse import urlparse
+
+        from cogniverse_foundation.config.utils import get_config
+
+        cfg = get_config(tenant_id=TENANT)
+        backend_url = cfg.get("backend", {}).get("url", "http://localhost")
+        backend_port = cfg.get("backend", {}).get("port", 8080)
+        wait_for_vespa_indexing(
+            backend_url=urlparse(f"{backend_url}:{backend_port}").geturl(),
+            delay=3,
+            description="org-trunk promotion indexing",
+        )
 
         # The promoted record must be visible in the org-trunk store
         # and carry the promotion stamp on its metadata. FederationService

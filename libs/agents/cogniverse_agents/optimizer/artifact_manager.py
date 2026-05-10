@@ -63,6 +63,17 @@ class ExperimentMetrics:
 
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "ExperimentMetrics":
+        # Phoenix's ``to_dataframe()`` round-trip may flatten metadata into a
+        # nested ``metadata`` column instead of preserving original column
+        # names. Promote the nested dict's keys back to the row level so
+        # the typed lookups below work regardless of which shape Phoenix
+        # returned.
+        if "tenant_id" not in row and isinstance(row.get("metadata"), dict):
+            row = {
+                **row.get("metadata", {}),
+                **{k: v for k, v in row.items() if k != "metadata"},
+            }
+
         extras = row.get("extra_metrics") or {}
         if isinstance(extras, str):
             try:
@@ -1012,14 +1023,18 @@ class ArtifactManager:
         dataset_name = self._experiments_dataset_name(metrics.agent_type)
         row_df = pd.DataFrame([metrics.to_row()])
 
-        # First run: create the dataset; subsequent runs: append.
+        # First run: create the dataset; subsequent runs: append. Every
+        # metric column is sent as metadata_keys so Phoenix's
+        # to_dataframe() round-trip preserves them under their original
+        # names — without metadata_keys, Phoenix collapses unclassified
+        # columns and the from_row read raises KeyError on tenant_id.
+        all_columns = list(row_df.columns)
         try:
             await self._provider.datasets.append_to_dataset(
                 name=dataset_name, data=row_df
             )
             return dataset_name
         except (KeyError, ValueError):
-            # Dataset doesn't exist yet — create it with the first row.
             dataset_id = await self._provider.datasets.create_dataset(
                 name=dataset_name,
                 data=row_df,
@@ -1028,6 +1043,7 @@ class ArtifactManager:
                     "agent_type": metrics.agent_type,
                     "tenant_id": self._tenant_id,
                     "created_at": datetime.now(timezone.utc).isoformat(),
+                    "metadata_keys": all_columns,
                 },
             )
             logger.info(

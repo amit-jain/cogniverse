@@ -69,7 +69,7 @@ def seeded_dataset(phoenix_container, tenant_id: str) -> str:
     )
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         provider.datasets.create_dataset(
             name=dataset_name,
             data=df,
@@ -262,7 +262,7 @@ class TestAbCompareRoundTrip:
         df = pd.DataFrame([{"foo": "no query column"}])
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             provider.datasets.create_dataset(
                 name=bad_dataset,
                 data=df,

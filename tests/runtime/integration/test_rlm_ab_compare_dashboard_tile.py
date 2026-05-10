@@ -215,7 +215,7 @@ class TestLoaderAgainstRealPhoenix:
         # A unique tenant id with no emitted spans → loader returns the
         # zero aggregate, not an error.
         tenant_id = f"b5empty_{uuid.uuid4().hex[:8]}"
-        agg = asyncio.get_event_loop().run_until_complete(
+        agg = asyncio.run(
             load_ab_compare_data(
                 phoenix_http_endpoint="http://localhost:16006",
                 tenant_id=tenant_id,
@@ -249,7 +249,7 @@ class TestLoaderAgainstRealPhoenix:
 
         time.sleep(2)
 
-        agg = asyncio.get_event_loop().run_until_complete(
+        agg = asyncio.run(
             load_ab_compare_data(
                 phoenix_http_endpoint="http://localhost:16006",
                 tenant_id=tenant_id,
