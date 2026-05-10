@@ -173,14 +173,15 @@ async def test_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager):
 
 
 @pytest.mark.asyncio
-async def test_knowledge_summarises_real_subject_slice(real_mm: Mem0MemoryManager):
+async def test_knowledge_summarises_real_subject_slice(
+    real_mm: Mem0MemoryManager, dspy_lm
+):
     """Write 3 memories on the same subject_key + kind to real Vespa,
-    then ask the summarisation agent to distill them. With the DSPy
-    module stubbed (no LLM inference required for the wire test) the
-    test asserts the agent correctly read the slice from real
-    persistence and grouped citation refs over the 3 source ids."""
-    from unittest.mock import MagicMock
-
+    then ask the summarisation agent to distill them through a real
+    DSPy LM. Asserts (a) the agent read the slice correctly from real
+    persistence, (b) all 3 sources are cited, and (c) the LM produced
+    a non-empty grounded summary (no hard string match — LM output is
+    non-deterministic; the assertion is the contract, not the prose)."""
     subject = "policy:refunds_summary"
     written_ids = []
     for i in range(3):
@@ -207,11 +208,7 @@ async def test_knowledge_summarises_real_subject_slice(real_mm: Mem0MemoryManage
         memory_manager_factory=lambda _t: real_mm,
         registry=build_default_registry(),
     )
-    # Stub DSPy so the test doesn't require Ollama; the wire we're
-    # asserting is the read-from-Vespa side, not the LLM synthesis.
-    agent._dspy_module = MagicMock(
-        return_value=MagicMock(summary="STUB_SUMMARY_OF_REAL_SLICE")
-    )
+    # No DSPy stub — exercise the real LM via the dspy_lm fixture.
 
     out = await agent._process_impl(
         KnowledgeSummarizationInput(
@@ -233,7 +230,14 @@ async def test_knowledge_summarises_real_subject_slice(real_mm: Mem0MemoryManage
         f"slice; got source_count={out.source_count}. If this is < 3, "
         "metadata round-trip is dropping subject_key/kind on the read."
     )
-    assert out.summary == "STUB_SUMMARY_OF_REAL_SLICE"
+    # Real LM contract — output is non-deterministic, but it must be a
+    # non-empty string (the LM ran and the agent surfaced the result).
+    assert isinstance(out.summary, str) and out.summary.strip(), (
+        f"DSPy summary must be a non-empty string from the real LM; got "
+        f"{out.summary!r}. If this is empty, the dspy_lm fixture did not "
+        f"configure dspy.settings.lm OR the agent's _dspy_module returned "
+        f"a malformed prediction."
+    )
     cited = {ref.ref_id for ref in out.citation_refs}
     for mid in written_ids:
         assert mid in cited, (

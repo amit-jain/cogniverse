@@ -117,9 +117,10 @@ def _inject_memory(agent, mm, agent_name: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_multi_doc_synthesis_real_vespa(primary_mm):
-    """Seed 3 docs, ask the agent to synthesise across them, assert the
-    persisted synthesis carries citations to all three input ids."""
+async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
+    """Seed 3 docs, ask the agent to synthesise across them through a
+    real DSPy LM, assert the persisted synthesis carries citations to
+    all three input ids and the LM produced a non-empty answer."""
     from cogniverse_agents.multi_document_synthesis_agent import (
         DocumentRef,
         MultiDocSynthesisDeps,
