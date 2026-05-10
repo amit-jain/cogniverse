@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import List, Tuple
 
 import pytest
 
@@ -176,15 +177,45 @@ async def test_audit_walks_real_provenance_chain(real_mm: Mem0MemoryManager):
 async def test_knowledge_summarises_real_subject_slice(
     real_mm: Mem0MemoryManager, dspy_lm
 ):
-    """Write 3 memories on the same subject_key + kind to real Vespa,
-    then ask the summarisation agent to distill them through a real
-    DSPy LM. Asserts (a) the agent read the slice correctly from real
-    persistence, (b) all 3 sources are cited, and (c) the LM produced
-    a non-empty grounded summary (no hard string match — LM output is
-    non-deterministic; the assertion is the contract, not the prose)."""
+    """Seed 3 DISTINGUISHABLE refund-policy facts under one subject_key,
+    invoke the agent through a real DSPy LM, and assert the summary
+    actually synthesises content from each source (not just one).
+
+    The agent's contract is: read N source memories matching
+    ``subject_keys`` + ``kinds`` from Vespa, build a prompt block,
+    pass it to ``dspy.ChainOfThought(_SummarizationSignature)``, and
+    return the LM's summary together with the citation refs.
+
+    Distinguishable seed content makes it possible to tell whether
+    the LM actually consumed each source. With identical filler text
+    (the prior version's "Refund fact {i}: text"), the LM could echo
+    one source and the test would pass — proving nothing about the
+    summary contract.
+    """
     subject = "policy:refunds_summary"
+    # Three SOURCE FACTS with disjoint distinguishing tokens. The
+    # summary must reference each one's distinguishing token; otherwise
+    # the LM either (a) didn't see that source, or (b) ignored it.
+    seed_facts: List[Tuple[str, str]] = [
+        # (content, expected distinguishing token in the summary lower-cased)
+        (
+            "Standard refund policy: customers may request a refund within "
+            "30 days of purchase, no questions asked.",
+            "30",
+        ),
+        (
+            "Customers in the European Union receive an additional 14 days "
+            "of return rights under EU consumer protection law.",
+            "14",
+        ),
+        (
+            "Digital downloads are non-refundable once the file has been "
+            "accessed; refund requests on accessed downloads are denied.",
+            "digital",
+        ),
+    ]
     written_ids = []
-    for i in range(3):
+    for i, (content, _expected) in enumerate(seed_facts):
         prov = make_provenance(
             written_by=f"agent:doc_{i}",
             derivation_kind=DerivationKind.DIRECT_INGEST,
@@ -192,7 +223,7 @@ async def test_knowledge_summarises_real_subject_slice(
             derived_from=[CitationRef.external(f"https://docs/refunds_{i}")],
         )
         mid = real_mm.add_memory(
-            content=f"Refund fact {i}: text",
+            content=content,
             tenant_id=TENANT,
             agent_name=AGENT,
             metadata=attach_to_metadata(
@@ -216,50 +247,69 @@ async def test_knowledge_summarises_real_subject_slice(
             subject_keys=[subject],
             kinds=["external_doc"],
             agent_name_filter=AGENT,
-            title="refunds slice",
+            title="refunds policy summary",
             actor_role="user",
             actor_id="alice",
             promote=False,
         )
     )
-    # subject_key + kind must round-trip through Vespa metadata for the
-    # subject-slice filter to find what we wrote. With the metadata
-    # round-trip fix in BackendVectorStore, all 3 must surface.
-    assert out.source_count >= 3, (
-        f"agent should see all 3 seeded memories on the real subject "
+    # Slice contract: subject_key + kind round-trip through Vespa
+    # metadata so all 3 seeded memories surface in the slice.
+    assert out.source_count == 3, (
+        f"agent should see exactly the 3 seeded memories on the real subject "
         f"slice; got source_count={out.source_count}. If this is < 3, "
         "metadata round-trip is dropping subject_key/kind on the read."
     )
-    # Tight assertions on the real LM output:
-    #   1. Non-empty string (LM ran, agent surfaced result).
-    #   2. NOT the agent's silent fallback string. KnowledgeSummarizationAgent
-    #      catches DSPy exceptions in _summarise_without_rlm and returns
-    #      "[FALLBACK: synthesis failed] ...". If we let that pass, a
-    #      broken LM endpoint would silently turn this test into "the
-    #      source text contains the word 'refund'" — which it always
-    #      does, because the fallback emits the source block.
-    #   3. Must reference seeded doc content ('refund') — confirms the
-    #      agent passed the slice into the prompt and the LM grounded
-    #      its synthesis in it.
+
     summary_text = out.summary or ""
+
+    # 1. Output is a non-empty string (LM ran, agent surfaced result).
     assert isinstance(summary_text, str) and summary_text.strip(), (
         f"DSPy summary must be a non-empty string from the real LM; got "
-        f"{summary_text!r}. If empty, dspy_lm did not configure "
-        f"dspy.settings.lm OR the agent's _dspy_module returned a "
-        f"malformed prediction."
+        f"{summary_text!r}."
     )
+
+    # 2. NOT the silent fallback. The agent catches DSPy exceptions in
+    # _summarise_without_rlm and returns "[FALLBACK: synthesis failed] ...".
+    # If we let that pass, a broken LM endpoint would silently turn
+    # this test into "the source text contained the word 'refund'".
     assert not summary_text.startswith("[FALLBACK:"), (
-        f"KnowledgeSummarizationAgent fell back to its [FALLBACK: ...] "
-        f"path — DSPy threw an exception inside _summarise_without_rlm. "
-        f"This means the LM call failed (auth, endpoint, model name) "
-        f"and the test would otherwise silently 'pass' on the source "
-        f"text echoed by the fallback. Got: {summary_text[:300]!r}"
+        f"KnowledgeSummarizationAgent fell back — DSPy threw inside "
+        f"_summarise_without_rlm (LM auth, endpoint, or model name "
+        f"broken). Got: {summary_text[:300]!r}"
     )
-    assert "refund" in summary_text.lower(), (
-        f"Real LM summary must reference the seeded doc content "
-        f"('Refund fact ...'); got summary={summary_text!r}. If 'refund' "
-        f"is missing, the agent likely didn't pass doc content into the "
-        f"prompt (broken slice assembly), or the LM ignored its prompt."
+
+    # 3. The summary must NOT be a verbatim echo of any single source.
+    # A SUMMARY synthesises — copying one input is a contract violation.
+    summary_norm = " ".join(summary_text.split())
+    for content, _ in seed_facts:
+        source_norm = " ".join(content.split())
+        assert source_norm not in summary_norm, (
+            f"summary is a verbatim copy of one input source — the "
+            f"summarisation contract is to SYNTHESISE, not echo. "
+            f"Echoed source: {source_norm!r}. Full summary: "
+            f"{summary_text!r}."
+        )
+
+    # 4. Coverage. Each seeded fact has a distinguishing token; the
+    # summary must reference at least 2 of the 3, proving the LM
+    # actually consumed the joined block (not just one source). All 3
+    # is the ideal but local LMs can omit one detail; 2-of-3 is the
+    # weakest signal that still proves "the LM saw and synthesised
+    # multiple sources." A real synthesis MUST mention more than one
+    # source's content.
+    summary_lower = summary_text.lower()
+    hits = [
+        token for _content, token in seed_facts if token in summary_lower
+    ]
+    assert len(hits) >= 2, (
+        f"summary must reference distinguishing content from at least 2 "
+        f"of the 3 seeded facts (proving it synthesised multiple sources, "
+        f"not just one). Expected tokens: "
+        f"{[token for _, token in seed_facts]!r}. Found: {hits!r}. "
+        f"Full summary: {summary_text!r}. If only 1 token is hit, the "
+        f"agent likely passed only one memory to the LM (broken slice "
+        f"assembly) or the LM ignored most of the prompt."
     )
     cited = {ref.ref_id for ref in out.citation_refs}
     for mid in written_ids:

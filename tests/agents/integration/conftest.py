@@ -108,7 +108,14 @@ def _dspy_lm_instance():
         # convention sentinel.
         api_key=llm_cfg.get("api_key") or "not-required",
         temperature=0.1,
-        max_tokens=200,
+        # 200 tokens was too small: synthesis / summarisation tests
+        # truncate mid-sentence, masking real failures behind a
+        # plausible-looking partial answer (the 3-doc synthesis test
+        # would only ever surface 1 of 3 distinguishing facts before
+        # hitting the cap). 800 is enough headroom for the largest
+        # synthesis prompts in the test suite without slowing simple
+        # Q&A tests appreciably (local LMs stop early on short answers).
+        max_tokens=800,
         extra_body=extra_body,
     )
     return create_dspy_lm(endpoint)
