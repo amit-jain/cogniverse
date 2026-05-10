@@ -89,7 +89,7 @@ def trunk_setup(vespa_instance, shared_denseon, memory_manager):
 
 
 @pytest.fixture
-def promote_client(trunk_setup, monkeypatch):
+def promote_client(trunk_setup, vespa_instance, monkeypatch):
     tenant_mm, trunk_mm = trunk_setup
     # Override the default registry's sensitivity for tenant_instruction
     # so the promote endpoint's schema gate considers it org-shared.
@@ -122,12 +122,17 @@ def promote_client(trunk_setup, monkeypatch):
 
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
-    yield TestClient(app, raise_server_exceptions=False), tenant_mm, trunk_mm
+    yield (
+        TestClient(app, raise_server_exceptions=False),
+        tenant_mm,
+        trunk_mm,
+        vespa_instance,
+    )
 
 
 class TestPromoteToOrgTrunk:
     def test_round_trip_promotion(self, promote_client):
-        client, tenant_mm, trunk_mm = promote_client
+        client, tenant_mm, trunk_mm, vespa_instance = promote_client
         # Seed a tenant memory.
         mid = tenant_mm.add_memory(
             content="HOUSE_RULE_promote_me_h7",
@@ -153,15 +158,8 @@ class TestPromoteToOrgTrunk:
         # through that path, so reading immediately after the promotion's
         # internal feed can race the indexer and return zero rows. Wait
         # for indexing to settle before asserting visibility.
-        from urllib.parse import urlparse
-
-        from cogniverse_foundation.config.utils import get_config
-
-        cfg = get_config(tenant_id=TENANT)
-        backend_url = cfg.get("backend", {}).get("url", "http://localhost")
-        backend_port = cfg.get("backend", {}).get("port", 8080)
         wait_for_vespa_indexing(
-            backend_url=urlparse(f"{backend_url}:{backend_port}").geturl(),
+            backend_url=f"http://localhost:{vespa_instance['http_port']}",
             delay=3,
             description="org-trunk promotion indexing",
         )
@@ -190,7 +188,7 @@ class TestPromoteToOrgTrunk:
         assert meta.get("promoted_by_role") == "tenant_admin"
 
     def test_unknown_memory_returns_404(self, promote_client):
-        client, _t, _tr = promote_client
+        client, _t, _tr, _vi = promote_client
         resp = client.post(
             f"/admin/tenants/{TENANT}/memories/no-such-id/promote_to_org_trunk",
             json={"actor_role": "tenant_admin", "actor_id": "admin_alpha"},
@@ -198,7 +196,7 @@ class TestPromoteToOrgTrunk:
         assert resp.status_code == 404
 
     def test_invalid_actor_role_returns_400(self, promote_client):
-        client, _t, _tr = promote_client
+        client, _t, _tr, _vi = promote_client
         resp = client.post(
             f"/admin/tenants/{TENANT}/memories/anything/promote_to_org_trunk",
             json={"actor_role": "superadmin", "actor_id": "x"},

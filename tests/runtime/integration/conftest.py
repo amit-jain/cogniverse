@@ -399,6 +399,38 @@ def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon
         auto_create_schema=True,
     )
 
+    # Vespa's prepareandactivate returns before content nodes finish
+    # activating new schemas. The deploy_schema calls above return True
+    # but feed_data_point against the just-deployed agent_memories_test_unit
+    # / provenance_test_unit schemas can fail with "Document type ... does
+    # not exist" for several seconds afterwards. Probe both schemas with
+    # a Document v1 GET (404 means schema-known-but-doc-absent → ready;
+    # connection-error or 400 means schema not yet activated).
+    import time as _t
+
+    import requests as _req
+
+    http_port = vespa_instance["http_port"]
+    for schema in ("agent_memories_test_unit", "provenance_test_unit"):
+        deadline = _t.monotonic() + 60
+        while _t.monotonic() < deadline:
+            try:
+                resp = _req.get(
+                    f"http://localhost:{http_port}/document/v1/{schema}/{schema}/docid/__readiness__",
+                    timeout=5,
+                )
+                if resp.status_code in (200, 404):
+                    break
+            except _req.RequestException:
+                pass
+            _t.sleep(1)
+        else:
+            raise RuntimeError(
+                f"schema {schema!r} did not become feedable on Vespa within 60s "
+                f"of memory_manager.initialize() — every test that writes to "
+                f"this schema will race the activation"
+            )
+
     yield mm
 
     Mem0MemoryManager._instances.clear()

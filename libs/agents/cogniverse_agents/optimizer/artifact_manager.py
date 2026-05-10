@@ -63,16 +63,27 @@ class ExperimentMetrics:
 
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "ExperimentMetrics":
-        # Phoenix's ``to_dataframe()`` round-trip may flatten metadata into a
-        # nested ``metadata`` column instead of preserving original column
-        # names. Promote the nested dict's keys back to the row level so
-        # the typed lookups below work regardless of which shape Phoenix
-        # returned.
-        if "tenant_id" not in row and isinstance(row.get("metadata"), dict):
-            row = {
-                **row.get("metadata", {}),
-                **{k: v for k, v in row.items() if k != "metadata"},
-            }
+        # Phoenix's ``to_dataframe()`` round-trip preserves the original
+        # column names when ``metadata_keys`` was passed at create time,
+        # but two other shapes can land here:
+        #   * a nested dict under ``metadata`` (older Phoenix versions);
+        #   * flattened dotted columns like ``metadata.tenant_id``.
+        # Normalise both forms back to the flat layout the dataclass expects.
+        if "tenant_id" not in row:
+            if isinstance(row.get("metadata"), dict):
+                row = {
+                    **row.get("metadata", {}),
+                    **{k: v for k, v in row.items() if k != "metadata"},
+                }
+            else:
+                row = {
+                    **{
+                        k.split(".", 1)[1]: v
+                        for k, v in row.items()
+                        if k.startswith("metadata.")
+                    },
+                    **{k: v for k, v in row.items() if not k.startswith("metadata.")},
+                }
 
         extras = row.get("extra_metrics") or {}
         if isinstance(extras, str):
