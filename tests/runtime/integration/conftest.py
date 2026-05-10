@@ -41,7 +41,7 @@ from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from tests.utils.llm_config import get_llm_model
+from tests.utils.llm_config import get_llm_base_url, get_llm_model
 from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
@@ -392,11 +392,11 @@ def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon
         backend_config_port=vespa_instance["config_port"],
         llm_model=get_llm_model(),
         embedding_model="lightonai/DenseOn",
-        llm_base_url="http://localhost:11434",
+        llm_base_url=get_llm_base_url(),
         embedder_base_url=shared_denseon,
         config_manager=config_manager,
         schema_loader=schema_loader,
-        auto_create_schema=False,
+        auto_create_schema=True,
     )
 
     yield mm
