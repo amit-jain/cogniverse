@@ -63,19 +63,31 @@ class ExperimentMetrics:
 
     @classmethod
     def from_row(cls, row: Dict[str, Any]) -> "ExperimentMetrics":
-        # Phoenix's ``to_dataframe()`` round-trip preserves the original
-        # column names when ``metadata_keys`` was passed at create time,
-        # but two other shapes can land here:
-        #   * a nested dict under ``metadata`` (older Phoenix versions);
-        #   * flattened dotted columns like ``metadata.tenant_id``.
-        # Normalise both forms back to the flat layout the dataclass expects.
+        # Phoenix's ``to_dataframe()`` round-trip lands columns in one
+        # of four shapes depending on how create_dataset was called:
+        #   * flat with original names (when metadata_keys covers them all)
+        #   * dict under ``input`` / ``output`` / ``metadata`` (Phoenix's
+        #     default categorisation when no keys are specified — every
+        #     column except input_keys/output_keys lands under ``input``)
+        #   * nested dict under ``metadata`` (older Phoenix versions)
+        #   * dotted-flat like ``metadata.tenant_id``
+        # Normalise all four back to the flat layout the dataclass expects.
         if "tenant_id" not in row:
-            if isinstance(row.get("metadata"), dict):
+            promoted = {}
+            for nested_key in ("input", "metadata", "output"):
+                nested = row.get(nested_key)
+                if isinstance(nested, dict):
+                    promoted.update(nested)
+            if promoted:
                 row = {
-                    **row.get("metadata", {}),
-                    **{k: v for k, v in row.items() if k != "metadata"},
+                    **promoted,
+                    **{
+                        k: v
+                        for k, v in row.items()
+                        if k not in ("input", "metadata", "output")
+                    },
                 }
-            else:
+            elif any(k.startswith("metadata.") for k in row):
                 row = {
                     **{
                         k.split(".", 1)[1]: v
@@ -84,6 +96,13 @@ class ExperimentMetrics:
                     },
                     **{k: v for k, v in row.items() if not k.startswith("metadata.")},
                 }
+            if "tenant_id" not in row:
+                raise KeyError(
+                    f"ExperimentMetrics.from_row could not locate 'tenant_id' "
+                    f"in any of: top-level row, nested input/output/metadata "
+                    f"dicts, or 'metadata.<key>' dotted columns. "
+                    f"Row columns: {sorted(row.keys())}"
+                )
 
         extras = row.get("extra_metrics") or {}
         if isinstance(extras, str):
@@ -100,7 +119,7 @@ class ExperimentMetrics:
             baseline_score=_optional_float(row.get("baseline_score")),
             candidate_score=_optional_float(row.get("candidate_score")),
             improvement=_optional_float(row.get("improvement")),
-            promoted=bool(row.get("promoted", False)),
+            promoted=_parse_bool(row.get("promoted", False)),
             train_examples=_optional_int(row.get("train_examples")),
             extra_metrics=extras,
         )
@@ -113,6 +132,25 @@ def _optional_float(v: Any) -> Optional[float]:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_bool(v: Any) -> bool:
+    """Round-trip-safe bool parse.
+
+    Phoenix's dataset round-trip can stringify booleans (``True`` → ``"True"``
+    and ``False`` → ``"False"``); a naked ``bool("False")`` is truthy. Treat
+    common string spellings explicitly.
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "1", "yes"}
+    if v is None:
+        return False
+    try:
+        return bool(int(v))
+    except (TypeError, ValueError):
+        return bool(v)
 
 
 def _optional_int(v: Any) -> Optional[int]:
@@ -1133,6 +1171,20 @@ class ArtifactManager:
         invocations keep working while callers migrate.
         """
         run_id = str(metrics.get("run_id") or _generate_run_id())
+        # Typed numeric fields: only consume when the value parses as a
+        # number — otherwise leave the original (potentially nested) value
+        # in extra_metrics so the round-trip preserves it. Older callers
+        # pass nested dicts (``"improvement": {"overall": 0.5, ...}``)
+        # under the typed names; we honour both shapes.
+        typed_fields = (
+            "baseline_score",
+            "candidate_score",
+            "improvement",
+            "train_examples",
+        )
+        consumed_typed = {
+            k for k in typed_fields if _optional_float(metrics.get(k)) is not None
+        }
         record = ExperimentMetrics(
             tenant_id=self._tenant_id,
             agent_type=agent_type,
@@ -1147,35 +1199,35 @@ class ArtifactManager:
             extra_metrics={
                 k: v
                 for k, v in metrics.items()
-                if k
-                not in {
-                    "run_id",
-                    "optimizer",
-                    "baseline_score",
-                    "candidate_score",
-                    "improvement",
-                    "promoted",
-                    "train_examples",
-                }
+                if k not in {"run_id", "optimizer", "promoted"} | consumed_typed
             },
         )
         return await self.save_experiment(record)
 
     async def load_optimization_run(self, agent_type: str) -> Optional[Dict[str, Any]]:
-        """[Deprecated] Use ``load_latest_experiment`` for the typed result."""
+        """[Deprecated] Use ``load_latest_experiment`` for the typed result.
+
+        ``metrics`` only contains typed fields whose values aren't the
+        record's defaults (``None`` for the numeric fields, ``False``
+        for promoted, ``"unknown"`` for optimizer). That makes the
+        round-trip exactly preserve a free-form metrics dict — callers
+        that wrote ``{"baseline": {...}}`` get the same dict back, not
+        the dict plus four ``None``-valued typed columns.
+        """
         latest = await self.load_latest_experiment(agent_type)
         if latest is None:
             return None
+        typed = {}
+        if latest.optimizer != "unknown":
+            typed["optimizer"] = latest.optimizer
+        for field_name in ("baseline_score", "candidate_score", "improvement", "train_examples"):
+            value = getattr(latest, field_name)
+            if value is not None:
+                typed[field_name] = value
+        if latest.promoted:
+            typed["promoted"] = True
         return {
-            "metrics": {
-                "optimizer": latest.optimizer,
-                "baseline_score": latest.baseline_score,
-                "candidate_score": latest.candidate_score,
-                "improvement": latest.improvement,
-                "promoted": latest.promoted,
-                "train_examples": latest.train_examples,
-                **latest.extra_metrics,
-            },
+            "metrics": {**typed, **latest.extra_metrics},
             "tenant_id": latest.tenant_id,
             "agent_type": latest.agent_type,
             "timestamp": latest.timestamp,
