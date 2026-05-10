@@ -463,9 +463,7 @@ class TestWikiLint:
         # as the calendar advances past lint()'s 30-day threshold.
         from datetime import datetime, timedelta, timezone
 
-        recent_iso = (
-            datetime.now(timezone.utc) - timedelta(days=1)
-        ).isoformat()
+        recent_iso = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         topic_id = "wiki_topic_acme_production_healthy"
         results = [
             _make_mock_result(

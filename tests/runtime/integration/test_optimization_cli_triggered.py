@@ -17,7 +17,7 @@ from tests.fixtures.llm import is_test_lm_available
 logger = logging.getLogger(__name__)
 
 
-skip_if_no_ollama = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not is_test_lm_available(),
     reason="Test LM not available for triggered optimization",
 )
@@ -120,7 +120,7 @@ def trigger_dataset_in_phoenix(real_telemetry):
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestTriggeredOptimization:
     """Test run_triggered_optimization() end-to-end."""
 

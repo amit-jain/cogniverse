@@ -1,24 +1,39 @@
-"""Integration tests for RLM — real Ollama calls, no mocks on the LLM boundary."""
+"""Integration tests for RLM — real LM calls (no LLM-boundary mocks).
+
+Endpoint, model, provider and api key resolve via ``tests/fixtures/llm.py``
+so the same suite runs against any OpenAI-compatible provider without a
+code change. Deno is provisioned by the ``ensure_deno`` session fixture
+in ``tests/agents/integration/conftest.py`` when missing.
+"""
 
 import pytest
 
-from cogniverse_agents.inference import is_deno_available
-from tests.agents.integration.conftest import is_ollama_available
-
-pytestmark = pytest.mark.integration
-
-skip_if_no_ollama = pytest.mark.skipif(
-    not is_ollama_available(),
-    reason="Ollama not available at http://localhost:11434",
+from tests.agents.integration.conftest import skip_if_no_lm
+from tests.fixtures.llm import (
+    resolve_bare_model,
+    resolve_base_url,
+    resolve_prefixed_model,
+    resolve_provider,
 )
 
-skip_if_no_deno = pytest.mark.skipif(
-    not is_deno_available(),
-    reason="Deno not installed — DSPy RLM REPL requires Deno for code execution",
-)
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("ensure_deno")]
 
-_OLLAMA_MODEL = "ollama/llama3.2"
-_OLLAMA_API_BASE = "http://localhost:11434"
+
+def _lm_model() -> str:
+    return resolve_prefixed_model()
+
+
+def _lm_base() -> str:
+    return resolve_base_url()
+
+
+def _lm_provider() -> str:
+    return resolve_provider()
+
+
+def _lm_bare_model() -> str:
+    return resolve_bare_model()
+
 
 # Short contexts so each test runs in under 30 s.
 _FRANCE_CONTEXT = (
@@ -40,18 +55,17 @@ _PYTHON_NEW = (
 )
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMInferenceDirect:
-    """RLMInference.process() called with real Ollama."""
+    """RLMInference.process() called with the configured LM."""
 
-    @skip_if_no_deno
     def test_process_returns_answer_with_content(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=300,
             temperature=0.1,
         )
@@ -71,8 +85,8 @@ class TestRLMInferenceDirect:
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.1,
         )
@@ -90,8 +104,8 @@ class TestRLMInferenceDirect:
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.1,
         )
@@ -112,7 +126,7 @@ class TestRLMInferenceDirect:
 class TestRLMBootProbe:
     """fast-fail at construction when Deno is absent.
 
-    Runs everywhere (does not require Ollama) — the point is that the boot
+    Runs everywhere (does not require the LM) — the point is that the boot
     probe surfaces a clear error before any RLM call attempts to spawn Deno.
     """
 
@@ -160,18 +174,17 @@ class TestRLMBootProbe:
         assert rlm.model == "openai/gpt-4o"
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMABHarness:
-    """RLMABRunner against real Ollama: both arms run, share ab_id."""
+    """RLMABRunner against the configured LM: both arms run, share ab_id."""
 
-    @skip_if_no_deno
     def test_ab_runner_executes_both_arms_with_shared_ab_id(self):
         from cogniverse_agents.inference.ab_harness import RLMABRunner
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         cfg = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.0,
         )
@@ -204,7 +217,6 @@ class TestRLMABHarness:
         assert td["ab_without_rlm_latency_ms"] > 0
         assert "ab_latency_delta_ms" in td
 
-    @skip_if_no_deno
     def test_judge_callable_scores_both_arms(self):
         from cogniverse_agents.inference.ab_harness import RLMABRunner
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
@@ -215,8 +227,8 @@ class TestRLMABHarness:
 
         runner = RLMABRunner(
             llm_config=LLMEndpointConfig(
-                model=_OLLAMA_MODEL,
-                api_base=_OLLAMA_API_BASE,
+                model=_lm_model(),
+                api_base=_lm_base(),
                 max_tokens=200,
                 temperature=0.0,
             ),
@@ -236,24 +248,23 @@ class TestRLMABHarness:
             assert -1.0 <= result.comparison.judge_delta <= 1.0
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMTokenAccounting:
-    """verify tokens_used is populated from a real Ollama-backed run.
+    """verify tokens_used is populated from a real LM-backed run.
 
-    Ollama's API reports prompt_tokens / completion_tokens for every call;
+    LM provider reports prompt_tokens / completion_tokens for every call;
     DSPy's track_usage forwards these into the UsageTracker. After a real
     process() call the RLMResult.tokens_used must be strictly positive and
     consistent with the depth_reached (more iterations => more tokens).
     """
 
-    @skip_if_no_deno
     def test_tokens_used_is_positive(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.1,
         )
@@ -264,21 +275,20 @@ class TestRLMTokenAccounting:
         )
 
         assert result.tokens_used > 0, (
-            f"tokens_used must be > 0 for a real Ollama run; got {result.tokens_used}, "
+            f"tokens_used must be > 0 for a real LM run; got {result.tokens_used}, "
             f"answer={result.answer!r}, depth={result.depth_reached}"
         )
         # Telemetry surfaces it for Phoenix consumption.
         assert result.to_telemetry_dict()["rlm_tokens_used"] == result.tokens_used
 
-    @skip_if_no_deno
     def test_more_iterations_consume_more_tokens(self):
         """Two runs with different max_iterations must show tokens_used scales up."""
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.0,  # deterministic to keep the comparison stable
         )
@@ -309,23 +319,22 @@ class TestRLMTokenAccounting:
         assert small.tokens_used == small.to_telemetry_dict()["rlm_tokens_used"]
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMTrajectoryCapture:
-    """verify trajectory surfacing against real Ollama-backed RLM run.
+    """verify trajectory surfacing against the configured LM-backed RLM run.
 
     Trajectory must be populated when callers opt in via include_trajectory,
     and the metadata.trajectory_summary plus telemetry rlm_trajectory_length
     must be present regardless of the opt-in (server-side debug aid).
     """
 
-    @skip_if_no_deno
     def test_include_trajectory_populates_result(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=300,
             temperature=0.1,
         )
@@ -351,14 +360,13 @@ class TestRLMTrajectoryCapture:
             result.trajectory
         )
 
-    @skip_if_no_deno
     def test_default_no_trajectory_but_metadata_summary_present(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.1,
         )
@@ -381,9 +389,9 @@ class TestRLMTrajectoryCapture:
         assert isinstance(result.metadata["trajectory_length"], int)
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMFallbackMarker:
-    """verify RLMResult.was_fallback against a real Ollama-backed RLM run.
+    """verify RLMResult.was_fallback against a real LM-backed RLM run.
 
     Two arms:
       - normal completion: max_iterations is generous; SUBMIT() should fire and
@@ -393,14 +401,13 @@ class TestRLMFallbackMarker:
         and the result MUST be marked as fallback.
     """
 
-    @skip_if_no_deno
     def test_normal_completion_is_not_fallback(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=300,
             temperature=0.1,
         )
@@ -420,14 +427,13 @@ class TestRLMFallbackMarker:
         telemetry = result.to_telemetry_dict()
         assert telemetry["rlm_was_fallback"] is False
 
-    @skip_if_no_deno
     def test_forced_fallback_marks_was_fallback_true(self):
         from cogniverse_agents.inference.rlm_inference import RLMInference
         from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         config = LLMEndpointConfig(
-            model=_OLLAMA_MODEL,
-            api_base=_OLLAMA_API_BASE,
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_tokens=200,
             temperature=0.1,
         )
@@ -452,9 +458,9 @@ class TestRLMFallbackMarker:
         assert telemetry["rlm_enabled"] is True
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMAwareMixinProcess:
-    """RLMAwareMixin.process_with_rlm() called with real Ollama."""
+    """RLMAwareMixin.process_with_rlm() called with the configured LM."""
 
     def _make_agent(self):
         from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
@@ -464,15 +470,14 @@ class TestRLMAwareMixinProcess:
 
         return _Agent()
 
-    @skip_if_no_deno
     def test_process_with_rlm_returns_rlm_result(self):
         from cogniverse_agents.inference.rlm_inference import RLMResult
         from cogniverse_core.agents.rlm_options import RLMOptions
 
         opts = RLMOptions(
             enabled=True,
-            backend="ollama",
-            model="llama3.2",
+            backend=_lm_provider(),
+            model=_lm_bare_model(),
             max_iterations=3,
             timeout_seconds=120,
         )
@@ -491,8 +496,8 @@ class TestRLMAwareMixinProcess:
 
         opts = RLMOptions(
             enabled=True,
-            backend="ollama",
-            model="llama3.2",
+            backend=_lm_provider(),
+            model=_lm_bare_model(),
             max_iterations=3,
             timeout_seconds=120,
         )
@@ -514,7 +519,7 @@ class TestRLMAwareMixinProcess:
 
         opts = RLMOptions(
             enabled=True,
-            backend="ollama",
+            backend=_lm_provider(),
             model="nonexistent-model-xyz-9999",
             max_iterations=2,
             timeout_seconds=30,
@@ -535,7 +540,7 @@ class TestRLMAwareMixinProcess:
         )
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestWikiManagerMergeWithRLM:
     """WikiManager._merge_with_rlm() integrates old and new content via real RLM."""
 
@@ -573,7 +578,7 @@ class TestWikiManagerMergeWithRLM:
 
         # Patch RLMInference to raise so the fallback path is exercised
         bad_config = LLMEndpointConfig(
-            model="ollama/bad-model-xyz", api_base=_OLLAMA_API_BASE
+            model=f"{_lm_provider()}/bad-model-xyz", api_base=_lm_base()
         )
         broken_rlm = RLMInference(llm_config=bad_config, timeout_seconds=10)
 

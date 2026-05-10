@@ -1,7 +1,7 @@
 """
 Real-service integration tests for A2A agent architecture.
 
-Every test uses REAL services: GLiNER model, SpaCy NLP, Ollama LLM via DSPy,
+Every test uses REAL services: GLiNER model, SpaCy NLP, configured LM via DSPy,
 Vespa Docker with ingested video data, Phoenix Docker container.
 NO mocks for agent internals.
 
@@ -29,7 +29,7 @@ import pytest
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-from .conftest import skip_if_no_ollama
+from .conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ pytestmark = [pytest.mark.integration]
 
 @pytest.fixture(scope="module")
 def _configure_dspy_lm():
-    """Module-scoped: configure DSPy with real Ollama LLM.
+    """Module-scoped: configure DSPy with the configured LM.
 
     Reads model from config.json, disables qwen3 thinking mode.
     """
@@ -87,7 +87,7 @@ def configure_dspy(_configure_dspy_lm):
 # ---------------------------------------------------------------------------
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestGatewayWithRealGLiNER:
     """GatewayAgent uses GLiNER for zero-shot classification. No LLM needed.
 
@@ -185,7 +185,7 @@ class TestGatewayWithRealGLiNER:
 # ---------------------------------------------------------------------------
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestEntityExtractionRealGLiNERSpaCy:
     """Entity extraction using real GLiNER model and SpaCy NLP pipeline.
 
@@ -333,9 +333,9 @@ class TestEntityExtractionRealGLiNERSpaCy:
 # ---------------------------------------------------------------------------
 
 
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestQueryEnhancementRealDSPy:
-    """Query enhancement using real DSPy ChainOfThought with Ollama.
+    """Query enhancement using real DSPy ChainOfThought against the configured LM.
 
     The LLM should expand abbreviated terms and add relevant context.
     """

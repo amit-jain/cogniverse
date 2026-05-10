@@ -5,7 +5,7 @@ Exercises every agent's streaming path through the full stack:
 real A2A server → real executor → real dispatcher → real agent → emit_progress events.
 
 Infrastructure:
-- Real Ollama LLM (via dspy_lm fixture from conftest)
+- Configured LM (via dspy_lm fixture from conftest)
 - Real Vespa Docker (via vespa_instance fixture from conftest)
 - Real ConfigManager backed by VespaConfigStore
 - Real DSPy modules (ChainOfThought, not mocked)
@@ -218,7 +218,7 @@ def _assert_no_errors(events, agent_name):
 @pytest.mark.integration
 @skip_if_no_llm
 class TestSummarizerAgentStreaming:
-    """SummarizerAgent streaming with real Ollama."""
+    """SummarizerAgent streaming against the configured LM."""
 
     def test_stream_phases_and_output(self, config_manager, dspy_lm):
         from cogniverse_agents.summarizer_agent import (
@@ -324,7 +324,7 @@ class TestSummarizerAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestOrchestratorAgentStreaming:
-    """OrchestratorAgent streaming with real Ollama + real DSPy planning.
+    """OrchestratorAgent streaming against the configured LM + real DSPy planning.
 
     The registry uses real AgentEndpoint objects (not Mock) so the orchestrator
     plans against real agent names. Execution will attempt HTTP calls that fail
@@ -407,7 +407,7 @@ class TestOrchestratorAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestQueryEnhancementAgentStreaming:
-    """QueryEnhancementAgent streaming with real Ollama."""
+    """QueryEnhancementAgent streaming against the configured LM."""
 
     def test_stream_phases_and_enhanced_query(self, dspy_lm):
         from cogniverse_agents.query_enhancement_agent import (
@@ -453,7 +453,7 @@ class TestQueryEnhancementAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestEntityExtractionAgentStreaming:
-    """EntityExtractionAgent streaming with real Ollama."""
+    """EntityExtractionAgent streaming against the configured LM."""
 
     def test_stream_phases_and_extracted_entities(self, dspy_lm):
         from cogniverse_agents.entity_extraction_agent import (
@@ -492,7 +492,7 @@ class TestEntityExtractionAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestProfileSelectionAgentStreaming:
-    """ProfileSelectionAgent streaming with real Ollama."""
+    """ProfileSelectionAgent streaming against the configured LM."""
 
     def test_stream_phases_and_selected_profile(self, dspy_lm):
         from cogniverse_agents.profile_selection_agent import (
@@ -551,7 +551,7 @@ class TestProfileSelectionAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestDetailedReportAgentStreaming:
-    """DetailedReportAgent streaming with real Ollama."""
+    """DetailedReportAgent streaming against the configured LM."""
 
     def test_stream_phases_and_report_output(self, config_manager, dspy_lm):
         from cogniverse_agents.detailed_report_agent import (
@@ -630,7 +630,7 @@ class TestDetailedReportAgentStreaming:
 @pytest.mark.integration
 @skip_if_no_llm
 class TestSearchAgentStreaming:
-    """SearchAgent streaming with real Vespa + real Ollama."""
+    """SearchAgent streaming with real Vespa + the configured LM."""
 
     def test_stream_phases_and_search_output(
         self, vespa_instance, config_manager, schema_loader, dspy_lm
@@ -816,7 +816,7 @@ class TestA2AStreamingFullStack:
     """Full A2A protocol streaming: message/stream → SSE with real services."""
 
     def test_summarizer_streams_through_a2a(self, streaming_a2a_client):
-        """Real Ollama summarization streams through A2A protocol."""
+        """Real summarization via the configured LM streams through A2A protocol."""
         raw_events = _send_a2a_stream(
             streaming_a2a_client,
             "Briefly explain what deep learning is in two sentences",

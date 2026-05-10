@@ -43,7 +43,7 @@ def memory_manager(shared_memory_vespa, shared_denseon):
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-    # Initialize with shared Vespa backend (LLM via Ollama, embeddings via denseon).
+    # Initialize with shared Vespa backend (LLM via the configured provider, embeddings via denseon).
     # auto_create_schema=False since schema was already deployed by shared_memory_vespa fixture
     manager.initialize(
         backend_host="http://localhost",  # Must include protocol
@@ -172,7 +172,7 @@ class TestMem0VespaIntegration:
         has_tenant1_content = "cat" in tenant1_text or "rescue" in tenant1_text
         has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
 
-        # At least one should have content (if both empty, Mem0/Ollama issue)
+        # At least one should have content (if both empty, Mem0/LLM issue)
         assert has_tenant1_content or has_tenant2_content, (
             f"Neither tenant has memories. T1: {tenant1_text[:100]}, T2: {tenant2_text[:100]}"
         )

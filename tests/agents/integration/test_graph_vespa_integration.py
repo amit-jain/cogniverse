@@ -19,6 +19,7 @@ import requests
 
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
+from tests.fixtures.llm import is_test_lm_available
 from tests.utils.docker_utils import generate_unique_ports
 
 TENANT_ID = "test_tenant"
@@ -570,14 +571,6 @@ class TestGraphExtractorE2E:
         assert "alpha" in out_targets or "beta" in out_targets
 
 
-def _ollama_available() -> bool:
-    try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
 @pytest.fixture(scope="module")
 def real_doc_extractor():
     """DocExtractor with real GLiNER and tech/infra domain labels.
@@ -616,11 +609,11 @@ def real_doc_extractor():
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not _ollama_available(),
-    reason="Ollama required for real embeddings in graph integration tests",
+    not is_test_lm_available(),
+    reason="Configured LM endpoint required for real embeddings in graph integration tests",
 )
 class TestMultimodalGraphExtraction:
-    """Real multimodal extraction: real GLiNER, real Ollama embeddings, real Vespa.
+    """Real multimodal extraction: real GLiNER, real LM embeddings, real Vespa.
 
     Exercises the exact code path the ingestion router uses:
       pipeline_result → _extract_text_for_graph → DocExtractor (GLiNER)

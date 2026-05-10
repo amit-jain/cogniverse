@@ -2,10 +2,10 @@
 Integration test for CodingAgent.
 
 Tests the full coding agent pipeline: DSPy planning + code generation +
-sandboxed execution + output evaluation. Uses real Ollama LLM and real
+sandboxed execution + output evaluation. Uses the configured LM and real
 OpenShell sandbox (started/destroyed per test module).
 
-Requires: Ollama at localhost:11434, openshell CLI, Docker.
+Requires: the configured LM endpoint, openshell CLI, Docker.
 """
 
 import logging
@@ -13,7 +13,7 @@ import logging
 import pytest
 
 from cogniverse_runtime.sandbox_manager import SandboxManager
-from tests.agents.integration.conftest import skip_if_no_ollama
+from tests.agents.integration.conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
 
@@ -383,9 +383,9 @@ def _build_vespa_search_fn(vespa_url, schema_name, colbert_model):
     return search_fn
 
 
-@skip_if_no_ollama
-class TestCodingAgentWithOllama:
-    """Full integration: real Ollama + real Vespa code search + real OpenShell sandbox.
+@skip_if_no_lm
+class TestCodingAgentWithRealLM:
+    """Full integration: configured LM + real Vespa code search + real OpenShell sandbox.
 
     code_search_infra deploys code_lateon_mv into the test Vespa, ingests real
     source with LateOn-Code-edge, starts OpenShell. The agent's search_fn hits

@@ -1,13 +1,12 @@
 """
 Pytest configuration for routing integration tests.
 
-Provides Ollama + Vespa Docker fixtures for tests that need real services.
+Provides LM + Vespa fixtures for tests that need real services.
 """
 
 import json
 import logging
 import os
-import subprocess
 import time
 from pathlib import Path
 
@@ -29,26 +28,23 @@ logger = logging.getLogger(__name__)
 SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 
-def is_ollama_available():
-    """Check if Ollama is available"""
-    try:
-        result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, timeout=5
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
-
-
 @pytest.fixture(autouse=True)
 def dspy_lm():
-    """Configure DSPy with real Ollama LM for integration tests"""
-    if not is_ollama_available():
-        pytest.skip("Ollama not available - required for integration tests")
+    """Configure DSPy with the configured test LM for integration tests."""
+    from tests.fixtures.llm import (
+        is_test_lm_available,
+        resolve_api_key,
+        resolve_base_url,
+        resolve_prefixed_model,
+    )
+
+    if not is_test_lm_available():
+        pytest.skip(f"Test LM not reachable at {resolve_base_url()}")
 
     config = LLMEndpointConfig(
-        model="ollama/gemma3:4b",
-        api_base="http://localhost:11434",
+        model=resolve_prefixed_model(),
+        api_base=resolve_base_url(),
+        api_key=resolve_api_key(),
     )
     lm = create_dspy_lm(config)
     dspy.configure(lm=lm)

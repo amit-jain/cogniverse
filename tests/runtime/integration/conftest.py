@@ -365,7 +365,7 @@ def memory_manager(vespa_instance, config_manager, schema_loader, shared_denseon
     """Real Mem0MemoryManager backed by test Vespa Docker + denseon.
 
     Follows the same pattern as tests/memory/conftest.py shared_memory_vespa.
-    Uses the same Vespa instance as search tests. Requires Ollama
+    Uses the same Vespa instance as search tests. Requires the configured LM endpoint
     for Mem0's LLM-based memory extraction; embeddings go through the
     denseon sidecar (DenseOn / 768-dim) at shared_denseon.
     """

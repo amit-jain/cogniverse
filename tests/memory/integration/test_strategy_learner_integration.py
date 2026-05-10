@@ -1,5 +1,5 @@
 """
-Integration tests for strategy learning round-trip with real Vespa + Ollama.
+Integration tests for strategy learning round-trip with real Vespa + configured LM.
 
 Uses shared_memory_vespa + memory_manager fixtures from tests/memory/conftest.py.
 Full flow: distill strategies → store in real Vespa memory → retrieve → format.
@@ -316,16 +316,16 @@ class TestTwoLevelScoping:
 
 from tests.fixtures.llm import is_test_lm_available
 
-skip_if_no_ollama = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not is_test_lm_available(),
     reason="Test LM not available for LLM distillation",
 )
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestLLMDistillation:
-    """Test contrastive LLM distillation with real Ollama."""
+    """Test contrastive LLM distillation against the configured LM."""
 
     @pytest.mark.asyncio
     async def test_llm_distillation_produces_strategies(

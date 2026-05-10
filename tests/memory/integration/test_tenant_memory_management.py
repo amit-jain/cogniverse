@@ -1,7 +1,7 @@
 """
 Integration tests for tenant extensibility HTTP API (memories + jobs).
 
-Uses shared_memory_vespa fixture — real Vespa + Ollama backend.
+Uses shared_memory_vespa fixture — real Vespa + LM backend.
 Tests the actual HTTP endpoints with real ConfigStore and Mem0.
 """
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="module")
 def tenant_api_client(shared_memory_vespa, shared_denseon):
-    """FastAPI TestClient wired to real Vespa + Ollama + denseon for memory tests."""
+    """FastAPI TestClient wired to real Vespa + LM + denseon for memory tests."""
     Mem0MemoryManager._instances.clear()
 
     config_store = VespaConfigStore(

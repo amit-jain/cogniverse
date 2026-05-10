@@ -11,7 +11,8 @@ Requires Docker to be running. Uses the ``phoenix_container`` and
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-from tests.agents.integration.conftest import skip_if_no_ollama
+from tests.agents.integration.conftest import skip_if_no_lm
+from tests.fixtures.llm import make_dspy_lm
 
 
 @pytest.fixture
@@ -712,7 +713,7 @@ class TestDispatcherArtifactWiring:
         assert result["agent"] == "entity_extraction_agent"
 
     @pytest.mark.asyncio
-    @skip_if_no_ollama
+    @skip_if_no_lm
     async def test_dispatcher_gateway_path_loads_artifact(self, real_provider):
         """Gateway dispatch path should save/load threshold artifact via _load_artifact."""
         import json
@@ -742,11 +743,7 @@ class TestDispatcherArtifactWiring:
         # Configure DSPy LM via context — the gateway may route to orchestrator
         # (if GLiNER confidence < 0.72), which needs a configured LM.
         # Use dspy.context instead of dspy.configure to avoid cross-task conflicts.
-        lm = dspy.LM(
-            "ollama_chat/qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
+        lm = make_dspy_lm()
 
         # Set up dispatcher with real dependencies
         config_manager = create_default_config_manager()
@@ -795,7 +792,7 @@ class TestArtifactAffectsBehavior:
 
     Each test: save artifact to real Phoenix -> create real agent -> load artifact
     -> call _process_impl with real query -> assert output reflects the artifact.
-    Uses real Ollama (qwen3:4b) for DSPy agents. Zero mocks.
+    Uses the configured LM for DSPy agents. Zero mocks.
     """
 
     @pytest.mark.asyncio
@@ -853,11 +850,7 @@ class TestArtifactAffectsBehavior:
         assert len(loaded_demos) == 2
 
         # Configure DSPy LM for the call
-        lm = dspy.LM(
-            "ollama_chat/qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
+        lm = make_dspy_lm()
 
         # Process with real LLM
         with dspy.context(lm=lm):
@@ -947,11 +940,7 @@ class TestArtifactAffectsBehavior:
         assert len(loaded_demos) == 2
 
         # Configure DSPy LM for the call
-        lm = dspy.LM(
-            "ollama_chat/qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
+        lm = make_dspy_lm()
 
         # Process with real LLM via DSPy fallback
         with dspy.context(lm=lm):
@@ -1056,11 +1045,7 @@ class TestArtifactAffectsBehavior:
 
         # Configure DSPy LM via context (not dspy.configure which pollutes
         # global state and causes cross-task conflicts in test suite)
-        lm = dspy.LM(
-            "ollama_chat/qwen3:4b",
-            api_base="http://localhost:11434",
-            extra_body={"think": False},
-        )
+        lm = make_dspy_lm()
 
         # Process with real LLM
         with dspy.context(lm=lm):

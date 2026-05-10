@@ -9,8 +9,8 @@ Tests with real Vespa backend, real query encoders, real search:
 - Latency validation
 - Error handling (profile failures, sparse results)
 
-Tests requiring real Ollama for ComposableQueryAnalysisModule query variant
-generation use @skip_if_no_ollama and configure DSPy with ollama/gemma3:4b.
+Tests requiring a real LM for ComposableQueryAnalysisModule query variant
+generation use @skip_if_no_lm and configure DSPy via ``tests/fixtures/llm.py``.
 """
 
 import logging

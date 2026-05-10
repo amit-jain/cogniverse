@@ -10,11 +10,11 @@ Tests validate the COMPLETE orchestration pipeline:
 - Concrete assertions on agent outputs (entities, enhanced queries, profiles, search results)
 
 Requirements:
-- Ollama running with gemma4:e2b model (orchestrator planning needs a capable LLM)
+- the configured LM endpoint reachable (orchestrator planning needs a capable model)
 - Docker for Vespa container (for search agent)
 
 What is REAL (integration boundary):
-- Real DSPy LLM inference via Ollama (planning + per-agent inference)
+- Real DSPy LLM inference via the configured LM (planning + per-agent inference)
 - Real Vespa Docker container (search agent hits actual Vespa)
 - Real agent instances (EntityExtractionAgent, ProfileSelectionAgent, etc.)
 - Real FastAPI app mounted in memory via ASGITransport — payloads validate
@@ -62,7 +62,8 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.agents.integration.conftest import skip_if_no_ollama
+from tests.agents.integration.conftest import skip_if_no_lm
+from tests.fixtures.llm import resolve_api_key, resolve_base_url, resolve_prefixed_model
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,11 @@ logger = logging.getLogger(__name__)
 def dspy_lm():
     """Module-scoped DSPy LM for orchestrator tests."""
     lm = create_dspy_lm(
-        LLMEndpointConfig(model="ollama/gemma3:4b", api_base="http://localhost:11434")
+        LLMEndpointConfig(
+            model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
+            api_key=resolve_api_key(),
+        )
     )
     dspy.configure(lm=lm)
     # Verify the LM was actually set
@@ -236,7 +241,7 @@ def orchestrator_with_agents(vespa_with_schema, dspy_lm, agent_instances):
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 @pytest.mark.slow
 class TestOrchestratorWithRealAgents:
     """

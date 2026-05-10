@@ -1,9 +1,11 @@
 """
-Integration test for DeepResearchAgent with real Ollama and Vespa.
+Integration test for DeepResearchAgent against the configured LM and a real
+Vespa instance.
 
 Exercises the full research cycle: decompose → search → evaluate → synthesize.
 Uses vespa_instance fixture from conftest to manage its own Docker container.
-Requires Ollama (localhost:11434).
+Requires the configured test LM endpoint to be reachable (see
+``tests/fixtures/llm.py``).
 """
 
 import logging
@@ -17,30 +19,33 @@ from cogniverse_agents.deep_research_agent import (
     DeepResearchInput,
     DeepResearchOutput,
 )
+from tests.fixtures.llm import (
+    is_test_lm_available,
+    resolve_api_key,
+    resolve_base_url,
+    resolve_prefixed_model,
+)
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "ollama_chat/qwen3:4b"
-
-
-def _ollama_available():
-    import requests
-
-    try:
-        return requests.get(f"{OLLAMA_URL}/api/tags", timeout=3).status_code == 200
-    except Exception:
-        return False
-
 
 pytestmark = [
-    pytest.mark.skipif(not _ollama_available(), reason="Ollama not running on :11434"),
+    pytest.mark.skipif(
+        not is_test_lm_available(),
+        reason=f"Test LM not reachable at {resolve_base_url()}",
+    ),
 ]
 
 
 @pytest.fixture(scope="module", autouse=True)
 def configure_dspy():
-    lm = dspy.LM(OLLAMA_MODEL, api_base=OLLAMA_URL, temperature=0.1, max_tokens=500)
+    lm = dspy.LM(
+        resolve_prefixed_model(),
+        api_base=resolve_base_url(),
+        api_key=resolve_api_key(),
+        temperature=0.1,
+        max_tokens=500,
+    )
     dspy.configure(lm=lm)
     yield
     dspy.configure(lm=None)
@@ -89,7 +94,7 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.asyncio
     @pytest.mark.timeout(120)
     async def test_full_research_cycle(self, real_search_fn):
-        """Decompose → search Vespa → evaluate → synthesize with real Ollama."""
+        """Decompose → search Vespa → evaluate → synthesize against the configured LM."""
         deps = DeepResearchDeps(tenant_id="test:unit")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 
@@ -115,7 +120,7 @@ class TestDeepResearchWithRealServices:
     @pytest.mark.asyncio
     @pytest.mark.timeout(60)
     async def test_decomposition_produces_real_subquestions(self, real_search_fn):
-        """DSPy decomposition with real Ollama produces meaningful sub-questions."""
+        """DSPy decomposition against the configured LM produces meaningful sub-questions."""
         deps = DeepResearchDeps(tenant_id="test:unit")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
 

@@ -9,11 +9,19 @@ up a duplicate.
 
 import logging
 import os
+import platform
+import shutil
+import stat
+import tempfile
+import urllib.request
+import zipfile
+from pathlib import Path
 
 import dspy
 import httpx
 import pytest
 
+from cogniverse_agents.inference.deno_check import is_deno_available
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
@@ -26,20 +34,13 @@ from tests.memory.conftest import shared_memory_vespa  # noqa: F401
 logger = logging.getLogger(__name__)
 
 
-def is_ollama_available(base_url: str = "http://localhost:11434") -> bool:
-    """Check if Ollama service is available."""
-    try:
-        response = httpx.get(f"{base_url}/api/tags", timeout=5.0)
-        return response.status_code == 200
-    except Exception:
-        return False
-
-
 def is_llm_available() -> bool:
-    """Check if the configured LLM endpoint is reachable.
+    """Check if the LM endpoint configured in ``configs/config.json`` is reachable.
 
-    Reads api_base from configs/config.json directly (no ConfigManager
-    needed — avoids BACKEND_URL env var requirement at import time).
+    Reads ``llm_config.primary.api_base`` directly (no ConfigManager — avoids the
+    BACKEND_URL env var requirement at import time) and probes both ``/api/tags``
+    (native LM-server tag listing) and ``/v1/models`` (OAI-compat). Either
+    returning HTTP 200 means the endpoint is up.
     """
     try:
         import json as _json
@@ -49,12 +50,20 @@ def is_llm_available() -> bool:
         with open(config_path) as f:
             config = _json.load(f)
         api_base = (
-            config.get("llm_config", {})
-            .get("primary", {})
-            .get("api_base", "http://localhost:11434")
-        )
-        response = httpx.get(f"{api_base}/api/tags", timeout=5.0)
-        return response.status_code == 200
+            config.get("llm_config", {}).get("primary", {}).get("api_base") or ""
+        ).rstrip("/")
+        if not api_base:
+            return False
+        if api_base.endswith("/v1"):
+            api_base = api_base[: -len("/v1")]
+        for path in ("/api/tags", "/v1/models"):
+            try:
+                response = httpx.get(f"{api_base}{path}", timeout=5.0)
+                if response.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                continue
+        return False
     except Exception:
         return False
 
@@ -66,13 +75,7 @@ def is_teacher_api_available() -> bool:
     return bool(os.getenv("ROUTER_OPTIMIZER_TEACHER_KEY"))
 
 
-# Skip markers for integration tests
-skip_if_no_ollama = pytest.mark.skipif(
-    not is_ollama_available(),
-    reason="Ollama service not available at http://localhost:11434",
-)
-
-skip_if_no_llm = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not is_llm_available(),
     reason="Configured LLM endpoint not reachable",
 )
@@ -81,6 +84,80 @@ skip_if_no_teacher_api = pytest.mark.skipif(
     not is_teacher_api_available(),
     reason="ROUTER_OPTIMIZER_TEACHER_KEY environment variable not set",
 )
+
+
+_DENO_RELEASE_BASE = "https://github.com/denoland/deno/releases/latest/download"
+
+
+def _resolve_deno_artefact() -> str:
+    system = platform.system()
+    machine = platform.machine().lower()
+    if system == "Linux" and machine in ("x86_64", "amd64"):
+        return "deno-x86_64-unknown-linux-gnu.zip"
+    if system == "Linux" and machine in ("aarch64", "arm64"):
+        return "deno-aarch64-unknown-linux-gnu.zip"
+    if system == "Darwin" and machine in ("arm64", "aarch64"):
+        return "deno-aarch64-apple-darwin.zip"
+    if system == "Darwin" and machine in ("x86_64", "amd64"):
+        return "deno-x86_64-apple-darwin.zip"
+    raise RuntimeError(f"Unsupported platform for Deno install: {system}/{machine}")
+
+
+def _install_deno_to_home() -> Path:
+    """Download the latest Deno release zip into ~/.deno/bin/ and chmod +x.
+
+    The cogniverse Deno probe (``is_deno_available``) already checks
+    ``~/.deno/bin/deno`` and amends ``PATH`` when found, so this matches the
+    install location the production code expects.
+    """
+    home_bin = Path.home() / ".deno" / "bin"
+    home_bin.mkdir(parents=True, exist_ok=True)
+    deno_path = home_bin / "deno"
+    if deno_path.exists():
+        return deno_path
+
+    artefact = _resolve_deno_artefact()
+    url = f"{_DENO_RELEASE_BASE}/{artefact}"
+    logger.info("Downloading Deno from %s", url)
+    with tempfile.TemporaryDirectory() as td:
+        zip_path = Path(td) / artefact
+        with (
+            urllib.request.urlopen(url, timeout=120) as resp,
+            open(zip_path, "wb") as f,
+        ):
+            shutil.copyfileobj(resp, f)
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(home_bin)
+
+    if not deno_path.exists():
+        raise RuntimeError(
+            f"Deno install completed but binary missing at {deno_path}; "
+            f"zip layout may have changed"
+        )
+    deno_path.chmod(
+        deno_path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
+    )
+    return deno_path
+
+
+@pytest.fixture(scope="session")
+def ensure_deno() -> Path:
+    """Session-scoped fixture: guarantees Deno is reachable for RLM REPL tests.
+
+    Installs the latest Deno release into ``~/.deno/bin/`` if missing
+    (single binary, no package manager). Tests use this instead of
+    skipping when Deno is absent — infrastructure managed inside the
+    test suite, per project policy that infra-skips count as bugs.
+    """
+    if is_deno_available():
+        return Path(shutil.which("deno") or Path.home() / ".deno" / "bin" / "deno")
+    logger.info("Deno not on PATH or in ~/.deno/bin — installing for test session")
+    deno_path = _install_deno_to_home()
+    if not is_deno_available():
+        raise RuntimeError(
+            f"Installed Deno at {deno_path} but is_deno_available() still False"
+        )
+    return deno_path
 
 
 @pytest.fixture(scope="module")
@@ -100,12 +177,11 @@ def _dspy_lm_instance():
     endpoint = LLMEndpointConfig(
         model=model,
         api_base=llm_cfg.get("api_base"),
-        # Local LM endpoints (Ollama, vLLM) accept any bearer token but
-        # litellm refuses to construct an OpenAI client without an
-        # api_key set, so it falls back to the OPENAI_API_KEY env var
-        # and raises AuthenticationError when neither is present. The
-        # test endpoints don't validate the key — pass the cogniverse
-        # convention sentinel.
+        # Local OAI-compat LM servers accept any bearer token but litellm
+        # refuses to construct an OpenAI client without an api_key set, so
+        # it falls back to OPENAI_API_KEY and raises AuthenticationError
+        # when neither is present. Test endpoints don't validate the key —
+        # pass the cogniverse convention sentinel.
         api_key=llm_cfg.get("api_key") or "not-required",
         temperature=0.1,
         # 200 tokens was too small: synthesis / summarisation tests

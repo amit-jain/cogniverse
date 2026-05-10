@@ -1,8 +1,13 @@
 """Knowledge agents in RLM mode — exercises ``_synthesise_with_rlm`` /
-``_summarise_with_rlm`` against a real Ollama LM via Deno-backed RLM REPL.
+``_summarise_with_rlm`` against the configured test LM via Deno-backed
+RLM REPL.
 
-Skipped when Deno or Ollama is not available locally; runs in CI
-environments where both are installed.
+Endpoint, model, provider and api key all come from
+``tests/fixtures/llm.py`` (driven by ``TEST_LLM_API_BASE`` /
+``TEST_LLM_MODEL`` / ``TEST_LLM_PROVIDER`` / ``TEST_LLM_API_KEY``) so
+the same test runs against any OpenAI-compatible provider without a
+code change. Deno is installed by the ``ensure_deno`` session fixture
+when missing.
 """
 
 from __future__ import annotations
@@ -11,38 +16,34 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from cogniverse_agents.inference import is_deno_available
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.agents.integration.conftest import is_ollama_available
-
-pytestmark = pytest.mark.integration
-
-skip_if_no_ollama = pytest.mark.skipif(
-    not is_ollama_available(),
-    reason="Ollama not available at http://localhost:11434",
-)
-skip_if_no_deno = pytest.mark.skipif(
-    not is_deno_available(),
-    reason="Deno not installed — DSPy RLM REPL requires Deno",
+from tests.fixtures.llm import (
+    is_test_lm_available,
+    resolve_api_key,
+    resolve_base_url,
+    resolve_prefixed_model,
 )
 
-
-_OLLAMA_MODEL = "ollama/llama3.2"
-_OLLAMA_API_BASE = "http://localhost:11434"
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not is_test_lm_available(),
+        reason=f"Test LM endpoint not reachable at {resolve_base_url()}",
+    ),
+]
 
 
 def _llm_config() -> LLMEndpointConfig:
     return LLMEndpointConfig(
-        model=_OLLAMA_MODEL,
-        api_base=_OLLAMA_API_BASE,
+        model=resolve_prefixed_model(),
+        api_base=resolve_base_url(),
+        api_key=resolve_api_key(),
         max_tokens=600,
         temperature=0.1,
     )
 
 
-# Three disjoint refund-policy facts — same shape as the without_rlm
-# tests so the assertions can hold the LM to multi-source coverage.
 _FACTS = [
     (
         "Standard refund window: customers may request a refund within "
@@ -62,8 +63,7 @@ _FACTS = [
 ]
 
 
-@skip_if_no_ollama
-@skip_if_no_deno
+@pytest.mark.usefixtures("ensure_deno")
 class TestMultiDocSynthesisRLMMode:
     @pytest.mark.asyncio
     async def test_synthesises_across_docs_through_rlm(self):
@@ -99,8 +99,6 @@ class TestMultiDocSynthesisRLMMode:
                     "extension, and digital downloads."
                 ),
                 documents=[DocumentRef(memory_id=mid) for mid in rows_by_id],
-                # Force RLM mode by setting context_threshold below the
-                # built block size so should_use_rlm() returns True.
                 rlm=RLMOptions(auto_detect=True, context_threshold=50),
                 persist=False,
             )
@@ -118,8 +116,7 @@ class TestMultiDocSynthesisRLMMode:
         assert "digital" in lower, answer
 
 
-@skip_if_no_ollama
-@skip_if_no_deno
+@pytest.mark.usefixtures("ensure_deno")
 class TestKnowledgeSummarizationRLMMode:
     @pytest.mark.asyncio
     async def test_summarises_subject_slice_through_rlm(self):

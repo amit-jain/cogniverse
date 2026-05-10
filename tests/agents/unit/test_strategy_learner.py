@@ -253,7 +253,9 @@ class TestDeduplication:
         assert stored is True
         mock_memory_manager.add_memory.assert_called_once()
 
-    def test_bumps_confirmation_when_duplicate_exists(self, learner, mock_memory_manager):
+    def test_bumps_confirmation_when_duplicate_exists(
+        self, learner, mock_memory_manager
+    ):
         # Simulate existing strategy with high overlap and confirmation_count=1
         mock_memory_manager.search_memory.return_value = [
             {

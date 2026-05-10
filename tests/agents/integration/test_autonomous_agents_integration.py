@@ -2,7 +2,7 @@
 Integration tests for Autonomous A2A Agents with real DSPy LLMs.
 
 Tests EntityExtractionAgent, ProfileSelectionAgent, QueryEnhancementAgent,
-and OrchestratorAgent with actual language models through Ollama.
+and OrchestratorAgent with the configured LM.
 
 These tests validate CORRECTNESS, not just structure.
 """
@@ -32,7 +32,7 @@ from cogniverse_agents.query_enhancement_agent import (
 )
 from tests.fixtures.llm import is_test_lm_available, make_dspy_lm
 
-skip_if_no_ollama = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not is_test_lm_available(),
     reason="Test LM not available",
 )
@@ -227,7 +227,7 @@ def orchestrator_with_real_agents(real_dspy_lm):
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestEntityExtractionAgentIntegration:
     """Integration tests validating EntityExtractionAgent correctness"""
 
@@ -344,7 +344,7 @@ class TestEntityExtractionAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestProfileSelectionAgentIntegration:
     """Integration tests validating ProfileSelectionAgent correctness"""
 
@@ -459,7 +459,7 @@ class TestProfileSelectionAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestQueryEnhancementAgentIntegration:
     """Integration tests validating QueryEnhancementAgent correctness"""
 
@@ -568,7 +568,7 @@ class TestQueryEnhancementAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestOrchestratorAgentIntegration:
     """Integration tests validating OrchestratorAgent correctness"""
 
@@ -781,7 +781,7 @@ class TestOrchestratorAgentIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestAgentCoordinationIntegration:
     """Integration tests validating agent coordination correctness"""
 
@@ -886,7 +886,7 @@ class TestAgentCoordinationIntegration:
 
 
 @pytest.mark.integration
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestOrchestratorComplexPatterns:
     """Advanced orchestration patterns: multiple parallel groups, cascading failures, edge cases"""
 

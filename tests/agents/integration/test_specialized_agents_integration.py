@@ -1,4 +1,4 @@
-"""Integration tests for Specialized Agents with DSPy.LM through Ollama."""
+"""Integration tests for Specialized Agents with DSPy.LM via the configured LM."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -13,27 +13,27 @@ from cogniverse_agents.summarizer_agent import SummarizerAgent, SummarizerDeps
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+from tests.fixtures.llm import (
+    is_test_lm_available,
+    resolve_api_key,
+    resolve_base_url,
+    resolve_prefixed_model,
+)
 
 
 @pytest.fixture
 def real_dspy_lm():
-    """Real DSPy.LM configured for Ollama"""
-    # Check if Ollama is available
-    import requests
-
-    response = requests.get("http://localhost:11434/v1/models", timeout=2)
-    assert response.status_code == 200, (
-        "Ollama server must be running at localhost:11434"
+    """Real DSPy.LM configured against the configured test LM."""
+    assert is_test_lm_available(), (
+        f"Test LM endpoint not reachable at {resolve_base_url()}"
     )
-
-    # Configure real DSPy.LM with Ollama via factory
     lm = create_dspy_lm(
         LLMEndpointConfig(
-            model="ollama/qwen2.5:1.5b",
-            api_base="http://localhost:11434",
+            model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
+            api_key=resolve_api_key(),
         )
     )
-    # Test the connection using correct DSPy API
     test_response = lm("test")
     assert test_response is not None
     return lm
@@ -82,20 +82,14 @@ def sample_search_results():
 
 
 @pytest.fixture
-def mock_ollama_server():
-    """Check if Ollama server is available"""
-    import requests
-
-    try:
-        requests.get("http://localhost:11434", timeout=2)
-        return True
-    except Exception:
-        return False
+def lm_endpoint_reachable():
+    """Boolean flag — True iff the configured test LM endpoint responds."""
+    return is_test_lm_available()
 
 
-@pytest.mark.requires_ollama
+@pytest.mark.requires_lm
 class TestSummarizerAgentDSPyIntegration:
-    """Integration tests for SummarizerAgent with DSPy.LM through Ollama"""
+    """Integration tests for SummarizerAgent with DSPy.LM via the configured LM"""
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -103,7 +97,7 @@ class TestSummarizerAgentDSPyIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test SummarizerAgent with small model via real DSPy.LM"""
@@ -135,7 +129,7 @@ class TestSummarizerAgentDSPyIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test SummarizerAgent A2A processing with real DSPy.LM"""
@@ -160,9 +154,9 @@ class TestSummarizerAgentDSPyIntegration:
             assert result.confidence_score > 0
 
 
-@pytest.mark.requires_ollama
+@pytest.mark.requires_lm
 class TestDetailedReportAgentDSPyIntegration:
-    """Integration tests for DetailedReportAgent with DSPy.LM through Ollama"""
+    """Integration tests for DetailedReportAgent with DSPy.LM via the configured LM"""
 
     @pytest.mark.integration
     @pytest.mark.asyncio
@@ -170,7 +164,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test DetailedReportAgent with real DSPy.LM"""
@@ -221,7 +215,7 @@ class TestDetailedReportAgentDSPyIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test DetailedReportAgent A2A processing with real DSPy.LM"""
@@ -256,7 +250,7 @@ class TestDetailedReportAgentDSPyIntegration:
                 assert len(result.recommendations) > 0
 
 
-@pytest.mark.requires_ollama
+@pytest.mark.requires_lm
 class TestCrossAgentDSPyIntegration:
     """Integration tests across multiple agents with DSPy.LM"""
 
@@ -266,7 +260,7 @@ class TestCrossAgentDSPyIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test workflow from summarizer to detailed report using real DSPy.LM"""
@@ -328,9 +322,9 @@ class TestCrossAgentDSPyIntegration:
                 assert report_result.confidence_assessment["overall"] > 0.0
 
 
-@pytest.mark.requires_ollama
+@pytest.mark.requires_lm
 class TestDSPyLMConfigurationIntegration:
-    """Integration tests for DSPy.LM configuration and setup through Ollama"""
+    """Integration tests for DSPy.LM configuration and setup via the configured LM"""
 
     def test_dspy_lm_configuration(self, test_config_manager):
         """Test DSPy.LM configuration from real config manager"""
@@ -349,7 +343,7 @@ class TestDSPyLMConfigurationIntegration:
         self,
         sample_search_results,
         real_dspy_lm,
-        mock_ollama_server,
+        lm_endpoint_reachable,
         test_config_manager,
     ):
         """Test switching between different models via real DSPy.LM"""
@@ -381,22 +375,22 @@ class TestDSPyLMConfigurationIntegration:
 
     @pytest.mark.integration
     @pytest.mark.asyncio
-    async def test_agent_error_handling_with_bad_dspy_config(self, mock_ollama_server):
+    async def test_agent_error_handling_with_bad_dspy_config(
+        self, lm_endpoint_reachable
+    ):
         """Test agent error handling when DSPy.LM configuration fails"""
         # Without config_manager, agent should raise ValueError
         with pytest.raises(ValueError, match="config_manager is required"):
             SummarizerAgent(deps=SummarizerDeps())
 
 
-# Integration test configuration for DSPy.LM + Ollama
+# Integration test configuration
 """
-To run these integration tests with real DSPy.LM + Ollama:
+To run these integration tests against a real LM endpoint:
 
-1. Install Ollama: https://ollama.ai
-2. Pull models:
-   ollama pull qwen2.5:1.5b  # Smallest model for tests
-   ollama pull gemma3:4b      # Larger model for teacher/generation tests
-3. Start Ollama server: ollama serve
-4. Run tests with Ollama requirement:
-   pytest -m requires_ollama tests/agents/integration/test_specialized_agents_integration.py
+1. Provision the LM endpoint (any OpenAI-compatible server).
+2. Set ``TEST_LLM_API_BASE`` and ``TEST_LLM_MODEL`` (see
+   ``tests/fixtures/llm.py`` for the full env-var contract).
+3. Run with the marker:
+   pytest -m requires_lm tests/agents/integration/test_specialized_agents_integration.py
 """

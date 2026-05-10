@@ -3,7 +3,7 @@ Integration tests for RLM (Recursive Language Model) with SearchAgent.
 
 Tests the complete RLM integration pipeline:
 - Query-level RLM configuration via RLMOptions
-- RLM inference with DSPy ProgramOfThought (uses Ollama backend)
+- RLM inference with DSPy ProgramOfThought (uses the configured LM)
 - Telemetry generation for A/B testing
 - Integration with Vespa backend for search results
 """
@@ -14,7 +14,13 @@ import pytest
 
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.agents.integration.conftest import skip_if_no_ollama
+from tests.agents.integration.conftest import skip_if_no_lm
+from tests.fixtures.llm import (
+    resolve_bare_model,
+    resolve_base_url,
+    resolve_prefixed_model,
+    resolve_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -725,30 +731,32 @@ class TestRLMVespaIntegration:
 
 @pytest.mark.integration
 @pytest.mark.slow
-@skip_if_no_ollama
+@skip_if_no_lm
 class TestRLMRealInferenceIntegration:
     """
-    Integration tests for RLM with real Ollama LLM backend.
+    Integration tests for RLM with the configured LM backend.
 
     These tests require:
-    - Ollama service running at localhost:11434
+    - the configured LM endpoint reachable
     - RLM library installed (uv pip install 'cogniverse-agents[rlm]')
 
     Tests verify actual RLM inference with recursive processing.
     """
 
     @pytest.mark.asyncio
-    async def test_rlm_process_with_ollama(self):
+    async def test_rlm_process_with_lm(self):
         """
-        Test RLM process method with real Ollama backend.
+        Test RLM process method against the configured LM.
 
-        Uses litellm backend to connect to local Ollama.
+        Uses litellm to connect to the configured LM provider.
         """
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
-        # Create RLM with Ollama backend (small model for fast tests)
+        # Create RLM against the configured LM (small model for fast tests)
         rlm = RLMInference(
-            llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"),
+            llm_config=LLMEndpointConfig(
+                model=resolve_prefixed_model(), api_base=resolve_base_url()
+            ),
             max_iterations=2,  # Limit iterations for faster tests
         )
 
@@ -773,21 +781,23 @@ class TestRLMRealInferenceIntegration:
         assert result.latency_ms > 0
 
         logger.info(
-            f"RLM with Ollama completed: answer={result.answer[:100]}..., "
+            f"RLM with configured LM completed: answer={result.answer[:100]}..., "
             f"depth={result.depth_reached}, calls={result.total_calls}"
         )
 
     @pytest.mark.asyncio
-    async def test_rlm_process_search_results_with_ollama(self):
+    async def test_rlm_process_search_results_with_lm(self):
         """
-        Test RLM process_search_results with real Ollama backend.
+        Test RLM process_search_results against the configured LM.
 
         Simulates processing Vespa search results with RLM.
         """
         from cogniverse_agents.inference.rlm_inference import RLMInference
 
         rlm = RLMInference(
-            llm_config=LLMEndpointConfig(model="ollama/qwen2.5:1.5b"),
+            llm_config=LLMEndpointConfig(
+                model=resolve_prefixed_model(), api_base=resolve_base_url()
+            ),
             max_iterations=2,
         )
 
@@ -823,7 +833,7 @@ class TestRLMRealInferenceIntegration:
     @pytest.mark.asyncio
     async def test_rlm_mixin_process_with_rlm_real(self):
         """
-        Test RLMAwareMixin.process_with_rlm with real Ollama backend.
+        Test RLMAwareMixin.process_with_rlm against the configured LM.
 
         Tests the mixin method that agents would use.
         """
@@ -834,8 +844,8 @@ class TestRLMRealInferenceIntegration:
         rlm_options = RLMOptions(
             enabled=True,
             max_iterations=2,
-            backend="litellm",
-            model="ollama/qwen2.5:1.5b",
+            backend=resolve_provider(),
+            model=resolve_bare_model(),
         )
 
         context = "Python is a popular programming language for data science and ML."
