@@ -38,7 +38,7 @@ def _llm_available() -> bool:
         return False
 
 
-skip_if_no_llm = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not _llm_available(), reason="LLM endpoint not available"
 )
 
@@ -116,7 +116,7 @@ _ML_SEARCH_RESULTS = [
 
 
 @pytest.mark.asyncio
-@skip_if_no_llm
+@skip_if_no_lm
 async def test_generates_report_from_results(report_agent):
     """Passing 3 search results must produce a report with executive_summary and findings."""
     from cogniverse_agents.detailed_report_agent import ReportRequest
@@ -143,7 +143,7 @@ async def test_generates_report_from_results(report_agent):
 
 
 @pytest.mark.asyncio
-@skip_if_no_llm
+@skip_if_no_lm
 async def test_report_mentions_input_topics(report_agent):
     """Report generated from ML-themed results must reference ML concepts."""
     from cogniverse_agents.detailed_report_agent import ReportRequest

@@ -515,7 +515,7 @@ def _is_llm_available() -> bool:
         return False
 
 
-skip_if_no_llm = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not _is_llm_available(),
     reason="Configured LLM endpoint not reachable",
 )

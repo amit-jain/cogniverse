@@ -10,11 +10,11 @@ import pytest
 
 from cogniverse_agents.search_agent import ConversationalQueryRewriteModule
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-from tests.agents.integration.conftest import skip_if_no_llm
+from tests.agents.integration.conftest import skip_if_no_lm
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestQueryRewriteWithRealLLM:
     """Test ConversationalQueryRewriteModule against a real LLM."""
 

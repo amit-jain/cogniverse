@@ -28,7 +28,7 @@ from cogniverse_core.common.agent_models import AgentEndpoint
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-from tests.runtime.integration.conftest import skip_if_no_llm
+from tests.runtime.integration.conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +216,7 @@ def _assert_no_errors(events, agent_name):
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestSummarizerAgentStreaming:
     """SummarizerAgent streaming against the configured LM."""
 
@@ -322,7 +322,7 @@ class TestSummarizerAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestOrchestratorAgentStreaming:
     """OrchestratorAgent streaming against the configured LM + real DSPy planning.
 
@@ -405,7 +405,7 @@ class TestOrchestratorAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestQueryEnhancementAgentStreaming:
     """QueryEnhancementAgent streaming against the configured LM."""
 
@@ -451,7 +451,7 @@ class TestQueryEnhancementAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestEntityExtractionAgentStreaming:
     """EntityExtractionAgent streaming against the configured LM."""
 
@@ -490,7 +490,7 @@ class TestEntityExtractionAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestProfileSelectionAgentStreaming:
     """ProfileSelectionAgent streaming against the configured LM."""
 
@@ -549,7 +549,7 @@ class TestProfileSelectionAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestDetailedReportAgentStreaming:
     """DetailedReportAgent streaming against the configured LM."""
 
@@ -628,7 +628,7 @@ class TestDetailedReportAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestSearchAgentStreaming:
     """SearchAgent streaming with real Vespa + the configured LM."""
 
@@ -687,7 +687,7 @@ class TestSearchAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestImageSearchAgentStreaming:
     """ImageSearchAgent streaming with real Vespa."""
 
@@ -727,7 +727,7 @@ class TestImageSearchAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestAudioAnalysisAgentStreaming:
     """AudioAnalysisAgent streaming with real Vespa."""
 
@@ -767,7 +767,7 @@ class TestAudioAnalysisAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestDocumentAgentStreaming:
     """DocumentAgent streaming with real Vespa."""
 
@@ -811,7 +811,7 @@ class TestDocumentAgentStreaming:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestA2AStreamingFullStack:
     """Full A2A protocol streaming: message/stream → SSE with real services."""
 

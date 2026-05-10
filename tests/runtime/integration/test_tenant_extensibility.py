@@ -31,7 +31,7 @@ def _llm_available():
         return False
 
 
-skip_if_no_llm = pytest.mark.skipif(not _llm_available(), reason="LLM not available")
+skip_if_no_lm = pytest.mark.skipif(not _llm_available(), reason="LLM not available")
 
 
 @pytest.fixture(scope="module")
@@ -215,7 +215,7 @@ class TestTenantJobsRealVespa:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestMemoryManagementRealMem0:
     """Memory management with real Mem0/Vespa.
 
@@ -286,7 +286,7 @@ class TestMemoryManagementRealMem0:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestJobExecutorRealLLM:
     """Job executor routing with real LLM — verifies the routing module
     produces meaningful agent selections for different query types."""

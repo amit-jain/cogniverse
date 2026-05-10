@@ -37,7 +37,7 @@ def _llm_available() -> bool:
         return False
 
 
-skip_if_no_llm = pytest.mark.skipif(
+skip_if_no_lm = pytest.mark.skipif(
     not _llm_available(), reason="LLM endpoint not available"
 )
 
@@ -79,7 +79,7 @@ def enhancement_module(dspy_lm):
     return QueryEnhancementModule()
 
 
-@skip_if_no_llm
+@skip_if_no_lm
 def test_enhances_short_query(enhancement_module):
     """A single-word query must produce a longer, more descriptive enhanced query."""
     result = enhancement_module.forward(query="cats")
@@ -91,7 +91,7 @@ def test_enhances_short_query(enhancement_module):
     )
 
 
-@skip_if_no_llm
+@skip_if_no_lm
 def test_preserves_intent(enhancement_module):
     """Enhancement of 'machine learning tutorials' must keep ML semantics."""
     result = enhancement_module.forward(query="machine learning tutorials")

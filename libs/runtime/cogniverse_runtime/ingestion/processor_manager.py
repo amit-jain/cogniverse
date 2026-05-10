@@ -132,8 +132,11 @@ class ProcessorManager:
 
     # Processor types handled directly by ProcessingStrategySet._process_segmentation()
     # — they do not require a processor plugin, so skip them gracefully.
+    # ``embedding`` is in this set because the live ColPali/VideoPrism embedders
+    # live in the ``embedding_generator/`` subpackage, which the discovery loop
+    # below skips (it only loads top-level ``.py`` modules under ``processors/``).
     _STRATEGY_HANDLED_TYPES = frozenset(
-        {"image", "audio_file", "document_file", "single_vector"}
+        {"image", "audio_file", "document_file", "single_vector", "embedding"}
     )
 
     def _init_from_requirements(self, required_processors: dict[str, dict[str, Any]]):

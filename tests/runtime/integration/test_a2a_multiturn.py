@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from tests.runtime.integration.conftest import skip_if_no_llm
+from tests.runtime.integration.conftest import skip_if_no_lm
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def _extract_response_text(body: dict) -> str:
 
 
 @pytest.mark.integration
-@skip_if_no_llm
+@skip_if_no_lm
 class TestA2AMultiTurnHistoryAccumulation:
     """Test multi-turn conversation history via A2A contextId."""
 
