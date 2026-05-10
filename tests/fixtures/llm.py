@@ -1,28 +1,20 @@
 """Shared DSPy LM fixture for integration tests.
 
 Resolves the test LM endpoint from environment variables so the same
-test suite can run against any OpenAI-compatible provider — Ollama,
-vLLM, llama.cpp, OpenAI, hosted endpoints — without code change.
+test suite can run against any OpenAI-compatible LM provider without a
+code change.
 
 Env vars:
 
 - ``TEST_LLM_API_BASE`` — base URL of the LM endpoint.
-  Default ``http://localhost:11434``. If the URL ends in ``/v1``
-  the fixture treats it as pure OAI-compat (uses the ``openai/``
-  litellm prefix); otherwise it uses the ``ollama/`` prefix so
-  litellm hits Ollama's native ``/api/`` surface.
+  Default ``http://localhost:11434``.
 - ``TEST_LLM_MODEL`` — bare model name. Default ``gemma3:4b``.
-- ``TEST_LLM_PROVIDER`` — explicit override (``ollama`` or
-  ``openai``). Wins over the URL heuristic when set.
+- ``TEST_LLM_PROVIDER`` — litellm provider prefix used when building
+  the prefixed model id (``<provider>/<model>``). When unset, defaults
+  to ``openai`` if ``TEST_LLM_API_BASE`` ends in ``/v1`` (pure
+  OAI-compat) and the litellm-routed local-server prefix otherwise.
 - ``TEST_LLM_API_KEY`` — optional. Defaults to ``not-required`` for
-  local backends that don't authenticate.
-
-Backwards-compatible env vars that still work:
-
-- ``OLLAMA_BASE_URL`` — fallback for ``TEST_LLM_API_BASE``.
-- ``OLLAMA_TEST_MODEL`` — fallback for ``TEST_LLM_MODEL``. May include
-  a litellm provider prefix (``ollama/gemma3:4b``); it gets stripped
-  before re-prepending the resolved prefix.
+  local LM servers that don't authenticate.
 """
 
 from __future__ import annotations
@@ -33,40 +25,38 @@ import dspy
 import httpx
 import pytest
 
+_DEFAULT_BASE_URL = "http://localhost:11434"
+_DEFAULT_MODEL = "gemma3:4b"
+_DEFAULT_LOCAL_PROVIDER = "openai"
+_LITELLM_PROVIDERS = (
+    "openai",
+    "ollama",
+    "ollama_chat",
+    "hosted_vllm",
+    "anthropic",
+    "azure",
+    "bedrock",
+    "vertex_ai",
+    "groq",
+    "mistral",
+    "cohere",
+)
+
 
 def resolve_base_url() -> str:
-    return (
-        os.environ.get("TEST_LLM_API_BASE")
-        or os.environ.get("OLLAMA_BASE_URL")
-        or "http://localhost:11434"
-    )
+    return os.environ.get("TEST_LLM_API_BASE") or _DEFAULT_BASE_URL
 
 
 def resolve_bare_model() -> str:
     """Return the model name without a litellm provider prefix.
 
     Some configs ship the model with a prefix that names the litellm
-    provider (``ollama/qwen3:4b``, ``openai/gpt-4o``); only those
+    provider (``openai/gpt-4o``, ``hosted_vllm/Qwen/...``); only those
     leading tokens are providers we should strip. HF-style namespaced
     names (``google/gemma-4-e4b-it``, ``meta-llama/Llama-3-8B``) are
     the actual model identifier and must be preserved verbatim.
     """
-    raw = (
-        os.environ.get("TEST_LLM_MODEL")
-        or os.environ.get("OLLAMA_TEST_MODEL")
-        or "gemma3:4b"
-    )
-    _LITELLM_PROVIDERS = (
-        "ollama",
-        "openai",
-        "anthropic",
-        "azure",
-        "bedrock",
-        "vertex_ai",
-        "groq",
-        "mistral",
-        "cohere",
-    )
+    raw = os.environ.get("TEST_LLM_MODEL") or _DEFAULT_MODEL
     head, _, _ = raw.partition("/")
     if head in _LITELLM_PROVIDERS:
         return raw.split("/", 1)[1]
@@ -79,7 +69,7 @@ def resolve_provider() -> str:
         return explicit
     if resolve_base_url().rstrip("/").endswith("/v1"):
         return "openai"
-    return "ollama"
+    return _DEFAULT_LOCAL_PROVIDER
 
 
 def resolve_prefixed_model() -> str:
@@ -93,9 +83,9 @@ def resolve_api_key() -> str:
 def is_test_lm_available() -> bool:
     """Return True if the configured test LM endpoint is reachable.
 
-    Probes ``GET /api/tags`` for Ollama-compatible servers and falls
-    back to ``GET /v1/models`` for pure OAI-compat endpoints. Either
-    returning HTTP 200 is enough — both are cheap, idempotent.
+    Probes ``GET /api/tags`` (native LM-server tag listing) and falls
+    back to ``GET /v1/models`` (pure OAI-compat). Either returning
+    HTTP 200 is enough — both are cheap, idempotent.
 
     Strips a trailing ``/v1`` from the base before probing so callers
     can pass the full endpoint URL (with or without the suffix) and

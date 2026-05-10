@@ -430,8 +430,9 @@ BACKEND_CONFIG_PORT=19071
 PHOENIX_ENABLED=true
 PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
 
-# Ollama
-OLLAMA_BASE_URL=http://localhost:11434
+# Test LM endpoint (any OpenAI-compatible server)
+TEST_LLM_API_BASE=http://localhost:11434
+TEST_LLM_MODEL=gemma3:4b
 
 # JAX (for VideoPrism)
 JAX_PLATFORM_NAME=cpu
