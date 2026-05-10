@@ -113,6 +113,25 @@ Example: `Fix embedding dimension mismatch in VideoPrism processor`
 
 ---
 
+## Assertions Before Code (prerequisite for every feature)
+
+Before writing production code for a feature, write down the strongest
+assertions a real-service integration test could make against it —
+exact values, exact set/dict shapes, exact substrings with surrounding
+context, exact length range, exact persisted row in the backing store.
+These are the contract the implementation owes.
+
+Forbidden weak assertions: `assert x is not None`,
+`assert isinstance(out, str) and out.strip()`,
+`assert "kw" in output` without bounds, `assert len(hits) >= 1`. If the
+strongest assertion you can write is "non-empty string," the contract
+is undefined — refine it before coding.
+
+`quality-enforcer` REJECTS a change whose tests use only weak
+assertions, even when they pass. Audit checklist in
+`docs/modules/agents.md` enumerates the failure patterns assertions
+must catch.
+
 ## Implementation Completeness
 
 NEVER declare "done" or "complete" when:
@@ -123,6 +142,7 @@ NEVER declare "done" or "complete" when:
 - Adding backward compatibility shims instead of actual implementation
 - Integration tests for wiring changes have not been written yet
 - Documentation for changed APIs/constructors/storage backends has not been updated yet
+- The test contract was not defined before the code (see "Assertions Before Code" above)
 
 If a condition cannot be met, RAISE an exception with a clear message.
 

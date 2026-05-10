@@ -118,6 +118,12 @@ The governing loop for all work: **gather context → take action → verify wor
 
 **Step 0 — Delete Before You Build**: Dead code accelerates context compaction. Before ANY structural refactor on a file >300 LOC, first remove dead props, unused exports, unused imports, debug logs. Commit cleanup separately. After restructuring, delete anything now unused.
 
+**Define Assertions Before Code**: Before writing any production code for a feature, articulate the strongest assertions a real-service integration test could make against it. Write them down as a list — what specific outputs, side effects, persisted state, and failure modes the test will check. These assertions are the contract. Implementation is "done" when a real-service test against those assertions passes; not when "it runs" or "the LM returned a string."
+
+Forbidden weak assertions: `assert x is not None`, `assert isinstance(out.summary, str) and out.summary.strip()`, `assert "keyword" in output` without bounds, `assert len(hits) >= 1`. Strong assertions name the exact value, exact set, exact dict shape, exact substring with surrounding context, exact length range, exact sentence count, exact persisted row in the backing store. If the strongest assertion you can write is "non-empty string," the contract isn't defined yet — refine it before coding.
+
+This applies to every plan item, every audit-driven fix, every new test. The audit checklist in `docs/modules/agents.md` enumerates the failure patterns to design assertions against.
+
 **Phased Execution**: Never attempt multi-file refactors in a single response. Break work into explicit phases. Complete Phase 1, run verification, wait for explicit approval before Phase 2. Each phase must touch no more than 5 files.
 
 **Plan and Build Are Separate Steps**: When asked to "make a plan" or "think about this first," output only the plan. No code until the user says go. If instructions are vague, outline what you'd build and where it goes. Get approval first.
