@@ -529,11 +529,22 @@ class TestComprehensiveIngestion:
 
     @pytest.mark.slow
     @pytest.mark.requires_vespa
+    @requires_vllm_colpali
     @pytest.mark.asyncio
     async def test_multi_profile_ingestion(
         self, ingestion_vespa_backend, all_test_videos, tmp_path
     ):
-        """Test ingestion with multiple profiles."""
+        """Test ingestion with multiple profiles.
+
+        Gated on ``requires_vllm_colpali`` because every profile in
+        ``profiles_to_test`` declares ``inference_services.embedding=*``
+        and the pipeline raises at init when the corresponding service
+        URL isn't configured. Without this gate the test caught every
+        per-profile exception, ended with ``results == {}``, and the
+        ``assert len(results) > 0`` failed with no actionable signal —
+        the right environmental requirement is now visible at skip
+        time.
+        """
         profiles_to_test = [
             "video_colpali_smol500_mv_frame",
             "video_videoprism_base_mv_chunk_30s",

@@ -566,10 +566,19 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
 
     blob = json.loads(src_path.read_text())
 
-    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:1.5b")
+    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:7b")
     test_api_base = os.environ.get("TEST_LLM_API_BASE", "http://localhost:11434")
 
     prefixed = f"openai/{test_model}"
+
+    # litellm with the ``openai/`` provider prefix sends requests to
+    # ``{api_base}/chat/completions``. Ollama's OAI-compat surface lives
+    # at ``/v1/chat/completions``, so the api_base MUST carry ``/v1`` —
+    # without it litellm hits ``localhost:11434/chat/completions`` and
+    # Ollama returns a literal "404 page not found". Append it here so
+    # the rest of the test suite doesn't have to remember.
+    if not test_api_base.rstrip("/").endswith("/v1"):
+        test_api_base = test_api_base.rstrip("/") + "/v1"
 
     llm_cfg = blob.setdefault("llm_config", {})
     primary = llm_cfg.setdefault("primary", {})
@@ -665,12 +674,26 @@ def _install_ollama_to_home() -> Path:
     return bin_path
 
 
+def _strip_v1(base_url: str) -> str:
+    """Drop a trailing ``/v1`` so Ollama-native ``/api/...`` paths resolve.
+
+    The cogniverse_test_config fixture pins api_base to end in ``/v1`` so
+    litellm's openai-prefixed model strings route correctly. Ollama's
+    native tag/pull endpoints live OUTSIDE ``/v1``, so probes/installs
+    need the bare host:port.
+    """
+    base = base_url.rstrip("/")
+    if base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return base
+
+
 def _probe_ollama(base_url: str, timeout: float = 2.0) -> bool:
     import httpx
 
     try:
         return (
-            httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=timeout).status_code
+            httpx.get(f"{_strip_v1(base_url)}/api/tags", timeout=timeout).status_code
             == 200
         )
     except (httpx.HTTPError, OSError):
@@ -678,16 +701,25 @@ def _probe_ollama(base_url: str, timeout: float = 2.0) -> bool:
 
 
 def _ollama_has_model(base_url: str, model: str) -> bool:
+    """Return True iff Ollama has *exactly* the requested model+tag pulled.
+
+    Ollama models are tag-versioned (``qwen2.5:1.5b`` vs ``qwen2.5:7b``);
+    if the requested tag is missing, ``litellm`` requests the full
+    ``model:tag`` string and Ollama replies 404 even though the base
+    model name matches a different-tagged pull. Match on the full
+    ``name:tag`` (Ollama's ``/api/tags`` returns names with the tag
+    suffix already, e.g. ``qwen2.5:7b``); when the caller asks for
+    ``qwen2.5`` without a tag, default to Ollama's ``:latest`` convention.
+    """
     import httpx
 
+    wanted = model if ":" in model else f"{model}:latest"
     try:
-        resp = httpx.get(f"{base_url.rstrip('/')}/api/tags", timeout=5.0)
+        resp = httpx.get(f"{_strip_v1(base_url)}/api/tags", timeout=5.0)
         if resp.status_code != 200:
             return False
-        names = {
-            m.get("name", "").split(":")[0] for m in resp.json().get("models") or []
-        }
-        return model.split(":")[0] in names
+        names = {m.get("name", "") for m in resp.json().get("models") or []}
+        return wanted in names
     except (httpx.HTTPError, OSError, ValueError):
         return False
 
@@ -718,7 +750,7 @@ def ensure_host_ollama(cogniverse_test_config):
       3. Starts ``ollama serve`` on the chosen port (via ``OLLAMA_HOST``)
          and waits for ``/api/tags`` to answer.
       4. Pulls the test model (``TEST_LLM_MODEL`` env, default
-         ``qwen2.5:1.5b``) if missing.
+         ``qwen2.5:7b``) if missing.
 
     Skipped when ``cogniverse_test_config`` is None (external
     ``COGNIVERSE_CONFIG``) — that operator owns their own LM provisioning.
@@ -735,7 +767,7 @@ def ensure_host_ollama(cogniverse_test_config):
     cfg = json.loads(cfg_path.read_text())
     primary = cfg.get("llm_config", {}).get("primary", {})
     configured_base = primary.get("api_base") or "http://localhost:11434"
-    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:1.5b")
+    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:7b")
 
     if _probe_ollama(configured_base) and _ollama_has_model(
         configured_base, test_model
@@ -762,7 +794,10 @@ def ensure_host_ollama(cogniverse_test_config):
         chosen_port = configured_port
     else:
         chosen_port = _claim_free_port()
-        new_base = f"http://localhost:{chosen_port}"
+        # Preserve the /v1 suffix the cogniverse_test_config fixture pinned —
+        # litellm's openai prefix sends to ``{api_base}/chat/completions``
+        # and Ollama only serves that under /v1.
+        new_base = f"http://localhost:{chosen_port}/v1"
         primary["api_base"] = new_base
         teacher = cfg.setdefault("llm_config", {}).setdefault("teacher", {})
         teacher["api_base"] = new_base
