@@ -5,6 +5,11 @@
 1. [Package Dependency Graph](#package-dependency-graph)
 2. [Package Internal Structure](#package-internal-structure)
 3. [Cross-Package Data Flow](#cross-package-data-flow)
+   - [Video Ingestion Flow](#video-ingestion-flow-across-packages-layered-architecture)
+   - [Query Routing Flow](#query-routing-flow-across-packages-layered-architecture)
+   - [Search Flow (with Knowledge Subsystem)](#search-flow-across-packages-layered-architecture)
+   - [Knowledge Synthesis Flow](#knowledge-synthesis-flow-across-packages)
+   - [Sandbox Policy Flow](#sandbox-policy-flow)
 4. [Import Patterns](#import-patterns)
 5. [Build and Deployment](#build-and-deployment)
 
@@ -216,10 +221,17 @@ flowchart TB
         AgentMixins["<span style='color:#000'>Agent Mixins</span>"]
     end
 
-    subgraph MemoryMgmt["<span style='color:#000'>Memory Management</span>"]
-        MemoryBackend["<span style='color:#000'>Backend Vector Store</span>"]
-        MemoryConfig["<span style='color:#000'>Memory Config</span>"]
-        Mem0MemoryManager["<span style='color:#000'>Mem0MemoryManager</span>"]
+    subgraph KnowledgeSys["<span style='color:#000'>Knowledge Subsystem (memory/)</span>"]
+        Mem0MemoryManager["<span style='color:#000'>Mem0MemoryManager<br/>manager.py</span>"]
+        KnowledgeRegistry["<span style='color:#000'>KnowledgeRegistry<br/>schema.py</span>"]
+        ProvenanceStore["<span style='color:#000'>ProvenanceStore<br/>provenance_store.py</span>"]
+        ProvenanceWalker["<span style='color:#000'>ProvenanceWalker<br/>provenance.py</span>"]
+        ContradictionDetector["<span style='color:#000'>ContradictionDetector<br/>contradiction.py</span>"]
+        TrustRanker["<span style='color:#000'>rank_with_trust<br/>trust.py</span>"]
+        FederationService["<span style='color:#000'>FederationService<br/>federation.py</span>"]
+        PinService["<span style='color:#000'>PinService<br/>pinning.py</span>"]
+        LifecycleScheduler["<span style='color:#000'>LifecycleScheduler<br/>lifecycle_scheduler.py</span>"]
+        BackendVectorStore["<span style='color:#000'>BackendVectorStore<br/>backend_vector_store.py</span>"]
     end
 
     subgraph CacheSys["<span style='color:#000'>Cache System</span>"]
@@ -236,22 +248,46 @@ flowchart TB
     CorePkg --> AgentBase
     CorePkg --> A2AAgent
     CorePkg --> AgentMixins
-    CorePkg --> MemoryBackend
-    CorePkg --> MemoryConfig
     CorePkg --> Mem0MemoryManager
+    CorePkg --> KnowledgeRegistry
+    CorePkg --> ProvenanceStore
+    CorePkg --> ProvenanceWalker
+    CorePkg --> ContradictionDetector
+    CorePkg --> TrustRanker
+    CorePkg --> FederationService
+    CorePkg --> PinService
+    CorePkg --> LifecycleScheduler
+    CorePkg --> BackendVectorStore
     CorePkg --> CacheManager
     CorePkg --> RedisBackend
     CorePkg --> InMemoryCache
     CorePkg --> Utils
     CorePkg --> Types
 
+    %% Internal knowledge subsystem wiring
+    Mem0MemoryManager --> KnowledgeRegistry
+    Mem0MemoryManager --> ProvenanceStore
+    Mem0MemoryManager --> BackendVectorStore
+    LifecycleScheduler --> KnowledgeRegistry
+    LifecycleScheduler --> PinService
+    ContradictionDetector --> TrustRanker
+    FederationService --> KnowledgeRegistry
+    ProvenanceWalker --> ProvenanceStore
+
     style CorePkg fill:#ce93d8,stroke:#7b1fa2,stroke-width:3px,color:#000
     style AgentBase fill:#ce93d8,stroke:#7b1fa2,color:#000
     style A2AAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
     style AgentMixins fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style MemoryBackend fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style MemoryConfig fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Mem0MemoryManager fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Mem0MemoryManager fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style KnowledgeRegistry fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style ProvenanceStore fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style ProvenanceWalker fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style ContradictionDetector fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style TrustRanker fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style FederationService fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style PinService fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style LifecycleScheduler fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style BackendVectorStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style CacheManager fill:#ce93d8,stroke:#7b1fa2,color:#000
     style RedisBackend fill:#ce93d8,stroke:#7b1fa2,color:#000
     style InMemoryCache fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -296,22 +332,46 @@ flowchart TB
 flowchart TB
     AgentsPkg["<span style='color:#000'>cogniverse_agents</span>"]
 
-    subgraph AgentsSubg["<span style='color:#000'>Agents</span>"]
+    subgraph CoreAgentsSubg["<span style='color:#000'>Core Agents</span>"]
         GatewayAgent["<span style='color:#000'>GatewayAgent</span>"]
         SearchAgent["<span style='color:#000'>SearchAgent</span>"]
         OrchestratorAgent["<span style='color:#000'>OrchestratorAgent</span>"]
+        DeepResearchAgent["<span style='color:#000'>DeepResearchAgent</span>"]
+        SummarizerAgent["<span style='color:#000'>SummarizerAgent</span>"]
+        CodingAgent["<span style='color:#000'>CodingAgent</span>"]
+        DeepSynthesisWorkflow["<span style='color:#000'>DeepSynthesisWorkflow</span>"]
+    end
+
+    subgraph KnowledgeAgentsSubg["<span style='color:#000'>Knowledge Agents</span>"]
+        MultiDocSynthesis["<span style='color:#000'>MultiDocumentSynthesisAgent</span>"]
+        KGTraversal["<span style='color:#000'>KnowledgeGraphTraversalAgent</span>"]
+        CrossTenantComparison["<span style='color:#000'>CrossTenantComparisonAgent</span>"]
+        ContradictionReconciliation["<span style='color:#000'>ContradictionReconciliationAgent</span>"]
+        CitationTracing["<span style='color:#000'>CitationTracingAgent</span>"]
+        TemporalReasoning["<span style='color:#000'>TemporalReasoningAgent</span>"]
+        FederatedQuery["<span style='color:#000'>FederatedQueryAgent</span>"]
+        KnowledgeSummarization["<span style='color:#000'>KnowledgeSummarizationAgent</span>"]
+        AuditExplanation["<span style='color:#000'>AuditExplanationAgent</span>"]
+    end
+
+    subgraph InferenceSubg["<span style='color:#000'>Inference</span>"]
+        InstrumentedRLM["<span style='color:#000'>InstrumentedRLM<br/>instrumented_rlm.py</span>"]
+        RLMInference["<span style='color:#000'>RLMInference<br/>rlm_inference.py</span>"]
+        RLMABRunner["<span style='color:#000'>RLMABRunner<br/>ab_harness.py</span>"]
+    end
+
+    subgraph OptimizerSubg["<span style='color:#000'>Optimizer</span>"]
+        ArtifactManager["<span style='color:#000'>ArtifactManager<br/>artifact_manager.py</span>"]
+        SignatureVariants["<span style='color:#000'>SignatureVariantRegistry<br/>signature_variants.py</span>"]
+        StrategyLearner["<span style='color:#000'>StrategyLearner<br/>strategy_learner.py</span>"]
+        DSPyAgentOptimizer["<span style='color:#000'>DSPyAgentPromptOptimizer<br/>dspy_agent_optimizer.py</span>"]
+        RouterOptimizer["<span style='color:#000'>OptimizedRouter<br/>router_optimizer.py</span>"]
     end
 
     subgraph RoutingSubg["<span style='color:#000'>Routing</span>"]
         RoutingConfig["<span style='color:#000'>RoutingConfig</span>"]
         GLiNERStrategy["<span style='color:#000'>GLiNER Strategy</span>"]
         LLMStrategy["<span style='color:#000'>LLM Strategy</span>"]
-        Optimizer["<span style='color:#000'>Optimizer</span>"]
-    end
-
-    subgraph ToolsSubg["<span style='color:#000'>Tools</span>"]
-        A2ATools["<span style='color:#000'>A2A Tools</span>"]
-        VideoPlayer["<span style='color:#000'>Video Player</span>"]
     end
 
     subgraph SearchSubg["<span style='color:#000'>Search</span>"]
@@ -322,27 +382,63 @@ flowchart TB
     AgentsPkg --> GatewayAgent
     AgentsPkg --> SearchAgent
     AgentsPkg --> OrchestratorAgent
+    AgentsPkg --> DeepResearchAgent
+    AgentsPkg --> SummarizerAgent
+    AgentsPkg --> CodingAgent
+    AgentsPkg --> DeepSynthesisWorkflow
+    AgentsPkg --> MultiDocSynthesis
+    AgentsPkg --> KGTraversal
+    AgentsPkg --> CrossTenantComparison
+    AgentsPkg --> ContradictionReconciliation
+    AgentsPkg --> CitationTracing
+    AgentsPkg --> TemporalReasoning
+    AgentsPkg --> FederatedQuery
+    AgentsPkg --> KnowledgeSummarization
+    AgentsPkg --> AuditExplanation
+    AgentsPkg --> InstrumentedRLM
+    AgentsPkg --> RLMInference
+    AgentsPkg --> RLMABRunner
+    AgentsPkg --> ArtifactManager
+    AgentsPkg --> SignatureVariants
+    AgentsPkg --> StrategyLearner
+    AgentsPkg --> DSPyAgentOptimizer
+    AgentsPkg --> RouterOptimizer
     AgentsPkg --> RoutingConfig
     AgentsPkg --> GLiNERStrategy
     AgentsPkg --> LLMStrategy
-    AgentsPkg --> Optimizer
     AgentsPkg --> Reranker
     AgentsPkg --> QueryEncoders
-    AgentsPkg --> A2ATools
-    AgentsPkg --> VideoPlayer
 
     style AgentsPkg fill:#ffcc80,stroke:#ef6c00,stroke-width:3px,color:#000
     style GatewayAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style SearchAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style OrchestratorAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DeepResearchAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SummarizerAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style CodingAgent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DeepSynthesisWorkflow fill:#ffcc80,stroke:#ef6c00,color:#000
+    style MultiDocSynthesis fill:#ffb74d,stroke:#ef6c00,color:#000
+    style KGTraversal fill:#ffb74d,stroke:#ef6c00,color:#000
+    style CrossTenantComparison fill:#ffb74d,stroke:#ef6c00,color:#000
+    style ContradictionReconciliation fill:#ffb74d,stroke:#ef6c00,color:#000
+    style CitationTracing fill:#ffb74d,stroke:#ef6c00,color:#000
+    style TemporalReasoning fill:#ffb74d,stroke:#ef6c00,color:#000
+    style FederatedQuery fill:#ffb74d,stroke:#ef6c00,color:#000
+    style KnowledgeSummarization fill:#ffb74d,stroke:#ef6c00,color:#000
+    style AuditExplanation fill:#ffb74d,stroke:#ef6c00,color:#000
+    style InstrumentedRLM fill:#ffb74d,stroke:#ef6c00,color:#000
+    style RLMInference fill:#ffb74d,stroke:#ef6c00,color:#000
+    style RLMABRunner fill:#ffb74d,stroke:#ef6c00,color:#000
+    style ArtifactManager fill:#ffb74d,stroke:#ef6c00,color:#000
+    style SignatureVariants fill:#ffb74d,stroke:#ef6c00,color:#000
+    style StrategyLearner fill:#ffb74d,stroke:#ef6c00,color:#000
+    style DSPyAgentOptimizer fill:#ffb74d,stroke:#ef6c00,color:#000
+    style RouterOptimizer fill:#ffb74d,stroke:#ef6c00,color:#000
     style RoutingConfig fill:#ffcc80,stroke:#ef6c00,color:#000
     style GLiNERStrategy fill:#ffcc80,stroke:#ef6c00,color:#000
     style LLMStrategy fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Optimizer fill:#ffcc80,stroke:#ef6c00,color:#000
     style Reranker fill:#ffcc80,stroke:#ef6c00,color:#000
     style QueryEncoders fill:#ffcc80,stroke:#ef6c00,color:#000
-    style A2ATools fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VideoPlayer fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ### cogniverse_vespa Package Structure (Implementation Layer)
@@ -517,15 +613,184 @@ sequenceDiagram
 
     Agents->>Vespa: docs = backend.search(query_dict with tenant_id)
     Vespa->>Vespa: Derive tenant schema and execute query
-    Vespa-->>Agents: Search results
+    Vespa-->>Agents: Video search results
+
+    Note over Agents,Core: Memory read goes through Knowledge Subsystem
+    Agents->>Core: FederationService.federated_get_all(tenant_id, agent_name)
+    Core->>Core: Fetch tenant memories (Mem0MemoryManager)
+    Core->>Core: Fetch org trunk memories (acme:_org_trunk)
+    Core->>Core: Dedup by subject_key — tenant overlay wins
+    Core->>Core: ContradictionDetector.detect(candidates)
+    Core->>Core: reconcile(candidates, schema.contradiction_policy)
+    Core->>Core: rank_with_trust(memories) — relevance × trust × confidence
+    Core-->>Agents: Trust-ranked, contradiction-resolved memories
 
     Agents->>Agents: Multi-modal reranking
     Agents->>Core: Access TelemetryManager
     Core->>Foundation: Record search span with results
     Foundation->>Foundation: Send to Phoenix: acme_corp_project
 
-    Agents-->>Runtime: Reranked results
+    Agents-->>Runtime: Reranked results with provenance
     Runtime-->>User: Search response
+```
+
+### Knowledge Synthesis Flow Across Packages
+
+```mermaid
+sequenceDiagram
+    participant User as User Request
+    participant Runtime as cogniverse_runtime
+    participant Gateway as GatewayAgent
+    participant Orchestrator as OrchestratorAgent
+    participant DSW as DeepSynthesisWorkflow
+    participant KAgents as Knowledge Agents
+    participant Core as cogniverse_core (Knowledge Subsystem)
+    participant Vespa as cogniverse_vespa
+
+    User->>Runtime: POST /agents {"query": "synthesize docs across tenants"}
+
+    Runtime->>Gateway: Route request
+    Gateway->>Orchestrator: Dispatch to OrchestratorAgent
+
+    Note over Orchestrator: Large synthesis detected — delegates to DeepSynthesisWorkflow
+    Orchestrator->>DSW: DeepSynthesisWorkflow(query, tenant_id, max_rounds=5)
+
+    loop RLM trajectory round
+        DSW->>KAgents: Fan out — MultiDocumentSynthesisAgent(docs_batch)
+        DSW->>KAgents: Fan out — KnowledgeGraphTraversalAgent(root_entity)
+        DSW->>KAgents: Fan out — CitationTracingAgent(memory_id)
+
+        KAgents->>Core: FederationService.federated_get_all(tenant_id)
+        Core->>Core: Merge org trunk + tenant overlay
+        Core->>Core: ContradictionDetector → reconcile(TRUST_RANKED)
+        Core->>Core: rank_with_trust → relevance × trust × confidence
+        Core->>Vespa: ProvenanceStore BFS walk for citation chains
+        Vespa-->>Core: Citation graph per root memory
+        Core-->>KAgents: Trust-ranked memories + provenance chain
+
+        KAgents-->>DSW: Sub-agent outputs + CitationGraph
+
+        DSW->>DSW: RLM summariser: enough material?
+        alt sufficient material
+            DSW->>DSW: Submit answer
+        else need more
+            DSW->>DSW: Request another fan-out round
+        end
+    end
+
+    DSW-->>Orchestrator: Synthesized answer + provenance chain
+    Orchestrator-->>Gateway: Result
+    Gateway-->>Runtime: Response with provenance
+    Runtime-->>User: Synthesized answer with citations
+```
+
+### Sandbox Policy Flow
+
+```mermaid
+flowchart TB
+    subgraph RuntimeBoot["<span style='color:#000'>Runtime Boot</span>"]
+        Config["<span style='color:#000'>SandboxPolicy config<br/>REQUIRED / OPTIONAL / DISABLED</span>"]
+        SandboxMgr["<span style='color:#000'>SandboxManager._connect()</span>"]
+    end
+
+    subgraph HealthProbe["<span style='color:#000'>GatewayHealthProbe<br/>openshell_health.py</span>"]
+        Probe["<span style='color:#000'>SandboxClient.health()</span>"]
+        ProbeResult["<span style='color:#000'>available: bool<br/>latency_ms: float</span>"]
+        PhoenixSpan["<span style='color:#000'>openshell.gateway_health span<br/>→ Phoenix dashboard tile</span>"]
+    end
+
+    subgraph PolicyGate["<span style='color:#000'>Policy Gate</span>"]
+        RequiredPath["<span style='color:#000'>REQUIRED:<br/>gateway unreachable<br/>→ SandboxGatewayUnavailableError</span>"]
+        OptionalPath["<span style='color:#000'>OPTIONAL:<br/>gateway unreachable<br/>→ warn + continue without sandbox</span>"]
+        DisabledPath["<span style='color:#000'>DISABLED:<br/>skip connect entirely<br/>SandboxManager.available = False</span>"]
+    end
+
+    subgraph ExecPath["<span style='color:#000'>Execution</span>"]
+        ExecSandbox["<span style='color:#000'>exec_in_sandbox(code)<br/>→ OOM / policy-denied detection</span>"]
+        OTelSpan["<span style='color:#000'>OpenTelemetry span per<br/>create_session / exec / delete</span>"]
+    end
+
+    Config --> SandboxMgr
+    SandboxMgr --> Probe
+    Probe --> ProbeResult
+    ProbeResult --> PhoenixSpan
+    ProbeResult -->|policy=REQUIRED, unavailable| RequiredPath
+    ProbeResult -->|policy=OPTIONAL, unavailable| OptionalPath
+    Config -->|policy=DISABLED| DisabledPath
+    ProbeResult -->|available| ExecSandbox
+    OptionalPath -.->|degrade gracefully| ExecSandbox
+    ExecSandbox --> OTelSpan
+
+    style Config fill:#b0bec5,stroke:#546e7a,color:#000
+    style SandboxMgr fill:#90caf9,stroke:#1565c0,color:#000
+    style Probe fill:#90caf9,stroke:#1565c0,color:#000
+    style ProbeResult fill:#90caf9,stroke:#1565c0,color:#000
+    style PhoenixSpan fill:#a5d6a7,stroke:#388e3c,color:#000
+    style RequiredPath fill:#e53935,stroke:#c62828,color:#fff
+    style OptionalPath fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DisabledPath fill:#b0bec5,stroke:#546e7a,color:#000
+    style ExecSandbox fill:#90caf9,stroke:#1565c0,color:#000
+    style OTelSpan fill:#a5d6a7,stroke:#388e3c,color:#000
+```
+
+### cogniverse_runtime Package Structure (Application Layer)
+
+```mermaid
+flowchart TB
+    RuntimePkg["<span style='color:#000'>cogniverse_runtime</span>"]
+
+    subgraph APISubg["<span style='color:#000'>FastAPI Routers</span>"]
+        AdminRouter["<span style='color:#000'>admin.py<br/>Tenant + schema management</span>"]
+        AgentsRouter["<span style='color:#000'>agents.py<br/>Agent dispatch</span>"]
+        SearchRouter["<span style='color:#000'>search.py<br/>Video search</span>"]
+        KnowledgeRouter["<span style='color:#000'>knowledge.py<br/>Knowledge CRUD</span>"]
+        HealthRouter["<span style='color:#000'>health.py<br/>Liveness / readiness</span>"]
+    end
+
+    subgraph IngestionSubg["<span style='color:#000'>Ingestion Pipeline</span>"]
+        PipelineBuilder["<span style='color:#000'>pipeline_builder.py</span>"]
+        Pipeline["<span style='color:#000'>VideoIngestionPipeline</span>"]
+    end
+
+    subgraph SandboxSubg["<span style='color:#000'>Sandbox</span>"]
+        SandboxManager["<span style='color:#000'>SandboxManager<br/>sandbox_manager.py<br/>SandboxPolicy enum</span>"]
+        GatewayHealthProbe["<span style='color:#000'>GatewayHealthProbe<br/>openshell_health.py</span>"]
+        SandboxPool["<span style='color:#000'>SandboxPool<br/>sandbox_pool.py</span>"]
+    end
+
+    subgraph OptCLISubg["<span style='color:#000'>Optimizer CLI</span>"]
+        OptimizationCLI["<span style='color:#000'>optimization_cli.py<br/>run / promote / rollback</span>"]
+        QualityMonitorCLI["<span style='color:#000'>quality_monitor_cli.py</span>"]
+    end
+
+    RuntimePkg --> AdminRouter
+    RuntimePkg --> AgentsRouter
+    RuntimePkg --> SearchRouter
+    RuntimePkg --> KnowledgeRouter
+    RuntimePkg --> HealthRouter
+    RuntimePkg --> PipelineBuilder
+    RuntimePkg --> Pipeline
+    RuntimePkg --> SandboxManager
+    RuntimePkg --> GatewayHealthProbe
+    RuntimePkg --> SandboxPool
+    RuntimePkg --> OptimizationCLI
+    RuntimePkg --> QualityMonitorCLI
+
+    SandboxManager --> GatewayHealthProbe
+
+    style RuntimePkg fill:#90caf9,stroke:#1565c0,stroke-width:3px,color:#000
+    style AdminRouter fill:#90caf9,stroke:#1565c0,color:#000
+    style AgentsRouter fill:#90caf9,stroke:#1565c0,color:#000
+    style SearchRouter fill:#90caf9,stroke:#1565c0,color:#000
+    style KnowledgeRouter fill:#90caf9,stroke:#1565c0,color:#000
+    style HealthRouter fill:#90caf9,stroke:#1565c0,color:#000
+    style PipelineBuilder fill:#64b5f6,stroke:#1565c0,color:#000
+    style Pipeline fill:#64b5f6,stroke:#1565c0,color:#000
+    style SandboxManager fill:#64b5f6,stroke:#1565c0,color:#000
+    style GatewayHealthProbe fill:#64b5f6,stroke:#1565c0,color:#000
+    style SandboxPool fill:#64b5f6,stroke:#1565c0,color:#000
+    style OptimizationCLI fill:#64b5f6,stroke:#1565c0,color:#000
+    style QualityMonitorCLI fill:#64b5f6,stroke:#1565c0,color:#000
 ```
 
 ---
@@ -918,9 +1183,13 @@ This diagram collection provides comprehensive visual documentation of the **lay
 
 1. **Package Dependencies**: Clear 4-layer hierarchy (Foundation → Core → Implementation → Application)
 2. **Internal Structure**: Detailed breakdown of each package's modules by layer
-3. **Data Flow**: Cross-package interactions during ingestion, routing, and search
+3. **Data Flow**: Cross-package interactions during ingestion, routing, search, and knowledge synthesis
 4. **Import Patterns**: Valid and invalid import paths with layer enforcement
 5. **Build & Deploy**: Complete pipeline from development to production
+6. **Knowledge Subsystem**: Full memory/ subsystem — provenance, contradiction, trust, federation, pinning, lifecycle
+7. **Knowledge Agents**: 9 shipped knowledge agents — multi-document synthesis, KG traversal, cross-tenant comparison, contradiction reconciliation, citation tracing, temporal reasoning, federated query, knowledge summarization, audit explanation
+8. **Sandbox Policy Flow**: SandboxPolicy REQUIRED/OPTIONAL/DISABLED decision tree with GatewayHealthProbe
+9. **cogniverse_runtime Structure**: Runtime package internals including sandbox, optimizer CLI, and API routers
 
 **Layered Architecture Layers:**
 

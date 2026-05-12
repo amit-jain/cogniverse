@@ -8,6 +8,8 @@
 4. [Phoenix Project Isolation](#phoenix-project-isolation)
 5. [Memory Isolation](#memory-isolation)
 6. [Deployment Patterns](#deployment-patterns)
+   - [Federation: Org Trunk + Tenant Overlay](#federation-org-trunk--tenant-overlay)
+   - [Cross-Tenant Comparison Flow](#cross-tenant-comparison-flow)
 
 ---
 
@@ -590,61 +592,99 @@ flowchart TB
     style MemC1 fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
-### Memory Manager Flow (Tenant-Aware)
+### Memory Manager Flow (Tenant-Aware, Knowledge Subsystem)
 
 ```mermaid
 sequenceDiagram
     participant Agent as Agent (acme_corp)
     participant Memory as Mem0MemoryManager
-    participant Mem0 as Mem0 Library
+    participant Federation as FederationService
+    participant KnowledgeReg as KnowledgeRegistry
+    participant Contradiction as ContradictionDetector
+    participant Trust as rank_with_trust
     participant Backend as BackendVectorStore
-    participant Schema as agent_memories_acme_corp
+    participant ProvenanceStore as ProvenanceStore (Vespa)
 
-    Agent->>Memory: search_memory(query="previous conversations", tenant_id="acme_corp", agent_name="video_agent")
+    Note over Agent,Memory: Write path — knowledge write with provenance + trust
+    Agent->>Memory: add_memory(content, metadata={kind, subject_key, provenance}, tenant_id)
+    Memory->>KnowledgeReg: get(kind) → KnowledgeSchema
+    KnowledgeReg-->>Memory: schema (retention, sensitivity, contradiction_policy, default_trust)
+    Memory->>Memory: schema.validate_provenance(provenance)
+    Memory->>Memory: compute_initial_trust(schema, provenance) → TrustRecord
+    Memory->>Memory: attach_trust_to_metadata(metadata, trust)
+    Memory->>Backend: store to agent_memories_acme_corp
+    Memory->>ProvenanceStore: index provenance record (memory_id, derived_from_ids)
 
-    Memory->>Memory: Validate inputs
-    Memory->>Mem0: memory.search(query, user_id=tenant_id, agent_id=agent_name)
+    Note over Agent,ProvenanceStore: Read path — federated, trust-ranked, contradiction-resolved
+    Agent->>Federation: federated_get_all(tenant_id="acme_corp", agent_name)
+    Federation->>Memory: get_all_memories(tenant_id="acme_corp")
+    Federation->>Memory: get_all_memories(tenant_id="acme:_org_trunk")
+    Federation->>Federation: Dedup by subject_key — tenant overlay wins
+    Federation-->>Agent: Merged candidates
 
-    Mem0->>Backend: search(query, filters)
-    Backend->>Schema: Query agent_memories_acme_corp with user_id filter
-    Schema-->>Backend: Memories for acme_corp tenant only
+    Agent->>Contradiction: detect(candidates)
+    Contradiction-->>Agent: ConflictSets (per subject_key)
+    Agent->>Contradiction: reconcile(candidates, schema.contradiction_policy)
+    Contradiction-->>Agent: Resolved memories
 
-    Backend-->>Mem0: Search results
-    Mem0-->>Memory: Formatted results
-    Memory-->>Agent: Memories (tenant-isolated)
+    Agent->>Trust: rank_with_trust(memories, apply_decay_now=True)
+    Trust-->>Agent: Re-ranked by relevance × trust × confidence
 
-    Note over Agent,Schema: Tenant isolation via schema suffix and user_id prefix
+    Note over Agent,ProvenanceStore: Tenant isolation via schema suffix + user_id prefix
 ```
 
 ### Memory Schema Naming (Per-Tenant)
 
 ```mermaid
 flowchart LR
-    subgraph "Base Memory Schema"
-        BaseSchema["<span style='color:#000'>agent_memories</span>"]
+    subgraph "Base Schemas"
+        BaseMemSchema["<span style='color:#000'>agent_memories</span>"]
+        BaseProvSchema["<span style='color:#000'>provenance</span>"]
+        BaseOrgSchema["<span style='color:#000'>organization_metadata</span>"]
+        BaseTenantMetaSchema["<span style='color:#000'>tenant_metadata</span>"]
+        BaseConfigSchema["<span style='color:#000'>config_metadata</span>"]
+        BaseAdapterSchema["<span style='color:#000'>adapter_registry</span>"]
     end
 
-    subgraph "Tenant-Specific Memory Schemas"
+    subgraph "Tenant acme_corp Schemas"
         SchemaA["<span style='color:#000'>agent_memories_acme_corp</span>"]
-        SchemaB["<span style='color:#000'>agent_memories_globex_inc</span>"]
-        SchemaC["<span style='color:#000'>agent_memories_default</span>"]
+        ProvSchemaA["<span style='color:#000'>provenance_acme_corp</span>"]
     end
 
-    BaseSchema -->|+ _acme_corp| SchemaA
-    BaseSchema -->|+ _globex_inc| SchemaB
-    BaseSchema -->|+ _default| SchemaC
+    subgraph "Tenant globex_inc Schemas"
+        SchemaB["<span style='color:#000'>agent_memories_globex_inc</span>"]
+        ProvSchemaB["<span style='color:#000'>provenance_globex_inc</span>"]
+    end
 
-    SchemaA --> DocA["<span style='color:#000'>Documents:<br/>user_id prefix: acme_corp_*</span>"]
-    SchemaB --> DocB["<span style='color:#000'>Documents:<br/>user_id prefix: globex_inc_*</span>"]
-    SchemaC --> DocC["<span style='color:#000'>Documents:<br/>user_id prefix: default_*</span>"]
+    subgraph "Org Trunk Schema"
+        OrgTrunk["<span style='color:#000'>agent_memories_acme__org_trunk<br/>(org shared knowledge)</span>"]
+    end
 
-    style BaseSchema fill:#90caf9,stroke:#1565c0,color:#000
+    BaseMemSchema -->|+ _acme_corp| SchemaA
+    BaseMemSchema -->|+ _globex_inc| SchemaB
+    BaseProvSchema -->|+ _acme_corp| ProvSchemaA
+    BaseProvSchema -->|+ _globex_inc| ProvSchemaB
+
+    SchemaA --> DocA["<span style='color:#000'>user_id prefix: acme_corp_*<br/>metadata: kind, subject_key, trust, provenance</span>"]
+    SchemaB --> DocB["<span style='color:#000'>user_id prefix: globex_inc_*<br/>metadata: kind, subject_key, trust, provenance</span>"]
+    ProvSchemaA --> ProvDocA["<span style='color:#000'>memory_id, derived_from_memory_ids<br/>written_by, derivation_kind, confidence</span>"]
+    OrgTrunk --> OrgDoc["<span style='color:#000'>org_shared memories promoted from tenants<br/>sensitivity=org_shared, promoted_from_tenant</span>"]
+
+    style BaseMemSchema fill:#90caf9,stroke:#1565c0,color:#000
+    style BaseProvSchema fill:#90caf9,stroke:#1565c0,color:#000
+    style BaseOrgSchema fill:#b0bec5,stroke:#546e7a,color:#000
+    style BaseTenantMetaSchema fill:#b0bec5,stroke:#546e7a,color:#000
+    style BaseConfigSchema fill:#b0bec5,stroke:#546e7a,color:#000
+    style BaseAdapterSchema fill:#b0bec5,stroke:#546e7a,color:#000
     style SchemaA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style ProvSchemaA fill:#ffcc80,stroke:#ef6c00,color:#000
     style SchemaB fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style SchemaC fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProvSchemaB fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style OrgTrunk fill:#a5d6a7,stroke:#388e3c,color:#000
     style DocA fill:#ffcc80,stroke:#ef6c00,color:#000
     style DocB fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style DocC fill:#a5d6a7,stroke:#388e3c,color:#000
+    style ProvDocA fill:#ffcc80,stroke:#ef6c00,color:#000
+    style OrgDoc fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -717,8 +757,10 @@ sequenceDiagram
     participant TenantMgr as TenantManager
     participant ConfigStore as Config Store
     participant SchemaManager as VespaSchemaManager
+    participant KnowledgeReg as KnowledgeRegistry
+    participant LifecycleSched as LifecycleScheduler
+    participant PinService as PinService
     participant Phoenix as Phoenix API
-    participant Mem0 as Mem0
 
     Note over Admin: Create new tenant: "new_corp"
 
@@ -729,7 +771,9 @@ sequenceDiagram
 
     TenantMgr->>SchemaManager: deploy_schemas(tenant_id="new_corp")
     loop For each schema
-        SchemaManager->>SchemaManager: Create schema: video_*_new_corp
+        SchemaManager->>SchemaManager: Create video schema: video_*_new_corp
+        SchemaManager->>SchemaManager: Create memory schema: agent_memories_new_corp
+        SchemaManager->>SchemaManager: Create provenance schema: provenance_new_corp
         SchemaManager->>SchemaManager: Deploy to Vespa
     end
     SchemaManager-->>TenantMgr: Schemas deployed
@@ -737,12 +781,26 @@ sequenceDiagram
     TenantMgr->>Phoenix: create_project("cogniverse-new_corp-video-search")
     Phoenix-->>TenantMgr: Project created
 
-    TenantMgr->>Mem0: Deploy memory schema: agent_memories_new_corp
-    Mem0-->>TenantMgr: Memory schema ready
+    TenantMgr-->>Admin: Tenant "new_corp" created successfully
 
-    TenantMgr-->>Admin: ✅ Tenant "new_corp" created successfully
+    Note over Admin,PinService: Schema-driven lifecycle cleanup tick (hourly via LifecycleScheduler)
 
-    Note over Admin,Mem0: Tenant can now ingest videos, search, and use memory
+    LifecycleSched->>LifecycleSched: get_warm_managers() — active tenant Mem0 instances
+    loop For each warm tenant manager
+        LifecycleSched->>KnowledgeReg: get(kind) → KnowledgeSchema per memory kind
+        LifecycleSched->>PinService: get_pinned_ids(tenant_id) — skip pinned memories
+        Note over LifecycleSched: Retention.EPHEMERAL_DAYS → delete if age > retention_days
+        Note over LifecycleSched: Retention.SCHEMA_DRIVEN → call cleanup_hook(memory, schema)
+        Note over LifecycleSched: Retention.PERMANENT → skip (never expire)
+        Note over LifecycleSched: Pinned memories always skipped — org_admin pins survive
+    end
+
+    Note over Admin,PinService: Admin pins a memory (org_admin override)
+    Admin->>PinService: pin(memory_id, role=ORG_ADMIN, tenant_id)
+    PinService->>KnowledgeReg: get(kind) → validate_pin_authority(ORG_ADMIN)
+    PinService->>PinService: Check quota (org_admin = unlimited)
+    PinService->>PinService: Write pin_record memory (kind=pin_record, agent=_pinning)
+    PinService-->>Admin: Pinned — memory immune to lifecycle cleanup
 ```
 
 ### Tenant Deletion/Cleanup Flow
@@ -778,6 +836,98 @@ sequenceDiagram
     TenantMgr->>TenantMgr: Remove tenant config
 
     TenantMgr-->>Admin: ✅ Tenant "old_corp" deleted<br/>Backup: old_corp_backup_20251015.tar.gz
+```
+
+### Federation: Org Trunk + Tenant Overlay
+
+```mermaid
+flowchart TB
+    subgraph OrgKnowledge["<span style='color:#000'>Org Trunk (acme:_org_trunk)</span>"]
+        OrgTrunkMem["<span style='color:#000'>org_shared memories<br/>sensitivity=org_shared<br/>promoted_from_tenant recorded</span>"]
+        OrgTrunkVespa["<span style='color:#000'>agent_memories_acme__org_trunk<br/>Vespa schema</span>"]
+    end
+
+    subgraph TenantProd["<span style='color:#000'>Tenant: acme:production</span>"]
+        TenantMem["<span style='color:#000'>tenant-private + org_shared memories<br/>agent_memories_acme_production</span>"]
+        TenantOverlay["<span style='color:#000'>Tenant overlay<br/>subject_key collision wins over trunk</span>"]
+    end
+
+    subgraph FedRead["<span style='color:#000'>FederationService.federated_get_all()</span>"]
+        FetchTenant["<span style='color:#000'>Fetch tenant memories</span>"]
+        FetchTrunk["<span style='color:#000'>Fetch org trunk memories</span>"]
+        DedupSubjectKey["<span style='color:#000'>Dedup by subject_key<br/>tenant overlay wins</span>"]
+        MergedResult["<span style='color:#000'>Merged candidates<br/>tagged with _federation_origin</span>"]
+    end
+
+    subgraph PromotePath["<span style='color:#000'>Admin Promote (org_admin / tenant_admin)</span>"]
+        PromoteCheck["<span style='color:#000'>schema.sensitivity != tenant_private<br/>actor_role >= schema.pinnable_by</span>"]
+        PromoteWrite["<span style='color:#000'>Write to acme:_org_trunk<br/>metadata: promoted_from_tenant, promoted_by</span>"]
+    end
+
+    TenantMem --> FetchTenant
+    OrgTrunkVespa --> FetchTrunk
+    FetchTenant --> DedupSubjectKey
+    FetchTrunk --> DedupSubjectKey
+    DedupSubjectKey --> MergedResult
+    TenantOverlay -.->|shadows trunk on same subject_key| DedupSubjectKey
+
+    TenantMem -->|org_shared memory| PromoteCheck
+    PromoteCheck -->|approved| PromoteWrite
+    PromoteWrite --> OrgTrunkMem
+    PromoteCheck -->|tenant_private| BlockedPromotion["<span style='color:#000'>FederationDeniedError</span>"]
+
+    style OrgTrunkMem fill:#a5d6a7,stroke:#388e3c,color:#000
+    style OrgTrunkVespa fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TenantMem fill:#90caf9,stroke:#1565c0,color:#000
+    style TenantOverlay fill:#64b5f6,stroke:#1565c0,color:#000
+    style FetchTenant fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FetchTrunk fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style DedupSubjectKey fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style MergedResult fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PromoteCheck fill:#ffcc80,stroke:#ef6c00,color:#000
+    style PromoteWrite fill:#a5d6a7,stroke:#388e3c,color:#000
+    style BlockedPromotion fill:#e53935,stroke:#c62828,color:#fff
+```
+
+### Cross-Tenant Comparison Flow
+
+```mermaid
+sequenceDiagram
+    participant OrgAdmin as Org Admin
+    participant Runtime as cogniverse_runtime
+    participant CrossTenant as CrossTenantComparisonAgent
+    participant Federation as FederationService
+    participant KnowledgeReg as KnowledgeRegistry
+    participant OrgTrunk as Org Trunk (acme:_org_trunk)
+    participant Tenants as Tenant Managers (acme:production, acme:staging)
+
+    OrgAdmin->>Runtime: POST /agents {"query": "compare knowledge across tenants", "org_id": "acme"}
+
+    Runtime->>CrossTenant: CrossTenantComparisonAgent(query, org_id="acme")
+
+    Note over CrossTenant: ACL check — only tenants under org_id visible
+    CrossTenant->>KnowledgeReg: get(kind) → sensitivity check per kind
+    KnowledgeReg-->>CrossTenant: Only org_shared sensitivity eligible for cross-tenant read
+
+    loop For each tenant under org: acme:production, acme:staging
+        CrossTenant->>Federation: federated_get_all(tenant_id, agent_name)
+        Federation->>Tenants: Fetch tenant memories (org_shared only — ACL enforced)
+        Federation->>OrgTrunk: Fetch org trunk memories
+        Federation-->>CrossTenant: Tenant-scoped candidates
+    end
+
+    CrossTenant->>CrossTenant: Compare memories by subject_key across tenants
+    CrossTenant->>CrossTenant: Detect divergences (same subject, different content)
+    CrossTenant->>CrossTenant: Synthesize comparison result
+
+    Note over CrossTenant,OrgTrunk: Result write to org trunk is admin-gated
+    CrossTenant->>Federation: promote_to_org_trunk(comparison_result, actor_role=ORG_ADMIN)
+    Federation->>KnowledgeReg: validate sensitivity + actor authority
+    Federation->>OrgTrunk: Write comparison_result memory (promoted_from_tenant=org_admin)
+    OrgTrunk-->>CrossTenant: Promoted
+
+    CrossTenant-->>Runtime: Comparison result + org trunk write confirmation
+    Runtime-->>OrgAdmin: Cross-tenant comparison report
 ```
 
 ### Multi-Region Deployment (Future)
@@ -836,11 +986,13 @@ flowchart TB
 This diagram collection provides comprehensive visual documentation of multi-tenant architecture across the **layered structure**:
 
 1. **Tenant Isolation**: Complete separation at schema, project, and memory levels across all layers
-2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse_vespa
+2. **Schema-Per-Tenant**: Naming convention with `_tenant_id` suffix managed by cogniverse_vespa; includes per-tenant `provenance_<tenant>` schema for citation graph BFS walks
 3. **Data Flow**: Tenant-specific routing from ingestion to search through layered architecture
 4. **Phoenix Projects**: Per-tenant observability via cogniverse_telemetry_phoenix plugin
-5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse_core
-6. **Lifecycle Management**: Tenant creation, deletion, and backup workflows
+5. **Memory Isolation**: User ID prefixes and tenant-specific schemas via cogniverse_core; full Knowledge Subsystem (provenance, contradiction, trust, federation, pinning, lifecycle)
+6. **Lifecycle Management**: Schema-driven lifecycle (KnowledgeSchema.retention → cleanup_hook); pinned memories skipped by LifecycleScheduler; org_admin pins survive
+7. **Federation**: Org trunk (`<org>:_org_trunk`) + tenant overlays; tenant overlay wins on subject_key collision; admin-gated promotion to trunk
+8. **Cross-Tenant Comparison**: CrossTenantComparisonAgent fans out across org tenants with sensitivity=org_shared ACL enforcement; result writes to org trunk admin-gated
 
 **Key Principles:**
 
@@ -848,9 +1000,9 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 - **Project Isolation**: Each tenant has dedicated Phoenix project (Implementation Layer Plugin)
 
-- **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer)
+- **Memory Isolation**: User IDs prefixed with tenant_id (Core Layer) with per-kind KnowledgeSchema policies (retention, sensitivity, pinnable_by, contradiction_policy, default_trust)
 
-- **No Cross-Tenant Access**: Firewall at every layer of the layered architecture
+- **No Cross-Tenant Access**: Firewall at every layer — FederationService only reads from caller's tenant + that tenant's org trunk; no cross-org leakage
 
 - **Shared Infrastructure**: Single Vespa/Phoenix instances serve all tenants
 
@@ -858,7 +1010,11 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 **Tenant Naming Conventions:**
 
-- Vespa schemas: `{base_schema}_{tenant_id}` (cogniverse_vespa)
+- Vespa video schemas: `{base_schema}_{tenant_id}` (cogniverse_vespa)
+
+- Vespa memory schemas: `agent_memories_{tenant_id}`, `provenance_{tenant_id}` (cogniverse_core)
+
+- Org trunk tenant id: `{org_id}:_org_trunk` (federation.py)
 
 - Phoenix projects: `cogniverse-{tenant_id}-{service}` (cogniverse_telemetry_phoenix)
 
@@ -868,11 +1024,11 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 - **Foundation Layer**: Provides SystemConfig with tenant_id, TelemetryManager base
 
-- **Core Layer**: Manages agent context, memory, and cache with tenant isolation
+- **Core Layer**: Full Knowledge Subsystem — KnowledgeRegistry, ProvenanceStore, ContradictionDetector, TrustRanker, FederationService, PinService, LifecycleScheduler
 
-- **Implementation Layer**: Vespa backend applies tenant suffixes, agents enforce isolation
+- **Implementation Layer**: Vespa backend applies tenant suffixes; 9 knowledge agents (MultiDocumentSynthesis, KGTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation)
 
-- **Application Layer**: Runtime and dashboard respect tenant boundaries
+- **Application Layer**: Runtime and dashboard respect tenant boundaries; SandboxPolicy governs coding agent + orchestrator execution
 
 **Related Documentation:**
 
