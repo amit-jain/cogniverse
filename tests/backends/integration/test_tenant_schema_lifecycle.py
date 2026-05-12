@@ -82,19 +82,55 @@ _KNOWN_BASE_SCHEMAS = (
     "wiki",
 )
 
+# Tenant_ids THIS module deploys under. The wipe fixture below clears
+# only schemas owned by these tenants — leaving tenants from other
+# packages (e.g. memory tests' ``test_tenant``) intact. Without this
+# allow-list, the wipe would delete other packages' schemas when the
+# whole sweep shares one Vespa.
+#
+# Note ``test_tenant`` is intentionally NOT in this list because
+# tests/memory/integration owns it. The single test in this file that
+# uses ``test_tenant`` (``test_delete_nonexistent_schema_with_existing_tenant``,
+# line ~221) intentionally exercises a tenant that already has schemas
+# but isn't this test's responsibility to clean up.
+_THIS_MODULES_TENANTS = frozenset(
+    {
+        "acme",
+        "bulk_a",
+        "bulk_noop",
+        "del_orphan",
+        "del_round_trip",
+        "guard_empty",
+        "guard_protected",
+        "idempotent_test",
+        "multi_tenant_test",
+        "schema_only_tenant",
+        "shared_a",
+        "shared_b",
+        "single_delete",
+        "startup",
+        "test_tenant_nonexistent",
+        "tombstone_fail",
+        "valid_tenant",
+        "vespa_fail",
+        "victim_a",
+    }
+)
+
 
 @pytest.fixture
 def wipe_non_protected_schemas(get_backend):
-    """Per-test fixture: wipes non-protected, tenant-scoped schemas before yield.
+    """Per-test fixture: wipe ONLY this module's tenant-scoped schemas
+    before yield, not other packages' schemas living on the same
+    shared_vespa container.
 
-    The conftest's ``vespa_instance`` hashes the conftest's ``__name__`` for
-    its port, so every module sharing this conftest lands on the same
-    container name. Schemas leaked by an earlier module (e.g.
-    ``agent_memories_dyn_roundtrip_*`` from
-    ``test_dynamic_profile_search_visibility.py``) survive into later
-    modules. The 4 tests below then hit the deploy safety check because
-    the registry singleton is fresh but Vespa still holds those schemas.
-    Tests opt in by requesting this fixture.
+    Earlier this fixture wiped any non-protected schema matching the
+    base-name list, regardless of which tenant owned it. With the
+    consolidated single-Vespa setup, that would erase memory tests'
+    ``agent_memories_test_tenant``, agent tests'
+    ``video_colpali_smol500_mv_frame_test_tenant``, etc. The
+    ``_THIS_MODULES_TENANTS`` allow-list bounds the wipe to schemas
+    this file itself deployed in prior tests.
     """
     backend = get_backend("__bootstrap_cleanup__")
     sm = backend.schema_manager
@@ -109,6 +145,9 @@ def wipe_non_protected_schemas(get_backend):
         for base in _KNOWN_BASE_SCHEMAS:
             if full_name.startswith(base + "_"):
                 tenant_id = full_name[len(base) + 1 :]
+                if tenant_id not in _THIS_MODULES_TENANTS:
+                    # Belongs to another package — leave it alone.
+                    break
                 try:
                     sm.delete_schema(tenant_id, base)
                 except Exception as e:

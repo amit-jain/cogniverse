@@ -106,6 +106,22 @@ class VllmSidecarFactory:
             container,
             "-p",
             f"{port}:8000",
+            # CPU vllm reads this for its budget (default 0.1 of host RAM
+            # = ~12 GiB on a 128 GiB box). Lower here so the sidecar can
+            # start even when other test infra (Ollama 7b, Vespa, embedders)
+            # has eaten most of the host's free RAM. Override per-test by
+            # passing a different value via extra_args before this default.
+            "-e",
+            "VLLM_CPU_MEMORY_UTILIZATION=0.05",
+            "-e",
+            "VLLM_CPU_KVCACHE_SPACE=2",
+            # Make this per-test sidecar more attractive to the kernel
+            # OOM-killer than the session-scoped Vespa (which sets
+            # oom-score-adj=-1000). vllm sidecars are short-lived and
+            # easily restarted; losing one fails its own tests but
+            # doesn't cascade. Losing Vespa breaks every memory test
+            # downstream.
+            "--oom-score-adj=500",
         ]
         if os.path.isdir(HOST_HF_CACHE):
             cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])

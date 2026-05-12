@@ -1010,6 +1010,59 @@ RLM is opt-in and disabled by default. When enabled, telemetry metrics (depth, c
 
 ---
 
+### Knowledge Management
+
+Cogniverse ships a full Knowledge Management Layer built on top of Mem0+Vespa. Every memory write is governed by a `KnowledgeSchema` that controls retention, sensitivity, pin authority, provenance requirement, contradiction policy, and default trust.
+
+#### Schema-driven retention
+
+| Retention | Behaviour |
+|---|---|
+| `PERMANENT` | Never auto-deleted. Default when the kind is unregistered. |
+| `EPHEMERAL_SESSION` | Cleared when the session ends (via `DELETE /admin/tenants/{tenant_id}/sessions/{session_id}`). |
+| `EPHEMERAL_DAYS(N)` | Soft-deleted at N days, hard-deleted at 2N days. Restorable inside the soft-delete window. |
+| `SCHEMA_DRIVEN` | Custom `cleanup_hook` on the schema. |
+
+#### Provenance and citations
+
+Every write can carry a `Provenance` record describing who wrote the memory, how it was derived (`direct_ingest`, `extraction`, `synthesis`, etc.), and which source memories or external URLs it cites. Use the `CitationTracingAgent` to walk the chain back to primary sources.
+
+#### Contradiction detection
+
+When two memories disagree about the same subject, `ContradictionDetector` groups them into a `ConflictSet`. The schema's `contradiction_policy` resolves conflicts at retrieval time: `latest_wins`, `trust_ranked`, or `preserve_both` (all copies surfaced with `metadata["disputed"]=True`). Use `ContradictionReconciliationAgent` to surface and resolve open conflict sets.
+
+#### Trust ranking
+
+Trust is derived from the schema's `default_trust` and the write's `derivation_kind`. It ages slowly (≈0.5 pt/day above baseline), and can be boosted by user/admin endorsements. At retrieval, results are ranked by `relevance × trust × confidence`. Direct human assertions (`user_assert`) outrank agent inferences by default.
+
+#### Federation (org trunk + tenant overlays)
+
+`FederatedQueryAgent` reads from both the caller's tenant and the org's shared trunk in one call, with tenant overlay winning on collision. `KnowledgeSummarizationAgent` can promote a summary into the org trunk so all tenants in the same org see it.
+
+#### Pinning
+
+Memories can be pinned (by users, tenant admins, or org admins, each with quota limits) so they survive lifecycle cleanup and trust decay. Pinned memories are never auto-deleted. Use `PinService` from code or via the admin API.
+
+#### Knowledge agents
+
+Nine specialized agents operate on the knowledge layer:
+
+| Agent | What it does |
+|---|---|
+| `AuditExplanationAgent` | Explains why an answer was produced (provenance + trust + contradictions) |
+| `CitationTracingAgent` | Walks provenance chains back to primary sources |
+| `ContradictionReconciliationAgent` | Surfaces and resolves conflict sets |
+| `FederatedQueryAgent` | Queries tenant + org-trunk in one call |
+| `KnowledgeGraphTraversalAgent` | Traverses the knowledge graph by entity and relationship |
+| `KnowledgeSummarizationAgent` | Summarizes a knowledge slice with citations |
+| `MultiDocumentSynthesisAgent` | Synthesizes across multiple source documents |
+| `TemporalReasoningAgent` | Answers questions about knowledge change over time |
+| `CrossTenantComparisonAgent` | Compares knowledge views across tenants (org-admin scoped) |
+
+For full API details see [Core Module — Memory Management](../modules/core.md#memory-management) and [Agents Module — Knowledge Agents](../modules/agents.md#knowledge-agents).
+
+---
+
 ## API Reference
 
 ### REST API Endpoints

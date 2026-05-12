@@ -23,21 +23,31 @@
    - [AudioAnalysisAgent](#11-audioanalysisagent)
    - [TextAnalysisAgent](#12-textanalysisagent)
    - [VideoSearchAgent (Refactored)](#13-videosearchagent-refactored)
-4. [Agent Architecture](#agent-architecture)
-5. [Multi-Tenant Integration](#multi-tenant-integration)
-6. [Usage Examples](#usage-examples)
-7. [Streaming API](#streaming-api)
-8. [RLM Inference (Recursive Language Models)](#rlm-inference-recursive-language-models)
-9. [Testing](#testing)
-10. [Audit Checklist](#audit-checklist)
-11. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
-11. [Real-Time Event Notifications](#real-time-event-notifications)
-12. [Approval Workflow System](#approval-workflow-system)
-13. [Tools Subsystem](#tools-subsystem)
+4. [Knowledge Agents](#knowledge-agents)
+   - [AuditExplanationAgent](#auditexplanationagent)
+   - [KnowledgeSummarizationAgent](#knowledgesummarizationagent)
+   - [TemporalReasoningAgent](#temporalreasoningagent)
+   - [FederatedQueryAgent](#federatedqueryagent)
+   - [CrossTenantComparisonAgent](#crosstenantcomparisonagent)
+   - [KnowledgeGraphTraversalAgent](#knowledgegraphtraversalagent)
+   - [MultiDocumentSynthesisAgent](#multidocumentsynthesisagent)
+   - [ContradictionReconciliationAgent](#contradictionreconciliationagent)
+   - [CitationTracingAgent](#citationtracingagent)
+5. [Agent Architecture](#agent-architecture)
+6. [Multi-Tenant Integration](#multi-tenant-integration)
+7. [Usage Examples](#usage-examples)
+8. [Streaming API](#streaming-api)
+9. [RLM Inference (Recursive Language Models)](#rlm-inference-recursive-language-models)
+10. [Testing](#testing)
+11. [Audit Checklist](#audit-checklist)
+12. [Durable Execution (Workflow Checkpointing)](#durable-execution-workflow-checkpointing)
+13. [Real-Time Event Notifications](#real-time-event-notifications)
+14. [Approval Workflow System](#approval-workflow-system)
+15. [Tools Subsystem](#tools-subsystem)
     - [VideoFileServer](#videofileserver)
     - [VideoPlayerTool](#videoplayertool)
     - [EnhancedTemporalExtractor](#enhancedtemporalextractor)
-14. [Inference System](#inference-system)
+16. [Inference System](#inference-system)
     - [RLMInference](#rlminference)
     - [RLMResult](#rlmresult)
     - [InstrumentedRLM](#instrumentedrlm)
@@ -50,19 +60,33 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 ### Key Agents
 
+**Search and Orchestration Agents:**
+
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
-4. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
-5. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
-6. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
-7. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
-8. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
+3. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
+4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
+5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
+6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
+7. **DetailedReportAgent** - Comprehensive report generation with VLM visual analysis
 8. **DocumentAgent** - Dual-strategy document search (visual ColPali + text semantic)
 9. **ImageSearchAgent** - Image similarity search using ColPali embeddings
 10. **SummarizerAgent** - Intelligent summarization with thinking phase
 11. **AudioAnalysisAgent** - Audio search with Whisper transcription
 12. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
 13. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
+
+**Knowledge Management Agents:**
+
+14. **MultiDocumentSynthesisAgent** - Synthesize and reconcile claims across multiple source documents with citations
+15. **KnowledgeGraphTraversalAgent** - Walk the knowledge graph to find entity chains and relationship sub-graphs
+16. **CrossTenantComparisonAgent** - Compare knowledge views across multiple tenants (org-admin scoped)
+17. **ContradictionReconciliationAgent** - Surface and resolve `ConflictSet` entries in the contradiction store
+18. **CitationTracingAgent** - Walk provenance chains back to primary sources for a given answer
+19. **TemporalReasoningAgent** - Answer questions about how knowledge changed over time
+20. **FederatedQueryAgent** - Retrieve knowledge from both tenant overlay and org trunk in one call
+21. **KnowledgeSummarizationAgent** - Summarize a knowledge slice (by subject / kind / time window) with citations
+22. **AuditExplanationAgent** - Explain why an answer was produced by tracing provenance, trust, and contradictions
 
 ### Design Principles
 
@@ -113,8 +137,7 @@ graph TD
     Root --> DocAgent["<span style='color:#000'>document_agent.py</span>"]
     Root --> ImageAgent["<span style='color:#000'>image_search_agent.py</span>"]
     Root --> SummarizerAgent["<span style='color:#000'>summarizer_agent.py</span>"]
-    Root --> MultiOrch["<span style='color:#000'>multi_agent_orchestrator.py</span>"]
-    Root --> More32["<span style='color:#000'>... (32 total agent files at top level)</span>"]
+    Root --> More["<span style='color:#000'>... (knowledge agents + other agent files)</span>"]
 
     Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>21 files</span>"]
     RoutingDir --> RoutingInit["<span style='color:#000'>__init__.py</span>"]
@@ -141,6 +164,8 @@ graph TD
     OptDir --> DspyAgentOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
     OptDir --> RouterOpt["<span style='color:#000'>router_optimizer.py</span>"]
     OptDir --> Schemas["<span style='color:#000'>schemas.py</span>"]
+    OptDir --> SigVariants["<span style='color:#000'>signature_variants.py</span>"]
+    OptDir --> StrategyLearner["<span style='color:#000'>strategy_learner.py</span>"]
 
     Root --> QueryDir["<span style='color:#000'><b>query/</b></span>"]
     Root --> ResultsDir["<span style='color:#000'><b>results/</b></span>"]
@@ -3314,6 +3339,12 @@ at debug and that name is dropped from the round's evidence. The trajectory
 records every step (`subagent`, `rlm_step`, `cap_reached`,
 `stalled_no_asks`, `iteration_cap_exhausted`) so callers can audit
 exactly how the answer was produced.
+
+---
+
+## Knowledge Agents
+
+Nine A2A agents that operate on the Knowledge Management Layer (schema-driven memory, provenance, trust, contradiction, federation). All live at top level in `libs/agents/cogniverse_agents/`. Each is a full `A2AAgent[InputT, OutputT, DepsT]` implementation; `Deps` carries a `tenant_id` and an optional `memory_manager_factory` for override in tests.
 
 ### AuditExplanationAgent
 

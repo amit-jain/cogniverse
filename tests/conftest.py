@@ -772,7 +772,39 @@ def ensure_host_ollama(cogniverse_test_config):
     if _probe_ollama(configured_base) and _ollama_has_model(
         configured_base, test_model
     ):
-        yield
+        # Configured Ollama is up and has the model. Still export the
+        # env vars so ``tests/fixtures/llm.py`` helpers resolve to the
+        # same endpoint instead of their hardcoded 11434 default. Pass
+        # the URL WITH any trailing /v1 — make_dspy_lm sends to
+        # ``{api_base}/chat/completions`` (Ollama only serves that under
+        # /v1); is_test_lm_available strips /v1 internally before
+        # probing /api/tags + /v1/models, so passing the full URL works
+        # for both consumers.
+        # OPENAI_API_KEY is also exported because litellm's openai
+        # provider refuses to issue requests without one set in the
+        # environment, even when api_key is passed via kwargs — Ollama
+        # ignores the value but litellm requires it to be non-empty.
+        original_api_base = os.environ.get("TEST_LLM_API_BASE")
+        original_model = os.environ.get("TEST_LLM_MODEL")
+        original_openai_key = os.environ.get("OPENAI_API_KEY")
+        os.environ["TEST_LLM_API_BASE"] = configured_base
+        os.environ["TEST_LLM_MODEL"] = test_model
+        os.environ.setdefault("OPENAI_API_KEY", "not-required")
+        try:
+            yield
+        finally:
+            if original_api_base is None:
+                os.environ.pop("TEST_LLM_API_BASE", None)
+            else:
+                os.environ["TEST_LLM_API_BASE"] = original_api_base
+            if original_model is None:
+                os.environ.pop("TEST_LLM_MODEL", None)
+            else:
+                os.environ["TEST_LLM_MODEL"] = original_model
+            if original_openai_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = original_openai_key
         return
 
     if shutil.which("ollama") is None:
@@ -804,7 +836,17 @@ def ensure_host_ollama(cogniverse_test_config):
         cfg_path.write_text(json.dumps(cfg))
 
     chosen_base = f"http://localhost:{chosen_port}"
-    serve_env = {**os.environ, "OLLAMA_HOST": f"127.0.0.1:{chosen_port}"}
+    serve_env = {
+        **os.environ,
+        "OLLAMA_HOST": f"127.0.0.1:{chosen_port}",
+        # Unload the model from RAM as soon as a request finishes. The
+        # 7b model is ~5GB resident; leaving it warm starves the vllm
+        # CPU sidecars that other tests in the same sweep need (their
+        # health-check fails with "Available memory ... less than
+        # desired CPU memory utilization"). Reload latency on the next
+        # request is a few seconds — acceptable for tests.
+        "OLLAMA_KEEP_ALIVE": "0s",
+    }
     serve_proc = _sp.Popen(
         ["ollama", "serve"],
         env=serve_env,
@@ -836,7 +878,40 @@ def ensure_host_ollama(cogniverse_test_config):
                     f"{pull.stderr.decode(errors='replace')[:500]}"
                 )
 
-        yield
+        # Also export TEST_LLM_API_BASE / TEST_LLM_MODEL so the
+        # ``tests/fixtures/llm.py`` helpers (resolve_base_url,
+        # is_test_lm_available) used by tests that don't read the JSON
+        # config resolve to the same dynamic Ollama port. Without this,
+        # those tests fall back to the hardcoded ``http://localhost:11434``
+        # default and fail when k3d's serverlb owns 11434. Include the
+        # ``/v1`` suffix because litellm's openai prefix sends requests
+        # to ``{api_base}/chat/completions`` and Ollama only serves that
+        # path under /v1; is_test_lm_available strips /v1 internally
+        # before probing /api/tags + /v1/models, so it works for both.
+        # OPENAI_API_KEY is also exported because litellm refuses to
+        # issue without one in the env even when api_key is passed.
+        original_api_base = os.environ.get("TEST_LLM_API_BASE")
+        original_model = os.environ.get("TEST_LLM_MODEL")
+        original_openai_key = os.environ.get("OPENAI_API_KEY")
+        os.environ["TEST_LLM_API_BASE"] = f"{chosen_base}/v1"
+        os.environ["TEST_LLM_MODEL"] = test_model
+        os.environ.setdefault("OPENAI_API_KEY", "not-required")
+
+        try:
+            yield
+        finally:
+            if original_api_base is None:
+                os.environ.pop("TEST_LLM_API_BASE", None)
+            else:
+                os.environ["TEST_LLM_API_BASE"] = original_api_base
+            if original_model is None:
+                os.environ.pop("TEST_LLM_MODEL", None)
+            else:
+                os.environ["TEST_LLM_MODEL"] = original_model
+            if original_openai_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = original_openai_key
 
     finally:
         serve_proc.terminate()
@@ -902,3 +977,197 @@ def workflow_store(backend_config_env):
     )
     store.initialize()
     return store
+
+
+# shared_vespa — the single canonical Vespa container for the whole sweep.
+#
+# Every per-package conftest that used to spawn its own Vespa Docker container
+# (vespa_instance, ingestion_vespa_backend, shared_system_vespa, vespa_with_schema,
+# eval_vespa_instance, shared_memory_vespa) now re-exports this fixture and uses
+# tenant-scoped schemas for isolation. Vespa is multi-tenant by design — a
+# unique tenant_id per test gives the same isolation as a fresh container, at a
+# fraction of the RAM cost. The kernel OOM-killer was picking individual Vespa
+# containers under host RAM pressure, breaking unrelated tests; one container
+# pinned with --oom-score-adj=-1000 ends that class of cascade.
+
+
+def _vespa_wait_for_config_ready(config_port: int, timeout: int = 120) -> bool:
+    """Poll the Vespa config server until it serves /state/v1/health."""
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        try:
+            resp = requests.get(
+                f"http://localhost:{config_port}/state/v1/health", timeout=2
+            )
+            if resp.status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return False
+
+
+def _vespa_wait_for_data_port_ready(data_port: int, timeout: int = 120) -> bool:
+    """Poll the Vespa data port until it serves /state/v1/health."""
+    start = time.monotonic()
+    while time.monotonic() - start < timeout:
+        try:
+            resp = requests.get(
+                f"http://localhost:{data_port}/state/v1/health", timeout=2
+            )
+            if resp.status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+    return False
+
+
+def _vespa_cleanup_my_container(container_name: str) -> None:
+    """Remove only OUR container by exact name, not any container that
+    happens to share the prefix.
+
+    Earlier this helper used the prefix filter ``name=^backend-tests-``
+    and killed every matching container. That blew away in-use containers
+    when pytest re-evaluated the fixture mid-session (e.g. after a
+    transient setup failure), turning one bad fixture call into a
+    cascade of failed tests downstream. Exact name keeps the blast radius
+    to what we own."""
+    import subprocess
+
+    subprocess.run(
+        ["docker", "rm", "-f", container_name],
+        capture_output=True,
+        timeout=30,
+    )
+
+
+@pytest.fixture(scope="session")
+def shared_vespa():
+    """One Vespa container per pytest session, pinned against OOM-kill.
+
+    Deploys ONLY the four metadata schemas (organization, tenant, config,
+    adapter_registry) at startup. Per-test data schemas (agent_memories,
+    wiki_pages, provenance, video_*, code_*, etc.) are deployed at test
+    time via SchemaRegistry.deploy_schema(tenant_id, base_schema_name)
+    using a unique tenant_id derived from the test's module + function
+    name. Per-test teardown wipes only that tenant's schemas, leaving the
+    shared Vespa otherwise untouched.
+
+    Yields a dict::
+
+        {
+            "http_port": <int>,         # Vespa data port
+            "config_port": <int>,       # Vespa config-server port
+            "container_name": <str>,
+            "base_url": "http://localhost:<http_port>",
+        }
+
+    Per-package conftests should re-export this fixture via::
+
+        from tests.conftest import shared_vespa  # noqa: F401
+
+    Tests acquire their own tenant via the per-package ``vespa_tenant``
+    fixture (see ``tests/utils/vespa_test_helpers.py``).
+    """
+    import platform
+    import subprocess
+
+    from tests.utils.docker_utils import generate_unique_ports
+
+    http_port, config_port = generate_unique_ports("tests.conftest")
+    container_name = f"backend-tests-{http_port}"
+
+    # Only remove OUR exact container if a prior crashed pytest left it
+    # behind. Don't touch other backend-tests-* containers — they belong
+    # to concurrent sessions or other users.
+    _vespa_cleanup_my_container(container_name)
+
+    machine = platform.machine().lower()
+    docker_platform = (
+        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    )
+
+    # --oom-score-adj=-1000 makes the kernel pick literally anything else
+    # before this container under memory pressure. Losing the shared Vespa
+    # mid-session breaks every downstream test; the per-test sidecars
+    # (vllm, pylate) are cheaper to lose and restart.
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-p",
+            f"{http_port}:8080",
+            "-p",
+            f"{config_port}:19071",
+            "--platform",
+            docker_platform,
+            "--oom-score-adj=-1000",
+            "vespaengine/vespa",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start shared_vespa container: {result.stderr}")
+
+    try:
+        if not _vespa_wait_for_config_ready(config_port, timeout=120):
+            pytest.fail(
+                f"shared_vespa config-server (port {config_port}) not ready in 120s"
+            )
+
+        # Config-server ready != data port ready. Vespa's internal services
+        # need a few seconds to wire up after the container reports config
+        # readiness; without this the first deploy can race them.
+        time.sleep(10)
+
+        # Clear singleton state in case a prior session left stale references.
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+
+        Mem0MemoryManager._instances.clear()
+        BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
+
+        # Deploy ONLY the four metadata schemas. Data schemas are per-test.
+        from vespa.package import ApplicationPackage
+
+        from cogniverse_vespa.metadata_schemas import (
+            create_adapter_registry_schema,
+            create_config_metadata_schema,
+            create_organization_metadata_schema,
+            create_tenant_metadata_schema,
+        )
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        metadata_schemas = [
+            create_organization_metadata_schema(),
+            create_tenant_metadata_schema(),
+            create_config_metadata_schema(),
+            create_adapter_registry_schema(),
+        ]
+        app_package = ApplicationPackage(name="cogniverse", schema=metadata_schemas)
+        schema_mgr = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=config_port,
+        )
+        schema_mgr._deploy_package(app_package)
+
+        if not _vespa_wait_for_data_port_ready(http_port, timeout=120):
+            pytest.fail(
+                f"shared_vespa data port {http_port} not ready 120s after metadata deploy"
+            )
+
+        yield {
+            "http_port": http_port,
+            "config_port": config_port,
+            "container_name": container_name,
+            "base_url": f"http://localhost:{http_port}",
+        }
+
+    finally:
+        subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)

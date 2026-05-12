@@ -1,155 +1,113 @@
-"""
-System test configuration and fixtures.
+"""System test configuration and fixtures.
 
-Provides module-scoped Vespa instance for system tests.
-Similar pattern to memory tests:
-1. Starts once per test module
-2. Deploys video search schemas once
-3. Ingests test videos once
-4. Tests clean up documents (not schemas)
-5. Stops after module tests complete
-
-Uses unique ports per test module to avoid conflicts with:
-- Main Vespa (8080)
-- Backend integration tests (different module, different ports)
-- Other test modules (deterministic hash-based port assignment)
+The fixture is now a thin shim over the project-wide ``shared_vespa``
+container. Each test module gets its own tenant-scoped video schema
+(``video_colpali_smol500_mv_frame_<module>``) deployed via SchemaRegistry,
+preserving per-module isolation without spinning up a separate container
+per module.
 """
+
+import os
+from pathlib import Path
 
 import pytest
 
-from tests.utils.docker_utils import generate_unique_ports
-
-# Generate unique ports based on this module name
-SYSTEM_VESPA_PORT, SYSTEM_VESPA_CONFIG_PORT = generate_unique_ports(__name__)
-SYSTEM_VESPA_CONTAINER = f"vespa-system-tests-{SYSTEM_VESPA_PORT}"
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401
 
 
 @pytest.fixture(scope="module")
-def shared_system_vespa():
+def shared_system_vespa(shared_vespa, request):  # noqa: F811
+    """Compatibility shim: yields the dict shape system tests expect,
+    backed by the project-wide ``shared_vespa``.
+
+    Sets ``COGNIVERSE_CONFIG`` to the system test config so tests that
+    bootstrap their own ConfigManager pick up the right backend block.
+    Deploys ``video_colpali_smol500_mv_frame`` for tenant ``test_unit``
+    via SchemaRegistry (merge-safe). The ``manager`` field exposes a
+    minimal adapter providing ``http_port``, ``config_port``, and
+    ``default_test_schema`` so the few tests that read
+    ``vespa_config["manager"].http_port`` keep working.
     """
-    Module-scoped Vespa instance for system tests.
 
-    Each test module gets a fresh Vespa instance with proper isolation.
-    Starts, deploys schemas, and ingests test videos per module.
-    Torn down after each module completes for proper cleanup.
-    """
-    from .vespa_test_manager import VespaTestManager
+    class _SharedVespaSystemAdapter:
+        def __init__(self, http_port, config_port, container_name):
+            self.http_port = http_port
+            self.config_port = config_port
+            self.container_name = container_name
+            self.default_test_schema = "video_colpali_smol500_mv_frame"
 
-    print("\n" + "=" * 70)
-    print("🚀 Starting shared Vespa container for system tests...")
-    print(f"   Port: {SYSTEM_VESPA_PORT} (data), {SYSTEM_VESPA_CONFIG_PORT} (config)")
-    print("=" * 70)
+        def cleanup(self) -> None:
+            # No-op — shared_vespa owns the container lifecycle.
+            pass
 
-    # CRITICAL: Clear ALL singletons to ensure fresh state with test ports
+    # CRITICAL: Clear singletons so this module gets fresh state.
     from cogniverse_core.memory.manager import Mem0MemoryManager
-    from cogniverse_core.registries.backend_registry import get_backend_registry
+    from cogniverse_core.registries.backend_registry import (
+        BackendRegistry,
+        get_backend_registry,
+    )
+    from cogniverse_core.registries.registry import get_registry
     from cogniverse_foundation.config.manager import ConfigManager
-
-    print("🧹 Clearing all singleton state before setup...")
-
-    # Set COGNIVERSE_CONFIG to use system test config
-    import os
-    from pathlib import Path
 
     test_config_path = (
         Path(__file__).parent / "resources" / "configs" / "system_test_config.json"
     )
+    original_config = os.environ.get("COGNIVERSE_CONFIG")
     os.environ["COGNIVERSE_CONFIG"] = str(test_config_path.absolute())
-    print(f"   Set COGNIVERSE_CONFIG={os.environ['COGNIVERSE_CONFIG']}")
-
-    # Clear StrategyRegistry singleton (critical - it caches strategy config)
-    from cogniverse_core.registries.registry import get_registry
 
     strategy_registry = get_registry()
     if hasattr(strategy_registry, "_strategy_cache"):
         strategy_registry._strategy_cache.clear()
-    # Force reload of strategy config with new env var
     strategy_registry.reload()
-    print("   Cleared and reloaded StrategyRegistry")
 
-    # Clear Mem0MemoryManager per-tenant instance cache
     Mem0MemoryManager._instances.clear()
-
-    # Clear backend registry instances (critical - may have old port configs)
     registry = get_backend_registry()
     if hasattr(registry, "_backend_instances"):
-        old_count = len(registry._backend_instances)
         registry._backend_instances.clear()
-        print(f"   Cleared {old_count} cached backend instances")
-
-    # Clear ConfigManager singleton (may have cached old config)
+    BackendRegistry._shared_schema_registry = None
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
-        print("   Cleared ConfigManager singleton")
 
-    print("✅ Singleton state cleared")
+    # Pre-deploy the data schema for this module's tenant via SchemaRegistry.
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
-    # Create manager with unique test ports for this module
-    manager = VespaTestManager(
-        http_port=SYSTEM_VESPA_PORT, config_port=SYSTEM_VESPA_CONFIG_PORT
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="video_colpali_smol500_mv_frame",
     )
 
+    # Reset registries again so consumer tests start clean.
+    if hasattr(registry, "_backend_instances"):
+        registry._backend_instances.clear()
+
     try:
-        # Setup: directory, deploy, ingest
-        print("Setting up isolated Vespa instance with test data...")
-        if not manager.full_setup():
-            pytest.fail("Failed to setup Vespa test environment")
-
-        print("\n" + "=" * 70)
-        print("✅ Shared Vespa ready for system tests")
-        print(f"   Search endpoint: http://localhost:{manager.http_port}/search/")
-        print(f"   Document API: http://localhost:{manager.http_port}/document/v1/")
-        print("=" * 70 + "\n")
-
-        vespa_config = {
-            "http_port": manager.http_port,  # Use actual port from manager (may differ from requested)
-            "config_port": manager.config_port,
-            "container_name": manager.container_name,
-            "base_url": f"http://localhost:{manager.http_port}",
+        yield {
+            "http_port": shared_vespa["http_port"],
+            "config_port": shared_vespa["config_port"],
+            "container_name": shared_vespa["container_name"],
+            "base_url": shared_vespa["base_url"],
             "backend_url": "http://localhost",
-            "default_schema": manager.default_test_schema,
-            "manager": manager,  # Provide manager for tests that need it
+            "default_schema": "video_colpali_smol500_mv_frame",
+            "manager": _SharedVespaSystemAdapter(
+                shared_vespa["http_port"],
+                shared_vespa["config_port"],
+                shared_vespa["container_name"],
+            ),
         }
-
-        yield vespa_config
-
     finally:
-        # Cleanup
-        print("\n" + "=" * 70)
-        print("🧹 Cleaning up Vespa container...")
-        print("=" * 70)
-        manager.cleanup()
-
-        # Clear singleton state to avoid interference with other test modules
+        # Restore env vars; clear singletons.
+        if original_config is not None:
+            os.environ["COGNIVERSE_CONFIG"] = original_config
+        elif "COGNIVERSE_CONFIG" in os.environ:
+            del os.environ["COGNIVERSE_CONFIG"]
         try:
-            from cogniverse_core.memory.manager import Mem0MemoryManager
-            from cogniverse_core.registries.backend_registry import get_backend_registry
-            from cogniverse_core.registries.registry import get_registry
-            from cogniverse_foundation.config.manager import ConfigManager
-
-            # Clear Mem0MemoryManager instances
             Mem0MemoryManager._instances.clear()
-
-            # Clear backend registry instances
-            registry = get_backend_registry()
             if hasattr(registry, "_backend_instances"):
                 registry._backend_instances.clear()
-
-            # Clear StrategyRegistry
-            strategy_registry = get_registry()
-            if hasattr(strategy_registry, "_strategy_cache"):
-                strategy_registry._strategy_cache.clear()
-
-            # Clear ConfigManager singleton
+            BackendRegistry._shared_schema_registry = None
             if hasattr(ConfigManager, "_instance"):
                 ConfigManager._instance = None
-
-            # Clear COGNIVERSE_CONFIG env var
-            if "COGNIVERSE_CONFIG" in os.environ:
-                del os.environ["COGNIVERSE_CONFIG"]
-
-            print("✅ Cleared singleton state for next module")
-        except Exception as e:
-            print(f"⚠️  Error clearing singleton state: {e}")
-
-        print("✅ Cleanup complete")
+        except Exception:
+            pass

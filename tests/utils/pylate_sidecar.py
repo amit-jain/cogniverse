@@ -123,6 +123,11 @@ class PylateSidecarFactory:
             f"MODE={mode}",
             "-e",
             f"DEVICE={device}",
+            # Per-test sidecar — make this more attractive to the kernel
+            # OOM-killer than session-scoped Vespa (which sets
+            # oom-score-adj=-1000). Easier to restart this than to lose
+            # Vespa's accumulated schema state mid-sweep.
+            "--oom-score-adj=500",
         ]
         if os.path.isdir(HOST_HF_CACHE):
             cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])

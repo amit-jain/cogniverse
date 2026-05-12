@@ -5,11 +5,15 @@ Provides common test utilities, mock objects, and fixtures
 for testing the video processing pipeline.
 """
 
-# Re-register session-scoped sidecar fixtures here because
-# tests/ingestion/pytest.ini sets this directory as the rootdir, which
-# blocks pytest from auto-loading the project-level tests/conftest.py.
-pytest_plugins = ["tests.fixtures.sidecars"]
-
+# Import sidecar fixtures explicitly. Two reasons we can't use
+# ``pytest_plugins = [...]`` here:
+#  1. pytest 9 hard-rejects ``pytest_plugins`` in non-rootdir conftests.
+#     When the full sweep runs from project root, this conftest is
+#     non-rootdir and pytest aborts collection.
+#  2. ``tests/ingestion/pytest.ini`` sets rootdir to ``tests/ingestion``
+#     when ingestion tests run in isolation, so ``tests/conftest.py``'s
+#     pytest_plugins line is silently ignored too.
+# Direct imports work in both contexts.
 import importlib.util
 import logging
 import shutil
@@ -21,6 +25,11 @@ from unittest.mock import Mock, patch
 import cv2
 import numpy as np
 import pytest
+
+from tests.fixtures.sidecars import (  # noqa: F401
+    pylate_sidecar,
+    vllm_sidecar,
+)
 
 # Test data constants
 TEST_VIDEO_WIDTH = 640

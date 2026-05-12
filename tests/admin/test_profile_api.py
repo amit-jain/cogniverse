@@ -89,6 +89,7 @@ class TestProfileAPICRUD:
 
         BackendRegistry._instance = None
         BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
         SchemaRegistry._instance = None
 
         # Create config store pointing to isolated Vespa (metadata schemas already deployed)
@@ -125,6 +126,7 @@ class TestProfileAPICRUD:
             admin.reset_dependencies()
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
+            BackendRegistry._shared_schema_registry = None
             SchemaRegistry._instance = None
 
     def test_create_profile_minimal(self, test_client: TestClient):
@@ -638,9 +640,15 @@ class TestProfileAPISchemaDeployment:
         with open(schema_dir / "video_deploy_test3_schema.json", "w") as f:
             json.dump(video_schema3, f)
 
-        # Reset singletons
+        # Reset singletons. ``_shared_schema_registry`` MUST be cleared
+        # too — it holds the SchemaRegistry instance from any earlier
+        # test_client (e.g. TestProfileAPICRUD's), whose ``_schema_loader``
+        # points at the CRUD class's ``schemas0/`` temp dir. Without this
+        # clear, ``deploy_schema`` for ``video_deploy_test`` looks in the
+        # wrong dir and raises "Schema 'video_deploy_test' not found".
         BackendRegistry._instance = None
         BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
         SchemaRegistry._instance = None
         schema_registry_module._registry_instance = None
 
@@ -683,6 +691,7 @@ class TestProfileAPISchemaDeployment:
             admin.reset_dependencies()
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
+            BackendRegistry._shared_schema_registry = None
             SchemaRegistry._instance = None
 
     def test_create_profile_with_schema_deployment(self, test_client: TestClient):

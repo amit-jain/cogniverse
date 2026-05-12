@@ -25,78 +25,72 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="module")
-def multi_profile_vespa():
+def multi_profile_vespa(shared_memory_vespa):
+    """Module-scoped multi-profile fixture backed by the project-wide
+    ``shared_vespa``. Deploys ``video_colpali_smol500_mv_frame`` for
+    tenant ``ensemble_test_tenant`` via SchemaRegistry (merge-safe).
+
+    The 3 ``profiles`` returned all map to the same tenant-scoped
+    schema via the ``search_agent_ensemble`` fixture below — the test
+    exercises RRF metadata, not actual cross-encoder retrieval, so
+    pointing 3 profile names at one schema is sufficient.
+
+    Includes a ``manager`` field exposing ``config_manager`` since the
+    consumer fixture reads ``multi_profile_vespa["manager"].config_manager``.
     """
-    Module-scoped Vespa instance with MULTIPLE deployed profiles for ensemble testing.
-
-    Deploys 2-3 different schemas to test real ensemble search.
-    """
-    from cogniverse_core.registries.backend_registry import get_backend_registry
-    from cogniverse_foundation.config.manager import ConfigManager
-    from tests.system.vespa_test_manager import VespaTestManager
-    from tests.utils.docker_utils import generate_unique_ports
-
-    # Generate unique ports
-    ensemble_http_port, ensemble_config_port = generate_unique_ports("ensemble_test")
-
-    logger.info(
-        f"Ensemble tests using ports: {ensemble_http_port} (http), {ensemble_config_port} (config)"
+    from cogniverse_core.registries.backend_registry import (
+        BackendRegistry,
+        get_backend_registry,
     )
+    from cogniverse_foundation.config.manager import ConfigManager
 
-    # Clear singletons
+    class _SharedVespaEnsembleAdapter:
+        def __init__(self, cm):
+            self.config_manager = cm
+
+        def cleanup(self) -> None:
+            pass
+
+    # Clear singletons inherited from other modules.
     registry = get_backend_registry()
     if hasattr(registry, "_backend_instances"):
         registry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
 
-    # Create manager
-    manager = VespaTestManager(
-        http_port=ensemble_http_port, config_port=ensemble_config_port
+    from tests.utils.vespa_test_helpers import (
+        deploy_tenant_schema,
+        make_config_manager,
     )
 
-    try:
-        # Setup Vespa with default schema
-        logger.info("Setting up Vespa for ensemble testing...")
-        if not manager.full_setup():
-            pytest.skip("Failed to setup Vespa test environment")
+    cm = make_config_manager(shared_memory_vespa)
+    deploy_tenant_schema(
+        shared_memory_vespa,
+        tenant_id="ensemble_test_tenant",
+        base_schema_name="video_colpali_smol500_mv_frame",
+        config_manager=cm,
+    )
 
-        logger.info(f"✅ Vespa ready at http://localhost:{ensemble_http_port}")
+    # Reset registry caches so consumer tests don't inherit the deploy's
+    # backend instance.
+    if hasattr(registry, "_backend_instances"):
+        registry._backend_instances.clear()
 
-        # Use 3 REAL different profiles for comprehensive ensemble testing
-        real_profiles = [
-            "video_colpali_smol500_mv_frame",  # ColPali 128-dim
-            "video_videoprism_base_mv_chunk_30s",  # VideoPrism 768-dim
-            "video_colqwen_omni_mv_chunk_30s",  # ColQwen 128-dim
-        ]
-
-        yield {
-            "http_port": ensemble_http_port,
-            "config_port": ensemble_config_port,
-            "base_url": f"http://localhost:{ensemble_http_port}",
-            "manager": manager,
-            "profiles": real_profiles,  # List of 3 different real profiles
-            "profile_name": real_profiles[0],  # Use first profile as default
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to start multi-profile Vespa: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
-
-    finally:
-        logger.info("Tearing down multi-profile Vespa...")
-        manager.cleanup()
-
-        # Clear singletons
-        try:
-            registry = get_backend_registry()
-            if hasattr(registry, "_backend_instances"):
-                registry._backend_instances.clear()
-            if hasattr(ConfigManager, "_instance"):
-                ConfigManager._instance = None
-            logger.info("✅ Cleared singleton state")
-        except Exception as e:
-            logger.warning(f"⚠️  Error clearing state: {e}")
+    real_profiles = [
+        "video_colpali_smol500_mv_frame",
+        "video_videoprism_base_mv_chunk_30s",
+        "video_colqwen_omni_mv_chunk_30s",
+    ]
+    yield {
+        "http_port": shared_memory_vespa["http_port"],
+        "config_port": shared_memory_vespa["config_port"],
+        "base_url": shared_memory_vespa["base_url"],
+        "manager": _SharedVespaEnsembleAdapter(cm),
+        "profiles": real_profiles,
+        "profile_name": real_profiles[0],
+    }
+    # No teardown — shared_vespa owns the container.
 
 
 @pytest.fixture

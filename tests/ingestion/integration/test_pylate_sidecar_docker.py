@@ -94,6 +94,9 @@ def running_sidecar():
             "MODEL_NAME=lightonai/LateOn",
             "-e",
             "DEVICE=cpu",
+            # Per-test sidecar — make this more attractive to the kernel
+            # OOM-killer than session-scoped Vespa (oom-score-adj=-1000).
+            "--oom-score-adj=500",
             IMAGE_TAG,
         ],
         timeout=30,

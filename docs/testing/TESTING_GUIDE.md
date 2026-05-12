@@ -43,15 +43,13 @@ Comprehensive guide to testing practices in Cogniverse.
 tests/
 ├── agents/
 │   ├── unit/
-│   │   ├── test_orchestrator_agent.py
-│   │   ├── test_search_agent.py
+│   │   ├── test_agent_startup_no_env_vars.py
 │   │   └── ...
 │   ├── integration/
-│   │   ├── test_workflow_checkpointing_integration.py
 │   │   └── ...
 │   └── e2e/
 ├── system/
-│   ├── test_real_system_integration.py
+│   ├── test_ensemble_comprehensive.py
 │   ├── test_ensemble_search_e2e.py
 │   └── conftest.py
 ├── ingestion/
@@ -83,17 +81,21 @@ tests/
 │   ├── unit/
 │   └── integration/
 ├── admin/
-│   └── unit/
+│   ├── test_profile_api.py          # Integration tests (run against shared_vespa)
+│   ├── test_profile_concurrent.py
+│   ├── test_profile_multi_tenant.py
+│   ├── test_tenant_manager.py
+│   ├── unit/
+│   └── conftest.py
 ├── common/
 │   ├── unit/
 │   └── integration/
 ├── dashboard/
 ├── ui/
-│   └── integration/
 ├── synthetic/
 │   └── integration/
 ├── utils/
-└── conftest.py                      # Shared fixtures
+└── conftest.py                      # Shared fixtures (shared_vespa, phoenix_container, etc.)
 ```
 
 ### Naming Conventions
@@ -242,6 +244,7 @@ class TestSearchAgent:
         """Create valid test input."""
         return SearchInput(
             query="machine learning tutorial",
+            tenant_id="test-tenant",
             modality="video",
             top_k=10
         )
@@ -250,6 +253,7 @@ class TestSearchAgent:
         """Test that search_by_text returns results."""
         results = agent.search_by_text(
             query=valid_input.query,
+            tenant_id="test-tenant",
             modality=valid_input.modality,
             top_k=valid_input.top_k
         )
@@ -334,7 +338,7 @@ class TestValidation:
     ])
     def test_invalid_queries(self, agent, query, expected_validation):
         """Test validation of invalid queries."""
-        result = agent.search_by_text(query=query, modality="video", top_k=10)
+        result = agent.search_by_text(query=query, tenant_id="test-tenant", modality="video", top_k=10)
         # SearchAgent returns a list (may be empty for invalid queries)
         assert isinstance(result, list)
 ```
@@ -428,7 +432,7 @@ class TestSearchAgentWithMocks:
             port=8002
         )
 
-        result = agent.search_by_text(query="test", modality="video", top_k=5)
+        result = agent.search_by_text(query="test", tenant_id="test-tenant", modality="video", top_k=5)
 
         # Verify backend was called (if using mock backend in deps)
         # mock_backend.search.assert_called()
@@ -449,7 +453,7 @@ class TestSearchAgentWithMocks:
             port=8002
         )
 
-        result = agent.search_by_text(query="test", modality="video", top_k=10)
+        result = agent.search_by_text(query="test", tenant_id="test-tenant", modality="video", top_k=10)
 
         # Result is a list (may be empty or contain error info depending on implementation)
         assert isinstance(result, list)
@@ -732,42 +736,63 @@ sudo docker image prune -af             # Unused Docker images
 
 ### Docker Service Management
 
-Tests manage their own Docker containers via fixtures:
+Tests share a single session-scoped Vespa container and manage their own
+Phoenix containers via fixtures.
 
-**Vespa (VespaDockerManager):**
+**Vespa (shared_vespa):**
+
+All Vespa integration tests use the `shared_vespa` session-scoped fixture
+defined in `tests/conftest.py`. Each per-package `conftest.py` re-exports it
+and provides a compatibility shim under whatever fixture name its tests expect:
+
 ```python
-# tests/utils/vespa_docker.py
-from tests.utils.vespa_docker import VespaDockerManager
+# e.g. tests/backends/integration/conftest.py
+from tests.conftest import shared_vespa  # noqa: F401
 
-@pytest.fixture(scope="module")
-def vespa_docker():
-    """Start Vespa container for module tests."""
-    manager = VespaDockerManager()
-    container_info = manager.start_container(
-        module_name="test_module",
-        use_module_ports=True
+@pytest.fixture(scope="session")
+def vespa_instance(shared_vespa):
+    """Shim: yields the dict shape tests expect, backed by shared_vespa."""
+    yield {
+        "http_port": shared_vespa["http_port"],
+        "config_port": shared_vespa["config_port"],
+        "base_url": shared_vespa["base_url"],
+        "container_name": shared_vespa["container_name"],
+    }
+    # No teardown — shared_vespa owns the container lifecycle.
+```
+
+For tests that need to deploy their own schemas, use the helpers in
+`tests/utils/vespa_test_helpers.py`:
+
+```python
+from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_manager
+from tests.utils.tenant_helpers import tenant_id_for_test
+
+@pytest.fixture
+def my_schema(shared_vespa, request):
+    tenant_id = tenant_id_for_test(request)
+    config_manager = make_config_manager(shared_vespa)
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame",
+        config_manager=config_manager,
     )
-    yield container_info
-    manager.stop_container(container_info)
+    yield tenant_id
 ```
 
 **Phoenix:**
-```python
-@pytest.fixture(scope="module")
-def phoenix_container():
-    """Start Phoenix container for telemetry tests.
-    Uses non-default ports to avoid conflicts with local Phoenix instances.
-    """
-    container_name = f"phoenix_test_{int(time.time() * 1000)}"
-    subprocess.run([
-        "docker", "run", "-d", "--name", container_name,
-        "-p", "16006:6006", "-p", "14317:4317",
-        "arizephoenix/phoenix:latest"
-    ])
-    # Wait for ready...
-    yield container_name
-    subprocess.run(["docker", "rm", "-f", container_name])
-```
+
+The `phoenix_container` fixture is defined in `tests/conftest.py` (module-scoped).
+It uses non-default ports to avoid conflicts with local Phoenix instances:
+
+- HTTP: 16006 (instead of 6006)
+- gRPC: 14317 (instead of 4317)
+
+Image: `arizephoenix/phoenix:14.2.1` (pinned version, not `:latest`).
+
+Kills any leftover `phoenix_test_*` containers before starting, so reruns on
+the same host don't fail with "port already in use".
 
 ### Pre-commit Checklist
 

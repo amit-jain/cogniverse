@@ -6,9 +6,7 @@ Exactly the same pattern as test_wiki_vespa_integration.py.
 """
 
 import json
-import platform
 import socket
-import subprocess
 import tempfile
 import threading
 import time
@@ -160,71 +158,35 @@ def _deploy_graph_schema(config_port: int, http_port: int) -> None:
 
 
 @pytest.fixture(scope="module")
-def graph_vespa():
-    """Module-scoped Vespa with knowledge_graph schema deployed."""
-    http_port = _HTTP_PORT
-    config_port = _CONFIG_PORT
+def graph_vespa(shared_memory_vespa):
+    """Module-scoped graph-schema fixture backed by the project-wide
+    ``shared_vespa`` (re-exported via shared_memory_vespa).
 
-    machine = platform.machine().lower()
-    docker_platform = (
-        "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
+    Deploys ``knowledge_graph_test_tenant`` via SchemaRegistry —
+    merge-safe alongside the other tenant schemas already on
+    shared_vespa. Yields the same ``{http_port, config_port}`` shape
+    consumers expect.
+    """
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
+
+    deploy_tenant_schema(
+        shared_memory_vespa,
+        tenant_id=TENANT_ID,
+        base_schema_name="knowledge_graph",
+        config_manager=shared_memory_vespa["config_manager"],
     )
 
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-
-    result = subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            CONTAINER_NAME,
-            "-p",
-            f"{http_port}:8080",
-            "-p",
-            f"{config_port}:19071",
-            "--platform",
-            docker_platform,
-            "vespaengine/vespa",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to start Vespa container: {result.stderr}")
-
-    print(f"\nVespa container started on http={http_port}, config={config_port}")
-
-    if not _wait_for_config_port(config_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail("Vespa config port did not come up within 120s")
-
-    time.sleep(10)
-
-    try:
-        _deploy_graph_schema(config_port, http_port)
-        print("Graph schema deployed")
-    except Exception as exc:
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail(f"Schema deployment failed: {exc}")
-
-    if not _wait_for_data_port(http_port, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
-        pytest.fail("Vespa data port did not come up within 120s after deployment")
+    http_port = shared_memory_vespa["http_port"]
 
     if not _wait_for_schema_ready(http_port, GRAPH_SCHEMA, timeout=120):
-        subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-        subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
         pytest.fail(f"Schema {GRAPH_SCHEMA} not ready within 120s")
 
-    yield {"http_port": http_port, "config_port": config_port}
-
-    subprocess.run(["docker", "stop", CONTAINER_NAME], capture_output=True)
-    subprocess.run(["docker", "rm", CONTAINER_NAME], capture_output=True)
+    yield {
+        "http_port": http_port,
+        "config_port": shared_memory_vespa["config_port"],
+    }
+    # No teardown — shared_vespa owns the container; the deployed
+    # knowledge_graph_test_tenant schema stays around until session end.
 
 
 def _free_port() -> int:

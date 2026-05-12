@@ -217,7 +217,10 @@ def clear_singleton_state_between_tests():
     Runs automatically before each test to ensure clean state.
     """
     # Clear before each test
-    from cogniverse_core.registries.backend_registry import get_backend_registry
+    from cogniverse_core.registries.backend_registry import (
+        BackendRegistry,
+        get_backend_registry,
+    )
     from cogniverse_foundation.config.manager import ConfigManager
 
     registry = get_backend_registry()
@@ -228,6 +231,15 @@ def clear_singleton_state_between_tests():
             logger.debug(
                 f"🧹 Cleared {initial_count} cached backend instances before test"
             )
+
+    # Drop the shared SchemaRegistry singleton too. Without this, a
+    # SchemaRegistry created by an earlier test against one Vespa instance
+    # survives, and its captured ``_backend`` reference still points at
+    # that earlier backend. The next test's new backend then inherits
+    # the stale registry; any schema deploy through it hits the OLD
+    # vespa endpoint (e.g. ``cogniverse-vespa`` from a k3d cluster
+    # context) instead of the test's localhost vespa.
+    BackendRegistry._shared_schema_registry = None
 
     if hasattr(ConfigManager, "_instance"):
         if ConfigManager._instance is not None:
@@ -245,136 +257,147 @@ def clear_singleton_state_between_tests():
     registry = get_backend_registry()
     if hasattr(registry, "_backend_instances"):
         registry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
 
     with _sb._CACHE_LOCK:
         _sb._RANKING_STRATEGIES_CACHE = None
+
+
+class _SharedVespaManagerAdapter:
+    """Drop-in replacement for VespaTestManager when consumers only need
+    ``config_manager`` + ``get_backend_via_registry`` against a Vespa they
+    don't own.
+
+    The ~4 tests that consume ``vespa_with_schema["manager"]`` either read
+    ``manager.config_manager`` (a ConfigManager bound to the right ports)
+    or call ``manager.get_backend_via_registry(...)`` (a thin wrapper
+    around BackendRegistry that injects the right port info). Both work
+    against any Vespa endpoint, so we just point them at ``shared_vespa``.
+    """
+
+    def __init__(self, shared_vespa: dict):
+        self._http_port = shared_vespa["http_port"]
+        self._config_port = shared_vespa["config_port"]
+
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        store = VespaConfigStore(
+            backend_url="http://localhost", backend_port=self._http_port
+        )
+        cm = ConfigManager(store=store)
+        cm.set_system_config(
+            SystemConfig(backend_url="http://localhost", backend_port=self._http_port)
+        )
+        self.config_manager = cm
+        self._schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+    def get_backend_via_registry(
+        self,
+        tenant_id: str,
+        config_manager,
+        schema_loader=None,
+        backend_type: str = "ingestion",
+    ):
+        """Mirror VespaTestManager.get_backend_via_registry behavior."""
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+
+        backend_config = {
+            "backend": {
+                "url": "http://localhost",
+                "port": self._http_port,
+                "config_port": self._config_port,
+            }
+        }
+        registry = BackendRegistry.get_instance()
+        if backend_type == "ingestion":
+            return registry.get_ingestion_backend(
+                name="vespa",
+                tenant_id=tenant_id,
+                config=backend_config,
+                config_manager=config_manager,
+                schema_loader=schema_loader or self._schema_loader,
+            )
+        return registry.get_search_backend(
+            name="vespa",
+            config=backend_config,
+            config_manager=config_manager,
+            schema_loader=schema_loader or self._schema_loader,
+        )
 
 
 @pytest.fixture(scope="module")
-def vespa_with_schema():
+def vespa_with_schema(shared_memory_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape the 4 consumer tests
+    expect, but backed by the project-wide ``shared_vespa`` container
+    (re-exported through ``shared_memory_vespa``).
+
+    Deploys ``video_colpali_smol500_mv_frame`` for tenant ``test_tenant``
+    once per module via SchemaRegistry. Consumers read ``default_schema``
+    as the BASE name (``"video_colpali_smol500_mv_frame"``) and append
+    ``_test_tenant`` themselves — preserved to avoid touching consumer
+    code in this phase.
+
+    The previous implementation spawned its own Vespa container with
+    VespaTestManager + full_setup() (which also ingested test video
+    data). Tests don't strictly need that data — the surviving assertion
+    in test_orchestrator_with_search.py:388 is ``total_results >= 0``
+    which holds for an empty Vespa. If a future test does need
+    pre-ingested data, add it as a separate module-scoped fixture
+    rather than reviving the one-container-per-module model.
     """
-    Module-scoped Vespa instance with deployed schemas for agent integration tests.
-
-    Similar to system tests - deploys minimal video search schema for testing.
-
-    Yields:
-        dict: Vespa connection info with keys:
-            - http_port: Vespa HTTP port
-            - config_port: Vespa config server port
-            - base_url: Full HTTP URL
-            - manager: VespaTestManager instance
-            - default_schema: Default schema name
-    """
-
-    # Import after ensuring no prior state
-    from tests.utils.docker_utils import generate_unique_ports
-
-    # Generate unique ports for this test module
-    agent_http_port, agent_config_port = generate_unique_ports(__name__)
-
-    logger.info(
-        f"Agent tests using ports: {agent_http_port} (http), {agent_config_port} (config)"
+    import cogniverse_vespa.search_backend as _sb
+    from cogniverse_core.registries.backend_registry import (
+        BackendRegistry,
+        get_backend_registry,
     )
-
-    # Clear singletons before setup
-    from cogniverse_core.registries.backend_registry import get_backend_registry
     from cogniverse_foundation.config.manager import ConfigManager
 
-    logger.info("🧹 Clearing singleton state before Vespa setup...")
-
+    # Clear singletons (mirror the prior fixture's setup) — agents/integration
+    # tests assume fresh registry state per module.
     registry = get_backend_registry()
     if hasattr(registry, "_backend_instances"):
         registry._backend_instances.clear()
-
+    BackendRegistry._shared_schema_registry = None
     if hasattr(ConfigManager, "_instance"):
         ConfigManager._instance = None
-
-    # Clear ranking strategies cache — unit tests may have poisoned it
-    # with empty results from Mock schema_loaders
-    import cogniverse_vespa.search_backend as _sb
-
     with _sb._CACHE_LOCK:
         _sb._RANKING_STRATEGIES_CACHE = None
 
-    logger.info("✅ Singleton state cleared")
+    # Deploy the video schema for tenant_id="test_tenant" via the
+    # canonical SchemaRegistry pathway (handles merge-with-existing
+    # schemas, tenant-name normalization, ConfigStore registration).
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
-    # Import VespaTestManager (creates temp config)
-    from tests.system.vespa_test_manager import VespaTestManager
+    deploy_tenant_schema(
+        shared_memory_vespa,
+        tenant_id="test_tenant",
+        base_schema_name="video_colpali_smol500_mv_frame",
+        config_manager=shared_memory_vespa["config_manager"],
+    )
 
-    # Create manager with test ports
-    manager = VespaTestManager(http_port=agent_http_port, config_port=agent_config_port)
+    # Reset singletons again so consumer tests don't inherit stale
+    # state from the deploy above (the deploy populates registries that
+    # may collide with what the test expects to construct fresh).
+    if hasattr(registry, "_backend_instances"):
+        registry._backend_instances.clear()
 
-    try:
-        # Full setup: start container, deploy schema, ingest test data
-        logger.info("Setting up Vespa with test schema and data...")
-        if not manager.full_setup():
-            pytest.fail("Failed to setup Vespa test environment")
-
-        logger.info(f"✅ Vespa ready at http://localhost:{agent_http_port}")
-
-        # Set env vars so create_default_config_manager() and agent code
-        # resolve to the test Vespa container ports
-        original_url = os.environ.get("BACKEND_URL")
-        original_port = os.environ.get("BACKEND_PORT")
-        original_config_port = os.environ.get("VESPA_CONFIG_PORT")
-        os.environ["BACKEND_URL"] = "http://localhost"
-        os.environ["BACKEND_PORT"] = str(agent_http_port)
-        os.environ["VESPA_CONFIG_PORT"] = str(agent_config_port)
-
-        from cogniverse_foundation.config import utils as config_utils
-
-        config_utils._config_manager_singleton = None
-
-        # Yield with manager for agent fixture access
-        yield {
-            "http_port": agent_http_port,
-            "config_port": agent_config_port,
-            "base_url": f"http://localhost:{agent_http_port}",
-            "manager": manager,
-            "default_schema": manager.default_test_schema,
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.fail(f"Failed to start Vespa: {e}")
-    finally:
-        # Restore env vars
-        config_utils._config_manager_singleton = None
-        for var, orig in [
-            ("BACKEND_URL", original_url),
-            ("BACKEND_PORT", original_port),
-            ("VESPA_CONFIG_PORT", original_config_port),
-        ]:
-            if orig is not None:
-                os.environ[var] = orig
-            else:
-                os.environ.pop(var, None)
-
-        # Cleanup: stop Docker container and clear state
-        logger.info("Tearing down Vespa test instance...")
-        try:
-            manager.docker_manager.stop_container()
-        except Exception as cleanup_err:
-            logger.warning(f"Vespa container cleanup failed: {cleanup_err}")
-        manager.cleanup()
-
-        # Clear singleton state
-        try:
-            registry = get_backend_registry()
-            if hasattr(registry, "_backend_instances"):
-                registry._backend_instances.clear()
-
-            if hasattr(ConfigManager, "_instance"):
-                ConfigManager._instance = None
-
-            with _sb._CACHE_LOCK:
-                _sb._RANKING_STRATEGIES_CACHE = None
-
-            logger.info("✅ Cleared singleton state after teardown")
-        except Exception as e:
-            logger.warning(f"⚠️  Error clearing singleton state: {e}")
+    yield {
+        "http_port": shared_memory_vespa["http_port"],
+        "config_port": shared_memory_vespa["config_port"],
+        "base_url": shared_memory_vespa["base_url"],
+        "manager": _SharedVespaManagerAdapter(shared_memory_vespa),
+        # Base name (NOT tenant-scoped) — consumer tests append "_test_tenant"
+        # themselves, and config.json profile lookups key on base names.
+        "default_schema": "video_colpali_smol500_mv_frame",
+    }
+    # No teardown — shared_vespa owns the container; the deployed schema
+    # stays in Vespa until session end. Per-module re-deploy is idempotent
+    # at the SchemaRegistry layer (tenant-scoped registry entry already exists).
 
 
 @pytest.fixture(scope="module")

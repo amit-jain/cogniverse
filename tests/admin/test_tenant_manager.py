@@ -1,19 +1,35 @@
 """
 Integration tests for Tenant Management API.
 
-Tests organization and tenant CRUD operations with Vespa backend.
+Tests organization and tenant CRUD operations against the project-wide
+``shared_vespa`` container.
 """
 
 import logging
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 import cogniverse_vespa  # noqa: F401 - trigger Vespa backend self-registration
-from tests.system.vespa_test_manager import VespaTestManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
 logger = logging.getLogger(__name__)
+
+
+class _SharedVespaTenantManagerAdapter:
+    """Drop-in for VespaTestManager exposing the attrs this test reads:
+    ``http_port``, ``config_port``, ``container_name``, ``test_schemas_resource_dir``."""
+
+    def __init__(self, http_port: int, config_port: int, container_name: str):
+        self.http_port = http_port
+        self.config_port = config_port
+        self.container_name = container_name
+        self.test_schemas_resource_dir = Path("configs/schemas")
+
+    def cleanup(self) -> None:
+        # No-op — shared_vespa owns the container lifecycle.
+        pass
 
 
 @pytest.mark.integration
@@ -22,31 +38,18 @@ class TestTenantManagerAPI:
     """Integration tests for tenant management API"""
 
     @pytest.fixture(scope="module")
-    def vespa_backend(self):
-        """Start Vespa Docker container (NO schemas pre-deployed)"""
-        manager = VespaTestManager(app_name="test-tenant-manager", http_port=8084)
-
-        if not manager.setup_application_directory():
-            pytest.skip("Failed to setup application directory")
-
-        # Start Vespa WITHOUT deploying schemas - let SchemaRegistry handle it
-        from tests.utils.vespa_docker import VespaDockerManager
-
-        docker_mgr = VespaDockerManager()
-        container_info = docker_mgr.start_container(
-            module_name="tenant_manager_tests", use_module_ports=False
+    def vespa_backend(self, shared_vespa):
+        """Compatibility shim: yields a VespaTestManager-like adapter
+        backed by shared_vespa. Metadata schemas are already deployed
+        at session start; this test exercises tenant CRUD on top.
+        """
+        adapter = _SharedVespaTenantManagerAdapter(
+            http_port=shared_vespa["http_port"],
+            config_port=shared_vespa["config_port"],
+            container_name=shared_vespa["container_name"],
         )
-        manager.container_name = container_info["container_name"]
-        manager.http_port = container_info["http_port"]
-        manager.config_port = container_info["config_port"]
-        manager.docker_manager = docker_mgr
-
-        docker_mgr.wait_for_config_ready(container_info)
-        manager.is_deployed = True
-
-        logger.info(f"Vespa ready on port {manager.http_port}")
-        yield manager
-        manager.cleanup()
+        logger.info(f"Using shared_vespa on port {adapter.http_port}")
+        yield adapter
 
     @pytest.fixture(scope="module")
     def shared_test_db(self, tmp_path_factory):

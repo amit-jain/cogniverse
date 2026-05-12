@@ -23,6 +23,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401, E402
+
 eval_logger = logging.getLogger(__name__)
 
 # Path to schema JSON files
@@ -463,84 +466,41 @@ def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
 
 
 @pytest.fixture(scope="module")
-def eval_vespa_instance():
-    """Start Vespa Docker container for evaluation integration tests.
-
-    Deploys metadata + data schemas in a single application package.
-    Module-scoped to share across all tests in the integration module.
+def eval_vespa_instance(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape evaluation tests expect,
+    backed by the project-wide ``shared_vespa``. Deploys
+    ``video_colpali_smol500_mv_frame`` for tenant ``test_unit`` via
+    SchemaRegistry (merge-safe).
     """
-    # Import lazily to avoid loading for unit tests
     import cogniverse_vespa  # noqa: F401
     from cogniverse_core.registries.backend_registry import BackendRegistry
-    from tests.utils.vespa_docker import VespaDockerManager
-
-    manager = VespaDockerManager()
 
     BackendRegistry._instance = None
     BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
+
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
+
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="video_colpali_smol500_mv_frame",
+    )
+
+    BackendRegistry._backend_instances.clear()
 
     try:
-        container_info = manager.start_container(
-            module_name="evaluation_integration_tests",
-            use_module_ports=True,
-        )
-        manager.wait_for_config_ready(container_info, timeout=180)
-
-        eval_logger.info("Waiting 15s for Vespa internal services...")
-        time.sleep(15)
-
-        # Deploy metadata + data schemas
-        from vespa.package import ApplicationPackage
-
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_vespa.metadata_schemas import (
-            create_adapter_registry_schema,
-            create_config_metadata_schema,
-            create_organization_metadata_schema,
-            create_tenant_metadata_schema,
-        )
-
-        metadata_schemas = [
-            create_organization_metadata_schema(),
-            create_tenant_metadata_schema(),
-            create_config_metadata_schema(),
-            create_adapter_registry_schema(),
-        ]
-
-        schema_file = EVAL_SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
-        with open(schema_file) as f:
-            schema_json = json.load(f)
-        schema_json["name"] = EVAL_TENANT_SCHEMA
-        schema_json["document"]["name"] = EVAL_TENANT_SCHEMA
-
-        parser = JsonSchemaParser()
-        data_schema = parser.parse_schema(schema_json)
-
-        all_schemas = metadata_schemas + [data_schema]
-        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
-
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=container_info["config_port"],
-        )
-        schema_manager._deploy_package(app_package)
-
-        manager.wait_for_application_ready(container_info, timeout=120)
-
-        eval_logger.info("Evaluation Vespa ready")
-        yield container_info
-
-    except Exception as e:
-        eval_logger.error(f"Failed to start evaluation Vespa: {e}")
-        pytest.skip(f"Failed to start evaluation Vespa: {e}")
-
+        yield {
+            "http_port": shared_vespa["http_port"],
+            "config_port": shared_vespa["config_port"],
+            "base_url": shared_vespa["base_url"],
+            "container_name": shared_vespa["container_name"],
+        }
     finally:
-        manager.stop_container()
         try:
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
+            BackendRegistry._shared_schema_registry = None
         except Exception as cleanup_err:
             eval_logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
 

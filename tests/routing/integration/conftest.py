@@ -4,10 +4,8 @@ Pytest configuration for routing integration tests.
 Provides LM + Vespa fixtures for tests that need real services.
 """
 
-import json
 import logging
 import os
-import time
 from pathlib import Path
 
 import dspy
@@ -22,6 +20,9 @@ from cogniverse_foundation.config.unified_config import (
     OptimizerGenerationConfig,
     SyntheticGeneratorConfig,
 )
+
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401, E402
 
 logger = logging.getLogger(__name__)
 
@@ -53,141 +54,91 @@ def dspy_lm():
 
 
 @pytest.fixture(scope="module")
-def vespa_instance():
-    """Start isolated Vespa Docker for routing integration tests.
+def vespa_instance(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape routing/integration tests
+    expect, backed by the project-wide ``shared_vespa``.
 
-    Module-scoped to share across all tests. Deploys metadata + colpali
-    schemas so SearchService can query against it. Sets BACKEND_URL and
-    BACKEND_PORT env vars so create_default_config_manager() connects to
-    this container instead of localhost:8080.
+    Deploys ``video_colpali_smol500_mv_frame`` for tenant ``test_unit``
+    via SchemaRegistry (merge-safe, doesn't touch other tenants'
+    schemas). Sets ``BACKEND_URL`` / ``BACKEND_PORT`` env vars so any
+    ``create_default_config_manager()`` call inside tests resolves to
+    the shared container. Registers a profile under ``test:unit`` so
+    ``get_config(tenant_id="test:unit")`` can look it up.
     """
     from cogniverse_core.registries.backend_registry import BackendRegistry
-    from tests.utils.vespa_docker import VespaDockerManager
-
-    manager = VespaDockerManager()
 
     BackendRegistry._instance = None
     BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
 
     original_url = os.environ.get("BACKEND_URL")
     original_port = os.environ.get("BACKEND_PORT")
 
-    try:
-        container_info = manager.start_container(
-            module_name="routing_integration_tests",
-            use_module_ports=True,
-        )
-        manager.wait_for_config_ready(container_info, timeout=180)
+    # Pre-deploy the data schema via SchemaRegistry (merge-safe).
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
 
-        logger.info("Waiting 15s for Vespa internal services to initialize...")
-        time.sleep(15)
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="video_colpali_smol500_mv_frame",
+    )
 
-        from vespa.package import ApplicationPackage
+    # Point create_default_config_manager() at the shared container.
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(shared_vespa["http_port"])
 
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_vespa.metadata_schemas import (
-            create_adapter_registry_schema,
-            create_config_metadata_schema,
-            create_organization_metadata_schema,
-            create_tenant_metadata_schema,
-        )
+    # Seed SystemConfig + register the test:unit profile.
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import (
+        BackendProfileConfig,
+        SystemConfig,
+    )
+    from cogniverse_vespa.config.config_store import VespaConfigStore
 
-        metadata_schemas = [
-            create_organization_metadata_schema(),
-            create_tenant_metadata_schema(),
-            create_config_metadata_schema(),
-            create_adapter_registry_schema(),
-        ]
-
-        schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
-        with open(schema_file) as f:
-            schema_json = json.load(f)
-        # Tests in this module run against tenant "test:unit", which the
-        # VespaBackend tenant-scopes to the schema name suffix "_test_unit"
-        # (colon → underscore via ``get_tenant_schema_name``). The previous
-        # "_default" suffix predated the project's "_default" eradication
-        # (runtime/integration/conftest.py:107) and caused queries from
-        # tenant "test:unit" to resolve to "video_colpali_smol500_mv_frame
-        # _test_unit", which Vespa rejects as an unknown source ref.
-        schema_json["name"] = "video_colpali_smol500_mv_frame_test_unit"
-        schema_json["document"]["name"] = "video_colpali_smol500_mv_frame_test_unit"
-        parser = JsonSchemaParser()
-        data_schema = parser.parse_schema(schema_json)
-
-        all_schemas = metadata_schemas + [data_schema]
-        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
-
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=container_info["config_port"],
-        )
-        schema_manager._deploy_package(app_package)
-
-        manager.wait_for_application_ready(container_info, timeout=120)
-
-        # Point create_default_config_manager() at the test container
-        os.environ["BACKEND_URL"] = "http://localhost"
-        os.environ["BACKEND_PORT"] = str(container_info["http_port"])
-
-        # Seed SystemConfig into VespaConfigStore so get_config() works
-        from cogniverse_foundation.config.manager import ConfigManager
-        from cogniverse_foundation.config.unified_config import (
-            BackendProfileConfig,
-            SystemConfig,
-        )
-        from cogniverse_vespa.config.config_store import VespaConfigStore
-
-        store = VespaConfigStore(
+    store = VespaConfigStore(
+        backend_url="http://localhost",
+        backend_port=shared_vespa["http_port"],
+    )
+    cm = ConfigManager(store=store)
+    cm.set_system_config(
+        SystemConfig(
             backend_url="http://localhost",
-            backend_port=container_info["http_port"],
+            backend_port=shared_vespa["http_port"],
         )
-        cm = ConfigManager(store=store)
-        cm.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=container_info["http_port"],
-            )
-        )
-        # Register profile under "test:unit" to match the other fixtures in
-        # this file (``test_generator_config``, ``backend_config``) which
-        # share that tenant. Tests that need a different tenant register
-        # their own profile at runtime.
-        cm.add_backend_profile(
-            BackendProfileConfig(
-                profile_name="video_colpali_smol500_mv_frame",
-                type="video",
-                schema_name="video_colpali_smol500_mv_frame",
-                embedding_model="vidore/colsmol-500m",
-            ),
-            tenant_id="test:unit",
-        )
+    )
+    cm.add_backend_profile(
+        BackendProfileConfig(
+            profile_name="video_colpali_smol500_mv_frame",
+            type="video",
+            schema_name="video_colpali_smol500_mv_frame",
+            embedding_model="vidore/colsmol-500m",
+        ),
+        tenant_id="test:unit",
+    )
 
-        logger.info("Routing Vespa ready for integration tests")
-        yield container_info
+    BackendRegistry._backend_instances.clear()
 
-    except Exception as e:
-        logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
-
+    try:
+        yield {
+            "http_port": shared_vespa["http_port"],
+            "config_port": shared_vespa["config_port"],
+            "base_url": shared_vespa["base_url"],
+            "container_name": shared_vespa["container_name"],
+        }
     finally:
-        # Restore original env vars
+        # Restore env vars; clear singletons.
         if original_url is not None:
             os.environ["BACKEND_URL"] = original_url
         elif "BACKEND_URL" in os.environ:
             del os.environ["BACKEND_URL"]
-
         if original_port is not None:
             os.environ["BACKEND_PORT"] = original_port
         elif "BACKEND_PORT" in os.environ:
             del os.environ["BACKEND_PORT"]
-
-        manager.stop_container()
-
         try:
             BackendRegistry._instance = None
             BackendRegistry._backend_instances.clear()
+            BackendRegistry._shared_schema_registry = None
         except Exception as cleanup_err:
             logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
 

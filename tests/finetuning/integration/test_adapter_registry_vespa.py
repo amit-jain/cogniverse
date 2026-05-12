@@ -2,66 +2,35 @@
 Integration tests for Adapter Registry with real Vespa Docker instance.
 
 Tests actual adapter registration, querying, activation, and lifecycle
-operations against a live Vespa backend.
+operations against the project-wide ``shared_vespa`` container.
+adapter_registry schema is one of the metadata schemas deployed at
+``shared_vespa`` session start, so this fixture just forwards the
+connection info.
 
 Requires Docker to be running.
 """
 
 import logging
-import time
 
 import pytest
 
-from tests.utils.vespa_docker import VespaDockerManager
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="module")
-def vespa_instance():
+def vespa_instance(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields shared_vespa's connection info.
+    adapter_registry schema is already deployed at session start.
     """
-    Start isolated Vespa Docker instance for adapter registry integration tests.
-
-    Deploys the adapter_registry schema before yielding.
-    """
-    manager = VespaDockerManager()
-
-    try:
-        # Start container with module-specific ports
-        container_info = manager.start_container(
-            module_name=__name__, use_module_ports=True
-        )
-
-        # Wait for config server to be ready
-        manager.wait_for_config_ready(container_info, timeout=180)
-
-        # Give Vespa additional time for internal services to initialize
-        logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
-        time.sleep(15)
-
-        # Deploy metadata schemas including adapter_registry
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=container_info["config_port"],
-        )
-        schema_manager.upload_metadata_schemas(app_name="cogniverse")
-        logger.info("Deployed metadata schemas (including adapter_registry)")
-
-        # Wait for Vespa HTTP/application endpoint to be ready
-        manager.wait_for_application_ready(container_info, timeout=120)
-
-        logger.info("Vespa initialization complete - ready for adapter registry tests")
-
-        yield container_info
-
-    except Exception as e:
-        logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
-
-    finally:
-        manager.stop_container()
+    yield {
+        "http_port": shared_vespa["http_port"],
+        "config_port": shared_vespa["config_port"],
+        "base_url": shared_vespa["base_url"],
+        "container_name": shared_vespa["container_name"],
+    }
 
 
 @pytest.fixture

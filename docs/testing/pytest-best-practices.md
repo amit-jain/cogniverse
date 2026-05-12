@@ -163,7 +163,7 @@ The `ci_fast` marker identifies tests run in the CI Fast subset steps across wor
 ```python
 @pytest.mark.integration
 @pytest.mark.ci_fast
-async def test_tenant_schema_creation(vespa_docker):
+async def test_tenant_schema_creation(shared_vespa):
     """Essential test for CI - verifies tenant schema lifecycle."""
     # This runs in the CI Fast subset steps across workflows
     ...
@@ -347,10 +347,12 @@ from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 def test_agents_depends_on_foundation_and_core():
     """Verify agents package can use foundation and core packages"""
     from cogniverse_agents.orchestrator_agent import OrchestratorDeps
-    from cogniverse_foundation.telemetry.config import TelemetryConfig
-
-    # Create dependencies with tenant-specific configuration
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from tests.utils.memory_store import InMemoryConfigStore
+
     telemetry_config = TelemetryConfig()
     deps = OrchestratorDeps(
         telemetry_config=telemetry_config,
@@ -360,8 +362,12 @@ def test_agents_depends_on_foundation_and_core():
         ),
     )
 
-    # OrchestratorAgent from agents package should accept OrchestratorDeps
-    agent = OrchestratorAgent(deps=deps)
+    # OrchestratorAgent requires deps, registry, and config_manager
+    store = InMemoryConfigStore()
+    store.initialize()
+    config_manager = ConfigManager(store=store)
+    registry = AgentRegistry(tenant_id="test-tenant", config_manager=config_manager)
+    agent = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
     assert agent.deps is not None
     assert agent.deps == deps
@@ -398,17 +404,17 @@ def test_layered_architecture_dependencies():
 ```python
 # tests/test_tenant_isolation.py
 import pytest
-from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
 def test_tenant_config_isolation():
-    """Verify each tenant gets isolated configuration"""
-    config_a = SystemConfig(tenant_id="acme_corp")
-    config_b = SystemConfig(tenant_id="globex_inc")
+    """Verify tenant IDs are distinct — isolation is enforced per-operation."""
+    # Tenant IDs are plain strings passed to operations (search, schema deploy,
+    # memory add). SystemConfig does not carry a tenant_id field; the backend
+    # URL/port are shared across tenants in the same deployment.
+    tenant_a = "acme_corp"
+    tenant_b = "globex_inc"
 
-    assert config_a.tenant_id == "acme_corp"
-    assert config_b.tenant_id == "globex_inc"
-    assert config_a.tenant_id != config_b.tenant_id
+    assert tenant_a != tenant_b
 
 def test_tenant_schema_naming():
     """Verify tenant schemas use correct naming convention"""
@@ -512,6 +518,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
         llm_model="openai/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
+        embedder_base_url="http://localhost:11434",
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
@@ -523,6 +530,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
         llm_model="openai/google/gemma-4-e4b-it",
         embedding_model="ollama/nomic-embed-text",
         llm_base_url="http://localhost:11434",
+        embedder_base_url="http://localhost:11434",
         config_manager=config_manager,
         schema_loader=schema_loader,
     )
@@ -548,43 +556,45 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
 ### Tenant-Aware Fixtures
 
 **Example Patterns** (not in conftest.py; create as needed for multi-tenant tests):
+
+Tenant isolation in Cogniverse is enforced at the operation level (schema
+deployment, search, memory add) via a `tenant_id` string argument.
+`SystemConfig` carries backend connection details (URL, port) shared across
+all tenants — it does not hold a `tenant_id` field.
+
 ```python
 import pytest
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 @pytest.fixture
-def tenant_a_config():
-    """Configuration for tenant A (acme_corp)"""
+def backend_config():
+    """Shared backend config (same Vespa endpoint for all tenants)."""
     return SystemConfig(
-        tenant_id="acme_corp",
         backend_url="http://localhost",
         backend_port=8080,
     )
 
 @pytest.fixture
-def tenant_b_config():
-    """Configuration for tenant B (globex_inc)"""
-    return SystemConfig(
-        tenant_id="globex_inc",
-        backend_url="http://localhost",
-        backend_port=8080,
-    )
-
-@pytest.fixture
-def multi_tenant_configs():
-    """Multiple tenant configurations for cross-tenant tests"""
+def multi_tenant_ids():
+    """Tenant ID strings for cross-tenant tests."""
     return {
-        "acme_corp": SystemConfig(tenant_id="acme_corp"),
-        "globex_inc": SystemConfig(tenant_id="globex_inc"),
-        "default": SystemConfig(tenant_id="your_org:production")
+        "tenant_a": "acme_corp",
+        "tenant_b": "globex_inc",
     }
 
 @pytest.fixture
-def tenant_agent(tenant_a_config):
-    """Create orchestrator agent for tenant A"""
-    from cogniverse_foundation.telemetry.config import TelemetryConfig
+def tenant_agent():
+    """Create orchestrator agent (tenant_id is passed per-operation)."""
+    from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.telemetry.config import TelemetryConfig
+    from tests.utils.memory_store import InMemoryConfigStore
+
+    store = InMemoryConfigStore()
+    store.initialize()
+    config_manager = ConfigManager(store=store)
     deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
@@ -592,11 +602,13 @@ def tenant_agent(tenant_a_config):
             api_base="http://localhost:11434/v1",
         ),
     )
-    return OrchestratorAgent(deps=deps)
+    registry = AgentRegistry(tenant_id="test-tenant", config_manager=config_manager)
+    return OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
 # Use in tests:
-def test_with_tenant_fixtures(tenant_a_config, tenant_agent):
+def test_with_tenant_fixtures(multi_tenant_ids, tenant_agent):
     assert tenant_agent.deps is not None
+    assert multi_tenant_ids["tenant_a"] != multi_tenant_ids["tenant_b"]
 ```
 
 ---
@@ -661,13 +673,12 @@ What it does:
 1. Clones `configs/config.json` into a tmpdir.
 2. Rewrites `llm_config.primary` and `llm_config.teacher` to whatever
    the test machine actually serves (defaults to local Ollama
-   `qwen3:4b` on `http://localhost:11434`).
+   `qwen2.5:7b` on `http://localhost:11434`).
 3. Sets `COGNIVERSE_CONFIG=<tmpdir>/config.json` for the session.
 
 Override via env vars **before pytest starts**:
 
 ```bash
-TEST_LLM_ENGINE=vllm \
 TEST_LLM_MODEL=meta-llama/Llama-3.1-8B-Instruct \
 TEST_LLM_API_BASE=http://my-vllm:8000/v1 \
 uv run pytest
@@ -798,122 +809,111 @@ RUN pytest
 
 Integration tests use self-managed Docker containers via pytest fixtures.
 
-### VespaDockerManager
+### shared_vespa — Single Session-Scoped Vespa Container
 
-Located in `tests/utils/vespa_docker.py`, manages Vespa containers:
+The project uses a single session-scoped `shared_vespa` fixture defined in
+`tests/conftest.py`. All integration tests share this one Vespa container;
+isolation between tests comes from unique tenant IDs rather than separate
+containers. This eliminates the RAM pressure that caused OOM-kills when every
+package spawned its own container.
+
+`shared_vespa` yields a dict:
 
 ```python
-from tests.utils.vespa_docker import VespaDockerManager
-
-@pytest.fixture(scope="module")
-def vespa_docker():
-    """
-    Module-scoped Vespa container.
-
-    Starts Vespa, waits for readiness, yields container info, then cleans up.
-    Uses unique ports per module to avoid conflicts.
-    """
-    manager = VespaDockerManager()
-
-    # Start container with module-specific ports
-    container_info = manager.start_container(
-        module_name="test_module",  # Used for port generation
-        use_module_ports=True       # Generate unique ports based on module name
-    )
-
-    # Wait for config server to be ready
-    manager.wait_for_config_ready(container_info, timeout=120)
-
-    # Deploy schemas (if needed)
-    # manager.deploy_schemas(container_info, tenant_id="test_tenant")
-
-    # Wait for application to be ready (after schema deployment)
-    # manager.wait_for_application_ready(container_info, timeout=60)
-
-    yield container_info
-
-    # Cleanup
-    manager.stop_container(container_info)
-
-# Usage in tests
-@pytest.mark.integration
-async def test_vespa_operations(vespa_docker):
-    """Test with real Vespa container."""
-    http_port = vespa_docker["http_port"]
-    base_url = vespa_docker["base_url"]
-    # ... test operations using container_info
+{
+    "http_port": <int>,       # Vespa data port
+    "config_port": <int>,     # Vespa config-server port
+    "container_name": <str>,
+    "base_url": "http://localhost:<http_port>",
+}
 ```
 
-**Key Features:**
+#### Per-package compatibility shims
 
-- Generates unique ports per module to avoid conflicts
+Each per-package `conftest.py` re-exports `shared_vespa` and provides a thin
+shim under the fixture name that tests in that package already reference:
 
-- Container names based on port: `vespa-test-{http_port}`
+```python
+# e.g. tests/backends/integration/conftest.py
+from tests.conftest import shared_vespa  # noqa: F401
 
-- Waits for both config server and application readiness
+@pytest.fixture(scope="session")
+def vespa_instance(shared_vespa):
+    """Shim: exposes shared_vespa under the name backends tests expect."""
+    yield {
+        "http_port": shared_vespa["http_port"],
+        "config_port": shared_vespa["config_port"],
+        "base_url": shared_vespa["base_url"],
+        "container_name": shared_vespa["container_name"],
+    }
+    # No teardown — shared_vespa owns the container lifecycle.
+```
 
-- Automatic schema deployment with tenant support
+#### Tenant isolation helpers
 
-- Proper cleanup on test completion or failure
+`tests/utils/tenant_helpers.py` provides two functions for deriving
+Vespa-safe unique tenant IDs from the running test's `request` object:
 
-- Module-scoped to share container across tests in a file
+- `tenant_id_for_module(request)` — all tests in the same module share a
+  tenant (use when a fixture is module-scoped).
+- `tenant_id_for_test(request)` — unique per test function, including
+  parametrize variants (use when each test needs a blank-slate schema).
+
+`tests/utils/vespa_test_helpers.py` provides helpers for building config
+managers and deploying schemas against `shared_vespa`:
+
+- `make_config_manager(shared_vespa)` — returns a `ConfigManager` bound to
+  the shared container's ports.
+- `deploy_tenant_schema(shared_vespa, *, tenant_id, base_schema_name)` —
+  deploys a base schema scoped to `tenant_id`; returns the full schema name.
+- `schema_full_name(base_schema_name, tenant_id)` — computes the deployed
+  schema name without going through deploy.
+- `load_raw_schema_json(base_schema_name)` — reads a base schema definition
+  from `configs/schemas/`.
+
+Example fixture using the helpers:
+
+```python
+# Usage in tests
+@pytest.mark.integration
+async def test_vespa_operations(shared_vespa, request):
+    """Test with the shared Vespa container."""
+    from tests.utils.tenant_helpers import tenant_id_for_test
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema, make_config_manager
+
+    tenant_id = tenant_id_for_test(request)
+    config_manager = make_config_manager(shared_vespa)
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id=tenant_id,
+        base_schema_name="video_colpali_smol500_mv_frame",
+        config_manager=config_manager,
+    )
+    http_port = shared_vespa["http_port"]
+    base_url = shared_vespa["base_url"]
+    # ... test operations
+```
 
 ### Phoenix Docker Fixtures
 
 For telemetry and evaluation tests:
 
-The actual `phoenix_container` fixture is defined in `tests/conftest.py`:
+The `phoenix_container` fixture is defined in `tests/conftest.py` (module-scoped).
+Key details:
 
-```python
-@pytest.fixture(scope="module")
-def phoenix_container():
-    """
-    Start Phoenix Docker container with gRPC support for integration tests.
+- **Image**: `arizephoenix/phoenix:14.2.1` (pinned version, not `:latest`)
+- **Ports**: HTTP 16006 (→ 6006), gRPC 14317 (→ 4317)
+- **Env var**: Sets `TELEMETRY_OTLP_ENDPOINT` (not `OTLP_ENDPOINT`) and `TELEMETRY_SYNC_EXPORT`
+- **Leftover cleanup**: Kills any `phoenix_test_*` containers already running before starting
+- **Scope**: Module-scoped — one Phoenix instance per test module
 
-    Uses non-default ports to avoid conflicts:
-    - HTTP: 16006 (instead of 6006)
-    - gRPC: 14317 (instead of 4317)
+Companion fixtures also defined in `tests/conftest.py`:
 
-    Sets OTLP_ENDPOINT env var for tests and resets TelemetryManager.
-    """
-    import subprocess
-    import requests
-    from cogniverse_foundation.telemetry.manager import TelemetryManager
-
-    original_endpoint = os.environ.get("OTLP_ENDPOINT")
-    os.environ["OTLP_ENDPOINT"] = "http://localhost:14317"
-    os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
-    TelemetryManager.reset()
-
-    container_name = f"phoenix_test_{int(time.time() * 1000)}"
-
-    # Start container with offset ports
-    subprocess.run([
-        "docker", "run", "-d", "--name", container_name,
-        "-p", "16006:6006",   # HTTP port (offset)
-        "-p", "14317:4317",   # gRPC port (offset)
-        "-e", "PHOENIX_WORKING_DIR=/phoenix",
-        "arizephoenix/phoenix:latest"
-    ], check=True, capture_output=True, timeout=30)
-
-    # Wait for Phoenix to be ready
-    max_wait_time = 60
-    start_time = time.time()
-    while time.time() - start_time < max_wait_time:
-        try:
-            response = requests.get("http://localhost:16006", timeout=2)
-            if response.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(2)
-
-    yield container_name
-
-    # Cleanup
-    subprocess.run(["docker", "stop", container_name], check=False, capture_output=True, timeout=30)
-    subprocess.run(["docker", "rm", container_name], check=False, capture_output=True, timeout=10)
-```
+- `phoenix_client` — `phoenix.client.Client` pointed at `http://localhost:16006`
+- `telemetry_config_with_phoenix` — `TelemetryConfig` pre-configured for the container
+- `telemetry_manager_with_phoenix` — session-installed `TelemetryManager` singleton
+- `telemetry_manager_without_phoenix` — function-scoped manager with mock endpoints
+  (use for unit/integration tests that don't export real spans)
 
 ### Port Management
 
@@ -923,16 +923,22 @@ Located in `tests/utils/docker_utils.py`:
 
 ```python
 def generate_unique_ports(
-    module_name: str, base_http_port: int = 8100
+    module_name: str, base_http_port: int = 40000
 ) -> Tuple[int, int]:
     """
-    Generate unique HTTP and config ports based on module name.
+    Generate unique HTTP and config ports for a test module in the IANA
+    ephemeral range (49152-65535) so they don't collide with well-known
+    or registered services running on the host.
 
-    Uses MD5 hash of module name to deterministically assign ports,
-    ensuring different test modules never conflict.
+    The hash is seeded with module_name + the OS PID so concurrent pytest
+    invocations from different shells land on distinct ports while retries
+    within the same process get the same port.
     """
-    port_hash = int(hashlib.md5(module_name.encode()).hexdigest()[:4], 16)
-    http_port = base_http_port + (port_hash % 100)  # Range: base to base+99
+    import os
+    seed = f"{module_name}:{os.getpid()}"
+    port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
+    # Range: 40000-54544 so config_port (http + 10991) stays under 65535
+    http_port = 40000 + (port_hash % 14544)
     config_port = http_port + 10991  # Standard Vespa config port offset
     return http_port, config_port
 ```
@@ -955,8 +961,6 @@ Vespa requires disk usage below 75%. In GitHub Actions:
 - name: Pre-pull Vespa Docker image
   run: docker pull vespaengine/vespa:latest
 ```
-
----
 
 ---
 
@@ -1042,7 +1046,6 @@ graph TD
     telemetry_int["<span style='color:#000'>integration/</span>"]
 
     ui["<span style='color:#000'><b>ui/</b><br/>UI tests</span>"]
-    ui_int["<span style='color:#000'>integration/</span>"]
 
     utils["<span style='color:#000'><b>utils/</b><br/>shared test utilities</span>"]
 
@@ -1097,8 +1100,6 @@ graph TD
     telemetry --> telemetry_unit
     telemetry --> telemetry_int
 
-    ui --> ui_int
-
     style root fill:#b0bec5,stroke:#546e7a,color:#000
     style admin fill:#ef9a9a,stroke:#c62828,color:#000
     style agents fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -1138,7 +1139,6 @@ graph TD
     style synthetic_int fill:#fff176,stroke:#f9a825,color:#000
     style telemetry_unit fill:#81c784,stroke:#388e3c,color:#000
     style telemetry_int fill:#81c784,stroke:#388e3c,color:#000
-    style ui_int fill:#e57373,stroke:#c62828,color:#000
 ```
 
 **Related Documentation:**

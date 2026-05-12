@@ -69,6 +69,7 @@ class TestProfileMultiTenantIsolation:
         # Reset registries
         BackendRegistry._instance = None
         BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
         SchemaRegistry._instance = None
 
         # Create config store pointing to isolated Vespa (metadata schemas already deployed)

@@ -73,6 +73,7 @@ flowchart TB
         runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI Server · Quality Monitor</span>"]
         dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI</span>"]
         messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway</span>"]
+        cogcli["<span style='color:#000'><b>cli</b><br/>cogniverse CLI</span>"]
     end
 
     subgraph IMPL["<span style='color:#000'><b>IMPLEMENTATION LAYER</b></span>"]
@@ -141,6 +142,7 @@ flowchart TB
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |
 | **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |
 | **messaging** | Application | Telegram messaging gateway | gateway.py, auth.py, command_router.py |
+| **cli** | Application | cogniverse CLI (up, status, code, index, graph, deploy) | main.py, cluster.py, deploy.py, code.py, graph.py |
 | **dashboard** | Application | Streamlit UI, analytics | tabs/, utils/ |
 
 ---
@@ -224,7 +226,7 @@ uv --version
 git clone <repository-url>
 cd cogniverse
 
-# Install workspace (all 11 packages + dependencies)
+# Install workspace (all 13 packages + dependencies)
 uv sync
 
 # Activate virtual environment
@@ -253,7 +255,7 @@ uv run pytest tests/common/ -v
 # Verify all packages installed
 uv pip list | grep cogniverse
 
-# Expected: 11 packages (sdk, foundation, core, evaluation, etc.)
+# Expected: 13 packages (sdk, foundation, core, evaluation, cli, etc.)
 ```
 
 ### IDE Setup

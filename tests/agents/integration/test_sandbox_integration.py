@@ -89,6 +89,42 @@ def openshell_gateway():
     for cid in port_check.stdout.strip().splitlines():
         subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
 
+    # Drop ALL stale openshell-cluster-* containers AND their volumes,
+    # not just the one matching our gateway name. A stopped sibling
+    # cluster (e.g. left over from a different gateway in a prior run)
+    # holds a volume that the new bootstrap touches during helm-install,
+    # which makes the helm job loop and the gateway "fail to start"
+    # after ~12s with no useful error from `openshell gateway start`.
+    stale = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-aq",
+            "--filter",
+            "name=openshell-cluster-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    for cid in stale.stdout.strip().splitlines():
+        subprocess.run(["docker", "rm", "-f", cid], capture_output=True, timeout=10)
+    stale_vols = subprocess.run(
+        [
+            "docker",
+            "volume",
+            "ls",
+            "-q",
+            "--filter",
+            "name=openshell-cluster-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    for vol in stale_vols.stdout.strip().splitlines():
+        subprocess.run(["docker", "volume", "rm", vol], capture_output=True, timeout=10)
+
     # Destroy stale gateway metadata
     subprocess.run(
         ["openshell", "gateway", "destroy", "--name", GATEWAY_NAME],
@@ -98,22 +134,37 @@ def openshell_gateway():
     )
     _time.sleep(5)  # Let Docker release ports
 
-    result = subprocess.run(
-        [
-            "openshell",
-            "gateway",
-            "start",
-            "--name",
-            GATEWAY_NAME,
-            "--port",
-            str(GATEWAY_PORT),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    # OpenShell gateway start can fail with "Corrupted cluster state"
+    # if a previous run was interrupted; the CLI auto-cleans the bad
+    # state and instructs the caller to retry. Wrap up to 3 attempts so
+    # the test doesn't fail on a single transient corruption.
+    last_err = ""
+    for attempt in range(3):
+        result = subprocess.run(
+            [
+                "openshell",
+                "gateway",
+                "start",
+                "--name",
+                GATEWAY_NAME,
+                "--port",
+                str(GATEWAY_PORT),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0:
+            break
+        last_err = result.stderr
+        if "Corrupted cluster state" in result.stderr:
+            # CLI cleaned up; give Docker a beat then retry.
+            _time.sleep(5)
+            continue
+        # Other failure — don't retry; surface the original error.
+        break
     if result.returncode != 0:
-        pytest.fail(f"Failed to start OpenShell gateway: {result.stderr[:500]}")
+        pytest.fail(f"Failed to start OpenShell gateway: {last_err[:500]}")
 
     subprocess.run(
         ["openshell", "gateway", "select", GATEWAY_NAME],
@@ -141,7 +192,11 @@ class TestSandboxExecutionSDK:
 
         client = SandboxClient.from_active_cluster()
         session = client.create_session()
-        client.wait_ready(session.sandbox.name, timeout_seconds=120)
+        # 120s isn't enough on a cold K3s cluster (the gateway image needs
+        # to pull the sandbox runtime image on first run + scheduler needs
+        # to admit the pod). 300s tracks the prevailing K3s cold-start
+        # latency on this dev-host class.
+        client.wait_ready(session.sandbox.name, timeout_seconds=300)
 
         result = session.exec(["echo", "hello-from-sdk"])
         assert result.exit_code == 0, f"Run failed: {result.stderr}"

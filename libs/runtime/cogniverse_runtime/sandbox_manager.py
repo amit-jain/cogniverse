@@ -78,6 +78,29 @@ _DEFAULT_POLICY_DIR = Path("configs/agent_policies")
 _LEGACY_POLICY_DIR = Path("configs/openshell")
 
 
+def _probe_gateway_endpoint(endpoint: str, timeout: float = 2.0) -> None:
+    """TCP-probe the host:port of an OpenShell gateway endpoint.
+
+    grpc creates lazy channels and does not dial at construction, so a
+    bogus endpoint produces a happy-looking SandboxClient that only
+    fails on first RPC. policy=REQUIRED needs to refuse boot eagerly,
+    so we open a short TCP connection here. Raises ``OSError`` (or
+    subclass) when the endpoint is unreachable; caller catches and
+    flips ``_available=False``.
+    """
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or endpoint
+    port = parsed.port
+    if port is None:
+        # Default grpc-over-http(s) ports.
+        port = 443 if parsed.scheme == "https" else 80
+    with socket.create_connection((host, port), timeout=timeout):
+        return
+
+
 class SandboxManager:
     """
     Manages OpenShell sandboxes for per-agent execution isolation.
@@ -226,6 +249,13 @@ class SandboxManager:
 
             override_endpoint = os.environ.get("OPENSHELL_GATEWAY_ENDPOINT")
             if override_endpoint:
+                # ``SandboxClient(endpoint=...)`` only stores the endpoint
+                # and creates a lazy grpc channel — no eager dial. So a
+                # bogus endpoint produces a happy-looking client that
+                # only fails on first RPC. Probe the endpoint host:port
+                # with a short TCP connect so policy=REQUIRED actually
+                # refuses to boot when the gateway is unreachable.
+                _probe_gateway_endpoint(override_endpoint)
                 self._client = SandboxClient(endpoint=override_endpoint)
                 logger.info(f"Connected to OpenShell gateway at {override_endpoint}")
             else:

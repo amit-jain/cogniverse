@@ -1,77 +1,97 @@
-"""
-Integration test configuration for admin profile tests.
+"""Integration test configuration for admin profile tests.
 
-Provides shared Vespa Docker instance with metadata schemas deployed.
+Re-exports the project-wide ``shared_vespa`` container; admin tests
+only need the metadata schemas (already deployed at session start) and
+their own ConfigManager wiring (built per-test).
 """
 
 import logging
-import time
 
 import pytest
 
 # Import vespa backend to trigger self-registration
 import cogniverse_vespa  # noqa: F401
-from tests.utils.vespa_docker import VespaDockerManager
+
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
-def vespa_instance():
+def vespa_instance(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape admin tests expect
+    (``http_port``, ``config_port``, ``base_url``, ``container_name``)
+    backed by ``shared_vespa``. No pre-deploy needed — admin tests
+    drive the SchemaRegistry themselves under their own tenants.
     """
-    Start isolated Vespa Docker instance for admin integration tests.
-
-    Session-scoped to share across all admin test modules.
-    Deploys metadata schemas (config_metadata, organization_metadata, etc.)
-    so VespaConfigStore can be used immediately.
-
-    Yields:
-        dict: Vespa connection info with http_port, config_port, base_url, container_name
-    """
-    manager = VespaDockerManager()
-
+    yield {
+        "http_port": shared_vespa["http_port"],
+        "config_port": shared_vespa["config_port"],
+        "base_url": shared_vespa["base_url"],
+        "container_name": shared_vespa["container_name"],
+    }
+    # Clear singleton state so the next test module gets a fresh registry.
     try:
-        container_info = manager.start_container(
-            module_name="admin_tests", use_module_ports=True
-        )
+        from cogniverse_core.registries.backend_registry import BackendRegistry
 
-        # Wait for config server
-        manager.wait_for_config_ready(container_info, timeout=180)
+        BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
+    except Exception:
+        pass
 
-        # Wait for internal services to initialize
-        logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
-        time.sleep(15)
 
-        # Deploy metadata schemas (config_metadata, organization_metadata, tenant_metadata)
-        # MUST happen before VespaConfigStore can be used
-        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+@pytest.fixture(autouse=True)
+def _admin_singleton_reset_between_tests():
+    """Per-test reset of every singleton admin tests touch.
 
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=container_info["config_port"],
-        )
-        schema_manager.upload_metadata_schemas(app_name="cogniverse")
-        logger.info("Deployed metadata schemas (organization, tenant, config)")
+    Earlier each test file's ``test_client`` fixture maintained its own
+    list of singletons to clear; if any list missed
+    ``BackendRegistry._shared_schema_registry`` (the registry that
+    pins the active ``SchemaRegistry`` and its ``_schema_loader``) the
+    next test inherited a registry pointing at the prior test's tmp
+    schema dir and ``deploy_schema`` blew up with "Schema X not found
+    at /tmp/.../schemas{N}/X_schema.json".
 
-        # Wait for application readiness after schema deployment
-        manager.wait_for_application_ready(container_info, timeout=120)
+    Centralising the reset here means individual ``test_client``
+    fixtures stop being responsible for catching every singleton.
+    """
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-        logger.info("Vespa initialization complete - ready for admin tests")
+    BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
+    SchemaRegistry._instance = None
 
-        yield container_info
+    # Also reset the admin / tenant_manager module-level state so a
+    # test that forgets to call ``admin.reset_dependencies()`` in its
+    # teardown doesn't leak into the next test.
+    try:
+        from cogniverse_runtime.admin import tenant_manager
+        from cogniverse_runtime.routers import admin as admin_router
 
-    except Exception as e:
-        logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
+        admin_router.reset_dependencies()
+        tenant_manager.backend = None
+        tenant_manager._config_manager = None
+        tenant_manager._schema_loader = None
+    except Exception:
+        pass
 
-    finally:
-        manager.stop_container()
+    yield
 
-        # Clear singleton state to avoid interference with other test modules
-        try:
-            from cogniverse_core.registries.backend_registry import BackendRegistry
+    BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
+    SchemaRegistry._instance = None
+    try:
+        from cogniverse_runtime.admin import tenant_manager
+        from cogniverse_runtime.routers import admin as admin_router
 
-            BackendRegistry._instance = None
-            BackendRegistry._backend_instances.clear()
-        except Exception:
-            pass
+        admin_router.reset_dependencies()
+        tenant_manager.backend = None
+        tenant_manager._config_manager = None
+        tenant_manager._schema_loader = None
+    except Exception:
+        pass

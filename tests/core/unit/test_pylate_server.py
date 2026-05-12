@@ -62,7 +62,7 @@ def server_app(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    app = module.build_app("lightonai/LateOn", "cpu")
+    app = module.build_app("lightonai/LateOn", "cpu", mode="colbert")
     return app, "lightonai/LateOn"
 
 
@@ -114,4 +114,4 @@ def test_health_endpoint_reports_model(server_app):
     client = TestClient(app)
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "model": model_name}
+    assert resp.json() == {"status": "ok", "model": model_name, "mode": "colbert"}

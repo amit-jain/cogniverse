@@ -41,6 +41,12 @@ Central registry for vector database backends. Enables switching backends withou
 
 ## C
 
+### ConflictSet
+Group of memories that make conflicting claims about the same `metadata.subject_key`. Produced by `ContradictionDetector.detect()`. Each `ConflictSet` carries `subject_key` and the list of `conflicting_memory_ids`. Persisted under sentinel `agent_name="_conflict_store"`.
+
+### ContradictionDetector
+Class (`cogniverse_core/memory/contradiction.py`) that groups memories by `metadata.subject_key` and emits a `ConflictSet` for each subject that has more than one distinct content signature. Memories without a `subject_key` pass through unchanged. `reconcile(memories, policy)` applies the schema's `ContradictionPolicy` (`latest_wins`, `trust_ranked`, `preserve_both`).
+
 ### CancellationToken
 Thread-safe signal for graceful task cancellation. Used by EventQueue to coordinate workflow/ingestion abort at phase boundaries.
 
@@ -94,9 +100,15 @@ A2A-compatible real-time notification system for streaming task progress to mult
 ### EventType
 Enum discriminator for event types: `STATUS`, `PROGRESS`, `ARTIFACT`, `ERROR`, `COMPLETE`. Corresponding event classes are `StatusEvent` (state transitions), `ProgressEvent` (incremental progress), `ArtifactEvent` (intermediate results), `ErrorEvent` (errors), `CompleteEvent` (task completion).
 
+### ExperimentMetrics
+Typed dataclass (`cogniverse_agents/optimizer/artifact_manager.py`) recording one optimization run. Fields: `tenant_id`, `agent_type`, `run_id`, `timestamp`, `optimizer`, `baseline_score`, `candidate_score`, `improvement`, `promoted`, `train_examples`, `extra_metrics`. Stored as one row in the per-tenant per-agent experiments dataset; queryable via `ArtifactManager.load_experiments()`.
+
 ---
 
 ## F
+
+### FederationService
+Service (`cogniverse_core/memory/federation.py`) that merges an org's shared trunk of knowledge with per-tenant overlays. `federated_get_all` returns tenant rows + org-trunk rows, deduplicating by `metadata.subject_key` (tenant overlay wins). Promotion (`promote_to_org_trunk`) copies a tenant memory to `{org}:_org_trunk`. Schema sensitivity (`tenant_private` / `org_shared` / `global_shared`) gates promotion.
 
 ### Frame-based Processing
 Video processing strategy that extracts individual frames. Used with ColPali for image-level search.
@@ -120,7 +132,20 @@ Workflow pattern involving human approval or feedback. Implemented via `HumanApp
 
 ---
 
+## K
+
+### KnowledgeRegistry
+In-memory registry (`cogniverse_core/memory/schema.py`) mapping memory kind strings to `KnowledgeSchema` objects. Built via `build_default_registry()` which seeds `conversation_turn`, `learned_strategy`, `tenant_instruction`, `external_doc`, `entity_fact`, `kg_node`, `kg_edge`. Unregistered kinds fall back to `permanent + tenant_private + provenance_required=True`.
+
+### KnowledgeSchema
+Dataclass (`cogniverse_core/memory/schema.py`) describing one kind of memory. Fields: `kind`, `retention` (PERMANENT / EPHEMERAL_SESSION / EPHEMERAL_DAYS / SCHEMA_DRIVEN), `sensitivity` (tenant_private / org_shared / global_shared), `pinnable_by`, `provenance_required`, `contradiction_policy`, `default_trust`. Gating: `validate_write` raises `SchemaViolationError` when provenance rules or pin authority are violated.
+
+---
+
 ## L
+
+### LifecycleScheduler
+Background scheduler (`cogniverse_core/memory/lifecycle_scheduler.py`) that runs schema-driven cleanup on each warm tenant. Started in the FastAPI lifespan. Each tick looks up `metadata["kind"]` in the `KnowledgeRegistry` and applies the retention policy (EPHEMERAL_DAYS soft-delete at N days, hard-delete at 2N; SCHEMA_DRIVEN calls the schema's `cleanup_hook`). Pinned memory ids are excluded before any deletion. Configurable via `COGNIVERSE_MEMORY_LIFECYCLE_INTERVAL` (default 3600 s).
 
 ### LLM Judge
 Evaluator that uses LLMs to score outputs. Supports reference-free, reference-based, and hybrid modes.
@@ -174,8 +199,14 @@ A2A agent (`cogniverse_agents/orchestrator_agent.py`) with its own DSPy planning
 ### Phoenix
 Arize's observability platform for AI applications. Stores traces, spans, experiments, and enables visualization.
 
+### PinService
+Service (`cogniverse_core/memory/pinning.py`) that pins memories so they survive lifecycle cleanup, trust decay, and curator passes. Per-role quota enforced via `PinQuotas` (defaults: user 50, tenant_admin 500, org_admin unlimited). Pin records live under sentinel `agent_name="_pinning"`. Hierarchy: org_admin can unpin any pin; tenant_admin can unpin user/tenant pins; user can only unpin their own.
+
 ### Pipeline
 Sequence of processing steps for video ingestion. Includes segmentation, transcription, description, embedding.
+
+### Provenance
+Record attached to every memory write describing its origin. Fields: `written_by`, `derivation_kind` (direct_ingest / user_assert / extraction / summarization / synthesis / agent_inference), `confidence`, `derived_from` (list of `CitationRef`), `trace_id`. Stored under `metadata["provenance"]`. `ProvenanceWalker` traverses citation chains back to primary sources.
 
 ### Precision@K
 Evaluation metric: fraction of top-K results that are relevant.
@@ -209,6 +240,12 @@ Component that reorders search results for better relevance. Types: learned, hyb
 ### RRF (Reciprocal Rank Fusion)
 Algorithm for combining multiple ranked lists. Used in hybrid search to merge semantic and BM25 results.
 
+### RLMOptions
+Pydantic model (`cogniverse_core/agents/rlm_options.py`) for per-query RLM configuration. Key fields: `enabled` (explicit), `auto_detect` + `context_threshold` (size-based), `max_iterations`, `include_trajectory`, `trajectory_max_entries`. Passed as `rlm` field on eligible agent inputs.
+
+### RLMResult
+Dataclass from `RLMInference.process()`. Fields: `answer`, `depth_reached`, `total_calls`, `tokens_used` (total tokens across all LLM sub-calls), `latency_ms`, `was_fallback` (True when max_iterations exhausted without SUBMIT()), `trajectory` (populated when `include_trajectory=True`), `metadata` (always includes `trajectory_summary` and `trajectory_length`).
+
 ### Routing
 Directing queries to appropriate agents based on modality and content. Entry point is `GatewayAgent` (GLiNER classification, <100ms). Simple queries route directly to a single execution agent; complex queries hand off to `OrchestratorAgent` for multi-step A2A execution.
 
@@ -216,8 +253,17 @@ Directing queries to appropriate agents based on modality and content. Entry poi
 
 ## S
 
+### SandboxManager
+Component (`cogniverse_runtime/sandbox_manager.py`) that wraps the OpenShell SDK to create and manage per-agent execution sandboxes. Policy controlled by `SandboxPolicy` enum. Used by `CodingAgent` (code execution) and `OrchestratorAgent` (egress-restricted A2A sub-agent calls). Emits OpenTelemetry spans for every lifecycle event.
+
+### SandboxPolicy
+Enum in `cogniverse_runtime/sandbox_manager.py` with three values: `REQUIRED` (refuse to start without gateway), `OPTIONAL` (warn and continue, default for dev), `DISABLED` (skip entirely). Resolved from `COGNIVERSE_SANDBOX_POLICY` env var → config → default `optional`.
+
 ### Schema
 Vespa document schema defining fields and indexing. Tenant-specific schemas use `_tenant_id` suffix.
+
+### SignatureVariant
+Named variant of an agent's DSPy input/output signature (`cogniverse_agents/optimizer/signature_variants.py`). Registered in `SignatureVariantRegistry`; tenant selects via `TenantConfig.metadata["signature_variants"][agent_type]`. Artifact manager keys per `(tenant, agent, variant)`. Default variant uses the bare agent_type key for back-compat.
 
 ### Session
 Multi-turn conversation context. Tracked via `session_id` in telemetry for conversation-aware evaluation.
@@ -246,6 +292,9 @@ A2A-compatible workflow state: `pending`, `working`, `input-required`, `complete
 
 ### Telemetry
 Observability data: traces, spans, metrics. Managed by `TelemetryManager` with tenant isolation.
+
+### TrustRecord
+Struct derived at memory-write time from `KnowledgeSchema.default_trust` and `DerivationKind`. Carries initial score, decay floor, and endorsement history. Trust ages at ≈0.5 pt/day above baseline. At retrieval, `rank_with_trust` composes relevance × trust × confidence. See `cogniverse_core/memory/trust.py`.
 
 ### Tenant
 Isolated organization in multi-tenant system. All data and config is tenant-scoped via `tenant_id`.

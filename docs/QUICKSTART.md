@@ -244,6 +244,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 |------|---------------|
 | Understand the architecture | [Architecture Overview](./architecture/overview.md) |
 | Use the interactive coding agent | [Coding Agent CLI](./user/coding-agent-cli.md) |
+| Use the Knowledge Management Layer | [User Guide — Knowledge Management](./USER_GUIDE.md#knowledge-management) |
 | Extract a knowledge graph from code / docs | [Knowledge Graph](./user/knowledge-graph.md) |
 | Create a custom agent | [Creating Agents Tutorial](./tutorials/creating-agents.md) |
 | Learn key concepts | [Glossary](./GLOSSARY.md) |
@@ -257,7 +258,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 
 ```text
 cogniverse/
-├── libs/                    # 12-package workspace
+├── libs/                    # 13-package workspace
 │   ├── sdk/                 # Pure interfaces
 │   ├── foundation/          # Config + telemetry
 │   ├── core/                # Agent base, orchestration, caching
@@ -269,6 +270,7 @@ cogniverse/
 │   ├── synthetic/           # Training data generation
 │   ├── runtime/             # FastAPI server + quality monitor CLI
 │   ├── messaging/           # Telegram messaging gateway
+│   ├── cli/                 # cogniverse CLI (deploy, manage)
 │   └── dashboard/           # Streamlit UI
 ├── configs/                 # Configuration files
 │   ├── config.json          # Main config

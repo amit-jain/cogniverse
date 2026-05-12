@@ -295,11 +295,17 @@ class TestMem0VespaIntegration:
 
         wait_for_vespa_indexing(delay=1)
 
-        # Add memory with factual content
+        # Add memory with infer=False — same convention test_delete_memory
+        # uses. infer=True routes through Mem0's LLM fact-extraction pass,
+        # which on the local Ollama qwen2.5:7b sometimes returns no facts
+        # and ``add_memory`` returns ``None`` (documented behaviour). This
+        # test exercises the update→search round-trip, not LLM extraction;
+        # ``infer=False`` is the right contract.
         memory_id = memory_manager.add_memory(
             content="User primary email address is john.doe@oldcompany.com",
             tenant_id="test_tenant",
             agent_name="update_test_agent",
+            infer=False,
         )
 
         assert memory_id is not None

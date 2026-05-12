@@ -8,7 +8,6 @@ wired with real dependencies including real ColPali query encoder.
 
 import json
 import logging
-import time
 from pathlib import Path
 
 import dspy
@@ -40,9 +39,10 @@ from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 from cogniverse_runtime.routers import health, search
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401, E402
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
-from tests.utils.vespa_docker import VespaDockerManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,162 +50,59 @@ SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 
 @pytest.fixture(scope="module")
-def vespa_instance(request):
+def vespa_instance(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape runtime/integration tests
+    expect (``http_port``, ``config_port``, ``base_url``, ``container_name``)
+    backed by the project-wide ``shared_vespa``.
+
+    Deploys two baseline schemas under tenant ``test_unit`` (the
+    sanitised form of ``test:unit`` runtime tests use):
+    ``video_colpali_smol500_mv_frame_test_unit`` and
+    ``agent_memories_test_unit``. Goes through SchemaRegistry so the
+    deploy merges with any other tenants' schemas already on
+    shared_vespa instead of full-replacing them.
+
+    Singleton state is cleared at fixture entry so tests don't inherit
+    a backend pointing at a torn-down container from a prior module.
     """
-    Start isolated Vespa Docker instance for runtime integration tests.
-
-    Module-scoped to share across all tests in this module.
-    Uses the requesting module's name for unique port generation.
-    Deploys metadata schemas so VespaConfigStore can be used immediately.
-
-    Yields:
-        dict: Vespa connection info with http_port, config_port, base_url, container_name
-    """
-    manager = VespaDockerManager()
-
-    # Clear stale singleton state from other test modules so the test gets
-    # a fresh backend pointing at the isolated Vespa, not a cached one.
-    # ``_shared_schema_registry`` is a process-wide singleton that
-    # ``get_ingestion_backend`` falls back to when no registry is passed —
-    # without clearing it here, module B's backend creation inherits
-    # module A's torn-down container's registry and every deploy goes to
-    # the dead port.
+    # Clear stale singleton state inherited from other modules.
     BackendRegistry._instance = None
     BackendRegistry._backend_instances.clear()
     BackendRegistry._shared_schema_registry = None
 
+    # Pre-deploy the two baseline schemas via SchemaRegistry (merge-safe).
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
+
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="video_colpali_smol500_mv_frame",
+    )
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="agent_memories",
+    )
+
+    # Reset singletons so tests start with a clean slate (the deploy
+    # above populated registry caches that may collide with what tests
+    # construct themselves).
+    BackendRegistry._backend_instances.clear()
+
+    yield {
+        "http_port": shared_vespa["http_port"],
+        "config_port": shared_vespa["config_port"],
+        "base_url": shared_vespa["base_url"],
+        "container_name": shared_vespa["container_name"],
+    }
+    # No teardown — shared_vespa owns the container. Clear singletons
+    # so the next module gets a fresh registry.
     try:
-        # Use unique ports derived from module name hash to avoid collisions
-        # with a running Vespa instance on the default 8080/19071 ports.
-        container_info = manager.start_container(
-            module_name=request.module.__name__,
-            use_module_ports=True,
-        )
-
-        manager.wait_for_config_ready(container_info, timeout=180)
-
-        logger.info("Waiting 15 seconds for Vespa internal services to initialize...")
-        time.sleep(15)
-
-        # Deploy metadata + data schemas in a single application package.
-        # Vespa rejects deployments that remove existing schemas, so all
-        # schemas must be included together.
-        from vespa.package import ApplicationPackage
-
-        from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-        from cogniverse_vespa.metadata_schemas import (
-            create_adapter_registry_schema,
-            create_config_metadata_schema,
-            create_organization_metadata_schema,
-            create_tenant_metadata_schema,
-        )
-
-        metadata_schemas = [
-            create_organization_metadata_schema(),
-            create_tenant_metadata_schema(),
-            create_config_metadata_schema(),
-            create_adapter_registry_schema(),
-        ]
-
-        # Pre-deploy the baseline data + agent_memories schemas under the
-        # canonical TEST_TENANT_ID suffix ("test_unit" → sanitised form of
-        # "test:unit"). Production eradicated the "_default" tenant in #34;
-        # tests follow the same rule — per-test tenants deploy their own
-        # schemas at runtime via VespaBackend.deploy_schemas (which now
-        # discovers deployed document types from Vespa directly and
-        # preserves peer tenants through partial redeploys).
-        schema_file = SCHEMAS_DIR / "video_colpali_smol500_mv_frame_schema.json"
-        with open(schema_file) as f:
-            data_schema_base = json.load(f)
-        memory_schema_file = SCHEMAS_DIR / "agent_memories_schema.json"
-        with open(memory_schema_file) as f:
-            memory_schema_base = json.load(f)
-
-        parser = JsonSchemaParser()
-        data_def = json.loads(json.dumps(data_schema_base))
-        data_name = "video_colpali_smol500_mv_frame_test_unit"
-        data_def["name"] = data_name
-        data_def["document"]["name"] = data_name
-        data_schema = parser.parse_schema(data_def)
-
-        mem_def = json.loads(json.dumps(memory_schema_base))
-        mem_name = "agent_memories_test_unit"
-        mem_def["name"] = mem_name
-        mem_def["document"]["name"] = mem_name
-        memory_schema = parser.parse_schema(mem_def)
-
-        all_schemas = metadata_schemas + [data_schema, memory_schema]
-        app_package = ApplicationPackage(name="cogniverse", schema=all_schemas)
-
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=container_info["config_port"],
-        )
-        schema_manager._deploy_package(app_package)
-        logger.info("Deployed metadata + data schemas in single package")
-
-        manager.wait_for_application_ready(container_info, timeout=120)
-
-        # Wait for the data schema to be queryable (content node convergence).
-        # The GET/PUT probes check metadata schemas but the data schema may
-        # take additional time to become available for queries.
-        import requests as _requests
-
-        data_schema_name = "video_colpali_smol500_mv_frame_test_unit"
-        http_port = container_info["http_port"]
-        for attempt in range(30):
-            try:
-                resp = _requests.post(
-                    f"http://localhost:{http_port}/search/",
-                    json={
-                        "yql": "select documentid from sources * where true limit 1",
-                        "hits": 1,
-                        "model.restrict": data_schema_name,
-                    },
-                    timeout=5,
-                )
-                body = resp.json()
-                errors = body.get("root", {}).get("errors", [])
-                if resp.status_code == 200 and not errors:
-                    logger.info(
-                        f"✅ Data schema '{data_schema_name}' ready (model.restrict)"
-                    )
-                    break
-            except Exception:
-                pass
-            time.sleep(2)
-        else:
-            raise RuntimeError(
-                f"Data schema '{data_schema_name}' not queryable via model.restrict after 60s. "
-                "Content distributor may not have converged."
-            )
-
-        logger.info(
-            "Vespa initialization complete - ready for runtime integration tests"
-        )
-
-        yield container_info
-
-    except Exception as e:
-        logger.error(f"Failed to start Vespa instance: {e}")
-        pytest.skip(f"Failed to start Vespa: {e}")
-
-    finally:
-        manager.stop_container()
-
-        # Clear singleton state to avoid interference with other test modules.
-        # ``_shared_schema_registry`` MUST be cleared here too — it holds a
-        # reference to this module's backend which is now pointing at a
-        # stopped container; the next module's ``get_ingestion_backend``
-        # would otherwise reuse it via the
-        # ``effective_registry = schema_registry or _shared_schema_registry``
-        # fallback in BackendRegistry.
-        try:
-            BackendRegistry._instance = None
-            BackendRegistry._backend_instances.clear()
-            BackendRegistry._shared_schema_registry = None
-        except Exception as cleanup_err:
-            logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
+        BackendRegistry._instance = None
+        BackendRegistry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
+    except Exception as cleanup_err:
+        logger.warning(f"BackendRegistry cleanup failed: {cleanup_err}")
 
 
 @pytest.fixture(scope="module")

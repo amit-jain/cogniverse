@@ -5,6 +5,11 @@ schema, feeds audio documents carrying a known ``source_url``, then runs
 ``AudioAnalysisAgent._search_transcript`` and asserts every
 ``AudioResult.audio_url`` matches the canonical URI that was written.
 
+NOTE: This test still uses an isolated VespaTestManager-spawned container
+because ``AudioAnalysisAgent._search_transcript`` queries the bare
+``audio_content`` schema name, not a tenant-scoped variant. Migrating to
+``shared_vespa`` would require the agent to be tenant-aware first.
+
 The agent is constructed via ``__new__`` so the heavy A2A + Whisper init
 path is skipped — only the search code path under test is exercised.
 

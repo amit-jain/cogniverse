@@ -16,8 +16,9 @@ uv run pytest tests/runtime/integration/test_ranking_strategies_real.py -v
 
 The test fixture chain builds the full real backend on demand:
 
-- **Real Vespa**: `vespa_instance` fixture spawns a Docker Vespa with
-  `video_colpali_smol500_mv_frame_test_unit` deployed.
+- **Real Vespa**: `vespa_instance` fixture is a compatibility shim backed by
+  the session-scoped `shared_vespa` container (see `tests/conftest.py`), with
+  `video_colpali_smol500_mv_frame_test_unit` deployed at test setup.
 - **Real vLLM ColPali**: `vllm_sidecar` fixture spawns
   `vllm/vllm-openai-cpu` serving `vidore/colpali-v1.3-hf` and binds
   `RemoteColPaliLoader` against it.

@@ -1086,6 +1086,78 @@ All factory methods require explicit dependency injection:
 
 ---
 
+## Sandbox (OpenShell)
+
+**Location:** `libs/runtime/cogniverse_runtime/sandbox_manager.py`
+
+`SandboxManager` wraps the OpenShell SDK to create and manage per-agent execution sandboxes. Each agent type runs inside an OpenShell sandbox pod with a YAML policy (under `configs/agent_policies/`) controlling network egress, filesystem access, and process constraints.
+
+### SandboxPolicy knob
+
+`SandboxPolicy` (enum in `sandbox_manager.py`) controls behaviour when the gateway is unreachable at boot:
+
+| Value | Effect |
+|---|---|
+| `REQUIRED` | Refuse to start (`SandboxGatewayUnavailableError`). Use for production compliance. |
+| `OPTIONAL` | Log a warning and continue without sandbox enforcement. Default for dev. |
+| `DISABLED` | Skip entirely; `SandboxManager.available` is permanently False. |
+
+Resolution order: `COGNIVERSE_SANDBOX_POLICY` env var → `config["sandbox"]["policy"]` → default `optional`.
+
+### Multi-agent policy wiring
+
+`SandboxManager` is used by both `coding_agent.py` (code execution) and `orchestrator_agent.py` (A2A sub-agent calls via `make_http_client("orchestrator_agent")`). Each agent's policy file lives at `configs/agent_policies/<agent_name>.yaml`.
+
+### Sandbox telemetry
+
+Every `exec_in_sandbox` call emits a `sandbox.exec_in_sandbox` OpenTelemetry span with child spans for each lifecycle phase (`sandbox.create_session`, `sandbox.wait_ready`, `sandbox.exec`, `sandbox.delete`). Key span attributes: `openshell.agent_type`, `openshell.exit_code`, `openshell.wall_ms`, `openshell.oom`, `openshell.policy_denied`.
+
+### Gateway health probe
+
+**Location:** `libs/runtime/cogniverse_runtime/openshell_health.py`
+
+`GatewayHealthProbe` runs as a background asyncio task calling `SandboxClient.health()` every 30 s (configurable via `COGNIVERSE_SANDBOX_PROBE_INTERVAL`). Each probe emits an `openshell.gateway_health` span with `openshell.gateway_available` (0/1) and `openshell.gateway_latency_ms`. The Phoenix dashboard reads these spans for the gateway-status tile.
+
+```python
+from cogniverse_runtime.openshell_health import GatewayHealthProbe
+
+probe = GatewayHealthProbe(sandbox_manager=mgr, interval_seconds=30)
+probe.start()
+# on shutdown:
+await probe.stop()
+```
+
+---
+
+## Optimization CLI
+
+**Location:** `libs/runtime/cogniverse_runtime/optimization_cli.py`
+
+CLI entry point invoked by Argo CronWorkflows for batch per-agent optimization. Reads production spans from Phoenix, builds DSPy training examples, compiles optimized modules, and saves artifacts via `ArtifactManager`.
+
+**Modes:**
+
+```bash
+python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
+python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme:production
+python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
+python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
+python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
+python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+python -m cogniverse_runtime.optimization_cli --mode triggered \
+    --tenant-id acme:production --agents search,summary \
+    --trigger-dataset optimization-trigger-acme-production-20260403_040000
+# Rollback: restore a previously active artefact version
+python -m cogniverse_runtime.optimization_cli --mode rollback \
+    --tenant-id acme:production --agent search_agent --prompts-version 2
+```
+
+Hot reload: agents call `_load_artifact` per-request (the dispatcher runs it after telemetry/tenant injection), so a promoted or rolled-back artefact lands without a process restart.
+
+See [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) for the full `ArtifactManager.promote_if_better`, canary state machine, and rollback details.
+
+---
+
 ## Related Documentation
 
 - [Core Module](./core.md) - Agent base classes and registries
@@ -1093,7 +1165,9 @@ All factory methods require explicit dependency injection:
 - [Agents Module](./agents.md) - Agent implementations
 - [Vespa Backend](../backends/vespa.md) - Vespa integration details
 - [Configuration System](../CONFIGURATION_SYSTEM.md) - Profile configuration guide
+- [Coding Agent CLI](../user/coding-agent-cli.md) - Sandbox deployment modes and policy details
+- [Evaluation & Optimization Loop](../architecture/evaluation-optimization-loop.md) - Optimizer artifacts, canary promotion, rollback
 
 ---
 
-**Summary:** The Runtime module provides the FastAPI application layer for Cogniverse. `VideoIngestionPipeline` handles video processing with a strategy pattern for flexible configuration. The search service provides multi-modal search with session tracking. Processing profiles define which strategies and processors to use for different video analysis approaches (frame-based ColPali, chunk-based ColQwen, single-vector VideoPrism).
+**Summary:** The Runtime module provides the FastAPI application layer for Cogniverse. `VideoIngestionPipeline` handles video processing with a strategy pattern for flexible configuration. The search service provides multi-modal search with session tracking. `SandboxManager` enforces per-agent execution isolation via OpenShell with configurable `SandboxPolicy`. The optimization CLI drives batch DSPy recompilation from Argo CronWorkflows with hot-reload artifact promotion and rollback.

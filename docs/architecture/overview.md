@@ -43,7 +43,16 @@ cogniverse/
 │   │       ├── common/           # Shared utilities
 │   │       ├── events/           # EventQueue for real-time notifications
 │   │       ├── registries/       # Component registries
-│   │       └── memory/           # Memory management
+│   │       └── memory/           # Knowledge Management Layer
+│   │           ├── manager.py        # Mem0MemoryManager (add/search/lifecycle)
+│   │           ├── schema.py         # KnowledgeSchema, KnowledgeRegistry, Retention, Sensitivity
+│   │           ├── provenance.py     # Provenance, CitationRef, ProvenanceWalker
+│   │           ├── provenance_store.py # Vespa-backed provenance persistence
+│   │           ├── contradiction.py  # ContradictionDetector, ConflictSet, reconcile()
+│   │           ├── trust.py          # TrustRecord, rank_with_trust, apply_endorsement
+│   │           ├── federation.py     # FederationService (org trunk + tenant overlays)
+│   │           ├── pinning.py        # PinService, PinQuotas
+│   │           └── lifecycle_scheduler.py # Schema-driven periodic cleanup
 │   │
 │   ├── evaluation/               # cogniverse-evaluation
 │   │   ├── pyproject.toml
@@ -73,7 +82,9 @@ cogniverse/
 │   │       ├── tools/            # A2A tools
 │   │       ├── memory_aware_mixin.py  # MemoryAwareMixin with get_strategies()
 │   │       ├── optimizer/        # DSPy optimizers + strategy learner
-│   │       │   └── strategy_learner.py  # StrategyLearner (pattern + LLM distillation)
+│   │       │   ├── artifact_manager.py   # ArtifactManager (ExperimentMetrics, promote_if_better, canary, rollback)
+│   │       │   ├── signature_variants.py # SignatureVariantRegistry (per-tenant DSPy signature variants)
+│   │       │   └── strategy_learner.py   # StrategyLearner (pattern + LLM distillation)
 │   │       └── wiki/             # Wiki knowledge base (WikiManager, WikiPage)
 │   │
 │   ├── telemetry-phoenix/        # cogniverse-telemetry-phoenix (Plugin)
@@ -110,7 +121,9 @@ cogniverse/
 │   │       ├── ingestion/             # Video processing
 │   │       ├── search/                # Search service
 │   │       ├── admin/                 # Admin functionality
-│   │       ├── optimization_cli.py    # Argo-triggered optimization
+│   │       ├── sandbox_manager.py     # SandboxManager + SandboxPolicy (OpenShell)
+│   │       ├── openshell_health.py    # GatewayHealthProbe (background 30 s probe)
+│   │       ├── optimization_cli.py    # Argo-triggered optimization (promote/rollback)
 │   │       └── quality_monitor_cli.py # Continuous evaluation sidecar
 │   │
 │   ├── messaging/                # cogniverse-messaging (Telegram gateway)
@@ -123,6 +136,11 @@ cogniverse/
 │   │       ├── conversation.py   # Conversation history via Mem0
 │   │       ├── runtime_client.py # Async client for runtime API
 │   │       └── telegram_handler.py # Response formatting
+│   │
+│   ├── cli/                      # cogniverse-cli
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_cli/
+│   │       └── main.py           # cogniverse CLI entry point (up, status, code, index, graph, etc.)
 │   │
 │   └── dashboard/                # cogniverse-dashboard
 │       ├── pyproject.toml
@@ -159,6 +177,7 @@ flowchart TB
         dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI · Phoenix Analytics</span>"]
         runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · Tenant Middleware · Quality Monitor</span>"]
         messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway · Invite Auth</span>"]
+        cli["<span style='color:#000'><b>cli</b><br/>cogniverse CLI · deploy · manage</span>"]
     end
 
     subgraph Implementation["<span style='color:#000'><b>Implementation Layer</b></span>"]

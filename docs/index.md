@@ -60,11 +60,14 @@ flowchart TD
 
 - **Multi-Modal Processing** — Video, audio, images, documents with unified embeddings
 - **Agent Orchestration** — A2A protocol with OrchestratorAgent entry point, agent discovery via AgentRegistry
-- **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data
+- **Knowledge Management Layer** — Schema-driven memory with provenance tracking, contradiction detection, trust ranking, federation (org trunk + tenant overlays), pinning, and schema-driven lifecycle cleanup
+- **9 Knowledge Agents** — MultiDocumentSynthesis, KGTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation
+- **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data; regression-reject gate; per-tenant canary promotion; rollback
 - **LLM Fine-Tuning** — End-to-end pipeline from telemetry to LoRA adapters
-- **Memory** — Context persistence across conversations
+- **Memory** — Schema-governed context persistence with trust-ranked retrieval and per-schema lifecycle policies
 - **Experiments** — Run and track evaluation experiments with datasets
 - **Hybrid Search** — BM25 + dense vectors with multiple ranking strategies
+- **Sandbox Isolation** — OpenShell per-agent sandboxing with `SandboxPolicy` (required/optional/disabled) and gateway health probes
 - **Configurable** — Pluggable models, embeddings, and backends
 - **Multi-Tenant** — Schema-per-tenant isolation with independent telemetry
 - **Production Ready** — OpenTelemetry tracing, metrics, and distributed traces

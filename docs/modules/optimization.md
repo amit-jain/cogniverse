@@ -14,12 +14,17 @@ libs/agents/cogniverse_agents/routing/
 
 libs/agents/cogniverse_agents/optimizer/
 ├── dspy_agent_optimizer.py        # DSPy prompt optimization (SIMBA/MIPROv2/GEPA)
-└── artifact_manager.py            # Artifact save/load via ArtifactManager
+├── artifact_manager.py            # ArtifactManager: ExperimentMetrics, promote_if_better,
+│                                  #   promote_to_canary, rollback_to_version, snapshot_active
+├── signature_variants.py          # SignatureVariantRegistry: per-tenant DSPy signature variants
+├── schemas.py                     # Optimization data schemas
+├── strategy_learner.py            # StrategyLearner: pattern + LLM distillation from traces
+└── router_optimizer.py            # RoutingOptimizer base
 
 libs/runtime/cogniverse_runtime/
 ├── optimization_cli.py            # CLI for per-agent optimization modes
 │                                  # Modes: simba|gateway-thresholds|entity-extraction|
-│                                  #        workflow|profile|cleanup|triggered|synthetic
+│                                  #        workflow|profile|cleanup|triggered|synthetic|rollback
 └── routers/tenant.py              # POST /admin/tenant/{id}/optimize (on-demand submit)
 
 libs/synthetic/                     # Synthetic data generation system

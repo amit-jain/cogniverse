@@ -95,6 +95,12 @@ class VespaDockerManager:
                     f"{config_port}:19071",  # Map config server port
                     "--platform",
                     docker_platform,
+                    # Per-test transient Vespa — make this more attractive
+                    # to the kernel OOM-killer than the session-scoped
+                    # ``backend-memory-tests-*`` container (which sets
+                    # oom-score-adj=-1000). Losing a transient one fails
+                    # its own test but doesn't cascade across the sweep.
+                    "--oom-score-adj=300",
                     "vespaengine/vespa",
                 ],
                 capture_output=True,

@@ -61,7 +61,15 @@ cogniverse_core/
 │   ├── exceptions.py            # Registry exceptions
 │   └── registry.py              # Base registry class
 ├── memory/                      # Memory system
-│   ├── manager.py               # Mem0MemoryManager
+│   ├── manager.py               # Mem0MemoryManager (add_memory, search_memory, drop_session, lifecycle tick)
+│   ├── schema.py                # KnowledgeSchema, KnowledgeRegistry, Retention, Sensitivity, Pinnable, ContradictionPolicy
+│   ├── provenance.py            # Provenance, CitationRef, DerivationKind, ProvenanceWalker, make_provenance
+│   ├── provenance_store.py      # Vespa-backed provenance persistence
+│   ├── contradiction.py         # ContradictionDetector, ConflictSet, reconcile()
+│   ├── trust.py                 # TrustRecord, compute_initial_trust, rank_with_trust, apply_endorsement
+│   ├── federation.py            # FederationService (org-trunk + tenant overlays, cross-tenant ACLs)
+│   ├── pinning.py               # PinService, PinQuotas, PinRecord
+│   ├── lifecycle_scheduler.py   # LifecycleScheduler (schema-driven periodic cleanup)
 │   ├── backend_config.py        # Memory backend configuration
 │   └── backend_vector_store.py  # Vector store integration
 ├── common/                      # Shared utilities

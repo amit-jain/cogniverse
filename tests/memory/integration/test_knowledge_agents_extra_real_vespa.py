@@ -188,8 +188,16 @@ async def test_multi_doc_synthesis_real_vespa(primary_mm, dspy_lm):
         )
 
     answer_lower = answer_text.lower()
-    assert "30 days" in answer_lower, answer_text
-    assert "14 days" in answer_lower or "14 additional" in answer_lower, answer_text
+    # Accept "30 days" / "30-day" / "30 day" — the LLM is free to choose
+    # adjective vs. plural-noun form of the duration. Same for "14".
+    # The contract is that the synthesised number reaches the answer,
+    # not that the LLM phrases it a particular way.
+    assert "30 day" in answer_lower or "30-day" in answer_lower, answer_text
+    assert (
+        "14 day" in answer_lower
+        or "14-day" in answer_lower
+        or "14 additional" in answer_lower
+    ), answer_text
     assert "digital" in answer_lower, answer_text
     assert 150 <= len(answer_text) <= 1500, (
         f"answer length {len(answer_text)} chars outside prose range "

@@ -16,8 +16,6 @@ import pytest
 import requests
 
 from tests.system.minio_test_manager import MinIOTestManager
-from tests.system.vespa_test_manager import VespaTestManager
-from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.markers import (
     is_docker_available,
     is_ffmpeg_available,
@@ -315,86 +313,83 @@ def pytest_collection_modifyitems(items):
             )
 
 
-# Generate unique ports based on this module name
-INGESTION_VESPA_PORT, INGESTION_VESPA_CONFIG_PORT = generate_unique_ports(__name__)
+# Re-export the canonical session-scoped Vespa from the project root.
+from tests.conftest import shared_vespa  # noqa: F401, E402
 
 
 @pytest.fixture(scope="module")
-def ingestion_vespa_backend():
-    """
-    Module-scoped Vespa instance for ingestion integration tests.
+def ingestion_vespa_backend(shared_vespa):  # noqa: F811
+    """Compatibility shim: yields the dict shape ingestion/integration tests
+    expect, backed by the project-wide ``shared_vespa``.
 
-    Sets up:
-    - Vespa Docker container with unique ports
-    - BACKEND_URL environment variable
-    - Cleans up after module tests complete
+    Deploys the production video schema for tenant ``test_unit`` via
+    SchemaRegistry (merge-safe). Sets ``BACKEND_URL`` /
+    ``BACKEND_PORT`` and patches ``COGNIVERSE_CONFIG`` so the ingestion
+    pipeline's ``ConfigUtils`` resolves to the shared container — same
+    behavior as the prior ``VespaTestManager`` path. Includes a
+    ``manager`` field that wraps a small adapter so the few consumers
+    that read ``ingestion_vespa_backend["manager"].http_port`` still
+    work.
     """
-    manager = VespaTestManager(
-        app_name="test-ingestion-module",
-        http_port=INGESTION_VESPA_PORT,
-        config_port=INGESTION_VESPA_CONFIG_PORT,
-    )
+
+    class _SharedVespaIngestionAdapter:
+        def __init__(self, http_port, config_port):
+            self.http_port = http_port
+            self.config_port = config_port
 
     # Save old environment
     old_backend_url = os.environ.get("BACKEND_URL")
     old_backend_port = os.environ.get("BACKEND_PORT")
     old_cogniverse_config = os.environ.get("COGNIVERSE_CONFIG")
 
+    http_port = shared_vespa["http_port"]
+    config_port = shared_vespa["config_port"]
+
+    # Patch COGNIVERSE_CONFIG to point at the shared container.
+    os.environ["COGNIVERSE_CONFIG"] = materialise_test_pipeline_config(http_port)
+
+    # Point create_default_config_manager() at the shared container.
+    os.environ["BACKEND_URL"] = "http://localhost"
+    os.environ["BACKEND_PORT"] = str(http_port)
+
+    # Deploy the production video schema for tenant test_unit (merge-safe).
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema
+
+    deploy_tenant_schema(
+        shared_vespa,
+        tenant_id="test_unit",
+        base_schema_name="video_colpali_smol500_mv_frame",
+    )
+
+    # Seed SystemConfig with the inference-service URLs pytest_configure
+    # populated. Profiles that route embedding through a remote service
+    # need this so the pipeline doesn't raise "no URL configured".
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+    )
+
+    raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
     try:
-        # Start Vespa container
-        if not manager.setup_application_directory():
-            pytest.skip("Failed to setup application directory")
-
-        if not manager.deploy_test_application():
-            pytest.skip("Failed to deploy Vespa test application")
-
-        # See ``materialise_test_pipeline_config`` for why this is
-        # needed (backend port + per-profile frame-count caps). Pointing
-        # COGNIVERSE_CONFIG at the patched config makes the pipeline's
-        # ConfigUtils resolve to the test Vespa instead of the host's
-        # k3d cluster and stops every test from running 110+ frames
-        # per profile.
-        os.environ["COGNIVERSE_CONFIG"] = materialise_test_pipeline_config(
-            manager.http_port
+        inference_service_urls = json.loads(raw_urls) if raw_urls else {}
+    except json.JSONDecodeError:
+        inference_service_urls = {}
+    cm = create_default_config_manager()
+    cm.set_system_config(
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=http_port,
+            inference_service_urls=inference_service_urls,
         )
+    )
 
-        # Set environment for tests
-        os.environ["BACKEND_URL"] = "http://localhost"
-        os.environ["BACKEND_PORT"] = str(manager.http_port)
-
-        # Seed SystemConfig with the vllm_colpali / videoprism_jax /
-        # ... URLs ``pytest_configure`` populated. Profiles that route
-        # embedding through a remote service (model_loader=colpali /
-        # videoprism + inference_services.embedding=...) read the URL
-        # from SystemConfig at pipeline-init time, so without this seed
-        # the pipeline raises ``no URL is configured. Deployed services:
-        # []`` against the freshly-spawned Vespa.
-        from cogniverse_foundation.config.unified_config import SystemConfig
-        from cogniverse_foundation.config.utils import (
-            create_default_config_manager,
-        )
-
-        raw_urls = os.environ.get("INFERENCE_SERVICE_URLS", "")
-        try:
-            inference_service_urls = json.loads(raw_urls) if raw_urls else {}
-        except json.JSONDecodeError:
-            inference_service_urls = {}
-        cm = create_default_config_manager()
-        cm.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=manager.http_port,
-                inference_service_urls=inference_service_urls,
-            )
-        )
-
+    try:
         yield {
-            "manager": manager,
-            "http_port": manager.http_port,
-            "config_port": manager.config_port,
-            "backend_url": f"http://localhost:{manager.http_port}",
+            "manager": _SharedVespaIngestionAdapter(http_port, config_port),
+            "http_port": http_port,
+            "config_port": config_port,
+            "backend_url": f"http://localhost:{http_port}",
         }
-
     finally:
         # Restore environment
         if old_backend_url is not None:
@@ -411,9 +406,7 @@ def ingestion_vespa_backend():
             os.environ["COGNIVERSE_CONFIG"] = old_cogniverse_config
         elif "COGNIVERSE_CONFIG" in os.environ:
             del os.environ["COGNIVERSE_CONFIG"]
-
-        # Cleanup container
-        manager.cleanup()
+        # No container teardown — shared_vespa owns the lifecycle.
 
 
 @pytest.fixture(scope="module")
