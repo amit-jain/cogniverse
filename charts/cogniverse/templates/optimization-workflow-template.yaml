@@ -76,7 +76,7 @@ spec:
       - name: TELEMETRY_OTLP_ENDPOINT
         value: "{{ $fullName }}-phoenix:4317"
       - name: LLM_ENDPOINT
-        value: {{ include "cogniverse.llmEndpoint" . | quote }}
+        value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
       - name: LLM_ENGINE
         value: {{ .Values.llm.engine | quote }}
       - name: LLM_MODEL

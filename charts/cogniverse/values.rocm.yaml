@@ -202,7 +202,12 @@ runtime: {}
 # ROCm hosts already serve the agent LLM via inference.vllm_llm_student.
 # Disable the chart's builtin LLM block (Ollama StatefulSet by default)
 # so it doesn't duplicate the role and burn 20 GiB of unified memory
-# the vLLM pods need.
+# the vLLM pods need. Also pin engine=vllm + the served model so the
+# runtime template renders LLM_ENDPOINT pointing at vllm-llm-student
+# (via cogniverse.primaryLLMEndpoint), not at the absent
+# cogniverse-llm Ollama service the engine=ollama default would resolve.
 llm:
+  engine: vllm
+  model: google/gemma-4-e4b-it
   builtin:
     enabled: false

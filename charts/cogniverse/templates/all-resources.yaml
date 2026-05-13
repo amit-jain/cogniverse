@@ -297,7 +297,7 @@ spec:
         - name: TRANSFORMERS_CACHE
           value: "/home/cogniverse/.cache/huggingface"
         - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
@@ -483,7 +483,7 @@ spec:
         - "--phoenix-url"
         - "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - "--llm-base-url"
-        - {{ include "cogniverse.llmEndpoint" . | quote }}
+        - {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - "--llm-model"
         - {{ .Values.runtime.qualityMonitor.llmModel | quote }}
         - "--golden-interval"
@@ -508,7 +508,7 @@ spec:
         - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
@@ -709,7 +709,7 @@ spec:
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
         - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL
@@ -1945,7 +1945,7 @@ spec:
         - name: TELEMETRY_HTTP_ENDPOINT
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: LLM_ENDPOINT
-          value: {{ include "cogniverse.llmEndpoint" . | quote }}
+          value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - name: LLM_ENGINE
           value: {{ .Values.llm.engine | quote }}
         - name: LLM_MODEL

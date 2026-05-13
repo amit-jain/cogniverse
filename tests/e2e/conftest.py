@@ -219,6 +219,71 @@ def unique_id(prefix: str = "e2e") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
 
+@pytest.fixture(scope="session")
+def phoenix_client_session():
+    """Single PhoenixClient reused across the session.
+
+    Every span-polling test was rebuilding `PhoenixClient(base_url=...)` per
+    invocation (e.g. test_a2a_gateway_e2e.py:1041, test_batch_optimization_e2e.py).
+    Sharing one client over the e2e session avoids the per-test connection
+    setup and keeps every assertion path against Phoenix using the same wire.
+    """
+    from phoenix.client import Client as PhoenixClient
+
+    return PhoenixClient(base_url=PHOENIX_URL)
+
+
+def wait_for_span(
+    phoenix_client,
+    project: str,
+    name_substr: str,
+    attribute_predicate=None,
+    timeout_s: float = 30.0,
+    poll_interval_s: float = 2.0,
+):
+    """Poll a Phoenix project until a matching span lands or the deadline expires.
+
+    Mirrors the polling logic at test_a2a_gateway_e2e.py:1045-1062 so every
+    Phase that asserts on spans goes through the same helper. Returns the
+    first matching pandas Series row (the span's record) or None on timeout.
+
+    `name_substr` is a case-insensitive substring match on `span.name`.
+    `attribute_predicate`, if given, is `(attrs_dict) -> bool` evaluated on
+    each candidate span's attributes column. The first span that satisfies
+    BOTH name match AND predicate is returned.
+    """
+    deadline = _time.time() + timeout_s
+    while _time.time() < deadline:
+        try:
+            spans_df = phoenix_client.spans.get_spans_dataframe(
+                project_identifier=project,
+                limit=200,
+            )
+            if spans_df is not None and not spans_df.empty:
+                matches = spans_df[
+                    spans_df["name"].str.contains(name_substr, case=False, na=False)
+                ]
+                if not matches.empty:
+                    if attribute_predicate is None:
+                        return matches.iloc[0]
+                    for _, row in matches.iterrows():
+                        attrs = row.get("attributes")
+                        if attrs is None:
+                            continue
+                        # Phoenix returns attributes as a dict-like; coerce.
+                        attrs_dict = (
+                            dict(attrs) if not isinstance(attrs, dict) else attrs
+                        )
+                        if attribute_predicate(attrs_dict):
+                            return row
+        except Exception:
+            # Phoenix can transiently 5xx during heavy ingest; keep polling
+            # until the deadline. Failures past the deadline surface to caller.
+            pass
+        _time.sleep(poll_interval_s)
+    return None
+
+
 def restart_runtime(timeout_s: int = 60) -> bool:
     """Restart the runtime pod via kubectl.
 
@@ -471,6 +536,18 @@ _TEST_TENANT_PREFIXES = (
     "apiorg_",
     "search_e2e_",
     "ingest_e2e_",
+    # Knowledge-system e2e prefixes (added with the Section A/B/C/D coverage).
+    # Each phase claims one prefix; tests mint via unique_id("<prefix>") so the
+    # session-end sweep at _cleanup_test_tenants reaps them automatically.
+    "know_",  # KnowledgeRegistry / lifecycle / pinning (Phases 1, 4)
+    "prov_",  # Provenance round-trip (Phase 2)
+    "confl_",  # Contradiction detection (Phase 3)
+    "trust_",  # Trust ranking (Phase 3)
+    "fed_",  # Federation + cross-tenant (Phases 4, 9)
+    "rlm_",  # RLM telemetry / A-B / deep-synthesis (Phases 5, 11)
+    "opt_",  # Optimizer canary / variants / rollback (Phase 6)
+    "sbx_",  # Sandbox policy + health probe (Phase 7)
+    "kagent_",  # Nine knowledge agents (Phases 8, 9, 10)
 )
 
 
