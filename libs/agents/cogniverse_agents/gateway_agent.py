@@ -113,6 +113,14 @@ class GatewayDeps(AgentDeps):
     gliner_threshold: float = Field(
         0.3, description="Entity detection confidence threshold"
     )
+    gliner_inference_url: Optional[str] = Field(
+        None,
+        description=(
+            "Optional remote GLiNER service URL (e.g. the deploy/gliner "
+            "sidecar). When set, classification posts to this endpoint "
+            "instead of importing gliner in-process."
+        ),
+    )
     fast_path_confidence_threshold: float = Field(
         0.4, description="Minimum confidence for simple (fast-path) routing"
     )
@@ -212,6 +220,10 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         The dispatcher creates fresh agent instances per request; without
         caching, every request reloaded the 1.4GB GLiNER weights and PyTorch
         retained them in heap, leaking through the suite.
+
+        When ``gliner_inference_url`` is set, build a remote-HTTP client
+        that exposes the same ``predict_entities`` interface — runtime
+        image stays slim (no torch / gliner in-process).
         """
         if self._gliner_model is not None:
             return
@@ -219,7 +231,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         from cogniverse_core.common.models import get_or_load_gliner
 
         self._gliner_model = get_or_load_gliner(
-            self.deps.gliner_model_name, logger=logger
+            self.deps.gliner_model_name,
+            logger=logger,
+            inference_url=self.deps.gliner_inference_url,
         )
 
     # ------------------------------------------------------------------

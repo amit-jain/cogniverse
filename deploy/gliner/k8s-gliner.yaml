@@ -1,0 +1,84 @@
+# Minimal raw k8s manifest for the GLiNER sidecar.
+#
+# Deploys deploy/gliner as a separate pod in the cogniverse namespace
+# so the runtime can POST entity-extraction requests to it instead of
+# loading gliner+torch in-process. The slim runtime image excludes
+# both, by design (commits 8e2e3f2e + 34195f75).
+#
+# This is a temporary raw-manifest path; the proper integration is to
+# add a top-level ``inference.gliner`` block to charts/cogniverse/
+# values.yaml so the chart's macro renders the deployment alongside
+# colpali/pylate/denseon. That integration is tracked separately.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cogniverse-gliner
+  namespace: cogniverse
+  labels:
+    app.kubernetes.io/name: cogniverse-gliner
+    app.kubernetes.io/component: gliner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cogniverse-gliner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cogniverse-gliner
+        app.kubernetes.io/component: gliner
+    spec:
+      containers:
+        - name: gliner
+          image: cogniverse/gliner:dev
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: MODEL_NAME
+              value: urchade/gliner_large-v2.1
+            - name: HF_HOME
+              value: /hf-cache
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /hf-cache
+          resources:
+            requests:
+              cpu: "1"
+              memory: "3Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 30
+      volumes:
+        - name: hf-cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cogniverse-gliner
+  namespace: cogniverse
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: cogniverse-gliner

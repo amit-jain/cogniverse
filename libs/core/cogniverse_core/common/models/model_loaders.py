@@ -16,7 +16,7 @@ import logging
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import requests
@@ -971,29 +971,85 @@ def get_or_load_model(
 _gliner_cache: Dict[str, Any] = {}
 
 
+class RemoteGlinerClient:
+    """HTTP client wrapping the deploy/gliner sidecar.
+
+    Exposes the same ``predict_entities(text, labels, threshold=...)``
+    surface the in-process ``GLiNER`` class does so GatewayAgent can
+    treat local + remote loaders interchangeably.
+    """
+
+    def __init__(
+        self,
+        url: str,
+        model_name: str,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
+        self._url = url.rstrip("/")
+        self._model_name = model_name
+        self._logger = logger or logging.getLogger(__name__)
+        self._session = requests.Session()
+
+    def predict_entities(
+        self, text: str, labels: List[str], threshold: float = 0.4
+    ) -> List[Dict[str, Any]]:
+        payload = {"text": text, "labels": labels, "threshold": threshold}
+        try:
+            resp = self._session.post(
+                f"{self._url}/predict_entities",
+                json=payload,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return list(data.get("entities", []) or [])
+        except Exception as exc:
+            self._logger.error(
+                "Remote GLiNER prediction failed (url=%s): %s", self._url, exc
+            )
+            return []
+
+
 def get_or_load_gliner(
-    model_name: str, logger: Optional[logging.Logger] = None
+    model_name: str,
+    logger: Optional[logging.Logger] = None,
+    inference_url: Optional[str] = None,
 ) -> Optional[Any]:
     """Return a cached GLiNER instance, loading once per model name.
 
+    When ``inference_url`` is provided, return a ``RemoteGlinerClient``
+    that POSTs to the deploy/gliner sidecar. Local mode loads via
+    ``gliner.GLiNER.from_pretrained`` and requires the heavy torch
+    stack the runtime image normally omits.
+
     Returns None on load failure (callers must handle missing extractor).
-    Uses the same global lock as the embedding-model cache to serialize
-    HuggingFace `from_pretrained` calls (concurrent loads corrupt accelerate
-    dispatch hooks).
     """
+    cache_key = (model_name, inference_url or "_local_")
     with _model_lock:
-        cached = _gliner_cache.get(model_name)
+        cached = _gliner_cache.get(cache_key)
         if cached is not None:
             if logger:
-                logger.info(f"Using cached GLiNER model: {model_name}")
+                logger.info(
+                    f"Using cached GLiNER model: {model_name} "
+                    f"({'remote' if inference_url else 'local'})"
+                )
             return cached
+        if inference_url:
+            instance = RemoteGlinerClient(inference_url, model_name, logger=logger)
+            _gliner_cache[cache_key] = instance
+            if logger:
+                logger.info(
+                    f"Initialised remote GLiNER client: {model_name} "
+                    f"via {inference_url}"
+                )
+            return instance
         try:
             from gliner import GLiNER
 
             if logger:
                 logger.info(f"Loading GLiNER model: {model_name}")
             instance = GLiNER.from_pretrained(model_name)
-            _gliner_cache[model_name] = instance
+            _gliner_cache[cache_key] = instance
             if logger:
                 logger.info(f"GLiNER loaded: {model_name}")
             return instance

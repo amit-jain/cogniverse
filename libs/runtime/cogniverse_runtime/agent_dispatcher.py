@@ -55,6 +55,21 @@ class AgentDispatcher:
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
 
+    def _resolve_gliner_url(self) -> Optional[str]:
+        """Look up the deployed GLiNER sidecar URL from system config.
+
+        Returns the URL when ``inference.gliner`` is enabled in the
+        chart, otherwise None — in which case GatewayAgent falls back
+        to in-process loading (which only works when the runtime image
+        has the ``torch-local`` extras installed).
+        """
+        try:
+            sys_cfg = self._config_manager.get_system_config()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("get_system_config failed for gliner lookup: %s", exc)
+            return None
+        return (sys_cfg.inference_service_urls or {}).get("gliner")
+
     def _init_agent_memory(self, agent: Any, agent_name: str, tenant_id: str) -> None:
         """Auto-initialize MemoryAwareMixin for any agent that supports it.
 
@@ -702,7 +717,7 @@ class AgentDispatcher:
             )
 
             if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
-                deps = GatewayDeps()
+                deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
                 self._gateway_agent = GatewayAgent(deps=deps)
             typed_input = GatewayInput(query=query, tenant_id=tenant_id)
             return self._gateway_agent, typed_input
@@ -975,7 +990,7 @@ class AgentDispatcher:
         )
 
         if not hasattr(self, "_gateway_agent") or self._gateway_agent is None:
-            deps = GatewayDeps()
+            deps = GatewayDeps(gliner_inference_url=self._resolve_gliner_url())
             self._gateway_agent = GatewayAgent(deps=deps)
             # Inject global TelemetryManager for span emission
             from cogniverse_foundation.telemetry.manager import get_telemetry_manager
