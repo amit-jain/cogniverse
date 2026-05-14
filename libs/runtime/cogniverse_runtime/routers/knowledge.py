@@ -245,15 +245,25 @@ class KGTraverseRequest(BaseModel):
 async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]:
     """walk the entity / kg graph from a starting subject (read-only)."""
     from cogniverse_agents.kg_traversal_agent import (
-        KGTraversalAgent,
         KGTraversalDeps,
         KGTraversalInput,
+        KnowledgeGraphTraversalAgent,
     )
 
-    agent = KGTraversalAgent(deps=KGTraversalDeps(tenant_id=tenant_id))
+    agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=tenant_id))
     _inject_memory(agent, tenant_id, "kg_traversal_agent")
+    # KGTraversalInput uses ``relation_allowlist`` / ``max_edges``; the
+    # public route field names are ``relation_filter`` / ``max_nodes``
+    # for symmetry with the citation-trace request shape. Translate
+    # before construction so the agent input doesn't reject extra keys.
     out = await agent._process_impl(
-        KGTraversalInput(tenant_id=tenant_id, **body.model_dump())
+        KGTraversalInput(
+            tenant_id=tenant_id,
+            start_subject_key=body.start_subject_key,
+            relation_allowlist=body.relation_filter,
+            max_depth=body.max_depth,
+            max_edges=body.max_nodes,
+        )
     )
     return out.model_dump()
 
