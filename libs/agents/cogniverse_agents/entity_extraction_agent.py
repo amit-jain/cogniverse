@@ -328,6 +328,23 @@ class EntityExtractionAgent(
 
         return output
 
+    # GLiNER's broader 15-label set (used by the routing relationship
+    # extractor) maps onto the agent's normalized 6-type output:
+    # PERSON, ORGANIZATION, CONCEPT, PLACE, EVENT, TECHNOLOGY.
+    _GLINER_TYPE_MAP = {
+        "LOCATION": "PLACE",
+        "PRODUCT": "TECHNOLOGY",
+        "TOOL": "TECHNOLOGY",
+        "VEHICLE": "CONCEPT",
+        "MATERIAL": "CONCEPT",
+        "ANIMAL": "CONCEPT",
+        "OBJECT": "CONCEPT",
+        "ACTION": "CONCEPT",
+        "ACTIVITY": "CONCEPT",
+        "SPORT": "CONCEPT",
+        "APPLICATION": "TECHNOLOGY",
+    }
+
     def _extract_fast_path(
         self, query: str
     ) -> tuple[List[Entity], List[Relationship], str]:
@@ -338,7 +355,7 @@ class EntityExtractionAgent(
         entities = [
             Entity(
                 text=e["text"],
-                type=e["label"],
+                type=self._GLINER_TYPE_MAP.get(e["label"], e["label"]),
                 confidence=e.get("confidence", e.get("score", 0.5)),
                 context=self._extract_context(e["text"], query),
             )

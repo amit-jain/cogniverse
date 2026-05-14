@@ -30,7 +30,10 @@ RUN pip install --no-cache-dir \
 
 COPY server.py ./
 
-ENV MODEL_NAME=urchade/gliner_large-v2.1 \
+# Default to medium-v2.1 — narrower entity tokenisation matches the
+# production EntityExtractionAgent (GLiNERRelationshipExtractor pinned
+# to gliner_mediumv2.1) and keeps gateway classification fast on CPU.
+ENV MODEL_NAME=urchade/gliner_mediumv2.1 \
     DEVICE=cpu \
     HOST=0.0.0.0 \
     PORT=8080 \

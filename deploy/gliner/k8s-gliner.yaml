@@ -38,7 +38,7 @@ spec:
               containerPort: 8080
           env:
             - name: MODEL_NAME
-              value: urchade/gliner_large-v2.1
+              value: urchade/gliner_mediumv2.1
             - name: HF_HOME
               value: /hf-cache
           volumeMounts:
