@@ -69,22 +69,58 @@ class ColBERTQueryEncoder(QueryEncoder):
 
 
 class ColPaliQueryEncoder(QueryEncoder):
-    """Query encoder for ColPali models"""
+    """Query encoder for ColPali models.
 
-    def __init__(self, model_name: str = "vidore/colsmol-500m"):
+    When ``inference_service_url`` is set, the encoder POSTs to the
+    deployed vLLM ColPali sidecar and never imports ``colpali_engine``.
+    Local mode (no URL) is reserved for offline dev hosts that have the
+    ``cogniverse-agents[torch-local]`` extras installed.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "vidore/colsmol-500m",
+        *,
+        inference_service_url: Optional[str] = None,
+    ):
+        self.model_name = model_name
+        self.embedding_dim = 128
+        self._remote_client = None
+        self._remote_url = inference_service_url
+
+        if inference_service_url:
+            from cogniverse_core.common.models.model_loaders import (
+                RemoteInferenceClient,
+            )
+
+            self._remote_client = RemoteInferenceClient(
+                inference_service_url, None, logger
+            )
+            logger.info(
+                f"Loaded ColPali remote query encoder: {model_name} "
+                f"via {inference_service_url}"
+            )
+            return
+
         config = {
             "colpali_model": model_name,
             "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
         self.model, self.processor = get_or_load_model(model_name, config, logger)
-
         self.device = next(self.model.parameters()).device
-        self.embedding_dim = 128
-        logger.info(f"Loaded ColPali query encoder: {model_name} on {self.device}")
+        logger.info(
+            f"Loaded ColPali local query encoder: {model_name} on {self.device}"
+        )
 
     def encode(self, query: str) -> np.ndarray:
         """Encode query to multi-vector embeddings"""
+        if self._remote_client is not None:
+            result = self._remote_client.process_queries_vllm(
+                [query], model_name=self.model_name
+            )
+            return np.asarray(result["embeddings"], dtype=np.float32)
+
         import torch
 
         batch_queries = self.processor.process_queries([query]).to(self.device)
@@ -97,22 +133,57 @@ class ColPaliQueryEncoder(QueryEncoder):
 
 
 class ColQwenQueryEncoder(QueryEncoder):
-    """Query encoder for ColQwen models"""
+    """Query encoder for ColQwen models.
 
-    def __init__(self, model_name: str = "vidore/colqwen-omni-v0.1"):
+    Same remote/local split as ColPaliQueryEncoder — when
+    ``inference_service_url`` is set, calls the deployed sidecar's
+    ``/pooling`` endpoint and never imports ``colpali_engine``.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "vidore/colqwen-omni-v0.1",
+        *,
+        inference_service_url: Optional[str] = None,
+    ):
+        self.model_name = model_name
+        self.embedding_dim = 128
+        self._remote_client = None
+        self._remote_url = inference_service_url
+
+        if inference_service_url:
+            from cogniverse_core.common.models.model_loaders import (
+                RemoteInferenceClient,
+            )
+
+            self._remote_client = RemoteInferenceClient(
+                inference_service_url, None, logger
+            )
+            logger.info(
+                f"Loaded ColQwen remote query encoder: {model_name} "
+                f"via {inference_service_url}"
+            )
+            return
+
         config = {
             "colpali_model": model_name,
             "embedding_type": "multi_vector",
             "model_loader": "colqwen",
         }
         self.model, self.processor = get_or_load_model(model_name, config, logger)
-
         self.device = next(self.model.parameters()).device
-        self.embedding_dim = 128
-        logger.info(f"Loaded ColQwen query encoder: {model_name} on {self.device}")
+        logger.info(
+            f"Loaded ColQwen local query encoder: {model_name} on {self.device}"
+        )
 
     def encode(self, query: str) -> np.ndarray:
         """Encode query to multi-vector embeddings"""
+        if self._remote_client is not None:
+            result = self._remote_client.process_queries_vllm(
+                [query], model_name=self.model_name
+            )
+            return np.asarray(result["embeddings"], dtype=np.float32)
+
         import torch
 
         batch_queries = self.processor.process_queries([query]).to(self.device)
@@ -324,23 +395,32 @@ class QueryEncoderFactory:
           3. Profile-name substring match.
         """
         model_loader = profile_config.get("model_loader")
+        # Resolve the configured sidecar URL for this profile so the
+        # encoders can route through the deployed vLLM service instead
+        # of importing colpali_engine in-process. _build_colbert_encoder
+        # already does this; mirror it for ColPali / ColQwen.
+        service_name = (profile_config.get("inference_services") or {}).get("embedding")
+        inference_url: Optional[str] = None
+        if service_name:
+            service_urls = getattr(system_config, "inference_service_urls", {}) or {}
+            inference_url = service_urls.get(service_name)
 
         if model_loader == "colbert":
             return _build_colbert_encoder(
                 model_name, profile, profile_config, system_config
             )
         if model_loader == "colpali":
-            return ColPaliQueryEncoder(model_name)
+            return ColPaliQueryEncoder(model_name, inference_service_url=inference_url)
         if model_loader == "colqwen":
-            return ColQwenQueryEncoder(model_name)
+            return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
         if model_loader == "videoprism":
             return VideoPrismQueryEncoder(model_name)
 
         name = model_name.lower()
         if "colpali" in name or "colsmol" in name:
-            return ColPaliQueryEncoder(model_name)
+            return ColPaliQueryEncoder(model_name, inference_service_url=inference_url)
         if "colqwen" in name:
-            return ColQwenQueryEncoder(model_name)
+            return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
         if "videoprism" in name:
             return VideoPrismQueryEncoder(model_name)
         if "colbert" in name or "lateon" in name:

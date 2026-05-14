@@ -204,6 +204,20 @@ class ConfigUtils:
             f"{len(self._backend_config.profiles)} profiles available"
         )
 
+    @property
+    def inference_service_urls(self) -> dict[str, str]:
+        """Pass-through to ``SystemConfig.inference_service_urls``.
+
+        Search-side encoders (ColPali / ColQwen / VideoPrism) need to
+        resolve the deployed sidecar URL for the profile's
+        ``inference_services.embedding`` setting; without this passthrough
+        they fall back to in-process model loading (which then fails when
+        the heavy ``colpali_engine`` extras aren't installed in the
+        runtime container).
+        """
+        self._ensure_system_config()
+        return getattr(self._system_config, "inference_service_urls", {}) or {}
+
     def get_llm_config(self) -> LLMConfig:
         """
         Load the centralized LLM configuration from config.json.
