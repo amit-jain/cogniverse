@@ -61,6 +61,34 @@ BATCH2=(
   tests/e2e/test_tenant_extensibility_e2e.py
   tests/e2e/test_wiki_e2e.py
   tests/e2e/test_batch_optimization_e2e.py
+  # Knowledge-System Improvements e2e suite (Phases 0-11). Each per-test
+  # tenant deploys its own Vespa schema, and the RLM-bound tests run
+  # under the in-cluster vLLM — keeping these in batch 2 (after the
+  # runtime restart) avoids contention with batch 1's lighter
+  # gateway/CRUD set.
+  tests/e2e/test_phase0_helpers_e2e.py
+  tests/e2e/test_knowledge_schema_e2e.py
+  tests/e2e/test_provenance_e2e.py
+  tests/e2e/test_contradiction_detection_e2e.py
+  tests/e2e/test_trust_ranking_e2e.py
+  tests/e2e/test_federation_e2e.py
+  tests/e2e/test_pinning_quotas_e2e.py
+  tests/e2e/test_rlm_telemetry_e2e.py
+  tests/e2e/test_rlm_ab_harness_e2e.py
+  tests/e2e/test_signature_variants_e2e.py
+  tests/e2e/test_canary_state_machine_e2e.py
+  tests/e2e/test_artifact_rollback_cli_e2e.py
+  tests/e2e/test_sandbox_policy_boot_e2e.py
+  tests/e2e/test_gateway_health_probe_e2e.py
+  tests/e2e/test_citation_and_audit_agents_e2e.py
+  tests/e2e/test_kg_traversal_agent_e2e.py
+  tests/e2e/test_knowledge_summarization_agent_e2e.py
+  tests/e2e/test_cross_tenant_comparison_agent_e2e.py
+  tests/e2e/test_federated_query_agent_e2e.py
+  tests/e2e/test_contradiction_reconciliation_agent_e2e.py
+  tests/e2e/test_multi_document_synthesis_agent_e2e.py
+  tests/e2e/test_temporal_reasoning_agent_e2e.py
+  tests/e2e/test_deep_synthesis_workflow_e2e.py
 )
 
 # Intentionally excluded (not part of the regular suite):
