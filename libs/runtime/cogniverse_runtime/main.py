@@ -231,6 +231,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
         schema_loader
     )
+    app.dependency_overrides[knowledge._get_config_manager] = lambda: config_manager
     logger.info("Router dependencies configured")
 
     # 4. Initialize registries

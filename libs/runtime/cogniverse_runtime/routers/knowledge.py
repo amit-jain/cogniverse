@@ -21,8 +21,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,33 @@ def _build_default_registry():
     from cogniverse_core.memory.schema import build_default_registry
 
     return build_default_registry()
+
+
+def _get_config_manager() -> ConfigManager:
+    """FastAPI dep, overridden in main.py — same pattern as other routers."""
+    raise RuntimeError(
+        "ConfigManager dependency not configured. "
+        "Override this dependency in main.py using app.dependency_overrides."
+    )
+
+
+def _runtime_primary_llm_config(config_manager: ConfigManager):
+    """Return the runtime's primary LLMEndpointConfig (api_base + model).
+
+    Agents that take an optional ``llm_config`` (synthesis/RLM paths)
+    must point at the in-cluster vLLM, not the upstream OpenAI default
+    that ``LLMEndpointConfig.model_factory`` would synthesise. Without
+    this, the RLM path 401s against api.openai.com.
+    """
+    from cogniverse_foundation.config.utils import get_config
+
+    config = get_config(tenant_id="__system__", config_manager=config_manager)
+    llm_cfg = config.get("llm_config", {}).get("primary")
+    if not llm_cfg:
+        return None
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+    return LLMEndpointConfig(**llm_cfg)
 
 
 def _inject_memory(agent, tenant_id: str, agent_name: str):
@@ -210,11 +239,22 @@ class MultiDocSynthesizeRequest(BaseModel):
     documents: List[Dict[str, Any]] = Field(..., min_length=1)
     actor_role: str = Field("user")
     actor_id: str = Field("admin")
+    rlm: Optional[Dict[str, Any]] = Field(
+        None,
+        description=(
+            "Optional RLM options (RLMOptions schema). When provided with "
+            "``enabled=true`` or ``auto_detect=true`` past the threshold, "
+            "synthesis runs through RLMInference instead of the dspy.Predict "
+            "fast path."
+        ),
+    )
 
 
 @router.post("/tenants/{tenant_id}/knowledge/synthesis/multi_doc")
 async def multi_doc_synthesize(
-    tenant_id: str, body: MultiDocSynthesizeRequest
+    tenant_id: str,
+    body: MultiDocSynthesizeRequest,
+    config_manager: ConfigManager = Depends(_get_config_manager),
 ) -> Dict[str, Any]:
     """synthesise an answer across N documents with citations."""
     from cogniverse_agents.multi_document_synthesis_agent import (
@@ -223,7 +263,10 @@ async def multi_doc_synthesize(
         MultiDocumentSynthesisAgent,
     )
 
-    agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=tenant_id))
+    agent = MultiDocumentSynthesisAgent(
+        deps=MultiDocSynthesisDeps(tenant_id=tenant_id),
+        llm_config=_runtime_primary_llm_config(config_manager),
+    )
     _inject_memory(agent, tenant_id, "multi_document_synthesis_agent")
     out = await agent._process_impl(
         MultiDocSynthesisInput(tenant_id=tenant_id, **body.model_dump())

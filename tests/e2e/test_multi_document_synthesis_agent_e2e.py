@@ -202,6 +202,97 @@ class TestSynthesisOverInlineDocuments:
             assert body["used_rlm"] is False  # default RLMOptions=None
             assert body["metadata"]["document_count"] == 5
             assert body["metadata"]["derivation_kind"] == "synthesis"
+            # Answer must mention the synthesis subject — catches the
+            # regression where the LM returns garbage or echoes the prompt.
+            assert "lithium" in body["answer"].lower(), body["answer"][:300]
+
+            # Round-trip: re-fetch the persisted memory and verify the
+            # provenance contract the agent owes (kind, derivation_kind,
+            # derived_from len matches input docs).
+            persisted = mm.memory.get(body["persisted_memory_id"])
+            assert persisted is not None, "persisted memory missing"
+            persisted_meta = persisted.get("metadata") or {}
+            if isinstance(persisted_meta, str):
+                import json as _json
+
+                persisted_meta = _json.loads(persisted_meta)
+            assert persisted_meta.get("kind") == "synthesis_fact", persisted_meta
+            prov = persisted_meta.get("provenance") or {}
+            assert prov.get("derivation_kind") == "synthesis", prov
+            assert len(prov.get("derived_from") or []) == 5, prov
+        finally:
+            try:
+                mm.clear_agent_memory(tenant_id, SYN_AGENT)
+            except Exception:
+                pass
+            Mem0MemoryManager._instances.clear()
+
+
+# ---------------------------------------------------------------------------
+# 1b. Large-document path triggers RLM auto-detect
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestSynthesisLargeDocumentTriggersRLM:
+    """50 large docs (~5KB each) with rlm.auto_detect=True → used_rlm flips True.
+
+    Pins the agent's auto-detect contract: the dspy.Predict fast path is
+    skipped when the joined-document context exceeds ``context_threshold``
+    and the synthesis runs via RLMInference instead. ``context_chars`` in
+    the response metadata reports the joined-prompt size and must be in a
+    tight window for 50 docs of ~5_000 chars each.
+    """
+
+    @pytest.fixture(scope="class")
+    def deno_path_setup(self) -> None:
+        # RLMInference asserts Deno on construction; the runtime pod has
+        # Deno installed at /home/cogniverse/.deno/bin so the route works,
+        # but we don't need any local setup here — the RLM runs in-pod.
+        return None
+
+    def test_50_docs_5kb_each_flips_used_rlm(self, deno_path_setup: None) -> None:
+        Mem0MemoryManager._instances.clear()
+        tenant_id = unique_id("kagent_synl") + ":t1"
+        mm = _build_manager(tenant_id)
+        try:
+            big_docs = [
+                {
+                    "label": f"big_{i:02d}",
+                    # ~5_000 chars each → 50 docs ≈ 250_000 chars before
+                    # the per-document =====/label framing overhead.
+                    "content": (f"Document {i} body. " * 250).strip(),
+                }
+                for i in range(50)
+            ]
+            with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
+                resp = client.post(
+                    f"/admin/tenants/{tenant_id}/knowledge/synthesis/multi_doc",
+                    json={
+                        "query": "Summarise the documents.",
+                        "documents": big_docs,
+                        "actor_role": "user",
+                        "actor_id": "alice",
+                        "rlm": {
+                            "auto_detect": True,
+                            # Threshold below 200_000 so 50×5_000 trips it.
+                            "context_threshold": 100_000,
+                            "max_iterations": 1,
+                            "max_llm_calls": 2,
+                            "timeout_seconds": 600,
+                        },
+                    },
+                )
+            assert resp.status_code == 200, resp.text[:500]
+            body = resp.json()
+            # The whole point: auto_detect flipped used_rlm to True.
+            assert body["used_rlm"] is True, body.get("metadata")
+            assert body["metadata"]["document_count"] == 50
+            # 50 docs × 5_000 chars + per-doc framing ≈ 250_000-350_000.
+            ctx_chars = body["metadata"]["context_chars"]
+            assert 200_000 <= ctx_chars <= 400_000, ctx_chars
+            assert len(body["citation_refs"]) == 50
         finally:
             try:
                 mm.clear_agent_memory(tenant_id, SYN_AGENT)

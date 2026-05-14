@@ -143,7 +143,73 @@ def _write_with_provenance(
 
 
 # ---------------------------------------------------------------------------
-# 1. citation/trace truncates the chain at max_depth=1
+# 1. citation/trace walks the full chain back to the primary source
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+@skip_if_no_runtime
+class TestCitationTracingAgentWalksToPrimary:
+    """3-deep chain ROOT←MID←LEAF; trace from LEAF returns the full ordered chain."""
+
+    def test_walks_leaf_mid_root_with_exact_depths(self) -> None:
+        tenant_id = unique_id("kagent_cw") + ":t1"
+        mm = _build_manager(tenant_id)
+        try:
+            root = _write_with_provenance(
+                mm,
+                kind="external_doc",
+                content="ROOT primary source",
+                derivation_kind=DerivationKind.DIRECT_INGEST,
+                derived_from=[CitationRef.external("phase8://primary")],
+                subject_key="cw.root",
+            )
+            _wait_for_provenance(mm, root)
+            mid = _write_with_provenance(
+                mm,
+                kind="entity_fact",
+                content="MID extracted from ROOT",
+                derivation_kind=DerivationKind.EXTRACTION,
+                derived_from=[CitationRef.memory(root)],
+                subject_key="cw.mid",
+            )
+            _wait_for_provenance(mm, mid)
+            leaf = _write_with_provenance(
+                mm,
+                kind="entity_fact",
+                content="LEAF synthesised from MID",
+                derivation_kind=DerivationKind.SYNTHESIS,
+                derived_from=[CitationRef.memory(mid)],
+                subject_key="cw.leaf",
+            )
+            _wait_for_provenance(mm, leaf)
+
+            # max_depth=10 ensures the walker reaches ROOT (depth=2) without
+            # truncation. max_nodes=10 is well above the chain length.
+            with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+                resp = client.post(
+                    f"/admin/tenants/{tenant_id}/knowledge/citations/trace",
+                    json={"memory_id": leaf, "max_depth": 10, "max_nodes": 10},
+                )
+            assert resp.status_code == 200, resp.text[:300]
+            body = resp.json()
+            assert body["root_memory_id"] == leaf
+            assert body["truncated"] is False
+            # Exact id list in BFS order: LEAF (depth 0) → MID (1) → ROOT (2).
+            assert [n["memory_id"] for n in body["nodes"]] == [leaf, mid, root]
+            assert [n["depth"] for n in body["nodes"]] == [0, 1, 2]
+            assert [n["derivation_kind"] for n in body["nodes"]] == [
+                "synthesis",
+                "extraction",
+                "direct_ingest",
+            ]
+        finally:
+            mm.clear_agent_memory(tenant_id, "phase8_agent")
+            Mem0MemoryManager._instances.clear()
+
+
+# ---------------------------------------------------------------------------
+# 2. citation/trace truncates the chain at max_depth=1
 # ---------------------------------------------------------------------------
 
 

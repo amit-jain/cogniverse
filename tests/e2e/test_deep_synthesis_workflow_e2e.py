@@ -27,7 +27,7 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Iterator, List
+from typing import Dict, Iterator, List
 
 import httpx
 import pytest
@@ -147,75 +147,190 @@ class _ScriptedRLM:
 
 
 # ---------------------------------------------------------------------------
-# 1. Real-RLM happy path over a seeded sub-agent set
+# 1. DeepSynthesisOverHundredDocuments — real RLM + Mem0-backed dispatcher
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.e2e
 @skip_if_no_runtime
-class TestDeepSynthesisOverSeededSubagents:
-    """Seed the workflow with 4 deterministic sub-agents → real RLM converges."""
+class TestDeepSynthesisOverHundredDocuments:
+    """Pre-write 100 external_doc memories under one tenant. Workflow's
+    dispatcher fetches matching memories per sub-query keyword → real
+    RLM gets real evidence.
+
+    Pins:
+      * Workflow terminates within hard_call_cap=50 + max_iterations=4.
+      * subagent_calls_made >= 5 (all 5 seed agents fire).
+      * Exactly one terminal branch (was_submitted XOR was_capped XOR
+        rate_limited).
+      * answer length in [50, 50_000] (non-trivial output bound).
+      * answer contains "lithium" or "lithium-ion" (catches the
+        regression where the LM ignores the seeded evidence and emits
+        unrelated text).
+      * trajectory's iteration-0 names exactly match seed_subagents.
+    """
 
     @pytest.mark.asyncio
-    async def test_real_rlm_converges_within_iteration_cap(
+    async def test_workflow_terminates_within_bounds_with_real_lm(
         self, llm_config: LLMEndpointConfig
     ) -> None:
+        from pathlib import Path
+
         from cogniverse_agents.inference.rlm_inference import RLMInference
-
-        rlm = RLMInference(
-            llm_config=llm_config,
-            max_iterations=2,
-            max_llm_calls=4,
-            timeout_seconds=180,
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+        from cogniverse_core.memory.provenance import (
+            CitationRef,
+            DerivationKind,
+            attach_to_metadata,
+            make_provenance,
         )
+        from cogniverse_core.memory.schema import build_default_registry
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.manager import ConfigManager
+        from cogniverse_foundation.config.unified_config import SystemConfig
+        from cogniverse_vespa.config.config_store import VespaConfigStore
 
-        # Seed dispatcher: each sub-agent returns a single fact about
-        # lithium. The workflow gathers these, hands them to the RLM,
-        # and the RLM either SUBMIT()s an answer or asks for more.
-        snippets = {
-            "market_facts": "Lithium demand tripled between 2020 and 2024.",
-            "geology_facts": "Lithium reserves are concentrated in South America.",
-            "supply_facts": "Lithium recycling at scale remains an industrial challenge.",
-            "applications_facts": "Lithium is essential for EV battery production.",
-        }
-
-        async def dispatcher(query: str, name: str) -> str:
-            return snippets.get(name, f"(no data from {name})")
-
-        wf = DeepSynthesisWorkflow(
-            rlm=rlm,
-            sub_agent_dispatcher=dispatcher,
-            config=DeepSynthesisConfig(
-                rate_limit_per_hour=10,
-                hard_call_cap=20,
-                max_iterations=2,
-                max_subagent_calls_per_round=4,
-            ),
-        )
+        Mem0MemoryManager._instances.clear()
         tenant_id = unique_id("rlm_deep") + ":t1"
-        result = await wf.run(
-            query="Why is lithium central to modern energy supply?",
-            tenant_id=tenant_id,
-            seed_subagents=list(snippets),
+        cm = ConfigManager(
+            store=VespaConfigStore(backend_url="http://localhost", backend_port=8080)
+        )
+        cm.set_system_config(
+            SystemConfig(
+                backend_url="http://localhost",
+                backend_port=8080,
+                inference_service_urls={"denseon": "http://localhost:29006"},
+            )
+        )
+        mm = Mem0MemoryManager(tenant_id=tenant_id)
+        mm.initialize(
+            backend_host="http://localhost",
+            backend_port=8080,
+            backend_config_port=19071,
+            base_schema_name="agent_memories",
+            llm_model="google/gemma-4-e4b-it",
+            embedding_model="lightonai/DenseOn",
+            llm_base_url=("http://cogniverse-vllm-llm-student.cogniverse:8000/v1"),
+            embedder_base_url="http://localhost:29006",
+            auto_create_schema=True,
+            config_manager=cm,
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+            knowledge_registry=build_default_registry(),
         )
 
-        # All 4 seed sub-agents fire in iteration 0.
-        assert result.subagent_calls_made == 4, result
-        # was_rate_limited is the only branch that should NOT trip.
-        assert result.was_rate_limited is False, result
-        # Iterations are capped at 2; the workflow never exceeds the ceiling.
-        assert 1 <= result.iterations_used <= 2, result.iterations_used
-        # Total budget under the cap.
-        assert result.subagent_calls_made + result.llm_calls_used <= 20
-        # Exactly one terminal branch fires.
-        terminal_flags = (result.was_submitted, result.was_capped)
-        assert sum(bool(f) for f in terminal_flags) == 1, terminal_flags
-        # Trajectory contains the four iteration-0 sub-agent steps.
-        sub_steps = [t for t in result.trajectory if t["kind"] == "subagent"]
-        assert len(sub_steps) == 4, sub_steps
-        assert sorted(t["name"] for t in sub_steps if t["iter"] == 0) == sorted(
-            snippets
-        )
+        # Five topical buckets, 20 docs each = 100 total external_doc
+        # memories under one tenant.
+        topics = {
+            "market": "Lithium demand tripled between 2020 and 2024.",
+            "geology": "Lithium reserves are concentrated in South America.",
+            "supply": "Lithium recycling remains an industrial challenge.",
+            "ev": "Lithium-ion batteries power most modern EVs.",
+            "policy": "Several governments classify lithium as critical.",
+        }
+        try:
+            written: Dict[str, List[str]] = {topic: [] for topic in topics}
+            for topic, base_content in topics.items():
+                for i in range(20):
+                    prov = make_provenance(
+                        written_by="agent:phase11",
+                        derivation_kind=DerivationKind.DIRECT_INGEST,
+                        confidence=0.9,
+                        derived_from=[CitationRef.external(f"phase11://{topic}/{i}")],
+                    )
+                    metadata = attach_to_metadata(
+                        {"kind": "external_doc", "subject_key": f"{topic}.{i}"},
+                        prov,
+                    )
+                    mid = mm.add_memory(
+                        content=f"{base_content} (doc {topic}#{i})",
+                        tenant_id=tenant_id,
+                        agent_name=f"{topic}_agent",
+                        metadata=metadata,
+                        infer=False,
+                    )
+                    assert mid is not None
+                    written[topic].append(mid)
+
+            # Dispatcher: each sub-agent name names a topic. The
+            # dispatcher returns the first matching memory's content
+            # so the workflow consumes real Mem0-backed evidence.
+            async def dispatcher(query: str, name: str) -> str:
+                topic = name.replace("_agent", "")
+                ids = written.get(topic, [])
+                if not ids:
+                    return f"(no data for {name})"
+                memory = mm.memory.get(ids[0])
+                if isinstance(memory, dict):
+                    return (
+                        memory.get("memory")
+                        or memory.get("content")
+                        or f"(empty memory for {name})"
+                    )
+                return f"(memory shape unexpected for {name})"
+
+            rlm = RLMInference(
+                llm_config=llm_config,
+                max_iterations=4,
+                max_llm_calls=20,
+                timeout_seconds=600,
+            )
+            wf = DeepSynthesisWorkflow(
+                rlm=rlm,
+                sub_agent_dispatcher=dispatcher,
+                config=DeepSynthesisConfig(
+                    rate_limit_per_hour=10,
+                    hard_call_cap=50,
+                    max_iterations=4,
+                    max_subagent_calls_per_round=5,
+                ),
+            )
+            seed = [f"{t}_agent" for t in topics]
+            result = await wf.run(
+                query=(
+                    "Synthesise the role of lithium in modern energy "
+                    "across markets, geology, supply, EVs, and policy."
+                ),
+                tenant_id=tenant_id,
+                seed_subagents=seed,
+            )
+
+            # Exactly one terminal branch fires.
+            terminal_flags = (
+                result.was_submitted,
+                result.was_capped,
+                result.was_rate_limited,
+            )
+            assert sum(bool(f) for f in terminal_flags) == 1, terminal_flags
+            assert result.was_rate_limited is False, result
+
+            # Iteration 0 fires all 5 seed sub-agents.
+            assert result.subagent_calls_made >= 5, result.subagent_calls_made
+            # Hard cap honoured.
+            total = result.subagent_calls_made + result.llm_calls_used
+            assert total <= 50, (total, result)
+            # Iteration count strictly bounded by config.
+            assert 1 <= result.iterations_used <= 4, result.iterations_used
+
+            # Iteration 0 trajectory carries one entry per seed agent;
+            # exact name set pinned.
+            iter0_names = sorted(
+                t["name"]
+                for t in result.trajectory
+                if t["kind"] == "subagent" and t["iter"] == 0
+            )
+            assert iter0_names == sorted(seed), iter0_names
+
+            # Answer non-trivial AND topical (catches a regression
+            # where the LM returns unrelated text or echoes the prompt).
+            assert 50 <= len(result.answer) <= 50_000, len(result.answer)
+            assert "lithium" in result.answer.lower(), result.answer[:300]
+        finally:
+            for topic in topics:
+                try:
+                    mm.clear_agent_memory(tenant_id, f"{topic}_agent")
+                except Exception:
+                    pass
+            Mem0MemoryManager._instances.clear()
 
 
 # ---------------------------------------------------------------------------
