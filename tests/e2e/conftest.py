@@ -560,7 +560,7 @@ def _cleanup_test_tenants() -> None:
     """
     # Runtime exposes per-org listing only, so query Vespa directly for
     # a global sweep. Dedupe on tenant_id (one entry per tenant×schema).
-    vespa_url = os.environ.get("VESPA_URL", "http://localhost:18080")
+    vespa_url = os.environ.get("VESPA_URL", "http://localhost:8080")
     yql = (
         "select tenant_id from config_metadata "
         'where scope contains "schema" '

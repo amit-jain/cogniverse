@@ -73,7 +73,7 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
     return mm
 
 
-def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 30.0) -> None:
+def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
     """Block until the per-tenant provenance schema accepts writes (Phase 2 pattern)."""
     import time
     import uuid
