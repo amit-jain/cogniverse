@@ -19,6 +19,7 @@ when the per-window content set is large.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -67,11 +68,20 @@ def _content_signature(rows: List[Dict[str, Any]]) -> str:
     return h.hexdigest()[:16]
 
 
-def _matches_subject(memory: Dict[str, Any], subject_key: str) -> bool:
+def _read_metadata(memory: Dict[str, Any]) -> Dict[str, Any]:
+    """Defensive metadata reader — handles dict / JSON-string / None."""
     meta = memory.get("metadata") or {}
-    if isinstance(meta, dict) and meta.get("subject_key") == subject_key:
-        return True
-    return False
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _matches_subject(memory: Dict[str, Any], subject_key: str) -> bool:
+    meta = _read_metadata(memory)
+    return meta.get("subject_key") == subject_key
 
 
 class TimeWindow(AgentInput):
@@ -274,8 +284,16 @@ class TemporalReasoningAgent(
             parsed_windows.append((w.label, start, end))
 
         for r in rows:
-            meta = r.get("metadata") or {}
-            written_at = meta.get("written_at") if isinstance(meta, dict) else None
+            meta = _read_metadata(r)
+            # attach_to_metadata stores provenance under
+            # metadata["provenance"]["written_at"]; legacy callers may
+            # also stamp it at the top level.
+            written_at: Any = None
+            prov = meta.get("provenance")
+            if isinstance(prov, dict):
+                written_at = prov.get("written_at")
+            if not written_at:
+                written_at = meta.get("written_at")
             ts = _parse_iso(written_at)
             if ts is None:
                 undated.append(r)

@@ -218,12 +218,12 @@ async def multi_doc_synthesize(
 ) -> Dict[str, Any]:
     """synthesise an answer across N documents with citations."""
     from cogniverse_agents.multi_document_synthesis_agent import (
-        MultiDocSynthesisAgent,
         MultiDocSynthesisDeps,
         MultiDocSynthesisInput,
+        MultiDocumentSynthesisAgent,
     )
 
-    agent = MultiDocSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=tenant_id))
+    agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps(tenant_id=tenant_id))
     _inject_memory(agent, tenant_id, "multi_document_synthesis_agent")
     out = await agent._process_impl(
         MultiDocSynthesisInput(tenant_id=tenant_id, **body.model_dump())
@@ -373,7 +373,12 @@ async def federated_query(
 
 class TemporalReasonRequest(BaseModel):
     subject_key: str = Field(..., min_length=1)
-    windows: List[Dict[str, Any]] = Field(..., min_length=1)
+    # TemporalReasoningInput requires >= 2 windows (comparison is the
+    # whole point of the agent). Mirror that floor here so the route
+    # rejects single-window calls at validation rather than at the
+    # agent which would 500 the request.
+    windows: List[Dict[str, Any]] = Field(..., min_length=2)
+    agent_name_filter: Optional[str] = Field(None)
 
 
 @router.post("/tenants/{tenant_id}/knowledge/temporal/reason")
