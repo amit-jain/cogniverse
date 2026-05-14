@@ -274,8 +274,18 @@ async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]
 class CrossTenantCompareRequest(BaseModel):
     subject_key: str = Field(..., min_length=1)
     tenant_ids: List[str] = Field(..., min_length=2)
-    actor_role: str = Field("admin")
+    # actor_role must be a Pinnable enum value (tenant_admin / org_admin)
+    # — the agent rejects everything else via _ACLRejected. Default to
+    # tenant_admin so the route's documented default actually works.
+    actor_role: str = Field("tenant_admin")
     actor_id: str = Field("admin")
+    agent_name_filter: Optional[str] = Field(
+        None,
+        description=(
+            "Restrict each per-tenant federated read to this agent_name "
+            "namespace. Defaults to ``_promoted`` (matches federation writes)."
+        ),
+    )
 
 
 @router.post("/tenants/{tenant_id}/knowledge/cross_tenant/compare")
@@ -288,15 +298,21 @@ async def cross_tenant_compare(
         CrossTenantComparisonDeps,
         CrossTenantComparisonInput,
     )
+    from cogniverse_agents.cross_tenant_comparison_agent import (
+        _ACLRejected as _ACLRejectedCT,
+    )
 
     agent = CrossTenantComparisonAgent(
         deps=CrossTenantComparisonDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
     )
-    out = await agent._process_impl(
-        CrossTenantComparisonInput(tenant_id=tenant_id, **body.model_dump())
-    )
+    try:
+        out = await agent._process_impl(
+            CrossTenantComparisonInput(tenant_id=tenant_id, **body.model_dump())
+        )
+    except _ACLRejectedCT as exc:
+        raise HTTPException(403, str(exc)) from exc
     return out.model_dump()
 
 
@@ -306,9 +322,14 @@ async def cross_tenant_compare(
 class FederatedQueryRequest(BaseModel):
     query: str = Field(..., min_length=1)
     tenant_ids: List[str] = Field(..., min_length=1)
-    actor_role: str = Field("admin")
+    # Same Pinnable enum constraint as cross_tenant — default to a
+    # value that actually passes the agent's ACL.
+    actor_role: str = Field("tenant_admin")
     actor_id: str = Field("admin")
+    # FederatedQueryInput's field is ``top_k_per_tenant``; expose it
+    # under the public name ``top_k`` and translate at dispatch.
     top_k: int = Field(10, ge=1, le=200)
+    agent_name_filter: Optional[str] = Field(None)
 
 
 @router.post("/tenants/{tenant_id}/knowledge/federated/query")
@@ -321,15 +342,29 @@ async def federated_query(
         FederatedQueryDeps,
         FederatedQueryInput,
     )
+    from cogniverse_agents.federated_query_agent import (
+        _ACLRejected as _ACLRejectedFQ,
+    )
 
     agent = FederatedQueryAgent(
         deps=FederatedQueryDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
     )
-    out = await agent._process_impl(
-        FederatedQueryInput(tenant_id=tenant_id, **body.model_dump())
-    )
+    try:
+        out = await agent._process_impl(
+            FederatedQueryInput(
+                tenant_id=tenant_id,
+                query=body.query,
+                tenant_ids=body.tenant_ids,
+                actor_role=body.actor_role,
+                actor_id=body.actor_id,
+                top_k_per_tenant=body.top_k,
+                agent_name_filter=body.agent_name_filter,
+            )
+        )
+    except _ACLRejectedFQ as exc:
+        raise HTTPException(403, str(exc)) from exc
     return out.model_dump()
 
 
