@@ -88,6 +88,20 @@ OPTIMIZER_REGISTRY: Dict[str, OptimizerConfig] = {
         default_sample_size=200,
         default_generation_count=100,
     ),
+    "cross_modal": OptimizerConfig(
+        name="cross_modal",
+        description="Cross-modal fusion optimization. Generates queries that span video + audio + text modalities so retrieval profiles with multi-vector fusion get exercised together.",
+        # Cross-modal generation produces profile-selection examples with
+        # multi-modal sources; reuse the profile schema + generator. The
+        # ProfileSelector branch at profile_selector.py:348 already
+        # implements the cross_modal scoring weight.
+        schema_class=ProfileSelectionExampleSchema,
+        generator_class_name="ProfileGenerator",
+        backend_query_strategy="multi_modal_sequences",
+        agent_mapping_required=False,
+        default_sample_size=200,
+        default_generation_count=100,
+    ),
 }
 
 

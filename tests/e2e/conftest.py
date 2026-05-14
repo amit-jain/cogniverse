@@ -215,8 +215,58 @@ skip_if_no_runtime = pytest.mark.e2e
 skip_if_no_dashboard = pytest.mark.e2e
 
 
+_MINTED_TENANTS_THIS_TEST: list[str] = []
+
+
 def unique_id(prefix: str = "e2e") -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:8]}"
+    """Mint a per-test tenant id and register it for end-of-test cleanup.
+
+    The session-end ``_cleanup_test_tenants`` sweep can't keep up with
+    the per-test churn — Vespa accumulates 200+ tenant schemas mid-run
+    and new deploys time out. Recording every mint here lets the
+    autouse ``_drain_test_tenants_after_each_test`` fixture DELETE
+    each tenant as soon as the test finishes, keeping the cluster
+    schema count flat through the whole sweep.
+    """
+    tid = f"{prefix}_{uuid.uuid4().hex[:8]}"
+    if any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
+        _MINTED_TENANTS_THIS_TEST.append(tid)
+    return tid
+
+
+@pytest.fixture(autouse=True)
+def _drain_test_tenants_after_each_test():
+    """Delete every test tenant minted via ``unique_id`` after each test.
+
+    Without this, batch2's per-test tenant schemas accumulate in Vespa
+    until app-package redeploys time out. Per-test cleanup keeps the
+    schema count flat regardless of suite length.
+
+    DELETE failures are logged but never raised — a transient cleanup
+    failure must not turn a passing test into a teardown error.
+    """
+    _MINTED_TENANTS_THIS_TEST.clear()
+    yield
+    minted = list(_MINTED_TENANTS_THIS_TEST)
+    _MINTED_TENANTS_THIS_TEST.clear()
+    if not minted:
+        return
+    # Also strip suffixes — many tests append ``:t1``/``:org_admin``/etc
+    # to the bare tenant id; the runtime expects the full id.
+    targets: set[str] = set()
+    for tid in minted:
+        targets.add(tid)
+        # If tests build derived tenants like ``{org}:t1`` from the
+        # minted base, the base alone won't delete them. Add common
+        # derived shapes so the cluster drains cleanly.
+        for suf in (":t1", ":t2", ":t3", ":production", ":org_admin"):
+            targets.add(tid + suf)
+    for full_tid in targets:
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                client.delete(f"{RUNTIME}/admin/tenants/{full_tid}")
+        except (httpx.HTTPError, OSError):
+            pass
 
 
 @pytest.fixture(scope="session")

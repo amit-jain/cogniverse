@@ -24,15 +24,16 @@ GRAPH_PATH_URL = f"{RUNTIME}/graph/path"
 
 
 def _unique_tenant() -> str:
-    """Mint a fresh tenant id AND register it via POST /admin/tenants.
+    """Mint a fresh tenant id, register it, and wait for read-visibility.
 
-    The graph and ingestion endpoints now refuse traffic for tenants
-    without a ``tenant_metadata`` record (auth-class check). Any e2e
-    test that mints a tenant must register it before using it; doing
-    that registration here keeps test bodies focused on what they're
-    actually exercising.
+    POST /admin/tenants returns 200 immediately but the tenant_metadata
+    write is async on Vespa — without a wait, the very next /graph/upsert
+    call sees "not registered" via assert_tenant_exists and returns 404.
     """
+    from tests.e2e.conftest import _MINTED_TENANTS_THIS_TEST
+
     tid = f"graph_e2e_{uuid.uuid4().hex[:8]}"
+    _MINTED_TENANTS_THIS_TEST.append(tid)
     with httpx.Client(timeout=30.0) as client:
         resp = client.post(
             f"{RUNTIME}/admin/tenants",
@@ -42,7 +43,16 @@ def _unique_tenant() -> str:
             raise RuntimeError(
                 f"Could not register e2e tenant {tid!r}: {resp.status_code} {resp.text}"
             )
-    return tid
+        # Poll until tenant_metadata is queryable (Vespa indexing race).
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            r = client.get(f"{RUNTIME}/admin/tenants/{tid}")
+            if r.status_code == 200:
+                return tid
+            time.sleep(0.5)
+        raise RuntimeError(
+            f"Tenant {tid!r} created but never became readable within 30s"
+        )
 
 
 @pytest.mark.e2e
