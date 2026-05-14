@@ -23,14 +23,23 @@ class GLiNERRelationshipExtractor:
     to identify relationships between entities.
     """
 
-    def __init__(self, model_name: str = "urchade/gliner_mediumv2.1"):
+    def __init__(
+        self,
+        model_name: str = "urchade/gliner_mediumv2.1",
+        inference_url: Optional[str] = None,
+    ):
         """
         Initialize GLiNER relationship extractor.
 
         Args:
             model_name: GLiNER model to use for entity extraction
+            inference_url: When set, route through the deploy/gliner
+                sidecar instead of loading the model in-process. The
+                slim runtime image excludes torch+gliner by design;
+                production must always pass this URL.
         """
         self.model_name = model_name
+        self.inference_url = inference_url
         self.gliner_model = None
 
     def _load_gliner_model(self):
@@ -38,7 +47,9 @@ class GLiNERRelationshipExtractor:
         try:
             from cogniverse_core.common.models import get_or_load_gliner
 
-            self.gliner_model = get_or_load_gliner(self.model_name, logger=logger)
+            self.gliner_model = get_or_load_gliner(
+                self.model_name, logger=logger, inference_url=self.inference_url
+            )
         except ImportError:
             logger.warning("GLiNER not installed. Entity extraction will be limited.")
             self.gliner_model = None

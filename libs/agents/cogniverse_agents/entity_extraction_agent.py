@@ -77,7 +77,14 @@ class EntityExtractionOutput(AgentOutput):
 class EntityExtractionDeps(AgentDeps):
     """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
 
-    pass
+    gliner_inference_url: Optional[str] = Field(
+        None,
+        description=(
+            "Optional remote GLiNER service URL (deploy/gliner sidecar). "
+            "When set, the fast path posts to this endpoint instead of "
+            "loading gliner in-process — required on slim runtime images."
+        ),
+    )
 
 
 class EntityExtractionSignature(dspy.Signature):
@@ -226,9 +233,14 @@ class EntityExtractionAgent(
                 SpaCyDependencyAnalyzer,
             )
 
-            self._gliner_extractor = GLiNERRelationshipExtractor()
+            self._gliner_extractor = GLiNERRelationshipExtractor(
+                inference_url=self.deps.gliner_inference_url,
+            )
             self._spacy_analyzer = SpaCyDependencyAnalyzer()
-            logger.info("GLiNER + SpaCy extractors initialized for fast path")
+            logger.info(
+                "GLiNER + SpaCy extractors initialized for fast path "
+                f"(remote={'yes' if self.deps.gliner_inference_url else 'no'})"
+            )
         except Exception as e:
             self._gliner_extractor = None
             self._spacy_analyzer = None

@@ -639,8 +639,15 @@ class AgentDispatcher:
                 f"(no Deps class in {module_path} — agent uses legacy mixin pattern)"
             )
 
-        # Instantiate with default deps
-        deps = deps_cls()
+        # Instantiate with default deps. If the deps schema accepts a
+        # gliner_inference_url field (EntityExtractionAgent + any future
+        # gliner-using agent), inject the deployed sidecar URL so the
+        # agent doesn't fall back to in-process loading.
+        deps_kwargs: Dict[str, Any] = {}
+        gliner_url = self._resolve_gliner_url()
+        if gliner_url and "gliner_inference_url" in deps_cls.model_fields:
+            deps_kwargs["gliner_inference_url"] = gliner_url
+        deps = deps_cls(**deps_kwargs)
         agent = agent_cls(deps=deps)
         await asyncio.to_thread(self._init_agent_memory, agent, agent_name, tenant_id)
 
