@@ -69,7 +69,7 @@ whisper-local = [
 # longer carries the JAX / flax / tensorflow stack — TF's static
 # initialiser used to abort on darwin when loaded into the same process
 # as uvicorn server threads, and TF has no ROCm wheel.
-all = ["cogniverse-vespa", "cogniverse-agents"]
+all = ["cogniverse-vespa", "cogniverse-agents[torch-local]"]
 
 [tool.uv.sources]
 cogniverse-sdk = { workspace = true }
