@@ -993,12 +993,20 @@ class RemoteGlinerClient:
     def predict_entities(
         self, text: str, labels: List[str], threshold: float = 0.4
     ) -> List[Dict[str, Any]]:
-        payload = {"text": text, "labels": labels, "threshold": threshold}
+        payload = {
+            "text": text,
+            "labels": labels,
+            "threshold": threshold,
+            "model": self._model_name,
+        }
         try:
             resp = self._session.post(
                 f"{self._url}/predict_entities",
                 json=payload,
-                timeout=30,
+                # First request per (sidecar, model) cold-loads HF
+                # weights; on CPU that takes ~30-60s for medium and
+                # ~90s for large. Subsequent requests are sub-second.
+                timeout=240,
             )
             resp.raise_for_status()
             data = resp.json()

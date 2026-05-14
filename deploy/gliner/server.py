@@ -30,6 +30,14 @@ class PredictRequest(BaseModel):
     text: str = Field(..., min_length=1, description="Query text")
     labels: List[str] = Field(..., min_length=1, description="Candidate label set")
     threshold: float = Field(0.4, ge=0.0, le=1.0, description="Min entity score")
+    model: Optional[str] = Field(
+        None,
+        description=(
+            "Optional GLiNER HF id to use for this request "
+            "(e.g. urchade/gliner_large-v2.1). Defaults to the sidecar's "
+            "MODEL_NAME env. Models are loaded on first use and cached."
+        ),
+    )
 
 
 class EntityOut(BaseModel):
@@ -45,24 +53,26 @@ class PredictResponse(BaseModel):
     model: str
 
 
-_model: Any = None
+_models: dict = {}
 _model_lock = threading.Lock()
+_DEFAULT_MODEL = os.environ.get("MODEL_NAME", "urchade/gliner_mediumv2.1")
 
 
-def _get_model():
-    global _model
-    if _model is not None:
-        return _model
+def _get_model(name: str):
+    cached = _models.get(name)
+    if cached is not None:
+        return cached
     with _model_lock:
-        if _model is not None:
-            return _model
+        cached = _models.get(name)
+        if cached is not None:
+            return cached
         from gliner import GLiNER
 
-        name = os.environ.get("MODEL_NAME", "urchade/gliner_large-v2.1")
         logger.info("Loading GLiNER model=%s", name)
-        _model = GLiNER.from_pretrained(name)
+        instance = GLiNER.from_pretrained(name)
+        _models[name] = instance
         logger.info("GLiNER loaded: %s", name)
-        return _model
+        return instance
 
 
 app = FastAPI(title="cogniverse-gliner", version="1.0")
@@ -70,21 +80,26 @@ app = FastAPI(title="cogniverse-gliner", version="1.0")
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model": os.environ.get("MODEL_NAME", "")}
+    return {
+        "status": "ok",
+        "default_model": _DEFAULT_MODEL,
+        "loaded_models": sorted(_models),
+    }
 
 
 @app.post("/predict_entities", response_model=PredictResponse)
 def predict_entities(req: PredictRequest) -> PredictResponse:
+    model_name = req.model or _DEFAULT_MODEL
     try:
-        model = _get_model()
+        model = _get_model(model_name)
     except Exception as exc:
-        logger.exception("model load failed")
+        logger.exception("model load failed for %s", model_name)
         raise HTTPException(status_code=503, detail=f"model load failed: {exc}")
 
     try:
         raw = model.predict_entities(req.text, req.labels, threshold=req.threshold)
     except Exception as exc:
-        logger.exception("predict_entities failed")
+        logger.exception("predict_entities failed (model=%s)", model_name)
         raise HTTPException(status_code=500, detail=f"predict failed: {exc}")
 
     entities = [
@@ -97,9 +112,7 @@ def predict_entities(req: PredictRequest) -> PredictResponse:
         )
         for e in raw
     ]
-    return PredictResponse(
-        entities=entities, model=os.environ.get("MODEL_NAME", "")
-    )
+    return PredictResponse(entities=entities, model=model_name)
 
 
 if __name__ == "__main__":
