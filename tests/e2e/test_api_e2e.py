@@ -835,7 +835,13 @@ class TestTenantCRUD:
         tenant_name = "test_tenant"
         tenant_full_id = f"{org_id}:{tenant_name}"
 
-        with httpx.Client(base_url=RUNTIME, timeout=60.0) as client:
+        # Tenant create triggers a Vespa app-package redeploy whose latency
+        # scales with the number of tenant schemas in the cluster (the
+        # whole package is recompiled). Under sweep load with 100+
+        # schemas it routinely takes 60-90 s; the original 60 s timeout
+        # produced a flaky ReadTimeout. 180 s covers the worst case
+        # observed without weakening the assertions.
+        with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
             try:
                 resp = client.post(
                     "/admin/organizations",
