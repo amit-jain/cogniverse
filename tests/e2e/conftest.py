@@ -234,6 +234,119 @@ def unique_id(prefix: str = "e2e") -> str:
     return tid
 
 
+# Map base-schema-name → schema-definition JSON file for the per-test
+# reconciler below. Each entry is a base name we know how to reload
+# from the source-controlled schemas dir; for unknown bases we skip
+# (better to let the deploy refuse than register a stub the parser
+# would choke on). Mirror of tests/memory/integration/conftest.py.
+_BASE_SCHEMA_FILES_FOR_RECONCILE = {
+    "agent_memories": "agent_memories_schema.json",
+    "wiki_pages": "wiki_pages_schema.json",
+    "provenance": "provenance_schema.json",
+    "knowledge_graph": "knowledge_graph_schema.json",
+    "video_colpali_smol500_mv_frame": "video_colpali_smol500_mv_frame_schema.json",
+    "video_videoprism_base_mv_chunk_30s": (
+        "video_videoprism_base_mv_chunk_30s_schema.json"
+    ),
+    "video_colqwen_omni_mv_chunk_30s": "video_colqwen_omni_mv_chunk_30s_schema.json",
+    "image_colpali_mv": "image_colpali_mv_schema.json",
+    "audio_clap_semantic": "audio_clap_semantic_schema.json",
+    "audio_content": "audio_content_schema.json",
+    "document_text_semantic": "document_text_semantic_schema.json",
+    "document_text": "document_text_schema.json",
+    "code_lateon_mv": "code_lateon_mv_schema.json",
+}
+
+
+def _load_schema_definition_for_reconcile(
+    base_schema_name: str, full_schema_name: str
+) -> str | None:
+    """Load schema JSON for ``base_schema_name`` and patch the
+    ``name`` / ``document.name`` to the tenant-scoped ``full_schema_name``.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    file_name = _BASE_SCHEMA_FILES_FOR_RECONCILE.get(base_schema_name)
+    if file_name is None:
+        return None
+    schema_path = _Path("configs/schemas") / file_name
+    if not schema_path.exists():
+        return None
+    try:
+        schema_json = _json.loads(schema_path.read_text())
+        schema_json["name"] = full_schema_name
+        if "document" in schema_json and isinstance(schema_json["document"], dict):
+            schema_json["document"]["name"] = full_schema_name
+        return _json.dumps(schema_json)
+    except Exception:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _reconcile_registry_with_vespa_e2e():
+    """Reconcile BackendRegistry._shared_schema_registry with Vespa
+    state before every e2e test.
+
+    Test tenants come and go and their schemas accumulate in Vespa.
+    When the schema_registry singleton has fewer schemas than Vespa
+    (e.g. after a runtime restart or because of failed loads), the
+    deploy guard at backend.py:906 refuses every new schema deploy:
+
+        Refusing to deploy: Vespa has schemas X that are not in
+        SchemaRegistry and cannot be reconstructed.
+
+    This fixture pre-registers the source-controlled schema definition
+    for every Vespa-side schema the registry doesn't know about, so
+    the deploy guard reconstructs them via the JSON loader instead of
+    refusing. Mirrors the proven fix in
+    ``tests/memory/integration/conftest.py:_reconcile_registry_with_vespa``
+    (commit a36a6699). Does NOT touch Vespa data — only the in-memory
+    registry view.
+    """
+    try:
+        from cogniverse_core.registries.backend_registry import BackendRegistry
+        from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+
+        sm = VespaSchemaManager(
+            backend_endpoint="http://localhost",
+            backend_port=int(os.environ.get("VESPA_CONFIG_PORT", "19071")),
+        )
+        try:
+            deployed = sm.list_deployed_document_types()
+        except Exception:
+            yield
+            return
+        registry = BackendRegistry._shared_schema_registry
+        if registry is None:
+            yield
+            return
+        known_full = {info.full_schema_name for info in registry._get_all_schemas()}
+        for full_name in deployed:
+            if full_name in sm._PROTECTED_SCHEMAS or full_name in known_full:
+                continue
+            for base in _BASE_SCHEMA_FILES_FOR_RECONCILE:
+                if full_name.startswith(base + "_"):
+                    tid = full_name[len(base) + 1 :]
+                    schema_def = _load_schema_definition_for_reconcile(base, full_name)
+                    if schema_def is None:
+                        break
+                    try:
+                        registry.register_schema(
+                            tenant_id=tid,
+                            base_schema_name=base,
+                            full_schema_name=full_name,
+                            schema_definition=schema_def,
+                        )
+                    except Exception:
+                        pass
+                    break
+    except Exception:
+        # Reconciler is best-effort — never fail a test on the prologue.
+        pass
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _drain_test_tenants_after_each_test():
     """Delete every test tenant minted via ``unique_id`` after each test.
