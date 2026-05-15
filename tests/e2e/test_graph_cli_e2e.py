@@ -34,7 +34,11 @@ def _unique_tenant() -> str:
 
     tid = f"graph_e2e_{uuid.uuid4().hex[:8]}"
     _MINTED_TENANTS_THIS_TEST.append(tid)
-    with httpx.Client(timeout=30.0) as client:
+    # Tenant create triggers a Vespa app-package redeploy whose latency
+    # scales with the cluster's tenant-schema count — under sweep load
+    # with 100+ schemas the POST itself can take 60-90 s. 180 s covers
+    # the worst observed case; the read-visibility poll is independent.
+    with httpx.Client(timeout=180.0) as client:
         resp = client.post(
             f"{RUNTIME}/admin/tenants",
             json={"tenant_id": tid, "created_by": "graph_e2e_test"},
@@ -44,14 +48,14 @@ def _unique_tenant() -> str:
                 f"Could not register e2e tenant {tid!r}: {resp.status_code} {resp.text}"
             )
         # Poll until tenant_metadata is queryable (Vespa indexing race).
-        deadline = time.monotonic() + 30.0
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             r = client.get(f"{RUNTIME}/admin/tenants/{tid}")
             if r.status_code == 200:
                 return tid
             time.sleep(0.5)
         raise RuntimeError(
-            f"Tenant {tid!r} created but never became readable within 30s"
+            f"Tenant {tid!r} created but never became readable within 60s"
         )
 
 
