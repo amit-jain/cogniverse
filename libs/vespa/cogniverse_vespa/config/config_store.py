@@ -445,7 +445,18 @@ class VespaConfigStore(ConfigStore):
                             created_at=datetime.fromisoformat(fields["created_at"]),
                             updated_at=datetime.fromisoformat(fields["updated_at"]),
                         )
-                    except KeyError:
+                    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+                        # Skip a single malformed peer document — must not
+                        # bomb the whole list and leave the schema_registry
+                        # at 0 entries. A bad config_value JSON or missing
+                        # field on ONE doc otherwise dropped every other
+                        # tenant's schemas, causing deploy_schema to refuse
+                        # any new schema (Vespa-deployed > registry-known).
+                        logger.warning(
+                            "Skipping malformed config_metadata doc %s: %s",
+                            doc.get("id"),
+                            exc,
+                        )
                         continue
                     if (
                         config_id not in latest_configs
