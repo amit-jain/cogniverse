@@ -234,10 +234,26 @@ def unique_id(prefix: str = "e2e") -> str:
     return tid
 
 
-_VESPA_SCHEMAS_LIST_URL = (
-    "http://localhost:19071/application/v2/tenant/default/application/default/"
+# Vespa config-server URL. The e2e suite ASSUMES a k3d cluster with the
+# config-server NodePort-mapped at localhost:19071 (see
+# charts/cogniverse/values.k3s.yaml). Override via VESPA_CONFIG_URL
+# only if running against a non-k3d topology.
+_VESPA_SCHEMAS_LIST_URL = os.environ.get(
+    "VESPA_CONFIG_URL",
+    "http://localhost:19071",
+).rstrip("/") + (
+    "/application/v2/tenant/default/application/default/"
     "environment/prod/region/default/instance/default/content/schemas/"
 )
+
+
+def _vespa_config_server_reachable() -> bool:
+    """One-shot probe of the Vespa config-server. Cached after first hit."""
+    try:
+        resp = httpx.get(_VESPA_SCHEMAS_LIST_URL, timeout=5.0)
+        return resp.status_code == 200
+    except (httpx.HTTPError, OSError):
+        return False
 
 
 def _vespa_deployed_schema_names() -> set[str]:
@@ -293,6 +309,19 @@ def _drain_test_tenants_after_each_test():
     _MINTED_TENANTS_THIS_TEST.clear()
     if not minted:
         return
+    # Vespa config-server polling is part of the cleanup contract — the
+    # only safe completion signal that the runtime DELETE actually
+    # removed the schemas. Outside k3d (or a topology that exposes the
+    # config-server at $VESPA_CONFIG_URL) we can't poll, so fail loudly
+    # rather than silently leak schemas across the suite.
+    if not _vespa_config_server_reachable():
+        raise RuntimeError(
+            f"_drain_test_tenants_after_each_test cannot reach Vespa "
+            f"config-server at {_VESPA_SCHEMAS_LIST_URL!r}. The e2e suite "
+            f"is k3d-only — start it with `cogniverse up`, or set "
+            f"VESPA_CONFIG_URL to the config-server base URL of your "
+            f"deployed cluster."
+        )
     # Tests that mint via unique_id("<base>") may construct derived
     # tenants like f"{base}:t1". Cover the common shapes so we delete
     # the actual tenant the test wrote under.
@@ -302,6 +331,13 @@ def _drain_test_tenants_after_each_test():
         for suf in (":t1", ":t2", ":t3", ":production", ":org_admin"):
             targets.add(tid + suf)
     for full_tid in targets:
+        # Skip tenants that aren't actually in Vespa — most derived
+        # suffixes (`:t2`, `:t3`, etc.) won't apply to a given test, so
+        # the DELETE would 404 and we'd waste a 60 s timeout + poll
+        # window per non-existent tenant.
+        deployed = _vespa_deployed_schema_names()
+        if not _tenant_schema_names_in_vespa(full_tid, deployed):
+            continue
         try:
             with httpx.Client(timeout=60.0) as client:
                 client.delete(f"{RUNTIME}/admin/tenants/{full_tid}")
