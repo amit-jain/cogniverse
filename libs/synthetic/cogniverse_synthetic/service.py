@@ -155,6 +155,15 @@ class SyntheticDataService:
             generator = WorkflowGenerator()
         elif optimizer_name == "profile":
             generator = ProfileGenerator()
+        elif optimizer_name == "cross_modal":
+            # cross_modal generation produces profile-selection examples
+            # over multi-modal content; reuse ProfileGenerator with the
+            # multi_modal_sequences sampling strategy from the registry.
+            generator = ProfileGenerator()
+        elif optimizer_name == "unified":
+            # unified shares the workflow generator path (registry maps
+            # both to WorkflowGenerator).
+            generator = WorkflowGenerator()
         else:
             raise ValueError(f"Unknown optimizer: {optimizer_name}")
 

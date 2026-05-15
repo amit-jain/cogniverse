@@ -1014,6 +1014,57 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
+  # GLiNER zero-shot NER served by the FastAPI sidecar in deploy/gliner.
+  # GatewayAgent + EntityExtractionAgent post text + label sets to
+  # /predict_entities; the slim runtime image excludes torch+gliner by
+  # design (commits 8e2e3f2e + 34195f75) so they MUST route through
+  # this sidecar. The sidecar loads multiple models on demand keyed
+  # by request.model — gateway uses gliner_large-v2.1, entity
+  # extraction uses gliner_mediumv2.1.
+  gliner:
+    enabled: true
+    engine: gliner
+    model: urchade/gliner_mediumv2.1
+    type: ner
+    device: cpu                    # gliner runs comfortably on CPU
+    nodeSelector: {}
+    tolerations: []
+    replicaCount: 1
+    service:
+      type: ClusterIP
+      port: 8080
+      nodePort: 29007
+    image:
+      repository: cogniverse/gliner
+      tag: dev
+      pullPolicy: Never
+    imagesByDevice: {}
+    extraArgs: []
+    hfTokenSecret: ""              # gliner_mediumv2.1 is ungated
+    resources:
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "3Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 10
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 30
+
   # VideoPrism (JAX) video multi-vector embeddings served by the custom
   # FastAPI sidecar in deploy/videoprism (cogniverse/videoprism:dev).
   # Externalising VideoPrism keeps the runtime image free of the

@@ -1670,6 +1670,29 @@ spec:
           {{- range $cfg.extraArgs }}
           - {{ . | quote }}
           {{- end }}
+      {{- else if eq $engine "gliner" }}
+      # FastAPI sidecar (deploy/gliner) wrapping the gliner library.
+      # GatewayAgent + EntityExtractionAgent post text + label set to
+      # /predict_entities; the slim runtime image does NOT bundle
+      # torch+gliner so they MUST route through this sidecar.
+      - name: gliner
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: MODEL_NAME
+          value: {{ $cfg.model | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
       {{- else }}
       - name: vllm
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
