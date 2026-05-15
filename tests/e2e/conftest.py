@@ -347,16 +347,58 @@ def _reconcile_registry_with_vespa_e2e():
     yield
 
 
+_VESPA_SCHEMAS_LIST_URL = (
+    "http://localhost:19071/application/v2/tenant/default/application/default/"
+    "environment/prod/region/default/instance/default/content/schemas/"
+)
+
+
+def _vespa_deployed_schema_names() -> set[str]:
+    """Read the live deployed-schemas list straight from Vespa's config-server.
+
+    Returns the set of base names (without the .sd suffix). Empty set
+    on probe failure so callers treat the lookup as "don't know" and
+    fall through.
+    """
+    try:
+        resp = httpx.get(_VESPA_SCHEMAS_LIST_URL, timeout=10.0)
+        resp.raise_for_status()
+        entries = resp.json()
+    except (httpx.HTTPError, OSError, ValueError):
+        return set()
+    names: set[str] = set()
+    for entry in entries:
+        tail = entry.rsplit("/", 1)[-1]
+        if tail.endswith(".sd"):
+            names.add(tail[: -len(".sd")])
+    return names
+
+
+def _tenant_schema_names_in_vespa(tenant_id: str, deployed: set[str]) -> set[str]:
+    """Subset of ``deployed`` whose name carries the tenant's suffix.
+
+    Vespa-side tenant schemas are named ``<base>_<tenant_with_:_to_>``
+    (e.g. ``agent_memories_kagent_kg_abc_t1``). We don't know the base
+    set up front, so just match by suffix.
+    """
+    suffix = "_" + tenant_id.replace(":", "_")
+    return {name for name in deployed if name.endswith(suffix)}
+
+
 @pytest.fixture(autouse=True)
 def _drain_test_tenants_after_each_test():
-    """Delete every test tenant minted via ``unique_id`` after each test.
+    """Delete every test tenant minted via ``unique_id`` after each test
+    AND wait for Vespa to actually drop the tenant's schemas.
 
-    Without this, batch2's per-test tenant schemas accumulate in Vespa
-    until app-package redeploys time out. Per-test cleanup keeps the
-    schema count flat regardless of suite length.
-
-    DELETE failures are logged but never raised — a transient cleanup
-    failure must not turn a passing test into a teardown error.
+    Cleanup contract: every schema MUST be created via the
+    SchemaRegistry deploy path AND removed via the tenant-delete path.
+    A timed-out HTTP DELETE that left the runtime mid-redeploy
+    silently produced the registry-vs-Vespa drift the deploy guard
+    keeps tripping over. Replace the blind 30 s timeout with: send
+    the DELETE (60 s for the runtime to ACK), then poll Vespa's
+    schemas list every 2 s until none of the tenant's schemas remain.
+    Hard cap at 10 minutes per tenant so a hung Vespa can't wedge the
+    suite indefinitely.
     """
     _MINTED_TENANTS_THIS_TEST.clear()
     yield
@@ -364,22 +406,39 @@ def _drain_test_tenants_after_each_test():
     _MINTED_TENANTS_THIS_TEST.clear()
     if not minted:
         return
-    # Also strip suffixes — many tests append ``:t1``/``:org_admin``/etc
-    # to the bare tenant id; the runtime expects the full id.
+    # Tests that mint via unique_id("<base>") may construct derived
+    # tenants like f"{base}:t1". Cover the common shapes so we delete
+    # the actual tenant the test wrote under.
     targets: set[str] = set()
     for tid in minted:
         targets.add(tid)
-        # If tests build derived tenants like ``{org}:t1`` from the
-        # minted base, the base alone won't delete them. Add common
-        # derived shapes so the cluster drains cleanly.
         for suf in (":t1", ":t2", ":t3", ":production", ":org_admin"):
             targets.add(tid + suf)
     for full_tid in targets:
         try:
-            with httpx.Client(timeout=30.0) as client:
+            with httpx.Client(timeout=60.0) as client:
                 client.delete(f"{RUNTIME}/admin/tenants/{full_tid}")
         except (httpx.HTTPError, OSError):
+            # Server may have started the redeploy anyway. The poll
+            # below is the actual completion signal.
             pass
+        # Poll Vespa until the tenant's schemas are gone from the
+        # deployed app package. 10 min cap, 2 s interval.
+        deadline = _time.monotonic() + 600.0
+        last_remaining: set[str] = set()
+        while _time.monotonic() < deadline:
+            deployed = _vespa_deployed_schema_names()
+            remaining = _tenant_schema_names_in_vespa(full_tid, deployed)
+            if not remaining:
+                break
+            last_remaining = remaining
+            _time.sleep(2.0)
+        else:
+            print(
+                f"_drain_test_tenants_after_each_test: gave up waiting on "
+                f"{full_tid!r} — Vespa still shows {sorted(last_remaining)} "
+                f"after 600 s"
+            )
 
 
 @pytest.fixture(scope="session")
