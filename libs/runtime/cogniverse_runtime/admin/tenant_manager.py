@@ -800,6 +800,12 @@ def _list_orphan_schemas() -> Dict[str, list]:
         "agent_memories",
         "wiki_pages",
         "code_lateon_mv",
+        # Knowledge-system per-tenant provenance schema. Without this
+        # entry the orphan reconciler couldn't strip provenance_<tid>
+        # back to <tid>, so every Knowledge System e2e test left a
+        # provenance schema behind that the next sweep tripped over
+        # ("Refusing to deploy: Vespa has schemas X not in registry").
+        "provenance",
     )
     orphan_tenants: set = set()
     unrecovered: list = []
