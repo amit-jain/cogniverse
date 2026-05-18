@@ -458,6 +458,135 @@ spec:
           type: Directory
       {{- end }}
 {{- end }}
+{{- if .Values.argo.optimization.monthlyReports.enabled }}
+---
+# Monthly usage + performance reports — generated JSON is uploaded
+# to MinIO so dashboards / billing pipelines can consume the same
+# bucket the data-backup workflows write to. Replaces the standalone
+# kubectl-applied ``monthly-reports`` prototype that wrote empty stubs.
+{{- $reportsMinioSecret := printf "%s-minio" $fullName }}
+{{- $reportsBucket := default "cogniverse-backups" $.Values.hostStorage.backup.bucket }}
+{{- $reportsEndpoint := printf "http://%s-minio:9000" $fullName }}
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ $fullName }}-monthly-reports
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reporting
+spec:
+  schedule: {{ .Values.argo.optimization.monthlyReports.schedule | quote }}
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid"
+  successfulJobsHistoryLimit: 6  # ~6 months of history
+  failedJobsHistoryLimit: 3
+  workflowSpec:
+    entrypoint: reports-pipeline
+    serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    volumes:
+    - name: config
+      configMap:
+        name: {{ $fullName }}-config
+    {{- if .Values.devMode.enabled }}
+    - name: src-libs
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/libs
+        type: Directory
+    - name: src-scripts
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/scripts
+        type: Directory
+    {{- end }}
+    volumeClaimTemplates:
+    - metadata:
+        name: reports-stage
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+    templates:
+    - name: reports-pipeline
+      steps:
+      - - name: generate-reports
+          template: generate-reports
+      - - name: upload-reports
+          template: upload-reports
+    - name: generate-reports
+      container:
+        image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+        imagePullPolicy: {{ $workflowImage.pullPolicy }}
+        command: ["python", "-m", "cogniverse_runtime.optimization_cli"]
+        args:
+          - "--mode"
+          - "monthly-reports"
+          - "--reports-output-dir"
+          - "/reports"
+          - "--lookback-hours"
+          - "{{ .Values.argo.optimization.monthlyReports.lookbackHours }}"
+        env:
+        - name: BACKEND_URL
+          value: "http://{{ $fullName }}-vespa"
+        - name: BACKEND_PORT
+          value: "{{ .Values.vespa.service.ports.query }}"
+        - name: TELEMETRY_HTTP_ENDPOINT
+          value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+        - name: TELEMETRY_OTLP_ENDPOINT
+          value: "{{ $fullName }}-phoenix:4317"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        volumeMounts:
+        - name: config
+          mountPath: /app/configs/config.json
+          subPath: config.json
+          readOnly: true
+        - name: reports-stage
+          mountPath: /reports
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
+    - name: upload-reports
+      container:
+        image: minio/mc:latest
+        env:
+        - name: MINIO_ENDPOINT
+          value: {{ $reportsEndpoint | quote }}
+        - name: MINIO_BUCKET
+          value: {{ $reportsBucket | quote }}
+        - name: REPORTS_PREFIX
+          value: {{ .Values.argo.optimization.monthlyReports.uploadPrefix | quote }}
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $reportsMinioSecret | quote }}
+              key: rootUser
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $reportsMinioSecret | quote }}
+              key: rootPassword
+        command: [bash, -c]
+        args:
+        - |
+          set -eu
+          mc alias set dest "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null
+          mc mb --ignore-existing "dest/$MINIO_BUCKET"
+          mc cp /reports/*.json "dest/$MINIO_BUCKET/$REPORTS_PREFIX/"
+          echo "Uploaded reports to dest/$MINIO_BUCKET/$REPORTS_PREFIX/:"
+          mc ls "dest/$MINIO_BUCKET/$REPORTS_PREFIX/"
+        volumeMounts:
+        - name: reports-stage
+          mountPath: /reports
+{{- end }}
 ---
 # RBAC: Allow the quality monitor sidecar (via the shared ServiceAccount)
 # to create Workflow resources for on-demand optimization.

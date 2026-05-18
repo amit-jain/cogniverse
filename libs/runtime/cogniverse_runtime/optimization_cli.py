@@ -625,6 +625,177 @@ async def _load_approved_synthetic_data(
     return approved
 
 
+async def run_monthly_reports(
+    output_dir: str,
+    lookback_hours: float = 24.0 * 30,
+) -> dict:
+    """Generate the monthly usage + performance report.
+
+    Replaces the standalone ``monthly-reports`` CronWorkflow that was
+    a kubectl-applied stub (echoed empty JSON). This version collects
+    real data:
+
+      * **usage**: total orgs, total tenants per org, total schemas
+        deployed per tenant (from organization_metadata + tenant_metadata).
+      * **performance**: per-tenant span count, mean / p50 / p95 latency
+        across every span the project emitted in the lookback window,
+        plus error rate (status_code != OK).
+
+    Writes ``usage-YYYYMM.json`` and ``performance-YYYYMM.json`` to
+    ``output_dir`` so a follow-up workflow step can upload to MinIO via
+    ``mc cp``. Returns a summary the workflow log captures verbatim.
+    """
+    import json
+    from pathlib import Path
+
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+    from cogniverse_runtime.admin import tenant_manager
+
+    create_default_config_manager()  # warm config singletons
+    schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(schemas_dir))
+
+    period = datetime.now().strftime("%Y%m")
+    generated_at = datetime.utcnow().isoformat() + "Z"
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # --- usage ---
+    org_ids = await tenant_manager.list_organizations_internal()
+    usage_per_org: Dict[str, Any] = {}
+    total_tenants = 0
+    total_schemas = 0
+    for oid in org_ids:
+        tenants = await tenant_manager.list_tenants_for_org_internal(oid)
+        per_org_tenants = []
+        for t in tenants:
+            schemas = list(t.schemas_deployed or [])
+            per_org_tenants.append(
+                {
+                    "tenant_full_id": t.tenant_full_id,
+                    "tenant_name": t.tenant_name,
+                    "status": t.status,
+                    "schema_count": len(schemas),
+                    "schemas_deployed": schemas,
+                }
+            )
+            total_schemas += len(schemas)
+        total_tenants += len(per_org_tenants)
+        usage_per_org[oid] = {
+            "tenant_count": len(per_org_tenants),
+            "tenants": per_org_tenants,
+        }
+    usage_report = {
+        "period": period,
+        "generated_at": generated_at,
+        "summary": {
+            "org_count": len(org_ids),
+            "tenant_count": total_tenants,
+            "schema_count": total_schemas,
+        },
+        "organizations": usage_per_org,
+    }
+    usage_path = out / f"usage-{period}.json"
+    usage_path.write_text(json.dumps(usage_report, indent=2, default=str))
+
+    # --- performance ---
+    telemetry_manager = get_telemetry_manager()
+    end = datetime.now()
+    start = end - timedelta(hours=lookback_hours)
+    perf_per_tenant: Dict[str, Any] = {}
+    tenant_ids = [
+        t.tenant_full_id
+        for oid in org_ids
+        for t in await tenant_manager.list_tenants_for_org_internal(oid)
+        if t.tenant_full_id
+    ]
+    for tid in tenant_ids:
+        provider = telemetry_manager.get_provider(tenant_id=tid)
+        project = telemetry_manager.config.get_project_name(tid)
+        try:
+            spans_df = await provider.traces.get_spans(
+                project=project,
+                start_time=start,
+                end_time=end,
+                limit=10000,
+            )
+        except Exception as exc:
+            perf_per_tenant[tid] = {"error": f"phoenix query failed: {exc}"}
+            continue
+        if spans_df is None or spans_df.empty:
+            perf_per_tenant[tid] = {
+                "span_count": 0,
+                "latency_ms_mean": None,
+                "latency_ms_p50": None,
+                "latency_ms_p95": None,
+                "error_rate": 0.0,
+            }
+            continue
+
+        # Pyhoenix dataframes expose `latency_ms` (start_time, end_time)
+        # and a status_code column; fall back gracefully if either is
+        # absent in older provider versions.
+        latencies = []
+        if "latency_ms" in spans_df.columns:
+            latencies = [v for v in spans_df["latency_ms"].dropna() if v >= 0]
+        elif {"start_time", "end_time"}.issubset(spans_df.columns):
+            for s, e in zip(spans_df["start_time"], spans_df["end_time"]):
+                try:
+                    latencies.append((e - s).total_seconds() * 1000.0)
+                except Exception:
+                    continue
+        errors = 0
+        if "status_code" in spans_df.columns:
+            errors = int(
+                spans_df["status_code"].fillna("OK").str.upper().ne("OK").sum()
+            )
+        n = len(spans_df)
+        latencies_sorted = sorted(latencies) if latencies else []
+
+        def _pct(lst: list, q: float):
+            if not lst:
+                return None
+            idx = max(0, min(len(lst) - 1, int(q * (len(lst) - 1))))
+            return round(float(lst[idx]), 3)
+
+        perf_per_tenant[tid] = {
+            "span_count": int(n),
+            "latency_ms_mean": (
+                round(sum(latencies) / len(latencies), 3) if latencies else None
+            ),
+            "latency_ms_p50": _pct(latencies_sorted, 0.50),
+            "latency_ms_p95": _pct(latencies_sorted, 0.95),
+            "error_rate": round(errors / n, 4) if n else 0.0,
+        }
+    perf_report = {
+        "period": period,
+        "generated_at": generated_at,
+        "lookback_hours": lookback_hours,
+        "tenants": perf_per_tenant,
+    }
+    perf_path = out / f"performance-{period}.json"
+    perf_path.write_text(json.dumps(perf_report, indent=2, default=str))
+
+    return {
+        "period": period,
+        "generated_at": generated_at,
+        "output_dir": str(out),
+        "files_written": [str(usage_path), str(perf_path)],
+        "summary": {
+            "org_count": len(org_ids),
+            "tenant_count": total_tenants,
+            "perf_tenants_with_data": sum(
+                1
+                for v in perf_per_tenant.values()
+                if isinstance(v, dict) and v.get("span_count", 0) > 0
+            ),
+        },
+    }
+
+
 async def run_simba_optimization(
     tenant_id: str,
     lookback_hours: float = 24.0,
@@ -2061,16 +2232,29 @@ def main():
             "rollback",
             "ab-compare",
             "egress-netpol",
+            "monthly-reports",
         ],
         required=True,
     )
-    # --tenant-id is required for most modes; cleanup mode is the
-    # exception and runs globally when omitted, so the daily-cleanup
-    # CronWorkflow (which has no tenant) doesn't exit 2 on argparse.
+    # monthly-reports writes its JSON output here for a follow-up
+    # workflow step to upload via mc. Inside the cron pod this is a
+    # mounted emptyDir / PVC; local CLI runs default to ./reports.
+    parser.add_argument(
+        "--reports-output-dir",
+        default="./reports",
+        help="Output directory for monthly-reports mode (default: ./reports)",
+    )
+    # --tenant-id is required for most modes; cleanup + monthly-reports
+    # are the exceptions and run globally when omitted, so the
+    # daily-cleanup / monthly-reports CronWorkflows (no tenant) don't
+    # exit 2 on argparse.
     parser.add_argument(
         "--tenant-id",
         default=None,
-        help="Tenant ID (required for all modes except --mode cleanup)",
+        help=(
+            "Tenant ID (required for all modes except --mode cleanup / "
+            "--mode monthly-reports)"
+        ),
     )
     parser.add_argument(
         "--agents",
@@ -2199,13 +2383,23 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    if args.mode != "cleanup" and args.mode != "egress-netpol" and not args.tenant_id:
+    if (
+        args.mode not in ("cleanup", "egress-netpol", "monthly-reports")
+        and not args.tenant_id
+    ):
         parser.error(f"--tenant-id is required for mode={args.mode!r}")
 
     if args.mode == "cleanup":
         result = asyncio.run(
             run_cleanup(
                 args.tenant_id, args.log_retention_days, args.memory_retention_days
+            )
+        )
+    elif args.mode == "monthly-reports":
+        result = asyncio.run(
+            run_monthly_reports(
+                output_dir=args.reports_output_dir,
+                lookback_hours=args.lookback_hours,
             )
         )
     elif args.mode == "triggered":

@@ -71,6 +71,18 @@ argo:
     scheduledDistillation:
       enabled: true
       schedule: "0 5 * * *"  # Daily 5 AM UTC (after the optimization cycle)
+    # Monthly usage + performance reports. Replaces the standalone
+    # kubectl-applied ``monthly-reports`` prototype that wrote empty
+    # stub JSON. The chart version collects real metrics (per-org
+    # tenant counts + per-tenant Phoenix latency p50/p95/error rate).
+    monthlyReports:
+      enabled: true
+      schedule: "0 5 1 * *"  # 1st of each month, 5 AM UTC
+      lookbackHours: 720     # Cover the prior 30 days
+      # MinIO destination — same bucket the data-backup workflows use,
+      # under a separate prefix so reports don't mingle with backup
+      # tarballs.
+      uploadPrefix: "reports"
   maintenance:
     backup:
       enabled: true
