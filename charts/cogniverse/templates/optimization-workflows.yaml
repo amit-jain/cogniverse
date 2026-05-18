@@ -425,7 +425,13 @@ spec:
           - "--llm-base-url"
           - {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
           - "--llm-model"
-          - {{ .Values.runtime.qualityMonitor.llmModel | quote }}
+          # Resolve via the same helper the runtime + agent-optimization
+          # use, so the model id matches what vLLM/Ollama actually
+          # serves on the cluster. The legacy ``runtime.qualityMonitor.llmModel``
+          # default of ``qwen3:4b`` is wrong on a vLLM rocm cluster
+          # (which serves ``google/gemma-4-e4b-it``) and the distillation
+          # workflow 404s on /v1/chat/completions when that mismatches.
+          - {{ include "cogniverse.primaryLLMModel" . | quote }}
           - "--golden-dataset-path"
           - {{ .Values.runtime.qualityMonitor.goldenDatasetPath | quote }}
           - "--argo-url"

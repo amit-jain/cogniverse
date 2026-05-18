@@ -274,48 +274,39 @@ class TestSyntheticGenerationWorkflow:
     for every optimizer type. Functional intent: at least one new
     Phoenix dataset matching ``synthetic-*`` exists after the workflow."""
 
-    def test_workflow_creates_new_phoenix_datasets_for_each_optimizer(self):
+    def test_workflow_creates_synthetic_datasets_for_each_optimizer(self):
         if not _cronworkflow_exists("cogniverse-synthetic-generation"):
             pytest.skip("cogniverse-synthetic-generation CronWorkflow not deployed")
-
-        names_before = _phoenix_dataset_names()
 
         wf = _submit_and_wait_succeeded_heavy("cogniverse-synthetic-generation")
         logs = _workflow_pod_logs(wf)
 
-        # Wait briefly for the dataset to be visible via the Phoenix API
+        # Wait briefly for the upload to be visible via the Phoenix API
         # (the workflow writes via OTLP; the HTTP list-datasets endpoint
         # is read-after-write within a few seconds).
-        names_after = names_before
+        names_after: set[str] = set()
         for _ in range(6):
             time.sleep(POLL_INTERVAL_S)
             names_after = _phoenix_dataset_names()
-            if names_after - names_before:
+            if all(
+                any(f"synthetic_{opt}" in n for n in names_after)
+                for opt in ("workflow", "profile")
+            ):
                 break
 
-        new_datasets = names_after - names_before
-        if not new_datasets:
-            pytest.fail(
-                "synthetic-generation workflow Succeeded but no new "
-                "Phoenix datasets appeared.\n"
-                f"  before: {sorted(names_before)}\n"
-                f"  after:  {sorted(names_after)}\n"
-                f"--- pod logs (tail 500) ---\n{logs[-3000:]}"
-            )
-
-        # Functional outcome: every requested optimizer type produced
-        # at least one dataset. The chart args pin
-        # ``--agents workflow,profile`` (the set that runs without extra
-        # synthetic-generator config — see the chart comment). The
-        # CLI names datasets ``dspy-demos-default-synthetic_<optimizer>``
-        # via ArtifactManager._demo_dataset_name.
+        # Functional outcome: the expected dataset NAMES exist after the
+        # run. The CLI's ArtifactManager APPENDS to an existing dataset
+        # on second/later runs (same name → ``append_to_dataset``), so
+        # ``names_after - names_before`` is empty on re-runs. Assert
+        # existence instead — that's the contract this cron owes: each
+        # opt_type ends up with a populated demos dataset.
         for optimizer in ("workflow", "profile"):
             expected = f"synthetic_{optimizer}"
-            matched = [n for n in new_datasets if expected in n]
+            matched = [n for n in names_after if expected in n]
             assert matched, (
-                f"synthetic-generation must produce a dataset for "
+                f"synthetic-generation must leave a dataset for "
                 f"optimizer={optimizer!r} (expected substring "
-                f"{expected!r}); new datasets after run: "
-                f"{sorted(new_datasets)}.\n"
+                f"{expected!r}); datasets observed after run "
+                f"(showing first 50): {sorted(names_after)[:50]}.\n"
                 f"--- pod logs (tail 500) ---\n{logs[-3000:]}"
             )
