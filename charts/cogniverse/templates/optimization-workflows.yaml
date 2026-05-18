@@ -232,6 +232,20 @@ spec:
     - name: config
       configMap:
         name: {{ $fullName }}-config
+    {{- if .Values.devMode.enabled }}
+    # devMode bind-mount for the calling workflow — Argo does not
+    # inherit volumes from the templateRef'd run-optimizer template,
+    # they must be declared here too. Same reason this block exists
+    # for the "config" volume above.
+    - name: src-libs
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/libs
+        type: Directory
+    - name: src-scripts
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/scripts
+        type: Directory
+    {{- end }}
     templates:
     - name: daily-gateway-pipeline
       steps:
@@ -321,10 +335,26 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
       volumes:
       - name: config
         configMap:
           name: {{ $fullName }}-config
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
 {{- end }}
 {{- if .Values.argo.optimization.scheduledDistillation.enabled }}
 ---
@@ -399,6 +429,12 @@ spec:
           mountPath: /app/data/quality-monitor/golden_dataset.json
           subPath: golden_dataset.json
           readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
       volumes:
       - name: config
         configMap:
@@ -406,6 +442,16 @@ spec:
       - name: quality-monitor-data
         configMap:
           name: {{ $fullName }}-quality-monitor-data
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
 {{- end }}
 ---
 # RBAC: Allow the quality monitor sidecar (via the shared ServiceAccount)

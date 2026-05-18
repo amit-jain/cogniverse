@@ -48,6 +48,23 @@ spec:
   - name: config
     configMap:
       name: {{ $fullName }}-config
+  {{- if .Values.devMode.enabled }}
+  # devMode bind-mount: optimizer pods pick up local source edits
+  # without a runtime image rebuild. Required so the e2e
+  # CronWorkflow execution tests exercise the freshly-committed CLI
+  # code rather than whatever was baked into the runtime image days
+  # ago. Volumes go at workflowSpec / WorkflowTemplate-spec level so
+  # every templateRef'd Workflow inherits them — Argo does not merge
+  # volumes from referenced templates into the caller.
+  - name: src-libs
+    hostPath:
+      path: {{ .Values.devMode.hostPath }}/libs
+      type: Directory
+  - name: src-scripts
+    hostPath:
+      path: {{ .Values.devMode.hostPath }}/scripts
+      type: Directory
+  {{- end }}
   templates:
   - name: run-optimizer
     inputs:
@@ -93,4 +110,10 @@ spec:
         mountPath: /app/configs/config.json
         subPath: config.json
         readOnly: true
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        mountPath: /app/libs
+      - name: src-scripts
+        mountPath: /app/scripts
+      {{- end }}
 {{- end }}

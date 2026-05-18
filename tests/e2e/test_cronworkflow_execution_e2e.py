@@ -1,17 +1,18 @@
-"""E2E coverage for CronWorkflow execution paths.
+"""E2E coverage for CronWorkflow execution paths — light tier.
 
-Catches regressions where a CronWorkflow's workflowSpec is syntactically
-valid (chart renders, kubectl accepts) but fails at runtime — e.g.,
-argparse exit 2 because a required flag is missing (the daily-cleanup
-regression that prompted task #125), or "volume 'config' not found in
-workflow spec" because templateRef volumes were not inherited (the
-daily-gateway regression).
+Each test in this file submits a one-off Workflow derived from the
+chart's CronWorkflow ``workflowSpec`` against the live cluster, polls
+for completion, and asserts both that the workflow reached
+``Succeeded`` AND that its real side effect landed on the live
+backend. "Succeeded" alone is too weak — these workflows exist for
+specific functional reasons, and the test must prove each one
+actually achieved its intent.
 
-Each test submits a one-off Workflow derived from the CronWorkflow's
-``workflowSpec`` (CronWorkflow suspension does not block this — only
-the scheduler) and waits for the Workflow to reach a terminal phase.
-Anything other than ``Succeeded`` is a test failure, with the pod logs
-attached for diagnosis.
+Light tier = workflows that complete in roughly 30s-90s and don't
+require a live LM endpoint. Heavy tier (DSPy training, distillation,
+synthetic data generation) lives in
+``test_cronworkflow_execution_heavy_e2e.py`` behind the ``e2e_heavy``
+marker.
 """
 
 from __future__ import annotations
@@ -20,12 +21,21 @@ import json
 import shutil
 import subprocess
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 NAMESPACE = "cogniverse"
+RUNTIME = "http://localhost:8080"
 SUBMISSION_TIMEOUT_S = 600.0
 POLL_INTERVAL_S = 5.0
+
+
+# ---------------------------------------------------------------------------
+# kubectl / Argo helpers (re-used by every cron in this file)
+# ---------------------------------------------------------------------------
 
 
 def _kubectl_available() -> bool:
@@ -45,12 +55,7 @@ def _cronworkflow_exists(name: str) -> bool:
 
 
 def _submit_workflow_from_cron(cron_name: str) -> str:
-    """Create a one-off Workflow from the CronWorkflow's workflowSpec.
-
-    Returns the submitted Workflow's metadata.name. Raises ``RuntimeError``
-    on any kubectl failure — the e2e suite reports those as test errors,
-    not flakes.
-    """
+    """Create a one-off Workflow from the CronWorkflow's workflowSpec."""
     out = subprocess.run(
         ["kubectl", "get", "cronworkflow", cron_name, "-n", NAMESPACE, "-o", "json"],
         capture_output=True,
@@ -100,13 +105,6 @@ def _workflow_status(name: str) -> dict:
 
 
 def _workflow_pod_logs(workflow_name: str) -> str:
-    """Concatenate logs from every pod the workflow created.
-
-    Argo labels its pods with ``workflows.argoproj.io/workflow=<name>`` so
-    a single ``kubectl logs -l`` call picks them all up. Best-effort —
-    if logs are unavailable (pods cleaned up too fast) we return an empty
-    string rather than crashing the assertion.
-    """
     out = subprocess.run(
         [
             "kubectl",
@@ -134,8 +132,9 @@ def _delete_workflow(name: str) -> None:
     )
 
 
-def _wait_for_workflow_terminal(name: str, timeout_s: float = SUBMISSION_TIMEOUT_S):
-    """Poll until phase is in {Succeeded, Failed, Error}. Returns status dict."""
+def _wait_for_workflow_terminal(
+    name: str, timeout_s: float = SUBMISSION_TIMEOUT_S
+) -> dict:
     deadline = time.monotonic() + timeout_s
     last_phase = "Unknown"
     while time.monotonic() < deadline:
@@ -150,45 +149,346 @@ def _wait_for_workflow_terminal(name: str, timeout_s: float = SUBMISSION_TIMEOUT
     return _workflow_status(name)
 
 
+def _submit_and_wait_succeeded(cron_name: str, timeout_s: float = SUBMISSION_TIMEOUT_S):
+    """Submit + poll. Fails the test with pod logs on non-Succeeded terminal."""
+    wf = _submit_workflow_from_cron(cron_name)
+    try:
+        status = _wait_for_workflow_terminal(wf, timeout_s=timeout_s)
+        phase = status.get("phase") or "Unknown"
+        if phase != "Succeeded":
+            logs = _workflow_pod_logs(wf)
+            pytest.fail(
+                f"Workflow {wf} (from {cron_name}) phase={phase!r}, expected "
+                f"'Succeeded'.\nstatus.message={status.get('message')!r}\n"
+                f"--- pod logs (tail 500) ---\n{logs[-4000:]}\n--- end logs ---"
+            )
+        return wf
+    finally:
+        _delete_workflow(wf)
+
+
+# ---------------------------------------------------------------------------
+# Runtime/Vespa side-effect helpers
+# ---------------------------------------------------------------------------
+
+
+def _seed_org_and_tenant(unique_suffix: str) -> str:
+    """Create real org + tenant via the runtime's admin API.
+
+    Returns the tenant_full_id. The daily-cleanup workflow enumerates
+    every tenant in every org via the live tenant_manager helpers, so
+    the seeded tenant becomes a real participant in the sweep.
+    """
+    org_id = f"cron_e2e_org_{unique_suffix}"
+    tenant_id = f"{org_id}:t1"
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(
+            f"{RUNTIME}/admin/organizations",
+            json={
+                "org_id": org_id,
+                "org_name": f"cron-e2e-{unique_suffix}",
+                "created_by": "e2e",
+            },
+        )
+        # 409 = already exists from a prior aborted run — acceptable.
+        assert r.status_code in (200, 409), r.text
+        r = client.post(
+            f"{RUNTIME}/admin/tenants",
+            json={"tenant_id": tenant_id, "created_by": "e2e"},
+        )
+        assert r.status_code in (200, 409), r.text
+    return tenant_id
+
+
+def _delete_tenant_and_org(tenant_full_id: str) -> None:
+    org_id = tenant_full_id.split(":", 1)[0]
+    with httpx.Client(timeout=120.0) as client:
+        try:
+            client.delete(f"{RUNTIME}/admin/tenants/{tenant_full_id}")
+        except httpx.HTTPError:
+            pass
+        try:
+            client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+        except httpx.HTTPError:
+            pass
+
+
+def _add_aged_memory(
+    tenant_full_id: str, kind: str, age_days: float, content: str
+) -> str:
+    """POST /admin/tenants/{t}/memories with metadata.created_at backdated."""
+    meta = {"kind": kind}
+    if age_days > 0:
+        meta["created_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=age_days)
+        ).isoformat()
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(
+            f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories",
+            json={
+                "content": content,
+                "agent_name": "cron_e2e_writer",
+                "metadata": meta,
+                "infer": False,
+            },
+        )
+        assert r.status_code == 200, r.text
+    return r.json()["memory_id"]
+
+
+def _resolve_memory(tenant_full_id: str, mid: str) -> dict | None:
+    with httpx.Client(timeout=30.0) as client:
+        r = client.get(f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories/{mid}")
+        if r.status_code == 404:
+            return None
+        if r.status_code != 200:
+            return None
+        return r.json()
+
+
+def _runtime_pod_restart_count() -> int:
+    """Read the runtime Deployment's pod restart-count for rollout detection."""
+    out = subprocess.run(
+        [
+            "kubectl",
+            "get",
+            "deployment",
+            "-n",
+            NAMESPACE,
+            "-l",
+            "app.kubernetes.io/component=runtime",
+            "-o",
+            "jsonpath={.items[*].status.observedGeneration}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return int(out.stdout.strip() or "0")
+
+
+# ---------------------------------------------------------------------------
+# MinIO helpers (backup tests)
+# ---------------------------------------------------------------------------
+
+
+def _mc_ls_count(prefix: str) -> int:
+    """List objects under cogniverse-backups/<prefix>/ via the in-cluster MinIO.
+
+    Spins a one-off mc pod that talks to the cluster's MinIO service —
+    same access pattern the backup workflow uses. Returns -1 on any
+    failure (caller treats as "skip detection of pre-state").
+    """
+    result = subprocess.run(
+        [
+            "kubectl",
+            "run",
+            f"mc-probe-{uuid.uuid4().hex[:8]}",
+            "-n",
+            NAMESPACE,
+            "--rm",
+            "-i",
+            "--restart=Never",
+            "--image=minio/mc:latest",
+            "--overrides",
+            json.dumps(
+                {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "mc",
+                                "image": "minio/mc:latest",
+                                "env": [
+                                    {
+                                        "name": "ACCESS",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "name": "cogniverse-minio",
+                                                "key": "rootUser",
+                                            }
+                                        },
+                                    },
+                                    {
+                                        "name": "SECRET",
+                                        "valueFrom": {
+                                            "secretKeyRef": {
+                                                "name": "cogniverse-minio",
+                                                "key": "rootPassword",
+                                            }
+                                        },
+                                    },
+                                ],
+                                "command": ["sh", "-c"],
+                                "args": [
+                                    'mc alias set dest http://cogniverse-minio:9000 "$ACCESS" "$SECRET" >/dev/null 2>&1 && '
+                                    f"mc ls dest/cogniverse-backups/{prefix}/ 2>/dev/null | wc -l"
+                                ],
+                            }
+                        ]
+                    }
+                }
+            ),
+            "--",
+            "true",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    try:
+        # mc ls output is the last non-empty line; pod attach prefixes some chatter
+        for line in reversed(result.stdout.splitlines()):
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+        return -1
+    except Exception:
+        return -1
+
+
+# ---------------------------------------------------------------------------
+# Light-tier tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.e2e
 @pytest.mark.skipif(
     not _kubectl_available(), reason="kubectl not available in test environment"
 )
-class TestCronWorkflowExecution:
-    """Each cron's workflowSpec submitted as a one-off Workflow must Succeed.
+class TestDailyCleanupWorkflow:
+    """Daily-cleanup must hard-delete EPHEMERAL memories past 2×TTL across
+    every tenant — that is its functional purpose, not just "Succeeded"."""
 
-    These cover the runtime failure mode that argparse-level unit tests
-    can't reach: the actual container, image, and chart-rendered spec
-    running on the live cluster.
-    """
+    def test_workflow_hard_deletes_stale_memory_for_seeded_tenant(self):
+        if not _cronworkflow_exists("cogniverse-daily-cleanup"):
+            pytest.skip("cogniverse-daily-cleanup CronWorkflow not deployed")
 
-    def _run_and_assert_succeeded(self, cron_name: str) -> None:
-        if not _cronworkflow_exists(cron_name):
-            pytest.skip(f"CronWorkflow {cron_name} not deployed on this cluster")
-        wf_name = _submit_workflow_from_cron(cron_name)
+        suffix = uuid.uuid4().hex[:8]
+        tenant_id = _seed_org_and_tenant(suffix)
         try:
-            status = _wait_for_workflow_terminal(wf_name)
-            phase = status.get("phase") or "Unknown"
-            if phase != "Succeeded":
-                logs = _workflow_pod_logs(wf_name)
-                pytest.fail(
-                    f"Workflow {wf_name} (from {cron_name}) reached phase="
-                    f"{phase!r}, expected 'Succeeded'.\n"
-                    f"status.message={status.get('message')!r}\n"
-                    f"--- pod logs (tail 500) ---\n{logs[-4000:]}\n"
-                    f"--- end logs ---"
-                )
+            # Plant one hard-deletable (40d > 28d) and one permanent control.
+            stale_id = _add_aged_memory(
+                tenant_id, "conversation_turn", 40.0, "stale-victim"
+            )
+            permanent_id = _add_aged_memory(
+                tenant_id, "tenant_instruction", 999.0, "rule-stays-forever"
+            )
+
+            # Pre-state: both visible.
+            assert _resolve_memory(tenant_id, stale_id) is not None, (
+                "precondition: stale memory must be queryable before cleanup runs"
+            )
+            assert _resolve_memory(tenant_id, permanent_id) is not None
+
+            _submit_and_wait_succeeded("cogniverse-daily-cleanup", timeout_s=600)
+
+            # Functional outcome: the 40d ephemeral memory is GONE.
+            assert _resolve_memory(tenant_id, stale_id) is None, (
+                f"daily-cleanup workflow Succeeded but the 40d-old "
+                f"conversation_turn ({stale_id}) is still resolvable — "
+                f"workflow ran but its functional intent did not land"
+            )
+            # And the PERMANENT memory survives.
+            assert _resolve_memory(tenant_id, permanent_id) is not None, (
+                "daily-cleanup must not touch PERMANENT kinds; "
+                "tenant_instruction was wiped"
+            )
         finally:
-            _delete_workflow(wf_name)
+            _delete_tenant_and_org(tenant_id)
 
-    def test_daily_cleanup_workflow_runs_to_succeeded(self):
-        """Regression test for the argparse exit-2 bug.
 
-        Pre-fix, ``optimization_cli --mode cleanup`` exited 2 because
-        ``--tenant-id`` was ``required=True`` and the chart-rendered
-        args don't pass one. The workflow pod's container therefore
-        exited non-zero and the Workflow reached Failed. After the fix
-        in ``optimization_cli`` (cleanup mode now iterates globally
-        when --tenant-id is omitted), the Workflow must reach Succeeded.
-        """
-        self._run_and_assert_succeeded("cogniverse-daily-cleanup")
+@pytest.mark.e2e
+@pytest.mark.skipif(
+    not _kubectl_available(), reason="kubectl not available in test environment"
+)
+class TestDailyGatewayWorkflow:
+    """Daily-gateway must (1) call run_gateway_thresholds_optimization
+    against Phoenix spans and (2) trigger a runtime rollout. The
+    workflow uses templateRef → optimization-runner, which is the
+    chart path that previously broke with "volume 'config' not found"."""
+
+    def test_workflow_runs_to_succeeded_and_records_no_data_or_threshold_update(self):
+        if not _cronworkflow_exists("cogniverse-daily-gateway"):
+            pytest.skip("cogniverse-daily-gateway CronWorkflow not deployed")
+
+        # Pre: capture rollout generation. Post: it must have bumped if the
+        # threshold computation actually completed.
+        gen_before = _runtime_pod_restart_count()
+
+        wf_name = _submit_and_wait_succeeded("cogniverse-daily-gateway", timeout_s=600)
+
+        # Functional outcome 1: rollout restart happened — the
+        # restart-deployment step is the second template in the
+        # pipeline and must have executed.
+        gen_after = _runtime_pod_restart_count()
+        assert gen_after > gen_before, (
+            f"daily-gateway workflow Succeeded but the runtime deployment "
+            f"observedGeneration did not advance ({gen_before} → {gen_after}); "
+            f"the restart-deployment step must have run for thresholds to "
+            f"take effect"
+        )
+
+        # Functional outcome 2: the optimize-gateway step produced
+        # either an updated threshold record or a recorded 'no_data'
+        # outcome on the pod logs — bare 'Succeeded' is not enough.
+        logs = _workflow_pod_logs(wf_name)
+        assert any(
+            marker in logs
+            for marker in (
+                "Updated gateway thresholds",
+                '"status": "no_data"',
+                '"status": "updated"',
+                "gateway_thresholds",
+            )
+        ), (
+            f"daily-gateway optimize step left no functional marker in "
+            f"its pod logs; got tail:\n{logs[-3000:]}"
+        )
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(
+    not _kubectl_available(), reason="kubectl not available in test environment"
+)
+class TestBackupVespaWorkflow:
+    """The vespa backup workflow tars vespa data via kubectl-exec and
+    uploads to MinIO under cogniverse-backups/vespa/. A new object
+    matching ``vespa-<TIMESTAMP>.tar`` must appear post-Succeeded."""
+
+    def test_workflow_uploads_new_vespa_snapshot_to_minio(self):
+        if not _cronworkflow_exists("cogniverse-backup-vespa"):
+            pytest.skip(
+                "cogniverse-backup-vespa CronWorkflow not deployed "
+                "(hostStorage.backup.enabled defaults to false)"
+            )
+        count_before = _mc_ls_count("vespa")
+        _submit_and_wait_succeeded("cogniverse-backup-vespa", timeout_s=600)
+        count_after = _mc_ls_count("vespa")
+        assert count_after > count_before, (
+            f"backup-vespa workflow Succeeded but MinIO object count under "
+            f"cogniverse-backups/vespa/ did not increase "
+            f"({count_before} → {count_after})"
+        )
+
+
+@pytest.mark.e2e
+@pytest.mark.skipif(
+    not _kubectl_available(), reason="kubectl not available in test environment"
+)
+class TestBackupPhoenixWorkflow:
+    """Same contract as backup-vespa for the phoenix snapshot."""
+
+    def test_workflow_uploads_new_phoenix_snapshot_to_minio(self):
+        if not _cronworkflow_exists("cogniverse-backup-phoenix"):
+            pytest.skip(
+                "cogniverse-backup-phoenix CronWorkflow not deployed "
+                "(hostStorage.backup.enabled defaults to false)"
+            )
+        count_before = _mc_ls_count("phoenix")
+        _submit_and_wait_succeeded("cogniverse-backup-phoenix", timeout_s=600)
+        count_after = _mc_ls_count("phoenix")
+        assert count_after > count_before, (
+            f"backup-phoenix workflow Succeeded but MinIO object count under "
+            f"cogniverse-backups/phoenix/ did not increase "
+            f"({count_before} → {count_after})"
+        )
