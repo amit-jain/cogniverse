@@ -19,6 +19,43 @@ import httpx
 
 from .base import Evaluator, create_evaluation_result
 
+
+def _run_async_isolated(coro: Any) -> Any:
+    """Run an awaitable in a fresh OS thread + fresh event loop.
+
+    Previous sync evaluate() methods called
+    ``asyncio.set_event_loop(asyncio.new_event_loop())`` then
+    ``loop.run_until_complete(coro)``. ``set_event_loop`` makes the loop
+    the thread's default — once set, every subsequent
+    ``asyncio.get_event_loop()`` on the same thread returns it. Tests
+    that import this module (e.g. e2e tests using llm_judge) then poison
+    the pytest-asyncio runner: pytest-asyncio sees a running loop on the
+    test thread and refuses to enter its own loop with
+    ``RuntimeError: Runner.run() cannot be called from a running event loop``.
+
+    Spawning a worker thread isolates the new loop entirely from the
+    calling thread. ``asyncio.run`` inside the worker creates a fresh
+    loop, runs the coroutine, closes the loop on return. The calling
+    thread's loop state is untouched.
+    """
+    import threading
+
+    box: dict = {}
+
+    def _runner() -> None:
+        try:
+            box["value"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001 — propagate verbatim
+            box["error"] = exc
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -210,16 +247,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
         """
         Synchronous evaluation for Phoenix experiments
         """
-        # Run async evaluation in sync context
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(self._evaluate_async(input, output, **kwargs))
+        return _run_async_isolated(self._evaluate_async(input, output, **kwargs))
 
     async def _evaluate_async(self, input, output, **kwargs) -> Any:
         """
@@ -384,15 +412,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
         """
         Synchronous evaluation for Phoenix experiments
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
+        return _run_async_isolated(
             self._evaluate_async(input, output, expected, **kwargs)
         )
 
@@ -647,15 +667,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
         """
         Hybrid evaluation combining both approaches
         """
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
+        return _run_async_isolated(
             self._evaluate_async(input, output, expected, **kwargs)
         )
 
