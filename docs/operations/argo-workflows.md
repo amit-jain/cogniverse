@@ -253,29 +253,49 @@ argo cron suspend weekly-dspy-optimization -n cogniverse
 argo cron resume weekly-dspy-optimization -n cogniverse
 ```
 
-### Daily Cleanup (4 AM UTC)
+### Daily Cleanup (`cogniverse-daily-cleanup`, 4 AM UTC)
 
-Cleans up logs, temp files, and databases daily.
+Chart `CronWorkflow` (`argo.maintenance.cleanup`, schedule `0 4 * * *`) running `python -m cogniverse_runtime.optimization_cli --mode cleanup`. Four sections run in one pod:
+
+- **Memory cleanup** — per-tenant `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` (schema-driven TTLs from `KnowledgeRegistry`); sweeps every org / tenant from `organization_metadata` + `tenant_metadata`.
+- **Log rotation** — `LOG_DIR` (default `/logs`), files older than `--log-retention-days` (chart `argo.maintenance.cleanup.logRetentionDays`, default 7) removed.
+- **Temp file cleanup** — `TEMP_DIR` (default `/tmp`), files older than `TEMP_RETENTION_DAYS` env (default 1) removed.
+- **Config metadata vacuum** — `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` (default 10) — drains legacy `config_metadata` row bloat down to the latest N per `config_id`.
+
+Each section reports exact counts in the result dict — see [optimization.md `--mode cleanup`](../modules/optimization.md#8-mode-cleanup-memory--logs--temp--config-vacuum).
 
 ```bash
 # View workflow
-kubectl get cronworkflow daily-cleanup -n cogniverse
+kubectl get cronworkflow cogniverse-daily-cleanup -n cogniverse
 
 # Check last run
-argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=daily-cleanup --limit 1
+argo list -n cogniverse --selector workflows.argoproj.io/cron-workflow=cogniverse-daily-cleanup --limit 1
 ```
 
-### Monthly Reports (1st of month, 5 AM UTC)
+### Monthly Reports (`cogniverse-monthly-reports`, 1st of month, 5 AM UTC)
 
-Generates usage and performance reports monthly.
+Chart `CronWorkflow` (`argo.optimization.monthlyReports`, schedule `0 5 1 * *`) — two-step pipeline.
+
+Step 1 (`generate-reports`): runs `optimization_cli --mode monthly-reports --reports-output-dir /reports --lookback-hours 720` against the in-cluster Phoenix and stages `usage-YYYYMM.json` + `performance-YYYYMM.json` onto a `reports-stage` PVC. Usage is per-org tenant counts + each tenant's `schemas_deployed`; performance is per-tenant span count, latency mean / p50 / p95, and `error_rate` over the lookback window.
+
+Step 2 (`upload-reports`): `minio/mc:latest` pod that `mc cp`s the staged JSON into MinIO at `cogniverse-backups/reports/` (`hostStorage.backup.bucket` + `argo.optimization.monthlyReports.uploadPrefix`).
 
 ```bash
 # View workflow
-kubectl get cronworkflow monthly-reports -n cogniverse
+kubectl get cronworkflow cogniverse-monthly-reports -n cogniverse
 
 # Trigger manually for testing
-argo submit --from cronwf/monthly-reports -n cogniverse
+argo submit --from cronwf/cogniverse-monthly-reports -n cogniverse
 ```
+
+### Chart LLM model helpers
+
+The chart resolves the runtime's primary chat LLM into two helper templates in `templates/_helpers.tpl`:
+
+- **`cogniverse.primaryLLMModel`** — DSPy / litellm form, always prefixed with the provider (`openai/<bare-model>` for in-cluster vLLM or Ollama; `anthropic/<id>` for SaaS providers if overridden via `runtime.primaryLLM.model`). Used by DSPy LM construction (`create_dspy_lm`) where the prefix selects provider routing.
+- **`cogniverse.primaryLLMModelBare`** — same model id **without** the provider prefix. Use this when calling an OpenAI-compatible `/v1/chat/completions` endpoint directly (vLLM, llama.cpp server, Ollama) — those servers serve the bare model name and return 404 on the prefixed form. Used by the `quality-monitor` sidecar (`charts/.../all-resources.yaml`) and the scheduled-distillation cron (`charts/.../optimization-workflows.yaml`).
+
+Resolution order for both: `runtime.primaryLLM.model` if set, else the engine-derived model (`inference.vllm_llm_student.model` when `llm.engine: vllm`, else `llm.model`).
 
 ---
 

@@ -312,6 +312,163 @@ class OptimizationConfig:
 
 ---
 
+### 5. **Signature Variants**
+
+Per-tenant named-variant registry for DSPy signatures. Each agent has at least a `"default"` variant; tenants opt into variants like `"with_jurisdiction"` via `TenantConfig.metadata['signature_variants'][agent_type]`. The artefact manager keys prompts / demos / experiments on `(tenant_id, agent_type, variant_id)` so each variant has its own compiled artefacts.
+
+**File:** `libs/agents/cogniverse_agents/optimizer/signature_variants.py`
+
+**Key methods:**
+
+```python
+from cogniverse_agents.optimizer.signature_variants import (
+    SignatureVariantRegistry,
+    variant_qualified_agent_key,
+    DEFAULT_VARIANT_ID,  # "default"
+)
+
+reg = SignatureVariantRegistry()
+
+# Register a variant. Idempotent for identical (agent_type, variant_id, description);
+# raises ValueError when replace=False and the variant exists with a different definition.
+reg.register("legal_qa", "with_jurisdiction", description="adds jurisdiction input")
+
+# Tenant lookup. Falls back to "default" when:
+#   * TenantConfig is None / has no metadata dict
+#   * signature_variants key is missing or not a dict
+#   * the requested variant id is not registered (logged at WARNING — operators want typo signal)
+variant_id = reg.selected_for_tenant(tenant_config, "legal_qa")
+
+# Artefact dataset key. Default variant returns the bare agent_type so pre-variant
+# artefacts keep working; non-default variants get a ``::variant=<safe_id>`` suffix.
+key = variant_qualified_agent_key("legal_qa", variant_id)
+# -> "legal_qa"                              when variant_id == "default"
+# -> "legal_qa::variant=with_jurisdiction"   otherwise
+```
+
+The registry is intentionally schemaless — variants only track which ids are valid for an agent; the agent owns the actual DSPy signature class lookup table.
+
+---
+
+### 6. **Canary FSM**
+
+`ArtifactManager` maintains a three-slot state — `active`, `canary`, `retired` — per `(tenant_id, agent_type)` and persists it via Phoenix `DatasetStore` under the `config` blob key. Routing decisions are stable per request (sha1 of `request_seed`, bucket `% 100`).
+
+**File:** `libs/agents/cogniverse_agents/optimizer/artifact_manager.py`
+
+```python
+from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+am = ArtifactManager(telemetry_provider=phoenix_provider, tenant_id="acme:production")
+
+# Promote a versioned artefact to canary at a traffic percentage.
+# Raises ValueError if traffic_pct not in [1, 100]. Replaces any existing canary
+# (the prior canary moves to retired with reason="superseded_by_new_canary").
+state = await am.promote_to_canary("search_agent", version=7, traffic_pct=10)
+
+# Promote canary to active. Prior active goes to retired with
+# reason="superseded_by_canary_promotion". Restores prompts + demos at the
+# un-versioned dataset name agents read at __init__. Raises ValueError if no canary set.
+state = await am.promote_canary_to_active("search_agent")
+
+# Drop the current canary back to retired without promoting. No-op when no canary set.
+# Common reason values: "metric_regression", "admin_retire", "superseded_by_new_canary".
+state = await am.retire_canary("search_agent", reason="metric_regression")
+```
+
+State shape:
+
+```python
+{
+  "active":  {"version": 6, "promoted_at": "..."},
+  "canary":  {"version": 7, "promoted_at": "...", "traffic_pct": 10},
+  "retired": [{"version": 5, "retired_at": "...", "reason": "..."}, ...],
+}
+```
+
+---
+
+### 7. **Rollback CLI**
+
+Restore active artefacts to a previously snapshotted version. Wraps `ArtifactManager.rollback_to_version` and snapshots the current active first so the rollback is itself reversible.
+
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_rollback`
+
+```bash
+# Roll back search_agent's active prompts to v2
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode rollback \
+  --tenant-id acme:production \
+  --agent search_agent \
+  --prompts-version 2
+
+# Demos rollback is independent; supply either or both
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode rollback \
+  --tenant-id acme:production \
+  --agent search_agent \
+  --prompts-version 2 \
+  --demos-version 3
+```
+
+Required: `--tenant-id`, `--agent`, plus at least one of `--prompts-version` / `--demos-version`. The Phoenix provider is built directly from `PHOENIX_HTTP_ENDPOINT` / `PHOENIX_GRPC_ENDPOINT` env vars so a CLI invocation can target a specific Phoenix without going through the global telemetry config.
+
+Returns `{summary: ..., backup_versions: {prompts: int?, demos: int?}}` — pass those versions to a follow-up `--mode rollback` to undo.
+
+---
+
+### 8. **`--mode cleanup` (memory + logs + temp + config vacuum)**
+
+Daily-cleanup workflow body (per-tenant when `--tenant-id` is set, global sweep when omitted). Replaces the legacy standalone `daily-cleanup` CronWorkflow that the chart didn't previously cover.
+
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_cleanup`
+
+| Section | Source | Knob |
+|---|---|---|
+| `memory_cleanup` | `Mem0MemoryManager.cleanup_with_schema(build_default_registry())` per tenant | per-kind TTLs in `KnowledgeRegistry` |
+| `log_cleanup` | `_prune_aged_files(LOG_DIR, older_than_days=log_retention_days)` | `LOG_DIR` env (default `/logs`), `--log-retention-days` (default 7) |
+| `temp_cleanup` | `_prune_aged_files(TEMP_DIR, older_than_days=TEMP_RETENTION_DAYS)` | `TEMP_DIR` env (default `/tmp`), `TEMP_RETENTION_DAYS` env (default 1) |
+| `config_vacuum` | `VespaConfigStore.prune_all_configs(keep=CONFIG_KEEP_VERSIONS)` | `CONFIG_KEEP_VERSIONS` env (default 10) |
+
+`_prune_aged_files` is a silent no-op when the path is not a directory (the cron pod may not mount `/logs` in every topology); it returns `{"skipped": "<reason>"}` so the workflow log records the skip. `_vacuum_config_metadata` is similarly safe when the backing store is not `VespaConfigStore`. Each section reports exact counts (`scanned`, `deleted`, `dropped`) so the workflow log proves the work landed.
+
+```bash
+# Global sweep (every org / every tenant)
+uv run python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
+
+# Per-tenant sweep
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode cleanup --tenant-id acme:production --log-retention-days 7
+```
+
+Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: {tid: "completed: {...}"} | per_tenant_dict, tenants_processed?, log_cleanup, temp_cleanup, config_vacuum}`.
+
+---
+
+### 9. **`--mode monthly-reports`**
+
+Generates usage + performance JSON for the prior period (default 30 days). Replaces the legacy kubectl-applied `monthly-reports` prototype that wrote empty stubs.
+
+**File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_monthly_reports`
+
+Writes two files into `--reports-output-dir` (default `./reports`):
+
+- `usage-YYYYMM.json` — per-org tenant counts (`organization_metadata` + `tenant_metadata`), each tenant's `schemas_deployed` list and `schema_count`; top-level summary `{org_count, tenant_count, schema_count}`.
+- `performance-YYYYMM.json` — per-tenant Phoenix span count, latency `mean / p50 / p95`, and `error_rate` (`status_code != OK`) over the lookback window. Empty-data tenants record `{span_count: 0, latency_*: null, error_rate: 0.0}`; Phoenix query failures record `{"error": "phoenix query failed: ..."}` and continue.
+
+```bash
+uv run python -m cogniverse_runtime.optimization_cli \
+  --mode monthly-reports \
+  --reports-output-dir /reports \
+  --lookback-hours 720
+```
+
+`--tenant-id` is not required (the workflow sweeps every tenant the metadata schemas know about). Cron `cogniverse-monthly-reports` (chart, schedule `0 5 1 * *`, 1st of month 5 AM UTC) runs this followed by a `minio/mc:latest` step that uploads to `cogniverse-backups/reports/` (`hostStorage.backup.bucket` + `argo.optimization.monthlyReports.uploadPrefix`).
+
+Returns `{period, generated_at, output_dir, files_written: [usage_path, perf_path], summary: {org_count, tenant_count, perf_tenants_with_data}}`.
+
+---
+
 ## Usage Examples
 
 ### Example 1: On-Demand Gateway Threshold Optimization

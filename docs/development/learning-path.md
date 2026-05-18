@@ -148,6 +148,121 @@ Foundation Layer
 
 ---
 
+## Knowledge Subsystem
+
+Cross-cutting track for the memory/provenance/trust stack and the agents that consume it. Read after Phase 5.
+
+### 1. Memory Layer Foundations
+
+**Reading order**: `schema.py` → `manager.py::cleanup_with_schema`
+
+**Key Files**:
+
+- `libs/core/cogniverse_core/memory/schema.py` — KnowledgeRegistry, KnowledgeSchema, Retention enum, Sensitivity, Pinnable, `build_default_registry`
+- `libs/core/cogniverse_core/memory/manager.py` — `cleanup_with_schema` (retention-driven sweep)
+
+**Diagram**: [diagrams/multi-tenant-diagrams.md](../diagrams/multi-tenant-diagrams.md) — knowledge sections
+
+---
+
+### 2. Provenance
+
+**Key Files**:
+
+- `libs/core/cogniverse_core/memory/provenance.py` — CitationRef (memory vs external), DerivationKind, ProvenanceWalker
+- `libs/core/cogniverse_core/memory/provenance_store.py` — per-tenant `provenance_<tenant>` Vespa schema isolation
+
+---
+
+### 3. Trust + Contradiction
+
+**Key Files**:
+
+- `libs/core/cogniverse_core/memory/trust.py` — derivation-weighted initial trust, endorsement bumps (user / org_admin), `rank_with_trust` composite score
+- `libs/core/cogniverse_core/memory/contradiction.py` — ContradictionDetector, ConflictSet, reconciliation policies: LATEST_WINS, TRUST_RANKED, PRESERVE_BOTH
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 1
+
+---
+
+### 4. Federation + Pinning
+
+**Key Files**:
+
+- `libs/core/cogniverse_core/memory/federation.py` — org_trunk promotion (sensitivity-gated), `federated_get_all` cross-tenant read
+- `libs/core/cogniverse_core/memory/pinning.py` — PinService, PinQuotas (per-role floor)
+- `libs/core/cogniverse_core/memory/lifecycle_scheduler.py` — periodic `cleanup_with_schema` driver
+
+---
+
+### 5. Knowledge Agents (9)
+
+**Dispatcher**: `libs/runtime/cogniverse_runtime/routers/knowledge.py`
+
+**Agents** (`libs/agents/cogniverse_agents/`):
+
+- `multi_document_synthesis_agent.py`
+- `kg_traversal_agent.py`
+- `cross_tenant_comparison_agent.py`
+- `contradiction_reconciliation_agent.py`
+- `citation_tracing_agent.py`
+- `temporal_reasoning_agent.py`
+- `federated_query_agent.py`
+- `knowledge_summarization_agent.py`
+- `audit_explanation_agent.py`
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 2
+
+---
+
+### 6. DeepSynthesisWorkflow
+
+**Key File**: `libs/agents/cogniverse_agents/deep_synthesis_workflow.py`
+
+**Concepts**: orchestrator-inside-RLM composition, rate limit + hard call cap + per-round bounded fan-out + max iterations
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 3
+
+---
+
+### 7. Sandbox + OpenShell
+
+**Key Files**:
+
+- `libs/runtime/cogniverse_runtime/sandbox_manager.py` — SandboxPolicy enum (required / optional / disabled), SandboxGatewayUnavailableError
+- `libs/runtime/cogniverse_runtime/openshell_health.py` — GatewayHealthProbe
+
+**Telemetry spans**: `sandbox.exec`, `openshell.gateway_health`
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 4
+
+---
+
+### 8. Optimizer Canary + Variants
+
+**Key Files**:
+
+- `libs/agents/cogniverse_agents/optimizer/signature_variants.py` — `register_variant`, `selected_for_tenant` fallback
+- `libs/agents/cogniverse_agents/optimizer/artifact_manager.py` — canary FSM: `promote_to_canary`, `promote_canary_to_active`, `retire_canary`, `rollback_to_version`
+- `libs/runtime/cogniverse_runtime/optimization_cli.py` — `--mode rollback` CLI
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 5
+
+---
+
+### 9. Maintenance Workflows
+
+**Chart crons**:
+
+- `cogniverse-daily-cleanup` — 4 sections: memory, log rotation, temp purge, config_metadata vacuum
+- `cogniverse-monthly-reports` — usage + perf JSON to MinIO
+
+**CLI source**: `libs/runtime/cogniverse_runtime/optimization_cli.py` — `run_cleanup`, `run_monthly_reports`
+
+**Diagram**: [diagrams/knowledge-system-diagrams.md](../diagrams/knowledge-system-diagrams.md) — Diagram 6
+
+---
+
 ## Practical Exercises
 
 ### Exercise 1: Trace a Document Through the System

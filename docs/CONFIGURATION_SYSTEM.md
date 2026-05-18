@@ -554,6 +554,15 @@ with dspy.context(lm=lm):
 - `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
 - `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory
 
+**Chart helpers — prefixed vs. bare model id**
+
+The chart resolves the primary model into two templates in `charts/cogniverse/templates/_helpers.tpl`:
+
+- `cogniverse.primaryLLMModel` — `openai/<bare-model>` (or `<provider>/<id>` when overridden via `runtime.primaryLLM.model`). Written into `config.json` and consumed by `create_dspy_lm()` / litellm, where the prefix selects provider routing.
+- `cogniverse.primaryLLMModelBare` — same id **without** the provider prefix. OpenAI-compatible `/v1/chat/completions` servers (vLLM, llama.cpp, Ollama) serve the bare name and reject the prefixed form with 404. Used by the `quality-monitor` sidecar and the `cogniverse-scheduled-distillation` cron (both call vLLM directly over HTTP rather than through DSPy).
+
+Both resolve in the same order: `runtime.primaryLLM.model` if set, else engine-derived (`inference.vllm_llm_student.model` when `llm.engine: vllm`, else `llm.model`).
+
 ## Backend Configuration API
 
 The ConfigManager provides methods for managing backend and profile configurations:
