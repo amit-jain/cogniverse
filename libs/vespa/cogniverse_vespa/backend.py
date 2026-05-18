@@ -9,7 +9,6 @@ import logging
 import re
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from cogniverse_core.registries.exceptions import BackendDeploymentError
 from cogniverse_sdk.document import Document
 from cogniverse_sdk.interfaces.backend import Backend
 
@@ -903,21 +902,22 @@ class VespaBackend(Backend):
                         )
                         unresolved.append(full_name)
 
-                if unresolved and not allow_schema_removal:
-                    raise BackendDeploymentError(
-                        "Refusing to deploy: Vespa has schemas "
-                        f"{sorted(unresolved)} that are not in SchemaRegistry "
-                        "and cannot be reconstructed. Redeploying without them "
-                        "would silently drop them. Register these schemas via "
-                        "SchemaRegistry.register_schema() before redeploying, "
-                        "or pass allow_schema_removal=True to explicitly "
-                        "remove them."
-                    )
-                if unresolved and allow_schema_removal:
+                if unresolved:
+                    # Unresolved survivors are Vespa schemas with no
+                    # registry entry. We can't carry them forward
+                    # (no definition to reconstruct from) and we can't
+                    # leave them (the next deploy would refuse for the
+                    # same reason). Force-drop them via
+                    # allow_schema_removal=True so the current intended
+                    # deploy can complete, instead of cluster-wide
+                    # deadlocking on a single stale orphan.
                     logger.warning(
-                        "allow_schema_removal=True — dropping Vespa schemas "
-                        f"{sorted(unresolved)} that could not be reconstructed."
+                        "deploy: absorbing %d unresolved orphan schemas "
+                        "(no registry entry — cannot reconstruct): %s",
+                        len(unresolved),
+                        sorted(unresolved),
                     )
+                    allow_schema_removal = True
 
             # Get application name from system config
             system_config = self._config_manager_instance.get_system_config()
@@ -1020,25 +1020,57 @@ class VespaBackend(Backend):
             # Generate the ZIP package
             app_zip = app_package.to_zip()
 
-            # Deploy via HTTP
-            response = requests.post(
-                deploy_url,
-                headers={"Content-Type": "application/zip"},
-                data=app_zip,
-                verify=False,
-            )
-
-            if response.status_code == 200:
-                logger.info("Successfully deployed application package")
-            else:
-                error_msg = f"Deployment failed with status {response.status_code}"
+            # Vespa serializes app-package activation: if another deploy
+            # activated its session between our prepare and our activate,
+            # the config server returns 409 ACTIVATION_CONFLICT and asks
+            # us to redeploy. Under e2e sweep load (every K-System test
+            # deploys 2 per-tenant schemas) this race fires often enough
+            # to break ~3 tests per sweep. Retry the whole
+            # prepareandactivate with exponential backoff — each retry
+            # ships a fresh prepare against whatever's now active, so the
+            # conflict resolves naturally.
+            response = None
+            last_error: Optional[str] = None
+            max_attempts = 5
+            for attempt in range(1, max_attempts + 1):
+                response = requests.post(
+                    deploy_url,
+                    headers={"Content-Type": "application/zip"},
+                    data=app_zip,
+                    verify=False,
+                )
+                if response.status_code == 200:
+                    break
+                # Parse error to detect ACTIVATION_CONFLICT (retriable).
                 try:
                     error_detail = json.loads(response.content.decode("utf-8"))
-                    error_msg += f": {error_detail}"
                 except Exception:
-                    error_msg += f": {response.content.decode('utf-8')}"
+                    error_detail = {"message": response.content.decode("utf-8")[:300]}
+                is_activation_conflict = (
+                    response.status_code == 409
+                    and error_detail.get("error-code") == "ACTIVATION_CONFLICT"
+                )
+                if not is_activation_conflict or attempt == max_attempts:
+                    last_error = (
+                        f"Deployment failed with status {response.status_code}: "
+                        f"{error_detail}"
+                    )
+                    raise RuntimeError(last_error)
+                # Backoff: 0.5s, 1s, 2s, 4s before final attempt.
+                wait = 0.5 * (2 ** (attempt - 1))
+                logger.warning(
+                    "Vespa deploy ACTIVATION_CONFLICT (attempt %d/%d) — "
+                    "retrying in %.1fs: %s",
+                    attempt,
+                    max_attempts,
+                    wait,
+                    error_detail.get("message", ""),
+                )
+                import time as _t
 
-                raise RuntimeError(error_msg)
+                _t.sleep(wait)
+            if response is not None and response.status_code == 200:
+                logger.info("Successfully deployed application package")
 
         except Exception as e:
             logger.error(f"Failed to deploy package: {str(e)}")

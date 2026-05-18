@@ -220,17 +220,18 @@ else:
 
 ### Bulk delete tenant schemas
 
-`VespaSchemaManager.delete_tenant_schemas` refuses when an
-unreconstructable peer-tenant orphan exists (an unsafe redeploy would
-silently drop the peer's schema). The bulk variant accepts every
-target tenant in one call so all orphans land in the deletion set
-together and one redeploy clears them.
+`VespaSchemaManager.delete_tenant_schemas` absorbs unresolved Vespa-only
+orphans (schemas in Vespa with no registry record) into the deletion set
+during the redeploy, logging them as warnings rather than raising
+`BackendDeploymentError`. The bulk variant accepts every target tenant in
+one call so all known orphans land in the deletion set together and one
+redeploy clears them.
 
 ```python
-# Single-tenant delete (fails if a peer orphan is present)
+# Single-tenant delete (absorbs any unresolved orphans encountered)
 schema_manager.delete_tenant_schemas("acme:prod")
 
-# Multi-tenant atomic delete (operator recovery path)
+# Multi-tenant atomic delete (explicit bulk path)
 schema_manager.delete_tenant_schemas_bulk(["acme:prod", "globex:dev"])
 ```
 
@@ -294,11 +295,12 @@ Response body:
 ```
 
 Why one endpoint instead of iterating per-tenant DELETEs: the single-
-tenant delete path refuses when peer orphans are present, so an
-operator with N orphan tenants would see N − 1 refusals and have to
-chain them in the right order. The reconcile endpoint computes the
-deletion set across every orphan tenant, then runs one `_redeploy_dropping`
-call so the peer-orphan safeguard is satisfied for the whole batch.
+tenant delete path absorbs unresolved orphans into its own deletion set,
+so iterating would silently drop them one by one with no explicit
+inventory. The reconcile endpoint first audits every orphan, exposes
+the full list in the response (`orphan_schemas`, `orphan_tenants`,
+`unrecovered_schemas`), then runs one `_redeploy_dropping` call so the
+operator has a single, reviewable record of what was removed.
 
 ---
 
