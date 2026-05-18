@@ -189,8 +189,21 @@ def _ensure_stack_running() -> bool:
     """Verify the stack is running. Does NOT redeploy — a transient probe
     blip used to trigger a mid-suite helm upgrade that cascaded every
     downstream test into a pod-restart failure.
+
+    Retries each probe a few times because k3d-serverlb intermittently
+    drops the first connection with ``RemoteProtocolError`` even when
+    the pod is healthy (same reason ``_runtime_already_up_for_collect``
+    already retries 3× at collect time). Without the retry here, one
+    such blip skipped the entire session.
     """
-    return runtime_available() and dashboard_available()
+    import time as _t
+
+    for attempt in range(5):
+        if runtime_available() and dashboard_available():
+            return True
+        if attempt < 4:
+            _t.sleep(3.0)
+    return False
 
 
 def _skip_if_no_runtime():
