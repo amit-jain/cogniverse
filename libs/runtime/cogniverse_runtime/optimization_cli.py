@@ -346,22 +346,56 @@ async def _optimize_agent(
 
 
 async def run_cleanup(
-    tenant_id: str, log_retention_days: int, memory_retention_days: int
+    tenant_id: Optional[str],
+    log_retention_days: int,
+    memory_retention_days: int,
 ) -> dict:
-    """Run cleanup tasks."""
-    results = {}
+    """Run cleanup tasks.
 
-    try:
-        from cogniverse_core.memory.manager import Mem0MemoryManager
+    If ``tenant_id`` is None, enumerates every tenant in every org and
+    runs Mem0 cleanup per tenant — the daily-cleanup CronWorkflow runs
+    in this mode. Per-tenant exceptions are captured so a single bad
+    tenant does not abort the sweep across the rest.
+    """
+    from cogniverse_core.memory.manager import Mem0MemoryManager
 
-        mem_manager = Mem0MemoryManager(tenant_id=tenant_id)
-        mem_manager.cleanup(retention_days=memory_retention_days)
-        results["memory_cleanup"] = "completed"
-    except Exception as e:
-        results["memory_cleanup"] = f"failed: {e}"
+    results: Dict[str, Any] = {
+        "log_retention_days": log_retention_days,
+        "memory_retention_days": memory_retention_days,
+    }
 
-    results["log_retention_days"] = log_retention_days
-    results["memory_retention_days"] = memory_retention_days
+    if tenant_id is not None:
+        try:
+            Mem0MemoryManager(tenant_id=tenant_id).cleanup(
+                retention_days=memory_retention_days
+            )
+            results["memory_cleanup"] = {tenant_id: "completed"}
+        except Exception as e:
+            results["memory_cleanup"] = {tenant_id: f"failed: {e}"}
+        return results
+
+    from cogniverse_runtime.admin.tenant_manager import (
+        list_organizations_internal,
+        list_tenants_for_org_internal,
+    )
+
+    per_tenant: Dict[str, str] = {}
+    org_ids = await list_organizations_internal()
+    for org_id in org_ids:
+        for tenant in await list_tenants_for_org_internal(org_id):
+            tid = tenant.tenant_full_id
+            if not tid:
+                continue
+            try:
+                Mem0MemoryManager(tenant_id=tid).cleanup(
+                    retention_days=memory_retention_days
+                )
+                per_tenant[tid] = "completed"
+            except Exception as e:
+                per_tenant[tid] = f"failed: {e}"
+
+    results["memory_cleanup"] = per_tenant
+    results["tenants_processed"] = len(per_tenant)
     return results
 
 
@@ -1921,7 +1955,14 @@ def main():
         ],
         required=True,
     )
-    parser.add_argument("--tenant-id", required=True)
+    # --tenant-id is required for most modes; cleanup mode is the
+    # exception and runs globally when omitted, so the daily-cleanup
+    # CronWorkflow (which has no tenant) doesn't exit 2 on argparse.
+    parser.add_argument(
+        "--tenant-id",
+        default=None,
+        help="Tenant ID (required for all modes except --mode cleanup)",
+    )
     parser.add_argument(
         "--agents",
         help="Comma-separated agent names for triggered mode",
@@ -2048,6 +2089,9 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+
+    if args.mode != "cleanup" and args.mode != "egress-netpol" and not args.tenant_id:
+        parser.error(f"--tenant-id is required for mode={args.mode!r}")
 
     if args.mode == "cleanup":
         result = asyncio.run(

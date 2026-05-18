@@ -602,7 +602,10 @@ uv run python -m cogniverse_runtime.optimization_cli \
 **Command Line Options:**
 ```bash
 --mode CHOICE                # simba|gateway-thresholds|entity-extraction|workflow|profile|cleanup (required)
---tenant-id ID               # Tenant identifier (default: default)
+--tenant-id ID               # Tenant identifier (required for every mode except cleanup;
+                             # if omitted under --mode cleanup the sweep runs globally
+                             # across every tenant in every org — the path the
+                             # daily-cleanup CronWorkflow takes)
 --log-retention-days DAYS    # Days to retain logs (cleanup mode, default: 7)
 ```
 

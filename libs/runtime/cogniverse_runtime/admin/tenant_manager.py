@@ -585,6 +585,28 @@ async def list_tenants_for_org(org_id: str) -> TenantListResponse:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def list_organizations_internal() -> List[str]:
+    """Internal helper to list every org_id known to the backend.
+
+    Lives next to ``list_tenants_for_org_internal`` so callers that need
+    a global tenant sweep (e.g. the daily-cleanup CronWorkflow) can
+    enumerate without going through the FastAPI HTTPException-raising
+    route. Returns an empty list rather than raising on backend error
+    so a single bad organization document does not crash the sweep.
+    """
+    try:
+        backend = get_backend()
+        documents = backend.query_metadata_documents(
+            schema="organization_metadata",
+            yql="select * from organization_metadata where true",
+            hits=400,
+        )
+        return [fields["org_id"] for fields in documents if fields.get("org_id")]
+    except Exception as e:
+        logger.error(f"Failed to list organizations: {e}")
+        return []
+
+
 async def list_tenants_for_org_internal(org_id: str) -> List[Tenant]:
     """Internal helper to list tenants"""
     try:
