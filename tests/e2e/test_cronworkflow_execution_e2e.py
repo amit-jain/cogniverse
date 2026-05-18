@@ -28,7 +28,9 @@ import httpx
 import pytest
 
 NAMESPACE = "cogniverse"
-RUNTIME = "http://localhost:8080"
+RUNTIME = (
+    "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+)
 SUBMISSION_TIMEOUT_S = 600.0
 POLL_INTERVAL_S = 5.0
 
@@ -216,34 +218,53 @@ def _delete_tenant_and_org(tenant_full_id: str) -> None:
 def _add_aged_memory(
     tenant_full_id: str, kind: str, age_days: float, content: str
 ) -> str:
-    """POST /admin/tenants/{t}/memories with metadata.created_at backdated."""
-    meta = {"kind": kind}
+    """POST /admin/tenant/{t}/memories with kind + backdated created_at."""
+    meta: dict = {}
     if age_days > 0:
         meta["created_at"] = (
             datetime.now(timezone.utc) - timedelta(days=age_days)
         ).isoformat()
     with httpx.Client(timeout=60.0) as client:
         r = client.post(
-            f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories",
-            json={
-                "content": content,
-                "agent_name": "cron_e2e_writer",
-                "metadata": meta,
-                "infer": False,
-            },
+            f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories",
+            json={"text": content, "kind": kind, "metadata": meta},
         )
         assert r.status_code == 200, r.text
-    return r.json()["memory_id"]
+    return r.json()["id"]
 
 
 def _resolve_memory(tenant_full_id: str, mid: str) -> dict | None:
+    """List memories for the tenant and return the one matching mid, or None."""
     with httpx.Client(timeout=30.0) as client:
-        r = client.get(f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories/{mid}")
-        if r.status_code == 404:
-            return None
+        r = client.get(f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories")
         if r.status_code != 200:
             return None
-        return r.json()
+        for m in r.json().get("memories") or []:
+            if m.get("id") == mid:
+                return m
+        return None
+
+
+def _poll_resolve(
+    tenant_full_id: str, mid: str, *, expect_present: bool, timeout_s: float = 30.0
+) -> dict | None:
+    """Poll _resolve_memory until the desired condition is observed.
+
+    Mem0 writes propagate through Vespa with eventual consistency on
+    the /search/ list path — a freshly POSTed memory may take a few
+    seconds to surface, and a freshly hard-deleted memory may take a
+    few seconds to disappear. Polling either direction avoids racing
+    that propagation.
+    """
+    deadline = time.monotonic() + timeout_s
+    last = _resolve_memory(tenant_full_id, mid)
+    while time.monotonic() < deadline:
+        present = last is not None
+        if present == expect_present:
+            return last
+        time.sleep(2.0)
+        last = _resolve_memory(tenant_full_id, mid)
+    return last
 
 
 def _runtime_pod_restart_count() -> int:
@@ -374,16 +395,20 @@ class TestDailyCleanupWorkflow:
                 tenant_id, "tenant_instruction", 999.0, "rule-stays-forever"
             )
 
-            # Pre-state: both visible.
-            assert _resolve_memory(tenant_id, stale_id) is not None, (
-                "precondition: stale memory must be queryable before cleanup runs"
+            # Pre-state: both visible. Poll the list endpoint — Mem0 +
+            # Vespa /search/ is eventually consistent after POST.
+            assert (
+                _poll_resolve(tenant_id, stale_id, expect_present=True) is not None
+            ), "precondition: stale memory must be queryable before cleanup runs"
+            assert (
+                _poll_resolve(tenant_id, permanent_id, expect_present=True) is not None
             )
-            assert _resolve_memory(tenant_id, permanent_id) is not None
 
             _submit_and_wait_succeeded("cogniverse-daily-cleanup", timeout_s=600)
 
             # Functional outcome: the 40d ephemeral memory is GONE.
-            assert _resolve_memory(tenant_id, stale_id) is None, (
+            # Same eventual-consistency caveat for the delete side.
+            assert _poll_resolve(tenant_id, stale_id, expect_present=False) is None, (
                 f"daily-cleanup workflow Succeeded but the 40d-old "
                 f"conversation_turn ({stale_id}) is still resolvable — "
                 f"workflow ran but its functional intent did not land"

@@ -370,7 +370,9 @@ async def run_cleanup(
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.memory.schema import build_default_registry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.memory_init import lazy_init_memory
 
     # tenant_manager.get_backend() refuses to initialise without a
     # SchemaLoader injected up-front. The daily-cleanup CronWorkflow
@@ -381,6 +383,14 @@ async def run_cleanup(
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     tenant_manager.set_schema_loader(FilesystemSchemaLoader(schemas_dir))
 
+    # cleanup_with_schema requires a fully-initialised Mem0 instance
+    # (it touches mgr.memory.get_all). The Mem0MemoryManager singleton
+    # cache returns a bare object on first construction — without
+    # lazy_init_memory every tenant returns "Mem0MemoryManager not
+    # initialized" and the workflow appears to Succeed while silently
+    # processing nothing. Build a config_manager once and reuse for
+    # every tenant in the sweep.
+    config_manager = create_default_config_manager()
     registry = build_default_registry()
 
     results: Dict[str, Any] = {
@@ -391,6 +401,8 @@ async def run_cleanup(
     def _cleanup_one(tid: str) -> str:
         try:
             mm = Mem0MemoryManager(tenant_id=tid)
+            if not lazy_init_memory(mm, tid, config_manager):
+                return "skipped: memory backend init failed (see workflow log)"
             deleted_by_kind = mm.cleanup_with_schema(registry)
             return f"completed: {dict(deleted_by_kind)}"
         except Exception as e:

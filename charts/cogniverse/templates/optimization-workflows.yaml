@@ -153,8 +153,13 @@ spec:
               value: simba
             - name: tenant-id
               value: "{{`{{workflow.parameters.tenant-id}}`}}"
+            # 168h (7 days) — simba runs weekly (matches the cron
+            # schedule "0 3 * * 0") so the lookback must cover the
+            # full week between firings. The other modes here
+            # (gateway-thresholds, entity-extraction, profile) run on
+            # tighter feedback so 48h is the right scope for them.
             - name: lookback-hours
-              value: "48"
+              value: "168"
         - name: profile
           templateRef:
             name: {{ $fullName }}-optimization-runner

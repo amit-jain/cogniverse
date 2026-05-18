@@ -16,7 +16,6 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_sdk.interfaces.config_store import ConfigScope
@@ -220,58 +219,16 @@ def _get_memory_manager(tenant_id: str):
 
 
 def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
-    """Attempt to initialize Mem0 from the ConfigManager's system config."""
-    import os
-    from pathlib import Path
+    """Initialise Mem0 from the ConfigManager's system config.
 
-    try:
-        cm = _require_config_manager()
-        sc = cm.get_system_config()
-        if not sc:
-            return
+    Thin wrapper around the shared ``lazy_init_memory`` helper so router
+    callers don't need to pass a config_manager — the router already has
+    one via ``_require_config_manager()``. The CLI path
+    (``optimization_cli.run_cleanup``) calls the shared helper directly.
+    """
+    from cogniverse_runtime.memory_init import lazy_init_memory
 
-        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-        from cogniverse_foundation.config.utils import get_config
-
-        config = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=cm)
-        llm_cfg = config.get("llm_config", {}).get("primary", {})
-        model = llm_cfg.get("model")
-        if not model:
-            raise RuntimeError(
-                "llm_config.primary.model is missing — Mem0 lazy-init requires "
-                "an explicit model id. Check configs/config.json or the chart "
-                "values that populate it."
-            )
-        if "/" in model:
-            model = model.split("/", 1)[1]
-
-        llm_base_url = os.environ.get(
-            "LLM_ENDPOINT",
-            llm_cfg.get("api_base") or "http://localhost:11434",
-        )
-        denseon_url = sc.inference_service_urls.get("denseon")
-        if not denseon_url:
-            raise RuntimeError(
-                "Mem0 lazy-init requires the denseon inference service. "
-                f"Available: {sorted(sc.inference_service_urls)}"
-            )
-
-        mgr.initialize(
-            backend_host=sc.backend_url,
-            backend_port=sc.backend_port,
-            backend_config_port=int(os.environ.get("VESPA_CONFIG_PORT", "19071")),
-            base_schema_name="agent_memories",
-            llm_model=model,
-            embedding_model="lightonai/DenseOn",
-            llm_base_url=llm_base_url,
-            embedder_base_url=denseon_url,
-            auto_create_schema=True,
-            config_manager=cm,
-            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
-        )
-        logger.info("Lazily initialized Mem0 for tenant %s", tenant_id)
-    except Exception as exc:
-        logger.warning("Failed to lazy-init Mem0 for tenant %s: %s", tenant_id, exc)
+    lazy_init_memory(mgr, tenant_id, _require_config_manager())
 
 
 _USER_MEMORY_AGENT = "_user_memories"
@@ -302,15 +259,28 @@ def _is_owned(agent_name: str) -> bool:
 class MemoryCreateRequest(BaseModel):
     text: str
     category: Optional[str] = None
+    # Optional admin/import fields. ``kind`` flows into the
+    # KnowledgeRegistry-keyed retention contract — the daily-cleanup
+    # workflow respects per-kind TTLs, so importers and e2e tests need
+    # to set the right kind. ``metadata`` is a free-form dict merged on
+    # top (e.g. ``created_at`` for backdated historical imports). Both
+    # are optional so the original {text, category} caller is unaffected.
+    kind: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @router.post("/{tenant_id}/memories")
 async def create_memory(tenant_id: str, request: MemoryCreateRequest):
-    """Save a user-defined memory with optional category."""
+    """Save a user-defined memory with optional category, kind, metadata."""
     mgr = _get_memory_manager(tenant_id)
-    metadata = {}
+    metadata: Dict[str, Any] = {}
     if request.category:
         metadata["category"] = request.category
+    if request.kind:
+        metadata["kind"] = request.kind
+    if request.metadata:
+        # Caller-supplied metadata wins over the derived fields above.
+        metadata.update(request.metadata)
 
     memory_id = mgr.add_memory(
         content=request.text,
@@ -324,6 +294,7 @@ async def create_memory(tenant_id: str, request: MemoryCreateRequest):
         "id": str(memory_id),
         "type": "preference",
         "category": request.category,
+        "kind": request.kind,
     }
 
 

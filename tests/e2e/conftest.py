@@ -863,18 +863,35 @@ _TEST_TENANT_PREFIXES = (
     "opt_",  # Optimizer canary / variants / rollback (Phase 6)
     "sbx_",  # Sandbox policy + health probe (Phase 7)
     "kagent_",  # Nine knowledge agents (Phases 8, 9, 10)
+    "cron_e2e_org_",  # CronWorkflow execution e2e (org+tenant pair, both sides matched)
+    # Smoke-test / CLI bootstrap prefixes observed in operator runs of
+    # ``cogniverse up`` / smoke commands. These create orgs with epoch
+    # suffixes (e.g. ``smk_1778946797``) that previously survived every
+    # e2e teardown and accumulated to 320+ rows.
+    "boot_",
+    "canonsmoke_",
+    "canontest_",
+    "smk_",
+    "smk2_",
 )
 
 
 def _cleanup_test_tenants() -> None:
-    """Delete every test-prefixed tenant so the next run starts clean.
+    """Delete every test-prefixed tenant AND parent org so the next run starts clean.
 
-    Tests mint per-test tenants and don't tear them down; without this
-    they accumulate, slowing deploys and tripping the orphan rollback
-    safeguard. Only tenants matching _TEST_TENANT_PREFIXES are deleted.
+    Tests mint per-test tenants and orgs and don't tear them down;
+    without this they accumulate. Symptoms observed:
+      * 321 orgs after a few days of runs — slows ``list_organizations``
+        and turns the daily-cleanup CronWorkflow into a 10-min crawl
+        because it instantiates one ``Mem0MemoryManager`` per tenant.
+      * Vespa orphan rollback trips on stale schemas left behind.
+
+    Only entities matching ``_TEST_TENANT_PREFIXES`` are touched —
+    real customer orgs / tenants must never be eligible.
     """
-    # Runtime exposes per-org listing only, so query Vespa directly for
-    # a global sweep. Dedupe on tenant_id (one entry per tenant×schema).
+    # 1. Tenant sweep — query Vespa for every schema_registry row and
+    # delete via runtime so the registry tombstone + Vespa schema both
+    # land atomically.
     vespa_url = os.environ.get("VESPA_URL", "http://localhost:8080")
     yql = (
         "select tenant_id from config_metadata "
@@ -902,6 +919,33 @@ def _cleanup_test_tenants() -> None:
                 client.delete(f"{RUNTIME}/admin/tenants/{tid}")
         except (httpx.HTTPError, OSError) as exc:
             print(f"Cleanup failed for tenant {tid}: {exc}")
+
+    # 2. Org sweep — DELETE /admin/organizations/{org_id}. Tenants
+    # have been removed above so org delete is unblocked. Skip orgs
+    # whose id doesn't match a test prefix so flywheel_org / customer
+    # orgs survive.
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.get(f"{RUNTIME}/admin/organizations")
+            if r.status_code != 200:
+                return
+            orgs = (r.json() or {}).get("organizations") or []
+    except (httpx.HTTPError, OSError) as exc:
+        print(f"Cleanup failed listing organizations: {exc}")
+        return
+
+    org_ids = sorted(
+        o["org_id"]
+        for o in orgs
+        if o.get("org_id")
+        and any(o["org_id"].startswith(p) for p in _TEST_TENANT_PREFIXES)
+    )
+    for org_id in org_ids:
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                client.delete(f"{RUNTIME}/admin/organizations/{org_id}")
+        except (httpx.HTTPError, OSError) as exc:
+            print(f"Cleanup failed for org {org_id}: {exc}")
 
 
 def _reconcile_vespa_orphans() -> None:

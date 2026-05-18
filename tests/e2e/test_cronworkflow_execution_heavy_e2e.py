@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 NAMESPACE = "cogniverse"
-RUNTIME = "http://localhost:8080"
+RUNTIME = "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
 HEAVY_TIMEOUT_S = 1500.0  # 25 min — covers DSPy training + Phoenix work
 POLL_INTERVAL_S = 10.0
 
