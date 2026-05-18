@@ -888,7 +888,18 @@ def _cleanup_test_tenants() -> None:
 
     Only entities matching ``_TEST_TENANT_PREFIXES`` are touched —
     real customer orgs / tenants must never be eligible.
+
+    Waits for the runtime to be ready before sweeping. Tests that
+    trigger a runtime rollout (e.g. the daily-gateway cron e2e) leave
+    the runtime mid-restart at teardown time; without this wait the
+    sweep would flood the log with ``Server disconnected without
+    sending a response`` for every test tenant.
     """
+    import time as _t
+
+    deadline = _t.monotonic() + 180.0
+    while _t.monotonic() < deadline and not runtime_available():
+        _t.sleep(3.0)
     # 1. Tenant sweep — query Vespa for every schema_registry row and
     # delete via runtime so the registry tombstone + Vespa schema both
     # land atomically.
