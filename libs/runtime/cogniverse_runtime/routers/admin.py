@@ -1089,11 +1089,10 @@ def _get_pin_service(tenant_id: str):
 
     mgr = Mem0MemoryManager(tenant_id)
     if not mgr.memory:
-        # Defer to the same lazy-init path the tenant router uses — keeps
-        # admin pinning workable on k3d setups where memory isn't pre-wired.
-        from cogniverse_runtime.routers import tenant as _tenant_router
+        from cogniverse_runtime.memory_init import lazy_init_memory
+        from cogniverse_runtime.routers.tenant import _require_config_manager
 
-        _tenant_router._lazy_init_memory(mgr, tenant_id)
+        lazy_init_memory(mgr, tenant_id, _require_config_manager())
     if not mgr.memory:
         raise HTTPException(
             status_code=503,

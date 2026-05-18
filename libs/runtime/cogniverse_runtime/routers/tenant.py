@@ -207,28 +207,17 @@ def _get_memory_manager(tenant_id: str):
     exists but was never initialized (common on k3d where memory isn't
     wired at startup).
     """
+    from cogniverse_runtime.memory_init import lazy_init_memory
+
     mgr = Mem0MemoryManager(tenant_id)
     if not mgr.memory:
-        _lazy_init_memory(mgr, tenant_id)
+        lazy_init_memory(mgr, tenant_id, _require_config_manager())
     if not mgr.memory:
         raise HTTPException(
             status_code=503,
             detail="Memory backend not initialised for this tenant",
         )
     return mgr
-
-
-def _lazy_init_memory(mgr: Mem0MemoryManager, tenant_id: str) -> None:
-    """Initialise Mem0 from the ConfigManager's system config.
-
-    Thin wrapper around the shared ``lazy_init_memory`` helper so router
-    callers don't need to pass a config_manager — the router already has
-    one via ``_require_config_manager()``. The CLI path
-    (``optimization_cli.run_cleanup``) calls the shared helper directly.
-    """
-    from cogniverse_runtime.memory_init import lazy_init_memory
-
-    lazy_init_memory(mgr, tenant_id, _require_config_manager())
 
 
 _USER_MEMORY_AGENT = "_user_memories"

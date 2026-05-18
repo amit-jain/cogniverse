@@ -42,9 +42,10 @@ def _build_factory(_tid: str):
 
     mm = Mem0MemoryManager(_tid)
     if not mm.memory:
-        from cogniverse_runtime.routers import tenant as _tenant_router
+        from cogniverse_runtime.memory_init import lazy_init_memory
+        from cogniverse_runtime.routers.tenant import _require_config_manager
 
-        _tenant_router._lazy_init_memory(mm, _tid)
+        lazy_init_memory(mm, _tid, _require_config_manager())
     if not mm.memory:
         raise HTTPException(
             status_code=503,
