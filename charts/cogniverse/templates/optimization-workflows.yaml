@@ -202,6 +202,15 @@ spec:
       - name: tenant-id
         value: "__system__"
     serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+    # The templateRef'd run-optimizer template requires a "config"
+    # volume. Argo does not inherit volumes from referenced
+    # WorkflowTemplates — they must be declared in the CALLING
+    # workflow's spec. Without this every daily-gateway run failed
+    # with "volume 'config' not found in workflow spec".
+    volumes:
+    - name: config
+      configMap:
+        name: {{ $fullName }}-config
     templates:
     - name: daily-gateway-pipeline
       steps:

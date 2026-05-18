@@ -197,7 +197,15 @@ inference:
     device: rocm
     gpuCount: 1
 
-runtime: {}
+runtime:
+  # Explicit backend selection so BOTH the runtime Deployment and the
+  # Argo WorkflowTemplate's $workflowImage lookup land on the rocm
+  # image. Without this, values.k3s.yaml's ``backend: cpu`` keeps the
+  # workflow pods pointed at cogniverse/runtime-cpu:dev which is never
+  # built/loaded on a rocm host → every cron-scheduled optimizer pod
+  # ends up ErrImageNeverPull, reserving CPU/memory indefinitely and
+  # eventually crowding the runtime pod out of the schedule.
+  backend: rocm
 
 # ROCm hosts already serve the agent LLM via inference.vllm_llm_student.
 # Disable the chart's builtin LLM block (Ollama StatefulSet by default)

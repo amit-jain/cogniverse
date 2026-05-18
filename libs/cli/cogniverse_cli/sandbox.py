@@ -118,7 +118,16 @@ def gateway_running() -> bool:
 
 
 def start_gateway() -> bool:
-    """Start the openshell gateway. Returns True on success."""
+    """Start the openshell gateway. Returns True on success.
+
+    Uses ``--port 28080`` because k3d's serverlb container holds host
+    port 8080 (the OpenShell default) in any session where ``cogniverse
+    up`` has been run, which makes the bare ``openshell gateway start``
+    fail with a port-in-use error. 28080 is in the same range as the
+    other cogniverse-bound host ports (28000-28501) and free under k3d.
+    Honors ``OPENSHELL_GATEWAY_HOST_PORT`` for environments that need a
+    different mapping.
+    """
     if not openshell_installed():
         console.print(
             "[yellow]openshell CLI not found. Install with: "
@@ -127,10 +136,13 @@ def start_gateway() -> bool:
         )
         return False
 
-    console.print("Starting OpenShell gateway...")
+    import os
+
+    host_port = os.environ.get("OPENSHELL_GATEWAY_HOST_PORT", "28080")
+    console.print(f"Starting OpenShell gateway on port {host_port}...")
     try:
         result = subprocess.run(
-            ["openshell", "gateway", "start"],
+            ["openshell", "gateway", "start", "--port", str(host_port)],
             capture_output=True,
             text=True,
             timeout=120,
