@@ -794,9 +794,18 @@ def e2e_stack():
     creates the E2E tenant, deploys schemas, ingests sample data, and brings
     up the OpenShell sandbox gateway so the coding agent's sandbox path is
     exercised end-to-end (not short-circuited by a skip).
+
+    CronWorkflows in the cogniverse namespace are suspended for the
+    duration of the session and their prior state restored on teardown
+    — they otherwise spawn workflow pods that compete with e2e tests
+    for k3d node resources (observed: stuck pods after long runs,
+    cascading evictions). The previous workaround was a live
+    ``kubectl patch`` left in place across runs, which leaked state.
     """
     if not _ensure_stack_running():
         pytest.skip("Cogniverse stack not available — run 'cogniverse up' first")
+
+    cron_restore = _suspend_cronworkflows_for_session()
 
     # Force the devMode-mounted code to reload. ``cogniverse up`` leaves
     # runtime/dashboard pods running with whatever Python modules were
@@ -819,8 +828,11 @@ def e2e_stack():
     _ingest_sample_video()
     _ensure_llm_model()
     _ensure_sandbox_gateway()
-    yield
-    _cleanup_test_tenants()
+    try:
+        yield
+    finally:
+        _cleanup_test_tenants()
+        _restore_cronworkflows(cron_restore)
 
 
 # Prefixes used by per-test tenants. Anything else (bootstrap, system,
@@ -958,6 +970,141 @@ def _reconcile_vespa_orphans() -> None:
             f"Session pre-flight: reconcile confirm returned "
             f"{confirm.status_code}: {confirm.text[:200]}"
         )
+
+
+_CRON_NAMESPACE = "cogniverse"
+
+
+def _suspend_cronworkflows_for_session() -> list[str]:
+    """Suspend every Argo CronWorkflow in the cogniverse namespace.
+
+    Returns the list of CronWorkflow names that were toggled from
+    ``spec.suspend != true`` to ``true`` so the matching
+    ``_restore_cronworkflows`` call only re-enables what this fixture
+    actually changed. Workflows that were already suspended (by the
+    user or a previous session) stay suspended on teardown.
+
+    No-op when:
+      * ``kubectl`` is not on PATH (CI runs without a real cluster)
+      * the Argo CRD is not installed (``no resources found``)
+    """
+    import json as _json
+    import shutil
+    import subprocess
+
+    if shutil.which("kubectl") is None:
+        return []
+
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "cronworkflows",
+                "-n",
+                _CRON_NAMESPACE,
+                "-o",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Session pre-flight: kubectl get cronworkflows failed: {exc}")
+        return []
+
+    if result.returncode != 0:
+        if "could not find the requested resource" in (result.stderr or ""):
+            return []
+        if "the server doesn't have a resource type" in (result.stderr or ""):
+            return []
+        print(
+            "Session pre-flight: kubectl get cronworkflows returned "
+            f"rc={result.returncode}: {result.stderr.strip()[:200]}"
+        )
+        return []
+
+    try:
+        payload = _json.loads(result.stdout or "{}")
+    except _json.JSONDecodeError as exc:
+        print(f"Session pre-flight: cronworkflows JSON parse failed: {exc}")
+        return []
+
+    toggled: list[str] = []
+    for item in payload.get("items") or []:
+        name = (item.get("metadata") or {}).get("name")
+        if not name:
+            continue
+        suspended = bool((item.get("spec") or {}).get("suspend"))
+        if suspended:
+            continue
+        patch = '{"spec":{"suspend":true}}'
+        patch_result = subprocess.run(
+            [
+                "kubectl",
+                "patch",
+                "cronworkflow",
+                name,
+                "-n",
+                _CRON_NAMESPACE,
+                "--type",
+                "merge",
+                "-p",
+                patch,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if patch_result.returncode != 0:
+            print(
+                f"Session pre-flight: failed to suspend cronworkflow {name}: "
+                f"{patch_result.stderr.strip()[:200]}"
+            )
+            continue
+        toggled.append(name)
+
+    if toggled:
+        print(
+            f"Session pre-flight: suspended {len(toggled)} cronworkflow(s) "
+            f"for the duration of the e2e session: {sorted(toggled)}"
+        )
+    return toggled
+
+
+def _restore_cronworkflows(names: list[str]) -> None:
+    """Re-enable CronWorkflows previously suspended by the fixture."""
+    import shutil
+    import subprocess
+
+    if not names or shutil.which("kubectl") is None:
+        return
+
+    patch = '{"spec":{"suspend":false}}'
+    for name in names:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "patch",
+                "cronworkflow",
+                name,
+                "-n",
+                _CRON_NAMESPACE,
+                "--type",
+                "merge",
+                "-p",
+                patch,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            print(
+                f"Session teardown: failed to restore cronworkflow {name}: "
+                f"{result.stderr.strip()[:200]}"
+            )
 
 
 def _ensure_sandbox_gateway() -> None:
