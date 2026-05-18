@@ -480,6 +480,16 @@ rules:
 - apiGroups: ["argoproj.io"]
   resources: ["workflowtaskresults"]
   verbs: ["create", "patch"]
+# daily-gateway's ``restart-deployment`` step runs ``kubectl rollout
+# restart deployment/<runtime>`` so freshly-trained DSPy artifacts get
+# picked up by the runtime pod. Without get/patch on deployments.apps
+# the kubectl call fails with Forbidden and the step exits 1 — even
+# though the optimize-gateway step that produced the artifacts
+# succeeded. The Workflow then surfaces as ``Failed`` and the next
+# day's run never benefits from the recomputed thresholds.
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
