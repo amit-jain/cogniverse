@@ -50,6 +50,7 @@ class VespaConfigStore(ConfigStore):
         backend_url: str = "http://localhost",
         backend_port: int = 8080,
         schema_name: str = "config_metadata",
+        keep_versions: int = 10,
     ):
         """
         Initialize Vespa configuration store.
@@ -59,6 +60,13 @@ class VespaConfigStore(ConfigStore):
             backend_url: Backend server URL
             backend_port: Backend server port
             schema_name: Vespa schema name for config storage
+            keep_versions: Per-config_id, how many recent versions to retain
+                after every ``set_config`` write. The default 10 is enough
+                to roll back a few accidental changes while keeping
+                ``_get_latest_version`` queries fast. Set to a higher
+                number on environments that depend on long version
+                history; set to 1 to keep only the latest at the cost of
+                losing rollback.
         """
         if vespa_app is not None:
             self.vespa_app = vespa_app
@@ -66,9 +74,10 @@ class VespaConfigStore(ConfigStore):
             self.vespa_app = make_vespa_app(url=backend_url, port=backend_port)
 
         self.schema_name = schema_name
+        self.keep_versions = max(1, keep_versions)
         logger.info(
             f"VespaConfigStore initialized with schema: {schema_name} "
-            f"at {backend_url}:{backend_port}"
+            f"at {backend_url}:{backend_port} (keep_versions={self.keep_versions})"
         )
 
     def initialize(self) -> None:
@@ -193,11 +202,106 @@ class VespaConfigStore(ConfigStore):
             )
 
             logger.info(f"Set config {entry.get_config_id()} v{new_version} in Vespa")
+
+            # Prune old versions to keep config_metadata size bounded.
+            # Without this every set_config call appends a new doc and old
+            # versions stick around forever — observed 5800+ backend_config
+            # rows after ~4 days of dev work, with each
+            # _get_latest_version query slowing as the table grew.
+            self._prune_old_versions(config_id, keep=self.keep_versions)
+
             return entry
 
         except Exception as e:
             logger.error(f"Failed to store config in Vespa: {e}")
             raise
+
+    def _prune_old_versions(self, config_id: str, *, keep: int) -> int:
+        """Delete every version of ``config_id`` older than the latest ``keep``.
+
+        Vespa's only delete primitive is per-document; iterate the
+        sorted version list and drop everything beyond the head ``keep``
+        entries. Best-effort — a delete failure is logged but does not
+        propagate, since the leading set_config write already succeeded
+        and a stale row only costs query latency, not correctness.
+        """
+        if keep < 1:
+            return 0
+        yql = (
+            f"select version from {self.schema_name} "
+            f'where config_id contains "{config_id}" '
+            f"order by version desc limit {keep + 100}"
+        )
+        try:
+            response = self.vespa_app.query(yql=yql)
+        except Exception as exc:  # noqa: BLE001 — pruning is best-effort
+            logger.warning(f"Could not list versions to prune {config_id!r}: {exc}")
+            return 0
+        hits = list(response.hits or [])
+        if len(hits) <= keep:
+            return 0
+        stale = hits[keep:]
+        dropped = 0
+        for hit in stale:
+            version = hit["fields"]["version"]
+            doc_id = f"{self.schema_name}::{config_id}::{version}"
+            try:
+                self.vespa_app.delete_data(schema=self.schema_name, data_id=doc_id)
+                dropped += 1
+            except Exception as exc:  # noqa: BLE001 — best-effort prune
+                logger.warning(f"Failed to prune {config_id!r} v{version}: {exc}")
+        if dropped:
+            logger.info(
+                f"Pruned {dropped} old versions of {config_id!r} (kept latest {keep})"
+            )
+        return dropped
+
+    def prune_all_configs(self, *, keep: Optional[int] = None) -> int:
+        """One-shot prune across every config_id in the schema.
+
+        Walks ``config_metadata`` via the Document v1 visit API,
+        collects every distinct ``config_id``, and applies
+        ``_prune_old_versions`` to each with the configured retention
+        window. Use to drain pre-existing bloat that accumulated before
+        per-write pruning was added to ``set_config``. Returns the total
+        number of stale version rows deleted.
+        """
+        import requests
+
+        keep = self.keep_versions if keep is None else max(1, keep)
+        url = f"{self.vespa_app.url}/document/v1/"
+        path = f"{url}{self.schema_name}/{self.schema_name}/docid/"
+        params: Dict[str, Any] = {"wantedDocumentCount": 1000}
+
+        seen: set[str] = set()
+        try:
+            continuation: Optional[str] = None
+            while True:
+                if continuation:
+                    params["continuation"] = continuation
+                resp = requests.get(path, params=params, timeout=60)
+                resp.raise_for_status()
+                payload = resp.json()
+                for doc in payload.get("documents") or []:
+                    fields = doc.get("fields") or {}
+                    config_id = fields.get("config_id")
+                    if config_id:
+                        seen.add(config_id)
+                continuation = payload.get("continuation")
+                if not continuation:
+                    break
+        except Exception as exc:  # noqa: BLE001 — best-effort drain
+            logger.error(f"prune_all_configs: visit failed: {exc}")
+            return 0
+
+        total_dropped = 0
+        for config_id in sorted(seen):
+            total_dropped += self._prune_old_versions(config_id, keep=keep)
+        logger.info(
+            f"prune_all_configs: drained {total_dropped} stale versions "
+            f"across {len(seen)} config_ids (kept latest {keep} per id)"
+        )
+        return total_dropped
 
     def get_config(
         self,

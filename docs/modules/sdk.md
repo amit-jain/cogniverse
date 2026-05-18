@@ -1239,11 +1239,14 @@ class ConfigStore(ABC):
 ```python
 from cogniverse_vespa.config.config_store import VespaConfigStore
 
-# VespaConfigStore implements ConfigStore using Vespa's config_metadata schema
+# VespaConfigStore implements ConfigStore using Vespa's config_metadata schema.
+# keep_versions bounds per-config row count — every set_config call
+# prunes versions older than the latest N (default 10).
 store = VespaConfigStore(
     backend_url="http://localhost",
     backend_port=8080,
-    schema_name="config_metadata"
+    schema_name="config_metadata",
+    keep_versions=10,
 )
 store.initialize()
 

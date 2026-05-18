@@ -229,10 +229,11 @@ from cogniverse_vespa.config.config_store import VespaConfigStore
 
 # Initialize backend store
 store = VespaConfigStore(
-    vespa_app=None,  # Optional: pass existing Vespa app instance
+    vespa_app=None,        # Optional: pass existing Vespa app instance
     backend_url="http://localhost",
     backend_port=8080,
-    schema_name="config_metadata"
+    schema_name="config_metadata",
+    keep_versions=10,      # per config_id, retained after every set_config write
 )
 
 # Use with ConfigManager
@@ -276,7 +277,26 @@ schema_manager.upload_metadata_schemas(app_name="cogniverse")
 - Real-time configuration sync
 - Horizontal scaling
 - Multi-tenant isolation via tenant_id field
-- Version tracking for configuration history
+- Version tracking for configuration history (bounded — see "Version Retention" below)
+
+**Version Retention:**
+
+Every `set_config` call writes a new versioned row. To keep
+`config_metadata` bounded, `VespaConfigStore` prunes versions older
+than the latest `keep_versions` (default `10`) per `config_id`
+immediately after each write. Pruning is best-effort: a failure to
+delete a stale row is logged and the live write still succeeds.
+
+To drain pre-existing bloat (legacy rows that accumulated before
+per-write pruning was added), run the one-off cleanup script:
+
+```bash
+# dry-run: report distinct config_ids and how many rows would drop
+uv run python scripts/prune_config_metadata.py --dry-run
+
+# actually delete
+uv run python scripts/prune_config_metadata.py --keep 10
+```
 
 ### Custom Backend Implementation
 

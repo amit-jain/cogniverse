@@ -155,6 +155,113 @@ class TestVespaConfigStoreListAllConfigs:
                 config_key="x",
             )
 
+    def test_set_config_prunes_to_keep_versions_window(self, vespa_instance):
+        """``set_config`` retains exactly ``keep_versions`` rows per config_id.
+
+        Pins the bound that fixes the config_metadata bloat (~5800 rows
+        observed in dev after a few days of e2e churn). Writes
+        ``keep+overflow`` versions, then asserts the surviving version
+        set is exactly ``[keep+overflow-keep+1 .. keep+overflow]`` and
+        the row count is exactly ``keep``.
+        """
+        keep = 3
+        overflow = 5
+        store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
+            keep_versions=keep,
+        )
+        tenant = "cs_prune_a"
+        try:
+            written = []
+            for i in range(1, keep + overflow + 1):
+                entry = store.set_config(
+                    tenant_id=tenant,
+                    scope=ConfigScope.BACKEND,
+                    service="prune_probe",
+                    config_key="k1",
+                    config_value={"i": i},
+                )
+                written.append(entry.version)
+
+            assert written == list(range(1, keep + overflow + 1)), (
+                f"set_config must monotonically increment version per key; "
+                f"got {written}"
+            )
+
+            config_id = store._create_document_id(
+                tenant, ConfigScope.BACKEND, "prune_probe", "k1"
+            )
+            response = store.vespa_app.query(
+                yql=(
+                    f"select version from config_metadata "
+                    f'where config_id contains "{config_id}" '
+                    f"order by version desc limit 100"
+                )
+            )
+            surviving = sorted(h["fields"]["version"] for h in response.hits)
+            expected = list(range(overflow + 1, keep + overflow + 1))
+            assert surviving == expected, (
+                f"pruning did not retain exactly the latest {keep} versions; "
+                f"expected {expected}, got {surviving}"
+            )
+
+            latest = store.get_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service="prune_probe",
+                config_key="k1",
+            )
+            assert latest is not None
+            assert latest.version == keep + overflow
+            assert latest.config_value == {"i": keep + overflow}
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service="prune_probe",
+                config_key="k1",
+            )
+
+    def test_set_config_does_not_prune_below_keep_window(self, vespa_instance):
+        """Fewer than ``keep_versions`` writes → no rows pruned."""
+        store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
+            keep_versions=10,
+        )
+        tenant = "cs_prune_b"
+        try:
+            for i in range(1, 4):
+                store.set_config(
+                    tenant_id=tenant,
+                    scope=ConfigScope.BACKEND,
+                    service="prune_probe",
+                    config_key="k_small",
+                    config_value={"i": i},
+                )
+            config_id = store._create_document_id(
+                tenant, ConfigScope.BACKEND, "prune_probe", "k_small"
+            )
+            response = store.vespa_app.query(
+                yql=(
+                    f"select version from config_metadata "
+                    f'where config_id contains "{config_id}" '
+                    f"order by version desc limit 100"
+                )
+            )
+            surviving = sorted(h["fields"]["version"] for h in response.hits)
+            assert surviving == [1, 2, 3], (
+                f"writes below keep_versions must not prune; got surviving={surviving}"
+            )
+        finally:
+            store.delete_config(
+                tenant_id=tenant,
+                scope=ConfigScope.BACKEND,
+                service="prune_probe",
+                config_key="k_small",
+            )
+
     def test_returns_only_latest_version(self, vespa_config_store):
         """Multiple writes to the same key — list returns only the latest."""
         store = vespa_config_store
