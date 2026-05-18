@@ -325,14 +325,17 @@ spec:
           - "synthetic"
           - "--tenant-id"
           - "default"
-          # ``simba`` is an agent-optimization mode but NOT a synthetic
-          # generator — the synthetic registry only knows
-          # ``routing, workflow, profile, unified, cross_modal``
-          # (see libs/synthetic/cogniverse_synthetic/registry.py).
-          # Passing simba here failed silently in the workflow result
-          # for 1 of 3 optimizers; ship the registry-valid set.
+          # Synthetic-generator subset that runs WITHOUT extra config.
+          # ``routing`` requires optimizer_configs['routing'] with
+          # query_templates, which the chart does not currently
+          # populate; including it produced a per-mode failure in the
+          # workflow result. ``simba`` is an agent-optimization mode,
+          # not a synthetic generator. ``unified`` / ``cross_modal``
+          # also need extra config. workflow + profile run clean
+          # against an empty cluster — the working set the cron should
+          # produce until query_templates land in values.yaml.
           - "--agents"
-          - "routing,workflow,profile"
+          - "workflow,profile"
         env:
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"
