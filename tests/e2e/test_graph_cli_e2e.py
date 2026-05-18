@@ -14,7 +14,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime
+from tests.e2e.conftest import (
+    RUNTIME,
+    register_tenant_and_wait,
+    skip_if_no_runtime,
+)
 
 GRAPH_STATS_URL = f"{RUNTIME}/graph/stats"
 GRAPH_UPSERT_URL = f"{RUNTIME}/graph/upsert"
@@ -24,39 +28,21 @@ GRAPH_PATH_URL = f"{RUNTIME}/graph/path"
 
 
 def _unique_tenant() -> str:
-    """Mint a fresh tenant id, register it, and wait for read-visibility.
+    """Mint a fresh tenant id, register it, and wait for full readiness.
 
-    POST /admin/tenants returns 200 immediately but the tenant_metadata
-    write is async on Vespa — without a wait, the very next /graph/upsert
-    call sees "not registered" via assert_tenant_exists and returns 404.
+    Delegates to ``register_tenant_and_wait`` which polls Vespa's
+    config-server schemas list (read-after-write consistent with
+    prepareandactivate) AND ``GET /admin/tenants/{tid}`` for the
+    tenant_metadata search-side row, with a 10-min hard cap. Bare
+    tenant_metadata polling alone overruns under sweep load because
+    per-tenant deploy is O(N) in the cluster's existing schema count.
     """
     from tests.e2e.conftest import _MINTED_TENANTS_THIS_TEST
 
     tid = f"graph_e2e_{uuid.uuid4().hex[:8]}"
     _MINTED_TENANTS_THIS_TEST.append(tid)
-    # Tenant create triggers a Vespa app-package redeploy whose latency
-    # scales with the cluster's tenant-schema count — under sweep load
-    # with 100+ schemas the POST itself can take 60-90 s. 180 s covers
-    # the worst observed case; the read-visibility poll is independent.
-    with httpx.Client(timeout=180.0) as client:
-        resp = client.post(
-            f"{RUNTIME}/admin/tenants",
-            json={"tenant_id": tid, "created_by": "graph_e2e_test"},
-        )
-        if resp.status_code not in (200, 201, 409):
-            raise RuntimeError(
-                f"Could not register e2e tenant {tid!r}: {resp.status_code} {resp.text}"
-            )
-        # Poll until tenant_metadata is queryable (Vespa indexing race).
-        deadline = time.monotonic() + 60.0
-        while time.monotonic() < deadline:
-            r = client.get(f"{RUNTIME}/admin/tenants/{tid}")
-            if r.status_code == 200:
-                return tid
-            time.sleep(0.5)
-        raise RuntimeError(
-            f"Tenant {tid!r} created but never became readable within 60s"
-        )
+    register_tenant_and_wait(tid, created_by="graph_e2e_test")
+    return tid
 
 
 @pytest.mark.e2e
@@ -378,9 +364,22 @@ class TestCliIndexWithGraph:
             f"Expected >= 2 graph nodes from markdown, got {summary['graph_nodes']}"
         )
 
-        time.sleep(3)
-
+        # Vespa indexing of the freshly-upserted nodes is async — a flat
+        # 3 s sleep was enough on an idle cluster but fails under sweep
+        # load when Vespa has many concurrent feed operations. Poll the
+        # stats endpoint until the upserted nodes are visible.
+        node_count = 0
+        deadline = time.monotonic() + 60.0
         with httpx.Client(timeout=30.0) as client:
-            stats = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
+            while time.monotonic() < deadline:
+                stats = client.get(GRAPH_STATS_URL, params={"tenant_id": tenant}).json()
+                node_count = stats.get("node_count", 0)
+                if node_count >= 2:
+                    break
+                time.sleep(2)
 
-        assert stats["node_count"] >= 2
+        assert node_count >= 2, (
+            f"After 60s, Vespa /graph/stats still shows {node_count} nodes "
+            f"despite POST /graph/upsert reporting {summary['graph_nodes']} "
+            f"nodes upserted for tenant={tenant}"
+        )

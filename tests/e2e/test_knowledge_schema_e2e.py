@@ -17,7 +17,6 @@ session-end sweep at ``_cleanup_test_tenants`` cleans up.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -47,7 +46,7 @@ from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
-from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
+from tests.e2e.conftest import RUNTIME, run_async, skip_if_no_runtime, unique_id
 
 # k3d-cogniverse-serverlb forwards these to the in-cluster cogniverse-vespa
 # and cogniverse-denseon services. Verified via:
@@ -73,12 +72,13 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
         backend_port=VESPA_HTTP_PORT,
     )
     cm = ConfigManager(store=config_store)
-    cm.set_system_config(
-        SystemConfig(
-            backend_url="http://localhost",
-            backend_port=VESPA_HTTP_PORT,
-            inference_service_urls={"denseon": DENSEON_URL},
-        )
+    # In-memory only: cm.set_system_config would persist a denseon-only
+    # localhost URL map into config_metadata and starve the in-cluster
+    # ingestor (which reads inference_service_urls from the same store).
+    cm._system_config_cache = SystemConfig(  # noqa: SLF001
+        backend_url="http://localhost",
+        backend_port=VESPA_HTTP_PORT,
+        inference_service_urls={"denseon": DENSEON_URL},
     )
     mm = Mem0MemoryManager(tenant_id=tenant_id)
     mm.initialize(
@@ -526,7 +526,7 @@ class TestPinningSurvivesLifecycle:
                 interval_seconds=3600.0,
                 pin_lookup=lambda _mgr: {mid},
             )
-            summary = asyncio.get_event_loop().run_until_complete(scheduler.tick_once())
+            summary = run_async(scheduler.tick_once())
 
             per_tenant = summary.get("tenants", {}).get(tenant_id, {})
             # Pinned memory was the only candidate that would have been

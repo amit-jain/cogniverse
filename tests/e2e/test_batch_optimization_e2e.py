@@ -1322,11 +1322,34 @@ class TestArtifactLoadingRoundTrip:
         )
 
     def test_entity_extraction_artifact_survives_restart(self):
-        """Verify entity_extraction artifact is loadable after the gateway restart."""
-        # Run batch job to ensure artifact exists
+        """Verify entity_extraction artifact is loadable after the gateway restart.
+
+        The prior test in this class bounces the runtime pod. The new pod
+        re-subscribes to Phoenix spans but the catch-up takes 30-120s on
+        first read. Running the batch job immediately can land in a
+        window where Phoenix returns ``training_examples=0`` (status is
+        still "success" — the optimizer just had nothing to learn from).
+        Retry the batch job until training examples appear OR the
+        wait-budget is exhausted; this distinguishes "Phoenix-catchup
+        race" (transient) from "no spans exist at all" (real bug).
+        """
+        deadline = time.monotonic() + 180.0
         result = _run_batch_job("entity-extraction")
-        assert result["status"] == "success"
-        assert result["training_examples"] >= 1
+        while (
+            result.get("status") == "success"
+            and result.get("training_examples", 0) < 1
+            and time.monotonic() < deadline
+        ):
+            time.sleep(15)
+            result = _run_batch_job("entity-extraction")
+        assert result["status"] == "success", (
+            f"entity-extraction batch job failed: {result}"
+        )
+        assert result["training_examples"] >= 1, (
+            f"Phoenix returned 0 training examples after 180s of post-bounce "
+            f"catch-up — either spans were never indexed or the bounce dropped "
+            f"persistent data. Last result: {result}"
+        )
 
         # Load the artifact — the gateway test already restarted the pod,
         # so this proves the artifact persists across restarts

@@ -48,12 +48,13 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
             backend_url="http://localhost", backend_port=VESPA_HTTP_PORT
         )
     )
-    cm.set_system_config(
-        SystemConfig(
-            backend_url="http://localhost",
-            backend_port=VESPA_HTTP_PORT,
-            inference_service_urls={"denseon": DENSEON_URL},
-        )
+    # In-memory only: cm.set_system_config would persist a denseon-only
+    # localhost URL map into config_metadata and starve the in-cluster
+    # ingestor (which reads inference_service_urls from the same store).
+    cm._system_config_cache = SystemConfig(  # noqa: SLF001
+        backend_url="http://localhost",
+        backend_port=VESPA_HTTP_PORT,
+        inference_service_urls={"denseon": DENSEON_URL},
     )
     mm = Mem0MemoryManager(tenant_id=tenant_id)
     mm.initialize(

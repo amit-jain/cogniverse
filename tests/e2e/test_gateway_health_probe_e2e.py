@@ -21,7 +21,7 @@ from typing import Iterator
 
 import pytest
 
-from tests.e2e.conftest import skip_if_no_runtime
+from tests.e2e.conftest import run_async, skip_if_no_runtime
 
 _GATEWAY_NAME = "cogniverse-test-gw"
 _GATEWAY_PORT = 19090
@@ -105,9 +105,7 @@ class TestProbeOnceLiveGatewayReportsAvailable:
 
         mgr = _make_manager()
         probe = GatewayHealthProbe(mgr, interval_seconds=1.0)
-        available, latency = asyncio.new_event_loop().run_until_complete(
-            probe.probe_once()
-        )
+        available, latency = run_async(probe.probe_once())
         assert available is True
         # Latency must be positive and below the timeout window.
         assert 0 < latency <= 5000, latency
@@ -141,7 +139,7 @@ class TestProbeEmitsOpenshellGatewayHealthSpan:
 
         mgr = _make_manager()
         probe = GatewayHealthProbe(mgr, interval_seconds=1.0, tracer=tracer)
-        asyncio.new_event_loop().run_until_complete(probe.probe_once())
+        run_async(probe.probe_once())
 
         spans = exporter.get_finished_spans()
         # Exactly one span per probe_once call — no leak, no missing.
@@ -188,7 +186,7 @@ class TestProbeLoopRunsOnSchedule:
             await asyncio.sleep(1.6)
             await probe.stop()
 
-        asyncio.new_event_loop().run_until_complete(_scenario())
+        run_async(_scenario())
 
         spans = [
             s
@@ -227,7 +225,7 @@ class TestProbeFlipsToUnavailableWhenClientGone:
         mgr = _make_manager()
         probe = GatewayHealthProbe(mgr, interval_seconds=1.0)
         # Healthy first.
-        ok, _ = asyncio.new_event_loop().run_until_complete(probe.probe_once())
+        ok, _ = run_async(probe.probe_once())
         assert ok is True
 
         # Now force the manager into the no-client state and re-probe.
@@ -236,9 +234,7 @@ class TestProbeFlipsToUnavailableWhenClientGone:
         mgr._client = None
         mgr._available = False
         mgr._enabled = False
-        not_ok, latency = asyncio.new_event_loop().run_until_complete(
-            probe.probe_once()
-        )
+        not_ok, latency = run_async(probe.probe_once())
         assert not_ok is False
         assert latency >= 0
         assert probe.last_available is False

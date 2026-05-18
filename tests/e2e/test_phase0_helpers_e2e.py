@@ -52,6 +52,7 @@ _LEGACY_PREFIXES = (
     "conc_",
     "both_",
     "apiorg_",
+    "apinorm_",  # canonicalization round-trip test in test_api_e2e.py
     "search_e2e_",
     "ingest_e2e_",
 )

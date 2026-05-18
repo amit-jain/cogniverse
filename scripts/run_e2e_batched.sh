@@ -122,7 +122,11 @@ run_batch() {
   local log="$LOG_DIR/$label.log"
   echo "=== $label — $(date) ==="
   echo "log: $log"
-  uv run pytest "$@" --tb=short -v 2>&1 | tee "$log"
+  # --tb=long + -rA: the end-of-run FAILURES section carries every
+  # full traceback so post-mortem analysis can pinpoint the actual
+  # assertion that failed. Prior sweeps used --tb=short, so killing
+  # them mid-run left only "FAILED" markers with zero diagnostic.
+  uv run pytest "$@" --tb=long -rA -v 2>&1 | tee "$log"
   local rc=${PIPESTATUS[0]}
   local passed failed skipped
   passed=$(grep -c PASSED "$log" || true)

@@ -18,13 +18,11 @@ Pins the FSM behaviour against the deployed cogniverse Phoenix:
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-from tests.e2e.conftest import skip_if_no_runtime, unique_id
+from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
 
 PHOENIX_HTTP = "http://localhost:26006"
 PHOENIX_GRPC = "localhost:4317"
@@ -44,8 +42,13 @@ def _make_artifact_manager(tenant_id: str) -> ArtifactManager:
 
 
 def _run(coro):
-    """Run a coroutine in a fresh loop — every test asserts on the result."""
-    return asyncio.new_event_loop().run_until_complete(coro)
+    """Run a coroutine in a fresh OS thread.
+
+    Direct ``asyncio.new_event_loop().run_until_complete(coro)`` raises
+    ``RuntimeError: This event loop is already running`` under
+    pytest.ini's ``asyncio_mode = auto``. See conftest.run_async.
+    """
+    return run_async(coro)
 
 
 async def _seed_three_versions(am: ArtifactManager, agent_type: str) -> None:

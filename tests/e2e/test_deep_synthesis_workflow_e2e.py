@@ -39,7 +39,7 @@ from cogniverse_agents.deep_synthesis_workflow import (
     DeepSynthesisWorkflow,
 )
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-from tests.e2e.conftest import skip_if_no_runtime, unique_id
+from tests.e2e.conftest import run_async, skip_if_no_runtime, unique_id
 
 # ---------------------------------------------------------------------------
 # vLLM port-forward fixture (mirrors test_rlm_telemetry_e2e.py:38-94 pattern)
@@ -170,10 +170,12 @@ class TestDeepSynthesisOverHundredDocuments:
       * trajectory's iteration-0 names exactly match seed_subagents.
     """
 
-    @pytest.mark.asyncio
-    async def test_workflow_terminates_within_bounds_with_real_lm(
+    def test_workflow_terminates_within_bounds_with_real_lm(
         self, llm_config: LLMEndpointConfig
     ) -> None:
+        run_async(self._async_workflow_terminates(llm_config))
+
+    async def _async_workflow_terminates(self, llm_config: LLMEndpointConfig) -> None:
         from pathlib import Path
 
         from cogniverse_agents.inference.rlm_inference import RLMInference
@@ -195,12 +197,13 @@ class TestDeepSynthesisOverHundredDocuments:
         cm = ConfigManager(
             store=VespaConfigStore(backend_url="http://localhost", backend_port=8080)
         )
-        cm.set_system_config(
-            SystemConfig(
-                backend_url="http://localhost",
-                backend_port=8080,
-                inference_service_urls={"denseon": "http://localhost:29006"},
-            )
+        # In-memory only: cm.set_system_config would persist a denseon-only
+        # localhost URL map into config_metadata and starve the in-cluster
+        # ingestor (which reads inference_service_urls from the same store).
+        cm._system_config_cache = SystemConfig(  # noqa: SLF001
+            backend_url="http://localhost",
+            backend_port=8080,
+            inference_service_urls={"denseon": "http://localhost:29006"},
         )
         mm = Mem0MemoryManager(tenant_id=tenant_id)
         mm.initialize(
@@ -339,11 +342,13 @@ class TestDeepSynthesisOverHundredDocuments:
 
 
 @pytest.mark.e2e
-@pytest.mark.asyncio
 class TestRateLimiterPerTenantSlidingWindow:
     """12 admits return True; 13th is False; a different tenant still admits."""
 
-    async def test_thirteenth_call_denied_separate_tenant_admitted(self) -> None:
+    def test_thirteenth_call_denied_separate_tenant_admitted(self) -> None:
+        run_async(self._async_thirteenth_call_denied())
+
+    async def _async_thirteenth_call_denied(self) -> None:
         rl = DeepSynthesisRateLimiter(rate_limit_per_hour=12)
         tenant_a = unique_id("rlm_rl") + ":t1"
         tenant_b = unique_id("rlm_rl") + ":t2"
@@ -358,7 +363,8 @@ class TestRateLimiterPerTenantSlidingWindow:
         assert await rl.remaining(tenant_a) == 0
         assert await rl.remaining(tenant_b) == 11
 
-    async def test_constructor_rejects_zero_or_negative_limit(self) -> None:
+    def test_constructor_rejects_zero_or_negative_limit(self) -> None:
+        # Pure sync — no awaits — but kept inside the class for grouping.
         with pytest.raises(ValueError, match="rate_limit_per_hour must be >= 1"):
             DeepSynthesisRateLimiter(rate_limit_per_hour=0)
 
@@ -369,11 +375,13 @@ class TestRateLimiterPerTenantSlidingWindow:
 
 
 @pytest.mark.e2e
-@pytest.mark.asyncio
 class TestHardCallCapTrips:
     """RLM always asks for one more sub-agent → cap=3 trips on iteration 2."""
 
-    async def test_cap_set_to_three_stops_at_three_calls(self) -> None:
+    def test_cap_set_to_three_stops_at_three_calls(self) -> None:
+        run_async(self._async_cap_set_to_three())
+
+    async def _async_cap_set_to_three(self) -> None:
         # The RLM never SUBMITs — it always asks for one more sub-agent.
         # The workflow should trip cap_reached on iteration 2 (after
         # iteration 0 used 1 sub-agent, then 1 RLM step + 1 sub-agent).
@@ -416,11 +424,13 @@ class TestHardCallCapTrips:
 
 
 @pytest.mark.e2e
-@pytest.mark.asyncio
 class TestBoundedFanOutPerRound:
     """RLM asks for 10 sub-agents in one round → only 2 fire (cap)."""
 
-    async def test_per_round_cap_is_two_drops_eight_extras(self) -> None:
+    def test_per_round_cap_is_two_drops_eight_extras(self) -> None:
+        run_async(self._async_per_round_cap())
+
+    async def _async_per_round_cap(self) -> None:
         # Single RLM step requests 10 ASKs; max_subagent_calls_per_round=2
         # should pick the first 2 only. Then SUBMIT to terminate cleanly.
         ten_asks = " ".join(f"ASK(agent_{i}: q{i})" for i in range(10))
@@ -476,11 +486,13 @@ class TestBoundedFanOutPerRound:
 
 
 @pytest.mark.e2e
-@pytest.mark.asyncio
 class TestRateLimitedInvocationReturnsFlag:
     """Once the limiter denies, .run returns immediately with was_rate_limited."""
 
-    async def test_run_after_quota_exhausted_returns_flag(self) -> None:
+    def test_run_after_quota_exhausted_returns_flag(self) -> None:
+        run_async(self._async_run_after_quota_exhausted())
+
+    async def _async_run_after_quota_exhausted(self) -> None:
         # Limit = 1; first acquire admits, second denies.
         rl = DeepSynthesisRateLimiter(rate_limit_per_hour=1)
         scripted_rlm = _ScriptedRLM(scripted_answers=[f"answer {SUBMIT_TOKEN}"])
