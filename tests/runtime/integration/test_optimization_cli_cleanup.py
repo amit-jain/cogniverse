@@ -10,7 +10,10 @@ fixture (real Mem0, real DenseOn, real LM, real Vespa).
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -149,7 +152,6 @@ class TestRunCleanupEnforcesSchemaRetention:
         reached this branch (exited 2 in argparse).
         """
         import time as _time
-        from pathlib import Path
 
         from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.admin import tenant_manager as tm
@@ -252,3 +254,182 @@ class TestRunCleanupEnforcesSchemaRetention:
                 )
             except Exception:
                 pass
+
+
+class TestRunCleanupCoversLogsTempAndConfigVacuum:
+    """The daily-cleanup workflow absorbed log rotation, temp file purge,
+    and config_metadata version vacuum from the standalone daily-cleanup
+    cron the chart didn't previously cover. These tests pin each section
+    against real filesystem + real Vespa."""
+
+    @pytest.mark.asyncio
+    async def test_log_cleanup_deletes_files_older_than_retention(
+        self, memory_manager, tmp_path, monkeypatch
+    ):
+        """Files older than ``log_retention_days`` are removed; fresh files survive.
+
+        Real filesystem, real os.unlink — no mock of pathlib or os. The
+        test seeds two files with deterministic mtimes via os.utime,
+        runs cleanup, then asserts exact survivor set on disk.
+        """
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        stale = log_dir / "stale.log"
+        fresh = log_dir / "fresh.log"
+        stale.write_text("stale entry")
+        fresh.write_text("fresh entry")
+
+        # Backdate stale to 10 days ago; fresh stays "now".
+        ten_days_ago = time.time() - 10 * 86400
+        os.utime(stale, (ten_days_ago, ten_days_ago))
+
+        monkeypatch.setenv("LOG_DIR", str(log_dir))
+        # Disable temp/vacuum so this test only asserts log behaviour.
+        monkeypatch.setenv("TEMP_DIR", str(tmp_path / "nonexistent_temp"))
+        monkeypatch.setenv("CONFIG_KEEP_VERSIONS", "10")
+
+        result = await run_cleanup(
+            tenant_id=memory_manager.tenant_id,
+            log_retention_days=7,
+            memory_retention_days=30,
+        )
+
+        assert result["log_cleanup"]["path"] == str(log_dir)
+        assert result["log_cleanup"]["scanned"] == 2
+        assert result["log_cleanup"]["deleted"] == 1
+        assert result["log_cleanup"]["errors"] == []
+        assert not stale.exists(), "stale.log (10d old) must be deleted"
+        assert fresh.exists(), "fresh.log must survive"
+
+    @pytest.mark.asyncio
+    async def test_log_cleanup_skips_missing_directory(
+        self, memory_manager, tmp_path, monkeypatch
+    ):
+        """LOG_DIR pointing at a non-existent path is a logged skip, not a failure."""
+        missing = tmp_path / "no_logs_here"
+        monkeypatch.setenv("LOG_DIR", str(missing))
+        monkeypatch.setenv("TEMP_DIR", str(tmp_path / "no_tmp_here"))
+
+        result = await run_cleanup(
+            tenant_id=memory_manager.tenant_id,
+            log_retention_days=7,
+            memory_retention_days=30,
+        )
+
+        assert "skipped" in result["log_cleanup"], (
+            f"missing log dir must report skipped, not crash; "
+            f"got {result['log_cleanup']!r}"
+        )
+        assert result["log_cleanup"]["scanned"] == 0
+        assert result["log_cleanup"]["deleted"] == 0
+
+    @pytest.mark.asyncio
+    async def test_temp_cleanup_deletes_old_temp_files(
+        self, memory_manager, tmp_path, monkeypatch
+    ):
+        """TEMP_DIR sweep removes files older than TEMP_RETENTION_DAYS."""
+        temp_dir = tmp_path / "tmp"
+        temp_dir.mkdir()
+        old_tmp = temp_dir / "old.tmp"
+        new_tmp = temp_dir / "new.tmp"
+        old_tmp.write_text("x")
+        new_tmp.write_text("y")
+        two_days_ago = time.time() - 2 * 86400
+        os.utime(old_tmp, (two_days_ago, two_days_ago))
+
+        monkeypatch.setenv("LOG_DIR", str(tmp_path / "no_logs"))
+        monkeypatch.setenv("TEMP_DIR", str(temp_dir))
+        monkeypatch.setenv("TEMP_RETENTION_DAYS", "1")
+
+        result = await run_cleanup(
+            tenant_id=memory_manager.tenant_id,
+            log_retention_days=7,
+            memory_retention_days=30,
+        )
+
+        assert result["temp_cleanup"]["path"] == str(temp_dir)
+        assert result["temp_cleanup"]["scanned"] == 2
+        assert result["temp_cleanup"]["deleted"] == 1
+        assert not old_tmp.exists()
+        assert new_tmp.exists()
+
+    @pytest.mark.asyncio
+    async def test_config_vacuum_prunes_excess_versions(
+        self, memory_manager, vespa_instance, monkeypatch
+    ):
+        """The config_vacuum section drives ``VespaConfigStore.prune_all_configs``.
+
+        Pre-seed N=15 versions of one config_id with keep_versions=5,
+        run cleanup, assert (a) the vacuum section reports the
+        dropped count >= 10, and (b) the on-disk version count for
+        that config_id is now <= 5.
+        """
+        from cogniverse_sdk.interfaces.config_store import ConfigScope
+        from cogniverse_vespa.config.config_store import VespaConfigStore
+
+        store = VespaConfigStore(
+            backend_url="http://localhost",
+            backend_port=vespa_instance["http_port"],
+            keep_versions=100,  # write all 15 without per-write pruning
+        )
+        for i in range(1, 16):
+            store.set_config(
+                tenant_id="vac_test",
+                scope=ConfigScope.BACKEND,
+                service="vacuum_probe",
+                config_key="kv",
+                config_value={"i": i},
+            )
+
+        config_id = store._create_document_id(
+            "vac_test", ConfigScope.BACKEND, "vacuum_probe", "kv"
+        )
+        pre_resp = store.vespa_app.query(
+            yql=(
+                f"select version from config_metadata "
+                f'where config_id contains "{config_id}" '
+                f"order by version desc limit 100"
+            )
+        )
+        pre_count = len(list(pre_resp.hits or []))
+        assert pre_count == 15, (
+            f"setup precondition: expected 15 versions seeded, found {pre_count}"
+        )
+
+        monkeypatch.setenv("LOG_DIR", "/no_logs_here_either")
+        monkeypatch.setenv("TEMP_DIR", "/no_tmp_here_either")
+        monkeypatch.setenv("CONFIG_KEEP_VERSIONS", "5")
+
+        try:
+            result = await run_cleanup(
+                tenant_id=memory_manager.tenant_id,
+                log_retention_days=7,
+                memory_retention_days=30,
+            )
+
+            vacuum = result["config_vacuum"]
+            assert vacuum.get("keep_versions") == 5, (
+                f"vacuum should respect CONFIG_KEEP_VERSIONS=5; got {vacuum!r}"
+            )
+            assert vacuum.get("dropped", 0) >= 10, (
+                f"15-5=10 stale rows must be dropped; got {vacuum!r}"
+            )
+
+            post_resp = store.vespa_app.query(
+                yql=(
+                    f"select version from config_metadata "
+                    f'where config_id contains "{config_id}" '
+                    f"order by version desc limit 100"
+                )
+            )
+            surviving = sorted(h["fields"]["version"] for h in post_resp.hits or [])
+            assert surviving == [11, 12, 13, 14, 15], (
+                f"vacuum must retain exactly the latest 5 versions; got {surviving!r}"
+            )
+        finally:
+            store.delete_config(
+                tenant_id="vac_test",
+                scope=ConfigScope.BACKEND,
+                service="vacuum_probe",
+                config_key="kv",
+            )

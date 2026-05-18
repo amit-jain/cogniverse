@@ -345,25 +345,89 @@ async def _optimize_agent(
         return {"status": "failed", "error": str(e)}
 
 
+def _prune_aged_files(root: str, *, older_than_days: float) -> dict:
+    """Delete files under ``root`` whose mtime is older than the cutoff.
+
+    Returns a dict ``{"scanned": N, "deleted": M, "errors": [..]}`` so
+    the workflow log captures exact numbers — the assertion contract
+    for the daily-cleanup e2e test depends on tight outcome reporting,
+    not opaque ``cleanup completed`` markers.
+
+    Silent no-op when ``root`` does not exist or is not a directory —
+    the cron container may run on a pod that doesn't mount that path
+    (e.g. ``/logs`` only exists when the runtime container mounts a
+    log PVC). Logged at INFO so the workflow run records "skipped: no
+    such path".
+    """
+    import time as _t
+    from pathlib import Path as _Path
+
+    summary: dict = {"path": root, "scanned": 0, "deleted": 0, "errors": []}
+    p = _Path(root)
+    if not p.is_dir():
+        summary["skipped"] = f"path {root!r} is not a directory"
+        return summary
+
+    cutoff = _t.time() - older_than_days * 86400
+    for entry in p.rglob("*"):
+        if not entry.is_file():
+            continue
+        summary["scanned"] += 1
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+                summary["deleted"] += 1
+        except OSError as exc:
+            summary["errors"].append(f"{entry}: {exc}")
+    return summary
+
+
+def _vacuum_config_metadata(*, keep_versions: int) -> dict:
+    """Drain config_metadata version bloat across every config_id.
+
+    Per-write pruning in ``VespaConfigStore.set_config`` keeps fresh
+    writes bounded, but a backlog can accumulate when ``keep_versions``
+    is bumped or when a backend write path skipped the prune (e.g. an
+    older runtime image). One-off sweep here brings legacy rows down
+    to ``keep_versions`` per config_id and returns the count dropped
+    so the workflow log proves the work happened.
+    """
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_vespa.config.config_store import VespaConfigStore
+
+    cm = create_default_config_manager()
+    store = cm.store
+    if not isinstance(store, VespaConfigStore):
+        return {
+            "skipped": f"store is {type(store).__name__}, expected VespaConfigStore"
+        }
+
+    dropped = store.prune_all_configs(keep=keep_versions)
+    return {"dropped": dropped, "keep_versions": keep_versions}
+
+
 async def run_cleanup(
     tenant_id: Optional[str],
     log_retention_days: int,
     memory_retention_days: int,
 ) -> dict:
-    """Run schema-driven memory cleanup across one or every tenant.
+    """Daily-cleanup workflow body: memory + logs + temp + config vacuum.
 
-    If ``tenant_id`` is None, enumerates every tenant in every org via
-    the live ``tenant_manager`` helpers and drives
-    ``Mem0MemoryManager.cleanup_with_schema`` per tenant — the
-    daily-cleanup CronWorkflow runs in this mode. Per-tenant
-    exceptions are captured so a single bad tenant does not abort the
-    sweep across the rest.
+    Per-tenant Mem0 cleanup is schema-driven (per-kind TTLs in the
+    KnowledgeRegistry). The other three steps absorbed from the legacy
+    standalone ``daily-cleanup`` CronWorkflow that the chart didn't
+    previously cover:
 
-    ``log_retention_days`` and ``memory_retention_days`` are accepted
-    for CLI/workflow compatibility but the real retention contract is
-    schema-driven (per-kind TTLs in the ``KnowledgeRegistry``); the
-    raw retention_days args are echoed back in the result so the
-    workflow logs preserve them.
+      * Log rotation under ``LOG_DIR`` (default ``/logs``) — files
+        older than ``log_retention_days`` are removed.
+      * Temp file cleanup under ``TEMP_DIR`` (default ``/tmp``) —
+        files older than 1 day are removed.
+      * config_metadata version vacuum — each config_id is pruned to
+        the latest ``CONFIG_KEEP_VERSIONS`` (default 10).
+
+    Each section reports exact counts in the result dict so the
+    workflow run log proves the work landed — bare "Succeeded" is too
+    weak a signal for a maintenance cron.
     """
     from pathlib import Path
 
@@ -408,21 +472,39 @@ async def run_cleanup(
         except Exception as e:
             return f"failed: {e}"
 
+    # --- Memory cleanup (per tenant) ---
     if tenant_id is not None:
         results["memory_cleanup"] = {tenant_id: _cleanup_one(tenant_id)}
-        return results
+    else:
+        per_tenant: Dict[str, str] = {}
+        org_ids = await tenant_manager.list_organizations_internal()
+        for org_id in org_ids:
+            for tenant in await tenant_manager.list_tenants_for_org_internal(org_id):
+                tid = tenant.tenant_full_id
+                if not tid:
+                    continue
+                per_tenant[tid] = _cleanup_one(tid)
+        results["memory_cleanup"] = per_tenant
+        results["tenants_processed"] = len(per_tenant)
 
-    per_tenant: Dict[str, str] = {}
-    org_ids = await tenant_manager.list_organizations_internal()
-    for org_id in org_ids:
-        for tenant in await tenant_manager.list_tenants_for_org_internal(org_id):
-            tid = tenant.tenant_full_id
-            if not tid:
-                continue
-            per_tenant[tid] = _cleanup_one(tid)
+    # --- Log rotation ---
+    log_dir = os.environ.get("LOG_DIR", "/logs")
+    results["log_cleanup"] = _prune_aged_files(
+        log_dir, older_than_days=float(log_retention_days)
+    )
 
-    results["memory_cleanup"] = per_tenant
-    results["tenants_processed"] = len(per_tenant)
+    # --- Temp file cleanup ---
+    temp_dir = os.environ.get("TEMP_DIR", "/tmp")
+    temp_age_days = float(os.environ.get("TEMP_RETENTION_DAYS", "1"))
+    results["temp_cleanup"] = _prune_aged_files(temp_dir, older_than_days=temp_age_days)
+
+    # --- Config metadata vacuum ---
+    keep_versions = int(os.environ.get("CONFIG_KEEP_VERSIONS", "10"))
+    try:
+        results["config_vacuum"] = _vacuum_config_metadata(keep_versions=keep_versions)
+    except Exception as exc:  # noqa: BLE001 — best-effort vacuum
+        results["config_vacuum"] = {"failed": str(exc)}
+
     return results
 
 
