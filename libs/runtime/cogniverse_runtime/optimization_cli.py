@@ -350,49 +350,64 @@ async def run_cleanup(
     log_retention_days: int,
     memory_retention_days: int,
 ) -> dict:
-    """Run cleanup tasks.
+    """Run schema-driven memory cleanup across one or every tenant.
 
-    If ``tenant_id`` is None, enumerates every tenant in every org and
-    runs Mem0 cleanup per tenant — the daily-cleanup CronWorkflow runs
-    in this mode. Per-tenant exceptions are captured so a single bad
-    tenant does not abort the sweep across the rest.
+    If ``tenant_id`` is None, enumerates every tenant in every org via
+    the live ``tenant_manager`` helpers and drives
+    ``Mem0MemoryManager.cleanup_with_schema`` per tenant — the
+    daily-cleanup CronWorkflow runs in this mode. Per-tenant
+    exceptions are captured so a single bad tenant does not abort the
+    sweep across the rest.
+
+    ``log_retention_days`` and ``memory_retention_days`` are accepted
+    for CLI/workflow compatibility but the real retention contract is
+    schema-driven (per-kind TTLs in the ``KnowledgeRegistry``); the
+    raw retention_days args are echoed back in the result so the
+    workflow logs preserve them.
     """
+    from pathlib import Path
+
     from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_core.memory.schema import build_default_registry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_runtime.admin import tenant_manager
+
+    # tenant_manager.get_backend() refuses to initialise without a
+    # SchemaLoader injected up-front. The daily-cleanup CronWorkflow
+    # runs as a standalone process (not via the runtime FastAPI app),
+    # so it has no app-startup lifespan to call set_schema_loader for
+    # it. Wire it here using the same FilesystemSchemaLoader pattern
+    # the synthetic mode uses.
+    schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
+    tenant_manager.set_schema_loader(FilesystemSchemaLoader(schemas_dir))
+
+    registry = build_default_registry()
 
     results: Dict[str, Any] = {
         "log_retention_days": log_retention_days,
         "memory_retention_days": memory_retention_days,
     }
 
-    if tenant_id is not None:
+    def _cleanup_one(tid: str) -> str:
         try:
-            Mem0MemoryManager(tenant_id=tenant_id).cleanup(
-                retention_days=memory_retention_days
-            )
-            results["memory_cleanup"] = {tenant_id: "completed"}
+            mm = Mem0MemoryManager(tenant_id=tid)
+            deleted_by_kind = mm.cleanup_with_schema(registry)
+            return f"completed: {dict(deleted_by_kind)}"
         except Exception as e:
-            results["memory_cleanup"] = {tenant_id: f"failed: {e}"}
+            return f"failed: {e}"
+
+    if tenant_id is not None:
+        results["memory_cleanup"] = {tenant_id: _cleanup_one(tenant_id)}
         return results
 
-    from cogniverse_runtime.admin.tenant_manager import (
-        list_organizations_internal,
-        list_tenants_for_org_internal,
-    )
-
     per_tenant: Dict[str, str] = {}
-    org_ids = await list_organizations_internal()
+    org_ids = await tenant_manager.list_organizations_internal()
     for org_id in org_ids:
-        for tenant in await list_tenants_for_org_internal(org_id):
+        for tenant in await tenant_manager.list_tenants_for_org_internal(org_id):
             tid = tenant.tenant_full_id
             if not tid:
                 continue
-            try:
-                Mem0MemoryManager(tenant_id=tid).cleanup(
-                    retention_days=memory_retention_days
-                )
-                per_tenant[tid] = "completed"
-            except Exception as e:
-                per_tenant[tid] = f"failed: {e}"
+            per_tenant[tid] = _cleanup_one(tid)
 
     results["memory_cleanup"] = per_tenant
     results["tenants_processed"] = len(per_tenant)

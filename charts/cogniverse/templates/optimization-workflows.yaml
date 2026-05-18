@@ -60,10 +60,31 @@ spec:
           mountPath: /app/configs/config.json
           subPath: config.json
           readOnly: true
+        {{- if .Values.devMode.enabled }}
+        - name: src-libs
+          mountPath: /app/libs
+        - name: src-scripts
+          mountPath: /app/scripts
+        {{- end }}
       volumes:
       - name: config
         configMap:
           name: {{ $fullName }}-config
+      {{- if .Values.devMode.enabled }}
+      # devMode mounts: workflow pods pick up local source edits without
+      # a runtime-image rebuild (same pattern as the runtime Deployment).
+      # Required so the daily-cleanup CronWorkflow execution e2e test
+      # exercises the freshly-committed optimization_cli code, not a
+      # frozen image baked days ago.
+      - name: src-libs
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/libs
+          type: Directory
+      - name: src-scripts
+        hostPath:
+          path: {{ .Values.devMode.hostPath }}/scripts
+          type: Directory
+      {{- end }}
 {{- end }}
 {{- if .Values.argo.optimization.agentOptimization.enabled }}
 ---
