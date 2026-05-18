@@ -119,7 +119,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     needs: unit-tests
 
     steps:
@@ -148,13 +148,14 @@ jobs:
         sudo docker image prune -af
         df -h
 
-    - name: Pre-pull Vespa Docker image
+    - name: Pre-pull Vespa + vLLM Docker images
       run: |
         docker pull vespaengine/vespa:8.668.5
+        docker pull vllm/vllm-openai-cpu:latest
         df -h
 
     - name: Run integration tests
-      timeout-minutes: 10
+      timeout-minutes: 25
       run: |
         JAX_PLATFORM_NAME=cpu uv run python -m pytest \
           tests/runtime/integration/ \

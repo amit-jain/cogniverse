@@ -37,6 +37,8 @@ hfCache:
 hostStorage:
   enabled: true
   path: /host-data
+  backup:
+    enabled: true
 
 inference:
   # ColPali uses the native FastAPI sidecar (deploy/colpali) — vLLM's
