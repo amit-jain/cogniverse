@@ -439,9 +439,17 @@ class TestSyntheticApprovalIntegration:
 
 
 @pytest.mark.integration
-@pytest.mark.ci_fast
 class TestSyntheticServiceIntegration:
-    """Integration tests for synthetic data service with real backends"""
+    """Integration tests for synthetic data service with real backends.
+
+    Drops ``ci_fast`` because both tests call ``SyntheticDataService.generate``
+    which invokes the real LLM per example (3 + 5 generations). On GHA's
+    CPU env each test takes 2-5 min — the 6-test ``TestSyntheticApprovalIntegration``
+    class above runs in ~30s total, but adding both LLM-driven tests
+    pushed the integration step past the 15-min cap. Local dev / nightly
+    integration suites still run these via the unmarked ``integration``
+    selector.
+    """
 
     @pytest.mark.asyncio
     async def test_service_with_phoenix_telemetry(
