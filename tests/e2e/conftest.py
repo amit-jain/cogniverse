@@ -289,6 +289,48 @@ def _tenant_schema_names_in_vespa(tenant_id: str, deployed: set[str]) -> set[str
 
 
 @pytest.fixture(autouse=True)
+def _reset_event_loop_state_before_each_test():
+    """Clear leaked thread-attached event loops before every test.
+
+    Some upstream code paths in cogniverse + dspy + dspy/lite-llm call
+    ``asyncio.set_event_loop(asyncio.new_event_loop())`` for a quick
+    ``run_until_complete`` and never undo it. ``set_event_loop`` writes
+    the loop into the thread-local ``_event_loop_policy.current_loop``
+    slot, so after the call every future ``asyncio.get_event_loop()``
+    on the same thread returns that leaked loop. When pytest-asyncio
+    later tries to set up an async test, its ``Runner.run`` checks
+    ``events._get_running_loop()``: if the leaked loop happens to still
+    be "running" (e.g. partially closed via the leaker's cleanup path
+    but with a coroutine still scheduled) it raises
+    ``RuntimeError: Runner.run() cannot be called from a running event
+    loop`` and the test fails before its body ever runs.
+
+    Reset the thread's loop slot to ``None`` (and any leaked policy
+    state) at the start of every test, so pytest-asyncio always sees a
+    clean thread when it constructs its per-test runner.
+    """
+    import asyncio
+
+    # Drop any leaked thread-current loop. Wrapping in try/except
+    # because asyncio's API for "give me the leaked loop without
+    # creating one" differs across 3.10/3.11/3.12.
+    try:
+        leaked = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        leaked = None
+    if leaked is not None and not leaked.is_closed():
+        try:
+            leaked.close()
+        except Exception:  # noqa: BLE001 — defensive
+            pass
+    try:
+        asyncio.set_event_loop(None)
+    except RuntimeError:
+        pass
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _drain_test_tenants_after_each_test():
     """Delete every test tenant minted via ``unique_id`` after each test
     AND wait for Vespa to actually drop the tenant's schemas.
@@ -362,6 +404,121 @@ def _drain_test_tenants_after_each_test():
                 f"{full_tid!r} — Vespa still shows {sorted(last_remaining)} "
                 f"after 600 s"
             )
+
+
+def register_tenant_and_wait(
+    tenant_id: str,
+    *,
+    created_by: str = "e2e",
+    timeout_s: float = 600.0,
+) -> None:
+    """POST /admin/tenants and poll until the tenant is fully visible.
+
+    Mirrors the deletion-side contract in
+    ``_drain_test_tenants_after_each_test``: send the create, then poll
+    Vespa's config-server schemas list every 2 s until the tenant's
+    per-tenant schemas appear (read-after-write consistent with
+    prepareandactivate), AND poll ``GET /admin/tenants/{tid}`` until the
+    tenant_metadata search-side row is queryable. Hard cap at 10 minutes
+    so a hung Vespa can't wedge the suite.
+
+    Why: the bare 60 s tenant_metadata poll in the older test helpers
+    was overrun by the cluster-wide schema-count growth (per-tenant
+    deploy is O(N) in deployed schemas). The schemas-list poll uses the
+    same definitive Vespa signal the cleanup contract already relies on,
+    just inverted (presence instead of absence).
+    """
+    if not _vespa_config_server_reachable():
+        raise RuntimeError(
+            f"register_tenant_and_wait cannot reach Vespa config-server "
+            f"at {_VESPA_SCHEMAS_LIST_URL!r}. The e2e suite is k3d-only — "
+            f"start it with `cogniverse up`, or set VESPA_CONFIG_URL to "
+            f"the config-server base URL of your deployed cluster."
+        )
+
+    # Send the create — give the runtime up to 5 min to ACK; the actual
+    # readiness signal is the poll below, not the response code.
+    with httpx.Client(timeout=300.0) as client:
+        try:
+            resp = client.post(
+                f"{RUNTIME}/admin/tenants",
+                json={"tenant_id": tenant_id, "created_by": created_by},
+            )
+        except (httpx.HTTPError, OSError) as exc:
+            # Server may have started the deploy anyway; the poll below
+            # is the actual completion signal. Don't fail here.
+            print(
+                f"register_tenant_and_wait: POST raised {exc!r} — "
+                f"continuing to schemas poll"
+            )
+            resp = None
+        if resp is not None and resp.status_code not in (200, 201, 409):
+            raise RuntimeError(
+                f"register_tenant_and_wait: POST /admin/tenants for "
+                f"{tenant_id!r} returned {resp.status_code} {resp.text}"
+            )
+
+    deadline = _time.monotonic() + timeout_s
+    saw_schema = False
+    saw_metadata = False
+    while _time.monotonic() < deadline:
+        if not saw_schema:
+            deployed = _vespa_deployed_schema_names()
+            if _tenant_schema_names_in_vespa(tenant_id, deployed):
+                saw_schema = True
+        if not saw_metadata:
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    r = client.get(f"{RUNTIME}/admin/tenants/{tenant_id}")
+                    if r.status_code == 200:
+                        saw_metadata = True
+            except (httpx.HTTPError, OSError):
+                pass
+        if saw_schema and saw_metadata:
+            return
+        _time.sleep(2.0)
+    raise RuntimeError(
+        f"register_tenant_and_wait: tenant {tenant_id!r} not ready after "
+        f"{timeout_s:.0f} s — saw_schema={saw_schema} "
+        f"saw_metadata={saw_metadata}"
+    )
+
+
+def run_async(coro):
+    """Run a coroutine to completion in a fresh OS thread.
+
+    pytest.ini sets ``asyncio_mode = auto`` so pytest-asyncio enters an
+    event loop on the calling thread for every test. A sync test body
+    that calls ``asyncio.get_event_loop().run_until_complete(coro)`` or
+    ``asyncio.new_event_loop().run_until_complete(coro)`` raises
+    ``RuntimeError: This event loop is already running`` because asyncio
+    refuses ``run_until_complete`` while the thread is inside another.
+    Worse, the leaked-loop state cascades into subsequent
+    ``@pytest.mark.asyncio`` tests which then fail with
+    ``Runner.run() cannot be called from a running event loop``.
+
+    Running the coroutine in a separate OS thread isolates it from
+    pytest-asyncio's loop — ``asyncio.run`` in the worker creates a
+    fresh loop, runs the coroutine, closes the loop, returns the result
+    (or re-raises the exception) on the calling thread.
+    """
+    import asyncio
+    import threading
+
+    box: dict = {}
+
+    def _runner():
+        try:
+            box["value"] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001 — propagate verbatim
+            box["error"] = exc
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 @pytest.fixture(scope="session")
@@ -679,6 +836,7 @@ _TEST_TENANT_PREFIXES = (
     "conc_",
     "both_",
     "apiorg_",
+    "apinorm_",
     "search_e2e_",
     "ingest_e2e_",
     # Knowledge-system e2e prefixes (added with the Section A/B/C/D coverage).
