@@ -485,7 +485,11 @@ spec:
         - "--llm-base-url"
         - {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
         - "--llm-model"
-        - {{ .Values.runtime.qualityMonitor.llmModel | quote }}
+        # Bare model id (no provider prefix) — same reason as the
+        # scheduled-distillation cron: LLMJudge posts directly to
+        # vLLM /v1/chat/completions which matches against the served
+        # model name, not the DSPy/litellm provider-routed form.
+        - {{ include "cogniverse.primaryLLMModelBare" . | quote }}
         - "--golden-interval"
         - {{ .Values.runtime.qualityMonitor.goldenIntervalSeconds | quote }}
         - "--live-interval"

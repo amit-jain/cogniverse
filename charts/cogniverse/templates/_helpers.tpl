@@ -207,6 +207,27 @@ Resolution order:
 {{- end -}}
 
 {{/*
+Same as ``cogniverse.primaryLLMModel`` but WITHOUT the provider prefix.
+Use this when sending the model id directly to an OAI-compatible
+``/v1/chat/completions`` endpoint (vLLM, llama.cpp server, etc.) —
+those servers reject ``openai/google/gemma-4-e4b-it`` with 404 because
+the actual served model name is ``google/gemma-4-e4b-it``. DSPy /
+litellm needs the prefix for provider routing; raw HTTP does not.
+*/}}
+{{- define "cogniverse.primaryLLMModelBare" -}}
+{{- if and .Values.runtime.primaryLLM .Values.runtime.primaryLLM.model -}}
+{{- .Values.runtime.primaryLLM.model -}}
+{{- else -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if eq $engine "vllm" -}}
+{{- .Values.inference.vllm_llm_student.model -}}
+{{- else -}}
+{{- .Values.llm.model -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Runtime primary LLM api_base. Resolves to ``runtime.primaryLLM.apiBase``
 when set, otherwise to the endpoint matching ``llm.engine``:
   - ollama   → ``cogniverse.llmEndpoint`` (the in-cluster Ollama service)
