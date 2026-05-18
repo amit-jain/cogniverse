@@ -38,12 +38,23 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def knowledge_client(memory_manager):
+def knowledge_client(memory_manager, config_manager):
     """TestClient with the knowledge router mounted; memory_manager
     fixture has already initialised the per-tenant Mem0 singleton against
-    real Vespa, so the lazy-init path inside the router is a no-op."""
+    real Vespa, so the lazy-init path inside the router is a no-op.
+
+    Routes that depend on ``_get_config_manager`` (currently just
+    multi_doc) require the dependency to be overridden — main.py wires
+    it via ``app.dependency_overrides`` in production; the test fixture
+    mirrors that. Without this every such route returned 500 from the
+    raised RuntimeError BEFORE Pydantic could validate the body,
+    masking the route-mounted assertion the test exists to make.
+    """
     app = FastAPI()
     app.include_router(knowledge_router.router, prefix="/admin")
+    app.dependency_overrides[knowledge_router._get_config_manager] = (
+        lambda: config_manager
+    )
     yield TestClient(app, raise_server_exceptions=False), memory_manager
     # Clean up any memories this test created.
     try:
