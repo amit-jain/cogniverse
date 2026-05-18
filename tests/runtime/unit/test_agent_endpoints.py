@@ -48,6 +48,10 @@ def dispatcher():
     sys_cfg = MagicMock()
     sys_cfg.backend_url = "http://localhost"
     sys_cfg.backend_port = 8080
+    # _resolve_gliner_url reads inference_service_urls; a bare MagicMock
+    # would return another MagicMock from .get("gliner"), which then fails
+    # GatewayDeps pydantic validation (Optional[str] rejects a MagicMock).
+    sys_cfg.inference_service_urls = None
     config_manager.get_system_config.return_value = sys_cfg
     schema_loader = MagicMock()
     return AgentDispatcher(
@@ -309,9 +313,11 @@ class TestAgentDispatcherCapabilityRouting:
                 context={"tenant_id": "t1"},
             )
 
+        # require_tenant_id canonicalizes "t1" → "t1:t1" for the tenant_id
+        # positional arg, while context dict is not mutated.
         mock_search.assert_called_once_with(
             "find cats",
-            "t1",
+            "t1:t1",
             10,
             conversation_history=[],
             enrichment=None,

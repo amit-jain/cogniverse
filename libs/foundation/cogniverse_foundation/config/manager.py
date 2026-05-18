@@ -321,6 +321,12 @@ class ConfigManager:
         if tenant_id:
             routing_config.tenant_id = tenant_id
 
+        # Canonicalize so the storage key always matches what get_routing_config
+        # looks up (which goes through require_tenant_id → canonical_tenant_id).
+        routing_config.tenant_id = require_tenant_id(
+            routing_config.tenant_id, source="ConfigManager.set_routing_config"
+        )
+
         self.store.set_config(
             tenant_id=routing_config.tenant_id,
             scope=ConfigScope.ROUTING,
@@ -450,6 +456,12 @@ class ConfigManager:
         """
         if tenant_id:
             backend_config.tenant_id = tenant_id
+
+        # Canonicalize so the storage key always matches what get_backend_config
+        # looks up (which goes through require_tenant_id → canonical_tenant_id).
+        backend_config.tenant_id = require_tenant_id(
+            backend_config.tenant_id, source="ConfigManager.set_backend_config"
+        )
 
         self.store.set_config(
             tenant_id=backend_config.tenant_id,
@@ -728,6 +740,7 @@ class ConfigManager:
         Returns:
             Dictionary of all configurations
         """
+        tenant_id = require_tenant_id(tenant_id, source="ConfigManager.get_all_configs")
         entries = self.store.list_configs(tenant_id=tenant_id, scope=scope)
 
         configs = {}

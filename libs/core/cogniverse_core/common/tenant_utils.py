@@ -64,6 +64,26 @@ def parse_tenant_id(tenant_id: str) -> tuple[str, str]:
         return tenant_id, tenant_id
 
 
+def canonical_tenant_id(tenant_id: str) -> str:
+    """Return the canonical ``org:tenant`` storage form for a tenant id.
+
+    The runtime stores tenant_metadata with doc_id in colon form (``org:tenant``)
+    even when the caller posts a simple form. Lookups (GET, assert_tenant_exists,
+    delete, etc.) MUST therefore canonicalize before hitting the store, otherwise
+    a simple-form input maps to a doc_id that was never written. POST already
+    does this normalization inline; this helper makes it reusable for every
+    other endpoint that takes ``tenant_id`` as a path or body parameter.
+
+    SYSTEM_TENANT_ID is returned as-is (it has the ``__system__`` shape that
+    parse_tenant_id would split into ``("__system__", "__system__")`` and is a
+    runtime-internal identity that bypasses tenant lookups anyway).
+    """
+    if not tenant_id or tenant_id == SYSTEM_TENANT_ID:
+        return tenant_id
+    org_id, tenant_name = parse_tenant_id(tenant_id)
+    return f"{org_id}:{tenant_name}"
+
+
 def get_tenant_storage_path(base_dir: Path | str, tenant_id: str) -> Path:
     """
     Get tenant-specific storage path with proper org/tenant structure.
@@ -168,7 +188,15 @@ def require_tenant_id(tenant_id: Optional[str], *, source: str) -> str:
         raise ValueError(
             f"tenant_id on {source} must be a string, got {type(tenant_id).__name__}"
         )
-    return tenant_id
+    # Canonicalize at the request boundary so every downstream call —
+    # assert_tenant_exists, deploy_schema, get_metadata_document, suffix
+    # matching during delete — sees the same storage form. POST
+    # /admin/tenants already normalized simple ``acme`` to ``acme:acme``
+    # for the tenant_metadata doc_id; ingestion/search/agent paths that
+    # accept a raw client tenant_id must do the same or else they deploy
+    # simple-suffix schemas the canonical-form delete cannot reap, and
+    # the deploy-guard eventually refuses every new tenant create.
+    return canonical_tenant_id(tenant_id)
 
 
 async def assert_tenant_exists(tenant_id: str) -> None:
@@ -189,7 +217,7 @@ async def assert_tenant_exists(tenant_id: str) -> None:
 
     from cogniverse_runtime.admin.tenant_manager import get_tenant_internal
 
-    tenant = await get_tenant_internal(tenant_id)
+    tenant = await get_tenant_internal(canonical_tenant_id(tenant_id))
     if tenant is None:
         raise HTTPException(
             status_code=404,

@@ -262,7 +262,8 @@ class TestConfigManagerBackendMethods:
         """Test getting backend config returns empty config if not set"""
         config = config_manager.get_backend_config(tenant_id="test_tenant")
 
-        assert config.tenant_id == "test_tenant"
+        # require_tenant_id canonicalizes simple form → org:tenant
+        assert config.tenant_id == "test_tenant:test_tenant"
         assert len(config.profiles) == 0
 
     def test_set_and_get_backend_config(self, config_manager):
@@ -277,7 +278,8 @@ class TestConfigManagerBackendMethods:
         config_manager.set_backend_config(backend_config)
         retrieved = config_manager.get_backend_config(tenant_id="test_tenant")
 
-        assert retrieved.tenant_id == "test_tenant"
+        # Both set and get canonicalize simple form → org:tenant
+        assert retrieved.tenant_id == "test_tenant:test_tenant"
         assert "test_profile" in retrieved.profiles
         assert retrieved.profiles["test_profile"].schema_name == "test_schema"
 

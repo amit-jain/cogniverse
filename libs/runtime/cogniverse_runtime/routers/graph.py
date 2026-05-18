@@ -96,14 +96,22 @@ class StatsResponse(BaseModel):
 async def upsert(request: UpsertRequest) -> UpsertResponse:
     """Upsert a batch of nodes and edges for a tenant."""
     from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
-    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+    from cogniverse_core.common.tenant_utils import (
+        assert_tenant_exists,
+        canonical_tenant_id,
+    )
 
-    await assert_tenant_exists(request.tenant_id)
-    mgr = get_graph_manager(request.tenant_id)
+    # Canonicalize before EVERY downstream use so the document's
+    # tenant_id field matches the form queries (stats/search/neighbors)
+    # filter by — without this, simple-form upsert and canonical-form
+    # stats live in the same Vespa schema but never see each other.
+    tenant_id = canonical_tenant_id(request.tenant_id)
+    await assert_tenant_exists(tenant_id)
+    mgr = get_graph_manager(tenant_id)
 
     nodes = [
         Node(
-            tenant_id=request.tenant_id,
+            tenant_id=tenant_id,
             name=n.name,
             description=n.description,
             kind=n.kind,
@@ -113,7 +121,7 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
     ]
     edges = [
         Edge(
-            tenant_id=request.tenant_id,
+            tenant_id=tenant_id,
             source=e.source,
             target=e.target,
             relation=e.relation,
@@ -140,8 +148,12 @@ async def search_nodes(
     top_k: int = Query(10, ge=1, le=100),
 ) -> NodeSearchResponse:
     """Semantic search over graph nodes."""
-    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+    from cogniverse_core.common.tenant_utils import (
+        assert_tenant_exists,
+        canonical_tenant_id,
+    )
 
+    tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     nodes = mgr.search_nodes(q, top_k=top_k)
@@ -155,8 +167,12 @@ async def get_neighbors(
     depth: int = Query(1, ge=1, le=3),
 ) -> NeighborsResponse:
     """Return direct neighbors (out and in) of a node by name."""
-    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+    from cogniverse_core.common.tenant_utils import (
+        assert_tenant_exists,
+        canonical_tenant_id,
+    )
 
+    tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     result = mgr.get_neighbors(node, depth=depth)
@@ -171,8 +187,12 @@ async def get_path(
     max_depth: int = Query(4, ge=1, le=6),
 ) -> PathResponse:
     """Shortest path between two nodes by name."""
-    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+    from cogniverse_core.common.tenant_utils import (
+        assert_tenant_exists,
+        canonical_tenant_id,
+    )
 
+    tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     path = mgr.get_path(source, target, max_depth=max_depth)
@@ -187,8 +207,12 @@ async def get_path(
 @router.get("/stats", response_model=StatsResponse)
 async def get_stats(tenant_id: str) -> StatsResponse:
     """Graph statistics: node and edge counts, top-degree nodes."""
-    from cogniverse_core.common.tenant_utils import assert_tenant_exists
+    from cogniverse_core.common.tenant_utils import (
+        assert_tenant_exists,
+        canonical_tenant_id,
+    )
 
+    tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
     stats = mgr.get_stats()

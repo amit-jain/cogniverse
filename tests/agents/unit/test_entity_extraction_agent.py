@@ -343,7 +343,9 @@ class TestGLiNERFastPath:
         assert result.entities[0].type == "PERSON"
         assert result.entities[0].confidence == 0.95
         assert result.entities[1].text == "Chicago"
-        assert result.entities[1].type == "LOCATION"
+        # EntityExtractionAgent maps GLiNER's LOCATION label → PLACE via
+        # _GLINER_TYPE_MAP (added in ffec8f35).
+        assert result.entities[1].type == "PLACE"
 
     @pytest.mark.asyncio
     async def test_fast_path_extracts_relationships(self, fast_agent):
@@ -511,7 +513,8 @@ class TestTelemetrySpanEmission:
         agent.telemetry_manager.span.assert_called_once()
         call_kwargs = agent.telemetry_manager.span.call_args
         assert call_kwargs[0][0] == "cogniverse.entity_extraction"
-        assert call_kwargs[1]["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert call_kwargs[1]["tenant_id"] == "acme:acme"
         attrs = call_kwargs[1]["attributes"]
         assert attrs["entity_extraction.entity_count"] == 2
         assert attrs["entity_extraction.relationship_count"] == 0

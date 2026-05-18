@@ -641,12 +641,21 @@ async def get_tenant(tenant_full_id: str) -> Tenant:
 
 
 async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
-    """Internal helper to get tenant"""
+    """Internal helper to get tenant.
+
+    Normalizes ``tenant_full_id`` via ``canonical_tenant_id`` so simple-form
+    inputs (``acme``) resolve to the same doc_id POST stored under
+    (``acme:acme``). Without this, GET /admin/tenants/{tid} returns 404 even
+    immediately after a successful POST that used the simple form.
+    """
     try:
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         backend = get_backend()
+        canonical = canonical_tenant_id(tenant_full_id)
 
         fields = backend.get_metadata_document(
-            schema="tenant_metadata", doc_id=tenant_full_id
+            schema="tenant_metadata", doc_id=canonical
         )
 
         if not fields:
@@ -697,58 +706,78 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """Delete a tenant's schemas and metadata.
 
-    Unions schemas from the registry with schemas in the deployed Vespa
-    package (filtered by tenant suffix) so schema-only orphans from
-    interrupted cleanups are still removable. Deletes each schema via
-    its own redeploy, then drops the tenant_metadata document.
+    Looks up tenant_metadata under the canonical form (POST stored it
+    that way) but suffix-matches Vespa schemas against BOTH the canonical
+    form AND the original input — Mem0MemoryManager's in-process
+    ``auto_create_schema=True`` deploys ``agent_memories_<tid>`` /
+    ``provenance_<tid>`` directly without going through the runtime's
+    HTTP boundary, so simple-form inputs accumulate simple-suffix
+    schemas the canonical-only suffix match would silently leave behind
+    on every cleanup. Each delete_schema call uses the tenant_id form
+    that matches its target schema's actual suffix.
     """
-    tenant = await get_tenant_internal(tenant_full_id)
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    original_tid = tenant_full_id
+    canonical_tid = canonical_tenant_id(tenant_full_id)
+    tenant = await get_tenant_internal(canonical_tid)
 
     backend = get_backend()
     schema_manager = backend.schema_manager
     schema_registry = schema_manager._schema_registry
 
-    base_names: set[str] = set()
-    if schema_registry is not None:
-        for info in schema_registry.get_tenant_schemas(tenant_full_id):
-            base_names.add(info.base_schema_name)
+    # (tenant_id, base_name) pairs — preserves which form to pass to
+    # delete_schema so it computes the correct full schema name.
+    targets: set[tuple[str, str]] = set()
 
-    tenant_suffix = "_" + tenant_full_id.replace(":", "_")
+    if schema_registry is not None:
+        for tid in {original_tid, canonical_tid}:
+            for info in schema_registry.get_tenant_schemas(tid):
+                targets.add((tid, info.base_schema_name))
+
     try:
         deployed_full_names = schema_manager.list_deployed_document_types()
     except Exception as e:
         deployed_full_names = []
         logger.warning(
             f"Vespa-side schema discovery failed for tenant "
-            f"'{tenant_full_id}' (continuing with registry-only set): {e}"
+            f"'{canonical_tid}' (continuing with registry-only set): {e}"
         )
+
+    # Suffix-match both forms. Longer suffix (canonical/doubled) is
+    # tested first so a name ending in the doubled suffix is attributed
+    # to the canonical tid even though it also ends in the simple suffix.
+    canonical_suffix = "_" + canonical_tid.replace(":", "_")
+    original_suffix = "_" + original_tid.replace(":", "_")
+    suffix_to_tid = [(canonical_suffix, canonical_tid)]
+    if original_suffix != canonical_suffix:
+        suffix_to_tid.append((original_suffix, original_tid))
     for full_name in deployed_full_names:
-        if full_name.endswith(tenant_suffix):
-            base_names.add(full_name[: -len(tenant_suffix)])
+        for suf, tid in suffix_to_tid:
+            if full_name.endswith(suf):
+                base = full_name[: -len(suf)]
+                targets.add((tid, base))
+                break
 
     # Allow schema-only orphans (no tenant_metadata record) to be cleaned
     # up — they're created by /ingestion/upload auto-deploy bypassing
     # tenant create, and accumulate every test run without this branch.
-    if not tenant and not base_names:
-        raise HTTPException(
-            status_code=404, detail=f"Tenant {tenant_full_id} not found"
-        )
+    if not tenant and not targets:
+        raise HTTPException(status_code=404, detail=f"Tenant {canonical_tid} not found")
 
     deleted_schemas: list = []
-    for base_name in sorted(base_names):
+    for tid, base_name in sorted(targets):
         try:
-            full_name = schema_manager.delete_schema(tenant_full_id, base_name)
+            full_name = schema_manager.delete_schema(tid, base_name)
             deleted_schemas.append(full_name)
         except Exception as e:
             logger.error(
-                f"Failed to delete schema '{base_name}' for "
-                f"tenant '{tenant_full_id}': {e}"
+                f"Failed to delete schema '{base_name}' for tenant '{tid}': {e}"
             )
 
     if tenant:
-        backend.delete_metadata_document(
-            schema="tenant_metadata", doc_id=tenant_full_id
-        )
+        backend.delete_metadata_document(schema="tenant_metadata", doc_id=canonical_tid)
+    tenant_full_id = canonical_tid  # for the logger.info + return below
 
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")
 

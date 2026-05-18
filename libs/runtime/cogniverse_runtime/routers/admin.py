@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.validation.profile_validator import ProfileValidator
 from cogniverse_foundation.config.manager import ConfigManager
@@ -272,7 +273,7 @@ async def create_profile(
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
-            tenant_id=request.tenant_id,
+            tenant_id=canonical_tenant_id(request.tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
             config_key="backend_config",
@@ -423,7 +424,7 @@ async def get_profile(
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
-            tenant_id=tenant_id,
+            tenant_id=canonical_tenant_id(tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
             config_key="backend_config",
@@ -540,7 +541,7 @@ async def update_profile(
         from cogniverse_sdk.interfaces.config_store import ConfigScope
 
         config_entry = config_manager.store.get_config(
-            tenant_id=request.tenant_id,
+            tenant_id=canonical_tenant_id(request.tenant_id),
             scope=ConfigScope.BACKEND,
             service="backend",
             config_key="backend_config",

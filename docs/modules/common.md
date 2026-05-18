@@ -671,6 +671,35 @@ print(f"Org: {org_id}, Tenant: {tenant_name}")
 
 ---
 
+### canonical_tenant_id()
+
+**Location:** `libs/core/cogniverse_core/common/tenant_utils.py`
+
+**Purpose:** Return the canonical `org:tenant` storage form for a tenant id.
+
+POST `/admin/tenants` accepts both simple form (`acme`) and colon form (`acme:production`) and stores the tenant_metadata document under the colon form (`acme:acme` for simple input). Read paths (`GET /admin/tenants/{tid}`, `assert_tenant_exists`, `DELETE /admin/tenants/{tid}`) MUST canonicalize incoming tenant_ids through this helper before hitting the document store, otherwise a simple-form input maps to a doc_id that was never written.
+
+**Function:**
+```python
+def canonical_tenant_id(tenant_id: str) -> str:
+    """Return the canonical ``org:tenant`` storage form."""
+```
+
+**Usage:**
+```python
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+canonical_tenant_id("acme")              # → "acme:acme"
+canonical_tenant_id("acme:production")   # → "acme:production"
+canonical_tenant_id("__system__")        # → "__system__" (bypassed)
+```
+
+`assert_tenant_exists` and `tenant_manager.get_tenant_internal` /
+`delete_tenant_internal` already invoke this internally — callers passing
+either form to those APIs get the same result.
+
+---
+
 ### get_tenant_storage_path()
 
 **Location:** `libs/core/cogniverse_core/common/tenant_utils.py:55-85`

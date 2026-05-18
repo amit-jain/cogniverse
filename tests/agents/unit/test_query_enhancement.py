@@ -1738,7 +1738,8 @@ class TestEnhancedQueryEnhancementAgent:
         )
 
         mock_tm.span.assert_called_once()
-        assert mock_tm.span.call_args[1]["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert mock_tm.span.call_args[1]["tenant_id"] == "acme:acme"
 
     # ------------------------------------------------------------------
     # _dspy_to_a2a_output includes query_variants

@@ -165,7 +165,8 @@ class TestA2AMessageSend:
         mock_dispatcher.dispatch.assert_called_once()
         call_kwargs = mock_dispatcher.dispatch.call_args
         assert call_kwargs.kwargs["agent_name"] == "search_agent"
-        assert call_kwargs.kwargs["context"]["tenant_id"] == "test_tenant"
+        # require_tenant_id canonicalizes "test_tenant" → "test_tenant:test_tenant"
+        assert call_kwargs.kwargs["context"]["tenant_id"] == "test_tenant:test_tenant"
 
     @pytest.mark.ci_fast
     def test_message_send_without_agent_name_defaults_to_orchestrator(

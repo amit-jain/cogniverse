@@ -544,9 +544,9 @@ curl -X DELETE http://localhost:8000/agents/video-search-agent
 **POST /admin/organizations** - Create organization
 **GET /admin/organizations/{org_id}** - Get organization
 **DELETE /admin/organizations/{org_id}** - Delete organization (and its tenants)
-**POST /admin/tenants** - Create tenant (writes `tenant_metadata`)
-**GET /admin/tenants/{tenant_full_id}** - Get tenant
-**DELETE /admin/tenants/{tenant_full_id}** - Delete tenant — drops registered schemas and Vespa-side orphans matching the tenant suffix; refuses (`BackendDeploymentError`) if a peer tenant has an unreconstructable orphan that would be silently dropped by the redeploy
+**POST /admin/tenants** - Create tenant (writes `tenant_metadata`). Accepts both simple form (`acme`) and colon form (`acme:production`); simple form is normalized to `acme:acme` before storage.
+**GET /admin/tenants/{tenant_full_id}** - Get tenant. Path param is canonicalized via `canonical_tenant_id` (see [common.md#canonical_tenant_id](common.md#canonical_tenant_id)), so simple form (`acme`) and colon form (`acme:acme`) resolve identically.
+**DELETE /admin/tenants/{tenant_full_id}** - Delete tenant. Path param is canonicalized like GET. Drops registered schemas and all Vespa-side orphans matching the tenant suffix; unresolved Vespa-only orphans encountered during the redeploy are absorbed into the deletion set (logged as warnings) rather than causing a `BackendDeploymentError`.
 **POST /admin/reconcile-orphans?dry_run={true|false}** - List Vespa-only schema orphans (no registry record), or drop every orphan tenant in one atomic redeploy. `dry_run=true` (default) returns the diff for operator review; `dry_run=false` calls `delete_tenant_schemas_bulk` so all orphans are removed in a single Vespa redeploy. See [operations/multi-tenant-ops.md#orphan-reconciliation](../operations/multi-tenant-ops.md#orphan-reconciliation) for the operator workflow.
 
 **Endpoint guards**

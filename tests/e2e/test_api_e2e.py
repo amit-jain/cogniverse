@@ -893,6 +893,55 @@ class TestTenantCRUD:
             f"Non-existent org should return 404, got {resp.status_code}"
         )
 
+    def test_simple_form_tenant_id_normalizes_for_get_and_delete(self):
+        """POST/GET/DELETE accept the simple form ``tid`` and resolve to ``tid:tid``.
+
+        Regression: POST has always normalized simple form to ``org:tenant``
+        (storing doc_id ``acme:acme`` for input ``acme``). GET and
+        assert_tenant_exists previously did NOT normalize, so a simple-form
+        input that POST happily wrote could not be read back. Tests like
+        graph_cli that minted simple-form tenants would 404 forever.
+        Both forms must now resolve identically.
+        """
+        from tests.e2e.conftest import unique_id
+
+        tid_simple = unique_id("apinorm")
+        tid_canonical = f"{tid_simple}:{tid_simple}"
+        with httpx.Client(base_url=RUNTIME, timeout=180.0) as client:
+            try:
+                resp = client.post(
+                    "/admin/tenants",
+                    json={"tenant_id": tid_simple, "created_by": "e2e_norm"},
+                )
+                assert resp.status_code == 200, resp.text
+                created = resp.json()
+                # Runtime normalized to colon form on storage.
+                assert created["tenant_full_id"] == tid_canonical, created
+
+                # GET via simple form must succeed (this is what was broken).
+                resp = client.get(f"/admin/tenants/{tid_simple}")
+                assert resp.status_code == 200, (
+                    f"GET with simple form {tid_simple!r} returned "
+                    f"{resp.status_code}; runtime should have canonicalized "
+                    f"to {tid_canonical!r}"
+                )
+                assert resp.json()["tenant_full_id"] == tid_canonical
+
+                # GET via canonical form must also succeed (no regression).
+                resp = client.get(f"/admin/tenants/{tid_canonical}")
+                assert resp.status_code == 200
+                assert resp.json()["tenant_full_id"] == tid_canonical
+            finally:
+                # DELETE via simple form must succeed too.
+                resp = client.delete(f"/admin/tenants/{tid_simple}")
+                assert resp.status_code in (200, 204, 404), (
+                    f"DELETE with simple form {tid_simple!r} returned "
+                    f"{resp.status_code}"
+                )
+                # And the tenant should now be gone.
+                resp = client.get(f"/admin/tenants/{tid_simple}")
+                assert resp.status_code == 404
+
 
 @pytest.mark.e2e
 @skip_if_no_runtime

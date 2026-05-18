@@ -625,7 +625,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             accesses reuse the cached manager. Errors during schema deploy
             are non-fatal — the manager still constructs and the first
             feed/query attempt surfaces the real error.
+
+            Canonicalizes the tenant_id so the schema name matches what
+            POST /admin/tenants stored it under. Without this, /graph/upsert
+            with a simple-form tenant_id ("acme") deploys
+            ``knowledge_graph_acme`` while the rest of the stack expects
+            ``knowledge_graph_acme_acme`` — and the simple-form schema
+            becomes an orphan the canonical-form DELETE cannot reap.
             """
+            from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+            tenant_id = canonical_tenant_id(tenant_id)
             if tenant_id in _graph_managers:
                 return _graph_managers[tenant_id]
 

@@ -93,7 +93,8 @@ class TestAgentBaseTelemetrySpan:
 
         assert len(spy.calls) == 1
         assert spy.calls[0]["name"] == "_TelemetryAgent.process"
-        assert spy.calls[0]["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert spy.calls[0]["tenant_id"] == "acme:acme"
 
     @pytest.mark.asyncio
     async def test_run_emits_span_too(self):
@@ -108,7 +109,8 @@ class TestAgentBaseTelemetrySpan:
 
         assert len(spy.calls) == 1
         assert spy.calls[0]["name"] == "_TelemetryAgent.process"
-        assert spy.calls[0]["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert spy.calls[0]["tenant_id"] == "acme:acme"
 
     @pytest.mark.asyncio
     async def test_streaming_emits_span(self):
@@ -125,7 +127,8 @@ class TestAgentBaseTelemetrySpan:
 
         assert len(spy.calls) == 1
         assert spy.calls[0]["name"] == "_TelemetryAgent.process"
-        assert spy.calls[0]["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert spy.calls[0]["tenant_id"] == "acme:acme"
         # Final event should still arrive after the span closes.
         assert events[-1]["type"] == "final"
         assert events[-1]["data"]["result"] == "processed: hi"

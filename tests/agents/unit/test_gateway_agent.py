@@ -454,7 +454,8 @@ class TestTelemetrySpan:
         gateway_call = next(
             c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.gateway"
         )
-        assert gateway_call.kwargs["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert gateway_call.kwargs["tenant_id"] == "acme:acme"
         gw_attrs = gateway_call.kwargs["attributes"]
         assert gw_attrs["gateway.query"] == "cooking videos"
         assert gw_attrs["gateway.complexity"] == "simple"
@@ -485,7 +486,8 @@ class TestTelemetrySpan:
         routing_call = next(
             c for c in mock_tm.span.call_args_list if c.args[0] == "cogniverse.routing"
         )
-        assert routing_call.kwargs["tenant_id"] == "acme"
+        # require_tenant_id canonicalizes "acme" → "acme:acme"
+        assert routing_call.kwargs["tenant_id"] == "acme:acme"
         attrs = routing_call.kwargs["attributes"]
         assert attrs["routing.query"] == "cooking videos"
         assert attrs["routing.chosen_agent"] == "search_agent"
