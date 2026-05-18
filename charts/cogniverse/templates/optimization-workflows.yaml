@@ -325,8 +325,14 @@ spec:
           - "synthetic"
           - "--tenant-id"
           - "default"
+          # ``simba`` is an agent-optimization mode but NOT a synthetic
+          # generator — the synthetic registry only knows
+          # ``routing, workflow, profile, unified, cross_modal``
+          # (see libs/synthetic/cogniverse_synthetic/registry.py).
+          # Passing simba here failed silently in the workflow result
+          # for 1 of 3 optimizers; ship the registry-valid set.
           - "--agents"
-          - "simba,profile,workflow"
+          - "routing,workflow,profile"
         env:
         - name: BACKEND_URL
           value: "http://{{ $fullName }}-vespa"

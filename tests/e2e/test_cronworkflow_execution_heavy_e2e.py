@@ -113,16 +113,24 @@ def _phoenix_dataset_names() -> set[str]:
 
 
 def _count_learned_strategies(tenant_full_id: str) -> int:
-    """Count learned_strategy memories for a tenant via the admin route."""
+    """Count strategy-type memories for a tenant via the admin route.
+
+    Route is ``/admin/tenant/{tid}/memories`` (singular ``tenant``)
+    with ``type=strategy`` — the chart maps that to the
+    ``_strategy_store`` Mem0 namespace where scheduled-distillation
+    writes learned_strategy memories. The kind metadata distinction
+    isn't exposed at the HTTP layer; ``type=strategy`` is the right
+    proxy because the namespace is dedicated to that kind.
+    """
     try:
         with httpx.Client(timeout=30.0) as client:
             r = client.get(
-                f"{RUNTIME}/admin/tenants/{tenant_full_id}/memories",
-                params={"kind": "learned_strategy", "limit": 1000},
+                f"{RUNTIME}/admin/tenant/{tenant_full_id}/memories",
+                params={"type": "strategy", "limit": 200},
             )
             if r.status_code != 200:
                 return -1
-            return len(r.json().get("memories", []))
+            return int(r.json().get("count", len(r.json().get("memories", []))))
     except (httpx.HTTPError, OSError):
         return -1
 
@@ -314,14 +322,19 @@ class TestSyntheticGenerationWorkflow:
             )
 
         # Functional outcome: every requested optimizer type produced
-        # at least one dataset (workflow args pass --agents
-        # simba,profile,workflow). The chart pins those three so the
-        # test pins them too.
-        for optimizer in ("simba", "profile", "workflow"):
-            matched = [n for n in new_datasets if optimizer in n.lower()]
+        # at least one dataset. The chart args pin
+        # ``--agents routing,workflow,profile`` against the synthetic
+        # registry's available generators (registry.py); the test pins
+        # the same set so a chart drift would surface here. The CLI
+        # names datasets ``dspy-demos-default-synthetic_<optimizer>``
+        # via ArtifactManager._demo_dataset_name.
+        for optimizer in ("routing", "workflow", "profile"):
+            expected = f"synthetic_{optimizer}"
+            matched = [n for n in new_datasets if expected in n]
             assert matched, (
                 f"synthetic-generation must produce a dataset for "
-                f"optimizer={optimizer!r}; new datasets after run: "
+                f"optimizer={optimizer!r} (expected substring "
+                f"{expected!r}); new datasets after run: "
                 f"{sorted(new_datasets)}.\n"
                 f"--- pod logs (tail 500) ---\n{logs[-3000:]}"
             )
