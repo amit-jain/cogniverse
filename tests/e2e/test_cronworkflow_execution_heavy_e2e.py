@@ -24,7 +24,9 @@ import httpx
 import pytest
 
 NAMESPACE = "cogniverse"
-RUNTIME = "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+RUNTIME = (
+    "http://localhost:28000"  # runtime.service.nodePort — matches tests/e2e/conftest.py
+)
 HEAVY_TIMEOUT_S = 1500.0  # 25 min — covers DSPy training + Phoenix work
 POLL_INTERVAL_S = 10.0
 
@@ -68,19 +70,41 @@ def _submit_and_wait_succeeded_heavy(cron_name: str) -> str:
 
 
 def _phoenix_url() -> str:
-    return "http://localhost:6006"
+    # Phoenix container port 6006 → k3d-serverlb NodePort 26006.
+    # Without 26006 the GET silently 0-results and the test
+    # mis-reports "no new datasets appeared" when the workflow
+    # actually created them.
+    return "http://localhost:26006"
 
 
 def _phoenix_dataset_names() -> set[str]:
-    """List dataset names via Phoenix's HTTP API. Empty set on any failure."""
+    """Full set of dataset names via Phoenix HTTP API, paginating cursor.
+
+    The endpoint returns ``data`` (10 per page) + ``next_cursor`` for
+    the next page. Without paging, any dataset older than the most
+    recent 10 is invisible — a newly-created dataset can be present
+    yet the diff against ``names_before`` looks empty if both pages
+    overlap into the same 10 head rows. The synthetic-generation
+    workflow adds ~3 new datasets per run, which would never fit
+    inside the head-10 window once the cluster has any real history.
+    """
+    names: set[str] = set()
+    cursor: str | None = None
     try:
         with httpx.Client(timeout=30.0) as client:
-            r = client.get(f"{_phoenix_url()}/v1/datasets")
-            if r.status_code != 200:
-                return set()
-            return {d.get("name", "") for d in r.json().get("data") or []}
+            while True:
+                params = {"cursor": cursor} if cursor else None
+                r = client.get(f"{_phoenix_url()}/v1/datasets", params=params)
+                if r.status_code != 200:
+                    return names
+                payload = r.json()
+                names.update(d.get("name", "") for d in payload.get("data") or [])
+                cursor = payload.get("next_cursor")
+                if not cursor:
+                    break
     except (httpx.HTTPError, OSError):
-        return set()
+        pass
+    return names
 
 
 # ---------------------------------------------------------------------------

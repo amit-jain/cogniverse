@@ -115,6 +115,20 @@ spec:
     - name: config
       configMap:
         name: {{ $fullName }}-config
+    {{- if .Values.devMode.enabled }}
+    # devMode bind-mount for templateRef'd run-optimizer pods. Argo
+    # doesn't inherit volumes from referenced WorkflowTemplates — they
+    # must be declared here so every optimizer step (gateway-thresholds,
+    # entity-extraction, simba, profile, workflow) can mount /app/libs.
+    - name: src-libs
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/libs
+        type: Directory
+    - name: src-scripts
+      hostPath:
+        path: {{ .Values.devMode.hostPath }}/scripts
+        type: Directory
+    {{- end }}
     templates:
     - name: optimize-all-agents
       steps:
