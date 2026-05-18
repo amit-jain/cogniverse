@@ -112,6 +112,28 @@ def _phoenix_dataset_names() -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def _wait_runtime_ready(timeout_s: float = 300.0) -> bool:
+    """Poll until the runtime /health/live returns 200.
+
+    Used at the start of tests in this file that follow an upstream
+    test which triggered a runtime rollout. The deployment's
+    observedGeneration advances when the controller schedules the new
+    replica, NOT when it's HTTP-ready — and rocm vLLM workloads can
+    take 2-3 minutes to fully come back. Without this wait, downstream
+    tests' probes race the rollout and read connection errors.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                if client.get(f"{RUNTIME}/health/live").status_code == 200:
+                    return True
+        except (httpx.HTTPError, OSError):
+            pass
+        time.sleep(3.0)
+    return False
+
+
 def _count_learned_strategies(tenant_full_id: str) -> int:
     """Count strategy-type memories for a tenant via the admin route.
 
@@ -228,6 +250,17 @@ class TestScheduledDistillationWorkflow:
     def test_workflow_runs_against_strategy_store_without_regression(self):
         if not _cronworkflow_exists("cogniverse-scheduled-distillation"):
             pytest.skip("cogniverse-scheduled-distillation CronWorkflow not deployed")
+
+        # Wait for runtime to be HTTP-ready before the pre-probe.
+        # The agent-optimization test above bounces the runtime as its
+        # functional outcome; its observedGeneration assertion fires
+        # the moment the controller schedules the new replica, NOT
+        # when it's accepting HTTP. Without this wait the pre-probe
+        # below races the rollout and reads -1.
+        assert _wait_runtime_ready(), (
+            "Runtime did not come back HTTP-ready within 5 min after "
+            "the upstream agent-optimization rollout"
+        )
 
         # Data-agnostic functional contract: the cron Succeeds, the
         # strategy-store endpoint is reachable both before and after
