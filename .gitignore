@@ -31,6 +31,12 @@ Thumbs.db
 !**/dataset/
 !libs/**/data/
 
+# Planning / design scratch — local-only working space.
+# Anything ready to ship as committed knowledge lives under docs/
+# (modules/, user/, architecture/, changelog/); docs/plan/ holds
+# in-flight design notes that haven't been executed yet.
+/docs/plan/
+
 # Testset: only track our authored evaluation artifacts
 # Third-party data is fetched by scripts/download_test_data.sh
 !/data/testset/
