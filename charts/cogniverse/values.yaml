@@ -1198,9 +1198,12 @@ inference:
     hfTokenSecret: "hf-token"
     replicaCount: 1
     service:
-      type: ClusterIP
+      type: NodePort
       port: 8000
       nodePort: 29010
+    # NodePort (not ClusterIP) so tests / local clients can reach the
+    # OAI-compat endpoint at localhost:29010 via the k3d serverlb
+    # without a kubectl port-forward bridge.
     # Guaranteed QoS — see vllm_colpali note. gemma-4-e4b-it is the
     # runtime's primary LLM and we cannot afford to lose it mid-test.
     #
@@ -1333,9 +1336,12 @@ inference:
     hfTokenSecret: "hf-token"
     replicaCount: 0                # scale-to-zero by default
     service:
-      type: ClusterIP
+      type: NodePort
       port: 8000
       nodePort: 29011
+    # NodePort so the optional teacher endpoint is reachable at
+    # localhost:29011 via the k3d serverlb without port-forwarding
+    # when the operator scales it up.
     resources:
       limits:
         cpu: "8"
