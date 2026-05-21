@@ -527,12 +527,11 @@ async def _extract_graph_per_segment(
         edges=accumulated_edges,
     )
 
-    colbert_url = _lookup_colbert_endpoint()
-    if colbert_url:
-        linker = CrossModalLinker(colbert_endpoint_url=colbert_url)
-        linked = linker.link(combined)
-    else:
-        linked = combined
+    # CrossModalLinker no longer depends on the ColBERT sidecar — it
+    # works purely off the existing Node.label tags and transcript
+    # Person-mention frequencies. Always runs; cheap.
+    linker = CrossModalLinker()
+    linked = linker.link(combined)
 
     # Account for the same_as edges the linker added against the original
     # segment that anchored each new edge.

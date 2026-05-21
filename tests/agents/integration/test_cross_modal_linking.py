@@ -356,13 +356,14 @@ def _edge_to_jsonable(edge: Edge) -> dict:
     return d
 
 
-def _linker(colbert_url: str) -> CrossModalLinker:
-    """Linker configured with the same thresholds the runtime uses."""
-    return CrossModalLinker(
-        colbert_endpoint_url=colbert_url,
-        temporal_window_s=5.0,
-        cosine_threshold=0.6,
-    )
+def _linker(_unused_colbert_url: str = "") -> CrossModalLinker:
+    """Linker configured with the same thresholds the runtime uses.
+
+    Signature kept compatible with the previous ColBERT-based linker so
+    the existing tests pass their fixture URL in; the value is ignored
+    because the structural-inference primitives don't need an encoder.
+    """
+    return CrossModalLinker(temporal_window_s=5.0)
 
 
 def _same_as_edges(result: ExtractionResult) -> list:

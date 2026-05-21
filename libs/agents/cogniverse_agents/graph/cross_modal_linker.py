@@ -1,26 +1,36 @@
 """Cross-modal entity linker.
 
 Run once per ``source_doc_id`` after all per-segment extractions complete.
-For each pair of ``Mention`` objects on *different* modalities whose
-temporal windows overlap within ``±temporal_window_s``, encode
-``entity_name + " " + evidence_span`` for each side via the
-``colbert_pylate`` sidecar (multi-vector ColBERT), compute MaxSim
-cosine, and emit an ``Edge(relation="same_as", provenance="INFERRED")``
-when the score exceeds ``cosine_threshold``.
+Emits ``same_as`` edges via three structural-inference primitives — no
+pairwise text-similarity scoring:
 
-The linker is deterministic: it sorts mentions by
-``(source_doc_id, modality, segment_id, ts_start)`` before pairing, so a
-repeat call on the same input produces identical ordering. Duplicate
-``same_as`` edges (by ``edge_id``) are skipped so re-running the linker
-on its own output is a no-op.
+  * **Shared-name-token coreference** — two cross-modal mentions whose
+    Node names share a substantive token (length ≥ 3, case-insensitive,
+    e.g. "Marie Curie" vs "Curie 1903" share ``curie``) link via
+    ``provenance="INFERRED"``, ``evidence_span="shared_token:<token>"``.
+  * **Video-subject inference** — when one Person dominates the
+    transcript Person-mentions of a ``source_doc_id``
+    (share ≥ ``SUBJECT_DOMINANCE_THRESHOLD``), every generic
+    VLM/OCR description in that doc links to the subject via
+    ``provenance="video_subject_inference"``, confidence = the
+    subject's dominance share.
+  * **Per-window subject inference** — when no single Person dominates
+    the whole video (interviews / debates / compilations), each VLM/OCR
+    mention falls back to the dominant Person inside a
+    ``±window_s`` window around its timestamp. Same provenance tag,
+    typically lower confidence.
+
+The linker is deterministic: pair ordering is set by sorted
+``(source_doc_id, modality, segment_id, ts_start)``. Re-running on its
+own output is a no-op because every emitted edge has a deterministic
+``edge_id`` and duplicates are filtered.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Tuple
-
-import numpy as np
+import re
+from typing import Dict, List, Optional, Tuple
 
 from cogniverse_agents.graph.graph_schema import (
     Edge,
@@ -28,17 +38,23 @@ from cogniverse_agents.graph.graph_schema import (
     Mention,
     Node,
 )
-from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
 
 logger = logging.getLogger(__name__)
 
-# Hard cap so a single noisy edge_span doesn't blow up the encode payload.
-_MAX_TEXT_CHARS = 512
+# Share of all transcript Person-mentions one Person must hold to be
+# treated as the video's subject. 0.6 = 60% dominance; below that the
+# content is multi-subject and per-window inference takes over.
+SUBJECT_DOMINANCE_THRESHOLD = 0.6
 
-# Labels that describe a real-world subject the visual-VLM modality may
-# also describe — a Person-named transcript mention can co-refer with a
-# Concept/Location/Organization VLM caption when the caption contains a
-# person-shaped indicator word OR shares a name token with the Person.
+# ± seconds around a VLM/OCR mention's timestamp when running per-window
+# subject inference. Wide enough to overlap a few transcript segments,
+# narrow enough that the "dominant person" in a compilation video shifts
+# scene-to-scene.
+DEFAULT_WINDOW_S = 15.0
+
+# Labels that describe a real-world subject the visual modality may
+# also describe — used by the (intentionally still-supported) Person↔peer
+# token-overlap path.
 _PERSON_LIKE_PEER_LABELS = frozenset(
     {
         "Concept",
@@ -51,9 +67,9 @@ _PERSON_LIKE_PEER_LABELS = frozenset(
     }
 )
 
-# Generic words a VLM caption uses to describe a human subject — when one
-# of these appears on the non-Person side of a Person/Peer pair, the
-# pair is allowed through the type gate even if no name token is shared.
+# Words that flag a non-Person caption as describing a human subject.
+# Used by per-video and per-window subject inference to decide whether
+# a generic visual caption is a candidate for subject attribution.
 _PERSON_INDICATOR_WORDS = frozenset(
     {
         "woman",
@@ -84,85 +100,125 @@ _PERSON_INDICATOR_WORDS = frozenset(
     }
 )
 
-
-def _tokenize_for_match(name: str) -> set:
-    """Lowercased alphanumeric tokens of length >= 3 from a name string."""
-    import re as _re
-
-    return {t.lower() for t in _re.findall(r"[A-Za-z0-9]+", name or "") if len(t) >= 3}
+_TRANSCRIPT_MODALITY = "transcript"
 
 
-def _accepts_type_gate(label_a: str, name_a: str, label_b: str, name_b: str) -> bool:
-    """Return True iff the two sides may be considered ``same_as`` candidates.
+def _tokenize_for_match(name: str) -> set[str]:
+    """Lowercased alphanumeric tokens of length ≥ 3 from a name string."""
+    return {t.lower() for t in re.findall(r"[A-Za-z0-9]+", name or "") if len(t) >= 3}
 
-    Type-gated linking — implements Option 2 from
-    ``docs/knowledge/CROSS_MODAL_PRECISION_TODO.md``:
 
-      * ``Person`` <-> ``Person``: accept (entity ↔ entity).
-      * ``Person`` <-> peer (``Concept``/``Location``/``Organization``/...):
-        accept when the non-Person side either shares a name token with
-        the Person side (length >= 3, case-insensitive) OR contains a
-        generic person-indicator word ("woman", "scientist", ...).
-      * Otherwise: reject — including ``Concept`` <-> ``Concept`` pairs,
-        which the ColBERT-LateOn cosine cannot reliably discriminate.
+def _shared_substantive_token(name_a: str, name_b: str) -> Optional[str]:
+    """Return the first shared token (length ≥ 3) between two names or None."""
+    overlap = _tokenize_for_match(name_a) & _tokenize_for_match(name_b)
+    if not overlap:
+        return None
+    return sorted(overlap)[0]
 
-    The reject path is what stops false positives like Person
-    "Marie Curie" being fused with Concept "yellow flowers in glass
-    vase" (no shared token, no person word) and stops the bogus
-    Concept-↔-Concept third edge in triangle scenarios where neither
-    side carries a Person tag.
+
+def _caption_looks_like_subject(node: Node) -> bool:
+    """A generic VLM/OCR caption that's a candidate for subject attribution.
+
+    True when the node's tokens contain a person-indicator word AND the
+    node isn't already a Person (Person nodes self-attribute by name).
     """
-    a_label = (label_a or "").strip()
-    b_label = (label_b or "").strip()
-
-    if a_label == "Person" and b_label == "Person":
-        return True
-
-    if a_label == "Person" and b_label in _PERSON_LIKE_PEER_LABELS:
-        person_tokens = _tokenize_for_match(name_a)
-        peer_tokens = _tokenize_for_match(name_b)
-        if person_tokens & peer_tokens:
-            return True
-        if peer_tokens & _PERSON_INDICATOR_WORDS:
-            return True
+    if (node.label or "").strip() == "Person":
         return False
+    tokens = _tokenize_for_match(node.name)
+    return bool(tokens & _PERSON_INDICATOR_WORDS)
 
-    if b_label == "Person" and a_label in _PERSON_LIKE_PEER_LABELS:
-        person_tokens = _tokenize_for_match(name_b)
-        peer_tokens = _tokenize_for_match(name_a)
-        if person_tokens & peer_tokens:
-            return True
-        if peer_tokens & _PERSON_INDICATOR_WORDS:
-            return True
-        return False
 
-    return False
+def infer_video_subject(
+    extraction_result: ExtractionResult,
+    threshold: float = SUBJECT_DOMINANCE_THRESHOLD,
+) -> Optional[Node]:
+    """Return the dominant Person if one carries ≥ threshold of all
+    transcript Person-mentions in ``extraction_result``. None when no
+    Person dominates (multi-subject content).
+    """
+    counts: Dict[str, int] = {}
+    person_nodes: Dict[str, Node] = {}
+    total = 0
+    for node in extraction_result.nodes:
+        if (node.label or "").strip() != "Person":
+            continue
+        transcript_mentions = sum(
+            1 for m in node.mentions if m.modality == _TRANSCRIPT_MODALITY
+        )
+        if transcript_mentions == 0:
+            continue
+        counts[node.name] = transcript_mentions
+        person_nodes[node.name] = node
+        total += transcript_mentions
+
+    if total == 0:
+        return None
+    top_name = max(counts, key=counts.get)
+    if counts[top_name] / total < threshold:
+        return None
+    return person_nodes[top_name]
+
+
+def infer_subject_per_window(
+    extraction_result: ExtractionResult,
+    window_s: float = DEFAULT_WINDOW_S,
+) -> Dict[Tuple[float, float], Node]:
+    """For each VLM/OCR mention, return the dominant transcript Person
+    in its (ts - window_s, ts + window_s) window. Mapping keyed by the
+    (ts_start, ts_end) of the mention being attributed.
+    """
+    transcript_person_mentions: List[Tuple[Node, Mention]] = []
+    for node in extraction_result.nodes:
+        if (node.label or "").strip() != "Person":
+            continue
+        for m in node.mentions:
+            if m.modality == _TRANSCRIPT_MODALITY:
+                transcript_person_mentions.append((node, m))
+
+    if not transcript_person_mentions:
+        return {}
+
+    visual_mentions: List[Tuple[Node, Mention]] = []
+    for node in extraction_result.nodes:
+        if not _caption_looks_like_subject(node):
+            continue
+        for m in node.mentions:
+            if m.modality != _TRANSCRIPT_MODALITY:
+                visual_mentions.append((node, m))
+
+    out: Dict[Tuple[float, float], Node] = {}
+    for _, vm in visual_mentions:
+        window_start = vm.ts_start - window_s
+        window_end = vm.ts_end + window_s
+        window_counts: Dict[str, int] = {}
+        window_nodes: Dict[str, Node] = {}
+        for person_node, pm in transcript_person_mentions:
+            if pm.ts_end < window_start or pm.ts_start > window_end:
+                continue
+            window_counts[person_node.name] = window_counts.get(person_node.name, 0) + 1
+            window_nodes[person_node.name] = person_node
+        if not window_counts:
+            continue
+        top_name = max(window_counts, key=window_counts.get)
+        out[(vm.ts_start, vm.ts_end)] = window_nodes[top_name]
+    return out
 
 
 class CrossModalLinker:
-    """Emit ``same_as`` edges between co-temporal cross-modal mentions."""
+    """Emit ``same_as`` edges via structural-inference primitives only.
+
+    No similarity scoring. No encoder dependency. The three primitives
+    (shared-token coreference, video-subject inference, per-window
+    subject inference) are documented at module level.
+    """
 
     def __init__(
         self,
-        colbert_endpoint_url: str,
-        temporal_window_s: float = 5.0,
-        cosine_threshold: float = 0.6,
-        colbert_model: str = "lightonai/LateOn",
+        temporal_window_s: float = DEFAULT_WINDOW_S,
+        subject_dominance_threshold: float = SUBJECT_DOMINANCE_THRESHOLD,
     ) -> None:
-        if not colbert_endpoint_url:
-            raise ValueError(
-                "CrossModalLinker requires a colbert_endpoint_url — same_as "
-                "linking uses the colbert_pylate sidecar for multi-vector "
-                "encoding."
-            )
         self._temporal_window_s = float(temporal_window_s)
-        self._cosine_threshold = float(cosine_threshold)
-        loader = RemoteColBERTLoader(
-            model_name=colbert_model,
-            config={"remote_inference_url": colbert_endpoint_url},
-            logger=logger,
-        )
-        self._encoder, _ = loader.load_model()
+        self._subject_dominance_threshold = float(subject_dominance_threshold)
 
     # ------------------------------------------------------------------ #
     # Public API                                                         #
@@ -171,49 +227,48 @@ class CrossModalLinker:
     def link(self, extraction_result: ExtractionResult) -> ExtractionResult:
         """Return a new ExtractionResult with cross-modal ``same_as`` edges.
 
-        The returned result preserves all original nodes and edges and
-        appends inferred edges. No duplicates by ``edge_id``.
+        Preserves all original nodes and edges; appends inferred edges.
+        Duplicates by ``edge_id`` are filtered, so re-running the linker
+        on its own output is a no-op.
         """
         nodes = list(extraction_result.nodes)
         edges = list(extraction_result.edges)
         existing_edge_ids = {edge.edge_id for edge in edges}
-
-        node_by_name = {node.name: node for node in nodes}
-
-        # Build (name, mention) pairs grouped by source_doc_id then modality.
-        # A single node can carry multiple mentions and contribute to many
-        # cross-modal candidates.
-        per_doc: Dict[str, Dict[str, List[Tuple[Node, Mention]]]] = {}
-        for node in nodes:
-            for mention in node.mentions:
-                doc_bucket = per_doc.setdefault(mention.source_doc_id, {})
-                modality_bucket = doc_bucket.setdefault(mention.modality, [])
-                modality_bucket.append((node, mention))
+        tenant_id = nodes[0].tenant_id if nodes else ""
 
         new_edges: List[Edge] = []
 
-        for source_doc_id, modality_buckets in per_doc.items():
-            modalities = sorted(modality_buckets.keys())
-            for i in range(len(modalities)):
-                for j in range(i + 1, len(modalities)):
-                    side_a = sorted(
-                        modality_buckets[modalities[i]],
-                        key=lambda nm: (nm[1].segment_id, nm[1].ts_start),
-                    )
-                    side_b = sorted(
-                        modality_buckets[modalities[j]],
-                        key=lambda nm: (nm[1].segment_id, nm[1].ts_start),
-                    )
-                    candidates = self._collect_temporal_pairs(side_a, side_b)
-                    new_edges.extend(
-                        self._score_and_emit(
-                            candidates,
-                            tenant_id=self._tenant_id_for(nodes),
-                            node_by_name=node_by_name,
-                            existing_edge_ids=existing_edge_ids,
-                            source_doc_id=source_doc_id,
-                        )
-                    )
+        # ── Shared-name-token coreference ─────────────────────────────────
+        new_edges.extend(
+            self._link_by_shared_token(extraction_result, tenant_id, existing_edge_ids)
+        )
+
+        # ── Video-subject inference (single-subject content) ─────────────
+        subject = infer_video_subject(
+            extraction_result, threshold=self._subject_dominance_threshold
+        )
+        if subject is not None:
+            new_edges.extend(
+                self._link_by_video_subject(
+                    extraction_result,
+                    subject,
+                    tenant_id,
+                    existing_edge_ids,
+                )
+            )
+        else:
+            # ── Per-window subject inference (multi-subject fallback) ────
+            window_subjects = infer_subject_per_window(
+                extraction_result, window_s=self._temporal_window_s
+            )
+            new_edges.extend(
+                self._link_by_window_subjects(
+                    extraction_result,
+                    window_subjects,
+                    tenant_id,
+                    existing_edge_ids,
+                )
+            )
 
         return ExtractionResult(
             source_doc_id=extraction_result.source_doc_id,
@@ -223,123 +278,188 @@ class CrossModalLinker:
         )
 
     # ------------------------------------------------------------------ #
-    # Internals                                                          #
+    # Primitive 1 — shared-name-token coreference                        #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def _tenant_id_for(nodes: List[Node]) -> str:
-        """All nodes in an ExtractionResult share a tenant_id."""
-        if not nodes:
-            return ""
-        return nodes[0].tenant_id
-
-    def _collect_temporal_pairs(
+    def _link_by_shared_token(
         self,
-        side_a: List[Tuple[Node, Mention]],
-        side_b: List[Tuple[Node, Mention]],
-    ) -> List[Tuple[Tuple[Node, Mention], Tuple[Node, Mention]]]:
-        """Return all (a, b) pairs whose mention windows overlap within ±window."""
-        pairs: List[Tuple[Tuple[Node, Mention], Tuple[Node, Mention]]] = []
-        window = self._temporal_window_s
-        for node_a, mention_a in side_a:
-            for node_b, mention_b in side_b:
-                if self._windows_overlap(mention_a, mention_b, window):
-                    pairs.append(((node_a, mention_a), (node_b, mention_b)))
-        return pairs
-
-    @staticmethod
-    def _windows_overlap(a: Mention, b: Mention, window: float) -> bool:
-        """True if [a.ts_start - w, a.ts_end + w] intersects [b.ts_start, b.ts_end]."""
-        return (a.ts_start - window) <= b.ts_end and (b.ts_start - window) <= a.ts_end
-
-    def _score_and_emit(
-        self,
-        candidates: List[Tuple[Tuple[Node, Mention], Tuple[Node, Mention]]],
+        extraction_result: ExtractionResult,
         tenant_id: str,
-        node_by_name: Dict[str, Node],
         existing_edge_ids: set,
-        source_doc_id: str,
     ) -> List[Edge]:
-        # Type-gate first — pairs whose labels are incompatible never
-        # touch the encoder. ColBERT-LateOn's cosine is too lexical to
-        # discriminate Person↔unrelated-Concept; gating up front keeps
-        # the encode payload small AND prevents false positives no
-        # threshold could filter post-hoc.
-        candidates = [
-            ((node_a, mention_a), (node_b, mention_b))
-            for (node_a, mention_a), (node_b, mention_b) in candidates
-            if _accepts_type_gate(node_a.label, node_a.name, node_b.label, node_b.name)
-        ]
-        if not candidates:
-            return []
-
-        # Build the encode payload deterministically.
-        texts: List[str] = []
-        for (node_a, mention_a), (node_b, mention_b) in candidates:
-            texts.append(self._format_for_encoding(node_a.name, mention_a))
-            texts.append(self._format_for_encoding(node_b.name, mention_b))
-
-        encodings = self._encoder.encode(texts, is_query=False)
-
+        """Pair cross-modal mentions whose Node names share a substantive
+        token. Emits one ``same_as`` edge per qualifying pair, anchored
+        on the lexicographically-first side's mention for determinism.
+        """
+        nodes = list(extraction_result.nodes)
+        # Sort for deterministic pair enumeration.
+        nodes_sorted = sorted(nodes, key=lambda n: n.name)
         out: List[Edge] = []
-        for idx, ((node_a, mention_a), (node_b, mention_b)) in enumerate(candidates):
-            vec_a = np.asarray(encodings[2 * idx], dtype=np.float32)
-            vec_b = np.asarray(encodings[2 * idx + 1], dtype=np.float32)
-            cosine = self._maxsim_cosine(vec_a, vec_b)
-            if cosine <= self._cosine_threshold:
-                continue
+        for i, node_a in enumerate(nodes_sorted):
+            for node_b in nodes_sorted[i + 1 :]:
+                token = _shared_substantive_token(node_a.name, node_b.name)
+                if token is None:
+                    continue
+                # Find one cross-modal mention pair to anchor the edge.
+                for ma in node_a.mentions:
+                    for mb in node_b.mentions:
+                        if ma.modality == mb.modality:
+                            continue
+                        edge = Edge(
+                            tenant_id=tenant_id,
+                            source=node_a.name,
+                            target=node_b.name,
+                            relation="same_as",
+                            evidence_span=f"shared_token:{token}",
+                            segment_id=ma.segment_id,
+                            ts_start=ma.ts_start,
+                            ts_end=ma.ts_end,
+                            modality=ma.modality,
+                            provenance="INFERRED",
+                            source_doc_id=ma.source_doc_id,
+                            confidence=1.0,
+                        )
+                        if edge.edge_id in existing_edge_ids:
+                            continue
+                        existing_edge_ids.add(edge.edge_id)
+                        out.append(edge)
+                        break  # one anchor per (node_a, node_b) is enough
+                    else:
+                        continue
+                    break
+        return out
 
-            # Anchor the inferred edge on side_a's mention (deterministic
-            # because candidates were built from sorted sides).
-            edge = Edge(
-                tenant_id=tenant_id,
-                source=node_a.name,
-                target=node_b.name,
-                relation="same_as",
-                evidence_span="cross_modal_temporal",
-                segment_id=mention_a.segment_id,
-                ts_start=mention_a.ts_start,
-                ts_end=mention_a.ts_end,
-                modality=mention_a.modality,
-                provenance="INFERRED",
-                source_doc_id=source_doc_id,
-                confidence=float(cosine),
-            )
-            if edge.edge_id in existing_edge_ids:
+    # ------------------------------------------------------------------ #
+    # Primitive 2 — video-subject inference (single-subject content)      #
+    # ------------------------------------------------------------------ #
+
+    def _link_by_video_subject(
+        self,
+        extraction_result: ExtractionResult,
+        subject: Node,
+        tenant_id: str,
+        existing_edge_ids: set,
+    ) -> List[Edge]:
+        """For every generic VLM/OCR mention in this video, emit a
+        same_as edge to the dominant subject Person.
+        """
+        confidence = self._subject_dominance_for(extraction_result, subject)
+        out: List[Edge] = []
+        for node in extraction_result.nodes:
+            if not _caption_looks_like_subject(node):
                 continue
-            existing_edge_ids.add(edge.edge_id)
-            out.append(edge)
+            for m in node.mentions:
+                if m.modality == _TRANSCRIPT_MODALITY:
+                    continue
+                edge = Edge(
+                    tenant_id=tenant_id,
+                    source=node.name,
+                    target=subject.name,
+                    relation="same_as",
+                    evidence_span="video_subject_inference",
+                    segment_id=m.segment_id,
+                    ts_start=m.ts_start,
+                    ts_end=m.ts_end,
+                    modality=m.modality,
+                    provenance="video_subject_inference",
+                    source_doc_id=m.source_doc_id,
+                    confidence=confidence,
+                )
+                if edge.edge_id in existing_edge_ids:
+                    continue
+                existing_edge_ids.add(edge.edge_id)
+                out.append(edge)
         return out
 
     @staticmethod
-    def _format_for_encoding(entity_name: str, mention: Mention) -> str:
-        """Build the encode input: entity name + verbatim evidence span."""
-        merged = f"{entity_name} {mention.evidence_span}".strip()
-        if len(merged) > _MAX_TEXT_CHARS:
-            return merged[:_MAX_TEXT_CHARS]
-        return merged
+    def _subject_dominance_for(
+        extraction_result: ExtractionResult, subject: Node
+    ) -> float:
+        """Share of transcript Person-mentions held by ``subject``."""
+        subject_count = sum(
+            1 for m in subject.mentions if m.modality == _TRANSCRIPT_MODALITY
+        )
+        total = 0
+        for node in extraction_result.nodes:
+            if (node.label or "").strip() != "Person":
+                continue
+            total += sum(1 for m in node.mentions if m.modality == _TRANSCRIPT_MODALITY)
+        if total == 0:
+            return 0.0
+        return round(subject_count / total, 4)
+
+    # ------------------------------------------------------------------ #
+    # Primitive 3 — per-window subject inference (multi-subject content)  #
+    # ------------------------------------------------------------------ #
+
+    def _link_by_window_subjects(
+        self,
+        extraction_result: ExtractionResult,
+        window_subjects: Dict[Tuple[float, float], Node],
+        tenant_id: str,
+        existing_edge_ids: set,
+    ) -> List[Edge]:
+        """Attribute each generic VLM/OCR mention to its per-window
+        dominant Person. Confidence is the per-window dominance share.
+        """
+        if not window_subjects:
+            return []
+        out: List[Edge] = []
+        for node in extraction_result.nodes:
+            if not _caption_looks_like_subject(node):
+                continue
+            for m in node.mentions:
+                if m.modality == _TRANSCRIPT_MODALITY:
+                    continue
+                subject = window_subjects.get((m.ts_start, m.ts_end))
+                if subject is None:
+                    continue
+                confidence = self._window_dominance_for(
+                    extraction_result, subject, m, self._temporal_window_s
+                )
+                edge = Edge(
+                    tenant_id=tenant_id,
+                    source=node.name,
+                    target=subject.name,
+                    relation="same_as",
+                    evidence_span="video_subject_inference",
+                    segment_id=m.segment_id,
+                    ts_start=m.ts_start,
+                    ts_end=m.ts_end,
+                    modality=m.modality,
+                    provenance="video_subject_inference",
+                    source_doc_id=m.source_doc_id,
+                    confidence=confidence,
+                )
+                if edge.edge_id in existing_edge_ids:
+                    continue
+                existing_edge_ids.add(edge.edge_id)
+                out.append(edge)
+        return out
 
     @staticmethod
-    def _maxsim_cosine(a: np.ndarray, b: np.ndarray) -> float:
-        """Mean over rows in A of the max cosine to any row in B.
-
-        Deterministic given identical inputs (no random sampling, no
-        floating-point reductions whose order depends on input length).
-        """
-        if a.ndim != 2 or b.ndim != 2 or a.shape[0] == 0 or b.shape[0] == 0:
+    def _window_dominance_for(
+        extraction_result: ExtractionResult,
+        subject: Node,
+        mention: Mention,
+        window_s: float,
+    ) -> float:
+        """Share of in-window transcript Person-mentions held by ``subject``."""
+        window_start = mention.ts_start - window_s
+        window_end = mention.ts_end + window_s
+        subject_count = 0
+        total = 0
+        for node in extraction_result.nodes:
+            if (node.label or "").strip() != "Person":
+                continue
+            for m in node.mentions:
+                if m.modality != _TRANSCRIPT_MODALITY:
+                    continue
+                if m.ts_end < window_start or m.ts_start > window_end:
+                    continue
+                total += 1
+                if node.name == subject.name:
+                    subject_count += 1
+        if total == 0:
             return 0.0
-
-        a_norms = np.linalg.norm(a, axis=1, keepdims=True)
-        b_norms = np.linalg.norm(b, axis=1, keepdims=True)
-        # Guard against zero-norm rows producing NaN; treat them as zero
-        # contribution rather than crashing.
-        a_safe = np.where(a_norms == 0.0, 1.0, a_norms)
-        b_safe = np.where(b_norms == 0.0, 1.0, b_norms)
-        a_normalized = a / a_safe
-        b_normalized = b / b_safe
-
-        # (N, M) cosine matrix; a row is zero if the source vector was zero
-        # because the corresponding row in `a` is the zero vector.
-        sim = a_normalized @ b_normalized.T
-        per_row_max = sim.max(axis=1)
-        return float(per_row_max.mean())
+        return round(subject_count / total, 4)
