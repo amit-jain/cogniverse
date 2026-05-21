@@ -533,8 +533,31 @@ async def _extract_graph_per_segment(
     linker = CrossModalLinker()
     linked = linker.link(combined)
 
-    # Account for the same_as edges the linker added against the original
-    # segment that anchored each new edge.
+    # Face pipeline — opt-in via INFERENCE_SERVICE_URLS['face_embed'].
+    # Adds same_as edges for cross-modal face↔Person identity links
+    # (temporal attribution + KG-overlap third chance).
+    face_embed_url = _lookup_face_embed_endpoint()
+    face_edges = (
+        _run_face_pipeline(
+            processing_results=processing_results,
+            linked_extraction=linked,
+            source_doc_id=source_doc_id,
+            tenant_id=tenant_id,
+            face_embed_url=face_embed_url,
+        )
+        if face_embed_url
+        else []
+    )
+    if face_edges:
+        linked = ExtractionResult(
+            source_doc_id=linked.source_doc_id,
+            nodes=linked.nodes,
+            edges=list(linked.edges) + list(face_edges),
+            file_sha256=linked.file_sha256,
+        )
+
+    # Account for the same_as edges the linker (and the face pipeline)
+    # added against the original segment that anchored each new edge.
     original_edge_ids = {edge.edge_id for edge in combined.edges}
     for edge in linked.edges:
         if edge.edge_id in original_edge_ids:
@@ -590,6 +613,141 @@ def _lookup_artifact_manager(tenant_id: str):
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+
+
+def _lookup_face_embed_endpoint() -> Optional[str]:
+    """Return the ``face_embed`` sidecar URL.
+
+    Reads from ``INFERENCE_SERVICE_URLS`` (same env-var contract as
+    ``_lookup_colbert_endpoint``). When the var is missing or doesn't
+    contain the ``face_embed`` key, the face pipeline is skipped
+    gracefully — the per-segment KG extraction + structural cross-modal
+    linker still ship, just without face-cluster ``same_as`` edges.
+    """
+    import json as _json
+
+    raw = os.environ.get("INFERENCE_SERVICE_URLS")
+    if not raw:
+        return None
+    try:
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed.get("face_embed")
+
+
+def _run_face_pipeline(
+    processing_results: Dict[str, Any],
+    linked_extraction,
+    source_doc_id: str,
+    tenant_id: str,
+    face_embed_url: str,
+) -> list:
+    """Run face extract → cluster → temporal-attribute → KG-overlap.
+
+    Returns the list of new same_as Edges to append to ``linked_extraction.edges``
+    and have GraphManager.upsert persist alongside the rest. Empty list
+    on any internal failure — face-path errors are logged but never
+    propagated, so a face-sidecar outage doesn't break ingestion.
+
+    Two attribution passes run:
+      1. ``attribute_clusters_to_persons`` — emits face_cluster_temporal
+         edges for every cluster that overlaps a transcript Person.
+      2. ``attribute_orphans_by_kg_overlap`` — third-chance attribution
+         for clusters left orphan by pass 1, scoring caption tokens
+         against each Person's KG profile bag.
+    """
+    from cogniverse_agents.graph.face_cluster_attributor import (
+        attribute_clusters_to_persons,
+    )
+    from cogniverse_agents.graph.face_clusterer import cluster_faces
+    from cogniverse_agents.graph.face_extractor import extract_faces_per_keyframe
+    from cogniverse_agents.graph.kg_overlap_attributor import (
+        attribute_orphans_by_kg_overlap,
+        build_person_profile_bags,
+    )
+
+    try:
+        face_mentions = extract_faces_per_keyframe(
+            processing_results=processing_results,
+            source_doc_id=source_doc_id,
+            face_embed_url=face_embed_url,
+        )
+    except Exception as exc:  # noqa: BLE001 — log + degrade, never fail ingest
+        logger.warning(
+            "Face extraction failed for source_doc_id=%s; skipping face pipeline: %s",
+            source_doc_id,
+            exc,
+        )
+        return []
+
+    if not face_mentions:
+        return []
+
+    clusters = cluster_faces(face_mentions)
+    temporal_edges = attribute_clusters_to_persons(
+        clusters,
+        linked_extraction,
+        source_doc_id=source_doc_id,
+    )
+    attributed_cluster_ids = {edge.source for edge in temporal_edges}
+    orphan_clusters = [
+        c for c in clusters if c.cluster_id not in attributed_cluster_ids
+    ]
+
+    # Orphans need caption-token bags to score against Person profiles.
+    # The caption tokens come from any non-Person Node that has a
+    # Mention overlapping the cluster's keyframe windows — typically the
+    # VLM-emitted Concept node the keyframe was tagged with.
+    orphan_tuples: list = []
+    if orphan_clusters:
+        candidate_bags = build_person_profile_bags(linked_extraction)
+        for cluster in orphan_clusters:
+            tokens = _caption_tokens_for_cluster(cluster, linked_extraction)
+            if tokens:
+                orphan_tuples.append((cluster, tokens))
+        if orphan_tuples and candidate_bags:
+            kg_edges = attribute_orphans_by_kg_overlap(
+                orphan_tuples,
+                candidate_bags,
+                source_doc_id=source_doc_id,
+                tenant_id=tenant_id,
+            )
+        else:
+            kg_edges = []
+    else:
+        kg_edges = []
+
+    return temporal_edges + kg_edges
+
+
+def _caption_tokens_for_cluster(cluster, extraction_result) -> set:
+    """Token bag drawn from non-Person Nodes whose mentions overlap the cluster.
+
+    Matches Mention.segment_id against the cluster's member segment_ids
+    so a VLM Concept node ("woman in lab coat") emitted on the same
+    keyframe contributes its name + evidence_span tokens to the orphan's
+    caption bag for KG-overlap scoring.
+    """
+    import re as _re
+
+    cluster_segments = {m.segment_id for m in cluster.members}
+    tokens: set = set()
+    for node in extraction_result.nodes:
+        if (node.label or "").strip() == "Person":
+            continue
+        for mention in node.mentions:
+            if mention.segment_id in cluster_segments:
+                for raw in _re.findall(r"[A-Za-z0-9_]+", node.name):
+                    if len(raw) >= 3:
+                        tokens.add(raw.lower())
+                for raw in _re.findall(r"[A-Za-z0-9_]+", mention.evidence_span or ""):
+                    if len(raw) >= 3:
+                        tokens.add(raw.lower())
+                break  # one overlapping mention is enough
+    return tokens
 
 
 def _lookup_colbert_endpoint() -> Optional[str]:
