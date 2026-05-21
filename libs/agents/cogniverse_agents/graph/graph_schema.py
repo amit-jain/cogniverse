@@ -48,6 +48,26 @@ class Mention:
 
 
 @dataclass(frozen=True)
+class FaceCluster:
+    """A group of FaceMentions that share an anonymous identity.
+
+    Produced by cosine-distance agglomerative clustering over the 512-dim
+    ArcFace embeddings on per-video FaceMention lists. The cluster is
+    "anonymous" in the sense that it identifies a same-person grouping
+    without naming the person — the downstream attribution step links
+    each cluster to a named transcript Person by temporal overlap.
+
+    Frozen for hashability. ``cluster_id`` is deterministic: derived
+    from the lowest-``(ts_start, segment_id, bbox)`` member so two runs
+    on the same input produce identical IDs.
+    """
+
+    cluster_id: str
+    members: tuple  # tuple[FaceMention, ...], ts-sorted
+    centroid_vec: tuple  # L2-normalised mean of member vecs
+
+
+@dataclass(frozen=True)
 class FaceMention:
     """A face detection grounded to a specific keyframe.
 
