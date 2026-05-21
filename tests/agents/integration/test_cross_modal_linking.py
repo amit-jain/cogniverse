@@ -19,8 +19,6 @@ import json
 import logging
 import os
 import socket
-import threading
-import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -117,18 +115,13 @@ def _colbert_available() -> bool:
     return _pylate_sidecar_module_importable()
 
 
-pytestmark = [
-    pytest.mark.integration,
-    pytest.mark.skipif(
-        not _colbert_available(),
-        reason=(
-            "CrossModalLinker tests need a real ColBERT endpoint — set "
-            "INFERENCE_SERVICE_URLS with a live colbert_pylate URL or make "
-            "deploy/pylate/server.py importable so the local in-process "
-            "server can be spawned."
-        ),
-    ),
-]
+pytestmark = pytest.mark.integration
+
+# Historically the linker depended on a live ColBERT pylate sidecar to
+# score cross-modal pairs by MaxSim cosine. The structural-inference
+# rewrite removed that dependency — the helpers below are kept inert
+# for the few tests that still pass a colbert_endpoint argument, but
+# the value is no longer consumed.
 
 
 # --------------------------------------------------------------------- #
@@ -138,52 +131,12 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def colbert_endpoint():
-    """Yield a live ColBERT /pooling URL.
-
-    Prefers ``INFERENCE_SERVICE_URLS[colbert_pylate]`` when reachable so
-    CI can point at a long-running sidecar. Falls back to spawning the
-    production ``deploy/pylate/server.py`` in-process on a free port.
+    """Inert fixture kept for backwards-compatibility with the existing
+    test signatures. The structural-inference linker no longer consumes
+    a ColBERT URL; we yield an empty string so existing
+    ``def test_x(self, colbert_endpoint)`` signatures continue to work.
     """
-    env_url = _colbert_endpoint_from_env()
-    if env_url is not None:
-        yield env_url
-        return
-
-    import uvicorn  # noqa: PLC0415 — heavy import, only when fallback fires
-
-    spec = importlib.util.spec_from_file_location(
-        "pylate_server_under_test_xmodal", "deploy/pylate/server.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("pylate /health did not come up within 180s — model load failed")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
+    yield ""
 
 
 # --------------------------------------------------------------------- #
@@ -513,32 +466,108 @@ class TestCrossModalLinkerSemanticMismatch:
 # --------------------------------------------------------------------- #
 
 
-class TestCrossModalLinkerTemporalMismatch:
-    """VLM ``woman in lab coat`` at ts=30.0 produces no same_as edge.
+class TestCrossModalLinkerPerWindowInference:
+    """Per-window subject inference for multi-subject content.
 
-    The transcript mention sits at 12.0–18.5s, and the linker's window
-    is ±5s, so 30.0 is firmly outside (closest gap to 18.5 is 11.5s).
-    The pair would clear the cosine threshold if encoded — the only
-    thing keeping the edge out is the temporal filter.
+    Constructs a fixture with two roughly-equally-mentioned Persons
+    (Alice Chen and Bob Smith). With no single dominant subject, the
+    linker falls back to per-window inference: each VLM mention
+    attributes to the dominant Person inside its ±window. A VLM at
+    ts=10 (when Alice was just named) attributes to Alice; a VLM at
+    ts=40 (when Bob was just named) attributes to Bob.
     """
 
-    def test_lab_coat_at_30_emits_no_same_as_edge(self, colbert_endpoint):
-        nodes = [
-            _marie_curie_node(),
-            _woman_in_lab_coat_node(_vlm_lab_coat_at_30_mention()),
-        ]
+    def test_window_subject_inference_picks_correct_person_per_segment(
+        self, colbert_endpoint
+    ):
+        from cogniverse_agents.graph.graph_schema import Mention, Node
+
+        alice_node = Node(
+            tenant_id="test",
+            name="Alice Chen",
+            label="Person",
+            kind="entity",
+            mentions=[
+                Mention(
+                    source_doc_id=VIDEO_ID,
+                    segment_id="seg_1",
+                    ts_start=5.0,
+                    ts_end=12.0,
+                    modality="transcript",
+                    evidence_span="Alice Chen presents her research.",
+                )
+            ],
+        )
+        bob_node = Node(
+            tenant_id="test",
+            name="Bob Smith",
+            label="Person",
+            kind="entity",
+            mentions=[
+                Mention(
+                    source_doc_id=VIDEO_ID,
+                    segment_id="seg_3",
+                    ts_start=35.0,
+                    ts_end=45.0,
+                    modality="transcript",
+                    evidence_span="Bob Smith responds.",
+                )
+            ],
+        )
+        vlm_early = Node(
+            tenant_id="test",
+            name="woman at podium",
+            label="Concept",
+            kind="concept",
+            mentions=[
+                Mention(
+                    source_doc_id=VIDEO_ID,
+                    segment_id="frame_10",
+                    ts_start=10.0,
+                    ts_end=10.0,
+                    modality="vlm",
+                    evidence_span="woman at podium with slides",
+                )
+            ],
+        )
+        vlm_late = Node(
+            tenant_id="test",
+            name="man at lectern",
+            label="Concept",
+            kind="concept",
+            mentions=[
+                Mention(
+                    source_doc_id=VIDEO_ID,
+                    segment_id="frame_40",
+                    ts_start=40.0,
+                    ts_end=40.0,
+                    modality="vlm",
+                    evidence_span="man at lectern gesturing",
+                )
+            ],
+        )
+
         extraction = ExtractionResult(
             source_doc_id=VIDEO_ID,
-            nodes=nodes,
+            nodes=[alice_node, bob_node, vlm_early, vlm_late],
             edges=[],
         )
 
         linked = _linker(colbert_endpoint).link(extraction)
         same_as = _same_as_edges(linked)
-        assert same_as == [], (
-            f"expected zero same_as edges for lab_coat@30, got "
-            f"{[(e.source, e.target, e.confidence) for e in same_as]}"
-        )
+
+        # Two same_as edges, each attributing the visual mention in its
+        # window to the Person who was being discussed then.
+        targets_by_source = {e.source: e.target for e in same_as}
+        assert targets_by_source == {
+            "woman at podium": "Alice Chen",
+            "man at lectern": "Bob Smith",
+        }, f"per-window inference picked wrong attribution: {targets_by_source}"
+        # Both edges carry the structural-inference provenance, not a
+        # similarity-driven INFERRED tag.
+        assert all(e.provenance == "video_subject_inference" for e in same_as), [
+            e.provenance for e in same_as
+        ]
 
 
 # --------------------------------------------------------------------- #
