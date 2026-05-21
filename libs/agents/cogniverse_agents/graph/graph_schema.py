@@ -47,6 +47,30 @@ class Mention:
     evidence_span: str
 
 
+@dataclass(frozen=True)
+class FaceMention:
+    """A face detection grounded to a specific keyframe.
+
+    Distinct from ``Mention`` because the anchor is a face rectangle plus
+    a 512-dim L2-normalised ArcFace embedding rather than a verbatim text
+    span. Frozen (immutable, hashable) so a ``set[FaceMention]`` can be
+    used as a deduplication key in the clustering consumer.
+
+    The 7-field shape is locked: ``source_doc_id``, ``segment_id``,
+    ``ts_start``, ``ts_end``, ``bbox``, ``vec``, ``det_score``. Field
+    order matters — ``dataclasses.fields(FaceMention)[0].name`` is the
+    documented public contract.
+    """
+
+    source_doc_id: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    bbox: tuple  # (x1, y1, x2, y2) ints in image pixels
+    vec: tuple  # length-512 tuple of floats, L2-normalised
+    det_score: float
+
+
 @dataclass
 class Node:
     """A graph node — a concept or entity extracted from source content.
