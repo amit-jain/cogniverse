@@ -18,13 +18,16 @@ agent that returned a memory id.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
+
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +133,52 @@ class CitationTracingAgent(
         )
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.trace`` can read structured Edge rows."""
+        self._graph_manager = graph_manager
+
+    def trace(self, claim_id: str) -> Dict[str, Any]:
+        """Walk an Edge (claim) back to its grounding Mention(s).
+
+        Returns ``{"chain": [<step>, ...]}`` where each step is a dict with
+        keys: ``source_doc_id``, ``segment_id``, ``ts_start``, ``ts_end``,
+        ``modality``, ``evidence_span``, ``node_name`` (subject), ``predicate``.
+
+        ``claim_id`` is the Edge ``edge_id`` (the SHA1-16 prefix of the
+        normalised triple+segment), matching ``edge_id_of(source, relation, target)``
+        in the test fixtures.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "CitationTracingAgent.trace requires a GraphManager — call "
+                "set_graph_manager(...) before invoking .trace()."
+            )
+
+        edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        chain: List[Dict[str, Any]] = []
+        for edge_fields in edges:
+            doc_id = str(edge_fields.get("doc_id") or "")
+            # doc_id format: ``kg_edge_{tenant}_{edge_id}``; match suffix.
+            if (
+                not doc_id.endswith(f"_{claim_id}")
+                and doc_id.split("_")[-1] != claim_id
+            ):
+                continue
+            chain.append(
+                {
+                    "source_doc_id": str(edge_fields.get("source_doc_id") or ""),
+                    "segment_id": str(edge_fields.get("segment_id") or ""),
+                    "ts_start": float(edge_fields.get("ts_start") or 0.0),
+                    "ts_end": float(edge_fields.get("ts_end") or 0.0),
+                    "modality": str(edge_fields.get("modality") or ""),
+                    "evidence_span": str(edge_fields.get("evidence_span") or ""),
+                    "node_name": str(edge_fields.get("source_node_id") or ""),
+                    "predicate": str(edge_fields.get("relation") or ""),
+                }
+            )
+        return {"chain": chain}
 
     async def _process_impl(self, input: CitationTracingInput) -> CitationTracingOutput:
         """Walk the chain and return a structured graph."""

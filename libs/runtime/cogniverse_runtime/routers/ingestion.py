@@ -2,9 +2,11 @@
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
+import httpx
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -17,6 +19,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from cogniverse_agents.graph.graph_schema import Mention
 from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_foundation.config.manager import ConfigManager
@@ -288,108 +291,397 @@ async def upload_video(
         response["graph_nodes"] = 0
         response["graph_edges"] = 0
         if result.state == "complete":
-            text = _extract_text_for_graph(pipeline_result.get("results", {}) or {})
-            if text:
-                source_doc_id = (
-                    pipeline_result.get("video_id") or result.ingest_id or file.filename
-                )
-                try:
-                    counts = await _extract_graph_from_multimodal(
-                        text=text,
-                        source_doc_id=source_doc_id,
-                        tenant_id=upload_tenant_id,
-                    )
-                    response["graph_nodes"] = counts.get("nodes_upserted", 0)
-                    response["graph_edges"] = counts.get("edges_upserted", 0)
-                except Exception as exc:
-                    logger.warning(
-                        f"Multimodal graph extraction failed for {source_doc_id}: {exc}"
-                    )
+            source_doc_id = (
+                pipeline_result.get("video_id") or result.ingest_id or file.filename
+            )
+            counts = await _extract_graph_per_segment(
+                processing_results=pipeline_result.get("results", {}) or {},
+                source_doc_id=source_doc_id,
+                tenant_id=upload_tenant_id,
+            )
+            response["graph_nodes"] = counts.get("nodes_upserted", 0)
+            response["graph_edges"] = counts.get("edges_upserted", 0)
     else:
         response["status"] = "queued"
     return response
 
 
-def _extract_text_for_graph(processing_results: Dict[str, Any]) -> str:
-    """Concatenate transcript, description, OCR, and document text fields."""
-    if not isinstance(processing_results, dict):
-        return ""
+# Hard cap on the verbatim evidence_span captured per SegmentRecord.
+_MAX_EVIDENCE_CHARS = 200
 
-    parts: list = []
+
+@dataclass
+class SegmentRecord:
+    """Per-segment text + temporal/positional anchor for graph extraction."""
+
+    text: str
+    segment_anchor: Mention
+
+
+def _iter_segments_for_graph(
+    processing_results: Dict[str, Any],
+    source_doc_id: str,
+) -> Iterator[SegmentRecord]:
+    """Yield one SegmentRecord per Whisper segment, VLM keyframe, OCR/caption
+    block, or document file present in the pipeline output.
+
+    Whisper segments use the actual ``start``/``end`` timestamps. VLM and OCR
+    keyframes use the keyframe ``timestamp`` for both ``ts_start`` and
+    ``ts_end``. Document files use ``ts_start == ts_end == 0.0`` and
+    ``segment_id == f"file_{i}"``.
+    """
+    if not isinstance(processing_results, dict):
+        return
 
     transcript = processing_results.get("transcript", {})
     if isinstance(transcript, dict):
-        full = transcript.get("full_text") or transcript.get("text")
-        if full:
-            parts.append(str(full))
         segments = transcript.get("segments", [])
         if isinstance(segments, list):
-            for seg in segments:
-                if isinstance(seg, dict):
-                    text = seg.get("text", "")
-                    if text:
-                        parts.append(str(text))
+            for idx, seg in enumerate(segments):
+                if not isinstance(seg, dict):
+                    continue
+                text = seg.get("text") or ""
+                if not text:
+                    continue
+                text = str(text)
+                yield SegmentRecord(
+                    text=text,
+                    segment_anchor=Mention(
+                        source_doc_id=source_doc_id,
+                        segment_id=f"seg_{idx}",
+                        ts_start=float(seg.get("start", 0.0) or 0.0),
+                        ts_end=float(seg.get("end", 0.0) or 0.0),
+                        modality="transcript",
+                        evidence_span=text[:_MAX_EVIDENCE_CHARS],
+                    ),
+                )
+
+    # VLM descriptions live under processing_results["descriptions"]
+    # (outer dict) → "descriptions" (inner dict keyed by frame_id string).
+    # The keyframe timestamps live in processing_results["keyframes"].
+    keyframes_data = processing_results.get("keyframes", {})
+    keyframes_list = []
+    if isinstance(keyframes_data, dict):
+        kfs = keyframes_data.get("keyframes", [])
+        if isinstance(kfs, list):
+            keyframes_list = kfs
+    keyframe_ts_by_id: Dict[str, float] = {}
+    for kf in keyframes_list:
+        if not isinstance(kf, dict):
+            continue
+        fid = kf.get("frame_id")
+        if fid is None:
+            continue
+        keyframe_ts_by_id[str(fid)] = float(kf.get("timestamp", 0.0) or 0.0)
 
     descriptions = processing_results.get("descriptions", {})
     if isinstance(descriptions, dict):
         inner = descriptions.get("descriptions", descriptions)
         if isinstance(inner, dict):
-            for desc in inner.values():
+            for frame_id, desc in inner.items():
                 if isinstance(desc, str):
-                    parts.append(desc)
+                    text = desc
                 elif isinstance(desc, dict):
                     text = desc.get("description") or desc.get("text") or ""
-                    if text:
-                        parts.append(str(text))
+                else:
+                    text = ""
+                if not text:
+                    continue
+                text = str(text)
+                ts = keyframe_ts_by_id.get(str(frame_id), 0.0)
+                yield SegmentRecord(
+                    text=text,
+                    segment_anchor=Mention(
+                        source_doc_id=source_doc_id,
+                        segment_id=f"frame_{frame_id}",
+                        ts_start=ts,
+                        ts_end=ts,
+                        modality="vlm",
+                        evidence_span=text[:_MAX_EVIDENCE_CHARS],
+                    ),
+                )
 
-    keyframes_data = processing_results.get("keyframes", {})
-    if isinstance(keyframes_data, dict):
-        for kf in keyframes_data.get("keyframes", []) or []:
-            if isinstance(kf, dict):
-                text = kf.get("ocr_text") or kf.get("caption") or ""
-                if text:
-                    parts.append(str(text))
+    # OCR / caption blocks attached to keyframes.
+    for kf in keyframes_list:
+        if not isinstance(kf, dict):
+            continue
+        text = kf.get("ocr_text") or kf.get("caption") or ""
+        if not text:
+            continue
+        text = str(text)
+        fid = kf.get("frame_id", "")
+        ts = float(kf.get("timestamp", 0.0) or 0.0)
+        yield SegmentRecord(
+            text=text,
+            segment_anchor=Mention(
+                source_doc_id=source_doc_id,
+                segment_id=f"frame_{fid}",
+                ts_start=ts,
+                ts_end=ts,
+                modality="ocr",
+                evidence_span=text[:_MAX_EVIDENCE_CHARS],
+            ),
+        )
 
     doc_files = processing_results.get("document_files", [])
     if isinstance(doc_files, list):
-        for doc in doc_files:
-            if isinstance(doc, dict):
-                text = doc.get("extracted_text") or ""
-                if text:
-                    parts.append(str(text))
+        for idx, doc in enumerate(doc_files):
+            if not isinstance(doc, dict):
+                continue
+            text = doc.get("extracted_text") or ""
+            if not text:
+                continue
+            text = str(text)
+            yield SegmentRecord(
+                text=text,
+                segment_anchor=Mention(
+                    source_doc_id=source_doc_id,
+                    segment_id=f"file_{idx}",
+                    ts_start=0.0,
+                    ts_end=0.0,
+                    modality="document",
+                    evidence_span=text[:_MAX_EVIDENCE_CHARS],
+                ),
+            )
 
-    return "\n\n".join(parts).strip()
 
-
-async def _extract_graph_from_multimodal(
-    text: str,
+async def _extract_graph_per_segment(
+    processing_results: Dict[str, Any],
     source_doc_id: str,
     tenant_id: str,
-) -> Dict[str, int]:
-    """Run DocExtractor on multimodal text and upsert to the tenant graph."""
+) -> Dict[str, Any]:
+    """Run per-segment KG extraction, cross-modal linking, and upsert.
+
+    For every ``SegmentRecord`` yielded by ``_iter_segments_for_graph``,
+    invoke ``DocExtractor.extract_from_text(..., segment_anchor=...)`` and
+    accumulate the resulting nodes and edges into a single
+    ``ExtractionResult``. ``CrossModalLinker.link`` then adds ``same_as``
+    edges across modalities. Finally, ``GraphManager.upsert`` persists the
+    full result and per-segment back-refs are PATCHed onto the
+    corresponding content documents in Vespa.
+    """
+    from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+    from cogniverse_agents.graph.cross_modal_linker import CrossModalLinker
     from cogniverse_agents.graph.doc_extractor import DocExtractor
+    from cogniverse_agents.graph.graph_schema import ExtractionResult
     from cogniverse_runtime.routers import graph as graph_router
 
+    empty: Dict[str, Any] = {
+        "nodes_upserted": 0,
+        "edges_upserted": 0,
+        "backrefs_by_segment": {},
+    }
+
     if graph_router._graph_manager_factory is None:
-        return {"nodes_upserted": 0, "edges_upserted": 0}
+        return empty
 
     mgr = graph_router._graph_manager_factory(tenant_id)
-    result = DocExtractor().extract_from_text(
-        text=text,
-        tenant_id=tenant_id,
-        source_doc_id=source_doc_id,
-    )
-    if not result.nodes and not result.edges:
-        return {"nodes_upserted": 0, "edges_upserted": 0}
 
-    counts = mgr.upsert(result)
-    logger.info(
-        "Multimodal graph extraction for %s: %d nodes, %d edges",
-        source_doc_id,
-        counts["nodes_upserted"],
-        counts["edges_upserted"],
+    claim_extractor = ClaimExtractor(
+        artifact_manager=_lookup_artifact_manager(tenant_id)
     )
-    return counts
+    doc_ext = DocExtractor(claim_extractor=claim_extractor)
+
+    accumulated_nodes = []
+    accumulated_edges = []
+    backrefs_by_segment: Dict[str, Dict[str, List[str]]] = {}
+    # Entity names seen so far across this source_doc_id. Passed forward
+    # as ``prior_entities`` so the ClaimExtractor can resolve pronoun
+    # coreferences in later segments (``She later won the Nobel Prize``
+    # binds ``She`` → ``Marie Curie`` when Marie Curie was already
+    # extracted from an earlier segment).
+    entity_pool: List[str] = []
+    entity_pool_seen: set[str] = set()
+
+    for record in _iter_segments_for_graph(processing_results, source_doc_id):
+        result = doc_ext.extract_from_text(
+            text=record.text,
+            tenant_id=tenant_id,
+            source_doc_id=source_doc_id,
+            segment_anchor=record.segment_anchor,
+            prior_entities=list(entity_pool),
+        )
+        accumulated_nodes.extend(result.nodes)
+        accumulated_edges.extend(result.edges)
+        for n in result.nodes:
+            if n.name.lower() not in entity_pool_seen:
+                entity_pool.append(n.name)
+                entity_pool_seen.add(n.name.lower())
+
+        bucket = backrefs_by_segment.setdefault(
+            record.segment_anchor.segment_id,
+            {"entity_ids": [], "relation_ids": [], "claim_ids": []},
+        )
+        for node in result.nodes:
+            if node.node_id not in bucket["entity_ids"]:
+                bucket["entity_ids"].append(node.node_id)
+        for edge in result.edges:
+            if edge.edge_id not in bucket["relation_ids"]:
+                bucket["relation_ids"].append(edge.edge_id)
+            if edge.edge_id not in bucket["claim_ids"]:
+                bucket["claim_ids"].append(edge.edge_id)
+
+    combined = ExtractionResult(
+        source_doc_id=source_doc_id,
+        nodes=accumulated_nodes,
+        edges=accumulated_edges,
+    )
+
+    colbert_url = _lookup_colbert_endpoint()
+    if colbert_url:
+        linker = CrossModalLinker(colbert_endpoint_url=colbert_url)
+        linked = linker.link(combined)
+    else:
+        linked = combined
+
+    # Account for the same_as edges the linker added against the original
+    # segment that anchored each new edge.
+    original_edge_ids = {edge.edge_id for edge in combined.edges}
+    for edge in linked.edges:
+        if edge.edge_id in original_edge_ids:
+            continue
+        bucket = backrefs_by_segment.setdefault(
+            edge.segment_id,
+            {"entity_ids": [], "relation_ids": [], "claim_ids": []},
+        )
+        if edge.edge_id not in bucket["relation_ids"]:
+            bucket["relation_ids"].append(edge.edge_id)
+        if edge.edge_id not in bucket["claim_ids"]:
+            bucket["claim_ids"].append(edge.edge_id)
+
+    counts = mgr.upsert(linked)
+
+    await _write_backrefs_to_content(
+        backrefs_by_segment=backrefs_by_segment,
+        processing_results=processing_results,
+        source_doc_id=source_doc_id,
+        tenant_id=tenant_id,
+    )
+
+    return {
+        "nodes_upserted": counts.get("nodes_upserted", 0),
+        "edges_upserted": counts.get("edges_upserted", 0),
+        "backrefs_by_segment": backrefs_by_segment,
+    }
+
+
+def _lookup_artifact_manager(tenant_id: str):
+    """Look up an ArtifactManager for the tenant.
+
+    Returns ``None`` when Phoenix telemetry isn't wired up; ``ClaimExtractor``
+    handles ``None`` gracefully (skips compiled-artifact loading).
+    """
+    try:
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+    except ImportError:
+        return None
+
+    http_endpoint = os.environ.get("PHOENIX_HTTP_ENDPOINT")
+    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT")
+    if not http_endpoint and not grpc_endpoint:
+        return None
+
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": http_endpoint or "http://localhost:6006",
+            "grpc_endpoint": grpc_endpoint or "localhost:4317",
+        }
+    )
+    return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
+
+
+def _lookup_colbert_endpoint() -> Optional[str]:
+    """Return the ``colbert_pylate`` sidecar URL.
+
+    Reads from ``INFERENCE_SERVICE_URLS`` (the same JSON dict ``main.py``
+    parses at startup into ``SystemConfig.inference_service_urls``). When
+    the var is missing or doesn't contain the ``colbert_pylate`` key, no
+    URL is returned and ``CrossModalLinker`` is skipped — the per-segment
+    KG extraction still ships, just without ``same_as`` edges.
+    """
+    import json as _json
+
+    raw = os.environ.get("INFERENCE_SERVICE_URLS")
+    if not raw:
+        return None
+    try:
+        parsed = _json.loads(raw)
+    except _json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed.get("colbert_pylate")
+
+
+async def _write_backrefs_to_content(
+    backrefs_by_segment: Dict[str, Dict[str, List[str]]],
+    processing_results: Dict[str, Any],
+    source_doc_id: str,
+    tenant_id: str,
+) -> None:
+    """PATCH ``entity_ids`` / ``relation_ids`` / ``claim_ids`` onto content docs.
+
+    For each segment with back-refs, look up its content schema and doc_id
+    from ``processing_results`` and issue a Vespa Document v1 partial
+    update with ``{"fields": {"entity_ids": {"assign": [...]}}}``. Uses
+    ``httpx.AsyncClient`` so all PATCHes for a single ingest fire
+    concurrently.
+    """
+    if not backrefs_by_segment:
+        return
+
+    base_url = os.environ.get("VESPA_URL") or os.environ.get("VESPA_ENDPOINT")
+    if not base_url:
+        logger.debug("Skipping content back-ref PATCH: VESPA_URL not configured")
+        return
+
+    fed_docs = processing_results.get("fed_documents") or []
+    if not isinstance(fed_docs, list):
+        return
+
+    # Build segment_id → (schema, doc_id) lookup from the pipeline output.
+    targets: Dict[str, List[tuple[str, str]]] = {}
+    for doc in fed_docs:
+        if not isinstance(doc, dict):
+            continue
+        schema = doc.get("schema") or doc.get("content_schema")
+        doc_id = doc.get("doc_id") or doc.get("id")
+        segment_id = doc.get("segment_id")
+        if not schema or not doc_id or not segment_id:
+            continue
+        targets.setdefault(str(segment_id), []).append((str(schema), str(doc_id)))
+
+    if not targets:
+        return
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for segment_id, backrefs in backrefs_by_segment.items():
+            for schema, doc_id in targets.get(segment_id, []):
+                url = (
+                    f"{base_url.rstrip('/')}/document/v1/"
+                    f"{schema}/{schema}/docid/{doc_id}"
+                )
+                payload = {
+                    "fields": {
+                        "entity_ids": {"assign": list(backrefs.get("entity_ids", []))},
+                        "relation_ids": {
+                            "assign": list(backrefs.get("relation_ids", []))
+                        },
+                        "claim_ids": {"assign": list(backrefs.get("claim_ids", []))},
+                    }
+                }
+                resp = await client.put(url, json=payload)
+                if not resp.is_success:
+                    logger.warning(
+                        "Content back-ref PATCH failed for %s/%s (%s): %s",
+                        schema,
+                        doc_id,
+                        resp.status_code,
+                        resp.text[:500],
+                    )
 
 
 async def run_ingestion(

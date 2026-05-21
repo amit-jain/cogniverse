@@ -128,10 +128,19 @@ class GraphManager:
 
         return {"nodes_upserted": nodes_upserted, "edges_upserted": edges_upserted}
 
-    def search_nodes(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
-        """MaxSim multi-vector search over nodes with bm25 rerank."""
+    def search_nodes(
+        self, query: str, top_k: int = 10, trace: str = ""
+    ) -> List[Dict[str, Any]]:
+        """MaxSim multi-vector search over nodes with bm25 rerank.
+
+        When ``trace`` is non-empty, the encoder receives ``query + " " + trace``
+        as joint input — the agentic CoT-rationale embedding pattern from
+        Chen+Ma (AgentIR, arXiv 2410.09713) that exposes signal humans never
+        give the retriever. ``trace=""`` preserves the legacy single-query path.
+        """
+        effective_query = f"{query} {trace}".strip() if trace else query
         try:
-            qt_blocks, qtb_blocks = self._encode_query_blocks(query)
+            qt_blocks, qtb_blocks = self._encode_query_blocks(effective_query)
         except Exception as exc:
             logger.warning("Query encode failed, falling back to YQL visit: %s", exc)
             return self._visit(doc_type="node", name_contains=query, top_k=top_k)
@@ -144,7 +153,7 @@ class GraphManager:
         )
         body = {
             "yql": yql,
-            "query": query,
+            "query": effective_query,
             "hits": top_k,
             "ranking.profile": "hybrid_binary_bm25",
             "input.query(qtb)": {"blocks": qtb_blocks},
@@ -236,15 +245,28 @@ class GraphManager:
     # ------------------------------------------------------------------ #
 
     def _merge_duplicate_nodes(self, nodes: List[Node]) -> List[Node]:
-        """Merge nodes with the same normalized name — union their mentions."""
+        """Merge nodes with the same normalized name — union Mentions by
+        (source_doc_id, segment_id, ts_start, ts_end, modality)."""
         merged: Dict[str, Node] = {}
         for node in nodes:
             key = normalize_name(node.name)
             if key in merged:
                 existing = merged[key]
+                existing_keys = {
+                    (m.source_doc_id, m.segment_id, m.ts_start, m.ts_end, m.modality)
+                    for m in existing.mentions
+                }
                 for m in node.mentions:
-                    if m not in existing.mentions:
+                    m_key = (
+                        m.source_doc_id,
+                        m.segment_id,
+                        m.ts_start,
+                        m.ts_end,
+                        m.modality,
+                    )
+                    if m_key not in existing_keys:
                         existing.mentions.append(m)
+                        existing_keys.add(m_key)
             else:
                 merged[key] = node
         return list(merged.values())

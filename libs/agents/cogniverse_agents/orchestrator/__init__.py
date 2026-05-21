@@ -14,11 +14,15 @@ from cogniverse_agents.orchestrator.checkpoint_types import (
     TaskCheckpoint,
     WorkflowCheckpoint,
 )
+from cogniverse_agents.orchestrator.sufficient_context_signature import (
+    SufficientContextSignature,
+)
 
 __all__ = [
     "CheckpointConfig",
     "CheckpointLevel",
     "CheckpointStatus",
+    "SufficientContextSignature",
     "TaskCheckpoint",
     "WorkflowCheckpoint",
     "WorkflowCheckpointStorage",

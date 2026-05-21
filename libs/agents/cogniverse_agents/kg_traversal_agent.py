@@ -23,15 +23,20 @@ graph reader, not a free-text searcher. (MultiDocumentSynthesisAgent covers free
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
 
+from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +156,48 @@ def _is_edge(meta: Dict[str, Any]) -> bool:
     return str(meta.get("kind") or "") == _EDGE_KIND
 
 
+def _ranges_overlap(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    """Closed-interval overlap on the time axis."""
+    return a_start <= b_end and b_start <= a_end
+
+
+def _node_passes_mention_filter(
+    node_fields: Dict[str, Any],
+    video_id: Optional[str],
+    ts_range: Optional[Tuple[float, float]],
+) -> bool:
+    """Return True iff any Mention on the node matches the filter.
+
+    Mentions are stored as a JSON string under ``fields["mentions"]`` by
+    ``Node.to_vespa_document``. Each parsed dict carries ``source_doc_id``,
+    ``segment_id``, ``ts_start``, ``ts_end``, ``modality``, ``evidence_span``.
+    """
+    raw = node_fields.get("mentions")
+    if not raw:
+        return False
+    if isinstance(raw, str):
+        try:
+            mentions = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+    elif isinstance(raw, list):
+        mentions = raw
+    else:
+        return False
+    for m in mentions:
+        if not isinstance(m, dict):
+            continue
+        if video_id is not None and str(m.get("source_doc_id") or "") != str(video_id):
+            continue
+        if ts_range is not None:
+            ms = float(m.get("ts_start") or 0.0)
+            me = float(m.get("ts_end") or 0.0)
+            if not _ranges_overlap(ms, me, ts_range[0], ts_range[1]):
+                continue
+        return True
+    return False
+
+
 class KnowledgeGraphTraversalAgent(
     MemoryAwareMixin,
     A2AAgent[KGTraversalInput, KGTraversalOutput, KGTraversalDeps],
@@ -180,6 +227,83 @@ class KnowledgeGraphTraversalAgent(
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
         self._llm_config = llm_config
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.traverse`` can read Node/Edge rows."""
+        self._graph_manager = graph_manager
+
+    def traverse(
+        self, node_name: str, filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """Traverse outgoing edges from ``node_name`` with optional filters.
+
+        ``filters`` keys:
+          * ``video_id`` — keep only Mentions / Edges whose ``source_doc_id``
+            matches.
+          * ``ts_range`` — ``(start, end)`` tuple; keep only Edges whose
+            ``[ts_start, ts_end]`` overlaps the requested window, AND only
+            Mentions whose ``[ts_start, ts_end]`` overlaps.
+
+        Returns ``{"nodes": [<target_node_id>, ...], "edges": [{"source":..,
+        "relation":.., "target":..}, ...]}``.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "KnowledgeGraphTraversalAgent.traverse requires a GraphManager — "
+                "call set_graph_manager(...) before invoking .traverse()."
+            )
+        filters = filters or {}
+        video_id = filters.get("video_id")
+        ts_range: Optional[Tuple[float, float]] = filters.get("ts_range")
+
+        source_id = normalize_name(node_name)
+        out_edges = self._graph_manager._visit_edges(source_node_id=source_id)
+
+        kept_edges: List[Dict[str, str]] = []
+        target_ids: List[str] = []
+        for edge_fields in out_edges:
+            if video_id is not None and str(
+                edge_fields.get("source_doc_id") or ""
+            ) != str(video_id):
+                continue
+            if ts_range is not None:
+                e_start = float(edge_fields.get("ts_start") or 0.0)
+                e_end = float(edge_fields.get("ts_end") or 0.0)
+                if not _ranges_overlap(e_start, e_end, ts_range[0], ts_range[1]):
+                    continue
+            target = str(edge_fields.get("target_node_id") or "")
+            relation = str(edge_fields.get("relation") or "")
+            source = str(edge_fields.get("source_node_id") or "")
+            if not target or not relation:
+                continue
+            kept_edges.append(
+                {"source": source, "relation": relation, "target": target}
+            )
+            target_ids.append(target)
+
+        # Filter the target node set further by Mention overlap when filters demand it.
+        if video_id is not None or ts_range is not None:
+            unique_targets = list(dict.fromkeys(target_ids))
+            allowed: List[str] = []
+            all_nodes = self._graph_manager._visit(doc_type="node", top_k=500)
+            node_by_id: Dict[str, Dict[str, Any]] = {}
+            for n in all_nodes:
+                nid = normalize_name(str(n.get("name") or ""))
+                node_by_id[nid] = n
+            for tgt in unique_targets:
+                node_fields = node_by_id.get(tgt)
+                if node_fields is None:
+                    continue
+                if _node_passes_mention_filter(node_fields, video_id, ts_range):
+                    allowed.append(tgt)
+            nodes_out = sorted(allowed)
+            kept_edges = [e for e in kept_edges if e["target"] in set(allowed)]
+        else:
+            nodes_out = sorted(set(target_ids))
+
+        kept_edges.sort(key=lambda e: (e["source"], e["relation"], e["target"]))
+        return {"nodes": nodes_out, "edges": kept_edges}
 
     async def _process_impl(self, input: KGTraversalInput) -> KGTraversalOutput:
         if not self.is_memory_enabled() or self.memory_manager is None:

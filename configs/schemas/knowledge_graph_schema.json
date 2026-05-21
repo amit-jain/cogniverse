@@ -41,6 +41,12 @@
         "attribute": ["fast-search"]
       },
       {
+        "name": "label",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
         "name": "mentions",
         "type": "string",
         "indexing": ["summary"]
@@ -76,6 +82,33 @@
       },
       {
         "name": "source_doc_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "evidence_span",
+        "type": "string",
+        "indexing": ["summary"]
+      },
+      {
+        "name": "segment_id",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
+        "name": "ts_start",
+        "type": "double",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "ts_end",
+        "type": "double",
+        "indexing": ["summary", "attribute"]
+      },
+      {
+        "name": "modality",
         "type": "string",
         "indexing": ["summary", "attribute"],
         "attribute": ["fast-search"]

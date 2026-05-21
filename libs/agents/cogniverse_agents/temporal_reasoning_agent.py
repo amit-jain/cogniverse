@@ -22,14 +22,18 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from pydantic import Field, field_validator
 
+from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
+
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +195,53 @@ class TemporalReasoningAgent(
 
         self._mm_factory = make_mm_factory(memory_manager_factory)
         self._llm_config = llm_config
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.compare_over_time`` can read Edges."""
+        self._graph_manager = graph_manager
+
+    def compare_over_time(
+        self, node_name: str, videos: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Build a chronological timeline of claims about ``node_name``.
+
+        Reads outgoing Edges whose ``source_node_id == normalize_name(node_name)``
+        and whose ``source_doc_id`` is in ``videos``. Returns
+        ``{"timeline": [<entry>, ...]}`` ordered by ``ts_start`` ascending.
+        Each entry: ``{ts_start, ts_end, video_id, segment_id, claim,
+        evidence_span}`` where ``claim`` is ``"<relation>:<target_node_id>"``.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "TemporalReasoningAgent.compare_over_time requires a "
+                "GraphManager — call set_graph_manager(...) first."
+            )
+        source_id = normalize_name(node_name)
+        all_edges = self._graph_manager._visit_edges(source_node_id=source_id)
+        video_set = {str(v) for v in videos}
+
+        timeline: List[Dict[str, Any]] = []
+        for edge_fields in all_edges:
+            video_id = str(edge_fields.get("source_doc_id") or "")
+            if video_id not in video_set:
+                continue
+            relation = str(edge_fields.get("relation") or "")
+            target = str(edge_fields.get("target_node_id") or "")
+            if not relation or not target:
+                continue
+            timeline.append(
+                {
+                    "ts_start": float(edge_fields.get("ts_start") or 0.0),
+                    "ts_end": float(edge_fields.get("ts_end") or 0.0),
+                    "video_id": video_id,
+                    "segment_id": str(edge_fields.get("segment_id") or ""),
+                    "claim": f"{relation}:{target}",
+                    "evidence_span": str(edge_fields.get("evidence_span") or ""),
+                }
+            )
+        timeline.sort(key=lambda e: (e["ts_start"], e["video_id"], e["segment_id"]))
+        return {"timeline": timeline}
 
     async def _process_impl(
         self, input: TemporalReasoningInput

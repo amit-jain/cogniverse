@@ -27,6 +27,34 @@ import pytest
 
 _DEFAULT_BASE_URL = "http://localhost:11434"
 _DEFAULT_MODEL = "gemma3:4b"
+
+
+def _config_llm_defaults() -> tuple[str | None, str | None]:
+    """Return (api_base, bare_model) from ``configs/config.json`` if present.
+
+    Lets the test suite default to whatever LM the deployed app is
+    configured against (production config is currently vLLM at 8101 with
+    gemma-4-e4b-it). Returns (None, None) when the config file cannot be
+    parsed — callers fall back to the historic localhost:11434/gemma3:4b
+    defaults so the env-var-driven path keeps working.
+    """
+    import json
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
+    if not src.exists():
+        return None, None
+    try:
+        primary = json.loads(src.read_text()).get("llm_config", {}).get("primary", {})
+    except (OSError, ValueError):
+        return None, None
+    api_base = primary.get("api_base") or None
+    model = primary.get("model") or None
+    if model and model.startswith("openai/"):
+        model = model[len("openai/") :]
+    return api_base, model
+
+
 _DEFAULT_LOCAL_PROVIDER = "openai"
 _LITELLM_PROVIDERS = (
     "openai",
@@ -44,7 +72,11 @@ _LITELLM_PROVIDERS = (
 
 
 def resolve_base_url() -> str:
-    return os.environ.get("TEST_LLM_API_BASE") or _DEFAULT_BASE_URL
+    env = os.environ.get("TEST_LLM_API_BASE")
+    if env:
+        return env
+    cfg_base, _ = _config_llm_defaults()
+    return cfg_base or _DEFAULT_BASE_URL
 
 
 def resolve_bare_model() -> str:
@@ -56,7 +88,10 @@ def resolve_bare_model() -> str:
     names (``google/gemma-4-e4b-it``, ``meta-llama/Llama-3-8B``) are
     the actual model identifier and must be preserved verbatim.
     """
-    raw = os.environ.get("TEST_LLM_MODEL") or _DEFAULT_MODEL
+    raw = os.environ.get("TEST_LLM_MODEL")
+    if not raw:
+        _, cfg_model = _config_llm_defaults()
+        raw = cfg_model or _DEFAULT_MODEL
     head, _, _ = raw.partition("/")
     if head in _LITELLM_PROVIDERS:
         return raw.split("/", 1)[1]

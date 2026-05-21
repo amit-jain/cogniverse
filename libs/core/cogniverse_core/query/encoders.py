@@ -59,9 +59,19 @@ class ColBERTQueryEncoder(QueryEncoder):
             f"remote={'yes' if inference_service_url else 'no'})"
         )
 
-    def encode(self, query: str) -> np.ndarray:
-        """Encode query to per-token embeddings."""
-        result = self.model.encode([query], is_query=True)
+    def encode(self, query: str, trace: str = "") -> np.ndarray:
+        """Encode query to per-token embeddings.
+
+        ``trace`` is the orchestrator's CoT reasoning produced alongside
+        the reformulated query (the joint-trace AgentIR pattern). When
+        non-empty, the encoder embeds ``f"{query} {trace}"`` so the
+        per-token vectors reflect the reasoning context, not just the
+        surface query. Empty trace is a no-op: ``f"{query} "`` would
+        diverge from ``query`` byte-for-byte at the tokenizer, so the
+        empty branch falls through to encoding ``query`` alone.
+        """
+        encoded_text = f"{query} {trace}" if trace else query
+        result = self.model.encode([encoded_text], is_query=True)
         return np.array(result[0], dtype=np.float32)
 
     def get_embedding_dim(self) -> int:

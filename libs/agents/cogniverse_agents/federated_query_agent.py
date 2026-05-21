@@ -16,8 +16,9 @@ context is large.
 
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
@@ -34,7 +35,26 @@ from cogniverse_core.memory.schema import (
     build_default_registry,
 )
 
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
+
 logger = logging.getLogger(__name__)
+
+
+def _parse_mentions(raw: Any) -> List[Dict[str, Any]]:
+    """Parse the JSON-string ``mentions`` field on a Node row."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    elif isinstance(raw, list):
+        parsed = raw
+    else:
+        return []
+    return [m for m in parsed if isinstance(m, dict)]
 
 
 _DEFAULT_PORT = 8024
@@ -154,6 +174,71 @@ class FederatedQueryAgent(
         self._registry = registry or build_default_registry()
         self._mm_factory = make_mm_factory(memory_manager_factory)
         self._llm_config = llm_config
+        self._graph_managers: Dict[str, "GraphManager"] = {}
+
+    def set_graph_managers(self, graph_managers: Dict[str, "GraphManager"]) -> None:
+        """Bind one GraphManager per tenant/overlay name for ``.query``."""
+        self._graph_managers = dict(graph_managers)
+
+    def query(
+        self, text: str, tenants_or_overlays: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Federated graph-level query that dedupes nodes across sources.
+
+        For each bound (tenant|overlay) name in ``tenants_or_overlays``, scans
+        the bound GraphManager's nodes and keeps the ones whose ``name``
+        contains ``text`` (case-insensitive). Results are deduplicated by
+        ``node_id`` (the normalised name) with sources merged. Each result:
+        ``{node_id, sources (sorted unique), merged_mentions_count (count of
+        distinct ``(source_doc_id, segment_id)`` tuples across all sources)}``.
+        Output list ordered by ``node_id`` ascending.
+        """
+        if not self._graph_managers:
+            raise RuntimeError(
+                "FederatedQueryAgent.query requires graph managers — call "
+                "set_graph_managers({name: GraphManager, ...}) first."
+            )
+        needle = (text or "").lower()
+        accum: Dict[str, Dict[str, Any]] = {}
+        for name in tenants_or_overlays:
+            mgr = self._graph_managers.get(name)
+            if mgr is None:
+                continue
+            for node_fields in mgr._visit(doc_type="node", top_k=500):
+                node_name = str(node_fields.get("name") or "")
+                if needle and needle not in node_name.lower():
+                    continue
+                doc_id = str(node_fields.get("doc_id") or "")
+                # doc_id format: ``kg_node_{tenant}_{node_id}``; the trailing
+                # node_id is the normalised name. Recover it from the suffix.
+                node_id = (
+                    doc_id.split("_", 3)[-1] if doc_id.startswith("kg_node_") else ""
+                )
+                if not node_id:
+                    continue
+                entry = accum.setdefault(
+                    node_id,
+                    {"node_id": node_id, "sources": set(), "mention_keys": set()},
+                )
+                entry["sources"].add(name)
+                for m in _parse_mentions(node_fields.get("mentions")):
+                    entry["mention_keys"].add(
+                        (
+                            str(m.get("source_doc_id") or ""),
+                            str(m.get("segment_id") or ""),
+                        )
+                    )
+        results: List[Dict[str, Any]] = []
+        for node_id in sorted(accum):
+            entry = accum[node_id]
+            results.append(
+                {
+                    "node_id": node_id,
+                    "sources": sorted(entry["sources"]),
+                    "merged_mentions_count": len(entry["mention_keys"]),
+                }
+            )
+        return {"results": results}
 
     async def _process_impl(self, input: FederatedQueryInput) -> FederatedQueryOutput:
         # ACL: role + cross-org checks (mirror CrossTenantComparisonAgent).

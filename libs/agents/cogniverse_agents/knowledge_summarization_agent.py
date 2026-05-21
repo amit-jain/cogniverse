@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import dspy
 from pydantic import Field
@@ -41,6 +41,9 @@ from cogniverse_core.memory.schema import (
     SchemaViolationError,
     build_default_registry,
 )
+
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +204,61 @@ class KnowledgeSummarizationAgent(
         self._llm_config = llm_config
         self._dspy_module = dspy.ChainOfThought(_SummarizationSignature)
         self._ensure_summary_kind_registered()
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.summarize`` can read Edges for one video."""
+        self._graph_manager = graph_manager
+
+    def summarize(self, video_id: str) -> Dict[str, str]:
+        """One-line-per-segment summary for a single video.
+
+        Returns ``{"text": <str>}``. Each line:
+        ``"<entity_name> [<ts_start>s-<ts_end>s]: <claim_or_summary>"`` where
+        ``entity_name`` is the Edge's ``source_node_id`` (the subject) and
+        ``claim_or_summary`` is rendered as ``"<predicate> <object_summary>"``.
+        Edges grouped by ``(subject, segment_id)``; multiple claims sharing a
+        ``(subject, ts_range)`` collapse into a single line whose body joins
+        the predicate/object pairs with ``"; "``.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "KnowledgeSummarizationAgent.summarize requires a "
+                "GraphManager — call set_graph_manager(...) first."
+            )
+        all_edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        # Group by (subject, segment_id, ts_start, ts_end), preserving the
+        # original subject name (from source_node_id) for readability.
+        grouped: Dict[tuple, List[Dict[str, Any]]] = {}
+        for edge_fields in all_edges:
+            if str(edge_fields.get("source_doc_id") or "") != video_id:
+                continue
+            subject = str(edge_fields.get("source_node_id") or "")
+            segment_id = str(edge_fields.get("segment_id") or "")
+            ts_start = float(edge_fields.get("ts_start") or 0.0)
+            ts_end = float(edge_fields.get("ts_end") or 0.0)
+            key = (subject, segment_id, ts_start, ts_end)
+            grouped.setdefault(key, []).append(edge_fields)
+
+        lines: List[str] = []
+        for key in sorted(grouped, key=lambda k: (k[2], k[3], k[0])):
+            subject, _seg_id, ts_start, ts_end = key
+            edges = sorted(
+                grouped[key],
+                key=lambda e: (
+                    str(e.get("relation") or ""),
+                    str(e.get("target_node_id") or ""),
+                ),
+            )
+            body_parts: List[str] = []
+            for e in edges:
+                rel = str(e.get("relation") or "")
+                tgt = str(e.get("target_node_id") or "")
+                if rel and tgt:
+                    body_parts.append(f"{rel} {tgt}")
+            body = "; ".join(body_parts)
+            lines.append(f"{subject} [{ts_start}s-{ts_end}s]: {body}")
+        return {"text": "\n".join(lines)}
 
     def _ensure_summary_kind_registered(self) -> None:
         """Register `knowledge_summary` when the registry doesn't already know it.

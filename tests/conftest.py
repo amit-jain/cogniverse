@@ -566,27 +566,56 @@ def cogniverse_test_config(backend_config_env, tmp_path_factory):
 
     blob = json.loads(src_path.read_text())
 
-    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:7b")
-    test_api_base = os.environ.get("TEST_LLM_API_BASE", "http://localhost:11434")
+    # When no env override is set AND the production-config vLLM
+    # endpoint (``configs/config.json`` → ``llm_config.primary``) is
+    # live, leave the config alone — integration tests then run against
+    # the same LM as the deployed app. The Ollama install/start path
+    # only fires when the production endpoint is unreachable.
+    env_model = os.environ.get("TEST_LLM_MODEL")
+    env_api_base = os.environ.get("TEST_LLM_API_BASE")
+    cfg_primary = blob.get("llm_config", {}).get("primary", {})
+    cfg_api_base = cfg_primary.get("api_base")
+    cfg_model = cfg_primary.get("model")
+    if (
+        env_model is None
+        and env_api_base is None
+        and cfg_api_base
+        and cfg_model
+        and _probe_openai_compat(cfg_api_base)
+        and _openai_compat_has_model(cfg_api_base, cfg_model)
+    ):
+        # Keep the production config verbatim — the OAI-compat path in
+        # ``ensure_host_ollama`` will export TEST_LLM_API_BASE / _MODEL
+        # to match so ``tests/fixtures/llm.py`` resolves the same target.
+        test_model = (
+            cfg_model[len("openai/") :]
+            if cfg_model.startswith("openai/")
+            else cfg_model
+        )
+        test_api_base = cfg_api_base
+    else:
+        test_model = env_model or "qwen2.5:7b"
+        test_api_base = env_api_base or "http://localhost:11434"
 
-    prefixed = f"openai/{test_model}"
+        prefixed = f"openai/{test_model}"
 
-    # litellm with the ``openai/`` provider prefix sends requests to
-    # ``{api_base}/chat/completions``. Ollama's OAI-compat surface lives
-    # at ``/v1/chat/completions``, so the api_base MUST carry ``/v1`` —
-    # without it litellm hits ``localhost:11434/chat/completions`` and
-    # Ollama returns a literal "404 page not found". Append it here so
-    # the rest of the test suite doesn't have to remember.
-    if not test_api_base.rstrip("/").endswith("/v1"):
-        test_api_base = test_api_base.rstrip("/") + "/v1"
+        # litellm with the ``openai/`` provider prefix sends requests to
+        # ``{api_base}/chat/completions``. Ollama's OAI-compat surface
+        # lives at ``/v1/chat/completions``, so the api_base MUST carry
+        # ``/v1`` — without it litellm hits
+        # ``localhost:11434/chat/completions`` and Ollama returns a
+        # literal "404 page not found". Append it here so the rest of
+        # the test suite doesn't have to remember.
+        if not test_api_base.rstrip("/").endswith("/v1"):
+            test_api_base = test_api_base.rstrip("/") + "/v1"
 
-    llm_cfg = blob.setdefault("llm_config", {})
-    primary = llm_cfg.setdefault("primary", {})
-    primary["model"] = prefixed
-    primary["api_base"] = test_api_base
-    teacher = llm_cfg.setdefault("teacher", {})
-    teacher["model"] = prefixed
-    teacher["api_base"] = test_api_base
+        llm_cfg = blob.setdefault("llm_config", {})
+        primary = llm_cfg.setdefault("primary", {})
+        primary["model"] = prefixed
+        primary["api_base"] = test_api_base
+        teacher = llm_cfg.setdefault("teacher", {})
+        teacher["model"] = prefixed
+        teacher["api_base"] = test_api_base
 
     test_dir = tmp_path_factory.mktemp("cogniverse_test_config")
     schemas_link = test_dir / "schemas"
@@ -700,6 +729,50 @@ def _probe_ollama(base_url: str, timeout: float = 2.0) -> bool:
         return False
 
 
+def _probe_openai_compat(base_url: str, timeout: float = 2.0) -> bool:
+    """Return True iff the endpoint answers ``GET /v1/models`` with 200.
+
+    vLLM and other pure OAI-compat servers (the production
+    ``llm_config.primary.api_base`` at ``http://localhost:8101/v1``)
+    expose ``/v1/models`` but NOT Ollama's native ``/api/tags``. When
+    the operator points the test config at such a server, we must NOT
+    install/start Ollama — the configured server is the LM and the
+    rest of the fixture machinery (env exports) still has to run so
+    downstream tests resolve the correct base.
+    """
+    import httpx
+
+    try:
+        return (
+            httpx.get(f"{_strip_v1(base_url)}/v1/models", timeout=timeout).status_code
+            == 200
+        )
+    except (httpx.HTTPError, OSError):
+        return False
+
+
+def _openai_compat_has_model(base_url: str, model: str) -> bool:
+    """Return True iff ``GET /v1/models`` lists ``model`` (or its prefix).
+
+    The configured model may carry a litellm provider prefix
+    (``openai/google/gemma-4-e4b-it``); vLLM lists the bare HF id
+    (``google/gemma-4-e4b-it``). Strip a single leading ``openai/`` (the
+    only litellm provider whose prefix vLLM-served models use) before
+    comparing.
+    """
+    import httpx
+
+    bare = model[len("openai/") :] if model.startswith("openai/") else model
+    try:
+        resp = httpx.get(f"{_strip_v1(base_url)}/v1/models", timeout=5.0)
+        if resp.status_code != 200:
+            return False
+        ids = {row.get("id", "") for row in (resp.json().get("data") or [])}
+        return bare in ids
+    except (httpx.HTTPError, OSError, ValueError):
+        return False
+
+
 def _ollama_has_model(base_url: str, model: str) -> bool:
     """Return True iff Ollama has *exactly* the requested model+tag pulled.
 
@@ -767,7 +840,61 @@ def ensure_host_ollama(cogniverse_test_config):
     cfg = json.loads(cfg_path.read_text())
     primary = cfg.get("llm_config", {}).get("primary", {})
     configured_base = primary.get("api_base") or "http://localhost:11434"
-    test_model = os.environ.get("TEST_LLM_MODEL", "qwen2.5:7b")
+    # Prefer an explicit ``TEST_LLM_MODEL`` env override; otherwise fall
+    # back to the model pinned in the rewritten test config (the
+    # ``cogniverse_test_config`` fixture sets ``primary.model`` after
+    # detecting the live OAI-compat server). Only when neither is
+    # available do we drop to the historical Ollama default — that path
+    # is reserved for sessions where the production endpoint is
+    # unreachable. Without this preference order, a session that unsets
+    # ``TEST_LLM_MODEL`` (as the BRIGHT probe test invocation does)
+    # silently routed every request to a freshly-spawned Ollama instance
+    # serving the wrong model and got back HTTP 404 "model not found".
+    cfg_model_raw = primary.get("model")
+    if os.environ.get("TEST_LLM_MODEL"):
+        test_model = os.environ["TEST_LLM_MODEL"]
+    elif cfg_model_raw:
+        test_model = cfg_model_raw
+    else:
+        test_model = "qwen2.5:7b"
+
+    # OAI-compat server (vLLM, sglang, ...) takes precedence — when the
+    # configured base answers ``/v1/models`` and lists the requested
+    # model, this is the production path and Ollama must not run.
+    if _probe_openai_compat(configured_base) and _openai_compat_has_model(
+        configured_base, test_model
+    ):
+        original_api_base = os.environ.get("TEST_LLM_API_BASE")
+        original_model = os.environ.get("TEST_LLM_MODEL")
+        original_openai_key = os.environ.get("OPENAI_API_KEY")
+        os.environ["TEST_LLM_API_BASE"] = configured_base
+        # Strip a leading ``openai/`` so the bare model id lands in the
+        # env (vLLM lists ``google/gemma-4-e4b-it`` under ``/v1/models``;
+        # ``tests/fixtures/llm.py`` re-prefixes it with the resolved
+        # provider before constructing the dspy.LM).
+        bare_model = (
+            test_model[len("openai/") :]
+            if test_model.startswith("openai/")
+            else test_model
+        )
+        os.environ["TEST_LLM_MODEL"] = bare_model
+        os.environ.setdefault("OPENAI_API_KEY", "not-required")
+        try:
+            yield
+        finally:
+            if original_api_base is None:
+                os.environ.pop("TEST_LLM_API_BASE", None)
+            else:
+                os.environ["TEST_LLM_API_BASE"] = original_api_base
+            if original_model is None:
+                os.environ.pop("TEST_LLM_MODEL", None)
+            else:
+                os.environ["TEST_LLM_MODEL"] = original_model
+            if original_openai_key is None:
+                os.environ.pop("OPENAI_API_KEY", None)
+            else:
+                os.environ["OPENAI_API_KEY"] = original_openai_key
+        return
 
     if _probe_ollama(configured_base) and _ollama_has_model(
         configured_base, test_model

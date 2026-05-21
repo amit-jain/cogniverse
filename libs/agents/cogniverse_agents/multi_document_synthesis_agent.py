@@ -37,7 +37,7 @@ from cogniverse_core.memory.provenance import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +178,63 @@ class MultiDocumentSynthesisAgent(
         self._config_manager = config_manager
         self._llm_config = llm_config
         self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.synthesize`` can read Edges across videos."""
+        self._graph_manager = graph_manager
+
+    def synthesize(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
+        """Group all known claims by source video for the orchestrator to render.
+
+        Walks every Edge in the graph, then partitions by ``source_doc_id``.
+        Each group: ``{video_id, segment_ids (sorted, unique), claims
+        (in ``"<relation>:<target>"`` form, in segment order)}``. Groups are
+        emitted sorted by ``video_id``. ``query`` is accepted on the signature
+        but not used for filtering at this layer — the orchestrator scopes
+        which subjects the synthesis ranges over upstream.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "MultiDocumentSynthesisAgent.synthesize requires a GraphManager — "
+                "call set_graph_manager(...) first."
+            )
+        all_edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        by_video: Dict[str, List[Dict[str, Any]]] = {}
+        for edge_fields in all_edges:
+            video_id = str(edge_fields.get("source_doc_id") or "")
+            if not video_id:
+                continue
+            by_video.setdefault(video_id, []).append(edge_fields)
+
+        groups: List[Dict[str, Any]] = []
+        for video_id in sorted(by_video):
+            edges = by_video[video_id]
+            edges_sorted = sorted(
+                edges,
+                key=lambda e: (
+                    str(e.get("segment_id") or ""),
+                    str(e.get("relation") or ""),
+                    str(e.get("target_node_id") or ""),
+                ),
+            )
+            segment_ids = sorted(
+                {
+                    str(e.get("segment_id") or "")
+                    for e in edges_sorted
+                    if e.get("segment_id")
+                }
+            )
+            claims: List[str] = []
+            for e in edges_sorted:
+                rel = str(e.get("relation") or "")
+                tgt = str(e.get("target_node_id") or "")
+                if rel and tgt:
+                    claims.append(f"{rel}:{tgt}")
+            groups.append(
+                {"video_id": video_id, "segment_ids": segment_ids, "claims": claims}
+            )
+        return {"groups": groups}
 
     async def _process_impl(
         self, input: MultiDocSynthesisInput

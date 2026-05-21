@@ -18,7 +18,7 @@ summarisation can plug in later via the same pattern as the other agents.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
@@ -34,7 +34,20 @@ from cogniverse_core.memory.schema import (
     build_default_registry,
 )
 
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
+
 logger = logging.getLogger(__name__)
+
+
+def _node_ids_for(manager: "GraphManager") -> set:
+    """Collect node_ids from a GraphManager by scanning all nodes."""
+    ids: set = set()
+    for node_fields in manager._visit(doc_type="node", top_k=500):
+        doc_id = str(node_fields.get("doc_id") or "")
+        if doc_id.startswith("kg_node_"):
+            ids.add(doc_id.split("_", 3)[-1])
+    return ids
 
 
 _DEFAULT_PORT = 8023
@@ -162,6 +175,53 @@ class CrossTenantComparisonAgent(
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()
         self._mm_factory = make_mm_factory(memory_manager_factory)
+        self._graph_managers: Dict[str, "GraphManager"] = {}
+        self._trunk_graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_managers(
+        self,
+        per_tenant: Dict[str, "GraphManager"],
+        trunk: Optional["GraphManager"] = None,
+    ) -> None:
+        """Bind per-tenant graph managers plus an optional org-trunk manager."""
+        self._graph_managers = dict(per_tenant)
+        self._trunk_graph_manager = trunk
+
+    def compare(self, tenant_a: str, tenant_b: str) -> Dict[str, Dict[str, Any]]:
+        """Diff the node sets of two tenants and (optionally) the org trunk.
+
+        Returns ``{"diff": {"shared": [...sorted node_ids...], "tenant_only":
+        {<tenant_a>: [...], <tenant_b>: [...]}, "trunk_only": [...]}}``.
+        Diff is computed over node_ids only — Edge / Mention deltas are out
+        of scope for this method and ``MultiDocumentSynthesisAgent`` covers
+        per-segment evidence.
+        """
+        mgr_a = self._graph_managers.get(tenant_a)
+        mgr_b = self._graph_managers.get(tenant_b)
+        if mgr_a is None or mgr_b is None:
+            raise RuntimeError(
+                "CrossTenantComparisonAgent.compare requires graph managers for "
+                f"both tenants; missing: "
+                f"{[t for t, m in [(tenant_a, mgr_a), (tenant_b, mgr_b)] if m is None]}"
+            )
+        ids_a = _node_ids_for(mgr_a)
+        ids_b = _node_ids_for(mgr_b)
+        trunk_ids: set = (
+            _node_ids_for(self._trunk_graph_manager)
+            if self._trunk_graph_manager is not None
+            else set()
+        )
+        shared = sorted(ids_a & ids_b)
+        only_a = sorted(ids_a - ids_b - trunk_ids)
+        only_b = sorted(ids_b - ids_a - trunk_ids)
+        trunk_only = sorted(trunk_ids - (ids_a | ids_b))
+        return {
+            "diff": {
+                "shared": shared,
+                "tenant_only": {tenant_a: only_a, tenant_b: only_b},
+                "trunk_only": trunk_only,
+            }
+        }
 
     async def _process_impl(
         self, input: CrossTenantComparisonInput

@@ -1,0 +1,31 @@
+query,video_id,segment_id_range,reasoning_type
+"video where someone teaches a skill that contradicts what they earlier said works",bright_q1,seg_2:seg_5,contradiction
+"video where the person uses a tool to repair something after taking it apart",bright_q2,seg_3:seg_7,temporal
+"video where the activity demonstrated requires the same equipment as snowboarding",bright_q3,seg_1:seg_4,lateral
+"video where rain stopped the outdoor activity and the host moved indoors",bright_q4,seg_4:seg_9,causal
+"video where the cook claims olive oil is best then fries in butter instead",bright_q5,seg_2:seg_6,contradiction
+"video where the climber would have summited if they had warmer gloves",bright_q6,seg_5:seg_8,counterfactual
+"video where the activity is similar to figure skating but without ice",bright_q7,seg_1:seg_5,lateral
+"video where the dough rose because the yeast was activated in warm water",bright_q8,seg_3:seg_6,causal
+"video where the painter mixes blue and yellow before showing the green stroke",bright_q9,seg_2:seg_5,temporal
+"video where the dog would have caught the frisbee if the wind had not gusted",bright_q10,seg_4:seg_7,counterfactual
+"video where the cyclist falls because the chain slips off the gear",bright_q11,seg_3:seg_5,causal
+"video where the magician shows the empty hat first then pulls the rabbit out",bright_q12,seg_1:seg_4,temporal
+"video where the activity uses the same balance skill as surfing but on land",bright_q13,seg_2:seg_6,lateral
+"video where the host says raw eggs are safe then warns about salmonella next",bright_q14,seg_3:seg_7,contradiction
+"video where the runner would have won if the shoe lace had not come undone",bright_q15,seg_5:seg_9,counterfactual
+"video where someone sharpens the knife before slicing the tomato cleanly",bright_q16,seg_2:seg_5,temporal
+"video where the activity demonstrated rhymes with the rhythm of drumming",bright_q17,seg_1:seg_5,lateral
+"video where the bread burned because the oven was set too high",bright_q18,seg_4:seg_7,causal
+"video where the team would have won if the goalie had stayed in position",bright_q19,seg_6:seg_10,counterfactual
+"video where the gardener plants the seeds after tilling the soil thoroughly",bright_q20,seg_2:seg_6,temporal
+"video where the activity uses the same hand grip as kayaking but with a different tool",bright_q21,seg_1:seg_4,lateral
+"video where the speaker first introduces the topic then cites melting glaciers later",bright_q22,seg_3:seg_8,temporal
+"video where the car would have started if the battery had been charged",bright_q23,seg_4:seg_6,counterfactual
+"video where the smoke alarm went off because of burnt toast in the kitchen",bright_q24,seg_2:seg_5,causal
+"video where the wood was cut to size before being assembled into a chair",bright_q25,seg_3:seg_8,temporal
+"video where the activity demonstrated has the same footwork pattern as boxing",bright_q26,seg_1:seg_5,lateral
+"video where the kite flew higher because the wind picked up over the field",bright_q27,seg_3:seg_6,causal
+"video where the host claims sugar is unhealthy then bakes a sugary cake",bright_q28,seg_4:seg_8,contradiction
+"video where the runner takes a breath then accelerates for the final sprint",bright_q29,seg_5:seg_9,temporal
+"video where the activity demonstrated mirrors the wrist flick used in casting a fishing rod",bright_q30,seg_2:seg_5,lateral

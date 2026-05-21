@@ -1,10 +1,10 @@
-"""Unified Node and Edge dataclasses for the knowledge graph."""
+"""Unified Node, Edge, and Mention dataclasses for the knowledge graph."""
 
 import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -31,14 +31,40 @@ def normalize_name(name: str) -> str:
 
 
 @dataclass
+class Mention:
+    """A single grounded occurrence of a node within a source segment.
+
+    Carries the temporal/positional anchor so KG consumers (CitationTracing,
+    KnowledgeGraphTraversal, TemporalReasoning, etc.) can surface where
+    in a video/document/code-file the entity was extracted from.
+    """
+
+    source_doc_id: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    modality: str
+    evidence_span: str
+
+
+@dataclass
 class Node:
-    """A graph node — a concept or entity extracted from source content."""
+    """A graph node — a concept or entity extracted from source content.
+
+    ``label`` carries the entity-type tag from the upstream extractor
+    (GLiNER labels: ``Person``, ``Location``, ``Organization``,
+    ``Substance``, ``Concept``, ...). Cross-modal linkers consult this
+    tag to gate ``same_as`` candidates so two mentions of incompatible
+    types do not get fused on a borderline cosine score. Default
+    ``"Concept"`` matches the doc-extractor fallback path.
+    """
 
     tenant_id: str
     name: str
+    mentions: List[Mention]
     description: str = ""
     kind: str = "concept"  # "concept" | "entity"
-    mentions: List[str] = field(default_factory=list)
+    label: str = "Concept"  # GLiNER tag (Person, Location, Substance, ...)
     degree: int = 0
     created_at: str = field(default_factory=_utcnow_iso)
     updated_at: str = field(default_factory=_utcnow_iso)
@@ -60,7 +86,8 @@ class Node:
                 "name": self.name,
                 "description": self.description,
                 "kind": self.kind,
-                "mentions": json.dumps(self.mentions),
+                "label": self.label,
+                "mentions": json.dumps([asdict(m) for m in self.mentions]),
                 "degree": self.degree,
                 "created_at": self.created_at,
                 "updated_at": self.updated_at,
@@ -70,13 +97,18 @@ class Node:
 
 @dataclass
 class Edge:
-    """A directed graph edge between two nodes."""
+    """A directed graph edge between two nodes, grounded in a specific segment."""
 
     tenant_id: str
     source: str  # node name (will be normalized to node_id)
     target: str  # node name (will be normalized to node_id)
     relation: str
-    provenance: str = "INFERRED"  # "EXTRACTED" | "INFERRED"
+    evidence_span: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    modality: str
+    provenance: str = "EXTRACTED"  # "EXTRACTED" | "INFERRED"
     source_doc_id: str = ""
     confidence: float = 1.0
     created_at: str = field(default_factory=_utcnow_iso)
@@ -91,10 +123,12 @@ class Edge:
 
     @property
     def edge_id(self) -> str:
-        """Deterministic edge id — same (source, relation, target) produces same id."""
-        raw = f"{self.source_node_id}|{self.relation}|{self.target_node_id}"
-        hashed = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-        return hashed
+        """Deterministic edge id — same (source, relation, target, segment) → same id."""
+        raw = (
+            f"{self.source_node_id}|{self.relation}|{self.target_node_id}"
+            f"|{self.segment_id}|{self.ts_start}|{self.ts_end}"
+        )
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
     @property
     def doc_id(self) -> str:
@@ -109,6 +143,11 @@ class Edge:
                 "source_node_id": self.source_node_id,
                 "target_node_id": self.target_node_id,
                 "relation": self.relation,
+                "evidence_span": self.evidence_span,
+                "segment_id": self.segment_id,
+                "ts_start": self.ts_start,
+                "ts_end": self.ts_end,
+                "modality": self.modality,
                 "provenance": self.provenance,
                 "source_doc_id": self.source_doc_id,
                 "confidence": self.confidence,
@@ -119,7 +158,7 @@ class Edge:
 
 @dataclass
 class ExtractionResult:
-    """Nodes and edges extracted from a single file."""
+    """Nodes and edges extracted from a single source (file or segment batch)."""
 
     source_doc_id: str
     nodes: List[Node] = field(default_factory=list)

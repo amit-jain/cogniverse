@@ -38,18 +38,33 @@ def get_graph_manager(tenant_id: str):
         raise HTTPException(status_code=503, detail="Graph backend unavailable")
 
 
+class MentionDoc(BaseModel):
+    source_doc_id: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    modality: str
+    evidence_span: str
+
+
 class NodeDoc(BaseModel):
     name: str
+    mentions: List[MentionDoc]
     description: str = ""
     kind: str = "concept"
-    mentions: List[str] = []
+    label: str = "Concept"  # GLiNER tag — gates same_as linking in CrossModalLinker
 
 
 class EdgeDoc(BaseModel):
     source: str
     target: str
     relation: str
-    provenance: str = "INFERRED"
+    evidence_span: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    modality: str
+    provenance: str = "EXTRACTED"
     confidence: float = 1.0
 
 
@@ -95,7 +110,12 @@ class StatsResponse(BaseModel):
 @router.post("/upsert", response_model=UpsertResponse)
 async def upsert(request: UpsertRequest) -> UpsertResponse:
     """Upsert a batch of nodes and edges for a tenant."""
-    from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
+    from cogniverse_agents.graph.graph_schema import (
+        Edge,
+        ExtractionResult,
+        Mention,
+        Node,
+    )
     from cogniverse_core.common.tenant_utils import (
         assert_tenant_exists,
         canonical_tenant_id,
@@ -115,7 +135,18 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
             name=n.name,
             description=n.description,
             kind=n.kind,
-            mentions=n.mentions or [request.source_doc_id],
+            label=n.label,
+            mentions=[
+                Mention(
+                    source_doc_id=m.source_doc_id,
+                    segment_id=m.segment_id,
+                    ts_start=m.ts_start,
+                    ts_end=m.ts_end,
+                    modality=m.modality,
+                    evidence_span=m.evidence_span,
+                )
+                for m in n.mentions
+            ],
         )
         for n in request.nodes
     ]
@@ -125,6 +156,11 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
             source=e.source,
             target=e.target,
             relation=e.relation,
+            evidence_span=e.evidence_span,
+            segment_id=e.segment_id,
+            ts_start=e.ts_start,
+            ts_end=e.ts_end,
+            modality=e.modality,
             provenance=e.provenance,
             confidence=e.confidence,
             source_doc_id=request.source_doc_id,

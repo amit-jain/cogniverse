@@ -1266,6 +1266,18 @@ class OrchestratorOutput(AgentOutput):
     agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
     final_output: Dict[str, Any] = Field(default_factory=dict, description="Aggregated final output")
     execution_summary: str = Field("", description="Summary of execution")
+    # Structured side-channel metadata. ``final_output["iterative_loop"]``
+    # is mirrored under ``metadata["iterative_loop"]`` so eval harnesses
+    # can read the loop trajectory without depending on the fusion-shaped
+    # ``final_output`` envelope. The ``iterative_loop`` dict now carries:
+    #   * ``top_hits`` — top-5 ranked evidence ({source_doc_id,
+    #     segment_id, ts_start, ts_end, score, video_id})
+    #   * ``missing_aspects`` — gate's missing_aspects list
+    #   * ``final_answer_id`` — "{source_doc_id}::{segment_id}" of top-1
+    #     or "" when there are no hits
+    # ...alongside the existing ``iterations_executed``, ``exit_reason``,
+    # ``evidence_count``, ``final_gate``, ``partial_due_to_*``, ``trace_id``.
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Side-channel structured metadata")
 
 class OrchestratorDeps(AgentDeps):
     """Dependencies for orchestrator agent (tenant-agnostic at startup)."""

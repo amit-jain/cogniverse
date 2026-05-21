@@ -21,10 +21,11 @@ sentinel kind) when policy = ``preserve_both`` so audit history persists.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -35,7 +36,20 @@ from cogniverse_core.memory.schema import (
     build_default_registry,
 )
 
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
+
 logger = logging.getLogger(__name__)
+
+
+def _policy_to_contract_string(policy: ContradictionPolicy) -> str:
+    """Map the registry's enum to the consumer-contract string vocabulary."""
+    mapping = {
+        ContradictionPolicy.PRESERVE_BOTH: "PRESERVE_BOTH",
+        ContradictionPolicy.LATEST_WINS: "LATEST_WINS",
+        ContradictionPolicy.TRUST_RANKED: "TRUST_RANKED",
+    }
+    return mapping.get(policy, "PRESERVE_BOTH")
 
 
 class ContradictionReconciliationInput(AgentInput):
@@ -140,6 +154,53 @@ class ContradictionReconciliationAgent(
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.detect`` can read Edge rows for a predicate."""
+        self._graph_manager = graph_manager
+
+    def detect(self, node_name: str, predicate: str) -> Dict[str, Dict[str, Any]]:
+        """Group Edges on ``(node_name, predicate)`` across videos into a conflict set.
+
+        Returns ``{"conflict_set": {"policy": <str>, "entries": [<entry>,...]}}``
+        where ``policy`` is one of ``"PRESERVE_BOTH"|"LATEST_WINS"|"TRUST_RANKED"``
+        (mapped from the schema's ``contradiction_policy`` for ``kg_edge``;
+        falls back to ``"PRESERVE_BOTH"`` when more than one distinct
+        ``(video, value)`` is observed). Each entry: ``{video_id,
+        segment_id, ts_start, ts_end, value, confidence}``.
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "ContradictionReconciliationAgent.detect requires a "
+                "GraphManager — call set_graph_manager(...) first."
+            )
+        source_id = normalize_name(node_name)
+        edges = self._graph_manager._visit_edges(source_node_id=source_id)
+        entries: List[Dict[str, Any]] = []
+        for edge_fields in edges:
+            if str(edge_fields.get("relation") or "") != predicate:
+                continue
+            entries.append(
+                {
+                    "video_id": str(edge_fields.get("source_doc_id") or ""),
+                    "segment_id": str(edge_fields.get("segment_id") or ""),
+                    "ts_start": float(edge_fields.get("ts_start") or 0.0),
+                    "ts_end": float(edge_fields.get("ts_end") or 0.0),
+                    "value": str(edge_fields.get("target_node_id") or ""),
+                    "confidence": float(edge_fields.get("confidence") or 0.0),
+                }
+            )
+        entries.sort(key=lambda e: (e["video_id"], e["ts_start"]))
+
+        # Map the schema's enum into the contract's string vocabulary.
+        try:
+            schema_policy = self._registry.get("kg_edge").contradiction_policy
+            policy_str = _policy_to_contract_string(schema_policy)
+        except Exception:
+            policy_str = "PRESERVE_BOTH"
+
+        return {"conflict_set": {"policy": policy_str, "entries": entries}}
 
     async def _process_impl(
         self, input: ContradictionReconciliationInput

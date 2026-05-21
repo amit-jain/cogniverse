@@ -701,6 +701,30 @@ flowchart TB
 
 ---
 
+### 5. Knowledge Graph Extraction (post-pipeline)
+
+After `VideoIngestionPipeline` finishes feeding content to Vespa, the ingestion router (`libs/runtime/cogniverse_runtime/routers/ingestion.py`) runs a per-segment KG extraction pass against every text-emitting result it produced. Two functions drive it:
+
+- `_iter_segments_for_graph(processing_results, source_doc_id) -> Iterator[SegmentRecord]` — yields one record per Whisper transcript segment, VLM keyframe description, OCR/caption block, and document file. Each `SegmentRecord` carries `text` plus a `segment_anchor: Mention` with the timestamps the upstream processor produced.
+- `_extract_graph_per_segment(processing_results, source_doc_id, tenant_id) -> dict` — calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention, prior_entities=<cumulative pool>)` per segment, accumulates `ExtractionResult` (anchored `Node.mentions: List[Mention]` + SPO `Edge` rows from `ClaimExtractor`), runs `CrossModalLinker.link()` to add `same_as` edges across modalities, `GraphManager.upsert()`s the merged result, then PATCHes per-segment back-refs (`entity_ids` / `relation_ids` / `claim_ids` arrays) onto the corresponding content documents.
+
+Key product knobs:
+
+| Symbol | Location | Purpose |
+|---|---|---|
+| `_GATE_PROMPT_SCAFFOLDING_CHARS = 2400` | `orchestrator_agent.py` | Folded into `_evidence_token_estimate` so the iterative-retrieval-loop token budget guard accounts for DSPy `ChatAdapter` wrapping (otherwise the estimate undercounts by ~30×). |
+| `_ITER_GATE_RLM_PROMOTION_CHARS = 6000` | `orchestrator_agent.py` | Sufficient-context gate promotes from CoT to `InstrumentedRLM` above this evidence size. |
+| `RLM_PROMOTION_TOKENS = 3000` | `graph/claim_extractor.py` | Claim extraction promotes to RLM above this segment-text size. |
+| `PREDICATE_VOCABULARY` (16 items) | `graph/claim_extractor.py` | Locked SPO predicate set; edges with relations outside the set are dropped after normalization. |
+
+User-facing detail with diagrams: [`docs/user/knowledge-graph.md`](../user/knowledge-graph.md).
+
+Operational scripts:
+- `scripts/seed_bright_corpus.py` — one-shot ingest of the 30-row BRIGHT probe corpus into the test tenant's content schema.
+- `scripts/setup_local_tests.sh` — bring up the four `kubectl port-forward`s the live integration tests depend on (vLLM, Phoenix HTTP + gRPC).
+
+---
+
 ## Core Components
 
 ### 1. VideoIngestionPipeline

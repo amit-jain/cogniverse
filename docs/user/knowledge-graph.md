@@ -120,7 +120,8 @@ Every node, regardless of whether it came from code or docs, has the same shape:
 | `node_id` | string | Normalized identifier derived from name (e.g. `searchagent`) |
 | `description` | string | Short description (from docstring, caption, or context) |
 | `kind` | `entity` \| `concept` | Loose label; `entity` for code symbols, `concept` for extracted doc topics |
-| `mentions` | list\[str\] | Source document IDs where this node appears |
+| `label` | string | GLiNER entity-type tag (`Person`, `Location`, `Organization`, `Substance`, `Concept`, ...). Defaults to `Concept`. Used by `CrossModalLinker` to gate `same_as` linking — a Person-named transcript mention only co-refers with a Concept/Location VLM caption when the caption contains person-indicator words or shares a name token. |
+| `mentions` | list\[Mention\] | Per-segment grounded mentions (source_doc_id, segment_id, ts_start, ts_end, modality, evidence_span) |
 | `degree` | int | Number of edges touching this node (computed) |
 | `embedding` | tensor(768) | nomic-embed-text vector of `name + description` |
 
@@ -189,18 +190,20 @@ All doc edges are `INFERRED` because co-mention isn't a proven relationship — 
 
 Unlike the code and doc paths which run in the CLI process, multimodal extraction happens **inside the runtime**, after the content pipeline produces text outputs.
 
-**The flow:**
+**The flow** (per-segment, with `Mention` provenance + SPO claim edges + cross-modal linking):
 
 1. User runs `cogniverse index ./stuff --type docs` and a `.mp4` is found.
 2. CLI uploads it via `POST /ingestion/upload` with the `video_colpali_smol500_mv_frame` profile.
 3. Runtime's `VideoIngestionPipeline` processes the file normally — runs Whisper for audio transcription, extracts keyframes, calls the VLM descriptor on each keyframe, generates embeddings, feeds Vespa.
-4. **New** — after the pipeline returns, `routers/ingestion.py` harvests every text field from the result via `_extract_text_for_graph()`:
-   - `result["transcript"]["full_text"]` + per-segment text
-   - `result["descriptions"]["descriptions"]` (VLM captions per keyframe)
-   - `result["keyframes"][*]["ocr_text"]` if OCR was run
-   - `result["document_files"][*]["extracted_text"]` for PDFs
-5. The combined text blob is passed to `DocExtractor.extract_from_text()` — the same GLiNER + regex pipeline used for `.md` files.
-6. The resulting nodes and edges are upserted to the tenant's shared `knowledge_graph_default` schema.
+4. After the pipeline returns, `routers/ingestion.py` iterates the result with `_iter_segments_for_graph()`, which yields one `SegmentRecord` per text-emitting source:
+   - one per Whisper transcript segment (carries `ts_start`/`ts_end` from the Whisper output)
+   - one per VLM keyframe description (`segment_id="frame_<idx>"`, anchored at the frame timestamp)
+   - one per OCR/caption block on a keyframe
+   - one per document file (PDF / OCR'd page)
+5. `_extract_graph_per_segment()` calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention)` per segment. Each entity GLiNER finds gets a structured `Mention` (source_doc_id + segment_id + ts_start + ts_end + modality + verbatim evidence_span) instead of a bare doc-id string. A cross-segment `entity_pool` is threaded forward so the `ClaimExtractor` resolves pronouns ("She later won the Nobel Prize" → Marie Curie when introduced in an earlier segment).
+6. `ClaimExtractor` (DSPy ChainOfThought + `InstrumentedRLM` promotion for inputs > 3000 chars) produces real SPO edges with predicates from a locked 16-element vocabulary (`born_in`, `discovered`, `worked_at`, `won`, `contradicts`, ...). Predicate normalization + a vocabulary filter drop free-form LM emissions ("was_born_in" → `born_in`, "yellow" / "in" / "glass" → dropped).
+7. `CrossModalLinker` runs once per `source_doc_id` after all per-segment passes, emitting `same_as` edges between cross-modal `Mention` pairs whose temporal windows overlap within `±temporal_window_s` AND whose Node labels pass the type gate (Person↔Person, or Person↔Concept with shared name token / person-indicator word).
+8. The accumulated `ExtractionResult` is `GraphManager.upsert()`'d to the tenant's shared `knowledge_graph_default` schema, then per-segment back-references (`entity_ids` / `relation_ids` / `claim_ids`) are PATCHed onto each content document so a single Vespa join finds every claim grounded in a given segment.
 
 **No new model calls** — the multimodal path reuses Whisper/VLM outputs that the content pipelines already produce. Whether a file gets graph extraction or not depends on whether its pipeline emits text:
 
@@ -278,38 +281,30 @@ Why one schema instead of per-tenant? Vespa refuses to deploy an application pac
 
 ## Architecture
 
-```
-cogniverse index ./src --type code
-    │
-    ▼
-  collect_files → [file1.py, file2.md, file3.mp4, file4.jpg, ...]
-    │
-    ├── For each file:
-    │
-    ├── CODE / TEXT PATH (local extraction, cheap)
-    │   ├── content: POST /ingestion/upload → Vespa (code_lateon_mv, document_text_semantic)
-    │   └── graph:   CodeExtractor / DocExtractor (locally in CLI process)
-    │                    │
-    │                    ▼
-    │                 POST /graph/upsert → GraphManager.upsert() → Vespa
-    │
-    └── MULTIMODAL PATH (video / image / audio — server-side)
-        └── content: POST /ingestion/upload → Vespa (video_colpali, image_colpali, audio_clap)
-                         │
-                         ▼ (inside runtime)
-                     VideoIngestionPipeline runs Whisper, VLM, OCR
-                         │
-                         ▼
-                     _extract_text_for_graph(result)  ← harvests transcript/captions/ocr
-                         │
-                         ▼
-                     DocExtractor.extract_from_text(harvested)
-                         │
-                         ▼
-                     GraphManager.upsert() → Vespa (knowledge_graph_default)
-                         │
-                         ▼
-                     Response includes graph_nodes / graph_edges counts
+```mermaid
+flowchart TD
+    CLI["<span style='color:#000'><b>cogniverse index ./src</b></span>"] --> Collect["<span style='color:#000'>collect_files</span>"]
+    Collect --> Files["<span style='color:#000'>[file1.py, file2.md, file3.mp4, file4.jpg, ...]</span>"]
+
+    Files --> CodePath["<span style='color:#000'><b>CODE / TEXT PATH</b><br/>(local extraction in CLI)</span>"]
+    Files --> MultiPath["<span style='color:#000'><b>MULTIMODAL PATH</b><br/>(server-side, video / image / audio)</span>"]
+
+    CodePath --> CodeContent["<span style='color:#000'>POST /ingestion/upload<br/>→ Vespa (code_lateon_mv,<br/>document_text_semantic)</span>"]
+    CodePath --> LocalExtract["<span style='color:#000'>CodeExtractor / DocExtractor<br/>(in CLI process)</span>"]
+    LocalExtract --> LocalUpsert["<span style='color:#000'>POST /graph/upsert<br/>→ GraphManager.upsert()</span>"]
+    LocalUpsert --> Vespa[("<span style='color:#000'><b>Vespa</b><br/>knowledge_graph_default</span>")]
+
+    MultiPath --> MultiContent["<span style='color:#000'>POST /ingestion/upload<br/>→ Vespa (video_colpali,<br/>image_colpali, audio_clap)</span>"]
+    MultiContent --> Pipeline["<span style='color:#000'>VideoIngestionPipeline<br/>runs Whisper / VLM / OCR</span>"]
+    Pipeline --> Iter["<span style='color:#000'>_iter_segments_for_graph(result)<br/>yields one SegmentRecord per:<br/>transcript-seg, VLM-keyframe,<br/>OCR-block, document-file</span>"]
+    Iter --> PerSegLoop["<span style='color:#000'><b>for each segment:</b></span>"]
+    PerSegLoop --> DocExtract["<span style='color:#000'>DocExtractor.extract_from_text(<br/>text, segment_anchor=Mention(...),<br/>prior_entities=&lt;cumulative pool&gt;)</span>"]
+    DocExtract --> Claim["<span style='color:#000'><b>ClaimExtractor</b><br/>DSPy CoT, RLM if &gt;3000 chars,<br/>16-predicate vocab → SPO Edges</span>"]
+    Claim --> CrossModal["<span style='color:#000'><b>CrossModalLinker.link(combined)</b><br/>same_as edges across modalities<br/>gated by Node.label + ±5s temporal</span>"]
+    CrossModal --> MultiUpsert["<span style='color:#000'>GraphManager.upsert(linked_result)</span>"]
+    MultiUpsert --> Vespa
+    MultiUpsert --> BackRefs["<span style='color:#000'>PATCH content docs<br/>(entity_ids / relation_ids / claim_ids)</span>"]
+    BackRefs --> Response["<span style='color:#000'>Response: graph_nodes / graph_edges counts</span>"]
 ```
 
 **Two extraction paths, one graph.** Code and text files are extracted locally in the CLI process so the runtime doesn't re-read them. Multimodal files (video/image/audio) are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR already run. Both paths write to the same `knowledge_graph_default` schema in the same way.

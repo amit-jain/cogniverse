@@ -1,20 +1,26 @@
-"""Document extractor — GLiNER for entities + heuristic relationship mining.
+"""Document extractor — GLiNER entities anchored to segment Mentions.
 
 For text-based documents (`.md`, `.txt`, `.rst`, `.html`, `.pdf` after
-text extraction). GLiNER is already in the cogniverse stack via the
-routing agent, so no new heavy deps.
+text extraction) and per-segment text inputs (transcripts, VLM
+descriptions, OCR, etc.). GLiNER is already in the cogniverse stack via
+the routing agent.
 
-Extracts named entities and concepts, emits them as nodes with
-INFERRED provenance (LLM-based, not structural). Edges link entities
-mentioned in the same chunk of text.
+This extractor produces nodes only. SPO edges are produced by
+``ClaimExtractor`` (DSPy ChainOfThought + RLM-promoted) — co-occurrence
+"mentioned_with" edges have been removed.
 """
 
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
-from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
+from cogniverse_agents.graph.graph_schema import (
+    Edge,
+    ExtractionResult,
+    Mention,
+    Node,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +30,14 @@ _PDF_EXTENSIONS = {".pdf"}
 _DEFAULT_LABELS = [
     "Person",
     "Organization",
-    "Technology",
-    "Concept",
     "Location",
+    "Date",
+    "Substance",
+    "Award",
+    "Field",
+    "Event",
+    "Concept",
+    "Technology",
     "Product",
     "Algorithm",
     "Model",
@@ -34,7 +45,103 @@ _DEFAULT_LABELS = [
     "Language",
 ]
 
+# Pronouns and common stop-verbs that GLiNER occasionally emits as
+# Concept/Person entities. Filtered out before nodes are created so the
+# KG isn't polluted with "She", "He", "discovered", "made" etc.
+_PRONOUN_BLOCKLIST = frozenset(
+    {
+        "he",
+        "she",
+        "it",
+        "they",
+        "we",
+        "i",
+        "you",
+        "him",
+        "her",
+        "his",
+        "hers",
+        "its",
+        "their",
+        "theirs",
+        "them",
+        "us",
+        "our",
+        "ours",
+        "my",
+        "mine",
+        "your",
+        "yours",
+        "this",
+        "that",
+        "these",
+        "those",
+    }
+)
+_COMMON_VERB_BLOCKLIST = frozenset(
+    {
+        "discovered",
+        "made",
+        "found",
+        "created",
+        "wrote",
+        "won",
+        "born",
+        "died",
+        "is",
+        "was",
+        "were",
+        "are",
+        "be",
+        "been",
+        "being",
+        "has",
+        "have",
+        "had",
+        "do",
+        "does",
+        "did",
+        "said",
+        "say",
+        "says",
+        "go",
+        "goes",
+        "went",
+        "gone",
+        "come",
+        "came",
+        "take",
+        "took",
+        "taken",
+        "get",
+        "got",
+        "gotten",
+        "give",
+        "gave",
+        "given",
+        "see",
+        "saw",
+        "seen",
+        "know",
+        "knew",
+        "known",
+        "think",
+        "thought",
+        "show",
+        "shown",
+        "showed",
+    }
+)
+
+
+def _is_blocked_entity(name: str) -> bool:
+    """Return True for pronouns and common verbs that aren't real entities."""
+    lower = name.strip().lower()
+    return lower in _PRONOUN_BLOCKLIST or lower in _COMMON_VERB_BLOCKLIST
+
+
 _MAX_CHARS_PER_CHUNK = 2000
+_MAX_EVIDENCE_CHARS = 200
 
 
 def supported_extensions() -> Set[str]:
@@ -42,12 +149,17 @@ def supported_extensions() -> Set[str]:
 
 
 class DocExtractor:
-    """Extract entities and relationships from text documents."""
+    """Extract entities (and via ClaimExtractor, SPO edges) from text segments."""
 
-    def __init__(self, labels: Optional[List[str]] = None) -> None:
+    def __init__(
+        self,
+        labels: Optional[List[str]] = None,
+        claim_extractor: Optional["ClaimExtractorProtocol"] = None,
+    ) -> None:
         self._labels = labels or list(_DEFAULT_LABELS)
         self._gliner = None
         self._gliner_failed = False
+        self._claim_extractor = claim_extractor
 
     def _get_gliner(self):
         """Lazily load the GLiNER model, caching the instance."""
@@ -68,7 +180,7 @@ class DocExtractor:
         tenant_id: str,
         source_doc_id: str,
     ) -> Optional[ExtractionResult]:
-        """Extract from a text or PDF file."""
+        """Extract from a text or PDF file — produces a doc-level Mention anchor."""
         ext = file_path.suffix.lower()
         if ext not in supported_extensions():
             return None
@@ -77,18 +189,35 @@ class DocExtractor:
         if not text:
             return None
 
-        return self._extract_from_text(text, tenant_id, source_doc_id)
+        file_anchor = Mention(
+            source_doc_id=source_doc_id,
+            segment_id="file",
+            ts_start=0.0,
+            ts_end=0.0,
+            modality="document",
+            evidence_span=_truncate(text, _MAX_EVIDENCE_CHARS),
+        )
+        return self.extract_from_text(text, tenant_id, source_doc_id, file_anchor)
 
     def extract_from_text(
         self,
         text: str,
         tenant_id: str,
         source_doc_id: str,
+        segment_anchor: Mention,
+        prior_entities: Optional[List[str]] = None,
     ) -> ExtractionResult:
-        """Public entry point for callers that already have extracted text
-        (e.g. video transcriptions, image captions).
+        """Per-segment entity extraction. ``segment_anchor`` is required.
+
+        ``prior_entities`` carries names already seen in earlier segments of
+        the same ``source_doc_id`` so the ClaimExtractor can resolve
+        pronoun-style coreferences (``"She later won the Nobel Prize."``
+        binds ``She`` → ``Marie Curie`` when Marie Curie was extracted
+        from an earlier segment).
         """
-        return self._extract_from_text(text, tenant_id, source_doc_id)
+        return self._extract_from_text(
+            text, tenant_id, source_doc_id, segment_anchor, prior_entities or []
+        )
 
     def _load_text(self, file_path: Path, ext: str) -> str:
         if ext in _PDF_EXTENSIONS:
@@ -110,7 +239,12 @@ class DocExtractor:
             return ""
 
     def _extract_from_text(
-        self, text: str, tenant_id: str, source_doc_id: str
+        self,
+        text: str,
+        tenant_id: str,
+        source_doc_id: str,
+        segment_anchor: Mention,
+        prior_entities: Optional[List[str]] = None,
     ) -> ExtractionResult:
         gliner = self._get_gliner()
         nodes: List[Node] = []
@@ -120,7 +254,7 @@ class DocExtractor:
         chunks = self._chunk_text(text)
 
         for chunk in chunks:
-            entities_in_chunk: List[tuple] = []
+            entities_in_chunk: List[Tuple[str, str]] = []
 
             if gliner is not None:
                 try:
@@ -130,6 +264,8 @@ class DocExtractor:
                         label = ent.get("label", "Concept")
                         if not name or len(name) < 2:
                             continue
+                        if _is_blocked_entity(name):
+                            continue
                         entities_in_chunk.append((name, label))
                 except Exception as exc:
                     logger.warning("GLiNER prediction failed on chunk: %s", exc)
@@ -137,6 +273,7 @@ class DocExtractor:
             if not entities_in_chunk:
                 entities_in_chunk = self._fallback_extract(chunk)
 
+            chunk_evidence = _truncate(chunk, _MAX_EVIDENCE_CHARS)
             for name, label in entities_in_chunk:
                 normalized = name.strip()
                 if normalized.lower() in seen:
@@ -148,24 +285,39 @@ class DocExtractor:
                         name=normalized,
                         description=f"{label} mentioned in {source_doc_id}",
                         kind="concept",
-                        mentions=[source_doc_id],
+                        label=label or "Concept",
+                        mentions=[
+                            Mention(
+                                source_doc_id=segment_anchor.source_doc_id,
+                                segment_id=segment_anchor.segment_id,
+                                ts_start=segment_anchor.ts_start,
+                                ts_end=segment_anchor.ts_end,
+                                modality=segment_anchor.modality,
+                                evidence_span=chunk_evidence,
+                            )
+                        ],
                     )
                 )
 
-            chunk_names = [name for name, _ in entities_in_chunk]
-            for i, src in enumerate(chunk_names):
-                for tgt in chunk_names[i + 1 :]:
-                    edges.append(
-                        Edge(
-                            tenant_id=tenant_id,
-                            source=src,
-                            target=tgt,
-                            relation="mentioned_with",
-                            provenance="INFERRED",
-                            source_doc_id=source_doc_id,
-                            confidence=0.5,
-                        )
+            if self._claim_extractor is not None:
+                chunk_hints = [name for name, _ in entities_in_chunk]
+                prior = prior_entities or []
+                merged_hints: List[str] = []
+                seen_hints: Set[str] = set()
+                for n in chunk_hints + prior:
+                    if n.lower() not in seen_hints:
+                        merged_hints.append(n)
+                        seen_hints.add(n.lower())
+                if merged_hints:
+                    claim_edges = self._claim_extractor.extract(
+                        text=chunk,
+                        entity_hints=merged_hints,
+                        modality_hint=segment_anchor.modality,
+                        segment_anchor=segment_anchor,
+                        tenant_id=tenant_id,
+                        source_doc_id=source_doc_id,
                     )
+                    edges.extend(claim_edges)
 
         return ExtractionResult(
             source_doc_id=source_doc_id,
@@ -194,7 +346,7 @@ class DocExtractor:
             chunks.append(current)
         return chunks
 
-    def _fallback_extract(self, chunk: str) -> List[tuple]:
+    def _fallback_extract(self, chunk: str) -> List[Tuple[str, str]]:
         """Cheap fallback when GLiNER is unavailable: capitalized phrases.
 
         Splits on sentence-initial capitalized articles so "The ColPali" →
@@ -229,7 +381,7 @@ class DocExtractor:
             r"\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+){0,3})\b", chunk
         )
         seen: Set[str] = set()
-        out: List[tuple] = []
+        out: List[Tuple[str, str]] = []
         for raw in candidates:
             parts = raw.split()
             while parts and parts[0].lower() in stopwords:
@@ -245,3 +397,25 @@ class DocExtractor:
             seen.add(key)
             out.append((name, "Concept"))
         return out
+
+
+class ClaimExtractorProtocol:
+    """Structural protocol — ClaimExtractor satisfies this without inheriting."""
+
+    def extract(
+        self,
+        *,
+        text: str,
+        entity_hints: List[str],
+        modality_hint: str,
+        segment_anchor: Mention,
+        tenant_id: str,
+        source_doc_id: str,
+    ) -> List[Edge]:
+        raise NotImplementedError
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1] + "…"

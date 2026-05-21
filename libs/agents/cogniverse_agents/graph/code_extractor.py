@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Set
 
-from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Node
+from cogniverse_agents.graph.graph_schema import Edge, ExtractionResult, Mention, Node
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +145,16 @@ class _TreeWalker:
             name=module_name,
             description=f"Module {module_name} ({language})",
             kind="entity",
-            mentions=[source_doc_id],
+            mentions=[
+                Mention(
+                    source_doc_id=source_doc_id,
+                    segment_id="module",
+                    ts_start=0.0,
+                    ts_end=0.0,
+                    modality="code",
+                    evidence_span=f"Module {module_name} ({language})",
+                )
+            ],
         )
         self.nodes.append(self._module_node)
         self._seen_node_names.add(module_name)
@@ -162,19 +171,22 @@ class _TreeWalker:
                     source=self._module_name,
                     target=name,
                     relation="defines",
-                    provenance="EXTRACTED",
+                    segment_id=f"{self._segment_prefix(node_type)}:{name}",
+                    evidence_span=self._truncate(self._text(node), 200),
                 )
 
         elif node_type in self._IMPORT_TYPES:
             imported = self._extract_import(node)
+            import_text = self._truncate(self._text(node), 200)
             for target in imported:
                 self._imports.append(target)
-                self._add_imported_node(target)
+                self._add_imported_node(target, import_text)
                 self._add_edge(
                     source=self._module_name,
                     target=target,
                     relation="imports",
-                    provenance="EXTRACTED",
+                    segment_id=f"import:{target}",
+                    evidence_span=import_text,
                 )
 
         elif node_type in self._CALL_TYPES:
@@ -182,11 +194,13 @@ class _TreeWalker:
             if callee and callee != self._module_name:
                 enclosing = self._find_enclosing_def(node)
                 if enclosing and callee != enclosing:
+                    enclosing_segment = f"function:{enclosing}"
                     self._add_edge(
                         source=enclosing,
                         target=callee,
                         relation="calls",
-                        provenance="EXTRACTED",
+                        segment_id=enclosing_segment,
+                        evidence_span=self._truncate(self._text(node), 200),
                     )
 
         for child in node.children:
@@ -254,19 +268,29 @@ class _TreeWalker:
             return
         kind = "entity"
         description = f"{node_type.replace('_', ' ')}: {name}"
+        segment_prefix = self._segment_prefix(node_type)
         self.nodes.append(
             Node(
                 tenant_id=self._tenant_id,
                 name=name,
                 description=description,
                 kind=kind,
-                mentions=[self._source_doc_id],
+                mentions=[
+                    Mention(
+                        source_doc_id=self._source_doc_id,
+                        segment_id=f"{segment_prefix}:{name}",
+                        ts_start=0.0,
+                        ts_end=0.0,
+                        modality="code",
+                        evidence_span=description,
+                    )
+                ],
             )
         )
         self._seen_node_names.add(name)
         self._defined_names.add(name)
 
-    def _add_imported_node(self, name: str) -> None:
+    def _add_imported_node(self, name: str, evidence_span: str) -> None:
         if name in self._seen_node_names:
             return
         self.nodes.append(
@@ -275,13 +299,27 @@ class _TreeWalker:
                 name=name,
                 description=f"Imported symbol: {name}",
                 kind="entity",
-                mentions=[self._source_doc_id],
+                mentions=[
+                    Mention(
+                        source_doc_id=self._source_doc_id,
+                        segment_id=f"import:{name}",
+                        ts_start=0.0,
+                        ts_end=0.0,
+                        modality="code",
+                        evidence_span=evidence_span,
+                    )
+                ],
             )
         )
         self._seen_node_names.add(name)
 
     def _add_edge(
-        self, source: str, target: str, relation: str, provenance: str
+        self,
+        source: str,
+        target: str,
+        relation: str,
+        segment_id: str,
+        evidence_span: str,
     ) -> None:
         self.edges.append(
             Edge(
@@ -289,7 +327,26 @@ class _TreeWalker:
                 source=source,
                 target=target,
                 relation=relation,
-                provenance=provenance,
+                evidence_span=evidence_span,
+                segment_id=segment_id,
+                ts_start=0.0,
+                ts_end=0.0,
+                modality="code",
+                provenance="EXTRACTED",
                 source_doc_id=self._source_doc_id,
             )
         )
+
+    @staticmethod
+    def _segment_prefix(node_type: str) -> str:
+        if "class" in node_type or "struct" in node_type or "interface" in node_type:
+            return "class"
+        if "method" in node_type:
+            return "method"
+        return "function"
+
+    @staticmethod
+    def _truncate(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1] + "…"

@@ -91,6 +91,39 @@
           "index"
         ],
         "index": "enable-bm25"
+      },
+      {
+        "name": "entity_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "relation_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "claim_ids",
+        "type": "array<string>",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
       }
     ]
   },

@@ -148,7 +148,7 @@ class AgentDispatcher:
         DSPy / pyvespa):
 
           * **L4 / kernel**: the unified-runtime NetworkPolicy generated
-            by the egress-netpol CLI (B3) covers the union of every
+            by the egress-netpol CLI covers the union of every
             agent's egress allowlist at the cluster boundary. A call to
             an off-allowlist destination is denied by the CNI before it
             leaves the pod.
@@ -867,7 +867,7 @@ class AgentDispatcher:
         profile = config.get("default_profile", "video_colpali_smol500_mv_frame")
 
         search_agent = self._get_search_agent(profile)
-        # B1 — apply the dispatcher's per-request artefact overlay so the
+        # Apply the dispatcher's per-request artefact overlay so the
         # canary/variant prompts shape the SearchAgent's DSPy call. Without
         # this, the overlay sits in context unread.
         self._apply_artefact_overlay(search_agent, context)
@@ -1102,7 +1102,7 @@ class AgentDispatcher:
         agent.telemetry_manager = tm
         agent._artifact_tenant_id = tenant_id
         agent._load_artifact()
-        # B1 — apply per-request artefact overlay so OrchestratorAgent's
+        # Apply per-request artefact overlay so OrchestratorAgent's
         # planner DSPy module honors the canary/variant decision.
         self._apply_artefact_overlay(agent, context)
 
@@ -1226,7 +1226,7 @@ class AgentDispatcher:
         await asyncio.to_thread(
             self._init_agent_memory, agent, "summarizer_agent", tenant_id
         )
-        # B1 — apply per-request artefact overlay to SummarizerAgent's
+        # Apply per-request artefact overlay to SummarizerAgent's
         # DSPy module(s) for canary/variant prompts.
         self._apply_artefact_overlay(agent, context)
 

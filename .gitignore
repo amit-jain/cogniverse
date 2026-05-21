@@ -42,6 +42,12 @@ Thumbs.db
 !/data/testset/evaluation/sample_videos_retrieval_queries.json
 !/data/testset/evaluation/processed/
 /data/testset/evaluation/processed/*
+!/data/testset/evaluation/bright_video_probes.csv
+
+# DSPy training set — checked-in fixture data the BootstrapFewShot
+# compile pass + ClaimExtractor integration tests depend on.
+!/data/training/
+!/data/training/**
 !/data/testset/evaluation/processed/descriptions/
 !/data/testset/evaluation/processed/transcripts/
 !/data/testset/evaluation/processed/metadata/
@@ -75,6 +81,11 @@ test_float_*.py
 *.pickle
 *.npy
 *.npz
+
+# Integration-test goldens are produced by RECORD_GOLDEN=1 pytest runs
+# (see scripts/record_test_goldens.sh). Don't track them in git —
+# regenerate locally before running the byte-equal replay suites.
+tests/**/goldens/
 
 # Temporary files
 *.tmp

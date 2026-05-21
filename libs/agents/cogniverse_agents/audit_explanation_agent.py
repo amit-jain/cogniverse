@@ -20,7 +20,7 @@ time.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
@@ -30,6 +30,9 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.memory.contradiction import ContradictionDetector
 from cogniverse_core.memory.provenance import ProvenanceWalker
 from cogniverse_core.memory.trust import apply_decay, extract_trust
+
+if TYPE_CHECKING:
+    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +155,51 @@ class AuditExplanationAgent(
         from cogniverse_agents._mm_factory import make_mm_factory
 
         self._mm_factory = make_mm_factory(memory_manager_factory)
+        self._graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind a GraphManager so ``.explain`` can read Edges (claims)."""
+        self._graph_manager = graph_manager
+
+    def explain(self, answer_id: str) -> Dict[str, str]:
+        """Render a human-readable audit block for a claim (Edge).
+
+        ``answer_id`` is treated as the Edge ``edge_id``. Returns
+        ``{"text": <str>}`` where the body includes a literal
+        ``"[<ts_start>s-<ts_end>s]"`` timestamp range. The format::
+
+            Claim: <subject> <predicate> <object>.
+            Source: <source_doc_id> [<ts_start>s-<ts_end>s] (<modality>)
+            Evidence: "<evidence_span>"
+            Confidence: <confidence>
+        """
+        if self._graph_manager is None:
+            raise RuntimeError(
+                "AuditExplanationAgent.explain requires a GraphManager — "
+                "call set_graph_manager(...) first."
+            )
+        for edge_fields in self._graph_manager._visit(doc_type="edge", top_k=2000):
+            doc_id = str(edge_fields.get("doc_id") or "")
+            suffix = doc_id.split("_")[-1] if doc_id else ""
+            if suffix != answer_id and not doc_id.endswith(f"_{answer_id}"):
+                continue
+            subject = str(edge_fields.get("source_node_id") or "")
+            predicate = str(edge_fields.get("relation") or "")
+            obj = str(edge_fields.get("target_node_id") or "")
+            ts_start = float(edge_fields.get("ts_start") or 0.0)
+            ts_end = float(edge_fields.get("ts_end") or 0.0)
+            modality = str(edge_fields.get("modality") or "")
+            source_doc = str(edge_fields.get("source_doc_id") or "")
+            evidence = str(edge_fields.get("evidence_span") or "")
+            confidence = float(edge_fields.get("confidence") or 0.0)
+            text = (
+                f"Claim: {subject} {predicate} {obj}.\n"
+                f"Source: {source_doc} [{ts_start}s-{ts_end}s] ({modality})\n"
+                f'Evidence: "{evidence}"\n'
+                f"Confidence: {confidence}"
+            )
+            return {"text": text}
+        raise KeyError(f"No edge found for answer_id={answer_id!r}")
 
     async def _process_impl(
         self, input: AuditExplanationInput
