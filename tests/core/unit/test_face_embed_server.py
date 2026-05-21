@@ -7,7 +7,7 @@ Buffalo_L weights. Verifies:
 * ``GET /health`` returns ``{"status": "ok"}``.
 * ``POST /embed`` with a valid base64-encoded image returns a response
   whose face count, bbox shape, embedding dimensionality, and detection
-  scores match what the cogniverse Phase-2 face-cluster path consumes.
+  scores match what the cogniverse face-cluster consumer expects.
 * Input validation rejects requests with both / neither image_url and
   image_b64, and surfaces image-decode failures as HTTP 400.
 """

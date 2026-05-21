@@ -1367,11 +1367,11 @@ inference:
       failureThreshold: 24
 
   # InsightFace Buffalo_L sidecar serving 512-dim ArcFace face
-  # embeddings + RetinaFace detection. Driven by the Phase 2 face-
-  # cluster path in the cross-modal linker — one POST /embed per
-  # keyframe, cluster the returned vectors per source_doc_id, attribute
-  # each cluster to the temporally-aligned named Person. CPU-only; the
-  # model pack (~210 MiB) downloads on first /embed call.
+  # embeddings + RetinaFace detection. The cross-modal face-cluster
+  # consumer POSTs one keyframe per request, clusters the returned
+  # vectors per source_doc_id, and attributes each cluster to the
+  # temporally-aligned named Person. CPU-only; the model pack
+  # (~210 MiB) downloads on first /embed call.
   face_embed:
     enabled: false
     replicaCount: 1
@@ -1663,8 +1663,8 @@ redis:
 # Default ``s3://`` source for ingestion. Files land in MinIO either by
 # direct upload through the runtime or by an external sync agent (Google
 # Photos, Drive). The ingestor worker fetches via ``MediaLocator`` which
-# already speaks ``s3://``. Webhook-based auto-ingest on bucket events is
-# Phase 5e — for now MinIO is just a dumb store.
+# already speaks ``s3://``. Webhook-based auto-ingest on bucket events
+# is a future follow-up — for now MinIO is just a dumb store.
 minio:
   enabled: true
   image:

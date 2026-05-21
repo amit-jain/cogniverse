@@ -4,9 +4,9 @@ Two endpoints:
 
 * ``POST /embed`` — body ``{"image_url": "http://..."}`` OR
   ``{"image_b64": "..."}``. Returns ``{"faces": [{bbox, vec}], "n": int}``
-  where ``vec`` is a 512-dim ArcFace embedding (the same space cogniverse
-  Phase-2 face-clustering operates in) and ``bbox`` is the detected face
-  rectangle as ``[x1, y1, x2, y2]`` in image pixels.
+  where ``vec`` is a 512-dim L2-normalised ArcFace embedding (the same
+  space the face-cluster consumer operates in) and ``bbox`` is the
+  detected face rectangle as ``[x1, y1, x2, y2]`` in image pixels.
 * ``GET /health`` — liveness probe used by Helm + ``setup_local_tests.sh``.
 
 One model, one process. InsightFace's ``Buffalo_L`` bundles the
@@ -14,10 +14,10 @@ One model, one process. InsightFace's ``Buffalo_L`` bundles the
 load on CPU at process start (≈300 MiB resident, ≈5 s cold-load). After
 warmup the encode path is ~50 ms per frame for typical 720p inputs.
 
-Cogniverse Phase-2 face-cluster paths POST one image per keyframe and
-cluster the returned vectors per ``source_doc_id`` to discover
-anonymous identity groups. The sidecar does not persist any state — it's
-a pure compute service.
+The face-cluster consumer POSTs one image per keyframe and clusters
+the returned vectors per ``source_doc_id`` to discover anonymous
+identity groups. The sidecar does not persist any state — it's a
+pure compute service.
 """
 
 import base64
