@@ -1366,6 +1366,50 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 24
 
+  # InsightFace Buffalo_L sidecar serving 512-dim ArcFace face
+  # embeddings + RetinaFace detection. Driven by the Phase 2 face-
+  # cluster path in the cross-modal linker — one POST /embed per
+  # keyframe, cluster the returned vectors per source_doc_id, attribute
+  # each cluster to the temporally-aligned named Person. CPU-only; the
+  # model pack (~210 MiB) downloads on first /embed call.
+  face_embed:
+    enabled: false
+    replicaCount: 1
+    image:
+      repository: cogniverse/face-embed
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    service:
+      type: NodePort
+      port: 8000
+      nodePort: 29007
+    env:
+      FACE_EMBED_MODEL: buffalo_l
+      FACE_EMBED_CTX_ID: "-1"            # -1 = CPU; set to a GPU index for CUDA
+    resources:
+      limits:
+        cpu: "2"
+        memory: "4Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+
 # ===========================================
 # Messaging Gateway (Telegram/Slack)
 # ===========================================
