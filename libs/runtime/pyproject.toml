@@ -54,6 +54,12 @@ dependencies = [
 
     # boto3 for MinIO uploads on the /ingestion/upload multipart path.
     "boto3==1.40.61",
+
+    # OpenInference DSPy instrumentation. Optional at runtime — only
+    # active when OPENINFERENCE_DSPY=1 is set in the env. Used by the
+    # inbound-channel E2E tests to assert on LM input/output via
+    # Phoenix span attributes (llm.prompt + llm.completion).
+    "openinference-instrumentation-dspy==0.1.37",
 ]
 
 [project.optional-dependencies]

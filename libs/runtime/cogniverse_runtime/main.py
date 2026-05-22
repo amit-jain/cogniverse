@@ -697,6 +697,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
     logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
 
+    # OpenInference DSPy instrumentation: when ``OPENINFERENCE_DSPY=1``
+    # is set in the env, every DSPy module call emits Phoenix spans
+    # with ``input.value`` / ``output.value`` attributes carrying the
+    # serialized LM prompt + completion. The E2E inbound-channel
+    # tests assert against these attributes to lock LM-OUTPUT-level
+    # contracts (constraint actually changes iter-N's reformulated
+    # text). Default off — production users who don't need span-
+    # level LM tracing aren't paying for the instrumentation.
+    if os.environ.get("OPENINFERENCE_DSPY") == "1":
+        try:
+            from openinference.instrumentation.dspy import DSPyInstrumentor
+
+            DSPyInstrumentor().instrument()
+            logger.info("OpenInference DSPy instrumentation enabled")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to enable DSPy instrumentation: %s", exc)
+
     modality_config = OptimizerGenerationConfig(
         optimizer_type="modality",
         dspy_modules={

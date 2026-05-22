@@ -35,6 +35,12 @@ class LLMEndpointConfig:
     max_tokens: int = 1000
     adapter_path: Optional[str] = None  # LoRA/fine-tuned artifact path
     extra_body: Optional[Dict[str, Any]] = None  # Provider-specific request params
+    # vLLM sampling seed. When set, gets forwarded into extra_body so vLLM's
+    # OpenAI-compat layer honors it on each request. With ``temperature=0``
+    # + a fixed ``seed``, the LM produces bit-stable output across runs
+    # against the same vLLM deployment (modulo vLLM batching state — see
+    # the test docs for caveats). Default None preserves vanilla behavior.
+    seed: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, omitting None values for clean serialization."""
@@ -62,6 +68,7 @@ class LLMEndpointConfig:
             max_tokens=data.get("max_tokens", 1000),
             adapter_path=data.get("adapter_path"),
             extra_body=data.get("extra_body"),
+            seed=data.get("seed"),
         )
 
 

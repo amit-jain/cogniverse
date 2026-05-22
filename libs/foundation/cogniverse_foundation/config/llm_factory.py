@@ -52,15 +52,23 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if config.api_key is not None:
         kwargs["api_key"] = config.api_key
 
-    if config.extra_body is not None:
-        kwargs["extra_body"] = config.extra_body
+    # Merge config.seed into extra_body when set. vLLM's OpenAI-compat
+    # layer reads ``seed`` from the request body and uses it for the
+    # sampling RNG; combined with ``temperature=0`` this gives
+    # byte-stable output across runs (modulo vLLM batching state).
+    extra_body = dict(config.extra_body or {})
+    if config.seed is not None:
+        extra_body["seed"] = int(config.seed)
+    if extra_body:
+        kwargs["extra_body"] = extra_body
 
     logger.info(
-        "Creating dspy.LM: model=%s api_base=%s temperature=%s max_tokens=%s",
+        "Creating dspy.LM: model=%s api_base=%s temperature=%s max_tokens=%s seed=%s",
         config.model,
         config.api_base or "(default)",
         config.temperature,
         config.max_tokens,
+        config.seed,
     )
 
     return dspy.LM(config.model, **kwargs)
