@@ -162,17 +162,64 @@ class DocExtractor:
         self._claim_extractor = claim_extractor
 
     def _get_gliner(self):
-        """Lazily load the GLiNER model, caching the instance."""
+        """Lazily load the GLiNER model, caching the instance.
+
+        Prefers the deployed ``deploy/gliner`` sidecar URL when one is
+        registered in ``SystemConfig.inference_service_urls`` so the
+        runtime image doesn't need the heavy local gliner+torch stack.
+        Falls back to a local-load (which usually fails in the slim
+        production image) only when the env doesn't expose the URL.
+        """
         if self._gliner is not None:
             return self._gliner
         if self._gliner_failed:
             return None
         from cogniverse_core.common.models import get_or_load_gliner
 
-        self._gliner = get_or_load_gliner("urchade/gliner_large-v2.1", logger=logger)
+        inference_url = self._discover_gliner_url()
+        self._gliner = get_or_load_gliner(
+            "urchade/gliner_large-v2.1",
+            logger=logger,
+            inference_url=inference_url,
+        )
         if self._gliner is None:
             self._gliner_failed = True
         return self._gliner
+
+    @staticmethod
+    def _discover_gliner_url():
+        """Return the GLiNER sidecar URL from SystemConfig or env."""
+        import os as _os
+
+        try:
+            from cogniverse_foundation.config.utils import (  # noqa: PLC0415
+                get_config_manager_singleton,
+            )
+
+            sys_cfg = get_config_manager_singleton().get_system_config()
+            url = (sys_cfg.inference_service_urls or {}).get("gliner")
+            if url:
+                return url
+        except Exception:
+            # Fall through to env / None — the loader handles both.
+            pass
+        # Env-backed override for processes that don't share the
+        # SystemConfig singleton (e.g. the ingestor worker, which builds
+        # its own ConfigManager). Reads INFERENCE_SERVICE_URLS or the
+        # dedicated GLINER_INFERENCE_URL var.
+        import json as _json
+
+        raw = _os.environ.get("INFERENCE_SERVICE_URLS")
+        if raw:
+            try:
+                parsed = _json.loads(raw)
+            except _json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                url = parsed.get("gliner")
+                if url:
+                    return url
+        return _os.environ.get("GLINER_INFERENCE_URL")
 
     def extract(
         self,
