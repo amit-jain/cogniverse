@@ -468,9 +468,19 @@ class ProcessingStrategySet:
                     f"Strategy {type(strategy).__name__!r} requires 'vlm' processor "
                     "but does not implement generate_descriptions()."
                 )
-            segments = accumulated_results.get("segments", {})
+            # The segmentation step writes its output under ``keyframes``
+            # (frame-strategy) or ``chunks`` (chunk-strategy); fall back
+            # to the legacy ``segments`` key for any future shape. VLM
+            # needs the rich metadata dict with ``video_id`` + per-frame
+            # entries, not just a bare list.
+            frames_metadata = (
+                accumulated_results.get("keyframes")
+                or accumulated_results.get("chunks")
+                or accumulated_results.get("segments")
+                or {}
+            )
             result = await strategy.generate_descriptions(
-                segments, video_path, pipeline_context, {}
+                frames_metadata, video_path, pipeline_context, {}
             )
             return {"descriptions": result} if result else {}
 

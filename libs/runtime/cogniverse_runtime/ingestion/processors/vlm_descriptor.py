@@ -204,9 +204,20 @@ class VLMDescriptor:
 
         for keyframe in keyframes:
             frame_path = Path(keyframe["path"])
-            if frame_path.exists():
-                frame_mapping[frame_path.name] = str(keyframe["frame_id"])
-                frame_paths.append(frame_path)
+            if not frame_path.exists():
+                continue
+            # The keyframe-processor writes ``frame_number``; older /
+            # downstream code reads ``frame_id``. Accept either so the
+            # VLM doesn't crash on the field-name mismatch.
+            frame_ref = keyframe.get("frame_id")
+            if frame_ref is None:
+                frame_ref = keyframe.get("frame_number")
+            if frame_ref is None:
+                # Last resort — derive from filename so the response
+                # mapping still has a stable key per frame.
+                frame_ref = frame_path.stem
+            frame_mapping[frame_path.name] = str(frame_ref)
+            frame_paths.append(frame_path)
 
         if not frame_paths:
             self.logger.warning("No valid frame paths found in batch")

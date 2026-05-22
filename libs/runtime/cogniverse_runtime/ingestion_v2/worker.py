@@ -154,7 +154,42 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
         return mgr
 
     graph_router.set_graph_manager_factory(_factory)
+    _configure_dspy_lm(config_manager)
     _GRAPH_FACTORY_INSTALLED = True
+
+
+def _configure_dspy_lm(config_manager) -> None:
+    """Configure the DSPy default LM from env so ClaimExtractor + the
+    sufficient-context gate run without an explicit dspy.configure.
+
+    The runtime's main.py does this on startup but the worker has its
+    own process. Reads ``LLM_ENDPOINT`` + ``LLM_MODEL`` from env
+    (the same env vars the runtime pod uses) and binds them to the
+    DSPy default LM. Idempotent — DSPy.settings.lm is replaced each
+    call but the side effect is the same.
+    """
+    import dspy
+
+    endpoint = os.environ.get("LLM_ENDPOINT")
+    model = os.environ.get("LLM_MODEL")
+    if not endpoint or not model:
+        logger.warning(
+            "LLM_ENDPOINT / LLM_MODEL env not set — DSPy will be unconfigured "
+            "and ClaimExtractor calls will raise 'No LM is loaded'."
+        )
+        return
+    base_url = endpoint.rstrip("/")
+    # vLLM's OAI-compat endpoint matches OpenAI's API contract; route
+    # through DSPy's openai provider with model_type='chat'.
+    lm = dspy.LM(
+        f"openai/{model}",
+        api_base=base_url,
+        api_key="not-needed",
+        model_type="chat",
+        temperature=0.0,
+    )
+    dspy.configure(lm=lm)
+    logger.info("DSPy LM configured for worker: model=%s api_base=%s", model, base_url)
 
 
 async def _default_processor(job: IngestJob) -> dict:
@@ -191,7 +226,18 @@ async def _default_processor(job: IngestJob) -> dict:
         schema_loader=schema_loader,
         schema_name=job.profile,
     )
-    processing_results = await pipeline.process_video_async(Path(local_path))
+    pipeline_envelope = await pipeline.process_video_async(Path(local_path))
+
+    # process_video_async wraps the strategy outputs under
+    # envelope["results"] (alongside top-level status/error/timing
+    # fields). Unwrap that nested dict before passing to the graph
+    # extractor — _iter_segments_for_graph reads keyframes/transcript/
+    # descriptions from the top level of whatever dict it receives.
+    if isinstance(pipeline_envelope, dict) and "results" in pipeline_envelope:
+        processing_results = dict(pipeline_envelope.get("results") or {})
+        processing_results.setdefault("video_id", pipeline_envelope.get("video_id"))
+    else:
+        processing_results = pipeline_envelope or {}
 
     # Run per-segment graph extraction + cross-modal linker + face
     # pipeline + back-ref PATCH on top of the content ingestion. Graph
@@ -219,6 +265,12 @@ async def _default_processor(job: IngestJob) -> dict:
         processing_results["graph_nodes"] = 0
         processing_results["graph_edges"] = 0
 
+    # Re-attach graph counts onto the original envelope the caller's
+    # _summarise reads from (so /ingestion/{id}/status surfaces them).
+    if isinstance(pipeline_envelope, dict):
+        pipeline_envelope["graph_nodes"] = processing_results.get("graph_nodes", 0)
+        pipeline_envelope["graph_edges"] = processing_results.get("graph_edges", 0)
+        return pipeline_envelope
     return processing_results
 
 

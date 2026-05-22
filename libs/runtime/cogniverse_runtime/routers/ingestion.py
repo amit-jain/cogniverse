@@ -369,7 +369,11 @@ def _iter_segments_for_graph(
     for kf in keyframes_list:
         if not isinstance(kf, dict):
             continue
+        # The keyframe processor writes ``frame_number``; accept both keys
+        # so this iterator works regardless of which extractor wrote them.
         fid = kf.get("frame_id")
+        if fid is None:
+            fid = kf.get("frame_number")
         if fid is None:
             continue
         keyframe_ts_by_id[str(fid)] = float(kf.get("timestamp", 0.0) or 0.0)
@@ -409,7 +413,7 @@ def _iter_segments_for_graph(
         if not text:
             continue
         text = str(text)
-        fid = kf.get("frame_id", "")
+        fid = kf.get("frame_id") or kf.get("frame_number", "")
         ts = float(kf.get("timestamp", 0.0) or 0.0)
         yield SegmentRecord(
             text=text,
@@ -493,7 +497,23 @@ async def _extract_graph_per_segment(
     entity_pool: List[str] = []
     entity_pool_seen: set[str] = set()
 
-    for record in _iter_segments_for_graph(processing_results, source_doc_id):
+    segments_list = list(_iter_segments_for_graph(processing_results, source_doc_id))
+    logger.info(
+        "KG extraction: %d segments yielded for source_doc_id=%s "
+        "(transcript_keys=%s, descriptions_keys=%s, keyframes_keys=%s)",
+        len(segments_list),
+        source_doc_id,
+        list((processing_results.get("transcript") or {}).keys())
+        if isinstance(processing_results.get("transcript"), dict)
+        else type(processing_results.get("transcript")).__name__,
+        list((processing_results.get("descriptions") or {}).keys())
+        if isinstance(processing_results.get("descriptions"), dict)
+        else type(processing_results.get("descriptions")).__name__,
+        list((processing_results.get("keyframes") or {}).keys())
+        if isinstance(processing_results.get("keyframes"), dict)
+        else type(processing_results.get("keyframes")).__name__,
+    )
+    for record in segments_list:
         result = doc_ext.extract_from_text(
             text=record.text,
             tenant_id=tenant_id,

@@ -28,6 +28,12 @@ dependencies = [
     # cluster vLLM ASR sidecar instead of shipping ~3 GB of model code.
     "librosa==0.11.0",
 
+    # PyAV: extract the audio stream from MP4/MKV containers and resample
+    # to 16 kHz mono WAV before POSTing to vLLM Whisper. vLLM's
+    # /v1/audio/transcriptions rejects raw video containers with
+    # HTTP 400 ("Invalid or unsupported audio file").
+    "av==13.1.0",
+
     # Document processing
     "pdf2image==1.17.0",
     "pypdf2==3.0.1",

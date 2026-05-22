@@ -195,16 +195,63 @@ class AudioProcessor(BaseProcessor):
             "segments": segments,
         }
 
+    @staticmethod
+    def _extract_audio_wav(video_path: Path) -> bytes:
+        """Extract the audio stream from ``video_path`` and return it as
+        16 kHz mono PCM WAV bytes.
+
+        Required because vLLM's Whisper endpoint rejects MP4 / MKV
+        containers (it expects pure audio in the OpenAI-Whisper-expected
+        16 kHz mono format). pyav decodes the source container and
+        resamples on the fly without a temp file.
+        """
+        import io
+
+        import av
+
+        container = av.open(str(video_path))
+        in_stream = next((s for s in container.streams if s.type == "audio"), None)
+        if in_stream is None:
+            container.close()
+            raise RuntimeError(f"{video_path}: no audio stream present")
+
+        buf = io.BytesIO()
+        out = av.open(buf, "w", format="wav")
+        out_stream = out.add_stream("pcm_s16le", rate=16000)
+        out_stream.layout = "mono"
+        resampler = av.audio.resampler.AudioResampler(
+            format=out_stream.format, layout=out_stream.layout, rate=16000
+        )
+
+        try:
+            for frame in container.decode(in_stream):
+                for resampled in resampler.resample(frame):
+                    for packet in out_stream.encode(resampled):
+                        out.mux(packet)
+            for packet in out_stream.encode():
+                out.mux(packet)
+        finally:
+            out.close()
+            container.close()
+
+        return buf.getvalue()
+
     def _transcribe_remote(self, video_path: Path, video_id: str) -> dict[str, Any]:
         """POST audio to the vLLM Whisper sidecar's
         ``/v1/audio/transcriptions`` endpoint and return the parsed
         transcript with per-segment timestamps.
+
+        vLLM's Whisper endpoint rejects raw video containers ("Invalid
+        or unsupported audio file") and requires 16 kHz mono PCM. We
+        extract the audio stream via pyav, resample on the fly, and
+        send the resulting wav buffer.
         """
+
         import requests
 
-        audio_bytes = video_path.read_bytes()
         url = f"{self.endpoint.rstrip('/')}/v1/audio/transcriptions"
-        files = {"file": (video_path.name, audio_bytes, "audio/wav")}
+        audio_bytes = self._extract_audio_wav(video_path)
+        files = {"file": (f"{video_id}.wav", audio_bytes, "audio/wav")}
         try:
             models_resp = requests.get(
                 f"{self.endpoint.rstrip('/')}/v1/models", timeout=10
