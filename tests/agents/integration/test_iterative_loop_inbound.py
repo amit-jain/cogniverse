@@ -427,3 +427,103 @@ async def test_empty_content_constraint_does_not_inject_blank_aspect():
 
     assert result.exit_reason == "sufficient"
     assert stub._reformulate_calls == [[], []]
+
+
+# --------------------------------------------------------------------- #
+# Per-session isolation — constraint to A doesn't reach B's loop          #
+# --------------------------------------------------------------------- #
+
+
+async def test_per_session_isolation_constraint_to_a_does_not_reach_b():
+    """Two concurrent sessions A and B running the iterative loop.
+    A constraint enqueued to A's queue MUST appear in A's reformulate
+    calls but MUST NOT appear in B's reformulate calls — proves the
+    registry's per-session indexing actually scopes messages, not a
+    shared broadcast queue.
+    """
+    reset_inbound_queue_registry_for_testing()
+    registry = get_inbound_queue_registry()
+    queue_a = await registry.get_or_create_queue("sess-A", "test_tenant")
+    queue_b = await registry.get_or_create_queue("sess-B", "test_tenant")
+    await queue_a.enqueue(_msg("constraint-only-for-A"))
+
+    stub_a = _StubOrchestrator()
+    stub_b = _StubOrchestrator()
+    plan_a = _StubPlan()
+    plan_b = _StubPlan()
+
+    # Run both loops to completion. The two stubs each have their
+    # own _reformulate_calls list so we can assert independently.
+    import asyncio as _aio
+
+    res_a, res_b = await _aio.gather(
+        OrchestratorAgent._iterative_retrieval_loop(
+            stub_a,
+            query="q-A",
+            plan=plan_a,
+            tenant_id="test_tenant",
+            workflow_id="wf-A",
+            session_id="sess-A",
+            agent_results_sink={},
+            inbound_queue=queue_a,
+        ),
+        OrchestratorAgent._iterative_retrieval_loop(
+            stub_b,
+            query="q-B",
+            plan=plan_b,
+            tenant_id="test_tenant",
+            workflow_id="wf-B",
+            session_id="sess-B",
+            agent_results_sink={},
+            inbound_queue=queue_b,
+        ),
+    )
+
+    # A saw the constraint at iter 0 (position 0).
+    assert stub_a._reformulate_calls[0] == ["constraint-only-for-A"]
+    # B saw NO constraints — exact equality to the no-inbound case.
+    assert stub_b._reformulate_calls == [[], []]
+    # B's reformulate_calls flattened contain ZERO occurrences of A's
+    # constraint string — strong leak check.
+    import json as _json
+
+    assert _json.dumps(stub_b._reformulate_calls).count("constraint-only-for-A") == 0
+    # Both sessions exit cleanly.
+    assert res_a.exit_reason == "sufficient"
+    assert res_b.exit_reason == "sufficient"
+
+
+# --------------------------------------------------------------------- #
+# max_iter exit — distinct from sufficient + user_stop                    #
+# --------------------------------------------------------------------- #
+
+
+async def test_max_iter_exit_reason_distinct_from_user_stop_and_sufficient():
+    """Three independent exit reasons must produce three distinct
+    strings. ``max_iter`` fires when the loop completes ``MAX_ITER``
+    iterations without convergence (gate not sufficient AND not all
+    agents return evidence). Stub returns NO evidence so the
+    convergence heuristic never fires; the loop runs all 3 iters and
+    exits with ``exit_reason="max_iter"``.
+    """
+    reset_inbound_queue_registry_for_testing()
+
+    class _NoEvidenceStub(_StubOrchestrator):
+        async def _execute_plan(self, plan, **kwargs):
+            self._execute_calls += 1
+            # Empty iter_results → bool(iter_results) is False → no
+            # convergence at iter_idx >= 1.
+            return {}
+
+    stub = _NoEvidenceStub()
+    plan = _StubPlan()
+    result = await _run_loop(stub, plan, inbound_queue=None)
+
+    # Three distinct exit reasons proven across the test file:
+    #   "sufficient"   — convergence heuristic (other tests above)
+    #   "user_stop"    — inbound stop (test_stop_mid_loop_*)
+    #   "max_iter"     — this test
+    assert result.exit_reason == "max_iter"
+    assert result.iterations_executed == 3
+    assert result.exit_reason != "user_stop"
+    assert result.exit_reason != "sufficient"

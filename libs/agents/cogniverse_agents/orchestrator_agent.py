@@ -376,6 +376,16 @@ class AccumulatedEvidence:
     partial_due_to_budget: bool = False
     partial_due_to_timeout: bool = False
     trace_id: str = ""
+    # Inbound-channel constraints the loop drained from
+    # ``InboundQueue`` while running. Each entry is the literal
+    # ``content`` of a message tagged ``constraint`` or ``interrupt``,
+    # in submission order. Empty for sessions without an inbound queue
+    # or with no constraint messages enqueued. End-to-end tests assert
+    # baseline runs have this empty AND with-constraint runs have the
+    # exact constraint text — observable proof the channel reached
+    # the loop without relying on top_hits (which can be empty when
+    # the LM hits the wall-clock cap mid-iteration).
+    inbound_constraints_applied: List[str] = field(default_factory=list)
 
 
 class OrchestrationSignature(dspy.Signature):
@@ -988,6 +998,9 @@ class OrchestratorAgent(
                 "top_hits": top_hits,
                 "missing_aspects": missing_aspects,
                 "final_answer_id": final_answer_id,
+                "inbound_constraints_applied": list(
+                    loop_result.inbound_constraints_applied
+                ),
             }
             final_output["iterative_loop"] = iterative_loop
             execution_summary = self._generate_summary(plan, agent_results)
@@ -1997,6 +2010,9 @@ class OrchestratorAgent(
                             partial_due_to_budget=partial_due_to_budget,
                             partial_due_to_timeout=partial_due_to_timeout,
                             trace_id=trace_id,
+                            inbound_constraints_applied=list(
+                                accumulated_inbound_constraints
+                            ),
                         )
                     if (
                         "constraint" in msg.tags or "interrupt" in msg.tags
@@ -2142,6 +2158,7 @@ class OrchestratorAgent(
             partial_due_to_budget=partial_due_to_budget,
             partial_due_to_timeout=partial_due_to_timeout,
             trace_id=trace_id,
+            inbound_constraints_applied=list(accumulated_inbound_constraints),
         )
 
     def _aggregate_results(

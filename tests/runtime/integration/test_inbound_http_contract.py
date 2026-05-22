@@ -81,6 +81,7 @@ def test_post_to_active_session_returns_202_with_message_id_and_queued_at(
             "/agents/orchestrator/message",
             json={
                 "session_id": "sess-active",
+                "tenant_id": "test_tenant",
                 "role": "user",
                 "content": "only sources from 2024",
                 "tags": ["constraint"],
@@ -115,6 +116,7 @@ def test_post_to_unknown_session_returns_404_with_exact_detail(client):
         "/agents/orchestrator/message",
         json={
             "session_id": "never-existed",
+            "tenant_id": "test_tenant",
             "role": "user",
             "content": "hi",
             "tags": [],
@@ -139,6 +141,7 @@ def test_post_with_past_deadline_returns_400_at_intake(client):
             "/agents/orchestrator/message",
             json={
                 "session_id": "sess-active",
+                "tenant_id": "test_tenant",
                 "role": "user",
                 "content": "stale",
                 "tags": [],
@@ -167,6 +170,7 @@ def test_post_with_invalid_role_returns_422(client):
             "/agents/orchestrator/message",
             json={
                 "session_id": "sess-active",
+                "tenant_id": "test_tenant",
                 "role": "wizard",  # not in {user, system, agent}
                 "content": "hi",
                 "tags": [],
@@ -191,6 +195,7 @@ def test_post_with_empty_session_id_returns_422(client):
         "/agents/orchestrator/message",
         json={
             "session_id": "",
+            "tenant_id": "test_tenant",
             "role": "user",
             "content": "hi",
             "tags": [],
@@ -234,6 +239,7 @@ def test_successful_post_message_is_observable_in_queue_drain(client):
             "/agents/orchestrator/message",
             json={
                 "session_id": "sess-active",
+                "tenant_id": "test_tenant",
                 "role": "user",
                 "content": "constraint-payload-XYZ",
                 "tags": ["constraint", "interrupt"],
@@ -270,6 +276,7 @@ def test_post_after_close_queue_returns_404(client):
         "/agents/orchestrator/message",
         json={
             "session_id": "sess-active",
+            "tenant_id": "test_tenant",
             "role": "user",
             "content": "post-close",
             "tags": [],
@@ -301,6 +308,7 @@ def test_race_close_during_enqueue_surfaces_404(client, monkeypatch):
         "/agents/orchestrator/message",
         json={
             "session_id": "sess-active",
+            "tenant_id": "test_tenant",
             "role": "user",
             "content": "racing",
             "tags": [],
@@ -325,7 +333,10 @@ def _resolve_queue(session_id: str):
 def test_get_session_returns_metadata_when_active(client):
     _register_sync("sess-poll", "test_tenant")
     try:
-        resp = client.get("/agents/orchestrator/sessions/sess-poll")
+        resp = client.get(
+            "/agents/orchestrator/sessions/sess-poll",
+            params={"tenant_id": "test_tenant"},
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["session_id"] == "sess-poll"
@@ -337,7 +348,10 @@ def test_get_session_returns_metadata_when_active(client):
 
 
 def test_get_session_returns_404_when_not_active(client):
-    resp = client.get("/agents/orchestrator/sessions/never-existed")
+    resp = client.get(
+        "/agents/orchestrator/sessions/never-existed",
+        params={"tenant_id": "test_tenant"},
+    )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "session 'never-existed' not active"
 
@@ -353,3 +367,113 @@ def test_queue_closed_error_is_public_for_consumers():
     # A refactor that hides it internally would break the route and
     # surface only as a 500 in production — this catches it at lint time.
     assert QueueClosedError.__module__ == "cogniverse_runtime.messaging"
+
+
+# --------------------------------------------------------------------- #
+# Cross-tenant POST → 404 (mismatched tenant cannot probe sessions)      #
+# --------------------------------------------------------------------- #
+
+
+def test_cross_tenant_post_to_active_session_returns_404(client):
+    """Alice registers ``sess-shared`` under tenant ``alice``. Bob
+    POSTs to the same session_id with tenant ``bob``. The route MUST
+    return 404 with the same detail used for genuinely-unknown
+    sessions — a 403 would leak "session exists, just not for you,"
+    enabling tenant + session_id enumeration. Locked: same detail
+    string for "doesn't exist" and "exists under another tenant."
+    """
+    _register_sync("sess-shared", "alice")
+    try:
+        resp = client.post(
+            "/agents/orchestrator/message",
+            json={
+                "session_id": "sess-shared",
+                "tenant_id": "bob",  # wrong tenant
+                "role": "user",
+                "content": "probe",
+                "tags": [],
+            },
+        )
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "session 'sess-shared' not active"
+    finally:
+        _close_sync("sess-shared")
+
+
+def test_cross_tenant_post_leaves_target_queue_untouched(client):
+    """Beyond the 404, Bob's POST MUST NOT leave any message in
+    Alice's queue. Otherwise the leak surface is "I can write to
+    your queue, you just can't tell it's me" — Alice's drain after
+    Bob's POST sees zero of Bob's messages.
+    """
+    import asyncio
+
+    _register_sync("sess-leak", "alice")
+    try:
+        # Alice writes her own message first.
+        client.post(
+            "/agents/orchestrator/message",
+            json={
+                "session_id": "sess-leak",
+                "tenant_id": "alice",
+                "role": "user",
+                "content": "alice-msg-1",
+                "tags": ["constraint"],
+            },
+        )
+        # Bob attempts a cross-tenant write.
+        client.post(
+            "/agents/orchestrator/message",
+            json={
+                "session_id": "sess-leak",
+                "tenant_id": "bob",
+                "role": "user",
+                "content": "bob-leaked-msg",
+                "tags": ["constraint"],
+            },
+        )
+        # Alice drains — must see ONLY her message.
+        queue = asyncio.run(get_inbound_queue_registry().get_queue("sess-leak"))
+        drained = asyncio.run(queue.drain())
+        assert [m.content for m in drained] == ["alice-msg-1"]
+        assert all(m.content != "bob-leaked-msg" for m in drained)
+    finally:
+        _close_sync("sess-leak")
+
+
+def test_cross_tenant_get_session_returns_404(client):
+    """GET sessions endpoint mirrors the same cross-tenant guard."""
+    _register_sync("sess-peek", "alice")
+    try:
+        resp = client.get(
+            "/agents/orchestrator/sessions/sess-peek",
+            params={"tenant_id": "bob"},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "session 'sess-peek' not active"
+    finally:
+        _close_sync("sess-peek")
+
+
+# --------------------------------------------------------------------- #
+# Missing tenant_id → 422 (required field)                                #
+# --------------------------------------------------------------------- #
+
+
+def test_post_with_missing_tenant_id_returns_422(client):
+    _register_sync("sess-active", "test_tenant")
+    try:
+        resp = client.post(
+            "/agents/orchestrator/message",
+            json={
+                "session_id": "sess-active",
+                "role": "user",
+                "content": "no tenant",
+                "tags": [],
+            },
+        )
+        assert resp.status_code == 422
+        locs = [tuple(item["loc"]) for item in resp.json()["detail"]]
+        assert ("body", "tenant_id") in locs
+    finally:
+        _close_sync("sess-active")

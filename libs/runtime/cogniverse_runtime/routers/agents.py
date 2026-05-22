@@ -390,9 +390,15 @@ class InboundMessageRequest(BaseModel):
     types) or 400 (deadline already past). Successful intake returns
     202 with ``message_id`` + ``queued_at`` so the caller can
     correlate the enqueue with the agent's downstream consumption.
+
+    ``tenant_id`` scopes the message — the route checks it matches
+    the session's registered tenant and returns 404 (not 403) on
+    mismatch so a cross-tenant probe can't enumerate other tenants'
+    session ids. Required, never optional.
     """
 
     session_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
     role: str
     content: str = ""
     tags: List[str] = Field(default_factory=list)
@@ -451,6 +457,16 @@ async def post_agent_message(
             status_code=404,
             detail=f"session {request.session_id!r} not active",
         )
+    # Cross-tenant guard: deliberately return 404 (not 403) so a probe
+    # cannot distinguish "session exists under different tenant" from
+    # "no such session" — denies tenant enumeration via the message
+    # route. Caller-supplied tenant_id MUST match the session's
+    # registered tenant.
+    if queue.tenant_id != request.tenant_id:
+        raise HTTPException(
+            status_code=404,
+            detail=f"session {request.session_id!r} not active",
+        )
 
     message_id = f"msg_{uuid.uuid4().hex[:16]}"
     queued_at = datetime.now(timezone.utc).isoformat()
@@ -476,20 +492,21 @@ async def post_agent_message(
 
 
 @router.get("/{agent_name}/sessions/{session_id}")
-async def get_agent_session(agent_name: str, session_id: str) -> Dict[str, Any]:
+async def get_agent_session(
+    agent_name: str, session_id: str, tenant_id: str
+) -> Dict[str, Any]:
     """Return 200 + session metadata when active, 404 when not.
 
     Used by clients (and the E2E test harness) to poll whether the
-    agent's ``process()`` has reached its loop body yet — the window
-    between ``POST /process`` returning a 202 and the loop's
-    ``get_or_create_queue`` call. Returns the same ``session_id`` +
-    ``tenant_id`` + ``created_at`` shape ``list_active_queues``
-    emits, so consumers can use either entry point.
+    agent's ``process()`` has reached its loop body. ``tenant_id`` is
+    required (query string) and scoped the same way the message
+    route is — cross-tenant peek returns 404, never reveals the
+    session's actual tenant.
     """
     _ = agent_name
     registry = get_inbound_queue_registry()
     queue = await registry.get_queue(session_id)
-    if queue is None:
+    if queue is None or queue.tenant_id != tenant_id:
         raise HTTPException(
             status_code=404,
             detail=f"session {session_id!r} not active",

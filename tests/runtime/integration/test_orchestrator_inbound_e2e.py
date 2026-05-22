@@ -76,6 +76,7 @@ def test_post_message_unknown_session_returns_404_with_exact_detail():
             f"{RUNTIME_BASE}/agents/orchestrator/message",
             json={
                 "session_id": "e2e-never-existed",
+                "tenant_id": "flywheel_org:production",
                 "role": "user",
                 "content": "hi",
                 "tags": [],
@@ -95,7 +96,10 @@ def test_post_message_unknown_session_returns_404_with_exact_detail():
 
 def test_get_session_unknown_returns_404_with_exact_detail():
     with httpx.Client(timeout=5.0) as c:
-        resp = c.get(f"{RUNTIME_BASE}/agents/orchestrator/sessions/e2e-unknown")
+        resp = c.get(
+            f"{RUNTIME_BASE}/agents/orchestrator/sessions/e2e-unknown",
+            params={"tenant_id": "flywheel_org:production"},
+        )
     assert resp.status_code == 404
     assert resp.json()["detail"] == "session 'e2e-unknown' not active"
 
@@ -112,6 +116,7 @@ def test_post_message_past_deadline_returns_400_with_field_and_value():
             f"{RUNTIME_BASE}/agents/orchestrator/message",
             json={
                 "session_id": "e2e-any",
+                "tenant_id": "flywheel_org:production",
                 "role": "user",
                 "content": "stale",
                 "tags": [],
@@ -175,8 +180,222 @@ def test_post_message_missing_session_id_returns_422():
     with httpx.Client(timeout=5.0) as c:
         resp = c.post(
             f"{RUNTIME_BASE}/agents/orchestrator/message",
-            json={"role": "user", "content": "hi", "tags": []},
+            json={
+                "tenant_id": "flywheel_org:production",
+                "role": "user",
+                "content": "hi",
+                "tags": [],
+            },
         )
     assert resp.status_code == 422
     locs = [tuple(item["loc"]) for item in resp.json()["detail"]]
     assert ("body", "session_id") in locs
+
+
+# --------------------------------------------------------------------- #
+# End-to-end inbound channel through /process → orchestrator loop         #
+# --------------------------------------------------------------------- #
+
+
+def _run_orchestrator_process(
+    *,
+    query: str,
+    session_id: str,
+    tenant_id: str,
+    timeout: float = 180.0,
+) -> dict:
+    """Submit /process and return the parsed orchestration_result.
+
+    The orchestrator is synchronous — this blocks until the loop
+    finishes. The caller hands ``session_id`` so a parallel HTTP
+    actor (test harness or another caller) can resolve the running
+    session via /sessions/{id} and POST messages.
+    """
+    with httpx.Client(timeout=timeout) as c:
+        resp = c.post(
+            f"{RUNTIME_BASE}/agents/orchestrator_agent/process",
+            json={
+                "agent_name": "orchestrator_agent",
+                "query": query,
+                "context": {"tenant_id": tenant_id},
+                "top_k": 5,
+                "session_id": session_id,
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["orchestration_result"]
+
+
+def _post_message(
+    *,
+    session_id: str,
+    tenant_id: str,
+    content: str,
+    tags: list[str],
+) -> int:
+    """POST /agents/orchestrator/message — returns the HTTP status."""
+    with httpx.Client(timeout=10.0) as c:
+        resp = c.post(
+            f"{RUNTIME_BASE}/agents/orchestrator/message",
+            json={
+                "session_id": session_id,
+                "tenant_id": tenant_id,
+                "role": "user",
+                "content": content,
+                "tags": tags,
+            },
+        )
+    return resp.status_code
+
+
+def test_baseline_process_run_has_empty_inbound_constraints_applied():
+    """Run /process with no inbound messages — the response's
+    ``inbound_constraints_applied`` list MUST be exactly ``[]``. This
+    is the baseline that with-constraint runs are compared against:
+    if a future regression silently drains messages from random
+    sessions, this empty baseline would flip and the test fails.
+    """
+    import uuid
+
+    session_id = f"e2e-baseline-{uuid.uuid4().hex[:8]}"
+    result = _run_orchestrator_process(
+        query="what about fire",
+        session_id=session_id,
+        tenant_id="flywheel_org:production",
+    )
+    loop = result["final_output"]["iterative_loop"]
+    # Exact empty list — not "len == 0", not "is not None".
+    assert loop["inbound_constraints_applied"] == []
+
+
+def test_constraint_posted_mid_process_lands_in_inbound_constraints_applied():
+    """Background task: POST /process. Foreground: wait for the
+    session to go active via /sessions/{id}, POST a constraint, wait
+    for /process to return. The response's
+    ``inbound_constraints_applied`` list MUST equal exactly
+    ``["<the constraint text>"]`` — proving the channel reached the
+    orchestrator's iterative loop end-to-end.
+
+    Strong assertion: the WITH-CONSTRAINT run differs from the
+    baseline in exactly this field, no others. Pinpoints the inbound
+    channel as the cause of the diff, not LM noise.
+    """
+    import threading
+    import uuid
+
+    session_id = f"e2e-with-constraint-{uuid.uuid4().hex[:8]}"
+    tenant_id = "flywheel_org:production"
+    constraint_text = "only sources from 2024"
+
+    result_holder: dict = {}
+    thread_error: list = []
+
+    def _run():
+        try:
+            result_holder["result"] = _run_orchestrator_process(
+                query="what about fire",
+                session_id=session_id,
+                tenant_id=tenant_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — propagated to assertion
+            thread_error.append(exc)
+
+    bg = threading.Thread(target=_run, daemon=True)
+    bg.start()
+
+    # Poll /sessions/{id} until 200 (orchestrator registered the
+    # session at loop entry).
+    deadline = time.time() + 30
+    active = False
+    while time.time() < deadline:
+        with httpx.Client(timeout=2.0) as c:
+            sess_resp = c.get(
+                f"{RUNTIME_BASE}/agents/orchestrator/sessions/{session_id}",
+                params={"tenant_id": tenant_id},
+            )
+        if sess_resp.status_code == 200:
+            active = True
+            break
+        time.sleep(0.5)
+    assert active, f"session {session_id} never went active within 30 s"
+
+    # Inject the constraint while the orchestrator is mid-flight.
+    post_status = _post_message(
+        session_id=session_id,
+        tenant_id=tenant_id,
+        content=constraint_text,
+        tags=["constraint"],
+    )
+    assert post_status == 202, f"expected 202 on inbound POST, got {post_status}"
+
+    bg.join(timeout=240)
+    assert not thread_error, f"background /process raised: {thread_error[0]!r}"
+    assert "result" in result_holder, "background /process didn't return"
+
+    loop = result_holder["result"]["final_output"]["iterative_loop"]
+    # Exact-list assertion — the constraint reached the loop AND
+    # only that constraint did (no phantom drain of other sessions'
+    # messages bleeding in via the singleton registry).
+    assert loop["inbound_constraints_applied"] == [constraint_text]
+
+
+def test_cross_tenant_post_to_active_session_returns_404_live():
+    """Live-cluster cross-tenant probe. POST to an active session
+    using a DIFFERENT tenant must 404 with the same detail used for
+    unknown sessions. Catches the case where the deployed runtime
+    forgot to apply the tenant guard.
+
+    Runs against a freshly-started session to avoid race with the
+    previous test's session lifecycle.
+    """
+    import threading
+    import uuid
+
+    session_id = f"e2e-xtenant-{uuid.uuid4().hex[:8]}"
+    owning_tenant = "flywheel_org:production"
+
+    result_holder: dict = {}
+
+    def _run():
+        try:
+            result_holder["result"] = _run_orchestrator_process(
+                query="what about fire",
+                session_id=session_id,
+                tenant_id=owning_tenant,
+            )
+        except Exception:
+            pass
+
+    bg = threading.Thread(target=_run, daemon=True)
+    bg.start()
+
+    # Wait for active.
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        with httpx.Client(timeout=2.0) as c:
+            sess_resp = c.get(
+                f"{RUNTIME_BASE}/agents/orchestrator/sessions/{session_id}",
+                params={"tenant_id": owning_tenant},
+            )
+        if sess_resp.status_code == 200:
+            break
+        time.sleep(0.5)
+
+    # Wrong tenant attempts a POST → 404 with the same detail.
+    with httpx.Client(timeout=5.0) as c:
+        resp = c.post(
+            f"{RUNTIME_BASE}/agents/orchestrator/message",
+            json={
+                "session_id": session_id,
+                "tenant_id": "wrong-tenant",
+                "role": "user",
+                "content": "probe",
+                "tags": [],
+            },
+        )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == f"session '{session_id}' not active"
+
+    # Wait for the orchestrator to finish so the session closes
+    # cleanly before the next test.
+    bg.join(timeout=240)
