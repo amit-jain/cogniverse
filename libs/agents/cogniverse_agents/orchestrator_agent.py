@@ -40,6 +40,21 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
+# Per-session inbound messaging — looked up lazily so the orchestrator
+# can run without the runtime layer wired (e.g. agent-only unit tests
+# don't import cogniverse_runtime). When the import fails we operate
+# as if no inbound channel is available — drain becomes a no-op.
+try:
+    from cogniverse_runtime.messaging import (
+        InboundQueue as _InboundQueue,
+    )
+    from cogniverse_runtime.messaging import (
+        get_inbound_queue_registry as _get_inbound_queue_registry,
+    )
+except ImportError:  # pragma: no cover — runtime not wired in agent-only contexts
+    _InboundQueue = None  # type: ignore[assignment]
+    _get_inbound_queue_registry = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from cogniverse_agents.orchestrator.checkpoint_storage import (
         WorkflowCheckpointStorage,
@@ -857,6 +872,30 @@ class OrchestratorAgent(
         """Orchestration body — runs under ``_orch_semaphores`` cap."""
         start_time = time.monotonic()
 
+        # Register the inbound-messaging session before any agent work
+        # starts so concurrent callers hitting ``POST
+        # /agents/{name}/message`` see 202 instead of 404. Closed in
+        # the ``finally`` block below; closure makes subsequent POSTs
+        # 404 and raises ``QueueClosedError`` on any in-flight enqueue.
+        inbound_queue: Optional["_InboundQueue"] = None
+        if session_id and _get_inbound_queue_registry is not None:
+            try:
+                inbound_queue = await _get_inbound_queue_registry().get_or_create_queue(
+                    session_id, tenant_id
+                )
+            except ValueError as exc:
+                # Cross-tenant session collision — surface as a routing
+                # bug. The orchestrator can still run without the inbound
+                # channel; we just won't accept inbound messages.
+                logger.warning(
+                    "Inbound session register failed for session_id=%s "
+                    "tenant_id=%s: %s",
+                    session_id,
+                    tenant_id,
+                    exc,
+                )
+                inbound_queue = None
+
         # Lazy memory initialization for this tenant
         self._ensure_memory_for_tenant(tenant_id)
 
@@ -909,6 +948,7 @@ class OrchestratorAgent(
                 workflow_id=workflow_id,
                 session_id=session_id,
                 agent_results_sink=agent_results,
+                inbound_queue=inbound_queue,
             )
 
             # Record error entries for agents the LLM proposed but aren't registered
@@ -1020,6 +1060,19 @@ class OrchestratorAgent(
             )
         finally:
             self.active_workflows.pop(workflow_id, None)
+            # Close the inbound-messaging session — subsequent POSTs to
+            # /agents/{name}/message for this session_id return 404 and
+            # any race with an in-flight enqueue surfaces
+            # QueueClosedError (handled by the HTTP route as 404).
+            if session_id and _get_inbound_queue_registry is not None:
+                try:
+                    await _get_inbound_queue_registry().close_queue(session_id)
+                except Exception as exc:  # noqa: BLE001 — log + degrade
+                    logger.warning(
+                        "Inbound session close failed for session_id=%s: %s",
+                        session_id,
+                        exc,
+                    )
 
     async def _create_plan(
         self,
@@ -1846,6 +1899,7 @@ class OrchestratorAgent(
         workflow_id: str,
         session_id: Optional[str],
         agent_results_sink: Dict[str, Any],
+        inbound_queue: Optional["_InboundQueue"] = None,
     ) -> AccumulatedEvidence:
         """Run the retrieve → gate → reformulate loop bounded by hard caps.
 
@@ -1897,12 +1951,63 @@ class OrchestratorAgent(
         except Exception:
             trace_id = ""
 
+        # Constraint messages drained from the inbound queue across the
+        # loop, prepended to ``missing_aspects`` at each iteration so
+        # the reformulator sees the caller's steering. We keep them
+        # across iterations (rather than re-applying on each drain)
+        # so a constraint sent at iter 0 still influences iter 2's
+        # reformulation. The list grows monotonically until loop exit.
+        accumulated_inbound_constraints: List[str] = []
+        iterations_executed = 0
         for iter_idx in range(_ITER_RETRIEVAL_MAX_ITER):
             iteration_started = time.monotonic()
 
-            missing_aspects = (
-                gate_output.get("missing_aspects", []) if gate_output else []
-            )
+            # Drain inbound messages BEFORE building the next iteration's
+            # query so user-injected constraints land in this iter's
+            # reformulation, not the one after. A ``stop`` tag triggers
+            # cooperative cancellation with the partial evidence
+            # accumulated so far.
+            if inbound_queue is not None:
+                inbound_msgs = await inbound_queue.drain()
+                for msg in inbound_msgs:
+                    if "stop" in msg.tags:
+                        exit_reason = "user_stop"
+                        iterations_executed = iter_idx
+                        # Also signal the EventQueue's cancellation
+                        # token so any InstrumentedRLM currently
+                        # running inside a sub-agent's chain observes
+                        # the stop at its next REPL iteration and
+                        # raises RLMCancelledError(reason="user_stop").
+                        # The outer return path returns the partial
+                        # evidence already accumulated.
+                        event_queue = getattr(self, "event_queue", None)
+                        if event_queue is not None:
+                            try:
+                                event_queue.cancel(reason="user_stop")
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning(
+                                    "EventQueue.cancel failed during user_stop: %s",
+                                    exc,
+                                )
+                        return AccumulatedEvidence(
+                            evidence=accumulated,
+                            iterations_executed=iterations_executed,
+                            exit_reason=exit_reason,
+                            final_gate_output=gate_output,
+                            partial_due_to_budget=partial_due_to_budget,
+                            partial_due_to_timeout=partial_due_to_timeout,
+                            trace_id=trace_id,
+                        )
+                    if (
+                        "constraint" in msg.tags or "interrupt" in msg.tags
+                    ) and msg.content:
+                        accumulated_inbound_constraints.append(msg.content)
+
+            base_missing = gate_output.get("missing_aspects", []) if gate_output else []
+            # Inbound constraints take precedence over gate-derived
+            # missing_aspects — the caller's explicit steering is more
+            # specific than the gate's inferred gaps.
+            missing_aspects = list(accumulated_inbound_constraints) + list(base_missing)
             reformulated_query, cot_rationale = await self._reformulate_query(
                 query, missing_aspects
             )

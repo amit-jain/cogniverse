@@ -1,17 +1,25 @@
 """Agent endpoints - unified interface for all agent operations."""
 
 import logging
+import time
+import uuid
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from cogniverse_agents.routing.annotation_queue import AnnotationQueue
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+from cogniverse_runtime.messaging import (
+    InboundMessage,
+    QueueClosedError,
+    get_inbound_queue_registry,
+)
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 logger = logging.getLogger(__name__)
@@ -363,3 +371,131 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         elif "no supported execution path" in detail:
             raise HTTPException(status_code=501, detail=detail)
         raise HTTPException(status_code=400, detail=detail)
+
+
+# --------------------------------------------------------------------------- #
+# Inbound messaging — per-session steering into running agents.               #
+# Mirrors the design in libs/runtime/cogniverse_runtime/messaging.py.         #
+# Phase 1 of docs/plan/agent-inbound-messaging.md.                            #
+# --------------------------------------------------------------------------- #
+
+
+_ALLOWED_INBOUND_ROLES = {"user", "system", "agent"}
+
+
+class InboundMessageRequest(BaseModel):
+    """Request body for ``POST /agents/{name}/message``.
+
+    Pydantic-validated at intake; mismatches surface as 422 (role,
+    types) or 400 (deadline already past). Successful intake returns
+    202 with ``message_id`` + ``queued_at`` so the caller can
+    correlate the enqueue with the agent's downstream consumption.
+    """
+
+    session_id: str = Field(min_length=1)
+    role: str
+    content: str = ""
+    tags: List[str] = Field(default_factory=list)
+    deadline_ms: Optional[int] = None
+
+    @field_validator("role")
+    @classmethod
+    def _validate_role(cls, v: str) -> str:
+        if v not in _ALLOWED_INBOUND_ROLES:
+            raise ValueError(
+                f"role must be one of {sorted(_ALLOWED_INBOUND_ROLES)}, got {v!r}"
+            )
+        return v
+
+
+@router.post("/{agent_name}/message", status_code=202)
+async def post_agent_message(
+    agent_name: str, request: InboundMessageRequest
+) -> Dict[str, Any]:
+    """Enqueue an inbound message for a running agent session.
+
+    The agent's running ``process()`` registered the session via
+    ``InboundQueueRegistry.get_or_create_queue`` at loop entry. Until
+    its ``finally`` block calls ``close_queue``, this route delivers
+    messages to the same queue. Tags drive agent behaviour:
+
+      * ``"stop"`` — cooperative cancellation, agent drains and exits
+        with ``exit_reason="user_stop"`` returning partial state.
+      * ``"constraint"`` / ``"interrupt"`` — content is prepended to
+        the next iteration's ``missing_aspects`` and feeds the
+        reformulator.
+
+    ``agent_name`` is reserved for future per-agent routing (so an
+    operator can address a specific running agent by name); today
+    the registry is keyed only by session_id and the param is
+    accepted for URL symmetry with ``/process``.
+    """
+    _ = agent_name  # reserved for future per-agent routing
+
+    if request.deadline_ms is not None and request.deadline_ms < int(
+        time.time() * 1000
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"deadline_ms {request.deadline_ms} is already in the past; "
+                "reject at intake rather than buffer a message no consumer "
+                "would ever drain"
+            ),
+        )
+
+    registry = get_inbound_queue_registry()
+    queue = await registry.get_queue(request.session_id)
+    if queue is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"session {request.session_id!r} not active",
+        )
+
+    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+    queued_at = datetime.now(timezone.utc).isoformat()
+    msg = InboundMessage(
+        session_id=request.session_id,
+        role=request.role,
+        content=request.content,
+        tags=tuple(request.tags),
+        created_at=queued_at,
+        deadline_ms=request.deadline_ms,
+    )
+    try:
+        await queue.enqueue(msg)
+    except QueueClosedError as exc:
+        # Race: queue closed between get_queue and enqueue. Surface as
+        # 404 (consistent with "not active") rather than a 5xx — the
+        # caller's mental model is "session ended."
+        raise HTTPException(
+            status_code=404,
+            detail=f"session {request.session_id!r} not active",
+        ) from exc
+    return {"message_id": message_id, "queued_at": queued_at}
+
+
+@router.get("/{agent_name}/sessions/{session_id}")
+async def get_agent_session(agent_name: str, session_id: str) -> Dict[str, Any]:
+    """Return 200 + session metadata when active, 404 when not.
+
+    Used by clients (and the E2E test harness) to poll whether the
+    agent's ``process()`` has reached its loop body yet — the window
+    between ``POST /process`` returning a 202 and the loop's
+    ``get_or_create_queue`` call. Returns the same ``session_id`` +
+    ``tenant_id`` + ``created_at`` shape ``list_active_queues``
+    emits, so consumers can use either entry point.
+    """
+    _ = agent_name
+    registry = get_inbound_queue_registry()
+    queue = await registry.get_queue(session_id)
+    if queue is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"session {session_id!r} not active",
+        )
+    return {
+        "session_id": queue.session_id,
+        "tenant_id": queue.tenant_id,
+        "created_at": queue.created_at.isoformat(),
+    }

@@ -137,7 +137,15 @@ class InstrumentedRLM(dspy.RLM):
             logger.debug("No async loop available for event emission, skipping")
 
     def _check_cancelled(self) -> None:
-        """Check if cancelled and raise RLMCancelledError if so."""
+        """Check if cancelled and raise RLMCancelledError if so.
+
+        The orchestrator-level inbound-queue drain (in
+        ``OrchestratorAgent._iterative_retrieval_loop``) sets the event
+        queue's cancellation token with ``reason="user_stop"`` when
+        it sees a ``tags=("stop",)`` message. This method observes the
+        token at each REPL iteration so cooperative cancellation
+        propagates from the outer loop into the RLM.
+        """
         if not self._event_queue:
             return
 
