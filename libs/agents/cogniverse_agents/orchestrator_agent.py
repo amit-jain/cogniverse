@@ -16,6 +16,7 @@ Features:
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -331,9 +332,18 @@ class OrchestrationResult(BaseModel):
 # probe sets and per-segment KG provenance flows; anything heavier should
 # adjust caps via the orchestrator constructor, not by carving out a
 # separate code path.
-_ITER_RETRIEVAL_MAX_ITER = 3
-_ITER_RETRIEVAL_TOKEN_BUDGET = 8000
-_ITER_RETRIEVAL_WALL_CLOCK_MS = 30000
+_ITER_RETRIEVAL_MAX_ITER = int(os.environ.get("ITER_RETRIEVAL_MAX_ITER", "3"))
+_ITER_RETRIEVAL_TOKEN_BUDGET = int(
+    os.environ.get("ITER_RETRIEVAL_TOKEN_BUDGET", "8000")
+)
+# Wall-clock cap for the iterative loop. Default 30 s suits the
+# production gemma-class student. Slower test fixtures (cold cluster,
+# debug LM) can override via env to allow the loop to converge so
+# top_hits + reformulated_query goldens are populated rather than
+# truncated mid-iteration.
+_ITER_RETRIEVAL_WALL_CLOCK_MS = int(
+    os.environ.get("ITER_RETRIEVAL_WALL_CLOCK_MS", "30000")
+)
 # Threshold (in characters of JSON-serialized evidence) above which the
 # sufficient-context gate is promoted from a single-prompt CoT to the
 # iterative RLM substrate. Mirrors the RLM-promotion rule for other large
@@ -380,12 +390,23 @@ class AccumulatedEvidence:
     # ``InboundQueue`` while running. Each entry is the literal
     # ``content`` of a message tagged ``constraint`` or ``interrupt``,
     # in submission order. Empty for sessions without an inbound queue
-    # or with no constraint messages enqueued. End-to-end tests assert
-    # baseline runs have this empty AND with-constraint runs have the
-    # exact constraint text — observable proof the channel reached
-    # the loop without relying on top_hits (which can be empty when
-    # the LM hits the wall-clock cap mid-iteration).
+    # or with no constraint messages enqueued.
     inbound_constraints_applied: List[str] = field(default_factory=list)
+    # Per-iteration record: list of dicts with keys
+    # ``iteration_idx``, ``missing_aspects``, ``reformulated_query``,
+    # ``evidence_added_count``, ``duration_ms``. Lets E2E tests
+    # assert byte-equal against per-iter goldens (baseline vs
+    # with-constraint) so the LM's actual consumption of the
+    # constraint surfaces — not just that the channel buffered it.
+    # The last iteration's ``evidence_added_count`` is the slice
+    # index for cooperative-stop partial-evidence comparisons.
+    loop_trajectory: List[Dict[str, Any]] = field(default_factory=list)
+    # Total loop wall-clock duration in ms. Used by cooperative-stop
+    # tests to assert the stop actually short-circuited rather than
+    # waiting for the full loop.
+    duration_ms: float = 0.0
+    # Per-iteration wall-clock durations in ms. Indexed by iteration.
+    per_iter_duration_ms: List[float] = field(default_factory=list)
 
 
 class OrchestrationSignature(dspy.Signature):
@@ -1001,6 +1022,10 @@ class OrchestratorAgent(
                 "inbound_constraints_applied": list(
                     loop_result.inbound_constraints_applied
                 ),
+                "loop_trajectory": list(loop_result.loop_trajectory),
+                "duration_ms": loop_result.duration_ms,
+                "per_iter_duration_ms": list(loop_result.per_iter_duration_ms),
+                "accumulated_evidence": list(loop_result.evidence),
             }
             final_output["iterative_loop"] = iterative_loop
             execution_summary = self._generate_summary(plan, agent_results)
@@ -1881,23 +1906,41 @@ class OrchestratorAgent(
         sufficiency_score: float,
         exit_reason: str,
         evidence_count: int,
+        session_id: Optional[str] = None,
+        inbound_constraints_applied: Optional[List[str]] = None,
     ) -> None:
         """Emit a ``retrieval_iteration`` Phoenix span carrying
         ``iteration_idx``, ``sufficiency_score``, ``exit_reason``, and
         ``evidence_count`` so trajectory-level evaluation can grade each
-        loop iteration independently."""
+        loop iteration independently.
+
+        ``session_id`` + ``inbound_constraints_applied`` are added as
+        attributes so end-to-end tests can query Phoenix spans by
+        session_id (deterministic across runs) to verify the inbound
+        channel reached the orchestrator's loop even when the
+        OTEL-context trace_id isn't propagated to the response.
+        """
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
+            attrs: Dict[str, Any] = {
+                "iteration_idx": int(iteration_idx),
+                "sufficiency_score": float(sufficiency_score),
+                "exit_reason": exit_reason,
+                "evidence_count": int(evidence_count),
+            }
+            if session_id:
+                attrs["session_id"] = session_id
+            if inbound_constraints_applied:
+                # Phoenix expects string-valued attributes; serialize
+                # the list compactly so consumers can split if needed.
+                attrs["inbound_constraints_applied"] = "|".join(
+                    inbound_constraints_applied
+                )
             with self.telemetry_manager.span(
                 name="retrieval_iteration",
                 tenant_id=tenant_id,
-                attributes={
-                    "iteration_idx": int(iteration_idx),
-                    "sufficiency_score": float(sufficiency_score),
-                    "exit_reason": exit_reason,
-                    "evidence_count": int(evidence_count),
-                },
+                attributes=attrs,
             ):
                 pass
         except Exception as exc:
@@ -1971,6 +2014,11 @@ class OrchestratorAgent(
         # so a constraint sent at iter 0 still influences iter 2's
         # reformulation. The list grows monotonically until loop exit.
         accumulated_inbound_constraints: List[str] = []
+        # Per-iter trajectory: missing_aspects (input to reformulate),
+        # reformulated_query (LM output), evidence_added_count (snippets
+        # this iter contributed before dedup), duration_ms. Tests assert
+        # byte-equal against per-iter goldens.
+        loop_trajectory: List[Dict[str, Any]] = []
         iterations_executed = 0
         for iter_idx in range(_ITER_RETRIEVAL_MAX_ITER):
             iteration_started = time.monotonic()
@@ -2002,6 +2050,7 @@ class OrchestratorAgent(
                                     "EventQueue.cancel failed during user_stop: %s",
                                     exc,
                                 )
+                        loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
                         return AccumulatedEvidence(
                             evidence=accumulated,
                             iterations_executed=iterations_executed,
@@ -2013,6 +2062,11 @@ class OrchestratorAgent(
                             inbound_constraints_applied=list(
                                 accumulated_inbound_constraints
                             ),
+                            loop_trajectory=list(loop_trajectory),
+                            duration_ms=loop_duration_ms,
+                            per_iter_duration_ms=[
+                                t["duration_ms"] for t in loop_trajectory
+                            ],
                         )
                     if (
                         "constraint" in msg.tags or "interrupt" in msg.tags
@@ -2072,12 +2126,29 @@ class OrchestratorAgent(
 
             iterations_executed = iter_idx + 1
 
+            # Record per-iter trajectory snapshot. Captured here so
+            # both the early-break paths (sufficient / max_iter /
+            # token_budget / wall_clock) and the loop-completes-
+            # naturally path see the iteration's inputs + outputs.
+            iter_duration_ms = (time.monotonic() - iteration_started) * 1000.0
+            loop_trajectory.append(
+                {
+                    "iteration_idx": iter_idx,
+                    "missing_aspects": list(missing_aspects),
+                    "reformulated_query": reformulated_query,
+                    "evidence_added_count": len(new_snippets),
+                    "duration_ms": iter_duration_ms,
+                }
+            )
+
             self._emit_retrieval_iteration_span(
                 tenant_id=tenant_id,
                 iteration_idx=iterations_executed,
                 sufficiency_score=gate_output.get("confidence", 0.0),
                 exit_reason="in_progress",
                 evidence_count=len(accumulated),
+                session_id=session_id,
+                inbound_constraints_applied=list(accumulated_inbound_constraints),
             )
 
             # Honor a ``sufficient`` gate decision only from the second
@@ -2150,6 +2221,7 @@ class OrchestratorAgent(
             # Defensive guard against runaway iterations from clock skew.
             del iteration_started
 
+        loop_duration_ms = (time.monotonic() - loop_started) * 1000.0
         return AccumulatedEvidence(
             evidence=accumulated,
             iterations_executed=iterations_executed,
@@ -2159,6 +2231,9 @@ class OrchestratorAgent(
             partial_due_to_timeout=partial_due_to_timeout,
             trace_id=trace_id,
             inbound_constraints_applied=list(accumulated_inbound_constraints),
+            loop_trajectory=list(loop_trajectory),
+            duration_ms=loop_duration_ms,
+            per_iter_duration_ms=[t["duration_ms"] for t in loop_trajectory],
         )
 
     def _aggregate_results(

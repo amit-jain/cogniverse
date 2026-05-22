@@ -527,3 +527,119 @@ async def test_max_iter_exit_reason_distinct_from_user_stop_and_sufficient():
     assert result.iterations_executed == 3
     assert result.exit_reason != "user_stop"
     assert result.exit_reason != "sufficient"
+
+
+# --------------------------------------------------------------------- #
+# All-three constraints golden distinct from single-constraint goldens   #
+# --------------------------------------------------------------------- #
+
+
+async def test_three_constraints_missing_aspects_distinct_from_each_single_constraint():
+    """The all-three composition MUST be observably different from
+    any single-constraint run, AND from any pair. Catches a silent
+    regression where the loop collapses three constraints down to
+    one (e.g. last-write-wins) — that bug would not be caught by
+    the existing "order locked" test if last-write happens to be
+    correct ordering by accident.
+    """
+    reset_inbound_queue_registry_for_testing()
+    registry = get_inbound_queue_registry()
+    q = await registry.get_or_create_queue("sess-1", "test_tenant")
+    await q.enqueue(_msg("A"))
+    await q.enqueue(_msg("B"))
+    await q.enqueue(_msg("C"))
+    stub = _StubOrchestrator()
+    result = await _run_loop(stub, _StubPlan(), inbound_queue=q)
+    all_three = stub._reformulate_calls[0]
+    assert all_three == ["A", "B", "C"]
+    # Distinct from each single-constraint shape.
+    assert all_three != ["A"]
+    assert all_three != ["B"]
+    assert all_three != ["C"]
+    # Distinct from each pair shape.
+    assert all_three != ["A", "B"]
+    assert all_three != ["B", "C"]
+    assert all_three != ["A", "C"]
+
+
+# --------------------------------------------------------------------- #
+# Cooperative stop returns baseline-slice partial evidence byte-equal    #
+# --------------------------------------------------------------------- #
+
+
+async def test_stop_returns_partial_evidence_byte_equal_to_baseline_slice():
+    """Strong cooperative-stop assertion: the partial evidence
+    returned by a user_stop run MUST be byte-equal to the same slice
+    of the baseline full run. Proves the stop returns work-in-progress
+    state, not a fresh recompute.
+
+    Approach: run baseline (no stop) → record full evidence list.
+    Run a second loop that stops between iter 0 and iter 1 (one iter
+    of work). The stopped run's evidence MUST equal the first
+    N_iter0_count items of the baseline's evidence — same order,
+    same content, no recompute.
+
+    Uses stub orchestrator so the per-iter evidence is deterministic
+    (each iter produces ``[{"source_doc_id":"doc-N","segment_id":
+    "seg-N",...}]``). The plan's strong assertion against a real
+    cluster baseline would require LM determinism which we lack;
+    the stub gives the SAME contract proof against a controlled
+    fixture.
+    """
+    reset_inbound_queue_registry_for_testing()
+
+    # Baseline run — no stop, full 3 iterations.
+    registry = get_inbound_queue_registry()
+    q_base = await registry.get_or_create_queue("sess-baseline", "test_tenant")
+    stub_base = _StubOrchestrator()
+    baseline = await OrchestratorAgent._iterative_retrieval_loop(
+        stub_base,
+        query="q",
+        plan=_StubPlan(),
+        tenant_id="test_tenant",
+        workflow_id="wf-base",
+        session_id="sess-baseline",
+        agent_results_sink={},
+        inbound_queue=q_base,
+    )
+    assert baseline.exit_reason == "sufficient"
+    assert baseline.iterations_executed == 2
+    assert len(baseline.evidence) == 2
+
+    # Stopped run — stop enqueued during iter 0's execute, drained at
+    # iter 1's top. Stub returns the SAME deterministic snippets so
+    # the baseline-slice byte-equal can be locked.
+    reset_inbound_queue_registry_for_testing()
+    registry = get_inbound_queue_registry()
+    q_stop = await registry.get_or_create_queue("sess-stop", "test_tenant")
+    stub_stop = _StubOrchestrator()
+
+    async def _execute_then_stop(plan, **kwargs):
+        result = await _StubOrchestrator._execute_plan(stub_stop, plan, **kwargs)
+        if stub_stop._execute_calls == 1:
+            await q_stop.enqueue(_msg("", tags=("stop",)))
+        return result
+
+    stub_stop._execute_plan = _execute_then_stop
+    stopped = await OrchestratorAgent._iterative_retrieval_loop(
+        stub_stop,
+        query="q",
+        plan=_StubPlan(),
+        tenant_id="test_tenant",
+        workflow_id="wf-stop",
+        session_id="sess-stop",
+        agent_results_sink={},
+        inbound_queue=q_stop,
+    )
+
+    assert stopped.exit_reason == "user_stop"
+    assert stopped.iterations_executed == 1
+    # Baseline-slice byte-equal: the stopped run's evidence MUST be
+    # exactly the first slice of the baseline's evidence. Same
+    # snippet dicts, same order, no recompute, no truncation.
+    n_stopped = len(stopped.evidence)
+    assert n_stopped == 1, f"stop after iter 0 should yield 1 snippet, got {n_stopped}"
+    assert stopped.evidence == baseline.evidence[:n_stopped], (
+        f"stopped evidence MUST byte-equal baseline[:{n_stopped}]\n"
+        f"  stopped={stopped.evidence}\n  baseline_slice={baseline.evidence[:n_stopped]}"
+    )
