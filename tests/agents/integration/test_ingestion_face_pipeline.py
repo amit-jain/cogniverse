@@ -223,7 +223,7 @@ def _debate_linked_extraction():
 def test_face_pipeline_emits_temporal_attribution_edges(face_embed_url):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    edges = _run_face_pipeline(
+    edges, nodes = _run_face_pipeline(
         processing_results=_debate_keyframes_payload(),
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
@@ -232,6 +232,8 @@ def test_face_pipeline_emits_temporal_attribution_edges(face_embed_url):
     )
     # Two clusters (Alice@5, Bob@15) each overlap exactly one Person.
     assert len(edges) == 2
+    # Both clusters got attributed → zero orphans → zero anonymous Nodes.
+    assert nodes == []
     by_source = {e.source: e for e in edges}
     assert sorted(by_source.keys()) == [
         "face_cluster::frame_15_0::80_40",
@@ -257,7 +259,7 @@ def test_face_pipeline_emits_temporal_attribution_edges(face_embed_url):
 def test_empty_keyframes_yields_no_face_edges(face_embed_url):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    edges = _run_face_pipeline(
+    edges, nodes = _run_face_pipeline(
         processing_results={"keyframes": {"items": []}},
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
@@ -265,6 +267,7 @@ def test_empty_keyframes_yields_no_face_edges(face_embed_url):
         face_embed_url=face_embed_url,
     )
     assert edges == []
+    assert nodes == []
 
 
 # --------------------------------------------------------------------- #
@@ -273,10 +276,10 @@ def test_empty_keyframes_yields_no_face_edges(face_embed_url):
 
 
 def test_sidecar_failure_degrades_gracefully():
-    """Unreachable URL → _run_face_pipeline returns [] instead of raising."""
+    """Unreachable URL → _run_face_pipeline returns ([], []) instead of raising."""
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    edges = _run_face_pipeline(
+    edges, nodes = _run_face_pipeline(
         processing_results=_debate_keyframes_payload(),
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
@@ -284,6 +287,7 @@ def test_sidecar_failure_degrades_gracefully():
         face_embed_url="http://127.0.0.1:1",  # nothing listening on port 1
     )
     assert edges == []
+    assert nodes == []
 
 
 # --------------------------------------------------------------------- #
@@ -294,14 +298,14 @@ def test_sidecar_failure_degrades_gracefully():
 def test_face_pipeline_is_idempotent(face_embed_url):
     from cogniverse_runtime.routers.ingestion import _run_face_pipeline
 
-    first = _run_face_pipeline(
+    first_edges, first_nodes = _run_face_pipeline(
         processing_results=_debate_keyframes_payload(),
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
         tenant_id="test",
         face_embed_url=face_embed_url,
     )
-    second = _run_face_pipeline(
+    second_edges, second_nodes = _run_face_pipeline(
         processing_results=_debate_keyframes_payload(),
         linked_extraction=_debate_linked_extraction(),
         source_doc_id="debate_30s",
@@ -310,11 +314,12 @@ def test_face_pipeline_is_idempotent(face_embed_url):
     )
     assert [
         (e.source, e.target, e.relation, e.confidence, e.provenance)
-        for e in sorted(first, key=lambda e: e.source)
+        for e in sorted(first_edges, key=lambda e: e.source)
     ] == [
         (e.source, e.target, e.relation, e.confidence, e.provenance)
-        for e in sorted(second, key=lambda e: e.source)
+        for e in sorted(second_edges, key=lambda e: e.source)
     ]
+    assert [n.name for n in first_nodes] == [n.name for n in second_nodes]
 
 
 # --------------------------------------------------------------------- #
