@@ -812,24 +812,73 @@ async def _write_backrefs_to_content(
 
     base_url = os.environ.get("VESPA_URL") or os.environ.get("VESPA_ENDPOINT")
     if not base_url:
-        logger.debug("Skipping content back-ref PATCH: VESPA_URL not configured")
+        # Fall back to the BACKEND_URL + BACKEND_PORT env the
+        # cogniverse-ingestor pod sets by default. Same shape, just
+        # different env names — both deployments use these.
+        bu = os.environ.get("BACKEND_URL")
+        bp = os.environ.get("BACKEND_PORT")
+        if bu and bp:
+            base_url = f"{bu.rstrip('/')}:{bp}"
+    if not base_url:
+        logger.debug(
+            "Skipping content back-ref PATCH: neither VESPA_URL nor "
+            "BACKEND_URL+BACKEND_PORT are configured"
+        )
         return
+
+    # Build segment_id → (schema, doc_id) lookup. The pipeline doesn't
+    # emit a top-level fed_documents list, so derive the per-segment
+    # content doc_ids from the keyframes the segmentation step
+    # produced. doc_id convention from the embedding feed:
+    #   <schema_name>::docid::<video_id>_seg_<segment_id>
+    # Schema name is <profile>_<tenant_sanitized>; the worker stamps
+    # processing_results["__profile__"] + ["__schema_name__"] for us
+    # before invoking the back-ref PATCH.
+    targets: Dict[str, List[tuple[str, str]]] = {}
+    schema = processing_results.get("__schema_name__") or processing_results.get(
+        "schema_name"
+    )
+    video_id = (
+        processing_results.get("video_id")
+        or processing_results.get("__video_id__")
+        or source_doc_id
+    )
 
     fed_docs = processing_results.get("fed_documents") or []
-    if not isinstance(fed_docs, list):
-        return
+    if isinstance(fed_docs, list) and fed_docs:
+        for doc in fed_docs:
+            if not isinstance(doc, dict):
+                continue
+            d_schema = doc.get("schema") or doc.get("content_schema") or schema
+            doc_id = doc.get("doc_id") or doc.get("id")
+            segment_id = doc.get("segment_id")
+            if not d_schema or not doc_id or segment_id is None:
+                continue
+            targets.setdefault(str(segment_id), []).append((str(d_schema), str(doc_id)))
 
-    # Build segment_id → (schema, doc_id) lookup from the pipeline output.
-    targets: Dict[str, List[tuple[str, str]]] = {}
-    for doc in fed_docs:
-        if not isinstance(doc, dict):
-            continue
-        schema = doc.get("schema") or doc.get("content_schema")
-        doc_id = doc.get("doc_id") or doc.get("id")
-        segment_id = doc.get("segment_id")
-        if not schema or not doc_id or not segment_id:
-            continue
-        targets.setdefault(str(segment_id), []).append((str(schema), str(doc_id)))
+    # Fall back: derive (schema, doc_id) from keyframes list + schema name.
+    if not targets and schema and video_id:
+        keyframes_section = processing_results.get("keyframes") or {}
+        kf_list = (
+            keyframes_section.get("keyframes")
+            if isinstance(keyframes_section, dict)
+            else None
+        )
+        if isinstance(kf_list, list):
+            for idx, kf in enumerate(kf_list):
+                if not isinstance(kf, dict):
+                    continue
+                # The embedding step writes doc_id=<video_id>_seg_<idx>.
+                doc_id = f"{video_id}_seg_{idx}"
+                # Worker may also report segment_id as int idx; record
+                # under both string keys so either lookup hits.
+                segment_keys = {str(idx)}
+                fid = kf.get("frame_id") or kf.get("frame_number")
+                if fid is not None:
+                    segment_keys.add(f"frame_{fid}")
+                    segment_keys.add(str(fid))
+                for k in segment_keys:
+                    targets.setdefault(k, []).append((schema, doc_id))
 
     if not targets:
         return

@@ -239,6 +239,15 @@ async def _default_processor(job: IngestJob) -> dict:
     else:
         processing_results = pipeline_envelope or {}
 
+    # Tag schema_name + video_id so _write_backrefs_to_content can
+    # derive (schema, doc_id) per segment without needing a top-level
+    # fed_documents list. The schema name follows the convention
+    # <profile>_<tenant_sanitised> applied by the pipeline's Vespa
+    # client.
+    safe_tenant = job.tenant_id.replace(":", "_")
+    processing_results.setdefault("__schema_name__", f"{job.profile}_{safe_tenant}")
+    processing_results.setdefault("__video_id__", processing_results.get("video_id"))
+
     # Run per-segment graph extraction + cross-modal linker + face
     # pipeline + back-ref PATCH on top of the content ingestion. Graph
     # path is fail-safe: any internal exception is logged + the content

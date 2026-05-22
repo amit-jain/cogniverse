@@ -305,7 +305,22 @@ class DocExtractor:
 
             if gliner is not None:
                 try:
-                    raw = gliner.predict_entities(chunk, self._labels, threshold=0.5)
+                    # 0.3 chosen empirically against the production
+                    # gliner_large-v2.1 sidecar: at 0.5 the model
+                    # silently drops named entities scoring well above
+                    # the threshold (observed against a real video
+                    # transcript — 'Bear Grylls' at 0.917 was returned
+                    # at 0.3 but not at 0.5). 0.3 preserves real
+                    # entities; pronoun + verb noise is filtered
+                    # downstream by _PRONOUN_BLOCKLIST + _COMMON_VERB_
+                    # BLOCKLIST.
+                    raw = gliner.predict_entities(chunk, self._labels, threshold=0.3)
+                    logger.info(
+                        "GLiNER returned %d raw entities for chunk (len=%d): %s",
+                        len(raw),
+                        len(chunk),
+                        [(e.get("text"), e.get("label"), round(e.get("score", 0), 3)) for e in raw[:8]],
+                    )
                     for ent in raw:
                         name = ent.get("text", "").strip()
                         label = ent.get("label", "Concept")
@@ -314,6 +329,11 @@ class DocExtractor:
                         if _is_blocked_entity(name):
                             continue
                         entities_in_chunk.append((name, label))
+                    logger.info(
+                        "After filtering: %d entities → %s",
+                        len(entities_in_chunk),
+                        entities_in_chunk[:8],
+                    )
                 except Exception as exc:
                     logger.warning("GLiNER prediction failed on chunk: %s", exc)
 
