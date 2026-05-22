@@ -934,15 +934,48 @@ def ensure_host_ollama(cogniverse_test_config):
                 os.environ["OPENAI_API_KEY"] = original_openai_key
         return
 
+    # Soft-fail when Ollama can't be installed or started — CI runners
+    # for ``unit and ci_fast`` tests don't need an LM and shouldn't pay
+    # for one. Tests that DO need an LM gate themselves via
+    # ``tests/fixtures/llm.is_test_lm_available`` (or pytest skipif),
+    # so degrading silently here lets unit collection succeed while
+    # LM-dependent tests skip with a clear reason.
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
     if shutil.which("ollama") is None:
         home_bin = Path.home() / ".ollama" / "bin"
         if not (home_bin / "ollama").exists():
-            _install_ollama_to_home()
+            try:
+                _install_ollama_to_home()
+            except Exception as exc:  # noqa: BLE001 — log + degrade
+                _log.warning(
+                    "ensure_host_ollama: Ollama install failed (%s); "
+                    "yielding without an LM. Tests that need an LM will "
+                    "skip via is_test_lm_available().",
+                    exc,
+                )
+                yield
+                return
         os.environ["PATH"] = f"{home_bin}{os.pathsep}{os.environ.get('PATH', '')}"
         if shutil.which("ollama") is None:
-            raise RuntimeError(
-                f"installed Ollama at {home_bin}/ollama but PATH update did not take effect"
+            _log.warning(
+                "ensure_host_ollama: Ollama binary still not on PATH after "
+                "install — yielding without an LM."
             )
+            yield
+            return
+
+    # Strip any ``openai/`` provider prefix before passing to
+    # ``ollama pull``. ``cogniverse_test_config`` writes
+    # ``model=openai/qwen2.5:7b`` into the test config so the rest of
+    # the suite resolves the LM through litellm's openai provider, but
+    # the Ollama CLI only accepts bare tags (``qwen2.5:7b``). The
+    # OAI-compat branch above already does the same strip; this keeps
+    # the two paths consistent.
+    test_model_for_pull = (
+        test_model[len("openai/") :] if test_model.startswith("openai/") else test_model
+    )
 
     # Pick a port we can actually bind to. The configured 11434 is often held
     # by the k3d serverlb on dev machines.
@@ -988,22 +1021,31 @@ def ensure_host_ollama(cogniverse_test_config):
                 break
             _t.sleep(1)
         if not ready:
-            raise RuntimeError(
-                f"`ollama serve` did not start answering at {chosen_base} within 30s"
+            _log.warning(
+                "ensure_host_ollama: ollama serve did not answer at %s "
+                "within 30s — yielding without an LM.",
+                chosen_base,
             )
+            yield
+            return
 
-        if not _ollama_has_model(chosen_base, test_model):
+        if not _ollama_has_model(chosen_base, test_model_for_pull):
             pull = _sp.run(
-                ["ollama", "pull", test_model],
+                ["ollama", "pull", test_model_for_pull],
                 env=serve_env,
                 capture_output=True,
                 timeout=900,
             )
             if pull.returncode != 0:
-                raise RuntimeError(
-                    f"`ollama pull {test_model}` failed: "
-                    f"{pull.stderr.decode(errors='replace')[:500]}"
+                _log.warning(
+                    "ensure_host_ollama: `ollama pull %s` failed (%s) — "
+                    "yielding without an LM. Tests that need an LM will "
+                    "skip via is_test_lm_available().",
+                    test_model_for_pull,
+                    pull.stderr.decode(errors="replace")[:200],
                 )
+                yield
+                return
 
         # Also export TEST_LLM_API_BASE / TEST_LLM_MODEL so the
         # ``tests/fixtures/llm.py`` helpers (resolve_base_url,
@@ -1021,7 +1063,11 @@ def ensure_host_ollama(cogniverse_test_config):
         original_model = os.environ.get("TEST_LLM_MODEL")
         original_openai_key = os.environ.get("OPENAI_API_KEY")
         os.environ["TEST_LLM_API_BASE"] = f"{chosen_base}/v1"
-        os.environ["TEST_LLM_MODEL"] = test_model
+        # Export the bare model tag (no ``openai/`` prefix) — tests/
+        # fixtures/llm.py re-prefixes it with the resolved provider
+        # before constructing the dspy.LM, mirroring the OAI-compat
+        # branch above.
+        os.environ["TEST_LLM_MODEL"] = test_model_for_pull
         os.environ.setdefault("OPENAI_API_KEY", "not-required")
 
         try:
