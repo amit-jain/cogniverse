@@ -6,6 +6,27 @@ This replaces 10+ scattered FastAPI apps with a single, unified runtime that:
 - Enables clean deployment and scaling
 """
 
+import os as _bootstrap_os
+
+# OpenInference DSPy instrumentation must run BEFORE any module
+# imports dspy.Predict / dspy.ChainOfThought etc. — those classes get
+# bound to unwrapped references on import and a later instrument()
+# call can't patch already-bound names. So we run instrumentation
+# at the very top of main.py, gated on OPENINFERENCE_DSPY=1, before
+# any other imports.
+if _bootstrap_os.environ.get("OPENINFERENCE_DSPY") == "1":
+    try:
+        from openinference.instrumentation.dspy import (
+            DSPyInstrumentor as _DSPyInstrumentor,
+        )
+
+        _DSPyInstrumentor().instrument()
+        print("OpenInference DSPy instrumentation enabled at bootstrap")
+    except ImportError as _exc:
+        print(f"OpenInference DSPy not installed; skipping: {_exc}")
+    except Exception as _exc:  # noqa: BLE001
+        print(f"OpenInference DSPy instrument failed: {_exc}")
+
 import asyncio
 import json
 import logging
@@ -696,23 +717,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     dspy.configure(lm=primary_lm, adapter=LenientJSONAdapter())
     logger.info(f"DSPy configured with LM: {llm_config.primary.model}")
+    # NOTE: OpenInference DSPy instrumentation runs at module-top
+    # bootstrap (see the top of this file) so DSPy classes are
+    # wrapped BEFORE any agent imports bind references to the
+    # unwrapped originals. dspy.configure here uses the already-
+    # wrapped classes.
 
-    # OpenInference DSPy instrumentation: when ``OPENINFERENCE_DSPY=1``
-    # is set in the env, every DSPy module call emits Phoenix spans
-    # with ``input.value`` / ``output.value`` attributes carrying the
-    # serialized LM prompt + completion. The E2E inbound-channel
-    # tests assert against these attributes to lock LM-OUTPUT-level
-    # contracts (constraint actually changes iter-N's reformulated
-    # text). Default off — production users who don't need span-
-    # level LM tracing aren't paying for the instrumentation.
+    # Re-instrument DSPy NOW that Phoenix's tracer is up so DSPy
+    # LM spans actually flow to Phoenix. The bootstrap
+    # instrumentation at module-top wrapped dspy.LM.__call__ with
+    # the default ProxyTracerProvider (no-op). Here we create a
+    # Phoenix tracer for the orchestration project and re-bind
+    # the wrappers. All DSPy LM spans across tenants land in
+    # this single project — acceptable for the test cluster +
+    # surfaces LM input/output for byte-equal assertions.
     if os.environ.get("OPENINFERENCE_DSPY") == "1":
         try:
             from openinference.instrumentation.dspy import DSPyInstrumentor
+            from phoenix.otel import register as _px_register
 
-            DSPyInstrumentor().instrument()
-            logger.info("OpenInference DSPy instrumentation enabled")
+            otlp_endpoint = os.environ.get(
+                "TELEMETRY_OTLP_ENDPOINT", "cogniverse-phoenix:4317"
+            )
+            if "://" not in otlp_endpoint:
+                otlp_endpoint = f"http://{otlp_endpoint}"
+            # Create a dedicated tracer provider for DSPy LM spans
+            # and use it explicitly with the instrumentor (NOT set
+            # as global so the existing telemetry-phoenix per-tenant
+            # tracers remain authoritative for their domains).
+            dspy_tp = _px_register(
+                endpoint=otlp_endpoint,
+                project_name="cogniverse-dspy-instrumentation",
+                batch=True,
+                protocol="grpc",
+                auto_instrument=False,
+                set_global_tracer_provider=False,
+            )
+            DSPyInstrumentor().uninstrument()
+            DSPyInstrumentor().instrument(tracer_provider=dspy_tp)
+            logger.info(
+                "DSPy re-instrumented with Phoenix tracer "
+                "(project: cogniverse-dspy-instrumentation)"
+            )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to enable DSPy instrumentation: %s", exc)
+            logger.warning(
+                "Failed to rebind DSPy instrumentation to Phoenix: %s", exc
+            )
 
     modality_config = OptimizerGenerationConfig(
         optimizer_type="modality",
