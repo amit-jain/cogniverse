@@ -226,16 +226,7 @@ def test_persisted_document_count_matches_pipeline_result(upload_result):
 
 
 def test_persisted_documents_carry_expected_fields(upload_result):
-    """Every persisted doc has video_id + segment_id + start_time + end_time.
-
-    NOTE on back-refs: the entity_ids / relation_ids / claim_ids array
-    fields added by the per-segment KG provenance work are populated
-    only when the ingestor pod runs a build that includes that code.
-    The deployed ingestor in this environment is the original 8-day-old
-    image and predates that extension, so back-refs are not asserted
-    here. Once the ingestor image is rebuilt + redeployed, add an
-    explicit assertion that locks those back-ref arrays.
-    """
+    """Every persisted doc has video_id + segment_id + start_time + end_time."""
     video_id = upload_result["final"]["latest"]["result"]["video_id"]
     yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
     docs = _vespa_search(yql, hits=50)
@@ -262,3 +253,73 @@ def test_persisted_documents_carry_expected_fields(upload_result):
     # The frame-based profile produces 1-second windows per keyframe.
     for s, e in zip(starts, ends, strict=True):
         assert e - s == pytest.approx(1.0, abs=0.01)
+
+
+def test_persisted_documents_have_kg_backrefs(upload_result):
+    """KG back-refs (entity_ids) populate on every content doc.
+
+    The per-segment KG extraction pass runs after content ingestion:
+    Whisper transcribes the audio, the transcript is aligned to each
+    keyframe's 1-second window, GLiNER extracts entities per chunk,
+    and the resulting node_ids are PATCHed onto every content doc via
+    the Vespa Document v1 update path.
+
+    For the v_-D1gdv_gQyw.mp4 sample (the speaker says "I'm about to
+    light a fire Bear Grylls style. Or at least try. Don't tell me I
+    got it on the first try. Don't tell me I got it on the first one.
+    Will it catch it on fire? Look at that. We have fire!"), GLiNER at
+    threshold 0.3 reliably surfaces:
+        - 'Bear Grylls' (Person, score ~0.917)
+        - 'fire'        (Substance, score ~0.75-0.81)
+    Pronouns 'I', 'We' are filtered by _PRONOUN_BLOCKLIST.
+
+    Whisper returns a single transcript segment for this audio; only
+    the keyframes whose 1-second window overlaps the spoken-audio span
+    receive KG back-refs. Empirically against the live cluster + this
+    video: keyframes 0..16 overlap (17 with entities), 17 + 18 fall
+    past the transcript end and have empty entity_ids — that boundary
+    shape is locked so a future Whisper-segmentation change here
+    surfaces for explicit review.
+    """
+    video_id = upload_result["final"]["latest"]["result"]["video_id"]
+    yql = f'select * from sources {SCHEMA_NAME} where video_id contains "{video_id}"'
+    docs = _vespa_search(yql, hits=50)
+    assert len(docs) == 19
+
+    by_seg = {int(d["segment_id"]): d for d in docs}
+    expected_entity_ids = sorted(["fire", "bear_grylls"])
+
+    # Keyframes 0..16 overlap the Whisper transcript window →
+    # entity_ids populated with ['bear_grylls', 'fire'] (sorted).
+    for idx in range(17):
+        doc = by_seg[idx]
+        actual = sorted(doc.get("entity_ids", []))
+        assert actual == expected_entity_ids, (
+            f"seg={idx}: expected entity_ids={expected_entity_ids}, got {actual}"
+        )
+
+    # Keyframes 17 + 18 fall past the spoken-audio span → no
+    # transcript overlap → empty entity_ids. Locked so a Whisper
+    # segmentation change here surfaces for explicit review.
+    for idx in (17, 18):
+        doc = by_seg[idx]
+        assert doc.get("entity_ids", []) == [], (
+            f"seg={idx}: expected empty entity_ids past transcript end, "
+            f"got {doc.get('entity_ids')}"
+        )
+
+    # ClaimExtractor produces SPO edges only when the transcript yields
+    # extractable relations against the locked predicate vocabulary
+    # (born_in, discovered, worked_at, won, ...). The Bear-Grylls test
+    # clip has no such relations, so relation_ids / claim_ids stay
+    # empty for this fixture. Lock the empty-list shape so a future
+    # ClaimExtractor change that starts emitting edges for this clip
+    # surfaces here for explicit review.
+    for idx in range(19):
+        doc = by_seg[idx]
+        assert doc.get("relation_ids", []) == [], (
+            f"seg={idx}: unexpected relation_ids: {doc.get('relation_ids')}"
+        )
+        assert doc.get("claim_ids", []) == [], (
+            f"seg={idx}: unexpected claim_ids: {doc.get('claim_ids')}"
+        )
