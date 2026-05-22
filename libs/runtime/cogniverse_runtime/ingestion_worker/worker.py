@@ -1,7 +1,7 @@
 """Ingestion worker — claim jobs from Redis, run the pipeline, ack.
 
 Runs as a long-lived process in the ingestor pod (``python -m
-cogniverse_runtime.ingestion_v2.worker``). Each worker joins the
+cogniverse_runtime.ingestion_worker.worker``). Each worker joins the
 configured consumer group; Redis Streams + consumer groups guarantee
 exclusive delivery so adding replicas just scales horizontally.
 
@@ -31,9 +31,9 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
-from cogniverse_runtime.ingestion_v2 import idempotency, queue
-from cogniverse_runtime.ingestion_v2.queue import IngestJob
-from cogniverse_runtime.ingestion_v2.redis_client import close_redis, get_redis
+from cogniverse_runtime.ingestion_worker import idempotency, queue
+from cogniverse_runtime.ingestion_worker.queue import IngestJob
+from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
 logger = logging.getLogger(__name__)
 

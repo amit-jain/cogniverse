@@ -949,7 +949,7 @@ app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 # mounted under the same prefix. Without REDIS_URL, /ingestion/upload
 # falls back to the legacy in-process pipeline.
 if os.environ.get("REDIS_URL"):
-    from cogniverse_runtime.ingestion_v2 import status_api as ingest_v2_status
+    from cogniverse_runtime.ingestion_worker import status_api as ingest_v2_status
 
     app.include_router(ingest_v2_status.router, prefix="/ingestion", tags=["ingestion"])
 

@@ -1,4 +1,4 @@
-"""End-to-end test for the ingestion_v2 path.
+"""End-to-end test for the ingestion_worker path.
 
 Real Redis 7.4 container, real ``status_api`` SSE + snapshot routes
 (via httpx.ASGITransport), real worker async-task in the same process
@@ -28,15 +28,15 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-from cogniverse_runtime.ingestion_v2 import queue
-from cogniverse_runtime.ingestion_v2 import status_api as ingest_status
-from cogniverse_runtime.ingestion_v2.queue import IngestJob
-from cogniverse_runtime.ingestion_v2.redis_client import close_redis, get_redis
-from cogniverse_runtime.ingestion_v2.submit_api import (
+from cogniverse_runtime.ingestion_worker import queue
+from cogniverse_runtime.ingestion_worker import status_api as ingest_status
+from cogniverse_runtime.ingestion_worker.queue import IngestJob
+from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
+from cogniverse_runtime.ingestion_worker.submit_api import (
     BackpressureError,
     enqueue_ingestion,
 )
-from cogniverse_runtime.ingestion_v2.worker import WorkerConfig, _claim_loop
+from cogniverse_runtime.ingestion_worker.worker import WorkerConfig, _claim_loop
 
 CONTAINER_NAME = "redis-ingestion-v2-e2e"
 

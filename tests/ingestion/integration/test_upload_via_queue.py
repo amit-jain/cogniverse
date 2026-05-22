@@ -425,7 +425,7 @@ async def real_stack(
         )
     )
 
-    from cogniverse_runtime.ingestion_v2.redis_client import close_redis, get_redis
+    from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
     await close_redis()
     redis = await get_redis(redis_container)
@@ -456,8 +456,8 @@ async def real_stack(
 async def worker_task(real_stack):
     """Real worker spawned in-process. Uses ``_default_processor`` so
     the actual ``VideoIngestionPipeline`` runs."""
-    from cogniverse_runtime.ingestion_v2.redis_client import get_redis
-    from cogniverse_runtime.ingestion_v2.worker import (
+    from cogniverse_runtime.ingestion_worker.redis_client import get_redis
+    from cogniverse_runtime.ingestion_worker.worker import (
         WorkerConfig,
         _claim_loop,
         _default_processor,
@@ -481,7 +481,7 @@ async def worker_task(real_stack):
 @pytest_asyncio.fixture
 async def http_client(real_stack):
     """FastAPI ASGI client mounting the real ingestion router + status_api."""
-    from cogniverse_runtime.ingestion_v2 import status_api as ingest_status
+    from cogniverse_runtime.ingestion_worker import status_api as ingest_status
     from cogniverse_runtime.routers import ingestion as ingestion_router
 
     application = FastAPI()
@@ -756,7 +756,7 @@ class TestUploadRealStack:
         key, so two uploads have different shas. Verify idempotency
         explicitly by calling enqueue_ingestion with the SAME
         source_url twice."""
-        from cogniverse_runtime.ingestion_v2.submit_api import enqueue_ingestion
+        from cogniverse_runtime.ingestion_worker.submit_api import enqueue_ingestion
 
         # First, upload once via /upload to get a real source_url.
         video_bytes = VIDEO_PATH.read_bytes()

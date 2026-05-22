@@ -1681,7 +1681,7 @@ async def run_synthetic_generation(
             # tenant_id here. Backend name comes from the resolved
             # backend config (defaults to "vespa"). schema_loader is
             # required for backend init — match what the ingestion v2
-            # worker does (see ingestion_v2/worker.py).
+            # worker does (see ingestion_worker/worker.py).
             schemas_dir = Path(
                 os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas")
             )

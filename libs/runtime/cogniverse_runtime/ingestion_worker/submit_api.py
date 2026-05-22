@@ -23,7 +23,7 @@ from typing import Optional
 
 import redis.asyncio as aioredis
 
-from cogniverse_runtime.ingestion_v2 import backpressure, idempotency, queue
+from cogniverse_runtime.ingestion_worker import backpressure, idempotency, queue
 
 logger = logging.getLogger(__name__)
 

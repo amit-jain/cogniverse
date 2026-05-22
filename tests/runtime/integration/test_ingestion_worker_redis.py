@@ -1,4 +1,4 @@
-"""Integration tests for the ingestion_v2 Redis primitives.
+"""Integration tests for the ingestion_worker Redis primitives.
 
 Spins up a real Redis 7.4 container, exercises the full
 submit → claim → ack round-trip + idempotency + status streams + the
@@ -22,8 +22,8 @@ import uuid
 
 import pytest
 
-from cogniverse_runtime.ingestion_v2 import idempotency, queue
-from cogniverse_runtime.ingestion_v2.redis_client import close_redis, get_redis
+from cogniverse_runtime.ingestion_worker import idempotency, queue
+from cogniverse_runtime.ingestion_worker.redis_client import close_redis, get_redis
 
 CONTAINER_NAME = "redis-ingestion-v2-tests"
 

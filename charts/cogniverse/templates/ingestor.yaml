@@ -45,7 +45,7 @@ spec:
         command:
           - python
           - -m
-          - cogniverse_runtime.ingestion_v2.worker
+          - cogniverse_runtime.ingestion_worker.worker
         env:
         - name: REDIS_URL
           value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import redis.asyncio as aioredis
 
-from cogniverse_runtime.ingestion_v2 import queue
+from cogniverse_runtime.ingestion_worker import queue
 
 
 @dataclass(frozen=True)

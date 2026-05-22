@@ -49,7 +49,7 @@ dependencies = [
     # be version-compatible for mTLS and the gRPC protocol.
     "openshell==0.0.13",
 
-    # Redis Streams + consumer groups for the ingestion_v2 queue.
+    # Redis Streams + consumer groups for the ingestion_worker queue.
     "redis==5.2.1",
 
     # boto3 for MinIO uploads on the /ingestion/upload multipart path.

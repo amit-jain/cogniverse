@@ -1717,7 +1717,7 @@ minio:
 # Ingestor workers — dequeue jobs, run pipeline
 # ===========================================
 # Same image as the runtime, different entry point
-# (``python -m cogniverse_runtime.ingestion_v2.worker``). Multi-replica
+# (``python -m cogniverse_runtime.ingestion_worker.worker``). Multi-replica
 # scales horizontally. Each worker joins a Redis consumer group and
 # claims one job at a time via XREADGROUP with BLOCK; a job in-flight
 # is owned by exactly one worker until it ACKs.

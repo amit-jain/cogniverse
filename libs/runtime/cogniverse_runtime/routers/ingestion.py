@@ -234,9 +234,9 @@ async def upload_video(
             },
         )
 
-    from cogniverse_runtime.ingestion_v2 import minio_client
-    from cogniverse_runtime.ingestion_v2.redis_client import get_redis
-    from cogniverse_runtime.ingestion_v2.submit_api import (
+    from cogniverse_runtime.ingestion_worker import minio_client
+    from cogniverse_runtime.ingestion_worker.redis_client import get_redis
+    from cogniverse_runtime.ingestion_worker.submit_api import (
         BackpressureError,
         enqueue_ingestion,
     )

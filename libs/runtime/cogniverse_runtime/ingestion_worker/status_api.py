@@ -21,8 +21,8 @@ import os
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from cogniverse_runtime.ingestion_v2 import queue
-from cogniverse_runtime.ingestion_v2.redis_client import get_redis
+from cogniverse_runtime.ingestion_worker import queue
+from cogniverse_runtime.ingestion_worker.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
