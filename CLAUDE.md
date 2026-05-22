@@ -77,6 +77,7 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 - When changing a constructor signature, storage backend, config key, or public API, update the corresponding documentation IN THE SAME PHASE — not as a separate "documentation phase"
 - Grep `docs/` for references to the old API/parameter/pattern and update them before moving to the next file
 - If you change `storage_dir` to `telemetry_provider` in a class, find every doc that mentions `storage_dir` for that class and fix it immediately
+- **Doc Coverage Check** — every commit that touches `libs/<pkg>/cogniverse_<pkg>/<subpkg>/` MUST verify that `<subpkg>` appears in at least one `docs/modules/*.md`. If not, add a Package Structure section in the same commit. "It was always undocumented" is not an exemption. The full check + script is in `.claude/rules/strict-commit.md` under "Doc Coverage Check"; the `doc-verifier` agent only audits docs that exist — a missing module guide silently passes unless this check catches it first.
 
 **Development Testing**:
 - Test with single video first: `--max-frames 1`

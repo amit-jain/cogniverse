@@ -56,8 +56,32 @@ vs. formatter). Running only one locally lets the other slip into CI.
 
 **What**: Verifies documentation against actual codebase — imports, classes, methods, configs, examples.
 **When**: Any docs change (docs/*.md), or code changes that affect documented APIs.
-**Must pass**: 100% of documentation synchronized with code.
+**Must pass**: 100% of documentation synchronized with code AND every touched subpackage has at least one module-guide reference (see "Doc Coverage Check" below).
 **If fails**: Fix documentation to match actual code (or fix code if docs are correct).
+
+### Doc Coverage Check (mandatory, every code-touching commit)
+
+`doc-verifier` only audits docs that **exist**. A subpackage with no module guide at all silently passes — that's the gap that let `ingestion_worker/` (formerly `ingestion_v2/`) ship 9+ modules with zero documentation until a user flagged it.
+
+After lint-and-quality passes, run this check **before invoking doc-verifier**:
+
+```bash
+# For every libs/<pkg>/<subpkg>/ directory touched in the diff,
+# verify the subpkg name appears in at least one docs/modules/*.md.
+for subpkg in $(git diff --name-only HEAD~1 HEAD -- 'libs/*/cogniverse_*/' \
+                  | awk -F/ '/^libs\// {print $3"/"$4}' | sort -u); do
+  if ! grep -rln "$subpkg" docs/modules/ >/dev/null 2>&1; then
+    echo "MISSING DOC COVERAGE: $subpkg has no docs/modules/ reference"
+  fi
+done
+```
+
+When the check reports MISSING:
+1. If the touched directory is a NEW subpackage → add a Package Structure section in the most relevant `docs/modules/*.md` (or create one if the parent module is also new).
+2. If the touched directory is an EXISTING subpackage that was never documented → same fix, in the same commit. "It was always undocumented" is not an exemption.
+3. Only after the doc exists may `doc-verifier` proceed to validate its contents.
+
+This check is mandatory. Skipping it is a violation, not a triage step.
 
 ---
 
@@ -142,6 +166,7 @@ NEVER declare "done" or "complete" when:
 - Adding backward compatibility shims instead of actual implementation
 - Integration tests for wiring changes have not been written yet
 - Documentation for changed APIs/constructors/storage backends has not been updated yet
+- The touched subpackage has no `docs/modules/*.md` reference at all (see "Doc Coverage Check" above)
 - The test contract was not defined before the code (see "Assertions Before Code" above)
 
 If a condition cannot be met, RAISE an exception with a clear message.
@@ -153,10 +178,11 @@ Each code change MUST ship with its tests and doc updates in the same step. Neve
 
 Instead, for each component changed:
 1. Edit the code
-2. Grep `docs/` for references to changed APIs and update them
-3. Write or update the integration test that exercises the new wiring
-4. Run the test, fix any failures
-5. THEN move to the next component
+2. Run the Doc Coverage Check (above) — if the touched subpackage has no `docs/modules/` reference, add one in this commit before continuing.
+3. Grep `docs/` for references to changed APIs and update them
+4. Write or update the integration test that exercises the new wiring
+5. Run the test, fix any failures
+6. THEN move to the next component
 
 This is not optional. Do not ask permission. Do not defer. The rules in CLAUDE.md already mandate this — follow them.
 
