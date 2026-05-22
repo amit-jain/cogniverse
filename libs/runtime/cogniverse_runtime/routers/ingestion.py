@@ -333,32 +333,10 @@ def _iter_segments_for_graph(
     if not isinstance(processing_results, dict):
         return
 
-    transcript = processing_results.get("transcript", {})
-    if isinstance(transcript, dict):
-        segments = transcript.get("segments", [])
-        if isinstance(segments, list):
-            for idx, seg in enumerate(segments):
-                if not isinstance(seg, dict):
-                    continue
-                text = seg.get("text") or ""
-                if not text:
-                    continue
-                text = str(text)
-                yield SegmentRecord(
-                    text=text,
-                    segment_anchor=Mention(
-                        source_doc_id=source_doc_id,
-                        segment_id=f"seg_{idx}",
-                        ts_start=float(seg.get("start", 0.0) or 0.0),
-                        ts_end=float(seg.get("end", 0.0) or 0.0),
-                        modality="transcript",
-                        evidence_span=text[:_MAX_EVIDENCE_CHARS],
-                    ),
-                )
-
-    # VLM descriptions live under processing_results["descriptions"]
-    # (outer dict) → "descriptions" (inner dict keyed by frame_id string).
-    # The keyframe timestamps live in processing_results["keyframes"].
+    # Build the keyframe timeline first so the transcript iterator can
+    # align Whisper segments to each keyframe's 1-second window and
+    # emit KG SegmentRecords whose segment_id matches the content
+    # schema's keyframe index (the back-ref PATCH path keys off this).
     keyframes_data = processing_results.get("keyframes", {})
     keyframes_list = []
     if isinstance(keyframes_data, dict):
@@ -366,17 +344,85 @@ def _iter_segments_for_graph(
         if isinstance(kfs, list):
             keyframes_list = kfs
     keyframe_ts_by_id: Dict[str, float] = {}
-    for kf in keyframes_list:
+    keyframe_windows: List[tuple[int, float, float]] = []
+    for idx, kf in enumerate(keyframes_list):
         if not isinstance(kf, dict):
             continue
-        # The keyframe processor writes ``frame_number``; accept both keys
-        # so this iterator works regardless of which extractor wrote them.
+        # The keyframe processor writes ``frame_number``; accept both
+        # keys so this iterator works regardless of which extractor
+        # wrote them.
         fid = kf.get("frame_id")
         if fid is None:
             fid = kf.get("frame_number")
         if fid is None:
             continue
-        keyframe_ts_by_id[str(fid)] = float(kf.get("timestamp", 0.0) or 0.0)
+        ts = float(kf.get("timestamp", 0.0) or 0.0)
+        keyframe_ts_by_id[str(fid)] = ts
+        # Frame-based profile: each keyframe owns a 1-second window
+        # starting at its timestamp. The content schema's segment_id is
+        # the integer index ``idx``; doc_ids are ``<video_id>_seg_<idx>``.
+        keyframe_windows.append((idx, ts, ts + 1.0))
+
+    transcript = processing_results.get("transcript", {})
+    if isinstance(transcript, dict):
+        segments = transcript.get("segments", [])
+        if isinstance(segments, list) and segments:
+            # Align Whisper segments to keyframe windows so KG
+            # segment_id matches the content schema's keyframe index.
+            # Without this alignment, transcript KG nodes live under
+            # ``seg_<idx>`` and back-ref PATCHes can't find their
+            # content doc. Falls back to the raw transcript layout
+            # when keyframe_windows is empty (chunk-based profiles).
+            if keyframe_windows:
+                for idx, win_start, win_end in keyframe_windows:
+                    overlap_text_parts: List[str] = []
+                    span_start = win_end
+                    span_end = win_start
+                    for seg in segments:
+                        if not isinstance(seg, dict):
+                            continue
+                        seg_start = float(seg.get("start", 0.0) or 0.0)
+                        seg_end = float(seg.get("end", seg_start) or seg_start)
+                        if seg_end <= win_start or seg_start >= win_end:
+                            continue
+                        text = str(seg.get("text") or "").strip()
+                        if text:
+                            overlap_text_parts.append(text)
+                            span_start = min(span_start, seg_start)
+                            span_end = max(span_end, seg_end)
+                    if not overlap_text_parts:
+                        continue
+                    combined = " ".join(overlap_text_parts)
+                    yield SegmentRecord(
+                        text=combined,
+                        segment_anchor=Mention(
+                            source_doc_id=source_doc_id,
+                            segment_id=str(idx),
+                            ts_start=float(span_start),
+                            ts_end=float(span_end),
+                            modality="transcript",
+                            evidence_span=combined[:_MAX_EVIDENCE_CHARS],
+                        ),
+                    )
+            else:
+                for idx, seg in enumerate(segments):
+                    if not isinstance(seg, dict):
+                        continue
+                    text = seg.get("text") or ""
+                    if not text:
+                        continue
+                    text = str(text)
+                    yield SegmentRecord(
+                        text=text,
+                        segment_anchor=Mention(
+                            source_doc_id=source_doc_id,
+                            segment_id=f"seg_{idx}",
+                            ts_start=float(seg.get("start", 0.0) or 0.0),
+                            ts_end=float(seg.get("end", 0.0) or 0.0),
+                            modality="transcript",
+                            evidence_span=text[:_MAX_EVIDENCE_CHARS],
+                        ),
+                    )
 
     descriptions = processing_results.get("descriptions", {})
     if isinstance(descriptions, dict):
@@ -886,9 +932,16 @@ async def _write_backrefs_to_content(
     async with httpx.AsyncClient(timeout=15.0) as client:
         for segment_id, backrefs in backrefs_by_segment.items():
             for schema, doc_id in targets.get(segment_id, []):
+                # Vespa Document v1 URL format:
+                #   /document/v1/<namespace>/<doctype>/docid/<id>
+                # Content schemas live under the ``content`` namespace
+                # (the embedding feed writes
+                # ``id:content:<schema>::<id>``), not under the schema
+                # name. Older versions of this function used
+                # ``<schema>/<schema>/docid/<id>`` which silently 404s.
                 url = (
                     f"{base_url.rstrip('/')}/document/v1/"
-                    f"{schema}/{schema}/docid/{doc_id}"
+                    f"content/{schema}/docid/{doc_id}"
                 )
                 payload = {
                     "fields": {
