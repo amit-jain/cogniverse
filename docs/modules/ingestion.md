@@ -1,8 +1,20 @@
 # Cogniverse Ingestion Module Study Guide
 
 **Package:** `cogniverse_runtime` (Application Layer)
-**Module Location:** `libs/runtime/cogniverse_runtime/ingestion/`
-**Purpose**: Configurable multi-modal content processing pipeline for video, document, audio, and image extraction and indexing
+**Module Location:**
+- `libs/runtime/cogniverse_runtime/ingestion/` — pipeline library (Whisper, ColPali, VLM, embeddings)
+- `libs/runtime/cogniverse_runtime/ingestion_worker/` — Redis-queue consumer + submit/status REST APIs
+
+**Purpose**: Configurable multi-modal content processing pipeline for video, document, audio, and image extraction and indexing.
+
+The runtime exposes two ingest entrypoints with different execution models:
+
+| Endpoint | Path | Pipeline call site |
+|---|---|---|
+| Synchronous | `POST /ingestion/start` | `routers/ingestion.run_ingestion` background task imports `ingestion/` directly |
+| Async (queued) | `POST /ingestion/upload` | Caller uploads to MinIO, runtime enqueues on Redis Streams. The `cogniverse-ingestor` pod runs `python -m cogniverse_runtime.ingestion_worker.worker`, which consumes jobs and calls into `ingestion/` |
+
+Both paths invoke the same `VideoIngestionPipeline` followed by `routers/ingestion._extract_graph_per_segment` for KG provenance + face pipeline + back-ref PATCH.
 
 ---
 
@@ -41,6 +53,32 @@ libs/runtime/cogniverse_runtime/ingestion/
         ├── document_builders.py        # Vespa document construction
         └── backend_factory.py          # Backend client creation
 ```
+
+### `ingestion_worker/` — service layer wrapping the pipeline
+
+```text
+libs/runtime/cogniverse_runtime/ingestion_worker/
+├── __init__.py
+├── worker.py                  # Long-lived Redis-Streams consumer; pod entrypoint
+├── queue.py                   # XADD / XREADGROUP / XACK helpers + IngestJob model
+├── idempotency.py             # SHA-keyed dedup: same file SHA → same ingest_id
+├── redis_client.py            # aioredis pool factory
+├── minio_client.py            # boto3 wrapper for the cogniverse-ingest bucket
+├── submit_api.py              # POST /ingestion/upload route handler
+├── status_api.py              # GET /ingestion/{id}/status + /events route handlers
+└── backpressure.py            # Per-tenant in-flight cap + circuit breaker
+```
+
+| Module | Role |
+|---|---|
+| `worker.py` | `python -m cogniverse_runtime.ingestion_worker.worker` is the `cogniverse-ingestor` pod's CMD. Long-lived process that joins the configured Redis consumer group and processes one job at a time via `_default_processor`, which calls `VideoIngestionPipeline.process_video_async` from `ingestion/` then runs the per-segment KG extraction + face pipeline + back-ref PATCH. |
+| `queue.py` | Redis Streams primitives (`enqueue_job`, `claim_pending`, `ack_message`, etc.) + the `IngestJob` dataclass that flows through the stream. |
+| `idempotency.py` | Computes a per-file SHA at upload time; subsequent uploads of the same file return the existing `ingest_id` instead of re-running the pipeline. `force=true` query-param bypasses this. |
+| `submit_api.py` | The `POST /ingestion/upload` handler — uploads file bytes to MinIO, computes SHA, enqueues an `IngestJob` on Redis, returns `202 + ingest_id`. |
+| `status_api.py` | `GET /ingestion/{ingest_id}/status` and `/events` — read terminal-state events from Redis Streams. |
+| `backpressure.py` | Per-tenant counter for in-flight jobs + automatic 429 when the cap is hit. |
+
+Both packages are required: `ingestion/` is "do the work" (synchronous, library-shaped); `ingestion_worker/` is "consume jobs and call ingestion/" (async, service-shaped). The synchronous `/ingestion/start` path bypasses the worker and runs the pipeline in a FastAPI background task; the async `/ingestion/upload` path goes through MinIO + Redis and the worker.
 
 ---
 
