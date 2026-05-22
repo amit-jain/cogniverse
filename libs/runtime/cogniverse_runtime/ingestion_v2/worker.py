@@ -81,15 +81,95 @@ def _media_config_from_env() -> "object":
     )
 
 
+_GRAPH_FACTORY_INSTALLED = False
+
+
+def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
+    """Install the per-tenant GraphManager factory on the graph router
+    so ``_extract_graph_per_segment`` can reach it during ingest.
+
+    Idempotent — first call sets the factory, subsequent calls return
+    immediately. Mirrors the per-tenant lazy-deploy pattern in
+    ``main.py``: each tenant gets its own ``knowledge_graph_<tenant>``
+    Vespa schema deployed on first access.
+    """
+    global _GRAPH_FACTORY_INSTALLED
+    if _GRAPH_FACTORY_INSTALLED:
+        return
+
+    from cogniverse_agents.graph.graph_manager import GraphManager
+    from cogniverse_core.common.tenant_utils import (
+        SYSTEM_TENANT_ID,
+        canonical_tenant_id,
+    )
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+    from cogniverse_foundation.config.bootstrap import BootstrapConfig
+    from cogniverse_runtime.routers import graph as graph_router
+
+    bootstrap = BootstrapConfig.from_environment()
+    graph_backend = BackendRegistry.get_instance().get_ingestion_backend(
+        name=bootstrap.backend_type,
+        tenant_id=SYSTEM_TENANT_ID,
+        config={
+            "backend": {
+                "url": bootstrap.backend_url,
+                "port": bootstrap.backend_port,
+            }
+        },
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
+
+    _graph_managers: dict = {}
+
+    def _factory(tenant_id: str) -> GraphManager:
+        tenant_id = canonical_tenant_id(tenant_id)
+        if tenant_id in _graph_managers:
+            return _graph_managers[tenant_id]
+        try:
+            graph_backend.schema_registry.deploy_schema(
+                tenant_id=tenant_id, base_schema_name="knowledge_graph"
+            )
+        except Exception:
+            # Schema may already be deployed; first feed/query attempt
+            # surfaces the real error.
+            pass
+        sys_cfg = config_manager.get_system_config()
+        colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
+        if not colbert_url:
+            raise RuntimeError(
+                "knowledge_graph requires colbert_pylate in "
+                "INFERENCE_SERVICE_URLS. Available: "
+                f"{sorted(sys_cfg.inference_service_urls)}"
+            )
+        mgr = GraphManager(
+            backend=graph_backend,
+            tenant_id=tenant_id,
+            schema_name=graph_backend.get_tenant_schema_name(
+                tenant_id, "knowledge_graph"
+            ),
+            colbert_endpoint_url=colbert_url,
+        )
+        _graph_managers[tenant_id] = mgr
+        return mgr
+
+    graph_router.set_graph_manager_factory(_factory)
+    _GRAPH_FACTORY_INSTALLED = True
+
+
 async def _default_processor(job: IngestJob) -> dict:
-    """Production processor: localise the source via MediaLocator and
-    run the existing VideoIngestionPipeline. Returns the pipeline's
-    result dict; the worker passes it to ``_summarise`` for the status
-    event payload."""
+    """Production processor: localise the source via MediaLocator, run
+    the VideoIngestionPipeline, then run the per-segment KG extraction
+    + back-ref PATCH so the graph state lands alongside the content
+    documents. Returns the pipeline's result dict augmented with the
+    graph counts; the worker passes it to ``_summarise`` for the
+    status event payload.
+    """
     from cogniverse_core.common.media import MediaLocator
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
+    from cogniverse_runtime.routers.ingestion import _extract_graph_per_segment
 
     media_config = _media_config_from_env()
     locator = MediaLocator(tenant_id=job.tenant_id, config=media_config)
@@ -98,13 +178,48 @@ async def _default_processor(job: IngestJob) -> dict:
     config_manager = create_default_config_manager()
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
+
+    # Install the per-tenant GraphManager factory before the pipeline
+    # runs so the downstream graph-extraction call can reach it. The
+    # factory mirrors the one main.py installs for the API runtime,
+    # so the worker behaves identically.
+    _ensure_graph_manager_factory(config_manager, schema_loader)
+
     pipeline = VideoIngestionPipeline(
         tenant_id=job.tenant_id,
         config_manager=config_manager,
         schema_loader=schema_loader,
         schema_name=job.profile,
     )
-    return await pipeline.process_video_async(Path(local_path))
+    processing_results = await pipeline.process_video_async(Path(local_path))
+
+    # Run per-segment graph extraction + cross-modal linker + face
+    # pipeline + back-ref PATCH on top of the content ingestion. Graph
+    # path is fail-safe: any internal exception is logged + the content
+    # ingestion's results are returned unchanged so an LM blip doesn't
+    # fail the whole upload.
+    source_doc_id = processing_results.get("video_id") or job.ingest_id
+    try:
+        graph_counts = await _extract_graph_per_segment(
+            processing_results=processing_results,
+            source_doc_id=source_doc_id,
+            tenant_id=job.tenant_id,
+        )
+        processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
+        processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
+    except Exception as exc:  # noqa: BLE001 — log + degrade, never fail ingest
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "per-segment KG extraction failed for ingest=%s: %s — content "
+            "ingestion already succeeded, returning without graph counts",
+            job.ingest_id,
+            exc,
+        )
+        processing_results["graph_nodes"] = 0
+        processing_results["graph_edges"] = 0
+
+    return processing_results
 
 
 async def _process_job(
