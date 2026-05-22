@@ -56,6 +56,33 @@ except ImportError:  # pragma: no cover — runtime not wired in agent-only cont
     _InboundQueue = None  # type: ignore[assignment]
     _get_inbound_queue_registry = None  # type: ignore[assignment]
 
+
+async def _resolve_inbound_registry_for_orchestrator():
+    """Pick in-pod vs Redis backend from ``REDIS_URL`` env.
+
+    Mirrors the routers/agents.py helper so the HTTP route and the
+    orchestrator hit the same registry instance per pod. When
+    ``REDIS_URL`` is set, both go through the cross-pod Redis
+    backend and messages routed across pods land where the
+    orchestrator drains them.
+    """
+    import os as _os
+
+    if _get_inbound_queue_registry is None:
+        return None
+    redis_url = _os.environ.get("REDIS_URL")
+    if redis_url:
+        try:
+            from cogniverse_runtime.messaging_redis import (
+                get_redis_inbound_queue_registry as _get_redis_reg,
+            )
+
+            return await _get_redis_reg(redis_url)
+        except ImportError:  # pragma: no cover
+            pass
+    return _get_inbound_queue_registry()
+
+
 if TYPE_CHECKING:
     from cogniverse_agents.orchestrator.checkpoint_storage import (
         WorkflowCheckpointStorage,
@@ -911,9 +938,10 @@ class OrchestratorAgent(
         inbound_queue: Optional["_InboundQueue"] = None
         if session_id and _get_inbound_queue_registry is not None:
             try:
-                inbound_queue = await _get_inbound_queue_registry().get_or_create_queue(
-                    session_id, tenant_id
-                )
+                _reg = await _resolve_inbound_registry_for_orchestrator()
+                if _reg is None:
+                    raise RuntimeError("no inbound registry available")
+                inbound_queue = await _reg.get_or_create_queue(session_id, tenant_id)
             except ValueError as exc:
                 # Cross-tenant session collision — surface as a routing
                 # bug. The orchestrator can still run without the inbound
@@ -1104,7 +1132,9 @@ class OrchestratorAgent(
             # QueueClosedError (handled by the HTTP route as 404).
             if session_id and _get_inbound_queue_registry is not None:
                 try:
-                    await _get_inbound_queue_registry().close_queue(session_id)
+                    _reg = await _resolve_inbound_registry_for_orchestrator()
+                    if _reg is not None:
+                        await _reg.close_queue(session_id)
                 except Exception as exc:  # noqa: BLE001 — log + degrade
                     logger.warning(
                         "Inbound session close failed for session_id=%s: %s",

@@ -22,6 +22,27 @@ from cogniverse_runtime.messaging import (
 )
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
+
+async def _resolve_inbound_registry():
+    """Pick the in-pod or Redis-backed inbound registry from env.
+
+    ``REDIS_URL`` set → cross-pod durable Redis backend (Phase 2/3).
+    unset → in-pod singleton. The two paths share the same surface
+    (``get_or_create_queue`` / ``get_queue`` / ``close_queue``)
+    so the route logic below doesn't branch.
+    """
+    import os
+
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        from cogniverse_runtime.messaging_redis import (
+            get_redis_inbound_queue_registry,
+        )
+
+        return await get_redis_inbound_queue_registry(redis_url)
+    return get_inbound_queue_registry()
+
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -450,7 +471,7 @@ async def post_agent_message(
             ),
         )
 
-    registry = get_inbound_queue_registry()
+    registry = await _resolve_inbound_registry()
     queue = await registry.get_queue(request.session_id)
     if queue is None:
         raise HTTPException(
@@ -504,7 +525,7 @@ async def get_agent_session(
     session's actual tenant.
     """
     _ = agent_name
-    registry = get_inbound_queue_registry()
+    registry = await _resolve_inbound_registry()
     queue = await registry.get_queue(session_id)
     if queue is None or queue.tenant_id != tenant_id:
         raise HTTPException(

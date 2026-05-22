@@ -240,13 +240,20 @@ class InboundQueueRegistry:
 
 
 # Module-level singleton — mirrors the cogniverse_runtime pattern of
-# in-pod registries (see EventQueueRegistry, AgentRegistry). Phase 2
-# replaces this with a Redis-Pub/Sub-backed multi-pod registry.
+# in-pod registries (see EventQueueRegistry, AgentRegistry).
+# When ``REDIS_URL`` is set in the env, callers should resolve the
+# registry via the async factory in ``messaging_redis`` instead,
+# which returns a cross-pod durable backend bound to the same Redis
+# instance as the ingestion queue.
 _singleton_registry: Optional[InboundQueueRegistry] = None
 
 
 def get_inbound_queue_registry() -> InboundQueueRegistry:
-    """Return the process-wide :class:`InboundQueueRegistry` singleton."""
+    """Return the process-wide in-pod :class:`InboundQueueRegistry`.
+
+    Single-pod / no-Redis path. For multi-pod or durable cross-pod
+    state, use ``messaging_redis.get_redis_inbound_queue_registry``.
+    """
     global _singleton_registry
     if _singleton_registry is None:
         _singleton_registry = InboundQueueRegistry()
