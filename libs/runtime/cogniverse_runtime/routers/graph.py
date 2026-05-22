@@ -49,7 +49,14 @@ class MentionDoc(BaseModel):
 
 class NodeDoc(BaseModel):
     name: str
-    mentions: List[MentionDoc]
+    # Defaults to ``[]`` so admin / SDK callers that POST a bare
+    # ``{"name": "Foo"}`` still validate. The internal ``Node``
+    # dataclass keeps ``mentions`` required (it's the KG provenance
+    # invariant); the REST DTO has a default so the route can do its
+    # tenant + auth checks BEFORE rejecting the body shape. Routes
+    # that need anchored mentions still verify mentions != [] before
+    # writing to the KG.
+    mentions: List[MentionDoc] = []
     description: str = ""
     kind: str = "concept"
     label: str = "Concept"  # GLiNER tag — gates same_as linking in CrossModalLinker

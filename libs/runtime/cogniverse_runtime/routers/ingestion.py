@@ -459,7 +459,12 @@ def _iter_segments_for_graph(
         if not text:
             continue
         text = str(text)
-        fid = kf.get("frame_id") or kf.get("frame_number", "")
+        # ``frame_id`` can legitimately be 0 — use explicit None checks
+        # rather than ``or`` so 0 doesn't fall through to ``frame_number``
+        # and end up as empty-string in the segment_id.
+        fid = kf.get("frame_id")
+        if fid is None:
+            fid = kf.get("frame_number", "")
         ts = float(kf.get("timestamp", 0.0) or 0.0)
         yield SegmentRecord(
             text=text,
