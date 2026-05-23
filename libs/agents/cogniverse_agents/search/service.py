@@ -10,8 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_core.registries.backend_registry import get_backend_registry
-
-from .base import SearchResult
+from cogniverse_sdk.document import SearchResult
 
 logger = logging.getLogger(__name__)
 

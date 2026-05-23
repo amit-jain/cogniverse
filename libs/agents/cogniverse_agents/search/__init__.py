@@ -1,6 +1,13 @@
-"""Unified search interface for video retrieval."""
+"""Unified search interface for video retrieval.
 
-from .base import SearchBackend, SearchResult
+``SearchResult`` and ``SearchBackend`` are re-exported from
+``cogniverse_sdk`` — the canonical home. The previous duplicates in
+``cogniverse_agents.search.base`` and ``cogniverse_runtime.search.base``
+were byte-identical dead copies and have been removed.
+"""
+
+from cogniverse_sdk.document import SearchResult
+from cogniverse_sdk.interfaces.backend import SearchBackend
 
 __all__ = [
     "SearchBackend",
