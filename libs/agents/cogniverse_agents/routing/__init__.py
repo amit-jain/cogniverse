@@ -11,16 +11,20 @@ onto each execution agent's typed input fields (``enhanced_query``,
 ``OrchestratorAgent._merge_enrichment``.
 
 This package also holds:
-  - ``cogniverse_agents.routing.config`` — runtime config loaders
+  - ``cogniverse_agents.routing.config`` — pydantic schemas for the
+    annotation / online-evaluator config knobs
+    (``AutomationRulesConfig`` + ``OnlineEvaluationConfig``)
   - offline optimisation/analytics modules (``modality_*``, ``xgboost_meta_models``,
     ``advanced_optimizer``, ``annotation_*``) used by Argo CronWorkflows and the
     Phoenix dashboard.
+
+The routing-system configuration itself lives in
+``cogniverse_foundation.config.unified_config.RoutingConfigUnified``.
 """
 
-from .config import AutomationRulesConfig, RoutingConfig, load_config
+from .config import AutomationRulesConfig, OnlineEvaluationConfig
 
 __all__ = [
     "AutomationRulesConfig",
-    "RoutingConfig",
-    "load_config",
+    "OnlineEvaluationConfig",
 ]

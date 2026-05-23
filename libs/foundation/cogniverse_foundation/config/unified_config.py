@@ -1,6 +1,9 @@
-"""
-Unified configuration schema with multi-tenant support.
-Consolidates AgentConfig, RoutingConfig, TelemetryConfig into single system.
+"""Unified configuration schema with multi-tenant support.
+
+Hosts ``SystemConfig`` (global deployment-level state) +
+``LLMEndpointConfig`` / ``LLMConfig`` (LLM wiring) +
+``RoutingConfigUnified`` (query-routing knobs) +
+``AgentConfig`` / ``TelemetryConfig`` re-exports.
 """
 
 import copy
