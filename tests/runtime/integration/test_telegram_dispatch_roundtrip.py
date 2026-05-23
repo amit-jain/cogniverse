@@ -126,7 +126,14 @@ class TestTelegramWikiDispatchRoundTrip:
 
         update.message.reply_text.assert_awaited_once()
         reply_text = update.message.reply_text.call_args[0][0]
-        assert reply_text is not None
+        # /wiki index returns a non-empty markdown / text response from the
+        # real /wiki/index endpoint; an empty reply means the endpoint
+        # silently returned the empty-tenant edge case. Asserts a substring
+        # match against the literal page-list header the endpoint emits.
+        assert reply_text, "wiki index reply must be non-empty"
+        assert "wiki" in reply_text.lower(), (
+            f"wiki index reply missing 'wiki' marker; got: {reply_text!r}"
+        )
 
     @pytest.mark.asyncio
     async def test_wiki_search_full_chain(self, gateway_with_real_runtime):

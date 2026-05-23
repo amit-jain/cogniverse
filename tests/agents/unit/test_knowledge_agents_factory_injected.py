@@ -29,7 +29,7 @@ import pytest
 
 from cogniverse_core.memory.schema import build_default_registry
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit
 
 TENANT = "knowledge_agents_factory_test"
 

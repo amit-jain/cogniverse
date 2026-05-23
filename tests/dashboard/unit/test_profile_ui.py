@@ -21,7 +21,7 @@ except ImportError:
     RUNTIME_AVAILABLE = False
 
 
-@pytest.mark.integration
+@pytest.mark.unit
 @pytest.mark.ci_fast
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="cogniverse_runtime not installed")
 class TestDashboardProfileIntegration:
