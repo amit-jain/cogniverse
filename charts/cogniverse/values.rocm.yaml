@@ -119,21 +119,17 @@ inference:
     # give DSPy/MIPROv2 longer contexts during optimization.
     extraArgs:
       - "--max-model-len"
-      - "16384"
+      - "8192"
       - "--enforce-eager"
       - "--gpu-memory-utilization"
-      - "0.30"
-      # Gemma 4 is multimodal (image + video + audio); cogniverse
-      # agents currently use the LLM only for text reasoning (visual
-      # encoding goes through ColPali, audio through Whisper). The
-      # encoder-profile pass on startup allocates ~5 GiB for the
-      # audio/video encoders which pushes KV cache below zero on a
-      # ~25 GiB student budget. To re-enable multimodal: bump
-      # gpu-memory-utilization to 0.40, drop max-model-len to 8192,
-      # remove this flag. Only worth it when an agent actually feeds
-      # images/audio to the student LLM.
-      - "--limit-mm-per-prompt"
-      - '{"image":0,"video":0,"audio":0}'
+      - "0.40"
+      # Gemma 4 is multimodal (image + video + audio). The visual_judge
+      # evaluator feeds keyframes to this endpoint, so the multimodal
+      # encoders stay enabled. The encoder-profile pass on startup
+      # allocates ~5 GiB for the audio/video encoders, which is why
+      # gpu-memory-utilization is 0.40 (≈49 GiB of the unified pool)
+      # and max-model-len is 8192 — a smaller KV cache leaves headroom
+      # for the encoder reservation on the ~25 GiB student budget.
     resources:
       limits:
         cpu: "4"

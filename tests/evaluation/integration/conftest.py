@@ -83,9 +83,15 @@ def _load_llm_config() -> dict[str, Any] | None:
     test_model = os.environ.get("TEST_LLM_MODEL")
     test_api_base = os.environ.get("TEST_LLM_API_BASE")
     if test_model and test_api_base:
-        bare = test_model.split("/", 1)[1] if "/" in test_model else test_model
-        prefix = "openai"
-        return {"provider_uri": f"{prefix}/{bare}", "base_url": test_api_base}
+        # ``TEST_LLM_MODEL`` from ``tests/conftest.py`` is the bare
+        # model id (e.g. ``google/gemma-4-e4b-it``) — the ``openai/``
+        # litellm prefix is already stripped at that layer. Don't
+        # strip again: vLLM serves the model under its full
+        # ``google/gemma-4-e4b-it`` id and 404s on the bare name.
+        return {
+            "provider_uri": f"openai/{test_model}",
+            "base_url": test_api_base,
+        }
 
     if _TEST_LLM_CONFIG.exists():
         with _TEST_LLM_CONFIG.open() as fh:
