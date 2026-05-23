@@ -215,8 +215,16 @@ class AgentDispatcher:
             llm_primary = cfg.get_llm_config().primary
             if llm_primary.api_base:
                 _add("llm", llm_primary.api_base, 11434)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            # Failure here silently drops the LLM endpoint from the
+            # egress allow-list the surrounding code uses to authorize
+            # outbound calls. Log so the policy hole is visible.
+            logger.warning(
+                "LLM endpoint resolution failed for tenant %s (egress "
+                "allow-list will not include the LLM endpoint): %s",
+                tenant_id,
+                exc,
+            )
         denseon_url = (sys_cfg.inference_service_urls or {}).get("denseon")
         if denseon_url:
             _add("denseon", denseon_url, 8000)

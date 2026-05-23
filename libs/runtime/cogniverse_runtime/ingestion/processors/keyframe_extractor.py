@@ -24,7 +24,6 @@ class KeyframeExtractor:
         self, video_path: Path, output_dir: Path = None
     ) -> dict[str, Any]:
         """Extract keyframes from video using histogram comparison"""
-        print(f"📸 Extracting keyframes from: {video_path.name}")
 
         video_id = video_path.stem
 
@@ -102,15 +101,9 @@ class KeyframeExtractor:
 
                 # Limit max frames per video
                 if keyframe_count >= self.max_frames:
-                    print(f"  ⚠️ Reached max frames limit ({self.max_frames})")
                     break
 
             frame_count += 1
-
-            # Progress reporting
-            if frame_count % 1000 == 0:
-                progress = (frame_count / total_frames) * 100
-                print(f"  🔄 Progress: {progress:.1f}% ({keyframe_count} keyframes)")
 
         cap.release()
         processing_time = time.time() - start_time
@@ -135,5 +128,4 @@ class KeyframeExtractor:
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        print(f"  ✅ Extracted {keyframe_count} keyframes in {processing_time:.1f}s")
         return metadata

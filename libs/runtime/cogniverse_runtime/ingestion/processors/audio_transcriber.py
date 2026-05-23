@@ -51,13 +51,11 @@ class AudioTranscriber:
                 ) from exc
 
             self._model = WhisperModel(self.model_size, device=self.device)
-            print(f"  📝 Loaded Whisper model: {self.model_size} on {self.device}")
 
     def transcribe_audio(
         self, video_path: Path, output_dir: Path = None
     ) -> dict[str, Any]:
         """Extract and transcribe audio from video"""
-        print(f"🎵 Transcribing audio from: {video_path.name}")
 
         # Use OutputManager for consistent directory structure
         if output_dir is None:
@@ -115,13 +113,9 @@ class AudioTranscriber:
             with open(transcript_file, "w") as f:
                 json.dump(transcript_data, f, indent=2)
 
-            print(
-                f"  ✅ Transcribed {len(transcript_data['segments'])} segments in {transcript_data['processing_time_seconds']:.1f}s"
-            )
             return transcript_data
 
         except Exception as e:
-            print(f"  ❌ Audio transcription failed: {e}")
             return {
                 "video_id": video_id,
                 "video_path": str(video_path),

@@ -7,12 +7,14 @@ Uses actual class names in config - no string mappings or if/elif logic.
 
 import importlib
 import inspect
+import logging
 from typing import Any
 
 from .processing_strategy_set import ProcessingStrategySet
 from .processor_base import BaseStrategy
 
 INFERENCE_SERVICE_PARAM = "inference_service"
+logger = logging.getLogger(__name__)
 
 
 class StrategyFactory:
@@ -96,7 +98,8 @@ class StrategyFactory:
                 "cogniverse_runtime.ingestion.strategies"
             )
             return getattr(strategies_module, class_name)
-        except (ImportError, AttributeError):
+        except (ImportError, AttributeError) as exc:
+            logger.error("Failed to resolve strategy class %r: %s", class_name, exc)
             return None
 
     @classmethod
@@ -135,10 +138,14 @@ class StrategyFactory:
         """
         strategy_class = cls._resolve_strategy_class(class_name)
         if strategy_class is None:
-            print(f"Failed to resolve strategy class {class_name!r}")
             return None
         try:
             return strategy_class(**params)
-        except TypeError as e:
-            print(f"Failed to instantiate strategy {class_name}: {e}")
+        except TypeError as exc:
+            logger.error(
+                "Failed to instantiate strategy %s with params %s: %s",
+                class_name,
+                params,
+                exc,
+            )
             return None

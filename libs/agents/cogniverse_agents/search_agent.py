@@ -39,6 +39,17 @@ from cogniverse_core.registries.backend_registry import get_backend_registry
 logger = logging.getLogger(__name__)
 
 
+class EncoderCapabilityError(Exception):
+    """The configured query encoder lacks a capability the request needs.
+
+    Raised by :meth:`SearchAgent._extract_video_embeddings` /
+    ``_extract_image_embeddings`` when the encoder doesn't expose the
+    required ``encode_video`` / ``encode_image`` / ``encode_frames``
+    method. Callers (notably the orchestrator) catch this and return a
+    capability-aware response instead of crashing.
+    """
+
+
 class ConversationalQueryRewriteSignature(dspy.Signature):
     """Rewrite a query that contains anaphoric references using conversation history."""
 
@@ -377,20 +388,37 @@ class ContentProcessor:
                 temp_image_path.unlink()
 
     def _extract_video_embeddings(self, video_path: Path) -> np.ndarray:
-        """Extract embeddings from video file using the query encoder"""
+        """Extract embeddings from video file using the query encoder.
+
+        Raises :class:`EncoderCapabilityError` when the configured
+        encoder lacks both ``encode_video`` and ``encode_frames`` —
+        a typed error the orchestrator can catch and downgrade to a
+        capability-aware response instead of crashing the agent.
+        """
         if hasattr(self.query_encoder, "encode_video"):
             return self.query_encoder.encode_video(str(video_path))
         elif hasattr(self.query_encoder, "encode_frames"):
             return self._extract_frames_and_encode(video_path)
         else:
-            raise NotImplementedError("Query encoder does not support video encoding")
+            raise EncoderCapabilityError(
+                f"Encoder {type(self.query_encoder).__name__} does not "
+                "support video encoding (missing both encode_video and "
+                "encode_frames methods)"
+            )
 
     def _extract_image_embeddings(self, image_path: Path) -> np.ndarray:
-        """Extract embeddings from image file using the query encoder"""
+        """Extract embeddings from image file using the query encoder.
+
+        Raises :class:`EncoderCapabilityError` when the configured
+        encoder lacks ``encode_image``.
+        """
         if hasattr(self.query_encoder, "encode_image"):
             return self.query_encoder.encode_image(str(image_path))
         else:
-            raise NotImplementedError("Query encoder does not support image encoding")
+            raise EncoderCapabilityError(
+                f"Encoder {type(self.query_encoder).__name__} does not "
+                "support image encoding (missing encode_image method)"
+            )
 
     def _extract_frames_and_encode(self, video_path: Path) -> np.ndarray:
         """Extract frames from video and encode them"""

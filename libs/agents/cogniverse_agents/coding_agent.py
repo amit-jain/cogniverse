@@ -9,6 +9,8 @@ generates code, executes in an OpenShell sandbox, evaluates output, and iterates
 from __future__ import annotations
 
 import logging
+import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 
 import dspy
@@ -186,7 +188,15 @@ class CodingAgent(
         self.emit_progress("plan", "Planning implementation...")
         plan = await self._plan(enriched_task, code_context, input.language)
 
-        # 3. Iterative code-execute-evaluate loop
+        # 3. Iterative code-execute-evaluate loop. Use a per-request
+        # temp workspace so concurrent CodingAgent invocations don't
+        # overwrite each other's solution files. mkdtemp returns a
+        # process-unique path; mkdtemp's resulting dir is the
+        # caller's responsibility to clean up — we leave it on
+        # disk for post-run inspection (sandbox is the actual
+        # execution environment; this path is only the staging
+        # area for the file write).
+        workspace_dir = tempfile.mkdtemp(prefix=f"coding_{uuid.uuid4().hex[:8]}_")
         all_code_changes: List[Dict[str, str]] = []
         all_exec_results: List[Dict[str, Any]] = []
         files_modified: List[str] = []
@@ -204,7 +214,7 @@ class CodingAgent(
             )
 
             # Write to workspace and execute
-            file_path = f"/tmp/coding_workspace/solution.{self._ext(input.language)}"
+            file_path = f"{workspace_dir}/solution.{self._ext(input.language)}"
             code_changes = [
                 {"file_path": file_path, "content": code, "change_type": "create"}
             ]

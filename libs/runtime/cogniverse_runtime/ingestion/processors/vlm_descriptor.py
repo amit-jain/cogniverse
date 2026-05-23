@@ -52,7 +52,6 @@ class VLMDescriptor:
             response = requests.get(self.vlm_endpoint, timeout=5)
             if response.status_code != 404:
                 self.logger.info("VLM service is already running")
-                print("  ✅ VLM service is already running")
                 return
         except Exception as e:
             self.logger.debug(f"Service check failed: {e}")
@@ -60,16 +59,12 @@ class VLMDescriptor:
 
         # Try to start Modal service
         self.logger.info("Starting Modal VLM service...")
-        print("  🚀 Starting Modal VLM service...")
         try:
             # Check if modal_vlm_service.py exists
             service_file = Path("scripts/modal_vlm_service.py")
             if not service_file.exists():
                 self.logger.warning(
                     "scripts/modal_vlm_service.py not found, cannot auto-start service"
-                )
-                print(
-                    "  ⚠️ scripts/modal_vlm_service.py not found, cannot auto-start service"
                 )
                 return
 
@@ -82,22 +77,18 @@ class VLMDescriptor:
 
             if result.returncode == 0:
                 self.logger.info("Modal VLM service started successfully")
-                print("  ✅ Modal VLM service started successfully")
                 # Wait a bit for service to be ready
                 time.sleep(5)  # Wait for Modal VLM service startup
             else:
                 self.logger.error(f"Failed to start Modal service: {result.stderr}")
-                print(f"  ❌ Failed to start Modal service: {result.stderr}")
 
         except Exception as e:
             self.logger.error(f"Error starting Modal service: {e}")
-            print(f"  ❌ Error starting Modal service: {e}")
 
     def stop_service(self):
         """Stop the Modal VLM service if it was started"""
         if self._service_started:
             self.logger.info("Modal VLM service will auto-stop after inactivity")
-            print("  🛑 Modal VLM service will auto-stop after inactivity")
             # Modal serverless functions automatically stop after ~5-10 minutes of inactivity
             # The 'modal stop' command is primarily for long-running services, not serverless functions
             # Optionally try to stop it explicitly
@@ -110,7 +101,6 @@ class VLMDescriptor:
                 )
                 if "stopped" in result.stdout.lower() or result.returncode == 0:
                     self.logger.info("Modal VLM service stop command sent")
-                    print("  ✅ Modal VLM service stop command sent")
             except Exception as e:
                 self.logger.debug(f"Modal stop command failed: {e}")
                 # It's okay if this fails - serverless functions auto-stop anyway
@@ -118,7 +108,6 @@ class VLMDescriptor:
             self._service_started = False
         else:
             self.logger.info("Modal VLM service was not started by this pipeline")
-            print("  ℹ️ Modal VLM service was not started by this pipeline")
 
     def generate_descriptions(
         self, keyframes_metadata: dict[str, Any], output_dir: Path = None
@@ -131,7 +120,6 @@ class VLMDescriptor:
 
         video_id = keyframes_metadata["video_id"]
         self.logger.info(f"Starting VLM description generation for video: {video_id}")
-        print(f"🤖 Generating VLM descriptions for: {video_id}")
 
         # Use OutputManager for consistent directory structure
         if output_dir is None:
@@ -155,11 +143,9 @@ class VLMDescriptor:
         keyframes = keyframes_metadata["keyframes"]
         if not keyframes:
             self.logger.warning(f"No keyframes found for video: {video_id}")
-            print("  ⚠️ No keyframes found")
             return {}
 
         self.logger.info(f"Processing {len(keyframes)} keyframes for video: {video_id}")
-        print(f"  🔄 Processing {len(keyframes)} keyframes...")
 
         # Process in batches
         descriptions = {}
@@ -175,8 +161,6 @@ class VLMDescriptor:
             batch_descriptions = self._process_vlm_batch(batch)
             descriptions.update(batch_descriptions)
 
-            print(f"  📊 Processed batch {batch_num}/{total_batches}")
-
             # Save progress periodically
             descriptions_file.parent.mkdir(parents=True, exist_ok=True)
             with open(descriptions_file, "w") as f:
@@ -185,7 +169,6 @@ class VLMDescriptor:
         self.logger.info(
             f"Successfully generated {len(descriptions)} descriptions for video: {video_id}"
         )
-        print(f"  ✅ Generated {len(descriptions)} descriptions")
 
         # Return in the expected format for the pipeline
         return {
@@ -248,7 +231,6 @@ class VLMDescriptor:
                     self.logger.info(
                         f"Uploading batch of {len(frame_mapping)} frames..."
                     )
-                    print(f"    📦 Uploading batch of {len(frame_mapping)} frames...")
                     response = requests.post(
                         batch_endpoint,
                         json=payload,
@@ -259,9 +241,6 @@ class VLMDescriptor:
                     self.logger.info(
                         f"Batch request completed with status: {response.status_code}"
                     )
-                    print(
-                        f"    📨 Batch request completed with status: {response.status_code}"
-                    )
 
                     if response.status_code == 200:
                         result = response.json()
@@ -269,22 +248,15 @@ class VLMDescriptor:
                         self.logger.info(
                             f"Batch processing successful: {len(descriptions_returned)} descriptions returned"
                         )
-                        print(
-                            f"    ✅ Batch processing successful: {len(descriptions_returned)} descriptions returned"
-                        )
                         return descriptions_returned
                     else:
                         self.logger.error(
                             f"Batch processing failed: {response.status_code} - {response.text}"
                         )
-                        print(
-                            f"    ❌ Batch processing failed: {response.status_code} - {response.text}"
-                        )
                         return {}
 
                 except Exception as e:
                     self.logger.error(f"Batch processing error: {e}")
-                    print(f"    ❌ Batch processing error: {e}")
                     # If service is not running, try to start it
                     if "Connection" in str(e) and self.auto_start:
                         self._ensure_service_running()

@@ -600,8 +600,15 @@ class MemoryAwareMixin:
                         return json.loads(value).get("text", "") or None
                     except (json.JSONDecodeError, AttributeError):
                         return value or None
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            # Tenant instructions feed the LLM prompt; silently
+            # dropping them on a ConfigStore error means the LLM
+            # call runs without any tenant-specific instructions.
+            logger.warning(
+                "Tenant-instruction fetch failed for tenant %s: %s",
+                getattr(self, "tenant_id", "?"),
+                exc,
+            )
         return None
 
     def inject_context_into_prompt(self, prompt: str, query: str) -> str:
