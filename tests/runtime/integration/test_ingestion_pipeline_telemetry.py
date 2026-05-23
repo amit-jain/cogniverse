@@ -1,15 +1,17 @@
 """Live-cluster proof that ingestion-pipeline spans land in Phoenix.
 
-Locks the contract added under "TODO #1: Wire up ingestion-pipeline
-telemetry":
+Locks the contract:
 
-1. ``pipeline.run`` outer span exists with the right attributes.
-2. Per-stage child spans (``pipeline.keyframes`` etc.) exist as
-   children of ``pipeline.run``, ordered correctly.
-3. ``pipeline.kg.extract_per_segment`` sibling span exists with
-   nodes/edges/segments attributes populated.
-4. ``TelemetryLevel`` filter actually controls emission: pipeline
-   spans land at DETAILED+ and DISAPPEAR at BASIC.
+* ``pipeline.run`` outer span exists with the expected attributes
+  (video_id, source_uri, schema_name, duration_ms, stages_run).
+* Per-stage child spans (``pipeline.keyframes`` /
+  ``pipeline.transcription`` / ``pipeline.descriptions`` /
+  ``pipeline.embeddings``) land as children of ``pipeline.run`` —
+  at least keyframes + embeddings on the colpali profile.
+* ``pipeline.kg.extract_per_segment`` sibling span carries
+  ``kg.nodes_count`` / ``kg.edges_count`` / ``kg.segments_count``.
+* ``TelemetryLevel`` filter controls emission: pipeline spans land
+  at DETAILED+ and disappear at BASIC.
 
 Skips when the cogniverse-runtime pod or Phoenix isn't reachable.
 """
