@@ -25,18 +25,15 @@ class CacheBackendRegistry:
         if not backend_class:
             raise ValueError(f"Unknown backend type: {backend_type}")
 
-        # Convert dict config to appropriate config class
-        if backend_type == "filesystem":
-            from .backends.filesystem import FilesystemCacheConfig
-
-            return backend_class(FilesystemCacheConfig(**config))
-        elif backend_type == "structured_filesystem":
+        # Convert dict config to appropriate config class. Only one
+        # backend is registered today (structured_filesystem); the
+        # fallback hands the raw dict to the backend ctor for any
+        # future registrations that accept it directly.
+        if backend_type == "structured_filesystem":
             from .backends.structured_filesystem import StructuredFilesystemConfig
 
             return backend_class(StructuredFilesystemConfig(**config))
-        else:
-            # Try to pass config directly
-            return backend_class(config)
+        return backend_class(config)
 
     @classmethod
     def list_backends(cls) -> list[str]:
