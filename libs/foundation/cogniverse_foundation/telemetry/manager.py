@@ -206,13 +206,15 @@ class TelemetryManager:
                          If None, uses tenant-only project for user operations
             attributes: Optional span attributes
             component: Telemetry-level component tag — one of
-                ``search_service`` / ``backend`` / ``encoder`` /
-                ``pipeline`` / ``agents``. ``TelemetryConfig.level``
-                controls which components emit. Default ``agents`` —
-                only ``VERBOSE`` admits agent-level spans, so callers
-                that want a span at lower levels MUST pass the right
-                component (e.g. ``search_service`` for top-level
-                search calls).
+                ``search_service`` / ``agents`` / ``backend`` /
+                ``pipeline`` / ``encoder``. ``TelemetryConfig.level``
+                controls which components emit (see
+                ``should_instrument_component``). Default ``agents`` —
+                emits at DETAILED and VERBOSE (the default and
+                higher). Callers emitting per-inference model details
+                should pass ``encoder``; ingestion-stage spans should
+                pass ``pipeline``; the top-level search HTTP entry
+                should pass ``search_service`` (admitted at BASIC).
 
         Usage:
             # User operation (search, routing, etc.) - unified tenant project.

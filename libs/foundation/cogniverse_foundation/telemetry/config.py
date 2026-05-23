@@ -96,17 +96,23 @@ class TelemetryConfig:
         from the given ``component``.
 
         The mapping is graduated — each level is a strict superset of the
-        previous:
+        previous. Tiering rationale: business-logic visibility (what did
+        agents decide, what did the backend return, what did the ingestion
+        pipeline do) is the production-debugging signal, so it lives at
+        DETAILED (the default). Per-inference model details (encoder
+        forward passes, embedding shapes) are noise unless you're
+        debugging the model itself — those live at VERBOSE.
 
         * ``DISABLED`` — emit nothing
-        * ``BASIC``    — only ``search_service`` (top-level search calls)
-        * ``DETAILED`` — adds ``backend`` + ``encoder`` (default)
-        * ``VERBOSE``  — adds ``pipeline`` + ``agents`` (everything)
+        * ``BASIC``    — ``search_service`` only (request-level visibility)
+        * ``DETAILED`` — adds ``agents`` + ``backend`` + ``pipeline``
+          (business logic + dependencies; default level)
+        * ``VERBOSE``  — adds ``encoder`` (per-inference model details)
 
         Components passed by callers should be one of the above strings.
-        Unknown components are treated as DETAILED-tier (emit on DETAILED
-        and VERBOSE) so a new component name doesn't accidentally drop
-        spans before the mapping is updated.
+        Unknown components are treated as DETAILED-tier so a new
+        component name doesn't accidentally drop spans before the mapping
+        is updated (fail-open).
         """
         if not self.enabled:
             return False
@@ -118,10 +124,10 @@ class TelemetryConfig:
         }
         component_tier = {
             "search_service": 1,
+            "agents": 2,
             "backend": 2,
-            "encoder": 2,
-            "pipeline": 3,
-            "agents": 3,
+            "pipeline": 2,
+            "encoder": 3,
         }.get(component, 2)
         return order[self.level] >= component_tier
 
