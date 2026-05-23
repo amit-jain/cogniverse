@@ -49,7 +49,9 @@ class TestPhoenixProbe:
         from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
         mock_tm.span.assert_called_once_with(
-            "startup.probe", tenant_id=SYSTEM_TENANT_ID
+            "startup.probe",
+            tenant_id=SYSTEM_TENANT_ID,
+            component="search_service",
         )
         # Success was logged.
         assert any("Phoenix reachability probe OK" in r.message for r in caplog.records)

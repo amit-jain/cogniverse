@@ -262,13 +262,15 @@ class TestConfigAPIMixin:
         assert data["status"] == "success"
         assert "available_modules" in data
 
-        # Verify all module types are present
+        # Verify all module types are present. Only the three actually
+        # registered + consumed by any agent: predict / chain_of_thought
+        # / react. multi_chain_comparison and program_of_thought used
+        # to be in the enum but had zero consumers in any commit —
+        # removed in the audit cleanup along with the matching
+        # dspy.MultiChainComparison / dspy.ProgramOfThought entries
+        # on DSPyModuleRegistry.
         modules = data["available_modules"]
-        assert "predict" in modules
-        assert "chain_of_thought" in modules
-        assert "react" in modules
-        assert "multi_chain_comparison" in modules
-        assert "program_of_thought" in modules
+        assert modules.keys() == {"predict", "chain_of_thought", "react"}
 
     def test_get_available_optimizers(self, client):
         """Test GET /config/optimizers/available lists all optimizer types"""
