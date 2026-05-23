@@ -617,21 +617,37 @@ class TestGetStorageBackend:
 class TestInferenceHelpers:
     """Tests for inference helper functions."""
 
-    def test_resolve_adapter_path_file_uri(self):
+    def test_resolve_adapter_path_file_uri(self, tmp_path):
         """Test resolving file:// URI to local path."""
         from cogniverse_finetuning.registry.inference import resolve_adapter_path
 
-        path = resolve_adapter_path("file:///data/adapters/routing_sft")
+        # cache_dir is mandatory even for file:// URIs — uniform call
+        # signature across all callers (no branching defaults).
+        path = resolve_adapter_path(
+            "file:///data/adapters/routing_sft", cache_dir=str(tmp_path)
+        )
 
         assert path == "/data/adapters/routing_sft"
 
-    def test_resolve_adapter_path_plain_path(self):
+    def test_resolve_adapter_path_plain_path(self, tmp_path):
         """Test resolving plain local path."""
         from cogniverse_finetuning.registry.inference import resolve_adapter_path
 
-        path = resolve_adapter_path("/data/adapters/routing_sft")
+        path = resolve_adapter_path(
+            "/data/adapters/routing_sft", cache_dir=str(tmp_path)
+        )
 
         assert path == "/data/adapters/routing_sft"
+
+    def test_resolve_adapter_path_rejects_empty_cache_dir(self):
+        """Empty cache_dir must raise — no fallback to hardcoded paths
+        or env reads."""
+        import pytest
+
+        from cogniverse_finetuning.registry.inference import resolve_adapter_path
+
+        with pytest.raises(ValueError, match="non-empty cache_dir"):
+            resolve_adapter_path("file:///data/x", cache_dir="")
 
     def test_adapter_info_dataclass(self):
         """Test AdapterInfo dataclass."""

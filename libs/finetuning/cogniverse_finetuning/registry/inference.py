@@ -139,52 +139,49 @@ def list_available_adapters(
         return []
 
 
-def resolve_adapter_path(adapter_uri: str, cache_dir: str = "") -> str:
+def resolve_adapter_path(adapter_uri: str, cache_dir: str) -> str:
     """
-    Resolve adapter URI to a local path.
-
-    Downloads the adapter if necessary (for cloud URIs).
-    For file:// URIs, returns the path directly.
+    Resolve adapter URI to a local path under ``cache_dir``.
 
     Args:
-        adapter_uri: Adapter URI (file://, s3://, modal://). For
-            file:// URIs the path after the scheme is returned
-            verbatim. For cloud URIs the resolver downloads under
-            ``cache_dir``.
+        adapter_uri: Adapter URI. Accepted schemes: ``file://`` (path
+            after scheme is returned verbatim), plain path (returned
+            verbatim), ``s3://`` / ``gs://`` / ``modal://`` (downloaded
+            under ``cache_dir``).
         cache_dir: Directory to download cloud-backed adapters into.
-            REQUIRED — no default. Callers MUST source this from
+            REQUIRED — no default, no branching. Even file:// /
+            plain-path callers MUST pass this so the call signature
+            is uniform across all callers. Source it from
             ``SystemConfig.adapter_cache_dir`` (populated at the
             runtime startup boundary). Production code may not
             hardcode any filesystem path or read env directly here.
 
     Returns:
-        Local filesystem path to adapter (the dir under ``cache_dir``
-        for cloud URIs; the path encoded in the URI for file://).
+        Local filesystem path to adapter.
+
+    Raises:
+        ValueError: If ``cache_dir`` is empty.
     """
+    if not cache_dir:
+        raise ValueError(
+            f"resolve_adapter_path requires a non-empty cache_dir "
+            f"(got {cache_dir!r} for uri {adapter_uri!r}); source it "
+            "from SystemConfig.adapter_cache_dir at the caller, not "
+            "from a hardcoded path or env read here"
+        )
+
     if adapter_uri.startswith("file://"):
         return adapter_uri[7:]  # Strip file://
 
     if not adapter_uri.startswith(("s3://", "gs://", "modal://")):
-        # Assume it's a local path
+        # Plain local path
         return adapter_uri
 
-    # Cloud URI — cache_dir is now mandatory. The empty-string
-    # default exists only so the file:// + plain-path early returns
-    # don't force every caller to pass a value they wouldn't use.
-    if not cache_dir:
-        raise ValueError(
-            f"resolve_adapter_path needs a non-empty cache_dir to "
-            f"download {adapter_uri!r}; source it from "
-            "SystemConfig.adapter_cache_dir at the caller, not from "
-            "a hardcoded path or env read here"
-        )
-
-    # Download from cloud storage
+    # Cloud URI — download under cache_dir.
     from pathlib import Path
 
     from cogniverse_finetuning.registry import download_adapter
 
-    # Create cache directory
     cache_path = Path(cache_dir)
     cache_path.mkdir(parents=True, exist_ok=True)
 
