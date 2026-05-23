@@ -790,6 +790,10 @@ class VideoIngestionPipeline:
                 )
             )
 
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tm = get_telemetry_manager()
+
         try:
             # Check for cancellation before processing
             if self._is_cancelled():
@@ -798,21 +802,42 @@ class VideoIngestionPipeline:
                 results["error"] = "Pipeline cancelled"
                 return results
 
-            # Let strategy set orchestrate everything
-            self.logger.info("Delegating to ProcessingStrategySet.process()")
-            processing_results = await self.strategy_set.process(
-                video_path=video_path,
-                processor_manager=self.processor_manager,
-                pipeline_context=self,
-            )
+            # Outer span wraps the orchestrating call so Phoenix
+            # renders the per-stage children as a single
+            # ingestion-tree per video. component=pipeline so the
+            # TelemetryLevel filter admits at DETAILED+.
+            with tm.span(
+                "pipeline.run",
+                tenant_id=self.tenant_id,
+                component="pipeline",
+                attributes={
+                    "pipeline.video_id": video_id,
+                    "pipeline.source_uri": video_uri,
+                    "pipeline.schema_name": self.schema_name or "unknown",
+                },
+            ) as pipeline_span:
+                # Let strategy set orchestrate everything
+                self.logger.info("Delegating to ProcessingStrategySet.process()")
+                processing_results = await self.strategy_set.process(
+                    video_path=video_path,
+                    processor_manager=self.processor_manager,
+                    pipeline_context=self,
+                )
 
-            # Add processing results to our results structure
-            results["results"] = processing_results
+                # Add processing results to our results structure
+                results["results"] = processing_results
 
-            # Calculate total time
-            total_time = time.time() - results["started_at"]
-            results["status"] = "completed"
-            results["total_processing_time"] = total_time
+                # Calculate total time
+                total_time = time.time() - results["started_at"]
+                results["status"] = "completed"
+                results["total_processing_time"] = total_time
+
+                pipeline_span.set_attribute(
+                    "pipeline.duration_ms", int(total_time * 1000)
+                )
+                pipeline_span.set_attribute(
+                    "pipeline.stages_run", len(processing_results or {})
+                )
 
             self.logger.info(f"Async video processing completed in {total_time:.2f}s")
             print(f"\n✅ Video processing completed in {total_time:.1f}s")

@@ -6,6 +6,7 @@ Container for processing strategies that works with any number and type of strat
 """
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,11 @@ class ProcessingStrategySet:
         Returns:
             Processing results from all strategies
         """
+        from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+        tm = get_telemetry_manager()
+        tenant_id = pipeline_context.tenant_id
+
         schema_name = getattr(pipeline_context, "schema_name", "unknown")
         pipeline_context.logger.info(
             f"🎯 ProcessingStrategySet.process() starting for {video_path.name} [Schema: {schema_name}]"
@@ -94,6 +100,15 @@ class ProcessingStrategySet:
 
         strategy_order = ["segmentation", "transcription", "description", "embedding"]
 
+        # One span per stage, component=pipeline so the TelemetryLevel
+        # filter admits at DETAILED+. Attributes carry the input shape
+        # + output count + duration for cost/perf attribution.
+        stage_span_name = {
+            "segmentation": "pipeline.keyframes",
+            "transcription": "pipeline.transcription",
+            "description": "pipeline.descriptions",
+            "embedding": "pipeline.embeddings",
+        }
         for strategy_name in strategy_order:
             strategy = self.get_strategy(strategy_name)
             if strategy:
@@ -101,19 +116,49 @@ class ProcessingStrategySet:
                     f"Processing {strategy_name} strategy: {type(strategy).__name__}"
                 )
 
-                strategy_result = await self._process_strategy(
-                    strategy_name,
-                    strategy,
-                    video_path,
-                    processor_manager,
-                    pipeline_context,
-                    results,
-                )
+                span_attrs = {
+                    "pipeline.stage": strategy_name,
+                    "pipeline.strategy_class": type(strategy).__name__,
+                    "pipeline.video_id": video_path.stem,
+                    "pipeline.schema_name": schema_name,
+                }
+                stage_started = time.time()
+                with tm.span(
+                    stage_span_name[strategy_name],
+                    tenant_id=tenant_id,
+                    attributes=span_attrs,
+                    component="pipeline",
+                ) as span:
+                    strategy_result = await self._process_strategy(
+                        strategy_name,
+                        strategy,
+                        video_path,
+                        processor_manager,
+                        pipeline_context,
+                        results,
+                    )
 
-                if isinstance(strategy_result, dict):
-                    results.update(strategy_result)
-                    pipeline_context.logger.info(
-                        f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
+                    if isinstance(strategy_result, dict):
+                        results.update(strategy_result)
+                        pipeline_context.logger.info(
+                            f"  ✅ {strategy_name} completed: {list(strategy_result.keys())}"
+                        )
+                        # Per-stage output cardinality — best signal for
+                        # cost attribution and perf regressions.
+                        for k in (
+                            "keyframes",
+                            "transcript",
+                            "descriptions",
+                            "documents",
+                        ):
+                            if k in strategy_result and hasattr(
+                                strategy_result[k], "__len__"
+                            ):
+                                span.set_attribute(
+                                    f"pipeline.{k}_count", len(strategy_result[k])
+                                )
+                    span.set_attribute(
+                        "duration_ms", int((time.time() - stage_started) * 1000)
                     )
 
         pipeline_context.logger.info(

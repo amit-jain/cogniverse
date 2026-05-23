@@ -314,6 +314,10 @@ async def _process_job(
     invariants (active counter accurate, idempotency record settled,
     queue PEL drained) are guaranteed consistent.
     """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tm = get_telemetry_manager()
+
     await queue.publish_status(
         redis,
         job.ingest_id,
@@ -326,22 +330,40 @@ async def _process_job(
 
     success = False
     terminal_event: dict
-    try:
-        result = await processor(job)
-        success = True
-        terminal_event = {
-            "state": "complete",
-            "ingest_id": job.ingest_id,
-            "result": _summarise(result),
-        }
-    except Exception as exc:
-        logger.exception("Ingest job %s failed", job.ingest_id)
-        terminal_event = {
-            "state": "failed",
-            "ingest_id": job.ingest_id,
-            "error": str(exc),
-            "error_type": type(exc).__name__,
-        }
+    # Outer span wraps the full job lifecycle (processor + cleanup +
+    # status publish). component=pipeline so the TelemetryLevel filter
+    # admits at DETAILED+. Errors propagate into the span via the
+    # contextmanager's try/yield/except path.
+    with tm.span(
+        "pipeline.worker.process_job",
+        tenant_id=job.tenant_id,
+        component="pipeline",
+        attributes={
+            "job.id": job.ingest_id,
+            "job.source_uri": getattr(job, "source_uri", "") or "",
+            "job.profile": getattr(job, "profile", "") or "",
+            "job.consumer_id": config.consumer_id,
+        },
+    ) as job_span:
+        try:
+            result = await processor(job)
+            success = True
+            terminal_event = {
+                "state": "complete",
+                "ingest_id": job.ingest_id,
+                "result": _summarise(result),
+            }
+            job_span.set_attribute("job.outcome", "success")
+        except Exception as exc:
+            logger.exception("Ingest job %s failed", job.ingest_id)
+            terminal_event = {
+                "state": "failed",
+                "ingest_id": job.ingest_id,
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+            }
+            job_span.set_attribute("job.outcome", "failed")
+            job_span.set_attribute("job.error_type", type(exc).__name__)
 
     try:
         if success:

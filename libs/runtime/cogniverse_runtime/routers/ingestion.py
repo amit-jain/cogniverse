@@ -518,12 +518,73 @@ async def _extract_graph_per_segment(
     full result and per-segment back-refs are PATCHed onto the
     corresponding content documents in Vespa.
     """
+    import time as _time
+
     from cogniverse_agents.graph.claim_extractor import ClaimExtractor
     from cogniverse_agents.graph.cross_modal_linker import CrossModalLinker
     from cogniverse_agents.graph.doc_extractor import DocExtractor
     from cogniverse_agents.graph.graph_schema import ExtractionResult
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
     from cogniverse_runtime.routers import graph as graph_router
 
+    empty: Dict[str, Any] = {
+        "nodes_upserted": 0,
+        "edges_upserted": 0,
+        "backrefs_by_segment": {},
+    }
+
+    if graph_router._graph_manager_factory is None:
+        return empty
+
+    # Span wraps the entire per-segment KG extraction pass — sibling
+    # of pipeline.run (not nested, since this runs AFTER the
+    # ingestion pipeline completes). component=pipeline so the
+    # TelemetryLevel filter admits at DETAILED+.
+    tm = get_telemetry_manager()
+    kg_started = _time.time()
+    with tm.span(
+        "pipeline.kg.extract_per_segment",
+        tenant_id=tenant_id,
+        component="pipeline",
+        attributes={
+            "kg.source_doc_id": source_doc_id,
+        },
+    ) as kg_span:
+        result = await _extract_graph_per_segment_inner(
+            processing_results=processing_results,
+            source_doc_id=source_doc_id,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
+            DocExtractor=DocExtractor,
+            ClaimExtractor=ClaimExtractor,
+            CrossModalLinker=CrossModalLinker,
+            ExtractionResult=ExtractionResult,
+            graph_router=graph_router,
+        )
+        kg_span.set_attribute("kg.nodes_count", result.get("nodes_upserted", 0))
+        kg_span.set_attribute("kg.edges_count", result.get("edges_upserted", 0))
+        kg_span.set_attribute(
+            "kg.segments_count", len(result.get("backrefs_by_segment", {}))
+        )
+        kg_span.set_attribute("duration_ms", int((_time.time() - kg_started) * 1000))
+        return result
+
+
+async def _extract_graph_per_segment_inner(
+    processing_results: Dict[str, Any],
+    source_doc_id: str,
+    tenant_id: str,
+    config_manager: ConfigManager,
+    DocExtractor,
+    ClaimExtractor,
+    CrossModalLinker,
+    ExtractionResult,
+    graph_router,
+) -> Dict[str, Any]:
+    """Inner implementation — wrapped by ``_extract_graph_per_segment``
+    in a Phoenix span. Split out so the outer function's span lifetime
+    cleanly covers all the work below.
+    """
     empty: Dict[str, Any] = {
         "nodes_upserted": 0,
         "edges_upserted": 0,
