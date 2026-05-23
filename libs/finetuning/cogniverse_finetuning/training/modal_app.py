@@ -10,10 +10,25 @@ Then call from Python:
 """
 
 import logging
+import tempfile
 
 import modal
 
 logger = logging.getLogger(__name__)
+
+
+def _adapter_workspace() -> str:
+    """Per-call adapter output directory.
+
+    Returns a unique mkdtemp path so two concurrent training jobs
+    (even running in the same Modal container if Modal ever reuses
+    one) write to distinct directories. Replaces the hardcoded
+    ``/tmp/adapter`` literal that used to be sprinkled through the
+    training functions — production code should not hardcode
+    process-shared paths.
+    """
+    return tempfile.mkdtemp(prefix="adapter_")
+
 
 # Create Modal app
 app = modal.App("cogniverse-finetuning")
@@ -105,9 +120,11 @@ def train_sft_remote(
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
 
-    # 4. Training arguments
+    # 4. Training arguments — per-call workspace dir so concurrent
+    # training calls never collide (mkdtemp is process-unique).
+    adapter_dir = _adapter_workspace()
     training_args = TrainingArguments(
-        output_dir="/tmp/adapter",
+        output_dir=adapter_dir,
         num_train_epochs=config.get("epochs", 3),
         per_device_train_batch_size=config.get("batch_size", 4),
         gradient_accumulation_steps=config.get("gradient_accumulation_steps", 4),
@@ -132,15 +149,15 @@ def train_sft_remote(
     )
 
     train_result = trainer.train()
-    trainer.save_model("/tmp/adapter")
-    tokenizer.save_pretrained("/tmp/adapter")
+    trainer.save_model(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
 
     logger.info(f"Training complete. Loss: {train_result.metrics.get('train_loss')}")
 
     # 6. Create tar.gz of adapter in memory
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add("/tmp/adapter", arcname="adapter")
+        tar.add(adapter_dir, arcname="adapter")
 
     adapter_bytes = buffer.getvalue()
     logger.info(f"Adapter size: {len(adapter_bytes) / 1024 / 1024:.2f} MB")
@@ -230,9 +247,10 @@ def train_dpo_remote(
         model = get_peft_model(model, lora_config)
         model.print_trainable_parameters()
 
-    # Training arguments
+    # Training arguments — per-call workspace dir.
+    adapter_dir = _adapter_workspace()
     training_args = TrainingArguments(
-        output_dir="/tmp/adapter",
+        output_dir=adapter_dir,
         num_train_epochs=config.get("epochs", 3),
         per_device_train_batch_size=config.get("batch_size", 4),
         gradient_accumulation_steps=config.get("gradient_accumulation_steps", 4),
@@ -259,15 +277,15 @@ def train_dpo_remote(
     )
 
     train_result = trainer.train()
-    trainer.save_model("/tmp/adapter")
-    tokenizer.save_pretrained("/tmp/adapter")
+    trainer.save_model(adapter_dir)
+    tokenizer.save_pretrained(adapter_dir)
 
     logger.info(f"Training complete. Loss: {train_result.metrics.get('train_loss')}")
 
     # 6. Create tar.gz of adapter in memory
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add("/tmp/adapter", arcname="adapter")
+        tar.add(adapter_dir, arcname="adapter")
 
     adapter_bytes = buffer.getvalue()
     logger.info(f"Adapter size: {len(adapter_bytes) / 1024 / 1024:.2f} MB")
@@ -355,13 +373,14 @@ def train_embedding_remote(
         triplet_margin=config.get("triplet_margin", 0.5),
     )
 
-    # 2. Train
+    # 2. Train — per-call workspace dir.
+    adapter_dir = _adapter_workspace()
     logger.info("Starting training...")
     model.fit(
         train_objectives=[(train_dataloader, train_loss)],
         epochs=config.get("epochs", 3),
         warmup_steps=config.get("warmup_steps", 100),
-        output_path="/tmp/adapter",
+        output_path=adapter_dir,
         save_best_model=True,
         show_progress_bar=True,
     )
@@ -371,7 +390,7 @@ def train_embedding_remote(
     # 3. Create tar.gz of adapter in memory
     buffer = BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        tar.add("/tmp/adapter", arcname="adapter")
+        tar.add(adapter_dir, arcname="adapter")
 
     adapter_bytes = buffer.getvalue()
     logger.info(f"Adapter size: {len(adapter_bytes) / 1024 / 1024:.2f} MB")

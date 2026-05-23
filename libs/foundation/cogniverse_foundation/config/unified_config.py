@@ -219,6 +219,13 @@ class SystemConfig:
     # boundary.
     redis_url: str = ""
 
+    # Local cache directory the finetuning adapter resolver downloads
+    # to. Empty string means "no cache configured" — production code
+    # paths that call ``resolve_adapter_path`` will raise rather than
+    # silently fall back to ``/tmp/...``. Populated from chart env
+    # COGNIVERSE_ADAPTER_CACHE at the runtime startup boundary.
+    adapter_cache_dir: str = ""
+
     # Metadata
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -248,6 +255,7 @@ class SystemConfig:
             "iter_retrieval_token_budget": self.iter_retrieval_token_budget,
             "iter_retrieval_wall_clock_ms": self.iter_retrieval_wall_clock_ms,
             "redis_url": self.redis_url,
+            "adapter_cache_dir": self.adapter_cache_dir,
             "environment": self.environment,
             "metadata": self.metadata,
         }
@@ -285,6 +293,7 @@ class SystemConfig:
                 data.get("iter_retrieval_wall_clock_ms", 30000)
             ),
             redis_url=data.get("redis_url", ""),
+            adapter_cache_dir=data.get("adapter_cache_dir", ""),
             environment=data.get("environment", "development"),
             metadata=data.get("metadata", {}),
         )

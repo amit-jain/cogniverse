@@ -55,7 +55,10 @@ def get_active_adapter_for_inference(
         ...     else:
         ...         # For cloud URIs, download first
         ...         from cogniverse_finetuning.registry import download_adapter
-        ...         lora_path = download_adapter(adapter.adapter_uri, "/tmp/adapters")
+        ...         lora_path = download_adapter(
+        ...             adapter.adapter_uri,
+        ...             cfg.adapter_cache_dir,  # from SystemConfig
+        ...         )
         ...
         ...     # Load in vLLM
         ...     llm = LLM(model=adapter.base_model, enable_lora=True)
@@ -136,7 +139,7 @@ def list_available_adapters(
         return []
 
 
-def resolve_adapter_path(adapter_uri: str, cache_dir: str = "/tmp/adapters") -> str:
+def resolve_adapter_path(adapter_uri: str, cache_dir: str = "") -> str:
     """
     Resolve adapter URI to a local path.
 
@@ -144,18 +147,19 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str = "/tmp/adapters") -> 
     For file:// URIs, returns the path directly.
 
     Args:
-        adapter_uri: Adapter URI (file://, s3://, modal://)
-        cache_dir: Directory to download adapters to
+        adapter_uri: Adapter URI (file://, s3://, modal://). For
+            file:// URIs the path after the scheme is returned
+            verbatim. For cloud URIs the resolver downloads under
+            ``cache_dir``.
+        cache_dir: Directory to download cloud-backed adapters into.
+            REQUIRED — no default. Callers MUST source this from
+            ``SystemConfig.adapter_cache_dir`` (populated at the
+            runtime startup boundary). Production code may not
+            hardcode any filesystem path or read env directly here.
 
     Returns:
-        Local filesystem path to adapter
-
-    Example:
-        >>> path = resolve_adapter_path("file:///data/adapters/routing_sft")
-        '/data/adapters/routing_sft'
-
-        >>> path = resolve_adapter_path("s3://bucket/adapters/routing_sft", "/tmp/cache")
-        '/tmp/cache/routing_sft'  # Downloaded from S3
+        Local filesystem path to adapter (the dir under ``cache_dir``
+        for cloud URIs; the path encoded in the URI for file://).
     """
     if adapter_uri.startswith("file://"):
         return adapter_uri[7:]  # Strip file://
@@ -163,6 +167,17 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str = "/tmp/adapters") -> 
     if not adapter_uri.startswith(("s3://", "gs://", "modal://")):
         # Assume it's a local path
         return adapter_uri
+
+    # Cloud URI — cache_dir is now mandatory. The empty-string
+    # default exists only so the file:// + plain-path early returns
+    # don't force every caller to pass a value they wouldn't use.
+    if not cache_dir:
+        raise ValueError(
+            f"resolve_adapter_path needs a non-empty cache_dir to "
+            f"download {adapter_uri!r}; source it from "
+            "SystemConfig.adapter_cache_dir at the caller, not from "
+            "a hardcoded path or env read here"
+        )
 
     # Download from cloud storage
     from pathlib import Path
@@ -174,7 +189,7 @@ def resolve_adapter_path(adapter_uri: str, cache_dir: str = "/tmp/adapters") -> 
     cache_path.mkdir(parents=True, exist_ok=True)
 
     # Generate local path from URI
-    # e.g., s3://bucket/adapters/routing_sft -> /tmp/adapters/routing_sft
+    # e.g., s3://bucket/adapters/<name> -> <cache_dir>/<name>
     uri_parts = adapter_uri.split("/")
     adapter_name = uri_parts[-1] if uri_parts[-1] else uri_parts[-2]
     local_path = str(cache_path / adapter_name)
