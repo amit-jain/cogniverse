@@ -504,14 +504,22 @@ class DSPyAgentOptimizerPipeline:
             if str(example.primary_agent).lower() == str(pred.primary_agent).lower():
                 score += 0.4
 
-            # Confidence score difference (closer to expected = better)
+            # Confidence score difference (closer to expected = better).
+            # Catch only the conversion errors a missing/malformed
+            # routing_confidence can raise — broader excepts used to
+            # swallow real bugs in `pred` shape and silently zero the
+            # confidence-bonus contribution.
             try:
                 expected_conf = float(example.routing_confidence)
                 actual_conf = float(pred.routing_confidence)
                 conf_diff = abs(expected_conf - actual_conf)
                 score += max(0, 0.2 - conf_diff)  # Up to 0.2 points for confidence
-            except Exception:
-                pass
+            except (AttributeError, TypeError, ValueError) as exc:
+                logger.warning(
+                    "agent_routing_metric: confidence-bonus skipped — "
+                    "example/pred routing_confidence malformed (%s)",
+                    exc,
+                )
 
             return min(1.0, score)
 

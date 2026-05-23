@@ -130,10 +130,20 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
             graph_backend.schema_registry.deploy_schema(
                 tenant_id=tenant_id, base_schema_name="knowledge_graph"
             )
-        except Exception:
-            # Schema may already be deployed; first feed/query attempt
-            # surfaces the real error.
-            pass
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            # The common case is "schema already deployed"; the deploy
+            # call is idempotent at the Vespa convergence layer but the
+            # client wrapper can raise on transient transport errors
+            # or genuine schema validation failures. Log so a real
+            # failure is visible — first feed/query attempt will then
+            # surface the actual blocking error to the caller.
+            logger.warning(
+                "Knowledge-graph schema deploy for tenant %s raised "
+                "(treating as already-deployed; real error surfaces on "
+                "first feed/query): %s",
+                tenant_id,
+                exc,
+            )
         sys_cfg = config_manager.get_system_config()
         colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
         if not colbert_url:

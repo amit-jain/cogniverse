@@ -91,9 +91,20 @@ class Evaluator:
             # Add provider's base to the class bases if not already present
             if provider_base not in cls.__bases__:
                 cls.__bases__ = (provider_base,) + cls.__bases__
-        except Exception:
-            # If provider not available during import, will be resolved at runtime
-            pass
+        except Exception as exc:  # noqa: BLE001 — log + degrade
+            # If the provider isn't available at class-definition
+            # time (typical at module import before runtime
+            # initialization completes), defer the base-class
+            # injection. Log so a genuine misconfig (provider
+            # configured but raises) is visible rather than the
+            # evaluator silently lacking its provider integration.
+            import logging as _logging
+
+            _logging.getLogger(__name__).debug(
+                "Evaluator %s: provider base injection deferred — %s",
+                cls.__name__,
+                exc,
+            )
 
 
 # Create a result type accessor

@@ -433,8 +433,15 @@ class AgentDispatcher:
         finally:
             try:
                 setter(None)
-            except Exception:  # pragma: no cover - defensive
-                pass
+            except Exception as exc:  # noqa: BLE001 — log + degrade
+                # Session-clear is best-effort cleanup; failures here
+                # leak session-id into the next request handled by this
+                # event-loop slot. Log so the leak is investigable.
+                logger.warning(
+                    "Session-id clear failed (next request may inherit "
+                    "stale session_id): %s",
+                    exc,
+                )
 
     @staticmethod
     def _resolve_signature_variant(tenant_id: str, agent_name: str) -> str:

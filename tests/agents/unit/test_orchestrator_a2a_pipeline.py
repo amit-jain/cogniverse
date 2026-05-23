@@ -20,6 +20,16 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorInput,
     OrchestratorOutput,
 )
+from cogniverse_foundation.config.unified_config import SystemConfig
+
+
+def _make_mock_config_manager() -> Mock:
+    """Mock ConfigManager whose ``get_system_config()`` returns a real
+    SystemConfig dataclass (the orchestrator reads
+    ``iter_retrieval_*`` and ``redis_url`` off it)."""
+    cm = Mock()
+    cm.get_system_config = Mock(return_value=SystemConfig())
+    return cm
 
 
 @pytest.fixture
@@ -56,7 +66,7 @@ def orchestrator(mock_registry):
     """OrchestratorAgent with mock registry."""
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
-        mock_config_manager = Mock()
+        mock_config_manager = _make_mock_config_manager()
         return OrchestratorAgent(
             deps=deps,
             registry=mock_registry,

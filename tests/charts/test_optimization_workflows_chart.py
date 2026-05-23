@@ -103,8 +103,7 @@ class TestWorkflowSubmitterRoleGrantsEveryStepNeeds:
                 "resources", []
             ):
                 assert {"get", "patch"}.issubset(set(rule["verbs"])), (
-                    f"deployments verbs incomplete for rollout restart: "
-                    f"{rule['verbs']}"
+                    f"deployments verbs incomplete for rollout restart: {rule['verbs']}"
                 )
                 return
         raise AssertionError(

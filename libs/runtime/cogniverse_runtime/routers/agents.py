@@ -24,16 +24,22 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 
 
 async def _resolve_inbound_registry():
-    """Pick the in-pod or Redis-backed inbound registry from env.
+    """Pick the in-pod or Redis-backed inbound registry from config.
 
-    ``REDIS_URL`` set → cross-pod durable Redis backend.
-    unset → in-pod singleton. The two paths share the same surface
-    (``get_or_create_queue`` / ``get_queue`` / ``close_queue``)
-    so the route logic below doesn't branch.
+    Non-empty ``SystemConfig.redis_url`` → cross-pod durable Redis
+    backend. Empty → in-pod singleton. The two paths share the same
+    surface (``get_or_create_queue`` / ``get_queue`` /
+    ``close_queue``) so the route logic below doesn't branch.
+
+    Env reads for ``REDIS_URL`` happen at the runtime startup
+    boundary (see ``main.py``); this route never touches env directly.
+    Falls back to the in-pod registry when ``_config_manager`` hasn't
+    been wired (test harnesses that mount the router directly without
+    running the runtime lifespan).
     """
-    import os
-
-    redis_url = os.environ.get("REDIS_URL")
+    redis_url = ""
+    if _config_manager is not None:
+        redis_url = _config_manager.get_system_config().redis_url
     if redis_url:
         from cogniverse_runtime.messaging_redis import (
             get_redis_inbound_queue_registry,

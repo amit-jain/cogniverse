@@ -443,6 +443,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if new_service_urls != system_config.inference_service_urls:
         system_config.inference_service_urls = new_service_urls
         updated = True
+    # Orchestrator iterative-loop knobs. Env reads belong here at the
+    # startup boundary — the orchestrator itself reads them from
+    # SystemConfig (no env access).
+    if os.environ.get("ITER_RETRIEVAL_MAX_ITER"):
+        system_config.iter_retrieval_max_iter = int(
+            os.environ["ITER_RETRIEVAL_MAX_ITER"]
+        )
+        updated = True
+    if os.environ.get("ITER_RETRIEVAL_TOKEN_BUDGET"):
+        system_config.iter_retrieval_token_budget = int(
+            os.environ["ITER_RETRIEVAL_TOKEN_BUDGET"]
+        )
+        updated = True
+    if os.environ.get("ITER_RETRIEVAL_WALL_CLOCK_MS"):
+        system_config.iter_retrieval_wall_clock_ms = int(
+            os.environ["ITER_RETRIEVAL_WALL_CLOCK_MS"]
+        )
+        updated = True
+    # REDIS_URL: env override for cross-pod inbound messaging. The
+    # orchestrator reads this from SystemConfig (no env access in
+    # the agent module).
+    if os.environ.get("REDIS_URL"):
+        system_config.redis_url = os.environ["REDIS_URL"]
+        updated = True
     if updated:
         config_manager.set_system_config(system_config)
         BackendRegistry.get_instance()._backend_instances.clear()
@@ -760,9 +784,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "(project: cogniverse-dspy-instrumentation)"
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "Failed to rebind DSPy instrumentation to Phoenix: %s", exc
-            )
+            logger.warning("Failed to rebind DSPy instrumentation to Phoenix: %s", exc)
 
     modality_config = OptimizerGenerationConfig(
         optimizer_type="modality",

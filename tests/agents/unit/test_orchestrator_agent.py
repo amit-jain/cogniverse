@@ -16,6 +16,19 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorInput,
     OrchestratorOutput,
 )
+from cogniverse_foundation.config.unified_config import SystemConfig
+
+
+def _make_mock_config_manager() -> Mock:
+    """Mock ConfigManager whose ``get_system_config()`` returns a real
+    SystemConfig dataclass. The orchestrator reads
+    ``iter_retrieval_max_iter`` / ``_token_budget`` /
+    ``_wall_clock_ms`` / ``redis_url`` off it; bare ``Mock()`` would
+    return ``Mock`` instances that can't be ``range()``'d / compared.
+    """
+    cm = Mock()
+    cm.get_system_config = Mock(return_value=SystemConfig())
+    return cm
 
 
 @pytest.fixture
@@ -70,7 +83,7 @@ def orchestrator_agent(mock_agent_registry):
     """Create OrchestratorAgent for testing"""
     with patch("dspy.ChainOfThought"):
         deps = OrchestratorDeps()
-        mock_config_manager = Mock()
+        mock_config_manager = _make_mock_config_manager()
         agent = OrchestratorAgent(
             deps=deps,
             registry=mock_agent_registry,
@@ -173,7 +186,7 @@ class TestOrchestratorAgent:
         """Test agent initializes with checkpoint, event_queue, workflow_intelligence"""
         with patch("dspy.ChainOfThought"):
             deps = OrchestratorDeps()
-            mock_config_manager = Mock()
+            mock_config_manager = _make_mock_config_manager()
             mock_checkpoint_storage = Mock()
             mock_event_queue = Mock()
             mock_workflow_intelligence = Mock()
@@ -645,7 +658,7 @@ class TestOrchestratorCheckpointing:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 port=8013,
                 checkpoint_config=CheckpointConfig(enabled=True),
                 checkpoint_storage=mock_storage,
@@ -711,7 +724,7 @@ class TestOrchestratorCheckpointing:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 port=8013,
                 checkpoint_config=CheckpointConfig(enabled=True),
                 checkpoint_storage=mock_storage,
@@ -879,7 +892,7 @@ class TestOrchestratorIntelligence:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 port=8013,
                 workflow_intelligence=mock_intelligence,
             )
@@ -969,7 +982,7 @@ class TestOrchestratorIntelligence:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 port=8013,
                 event_queue=mock_queue,
             )
@@ -998,7 +1011,7 @@ class TestOrchestratorArtifactLoading:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 workflow_intelligence=mock_wi,
             )
 
@@ -1021,7 +1034,7 @@ class TestOrchestratorArtifactLoading:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 workflow_intelligence=mock_wi,
             )
 
@@ -1040,7 +1053,7 @@ class TestOrchestratorArtifactLoading:
             agent = OrchestratorAgent(
                 deps=OrchestratorDeps(),
                 registry=mock_agent_registry,
-                config_manager=Mock(),
+                config_manager=_make_mock_config_manager(),
                 workflow_intelligence=mock_wi,
             )
 

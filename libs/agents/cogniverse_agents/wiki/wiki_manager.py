@@ -4,13 +4,16 @@ WikiManager — persists wiki pages to Vespa and maintains a per-tenant index.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import requests
 
 from cogniverse_agents.inference.rlm_inference import RLMInference
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+if TYPE_CHECKING:
+    from cogniverse_sdk.document import Document
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +259,10 @@ class WikiManager:
                     {"doc_id": doc_id, "title": title, "content_length": len(content)}
                 )
 
-            # Stale: updated_at older than 30 days.
+            # Stale: updated_at older than 30 days. Track parse
+            # failures explicitly — silently dropping them used to
+            # under-report the stale-page count (a page with a
+            # malformed updated_at would just vanish from the lint).
             updated_at_raw = doc.metadata.get("updated_at", "")
             if updated_at_raw:
                 try:
@@ -272,8 +278,13 @@ class WikiManager:
                                 "days_since_update": delta.days,
                             }
                         )
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.warning(
+                        "Wiki page %s has malformed updated_at %r: %s",
+                        doc_id,
+                        updated_at_raw,
+                        exc,
+                    )
 
         issues_found = len(orphan_pages) + len(stale_pages) + len(empty_pages)
         return {
@@ -461,13 +472,17 @@ class WikiManager:
         except Exception:
             logger.exception("Failed to feed wiki index document")
 
-    def _get_document_http(self, doc_id: str) -> Optional[Any]:
+    def _get_document_http(self, doc_id: str) -> Optional["Document"]:
         """Fetch a wiki document from Vespa via HTTP GET.
 
-        Returns a simple object with text_content and metadata attributes,
-        or None if not found. Uses direct HTTP instead of backend.get_document
-        to avoid schema configuration requirements.
+        Returns a ``cogniverse_sdk.document.Document`` (with
+        ``text_content`` and ``metadata`` populated from the Vespa
+        ``fields`` blob) or ``None`` if not found. Uses direct HTTP
+        instead of ``backend.get_document`` to avoid schema
+        configuration requirements.
         """
+        from cogniverse_sdk.document import ContentType, Document
+
         url = f"{self._backend._url}:{self._backend._port}"
         get_url = f"{url}/document/v1/wiki_content/{self._schema_name}/docid/{doc_id}"
         try:
@@ -477,14 +492,14 @@ class WikiManager:
             data = resp.json()
             fields = data.get("fields", {})
 
-            class _Doc:
-                pass
-
-            doc = _Doc()
-            doc.text_content = fields.get("content", "")
-            doc.metadata = fields
-            return doc
-        except Exception:
+            return Document(
+                id=doc_id,
+                content_type=ContentType.TEXT,
+                text_content=fields.get("content", ""),
+                metadata=fields,
+            )
+        except requests.RequestException as exc:
+            logger.warning("Wiki document HTTP fetch failed for %s: %s", doc_id, exc)
             return None
 
     def _feed_page(self, page: WikiPage, embedding: List[float]) -> None:

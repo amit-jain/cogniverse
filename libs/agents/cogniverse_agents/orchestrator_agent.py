@@ -16,7 +16,6 @@ Features:
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -57,20 +56,21 @@ except ImportError:  # pragma: no cover — runtime not wired in agent-only cont
     _get_inbound_queue_registry = None  # type: ignore[assignment]
 
 
-async def _resolve_inbound_registry_for_orchestrator():
-    """Pick in-pod vs Redis backend from ``REDIS_URL`` env.
+async def _resolve_inbound_registry_for_orchestrator(redis_url: str = ""):
+    """Pick in-pod vs Redis backend from a caller-supplied URL.
 
     Mirrors the routers/agents.py helper so the HTTP route and the
     orchestrator hit the same registry instance per pod. When
-    ``REDIS_URL`` is set, both go through the cross-pod Redis
+    ``redis_url`` is non-empty, both go through the cross-pod Redis
     backend and messages routed across pods land where the
     orchestrator drains them.
-    """
-    import os as _os
 
+    The caller MUST source ``redis_url`` from
+    ``SystemConfig.redis_url`` (populated at runtime startup from
+    the ``REDIS_URL`` env var). This function does not read env.
+    """
     if _get_inbound_queue_registry is None:
         return None
-    redis_url = _os.environ.get("REDIS_URL")
     if redis_url:
         try:
             from cogniverse_runtime.messaging_redis import (
@@ -359,18 +359,12 @@ class OrchestrationResult(BaseModel):
 # probe sets and per-segment KG provenance flows; anything heavier should
 # adjust caps via the orchestrator constructor, not by carving out a
 # separate code path.
-_ITER_RETRIEVAL_MAX_ITER = int(os.environ.get("ITER_RETRIEVAL_MAX_ITER", "3"))
-_ITER_RETRIEVAL_TOKEN_BUDGET = int(
-    os.environ.get("ITER_RETRIEVAL_TOKEN_BUDGET", "8000")
-)
-# Wall-clock cap for the iterative loop. Default 30 s suits the
-# production gemma-class student. Slower test fixtures (cold cluster,
-# debug LM) can override via env to allow the loop to converge so
-# top_hits + reformulated_query goldens are populated rather than
-# truncated mid-iteration.
-_ITER_RETRIEVAL_WALL_CLOCK_MS = int(
-    os.environ.get("ITER_RETRIEVAL_WALL_CLOCK_MS", "30000")
-)
+# Iterative-loop tuning knobs are now plumbed through SystemConfig
+# (see ``iter_retrieval_max_iter`` / ``iter_retrieval_token_budget``
+# / ``iter_retrieval_wall_clock_ms``). The runtime startup reads the
+# corresponding env vars at the main entry point and stores them on
+# SystemConfig; the orchestrator reads them via
+# ``self._config_manager.get_system_config()`` (no env access here).
 # Threshold (in characters of JSON-serialized evidence) above which the
 # sufficient-context gate is promoted from a single-prompt CoT to the
 # iterative RLM substrate. Mirrors the RLM-promotion rule for other large
@@ -938,7 +932,9 @@ class OrchestratorAgent(
         inbound_queue: Optional["_InboundQueue"] = None
         if session_id and _get_inbound_queue_registry is not None:
             try:
-                _reg = await _resolve_inbound_registry_for_orchestrator()
+                _reg = await _resolve_inbound_registry_for_orchestrator(
+                    redis_url=self._config_manager.get_system_config().redis_url
+                )
                 if _reg is None:
                     raise RuntimeError("no inbound registry available")
                 inbound_queue = await _reg.get_or_create_queue(session_id, tenant_id)
@@ -1132,7 +1128,9 @@ class OrchestratorAgent(
             # QueueClosedError (handled by the HTTP route as 404).
             if session_id and _get_inbound_queue_registry is not None:
                 try:
-                    _reg = await _resolve_inbound_registry_for_orchestrator()
+                    _reg = await _resolve_inbound_registry_for_orchestrator(
+                        redis_url=self._config_manager.get_system_config().redis_url
+                    )
                     if _reg is not None:
                         await _reg.close_queue(session_id)
                 except Exception as exc:  # noqa: BLE001 — log + degrade
@@ -1990,9 +1988,9 @@ class OrchestratorAgent(
         """Run the retrieve → gate → reformulate loop bounded by hard caps.
 
         The loop IS the retrieval path — there is no fallback to a
-        single-shot execution. Bounded by :data:`_ITER_RETRIEVAL_MAX_ITER`
-        iterations, :data:`_ITER_RETRIEVAL_TOKEN_BUDGET` cumulative tokens
-        across all evidence, and :data:`_ITER_RETRIEVAL_WALL_CLOCK_MS`
+        single-shot execution. Bounded by ``SystemConfig.iter_retrieval_max_iter``
+        iterations, ``SystemConfig.iter_retrieval_token_budget`` cumulative tokens
+        across all evidence, and ``SystemConfig.iter_retrieval_wall_clock_ms``
         wall-clock milliseconds.
 
         ``agent_results_sink`` receives the per-agent results from each
@@ -2050,7 +2048,15 @@ class OrchestratorAgent(
         # byte-equal against per-iter goldens.
         loop_trajectory: List[Dict[str, Any]] = []
         iterations_executed = 0
-        for iter_idx in range(_ITER_RETRIEVAL_MAX_ITER):
+        # Read loop-tuning caps from SystemConfig (set at runtime
+        # startup from ITER_RETRIEVAL_* env vars). Read once per
+        # /process call so a live ConfigManager update between
+        # requests takes effect.
+        _sys_cfg = self._config_manager.get_system_config()
+        _max_iter = _sys_cfg.iter_retrieval_max_iter
+        _token_budget = _sys_cfg.iter_retrieval_token_budget
+        _wall_clock_ms = _sys_cfg.iter_retrieval_wall_clock_ms
+        for iter_idx in range(_max_iter):
             iteration_started = time.monotonic()
 
             # Drain inbound messages BEFORE building the next iteration's
@@ -2213,7 +2219,7 @@ class OrchestratorAgent(
                 exit_reason = "sufficient"
                 break
 
-            if iterations_executed >= _ITER_RETRIEVAL_MAX_ITER:
+            if iterations_executed >= _max_iter:
                 exit_reason = "max_iter"
                 break
 
@@ -2221,16 +2227,13 @@ class OrchestratorAgent(
             # the LM, so we measure against the raw accumulated set (the
             # same set fed to the gate). Otherwise dedup hides the real
             # prompt cost and the loop keeps iterating past the cap.
-            if (
-                self._evidence_token_estimate(raw_accumulated)
-                > _ITER_RETRIEVAL_TOKEN_BUDGET
-            ):
+            if self._evidence_token_estimate(raw_accumulated) > _token_budget:
                 exit_reason = "token_budget"
                 partial_due_to_budget = True
                 break
 
             elapsed_ms = (time.monotonic() - loop_started) * 1000.0
-            if elapsed_ms > _ITER_RETRIEVAL_WALL_CLOCK_MS:
+            if elapsed_ms > _wall_clock_ms:
                 exit_reason = "wall_clock"
                 partial_due_to_timeout = True
                 break

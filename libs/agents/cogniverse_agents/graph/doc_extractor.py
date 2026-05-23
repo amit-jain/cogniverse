@@ -200,9 +200,15 @@ class DocExtractor:
             url = (sys_cfg.inference_service_urls or {}).get("gliner")
             if url:
                 return url
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — log + degrade
             # Fall through to env / None — the loader handles both.
-            pass
+            # Log at debug so misconfig is investigable but doesn't
+            # spam the worker log every entity extraction.
+            logger.debug(
+                "GLiNER URL discovery via ConfigManager singleton failed "
+                "(falling back to env / default): %s",
+                exc,
+            )
         # Env-backed override for processes that don't share the
         # SystemConfig singleton (e.g. the ingestor worker, which builds
         # its own ConfigManager). Reads INFERENCE_SERVICE_URLS or the
@@ -319,7 +325,10 @@ class DocExtractor:
                         "GLiNER returned %d raw entities for chunk (len=%d): %s",
                         len(raw),
                         len(chunk),
-                        [(e.get("text"), e.get("label"), round(e.get("score", 0), 3)) for e in raw[:8]],
+                        [
+                            (e.get("text"), e.get("label"), round(e.get("score", 0), 3))
+                            for e in raw[:8]
+                        ],
                     )
                     for ent in raw:
                         name = ent.get("text", "").strip()

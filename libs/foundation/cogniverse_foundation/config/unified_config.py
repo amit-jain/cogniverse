@@ -202,6 +202,23 @@ class SystemConfig:
     # ``INFERENCE_SERVICE_URLS`` env var at startup.
     inference_service_urls: Dict[str, str] = field(default_factory=dict)
 
+    # Orchestrator iterative-retrieval-loop tuning. Bounded by these
+    # three caps; the loop exits with ``exit_reason="max_iter"``,
+    # ``"token_budget"``, or ``"wall_clock"`` when the corresponding
+    # cap is hit. Populated from chart env (ITER_RETRIEVAL_MAX_ITER,
+    # ITER_RETRIEVAL_TOKEN_BUDGET, ITER_RETRIEVAL_WALL_CLOCK_MS) so
+    # ops can re-tune without a code change.
+    iter_retrieval_max_iter: int = 3
+    iter_retrieval_token_budget: int = 8000
+    iter_retrieval_wall_clock_ms: int = 30000
+
+    # Redis URL for cross-pod inbound-messaging routing + durability.
+    # Empty string means "use the in-pod InboundQueueRegistry"; a real
+    # URL ("redis://host:6379/0") activates the Redis-backed registry.
+    # Populated from chart env REDIS_URL at the runtime startup
+    # boundary.
+    redis_url: str = ""
+
     # Metadata
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -227,6 +244,10 @@ class SystemConfig:
             "agent_registry_url": self.agent_registry_url,
             "colpali_inference_url": self.colpali_inference_url,
             "inference_service_urls": dict(self.inference_service_urls),
+            "iter_retrieval_max_iter": self.iter_retrieval_max_iter,
+            "iter_retrieval_token_budget": self.iter_retrieval_token_budget,
+            "iter_retrieval_wall_clock_ms": self.iter_retrieval_wall_clock_ms,
+            "redis_url": self.redis_url,
             "environment": self.environment,
             "metadata": self.metadata,
         }
@@ -256,6 +277,14 @@ class SystemConfig:
             agent_registry_url=data.get("agent_registry_url", "http://localhost:8000"),
             colpali_inference_url=data.get("colpali_inference_url", ""),
             inference_service_urls=dict(data.get("inference_service_urls") or {}),
+            iter_retrieval_max_iter=int(data.get("iter_retrieval_max_iter", 3)),
+            iter_retrieval_token_budget=int(
+                data.get("iter_retrieval_token_budget", 8000)
+            ),
+            iter_retrieval_wall_clock_ms=int(
+                data.get("iter_retrieval_wall_clock_ms", 30000)
+            ),
+            redis_url=data.get("redis_url", ""),
             environment=data.get("environment", "development"),
             metadata=data.get("metadata", {}),
         )

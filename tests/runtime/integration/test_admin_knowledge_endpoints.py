@@ -52,8 +52,8 @@ def knowledge_client(memory_manager, config_manager):
     """
     app = FastAPI()
     app.include_router(knowledge_router.router, prefix="/admin")
-    app.dependency_overrides[knowledge_router._get_config_manager] = (
-        lambda: config_manager
+    app.dependency_overrides[knowledge_router._get_config_manager] = lambda: (
+        config_manager
     )
     yield TestClient(app, raise_server_exceptions=False), memory_manager
     # Clean up any memories this test created.

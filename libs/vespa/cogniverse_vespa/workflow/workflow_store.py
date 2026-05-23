@@ -459,7 +459,16 @@ class VespaWorkflowStore(WorkflowStore):
                         stats["performance_records"] = count
                     else:
                         stats["templates"] = response.number_documents_retrieved
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 — log + degrade
+                # Previously this silently dropped the count which made
+                # the dashboard show 0 instead of surfacing the real
+                # Vespa error. Log so the failure is investigable; the
+                # caller still gets a partial stats dict.
+                logger.warning(
+                    "workflow_store.get_stats: Vespa count query for "
+                    "record_type=%s failed; stats key will be missing: %s",
+                    record_type,
+                    exc,
+                )
 
         return stats
