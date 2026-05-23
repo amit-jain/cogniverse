@@ -10,7 +10,7 @@
 1. [Module Overview](#module-overview)
 2. [Package Structure](#package-structure)
 3. [Core Agents](#core-agents)
-   - [VideoSearchAgent](#1-videosearchagent)
+   - [SearchAgent](#1-videosearchagent)
    - [GatewayAgent](#gateway-gatewayagent)
    - [OrchestratorAgent (A2A Entry Point)](#3-orchestratoragent-a2a-entry-point)
    - [ProfileSelectionAgent](#4-profileselectionagent)
@@ -22,7 +22,7 @@
    - [SummarizerAgent](#10-summarizeragent)
    - [AudioAnalysisAgent](#11-audioanalysisagent)
    - [TextAnalysisAgent](#12-textanalysisagent)
-   - [VideoSearchAgent (Refactored)](#13-videosearchagent-refactored)
+   - [SearchAgent (Refactored)](#13-videosearchagent-refactored)
 4. [Knowledge Agents](#knowledge-agents)
    - [AuditExplanationAgent](#auditexplanationagent)
    - [KnowledgeSummarizationAgent](#knowledgesummarizationagent)
@@ -64,7 +64,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 
 1. **GatewayAgent** - Query entry point: GLiNER-based triage classifying queries as simple or complex (<100ms, no LLM)
 2. **OrchestratorAgent** - Autonomous A2A orchestrator: DSPy planning, parallel execution, cross-modal fusion, checkpointing
-3. **VideoSearchAgent** - Multi-modal video search (ColPali, VideoPrism)
+3. **SearchAgent** - Multi-modal video search (ColPali, VideoPrism)
 4. **ProfileSelectionAgent** - LLM-based intelligent backend profile selection and ensemble composition
 5. **EntityExtractionAgent** - Named entity extraction with DSPy ChainOfThought (PERSON, PLACE, ORG, CONCEPT, DATE)
 6. **SearchAgent** - Enhanced with ensemble mode and RRF fusion for multi-profile queries
@@ -74,7 +74,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 10. **SummarizerAgent** - Intelligent summarization with thinking phase
 11. **AudioAnalysisAgent** - Audio search with Whisper transcription
 12. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
-13. **VideoSearchAgent (Refactored)** - Simplified video search with unified service
+13. **SearchAgent (Refactored)** - Simplified video search with unified service
 
 **Knowledge Management Agents:**
 
@@ -196,10 +196,10 @@ graph TD
 
 ## Core Agents
 
-### 1. VideoSearchAgent
+### 1. SearchAgent
 
 **Purpose**: Text-to-video search with ColPali and VideoPrism embeddings
-**Constructor**: `VideoSearchAgent(config_manager: ConfigManager = None, schema_loader=None)`
+**Constructor**: `SearchAgent(deps: SearchAgentDeps, schema_loader=None, config_manager=None, port: int = 8002)`
 
 #### Multi-Modal Support
 
@@ -247,7 +247,7 @@ from typing import Optional, List, Dict, Any
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_agents.search.service import SearchService
 
-class VideoSearchAgent:
+class SearchAgent:
     """
     Profile-agnostic video search agent.
 
@@ -344,7 +344,7 @@ config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 # Create agent — profile-agnostic, tenant-agnostic
-agent = VideoSearchAgent(
+agent = SearchAgent(
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -362,7 +362,7 @@ recent_results = agent.search(
 )
 ```
 
-**Note**: `VideoSearchAgent` provides text-to-video search only. For video-to-video similarity search, use `SearchAgent` which supports this via `_search_by_video()`:
+**Note**: `SearchAgent` provides text-to-video search only. For video-to-video similarity search, use `SearchAgent` which supports this via `_search_by_video()`:
 
 ```python
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
@@ -399,7 +399,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 config_manager = create_default_config_manager()
 
 # ONE agent serves ALL tenants — profile and tenant_id are per-request
-agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
+agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
 
 # Tenant A: acme
 results_acme = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="acme")
@@ -570,10 +570,10 @@ The orchestrator uses DSPy for planning and AgentRegistry for discovery:
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent, OrchestratorDeps, OrchestratorInput, OrchestratorOutput,
 )
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Construction — tenant-agnostic, no env vars
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(
     deps=deps, registry=registry, config_manager=config_manager, port=8013
@@ -2334,14 +2334,14 @@ print(f"Result: {result}")
 
 ---
 
-### 13. VideoSearchAgent (Refactored)
+### 13. SearchAgent (Refactored)
 
 
-Refactored video search agent using the unified search service architecture. Provides a simpler interface compared to the original VideoSearchAgent.
+Refactored video search agent using the unified search service architecture. Provides a simpler interface compared to the original SearchAgent.
 
 **Constructor:**
 ```python
-VideoSearchAgent(
+SearchAgent(
     config_manager: ConfigManager = None,  # REQUIRED
     schema_loader=None,                    # REQUIRED
 )
@@ -2367,7 +2367,7 @@ from pathlib import Path
 
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
+agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
 
 results = agent.search("cooking tutorial", tenant_id="acme", profile="video_colpali_smol500_mv_frame", top_k=10)
 for result in results:
@@ -2722,9 +2722,9 @@ class OrchestratorAgent(A2AAgent[OrchestratorInput, OrchestratorOutput, Orchestr
 **Note**: All examples below assume agent is initialized with deps (tenant-agnostic):
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 # tenant_id arrives per-request in A2A task payload
 ```
@@ -2855,10 +2855,10 @@ sequenceDiagram
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # ONE orchestrator serves ALL tenants — tenant_id arrives per-request
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Memory is initialized lazily per-tenant on first request via MemoryAwareMixin:
@@ -2875,9 +2875,9 @@ agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 result = await orchestrator._process_impl(
@@ -2899,7 +2899,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize agent (profile-agnostic, tenant-agnostic)
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
+agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
 
 # Search (synchronous) — profile and tenant_id per-request
 results = agent.search(
@@ -2920,10 +2920,10 @@ for result in results:
 from cogniverse_agents.orchestrator_agent import (
     OrchestratorAgent, OrchestratorDeps, OrchestratorInput,
 )
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Create orchestrator with agent registry (discovers agents from config.json)
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(), registry=registry, config_manager=config_manager
 )
@@ -2950,7 +2950,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize agent (profile-agnostic)
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
+agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
 
 # Initialize memory manager separately
 memory = Mem0MemoryManager(tenant_id="acme")
@@ -3870,19 +3870,19 @@ result = rlm.process(query="Summarize", context=large_context)
 
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 class TestOrchestratorAgent:
     def test_initialization(self, config_manager):
         """Test agent initialization with deps (no tenant_id)"""
-        registry = AgentRegistry(config_manager=config_manager)
+        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
         agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
         assert agent.deps is not None
 
     async def test_process_query(self, config_manager):
         """Test query processing — tenant_id in request"""
-        registry = AgentRegistry(config_manager=config_manager)
+        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
         agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
         result = await agent._process_impl(
@@ -3896,7 +3896,7 @@ class TestOrchestratorAgent:
 
     def test_tenant_agnostic_construction(self, config_manager):
         """Agent serves all tenants — one instance, per-request tenant_id"""
-        registry = AgentRegistry(config_manager=config_manager)
+        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
         agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
         # Same agent handles different tenants at request time
@@ -3926,7 +3926,7 @@ class TestVideoSearchAgentIntegration:
         config_manager = create_default_config_manager()
 
         # Create agent (profile-agnostic, tenant-agnostic)
-        agent = VideoSearchAgent(
+        agent = SearchAgent(
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
@@ -4098,24 +4098,24 @@ patterns are found.
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # ✅ Good: Explicit deps (no tenant_id — it arrives per-request)
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # ❌ Bad: No deps or registry
 agent = OrchestratorAgent()  # TypeError: missing deps
 ```
 
-### 2. Initialize Config Manager for VideoSearchAgent
+### 2. Initialize Config Manager for SearchAgent
 
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# VideoSearchAgent requires config_manager + schema_loader
+# SearchAgent requires config_manager + schema_loader
 config_manager = create_default_config_manager()
-agent = VideoSearchAgent(config_manager=config_manager, schema_loader=schema_loader)
+agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
 
 # Search is synchronous — profile and tenant_id per-request
 results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
@@ -4126,9 +4126,9 @@ results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant
 ```python
 # OrchestratorAgent automatically initializes telemetry per-request
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Operations traced per-request with tenant_id from A2A payload
@@ -4144,9 +4144,9 @@ result = await orchestrator._process_impl(
 def test_tenant_isolation(config_manager):
     # ONE orchestrator serves all tenants — tenant_id is per-request
     from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_core.registries.agent_registry import AgentRegistry
 
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
     orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
     # Tenant isolation verified at request time, not construction

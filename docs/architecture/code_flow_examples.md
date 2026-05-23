@@ -106,7 +106,7 @@ curl -X POST http://localhost:8000/search/ \
 # 1. Receive and parse request
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
@@ -119,7 +119,7 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 tenant_id = request.headers.get("X-Tenant-ID", "default")
 
 # 3. Initialize orchestrator (tenant-agnostic at construction)
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # 4. Route query with DSPy optimization (async)
@@ -297,11 +297,11 @@ thresholds = _compute_gateway_thresholds(spans_df)
 #   > 1000 examples → GEPA
 
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Process user query — GatewayAgent routes, OrchestratorAgent plans

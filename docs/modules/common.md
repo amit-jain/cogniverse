@@ -200,6 +200,15 @@ class SystemConfig:
     backend_port: int = 8080
     application_name: str = "cogniverse"
 
+    # Inference-service routing (per-model endpoint resolution)
+    # ``colpali_inference_url`` overrides the ColPali endpoint when the
+    # remote ColPali sidecar lives at a non-default URL.
+    # ``inference_service_urls`` maps logical service names
+    # (e.g. ``"videoprism_jax"``, ``"denseon"``, ``"vllm_asr"``) to URLs
+    # so a profile can target the right per-model sidecar.
+    colpali_inference_url: str = ""
+    inference_service_urls: Dict[str, str] = field(default_factory=dict)
+
     # LLM configuration
     # Bare model id (e.g. "google/gemma-4-e4b-it"). The chart writes the
     # full litellm-prefixed id (openai/<model>) into config.json; this

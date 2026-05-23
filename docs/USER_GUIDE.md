@@ -229,7 +229,7 @@ Cogniverse automatically routes queries to the optimal execution agent via the G
 ```python
 import asyncio
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 async def main():
     registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
@@ -1198,7 +1198,7 @@ results = agent.search_by_text(
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)

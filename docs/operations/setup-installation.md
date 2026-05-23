@@ -731,7 +731,7 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Vespa - Backend and Schema Management
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager

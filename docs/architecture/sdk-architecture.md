@@ -1059,7 +1059,7 @@ from cogniverse_agents.image_search_agent import ImageSearchAgent
 
 # OrchestratorAgent (A2A entry point)
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Search utilities
 from cogniverse_agents.search.multi_modal_reranker import QueryModality

@@ -44,7 +44,6 @@ libs/runtime/cogniverse_runtime/ingestion/
     ├── vlm_processor.py           # VLM description generation
     ├── vlm_descriptor.py          # VLM description core logic
     ├── single_vector_processor.py # Sliding window segment processing
-    ├── embedding_processor.py     # Generic embedding processor
     └── embedding_generator/
         ├── embedding_generator.py      # Base classes and interfaces
         ├── embedding_generator_impl.py # Backend-agnostic embedding implementation

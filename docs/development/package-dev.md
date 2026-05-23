@@ -876,17 +876,17 @@ def vespa_backend(config_manager, schema_loader):
 ```python
 # tests/agents/unit/test_orchestrator_agent.py
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 def test_orchestrator_initialization(config_manager):
     """Test agent initialization (no external dependencies)"""
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
     agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
     assert agent.deps is not None
 
 async def test_orchestrator_decision(config_manager):
     """Test orchestrator routing decision"""
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
     agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
     result = await agent._process_impl(

@@ -42,53 +42,73 @@ The runtime sits at the top of the package hierarchy, depending on all other mod
 
 ```text
 cogniverse_runtime/
-├── main.py                          # FastAPI app entry point
+├── main.py                          # FastAPI app entry point + lifespan setup
 ├── config_loader.py                 # Dynamic backend/agent loading
-├── routers/                         # API routers
-│   ├── health.py                    # Health check endpoints
-│   ├── search.py                    # Search API endpoints
-│   ├── ingestion.py                 # Video ingestion endpoints
-│   ├── agents.py                    # Agent orchestration endpoints
-│   ├── events.py                    # SSE streaming for real-time notifications
-│   └── admin.py                     # Admin/tenant management
-├── ingestion/                       # Video processing pipeline
+├── agent_dispatcher.py              # Dispatch agent invocations + egress allow-list
+├── job_executor.py                  # Background-job executor
+├── a2a_executor.py                  # Agent-to-agent protocol executor
+├── memory_init.py                   # Mem0 client + per-tenant memory setup
+├── messaging.py                     # In-pod InboundQueueRegistry primitive
+├── messaging_redis.py               # Redis-backed cross-pod + durable variant
+├── openshell_cert_rotator.py        # mTLS cert rotation for OpenShell sandbox
+├── openshell_health.py              # OpenShell gateway health probing
+├── optimization_cli.py              # DSPy optimizer entrypoint (compile/serve)
+├── quality_monitor_cli.py           # Quality-monitor CLI entry
+├── sandbox_http.py                  # Sandbox HTTP transport layer
+├── sandbox_manager.py               # SandboxManager + policy enforcement
+├── sandbox_pool.py                  # Pool of warm sandbox instances
+├── inference_health_check.py        # Startup inference-service probes
+├── routers/                         # FastAPI routers (one per API surface)
+│   ├── health.py                    # Health + readiness endpoints
+│   ├── search.py                    # Search API
+│   ├── ingestion.py                 # Ingestion + KG extraction endpoints
+│   ├── agents.py                    # Agent orchestration + inbound messaging
+│   ├── events.py                    # SSE streaming for real-time updates
+│   ├── admin.py                     # Admin / tenant management
+│   ├── debug.py                     # Debug + diagnostic endpoints
+│   ├── graph.py                     # Graph traversal API
+│   ├── knowledge.py                 # Knowledge-graph query API
+│   ├── tenant.py                    # Per-tenant admin endpoints
+│   └── wiki.py                      # Wiki API endpoints
+├── admin/                           # Admin domain models + tenant tooling
+│   ├── tenant_manager.py
+│   ├── models.py
+│   └── profile_models.py
+├── inference/                       # Remote inference-service client wrappers
+├── ingestion/                       # In-process video-ingestion pipeline
 │   ├── pipeline.py                  # VideoIngestionPipeline
-│   ├── pipeline_builder.py          # Pipeline builder utilities
-│   ├── processor_base.py            # BaseProcessor, BaseStrategy
-│   ├── processor_manager.py         # ProcessorManager for auto-discovery
-│   ├── strategies.py                # Processing strategy implementations
+│   ├── pipeline_builder.py
+│   ├── processor_base.py            # BaseProcessor, BaseStrategy (abstract)
+│   ├── processor_manager.py         # Auto-discovery of processors
+│   ├── strategies.py                # Concrete strategy implementations
 │   ├── strategy.py                  # Strategy base classes
-│   ├── strategy_factory.py          # StrategyFactory for profile-based config
-│   ├── processing_strategy_set.py   # Strategy orchestration
-│   ├── exceptions.py                # Pipeline-specific exceptions
-│   └── processors/                  # Processor implementations
-│       ├── keyframe_extractor.py    # Frame extraction (similarity-based)
-│       ├── keyframe_extractor_fps.py # Frame extraction (FPS-based)
-│       ├── keyframe_processor.py    # Keyframe processing wrapper
-│       ├── chunk_processor.py       # Video chunk extraction
-│       ├── video_chunk_extractor.py # Chunk extraction utilities
-│       ├── audio_transcriber.py     # Whisper transcription
-│       ├── audio_processor.py       # Audio processing utilities
-│       ├── audio_embedding_generator.py # Audio embedding generation
-│       ├── vlm_processor.py         # VLM description generation
-│       ├── vlm_descriptor.py        # VLM descriptor implementation
-│       ├── single_vector_processor.py # Single-vector embeddings
-│       ├── embedding_processor.py   # Generic embedding processor
-│       └── embedding_generator/     # Embedding generation subsystem
-│           ├── embedding_generator.py # Main generator interface
-│           ├── embedding_generator_impl.py # Implementation
-│           ├── embedding_generator_factory.py # Generator factory
-│           ├── embedding_processors.py # Model-specific processors
-│           ├── document_builders.py # Document builders (internal)
-│           └── backend_factory.py   # Backend initialization
-├── search/                          # Search base types
-│   └── base.py                      # SearchResult + backend search interface
-├── admin/                           # Admin functionality
-│   ├── tenant_manager.py            # Tenant management
-│   ├── models.py                    # Admin models
-│   └── profile_models.py            # Profile configuration models
-└── inference_health_check.py        # Startup inference-service probes
+│   ├── strategy_factory.py          # Profile-driven strategy construction
+│   ├── processing_strategy_set.py
+│   ├── exceptions.py
+│   └── processors/                  # Per-processor implementations
+│       ├── keyframe_extractor.py
+│       ├── keyframe_extractor_fps.py
+│       ├── keyframe_processor.py
+│       ├── chunk_processor.py
+│       ├── video_chunk_extractor.py
+│       ├── audio_transcriber.py
+│       ├── audio_processor.py
+│       ├── audio_embedding_generator.py
+│       ├── vlm_processor.py
+│       ├── vlm_descriptor.py
+│       ├── single_vector_processor.py
+│       └── embedding_generator/     # Embedding subsystem
+│           ├── embedding_generator.py
+│           ├── embedding_generator_impl.py
+│           ├── embedding_generator_factory.py
+│           ├── embedding_processors.py
+│           ├── document_builders.py
+│           └── backend_factory.py
+└── ingestion_worker/                # Async Redis-Streams ingestion worker
+    └── worker.py                    # Worker entrypoint + queue consumer
 ```
+
+`SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 
 ---
 
@@ -139,7 +159,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 4. Initialize registries
     backend_registry = BackendRegistry(config_manager=config_manager)
-    agent_registry = AgentRegistry(config_manager=config_manager)
+    agent_registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 
     # 5. Wire agent registry and dependencies
     agents.set_agent_registry(agent_registry)
@@ -538,7 +558,14 @@ The runtime ships an inbound-messaging primitive in `cogniverse_runtime.messagin
 - `InboundQueue` — per-session async FIFO. `enqueue()` is non-blocking; `drain()` returns all buffered messages in submission order AND atomically clears the buffer. Past-deadline messages drop at drain (not at enqueue) so a slow agent that drains rarely still sees fresh messages.
 - `InboundQueueRegistry` — registry of `(session_id) -> InboundQueue` shared between the HTTP route and the agent. `get_or_create_queue(session_id, tenant_id)` is idempotent (same instance on re-resolve). `get_queue(session_id)` returns `None` for unknown sessions so the HTTP route can decide between 202 (active) and 404 (not active). `close_queue(session_id)` removes the queue from the registry AND marks the underlying queue closed — subsequent `enqueue()` raises `QueueClosedError`. Cross-tenant session-id collision raises `ValueError`.
 
-Module-level singleton via `get_inbound_queue_registry()`; the HTTP route and the orchestrator both go through the singleton so messages from either side land in the same buffer. Phase 1 is in-pod; multi-pod (Redis Pub/Sub) and durability (Mem0 + Argo replay) are deferred phases tracked in `docs/plan/agent-inbound-messaging.md`.
+Module-level singleton via `get_inbound_queue_registry()`; the HTTP route and the orchestrator both go through the singleton so messages from either side land in the same buffer.
+
+Multi-pod + durability are shipped via `cogniverse_runtime.messaging_redis`. When `REDIS_URL` is set in the runtime env, `routers.agents._resolve_inbound_registry` (and the orchestrator's equivalent resolver) swap in a `RedisInboundQueueRegistry` whose Redis state survives pod restarts AND routes correctly across pods sharing the same Redis. Redis state shape:
+
+- `session:<session_id>:tenant` — string with TTL. Value is the tenant_id. `SET NX` semantics make cross-tenant collision detection atomic.
+- `inbound:<tenant_id>:<session_id>` — list. `enqueue` does LPUSH; `drain` runs a server-side Lua script that LRANGE + DEL atomically so concurrent enqueues are never partially observed.
+
+Verified end-to-end against a live cluster with `kubectl delete pod --wait=true` mid-flight: enqueued constraints survive the pod kill and the new pod resumes from Redis state.
 
 ### Admin Endpoints
 

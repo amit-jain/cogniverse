@@ -733,7 +733,7 @@ uv run pytest tests/agents/ --cov=cogniverse_agents --cov-report=html
 # tests/agents/unit/test_orchestrator_agent.py
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 @pytest.fixture
 def orchestrator(config_manager):
@@ -754,7 +754,7 @@ class TestOrchestratorAgent:
 # tests/routing/integration/test_orchestration_pipeline.py
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 
 @pytest.mark.integration

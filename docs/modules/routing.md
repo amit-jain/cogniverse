@@ -759,7 +759,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
 deps = GatewayDeps()
-gateway = GatewayAgent(deps=deps, config_manager=config_manager)
+gateway = GatewayAgent(deps=deps)
 
 # Classify a query
 query = "Show me videos of robots playing soccer"
@@ -790,7 +790,7 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
 deps = QueryEnhancementDeps()
-agent = QueryEnhancementAgent(deps=deps, config_manager=config_manager)
+agent = QueryEnhancementAgent(deps=deps)
 
 # Enhance query
 query = "AI robot learning to play games"

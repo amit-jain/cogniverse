@@ -1,10 +1,11 @@
 """Redis-backed durable cross-pod inbound messaging.
 
-Phase 2 + Phase 3 of the per-session inbound-messaging design
-(docs/plan/agent-inbound-messaging.md). Replaces the in-pod
-:class:`InboundQueueRegistry` singleton with a Redis-backed
-implementation so messages survive pod restarts AND route correctly
-across pods sharing the same Redis instance.
+Replaces the in-pod
+:class:`cogniverse_runtime.messaging.InboundQueueRegistry`
+singleton with a Redis-backed implementation so messages survive
+pod restarts AND route correctly across pods sharing the same
+Redis instance. Activated when ``REDIS_URL`` is set in the runtime
+env (see ``routers.agents._resolve_inbound_registry``).
 
 Redis state shape:
 
@@ -309,7 +310,7 @@ async def get_redis_inbound_queue_registry(
 def reset_redis_inbound_queue_registry_for_testing() -> None:
     """Test-only: drop the Python-side singleton.
 
-    The REDIS STATE persists across this reset by design — Phase 3
+    The REDIS STATE persists across this reset by design — the
     durability assertions rely on it. To wipe Redis between tests,
     call ``RedisInboundQueueRegistry`` methods or ``FLUSHDB``
     explicitly in the test fixture.

@@ -97,7 +97,7 @@ class TestRealVespaIntegration:
         # 1. Setup: Initialize all components across packages
         from cogniverse_foundation.config.utils import create_default_config_manager
         from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-        from cogniverse_agents.agent_registry import AgentRegistry
+        from cogniverse_core.registries.agent_registry import AgentRegistry
         from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 
         config_manager = create_default_config_manager()
@@ -112,7 +112,7 @@ class TestRealVespaIntegration:
         )
 
         # cogniverse-agents package - OrchestratorAgent is tenant-agnostic at construction
-        registry = AgentRegistry(config_manager=config_manager)
+        registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
         orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
         # SearchAgent requires SearchAgentDeps with backend connection details
@@ -163,10 +163,10 @@ class TestRealVespaIntegration:
 ```python
 # Example: Use OrchestratorAgent as the central A2A entry point
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # OrchestratorAgent discovers agents via AgentRegistry (from config.json > agents section)
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
@@ -312,13 +312,13 @@ flowchart LR
 ```python
 # Execute multimodal search using orchestrator
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 query = "How does photosynthesis work?"
 
 config_manager = create_default_config_manager()
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
@@ -414,11 +414,11 @@ assert p95_latency < 1000  # < 1 second
 ```python
 # Example: Orchestrator handles failures
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
@@ -472,10 +472,10 @@ deps = AgentDeps()  # No tenant_id at construction
 ```python
 # Example: Verify core works with evaluation package
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Create experiment tracker for evaluation
@@ -536,7 +536,7 @@ assert len(results) >= 0
 
 # Example: Verify agents work with synthetic data
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_synthetic.generators.routing import RoutingGenerator
 from cogniverse_foundation.config.unified_config import OptimizerGenerationConfig
 
@@ -561,10 +561,10 @@ synthetic_data = await generator.generate(sampled_content=sampled_content, targe
 
 # Test orchestrator with synthetic queries
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
-    registry=AgentRegistry(config_manager=config_manager),
+    registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
 )
 for example in synthetic_data:
     result = await orchestrator._process_impl(

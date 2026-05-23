@@ -143,7 +143,7 @@ async for event in queue.subscribe():
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.events import get_queue_manager
 from cogniverse_foundation.config.utils import create_default_config_manager
 
@@ -157,7 +157,7 @@ queue = await manager.create_queue(
 
 # Create orchestrator with event queue (config_manager and registry are REQUIRED)
 config_manager = create_default_config_manager()
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
 deps = OrchestratorDeps()
 orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 

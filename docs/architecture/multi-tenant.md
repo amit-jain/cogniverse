@@ -80,12 +80,12 @@ vespa_client.query(
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Agent constructed WITHOUT tenant_id — serves all tenants
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
-    registry=AgentRegistry(config_manager=config_manager),
+    registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
 )
 
 # tenant_id flows per-request via A2A tasks:
@@ -516,7 +516,7 @@ search_client = VespaVideoSearchClient(
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 
@@ -536,7 +536,7 @@ deps = OrchestratorDeps(  #
         api_base="http://localhost:11434/v1",
     ),
 )
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 # Agent automatically uses tenant-specific resources per-request:
 # - Memory: agent_memories_acme (via Mem0MemoryManager singleton)
 # - Telemetry: cogniverse-acme project
@@ -662,7 +662,7 @@ Throughout the request lifecycle, tenant_id is available from `request.state`:
 ```python
 from fastapi import Request
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
@@ -675,7 +675,7 @@ deps = OrchestratorDeps(  #
         api_base="http://localhost:11434/v1",
     ),
 )
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
 @app.post("/search")
 async def search(request: Request, query: str):
@@ -1513,7 +1513,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 ```python
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 def test_tenant_isolation():
@@ -1529,7 +1529,7 @@ deps = OrchestratorDeps(  #
             api_base="http://localhost:11434/v1",
         ),
     )
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
     # Tenant isolation happens at request time:
     # - Each A2A task carries tenant_id in payload
@@ -1600,10 +1600,10 @@ async def test_end_to_end_tenant_flow():
 
     # 2. Initialize orchestrator — tenant-agnostic at construction
     from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_core.registries.agent_registry import AgentRegistry
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
-        registry=AgentRegistry(config_manager=config_manager),
+        registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
     )
 
     # 3. Execute query — tenant_id flows per-request
@@ -1654,7 +1654,7 @@ def cleanup_tenant_schemas(schema_manager):
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -1664,7 +1664,7 @@ def create_orchestrator() -> OrchestratorAgent:
     tenant_id flows per-request via _process_impl(OrchestratorInput(..., tenant_id=...)).
     """
     config_manager = create_default_config_manager()
-    registry = AgentRegistry(config_manager=config_manager)
+    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
     return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 ```
 
@@ -1699,7 +1699,7 @@ deps = OrchestratorDeps(  #
             api_base="http://localhost:11434/v1",
         ),
     )
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(config_manager=config_manager))
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
     # Execute query — tenant_id scopes resources at request time
     results = await orchestrator._process_impl(
@@ -1903,12 +1903,12 @@ memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # ✅ Good: Tenant-agnostic at construction — tenant_id flows per-request
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
-    registry=AgentRegistry(config_manager=config_manager),
+    registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
 )
 # Pass tenant_id per-request:
 # await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id=tenant_id))
@@ -1923,10 +1923,10 @@ agent = OrchestratorAgent()  # TypeError: missing required argument 'deps'
 # Always test that tenants can't access each other's data
 def test_tenant_isolation(config_manager):
     from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-    from cogniverse_agents.agent_registry import AgentRegistry
+    from cogniverse_core.registries.agent_registry import AgentRegistry
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
-        registry=AgentRegistry(config_manager=config_manager),
+        registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
     )
     # One agent serves all tenants — tenant isolation at request time
 

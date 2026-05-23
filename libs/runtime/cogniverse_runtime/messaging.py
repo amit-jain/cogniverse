@@ -32,9 +32,12 @@ Three primitives:
   agent's existing reference stays valid even if the HTTP route
   re-resolves the session.
 
-For Phase 1 the registry is in-pod. Phase 2 (see
-``docs/plan/agent-inbound-messaging.md``) extends to multi-pod via
-Redis Pub/Sub; Phase 3 adds Mem0 persistence + Argo replay.
+This module is the in-pod registry implementation. For multi-pod
+routing + durability across pod restarts, callers should resolve
+the registry through ``agents._resolve_inbound_registry`` (or
+``orchestrator_agent._resolve_inbound_registry_for_orchestrator``)
+which swaps in :class:`cogniverse_runtime.messaging_redis.RedisInboundQueueRegistry`
+when ``REDIS_URL`` is set.
 """
 
 from __future__ import annotations

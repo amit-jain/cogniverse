@@ -26,7 +26,7 @@ from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 async def _resolve_inbound_registry():
     """Pick the in-pod or Redis-backed inbound registry from env.
 
-    ``REDIS_URL`` set → cross-pod durable Redis backend (Phase 2/3).
+    ``REDIS_URL`` set → cross-pod durable Redis backend.
     unset → in-pod singleton. The two paths share the same surface
     (``get_or_create_queue`` / ``get_queue`` / ``close_queue``)
     so the route logic below doesn't branch.
@@ -397,7 +397,7 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
 # --------------------------------------------------------------------------- #
 # Inbound messaging — per-session steering into running agents.               #
 # Mirrors the design in libs/runtime/cogniverse_runtime/messaging.py.         #
-# Phase 1 of docs/plan/agent-inbound-messaging.md.                            #
+# Multi-pod + durability via libs/runtime/cogniverse_runtime/messaging_redis. #
 # --------------------------------------------------------------------------- #
 
 
