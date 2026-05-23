@@ -272,8 +272,12 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
     Supported schemes:
         - file:// or plain path: Local filesystem
         - hf://org/repo: HuggingFace Hub (recommended for production)
-        - s3://bucket/path: AWS S3 (not yet implemented)
-        - modal://volume/path: Modal volumes (not yet implemented)
+
+    Unsupported (raises ``NotImplementedError`` — no caller in the
+    repo currently emits these URIs, but the factory rejects them
+    explicitly so a typo in a profile fails loudly):
+        - s3://bucket/path
+        - modal://volume/path
     """
     parsed = urlparse(uri)
     scheme = parsed.scheme or "file"

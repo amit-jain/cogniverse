@@ -1435,10 +1435,6 @@ class VespaBackend(Backend):
             client.close()
             logger.info(f"Closed async Vespa client for schema: {schema_name}")
 
-        if self._vespa_search_backend:
-            # Search backend may not have a close method
-            pass
-
         logger.info("Closed all Vespa backend connections")
 
     def health_check(self) -> bool:

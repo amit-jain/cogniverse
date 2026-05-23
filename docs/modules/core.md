@@ -1438,7 +1438,7 @@ video_input = loader.preprocess_frames(frames)  # (1, num_frames, 288, 288, 3)
 
 Note: Output Embedding Dim is the final embedding vector dimension. Spatial Tokens is the internal representation before pooling.
 
-### SimpleVideoPrismModel (videoprism_models.py)
+### VideoPrismModel (videoprism_models.py)
 
 Minimal VideoPrism model wrapper for JAX:
 

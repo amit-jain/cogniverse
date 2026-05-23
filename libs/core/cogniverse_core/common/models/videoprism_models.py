@@ -22,7 +22,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-class SimpleVideoPrismModel:
+class VideoPrismModel:
     """Simplified VideoPrism model wrapper for embeddings extraction"""
 
     def __init__(self, model_name: str = "videoprism_public_v1_base_hf"):
@@ -153,6 +153,6 @@ class SimpleVideoPrismModel:
 
 def get_videoprism_model(
     model_name: str = "videoprism_public_v1_base_hf",
-) -> SimpleVideoPrismModel:
+) -> VideoPrismModel:
     """Factory function to create VideoPrism model"""
-    return SimpleVideoPrismModel(model_name)
+    return VideoPrismModel(model_name)

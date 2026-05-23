@@ -122,7 +122,7 @@ class QualityMonitor:
     Composes existing evaluation infrastructure:
     - SpanEvaluator for pulling/evaluating search spans
     - GoldenDatasetEvaluator for scoring against golden set
-    - LLMJudgeBase for live traffic relevance scoring
+    - LLMJudgeCore for live traffic relevance scoring
     - PhoenixDatasetStore for baseline storage
     - RetrievalMonitor for latency/error windows
 
@@ -181,9 +181,9 @@ class QualityMonitor:
     def _get_llm_judge(self):
         """Lazy-load LLM judge."""
         if self._llm_judge is None:
-            from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeBase
+            from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
 
-            self._llm_judge = LLMJudgeBase(
+            self._llm_judge = LLMJudgeCore(
                 model_name=self.llm_model,
                 base_url=self.llm_base_url,
             )

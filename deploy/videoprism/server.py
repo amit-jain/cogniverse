@@ -132,7 +132,7 @@ def _load_videoprism(model_name: str) -> None:
 def _sample_frames(video_path: str, num_frames: int) -> np.ndarray:
     """Decode ``video_path`` and sample ``num_frames`` evenly across its
     duration. Returns float32 [num_frames, 288, 288, 3] normalized to
-    [0, 1]. Mirrors ``SimpleVideoPrismModel.preprocess_video``."""
+    [0, 1]. Mirrors ``VideoPrismModel.preprocess_video``."""
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total_frames <= 0:

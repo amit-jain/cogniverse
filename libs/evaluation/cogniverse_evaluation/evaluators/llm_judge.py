@@ -72,7 +72,7 @@ class VideoMetadata:
     frame_descriptions: list[str] | None = None
 
 
-class LLMJudgeBase:
+class LLMJudgeCore:
     """Base class for LLM judge evaluators.
 
     Posts to any OAI-compatible ``/v1/chat/completions`` endpoint via
@@ -227,7 +227,7 @@ class LLMJudgeBase:
         return score, explanation
 
 
-class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
+class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeCore):
     """
     LLM-based reference-free evaluator
     Evaluates query-result relevance without ground truth using multimodal models
@@ -241,7 +241,7 @@ class SyncLLMReferenceFreeEvaluator(Evaluator, LLMJudgeBase):
             model_name: Multimodal model id from `evaluators.visual_judge.model`.
             base_url: OAI-compat LM endpoint base URL
         """
-        LLMJudgeBase.__init__(self, model_name, base_url)
+        LLMJudgeCore.__init__(self, model_name, base_url)
 
     def evaluate(self, *, input=None, output=None, **kwargs) -> Any:
         """
@@ -387,7 +387,7 @@ Explanation: Your visual assessment"""
         )
 
 
-class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
+class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeCore):
     """
     LLM-based reference evaluator
     Compares results against ground truth from database
@@ -405,7 +405,7 @@ class SyncLLMReferenceBasedEvaluator(Evaluator, LLMJudgeBase):
             model_name: LLM model id from `evaluators.llm_judge.model`.
             base_url: LLM API base URL
         """
-        LLMJudgeBase.__init__(self, model_name, base_url)
+        LLMJudgeCore.__init__(self, model_name, base_url)
         self.fetch_metadata = True  # Always fetch metadata for meaningful evaluation
 
     def evaluate(self, *, input=None, output=None, expected=None, **kwargs) -> Any:
@@ -636,7 +636,7 @@ Format: Score: X/10"""
         )
 
 
-class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
+class SyncLLMHybridEvaluator(Evaluator, LLMJudgeCore):
     """
     Hybrid LLM evaluator combining reference-free and reference-based approaches
     """
@@ -655,7 +655,7 @@ class SyncLLMHybridEvaluator(Evaluator, LLMJudgeBase):
             base_url: LLM API base URL
             reference_weight: Weight for reference-based score (0-1)
         """
-        LLMJudgeBase.__init__(self, model_name, base_url)
+        LLMJudgeCore.__init__(self, model_name, base_url)
         self.reference_weight = reference_weight
         self.relevance_weight = 1 - reference_weight
 

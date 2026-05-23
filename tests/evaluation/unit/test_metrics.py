@@ -138,14 +138,3 @@ class TestReferenceBasedMetrics:
         # Check metric values are in valid range
         for _key, value in metrics.items():
             assert 0 <= value <= 1
-
-
-class TestReferenceFreeMetrics:
-    """Test reference-free metrics."""
-
-    @pytest.mark.unit
-    def test_placeholder_for_future_reference_free_metrics(self):
-        """Placeholder test for future reference-free metrics implementation."""
-        # These will be implemented when we add RAGAS-based reference-free evaluation
-        # For now, we're using RAGAS through the scorers in src/evaluation/core/scorers.py
-        assert True

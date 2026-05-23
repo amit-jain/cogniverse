@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cogniverse_evaluation.evaluators.base_evaluator import (
+from cogniverse_evaluation.evaluators.span_prevention import (
     NoSpanEvaluator,
     no_span,
 )

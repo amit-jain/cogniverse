@@ -32,7 +32,8 @@ class TestImageSearchAgent:
 
     def test_initialization(self):
         """Test agent initialization"""
-        assert self.agent is not None
+        # Construction must produce the right deferred-load state — the
+        # private fields are the contract the lazy loader depends on.
         assert self.agent._colpali_model is None  # Lazy loaded
         assert self.agent._colpali_processor is None  # Lazy loaded
         assert self.agent._query_encoder is None  # Lazy loaded

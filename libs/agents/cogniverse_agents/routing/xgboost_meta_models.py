@@ -12,16 +12,13 @@ import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
 from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.search.types import QueryModality
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
-
-if TYPE_CHECKING:
-    pass
 
 
 def _import_xgboost():

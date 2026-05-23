@@ -35,7 +35,6 @@ class TestSummaryGenerationSignature:
         # Test that we can reference the signature (validates DSPy structure)
         try:
             str(signature)
-            assert True
         except Exception:
             pytest.fail("DSPy SummaryGenerationSignature structure is invalid")
 
