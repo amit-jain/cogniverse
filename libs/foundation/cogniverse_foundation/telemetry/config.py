@@ -91,6 +91,40 @@ class TelemetryConfig:
     # Resource attributes
     extra_resource_attributes: Dict[str, str] = field(default_factory=dict)
 
+    def should_instrument_component(self, component: str) -> bool:
+        """Return True iff the configured ``level`` admits a span emission
+        from the given ``component``.
+
+        The mapping is graduated — each level is a strict superset of the
+        previous:
+
+        * ``DISABLED`` — emit nothing
+        * ``BASIC``    — only ``search_service`` (top-level search calls)
+        * ``DETAILED`` — adds ``backend`` + ``encoder`` (default)
+        * ``VERBOSE``  — adds ``pipeline`` + ``agents`` (everything)
+
+        Components passed by callers should be one of the above strings.
+        Unknown components are treated as DETAILED-tier (emit on DETAILED
+        and VERBOSE) so a new component name doesn't accidentally drop
+        spans before the mapping is updated.
+        """
+        if not self.enabled:
+            return False
+        order = {
+            TelemetryLevel.DISABLED: 0,
+            TelemetryLevel.BASIC: 1,
+            TelemetryLevel.DETAILED: 2,
+            TelemetryLevel.VERBOSE: 3,
+        }
+        component_tier = {
+            "search_service": 1,
+            "backend": 2,
+            "encoder": 2,
+            "pipeline": 3,
+            "agents": 3,
+        }.get(component, 2)
+        return order[self.level] >= component_tier
+
     def get_project_name(self, tenant_id: str, service: Optional[str] = None) -> str:
         """
         Generate project name for a tenant.

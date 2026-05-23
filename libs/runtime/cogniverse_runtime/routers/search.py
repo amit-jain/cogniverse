@@ -116,6 +116,7 @@ async def search(
                 "top_k": request.top_k,
                 "stream": request.stream,
             },
+            component="search_service",
         )
 
     with context_manager as span:

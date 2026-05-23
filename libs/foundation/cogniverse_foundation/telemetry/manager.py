@@ -193,6 +193,7 @@ class TelemetryManager:
         tenant_id: str,
         project_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        component: str = "agents",
     ):
         """
         Context manager for creating tenant-specific spans.
@@ -204,6 +205,14 @@ class TelemetryManager:
                          (e.g., "experiments", "synthetic_data", "system")
                          If None, uses tenant-only project for user operations
             attributes: Optional span attributes
+            component: Telemetry-level component tag — one of
+                ``search_service`` / ``backend`` / ``encoder`` /
+                ``pipeline`` / ``agents``. ``TelemetryConfig.level``
+                controls which components emit. Default ``agents`` —
+                only ``VERBOSE`` admits agent-level spans, so callers
+                that want a span at lower levels MUST pass the right
+                component (e.g. ``search_service`` for top-level
+                search calls).
 
         Usage:
             # User operation (search, routing, etc.) - unified tenant project.
@@ -224,6 +233,14 @@ class TelemetryManager:
                 "tenant_id is required for all spans. "
                 "Non-tenant-specific spans are not allowed."
             )
+
+        # Telemetry-level filter: if the component is below the
+        # configured level, yield a NoOpSpan so callers' set_attribute /
+        # set_status calls become no-ops. Lets ops dial down telemetry
+        # cost in production without code changes.
+        if not self.config.should_instrument_component(component):
+            yield NoOpSpan()
+            return
 
         tracer = self._get_tracer_for_project(tenant_id, project_name)
 
@@ -309,6 +326,7 @@ class TelemetryManager:
         session_id: str,
         project_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
+        component: str = "search_service",
     ):
         """
         Context manager for creating a span within a session context.
@@ -350,13 +368,17 @@ class TelemetryManager:
 
         if provider is None:
             # Graceful degradation - no session tracking, just create span
-            with self.span(name, tenant_id, project_name, attributes) as span:
+            with self.span(
+                name, tenant_id, project_name, attributes, component=component
+            ) as span:
                 yield span
             return
 
         # Wrap span creation in session context
         with provider.session_context(session_id):
-            with self.span(name, tenant_id, project_name, attributes) as span:
+            with self.span(
+                name, tenant_id, project_name, attributes, component=component
+            ) as span:
                 # Session ID is now propagated via the session context
                 yield span
 

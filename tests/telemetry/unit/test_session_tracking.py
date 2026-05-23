@@ -33,7 +33,7 @@ def telemetry_config_sync():
         },
         service_name="test-service",
         environment="test",
-        level=TelemetryLevel.DETAILED,
+        level=TelemetryLevel.VERBOSE,
         max_cached_tenants=5,
         batch_config=BatchExportConfig(
             use_sync_export=True,
@@ -356,10 +356,13 @@ class TestSessionTrackingWithPhoenix:
             if isinstance(span, NoOpSpan):
                 pytest.skip("Phoenix server not running")
 
-            # Create nested span
+            # Create nested span — pass component=search_service so
+            # the test runs regardless of TelemetryConfig.level
+            # (the default 'agents' tier would NoOp below VERBOSE).
             with manager.span(
                 name="nested_operation",
                 tenant_id="test-tenant",
+                component="search_service",
             ) as nested:
                 assert not isinstance(nested, NoOpSpan)
 

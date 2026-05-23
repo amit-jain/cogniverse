@@ -97,7 +97,11 @@ def _probe_phoenix_reachability() -> None:
             )
             return
 
-        with tm.span("startup.probe", tenant_id=SYSTEM_TENANT_ID) as span:
+        with tm.span(
+            "startup.probe",
+            tenant_id=SYSTEM_TENANT_ID,
+            component="search_service",
+        ) as span:
             # NoOpSpan has no record_exception/set_attribute side effects;
             # if we got a real span we set an attribute to force any error
             # in the export pipeline to surface here rather than later.

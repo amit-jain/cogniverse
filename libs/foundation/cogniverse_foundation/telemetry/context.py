@@ -38,7 +38,10 @@ def search_span(
     }
 
     with manager.span(
-        "search_service.search", tenant_id=tenant_id, attributes=attributes
+        "search_service.search",
+        tenant_id=tenant_id,
+        attributes=attributes,
+        component="search_service",
     ) as span:
         start_time = time.time()
         try:
@@ -70,6 +73,7 @@ def encode_span(
         f"encoder.{encoder_type.lower()}.encode",
         tenant_id=tenant_id,
         attributes=attributes,
+        component="encoder",
     ) as span:
         start_time = time.time()
         try:
@@ -110,7 +114,10 @@ def backend_search_span(
     }
 
     with manager.span(
-        "search.execute", tenant_id=tenant_id, attributes=attributes
+        "search.execute",
+        tenant_id=tenant_id,
+        attributes=attributes,
+        component="backend",
     ) as span:
         start_time = time.time()
         try:

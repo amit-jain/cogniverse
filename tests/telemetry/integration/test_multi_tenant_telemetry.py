@@ -41,7 +41,7 @@ class TestMultiTenantTelemetryIntegration:
             },
             service_name="test-service",
             environment="test",
-            level=TelemetryLevel.DETAILED,
+            level=TelemetryLevel.VERBOSE,
             max_cached_tenants=5,
             batch_config=BatchExportConfig(
                 use_sync_export=True,  # SYNC mode for immediate testing
@@ -60,7 +60,7 @@ class TestMultiTenantTelemetryIntegration:
             },
             service_name="test-service",
             environment="test",
-            level=TelemetryLevel.DETAILED,
+            level=TelemetryLevel.VERBOSE,
             max_cached_tenants=5,
             batch_config=BatchExportConfig(
                 use_sync_export=False,  # BATCH mode (production)
@@ -221,6 +221,7 @@ class TestMultiTenantTelemetryIntegration:
         # Config with small cache size for testing
         config = TelemetryConfig(
             enabled=True,
+            level=TelemetryLevel.VERBOSE,  # test uses default "agents" component
             otlp_endpoint="http://localhost:4317",
             provider_config={
                 "http_endpoint": "http://localhost:6006",
@@ -416,6 +417,7 @@ class TestPhoenixIntegrationWithRealServer:
 
         phoenix_config = TelemetryConfig(
             enabled=True,
+            level=TelemetryLevel.VERBOSE,  # test uses default "agents" component
             otlp_endpoint="http://localhost:14317",
             provider_config={
                 "http_endpoint": "http://localhost:16006",
