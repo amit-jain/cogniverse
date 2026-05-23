@@ -19,8 +19,6 @@ class DSPyModuleRegistry:
         DSPyModuleType.PREDICT: dspy.Predict,
         DSPyModuleType.CHAIN_OF_THOUGHT: dspy.ChainOfThought,
         DSPyModuleType.REACT: dspy.ReAct,
-        DSPyModuleType.MULTI_CHAIN_COMPARISON: dspy.MultiChainComparison,
-        DSPyModuleType.PROGRAM_OF_THOUGHT: dspy.ProgramOfThought,
     }
 
     @classmethod

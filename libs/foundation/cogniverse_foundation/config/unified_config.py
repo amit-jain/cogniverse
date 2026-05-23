@@ -226,6 +226,14 @@ class SystemConfig:
     # COGNIVERSE_ADAPTER_CACHE at the runtime startup boundary.
     adapter_cache_dir: str = ""
 
+    # MinIO object-store endpoint for the ingestion upload path
+    # (``POST /ingestion/upload`` queues binary uploads to MinIO,
+    # then the ingestion worker reads them back to feed Vespa).
+    # Empty string means MinIO isn't configured and the upload route
+    # responds with 503. Populated from chart env MINIO_ENDPOINT at
+    # the runtime startup boundary.
+    minio_endpoint: str = ""
+
     # Metadata
     environment: str = "development"
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -256,6 +264,7 @@ class SystemConfig:
             "iter_retrieval_wall_clock_ms": self.iter_retrieval_wall_clock_ms,
             "redis_url": self.redis_url,
             "adapter_cache_dir": self.adapter_cache_dir,
+            "minio_endpoint": self.minio_endpoint,
             "environment": self.environment,
             "metadata": self.metadata,
         }
@@ -294,6 +303,7 @@ class SystemConfig:
             ),
             redis_url=data.get("redis_url", ""),
             adapter_cache_dir=data.get("adapter_cache_dir", ""),
+            minio_endpoint=data.get("minio_endpoint", ""),
             environment=data.get("environment", "development"),
             metadata=data.get("metadata", {}),
         )

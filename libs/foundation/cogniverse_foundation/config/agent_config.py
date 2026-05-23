@@ -8,13 +8,11 @@ from typing import Any, Dict, List, Optional
 
 
 class DSPyModuleType(Enum):
-    """Available DSPy module types for dynamic selection"""
+    """DSPy module types the dynamic_dspy_mixin can construct."""
 
     PREDICT = "predict"
     CHAIN_OF_THOUGHT = "chain_of_thought"
     REACT = "react"
-    MULTI_CHAIN_COMPARISON = "multi_chain_comparison"
-    PROGRAM_OF_THOUGHT = "program_of_thought"
 
 
 class OptimizerType(Enum):

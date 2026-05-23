@@ -1,7 +1,6 @@
 """Ingestion endpoints - unified interface for content ingestion."""
 
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
@@ -192,6 +191,7 @@ async def upload_video(
         default=False,
         description="Bypass idempotency and re-enqueue even on a cache hit.",
     ),
+    config_manager: ConfigManager = Depends(get_config_manager_dependency),
 ) -> Dict[str, Any]:
     """Upload a file to MinIO and enqueue ingestion via Redis.
 
@@ -212,14 +212,15 @@ async def upload_video(
     # local dev clusters and for any pre-auth code path.
     await assert_tenant_exists(upload_tenant_id)
 
-    redis_url = os.environ.get("REDIS_URL")
-    minio_endpoint = os.environ.get("MINIO_ENDPOINT")
+    sys_cfg = config_manager.get_system_config()
+    redis_url = sys_cfg.redis_url
+    minio_endpoint = sys_cfg.minio_endpoint
     if not redis_url or not minio_endpoint:
         missing = [
             name
             for name, value in (
-                ("REDIS_URL", redis_url),
-                ("MINIO_ENDPOINT", minio_endpoint),
+                ("redis_url", redis_url),
+                ("minio_endpoint", minio_endpoint),
             )
             if not value
         ]
@@ -298,6 +299,7 @@ async def upload_video(
                 processing_results=pipeline_result.get("results", {}) or {},
                 source_doc_id=source_doc_id,
                 tenant_id=upload_tenant_id,
+                config_manager=config_manager,
             )
             response["graph_nodes"] = counts.get("nodes_upserted", 0)
             response["graph_edges"] = counts.get("edges_upserted", 0)
@@ -504,6 +506,7 @@ async def _extract_graph_per_segment(
     processing_results: Dict[str, Any],
     source_doc_id: str,
     tenant_id: str,
+    config_manager: ConfigManager,
 ) -> Dict[str, Any]:
     """Run per-segment KG extraction, cross-modal linking, and upsert.
 
@@ -533,7 +536,7 @@ async def _extract_graph_per_segment(
     mgr = graph_router._graph_manager_factory(tenant_id)
 
     claim_extractor = ClaimExtractor(
-        artifact_manager=_lookup_artifact_manager(tenant_id)
+        artifact_manager=_lookup_artifact_manager(tenant_id, config_manager)
     )
     doc_ext = DocExtractor(claim_extractor=claim_extractor)
 
@@ -612,7 +615,7 @@ async def _extract_graph_per_segment(
     #     align with any Person (orphans). Persisted so face data
     #     isn't lost; a manual operator can attach a same_as edge
     #     to label them later.
-    face_embed_url = _lookup_face_embed_endpoint()
+    face_embed_url = _lookup_face_embed_endpoint(config_manager)
     if face_embed_url:
         face_edges, face_nodes = _run_face_pipeline(
             processing_results=processing_results,
@@ -653,6 +656,7 @@ async def _extract_graph_per_segment(
         processing_results=processing_results,
         source_doc_id=source_doc_id,
         tenant_id=tenant_id,
+        config_manager=config_manager,
     )
 
     return {
@@ -662,7 +666,7 @@ async def _extract_graph_per_segment(
     }
 
 
-def _lookup_artifact_manager(tenant_id: str):
+def _lookup_artifact_manager(tenant_id: str, config_manager: ConfigManager):
     """Look up an ArtifactManager for the tenant.
 
     Returns ``None`` when Phoenix telemetry isn't wired up; ``ClaimExtractor``
@@ -674,8 +678,13 @@ def _lookup_artifact_manager(tenant_id: str):
     except ImportError:
         return None
 
-    http_endpoint = os.environ.get("PHOENIX_HTTP_ENDPOINT")
-    grpc_endpoint = os.environ.get("PHOENIX_GRPC_ENDPOINT")
+    # Read Phoenix endpoints from SystemConfig — main.py reads
+    # TELEMETRY_HTTP_ENDPOINT / TELEMETRY_OTLP_ENDPOINT env vars at
+    # startup and stores them on SystemConfig.telemetry_url +
+    # .telemetry_collector_endpoint. No env reads in this router.
+    sys_cfg = config_manager.get_system_config()
+    http_endpoint = sys_cfg.telemetry_url
+    grpc_endpoint = sys_cfg.telemetry_collector_endpoint
     if not http_endpoint and not grpc_endpoint:
         return None
 
@@ -690,27 +699,18 @@ def _lookup_artifact_manager(tenant_id: str):
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
 
 
-def _lookup_face_embed_endpoint() -> Optional[str]:
-    """Return the ``face_embed`` sidecar URL.
+def _lookup_face_embed_endpoint(config_manager: ConfigManager) -> Optional[str]:
+    """Return the ``face_embed`` sidecar URL from SystemConfig.
 
-    Reads from ``INFERENCE_SERVICE_URLS`` (same env-var contract as
-    ``_lookup_colbert_endpoint``). When the var is missing or doesn't
-    contain the ``face_embed`` key, the face pipeline is skipped
-    gracefully — the per-segment KG extraction + structural cross-modal
-    linker still ship, just without face-cluster ``same_as`` edges.
+    main.py reads ``INFERENCE_SERVICE_URLS`` env at startup and parses
+    it into ``SystemConfig.inference_service_urls`` — this lookup
+    just indexes into that dict. When the key is missing the face
+    pipeline is skipped gracefully (per-segment KG extraction +
+    structural cross-modal linker still ship without face-cluster
+    ``same_as`` edges).
     """
-    import json as _json
-
-    raw = os.environ.get("INFERENCE_SERVICE_URLS")
-    if not raw:
-        return None
-    try:
-        parsed = _json.loads(raw)
-    except _json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed.get("face_embed")
+    sys_cfg = config_manager.get_system_config()
+    return (sys_cfg.inference_service_urls or {}).get("face_embed")
 
 
 def _run_face_pipeline(
@@ -787,34 +787,12 @@ def _run_face_pipeline(
     return temporal_edges, anonymous_nodes
 
 
-def _lookup_colbert_endpoint() -> Optional[str]:
-    """Return the ``colbert_pylate`` sidecar URL.
-
-    Reads from ``INFERENCE_SERVICE_URLS`` (the same JSON dict ``main.py``
-    parses at startup into ``SystemConfig.inference_service_urls``). When
-    the var is missing or doesn't contain the ``colbert_pylate`` key, no
-    URL is returned and ``CrossModalLinker`` is skipped — the per-segment
-    KG extraction still ships, just without ``same_as`` edges.
-    """
-    import json as _json
-
-    raw = os.environ.get("INFERENCE_SERVICE_URLS")
-    if not raw:
-        return None
-    try:
-        parsed = _json.loads(raw)
-    except _json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed.get("colbert_pylate")
-
-
 async def _write_backrefs_to_content(
     backrefs_by_segment: Dict[str, Dict[str, List[str]]],
     processing_results: Dict[str, Any],
     source_doc_id: str,
     tenant_id: str,
+    config_manager: ConfigManager,
 ) -> None:
     """PATCH ``entity_ids`` / ``relation_ids`` / ``claim_ids`` onto content docs.
 
@@ -827,21 +805,21 @@ async def _write_backrefs_to_content(
     if not backrefs_by_segment:
         return
 
-    base_url = os.environ.get("VESPA_URL") or os.environ.get("VESPA_ENDPOINT")
-    if not base_url:
-        # Fall back to the BACKEND_URL + BACKEND_PORT env the
-        # cogniverse-ingestor pod sets by default. Same shape, just
-        # different env names — both deployments use these.
-        bu = os.environ.get("BACKEND_URL")
-        bp = os.environ.get("BACKEND_PORT")
-        if bu and bp:
-            base_url = f"{bu.rstrip('/')}:{bp}"
-    if not base_url:
+    # Resolve Vespa base URL from SystemConfig — no env reads in
+    # production code paths. The runtime startup at main.py reads
+    # BACKEND_URL + BACKEND_PORT env vars (also the historical
+    # VESPA_URL / VESPA_ENDPOINT aliases) and stores the canonical
+    # values on SystemConfig.backend_url + .backend_port.
+    sys_cfg = config_manager.get_system_config()
+    bu = sys_cfg.backend_url
+    bp = sys_cfg.backend_port
+    if not (bu and bp):
         logger.debug(
-            "Skipping content back-ref PATCH: neither VESPA_URL nor "
-            "BACKEND_URL+BACKEND_PORT are configured"
+            "Skipping content back-ref PATCH: SystemConfig.backend_url "
+            "or .backend_port not configured"
         )
         return
+    base_url = f"{bu.rstrip('/')}:{bp}"
 
     # Build segment_id → (schema, doc_id) lookup. The pipeline doesn't
     # emit a top-level fed_documents list, so derive the per-segment

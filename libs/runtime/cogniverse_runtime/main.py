@@ -474,6 +474,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if os.environ.get("COGNIVERSE_ADAPTER_CACHE"):
         system_config.adapter_cache_dir = os.environ["COGNIVERSE_ADAPTER_CACHE"]
         updated = True
+    # MINIO_ENDPOINT: object-store target for the ingestion-upload
+    # route. The route reads from SystemConfig (no env access).
+    if os.environ.get("MINIO_ENDPOINT"):
+        system_config.minio_endpoint = os.environ["MINIO_ENDPOINT"]
+        updated = True
     if updated:
         config_manager.set_system_config(system_config)
         BackendRegistry.get_instance()._backend_instances.clear()

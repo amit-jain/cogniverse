@@ -133,7 +133,12 @@ async def _call_agent(
         response = await client.post(url, json=payload, timeout=120.0)
         response.raise_for_status()
         data = response.json()
-        return data.get("response") or data.get("result") or str(data)
+        # AgentDispatcher returns one of:
+        #   {"orchestration_result": {...}, "message": "...", ...}  (orchestrator route)
+        #   {"result": "...", "message": "..."}                      (specialized agent route)
+        # Pick the canonical human-readable field; fall back to the
+        # whole dict only when neither is present (caller-error case).
+        return data.get("message") or data.get("result") or str(data)
     except httpx.HTTPStatusError as exc:
         logger.error(
             "Agent call failed (%s): %s",

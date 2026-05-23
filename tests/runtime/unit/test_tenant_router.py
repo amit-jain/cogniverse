@@ -726,7 +726,7 @@ class TestJobExecutor:
         from cogniverse_runtime.job_executor import _call_agent
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "here are the results"}
+        mock_response.json.return_value = {"message": "here are the results"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -755,7 +755,7 @@ class TestJobExecutor:
         from cogniverse_runtime.job_executor import _call_agent
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "summarized results"}
+        mock_response.json.return_value = {"message": "summarized results"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()

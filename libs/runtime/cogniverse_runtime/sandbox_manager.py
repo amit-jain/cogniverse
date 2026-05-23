@@ -75,7 +75,6 @@ def _classify_exec_failure(exit_code: int, stderr: str) -> Dict[str, bool]:
 
 
 _DEFAULT_POLICY_DIR = Path("configs/agent_policies")
-_LEGACY_POLICY_DIR = Path("configs/openshell")
 
 
 def _probe_gateway_endpoint(endpoint: str, timeout: float = 2.0) -> None:
@@ -111,10 +110,7 @@ class SandboxManager:
     container sandbox; the other agents' policies are consumed at
     runtime by ``consult_egress_policy`` (audit log) and at deploy time
     by ``cogniverse-runtime egress-netpol`` (k8s NetworkPolicy
-    generator). The directory was historically named ``configs/openshell/``
-    because OpenShell consumed it for CodingAgent; the rename to
-    ``configs/agent_policies/`` reflects that the YAMLs are agent
-    constraints, not OpenShell-specific config.
+    generator).
     """
 
     def __init__(
@@ -128,16 +124,13 @@ class SandboxManager:
 
         Args:
             policy_dir: Directory containing per-agent policy YAMLs.
-                Defaults to ``configs/agent_policies/``; falls back to
-                ``configs/openshell/`` (with a deprecation warning) when
-                the new directory is absent so existing deployments that
-                mount the old path keep working.
+                Defaults to ``configs/agent_policies/``.
             cluster: OpenShell cluster name (None = active).
-            enabled: Deprecated. ``True`` maps to ``policy=optional``,
-                ``False`` to ``policy=disabled``. Use ``policy`` for new
-                code; this kwarg remains for backwards compatibility with
-                existing tests/callers.
-            policy: New explicit policy knob; takes precedence over
+            enabled: ``True`` maps to ``policy=optional``,
+                ``False`` to ``policy=disabled``. Prefer ``policy`` for
+                explicit configuration; this kwarg remains for tests
+                and shorthand callers.
+            policy: Explicit policy knob; takes precedence over
                 ``enabled`` when both are passed.
         """
         self._policy_dir = self._resolve_policy_dir(policy_dir)
@@ -178,28 +171,11 @@ class SandboxManager:
 
     @staticmethod
     def _resolve_policy_dir(policy_dir: Path | None) -> Path:
-        """Pick the policy dir, with back-compat fallback to the old name.
-
-        Priority:
-          1. Explicit ``policy_dir`` argument (operator override).
-          2. ``configs/agent_policies/`` if it exists (new canonical name).
-          3. ``configs/openshell/`` if it exists (legacy name; logged
-             once as deprecated so operators migrate).
-          4. ``configs/agent_policies/`` regardless — surfaces a clean
-             "directory not found" warning later in ``_load_policies``.
-        """
+        """Pick the policy dir: explicit override or the default
+        ``configs/agent_policies/``. Missing directory is surfaced
+        later in ``_load_policies`` as a warning."""
         if policy_dir is not None:
             return Path(policy_dir)
-        if _DEFAULT_POLICY_DIR.exists():
-            return _DEFAULT_POLICY_DIR
-        if _LEGACY_POLICY_DIR.exists():
-            logger.warning(
-                "Policy directory %s is deprecated; rename to %s. "
-                "Loading from the legacy location for back-compat.",
-                _LEGACY_POLICY_DIR,
-                _DEFAULT_POLICY_DIR,
-            )
-            return _LEGACY_POLICY_DIR
         return _DEFAULT_POLICY_DIR
 
     @staticmethod

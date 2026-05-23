@@ -104,26 +104,6 @@ class TelemetryConfig:
             )
         return self.tenant_project_template.format(tenant_id=tenant_id)
 
-    def should_instrument_level(self, component: str) -> bool:
-        """Check if a component should be instrumented based on level."""
-        if not self.enabled:
-            return False
-
-        level_components = {
-            TelemetryLevel.DISABLED: set(),
-            TelemetryLevel.BASIC: {"search_service"},
-            TelemetryLevel.DETAILED: {"search_service", "backend", "encoder"},
-            TelemetryLevel.VERBOSE: {
-                "search_service",
-                "backend",
-                "encoder",
-                "pipeline",
-                "agents",
-            },
-        }
-
-        return component in level_components.get(self.level, set())
-
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary for persistence."""
         return {
