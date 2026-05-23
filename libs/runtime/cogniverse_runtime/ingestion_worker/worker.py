@@ -269,6 +269,7 @@ async def _default_processor(job: IngestJob) -> dict:
             processing_results=processing_results,
             source_doc_id=source_doc_id,
             tenant_id=job.tenant_id,
+            config_manager=config_manager,
         )
         processing_results["graph_nodes"] = graph_counts.get("nodes_upserted", 0)
         processing_results["graph_edges"] = graph_counts.get("edges_upserted", 0)
@@ -340,7 +341,7 @@ async def _process_job(
         component="pipeline",
         attributes={
             "job.id": job.ingest_id,
-            "job.source_uri": getattr(job, "source_uri", "") or "",
+            "job.source_url": getattr(job, "source_url", "") or "",
             "job.profile": getattr(job, "profile", "") or "",
             "job.consumer_id": config.consumer_id,
         },
