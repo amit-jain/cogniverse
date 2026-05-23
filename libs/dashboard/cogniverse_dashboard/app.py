@@ -40,12 +40,14 @@ from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
+
+# PhoenixAnalytics is Phoenix-specific (concrete fetcher of spans);
+# TraceMetrics is the provider-agnostic dataclass and lives at the
+# canonical evaluation-provider location.
+from cogniverse_evaluation.providers import TraceMetrics
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_telemetry_phoenix.evaluation.analytics import (
     PhoenixAnalytics as Analytics,
-)
-from cogniverse_telemetry_phoenix.evaluation.analytics import (
-    TraceMetrics,
 )
 
 _config_manager = create_default_config_manager()

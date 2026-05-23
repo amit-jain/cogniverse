@@ -10,8 +10,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
-
 
 class EvaluatorFramework(ABC):
     """
@@ -230,32 +228,6 @@ class TraceMetrics:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
-class FailurePattern:
-    """Represents a pattern associated with failures"""
-
-    pattern_type: str  # 'operation', 'profile', 'strategy', 'time', 'parameter'
-    pattern_value: Any
-    failure_rate: float
-    occurrence_count: int
-    confidence: float
-    examples: List[str] = field(default_factory=list)
-    correlation_strength: float = 0.0
-
-
-@dataclass
-class RootCauseHypothesis:
-    """Hypothesis for root cause"""
-
-    hypothesis: str
-    confidence: float
-    evidence: List[str]
-    affected_traces: List[str]
-    suggested_action: str
-    category: str  # 'configuration', 'resource', 'timeout', 'data', 'model'
-    patterns: List[FailurePattern] = field(default_factory=list)
-
-
 # Additional provider interfaces
 
 
@@ -403,94 +375,5 @@ class MonitoringProvider(ABC):
 
         Returns:
             Dictionary with current metric values
-        """
-        pass
-
-
-class RootCauseProvider(ABC):
-    """
-    Provider for automated root cause analysis.
-
-    Implementations analyze failure patterns and generate hypotheses.
-    """
-
-    @abstractmethod
-    def analyze_failures(
-        self,
-        traces: List[TraceMetrics],
-        time_window_hours: int = 24,
-    ) -> List[RootCauseHypothesis]:
-        """
-        Analyze failure patterns and generate root cause hypotheses.
-
-        Args:
-            traces: List of trace metrics (including failures)
-            time_window_hours: Time window for analysis
-
-        Returns:
-            List of root cause hypotheses, sorted by confidence
-        """
-        pass
-
-
-class DatasetsProvider(ABC):
-    """
-    Provider for evaluation dataset management.
-
-    Implementations manage evaluation datasets and run batch evaluations.
-    """
-
-    @abstractmethod
-    def create_dataset(
-        self,
-        name: str,
-        data: pd.DataFrame,
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Any:
-        """
-        Create a new evaluation dataset.
-
-        Args:
-            name: Dataset name
-            data: DataFrame with dataset examples
-            description: Dataset description
-            metadata: Additional metadata
-
-        Returns:
-            Provider-specific dataset object
-        """
-        pass
-
-    @abstractmethod
-    def load_dataset(self, dataset_name: str) -> pd.DataFrame:
-        """
-        Load an existing dataset.
-
-        Args:
-            dataset_name: Name of the dataset
-
-        Returns:
-            DataFrame with dataset examples
-        """
-        pass
-
-    @abstractmethod
-    def run_batch_evaluation(
-        self,
-        dataset_name: str,
-        evaluators: List[Any],
-        experiment_name: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Run batch evaluation on a dataset.
-
-        Args:
-            dataset_name: Name of the dataset
-            evaluators: List of evaluator functions
-            experiment_name: Optional experiment name
-
-        Returns:
-            Dictionary with evaluation results and metrics
         """
         pass

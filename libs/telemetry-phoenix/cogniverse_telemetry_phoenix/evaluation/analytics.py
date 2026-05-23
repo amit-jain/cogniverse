@@ -7,7 +7,6 @@ including request statistics, response time analysis, and outlier detection.
 
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -17,22 +16,15 @@ import plotly.graph_objects as go
 from phoenix.client import Client as _PhoenixSyncClient
 from plotly.subplots import make_subplots
 
+# Canonical TraceMetrics lives in the evaluation provider hierarchy —
+# Phoenix is one source, but the dataclass shape is provider-agnostic.
+# Re-exported below so dashboards that already import
+# ``TraceMetrics`` from this module keep working without churn.
+from cogniverse_evaluation.providers.base import TraceMetrics
+
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class TraceMetrics:
-    """Metrics extracted from traces"""
-
-    trace_id: str
-    timestamp: datetime
-    duration_ms: float
-    operation: str
-    status: str
-    profile: str | None = None
-    strategy: str | None = None
-    error: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+__all__ = ["PhoenixAnalytics", "TraceMetrics"]
 
 
 class PhoenixAnalytics:
