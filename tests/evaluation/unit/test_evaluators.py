@@ -6,10 +6,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from cogniverse_evaluation.evaluators.span_prevention import (
-    NoSpanEvaluator,
-    no_span,
-)
 from cogniverse_evaluation.evaluators.reference_free import (
     CompositeEvaluator,
     LLMRelevanceEvaluator,
@@ -18,6 +14,10 @@ from cogniverse_evaluation.evaluators.reference_free import (
     RetrievalContext,
     TemporalCoverageEvaluator,
     create_reference_free_evaluators,
+)
+from cogniverse_evaluation.evaluators.span_prevention import (
+    NoSpanEvaluator,
+    no_span,
 )
 from cogniverse_telemetry_phoenix.evaluation.framework import EvaluationResult
 

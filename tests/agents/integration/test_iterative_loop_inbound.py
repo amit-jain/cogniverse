@@ -549,7 +549,7 @@ async def test_three_constraints_missing_aspects_distinct_from_each_single_const
     await q.enqueue(_msg("B"))
     await q.enqueue(_msg("C"))
     stub = _StubOrchestrator()
-    result = await _run_loop(stub, _StubPlan(), inbound_queue=q)
+    _result = await _run_loop(stub, _StubPlan(), inbound_queue=q)
     all_three = stub._reformulate_calls[0]
     assert all_three == ["A", "B", "C"]
     # Distinct from each single-constraint shape.
