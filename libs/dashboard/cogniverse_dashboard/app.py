@@ -1322,19 +1322,6 @@ with tabs[5]:
                     st.write(f"**Error:** {row['error']}")
 
 
-# Helper function to create Phoenix trace link
-def create_phoenix_link(trace_id, text="View in Phoenix"):
-    phoenix_base_url = _system_config.telemetry_url
-    # Phoenix uses project-based routing with base64 encoded project IDs
-    # Default project is "Project:1" which encodes to "UHJvamVjdDox"
-    import base64
-
-    project_encoded = base64.b64encode(b"Project:1").decode("utf-8")
-    # Phoenix uses client-side routing, so we'll link to the traces page
-    # Include the trace ID query format
-    return f"[{text}]({phoenix_base_url}/projects/{project_encoded}/traces)"
-
-
 # Tab 7: Root Cause Analysis (if enabled)
 if enable_rca and len(tabs) > 6:
     with tabs[6]:

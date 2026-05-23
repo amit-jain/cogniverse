@@ -89,12 +89,12 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             ValidationError: If deps fails Pydantic validation
         """
 
-        # Create DSPy module
-        class ImageSearchSignature(dspy.Signature):
-            query: str = dspy.InputField(desc="Image search query")
-            mode: str = dspy.InputField(desc="Search mode: semantic, hybrid")
-            result: str = dspy.OutputField(desc="Search results")
-
+        # Create DSPy module. The wrapper Module just shells out to a
+        # placeholder string for now; the actual ColPali model + Vespa
+        # roundtrip happens via the agent's _search_images_* methods.
+        # No dspy.Signature is defined because the Module never
+        # delegates to dspy.Predict/CoT — defining one would just be
+        # dead infrastructure.
         class ImageSearchModule(dspy.Module):
             def __init__(self):
                 super().__init__()

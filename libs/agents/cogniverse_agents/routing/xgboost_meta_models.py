@@ -1,10 +1,8 @@
 """
 XGBoost Meta-Models for Multi-Modal Optimization
 
-These meta-models use XGBoost to make automatic decisions about training strategies,
-eliminating the need for hardcoded thresholds.
-
-Part of Phase 11: Multi-Modal Optimization.
+These meta-models use XGBoost to make automatic decisions about training
+strategies, eliminating the need for hardcoded thresholds.
 """
 
 import logging

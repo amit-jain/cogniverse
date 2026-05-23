@@ -64,7 +64,7 @@ def _parse_iso(value: Any) -> Optional[datetime]:
 
 def _content_signature(rows: List[Dict[str, Any]]) -> str:
     """Stable hash of the sorted contents — for cheap window-vs-window diff."""
-    contents = sorted((r.get("memory") or r.get("content") or "").strip() for r in rows)
+    contents = sorted((r.get("memory", "")).strip() for r in rows)
     h = hashlib.sha256()
     for c in contents:
         h.update(c.encode("utf-8"))
@@ -269,10 +269,7 @@ class TemporalReasoningAgent(
                     end=w.end,
                     matching_memory_ids=[str(r.get("id") or "") for r in members],
                     content_signature=sig,
-                    excerpts=[
-                        str(r.get("memory") or r.get("content") or "")[:200]
-                        for r in members
-                    ],
+                    excerpts=[str(r.get("memory", ""))[:200] for r in members],
                 )
             )
 

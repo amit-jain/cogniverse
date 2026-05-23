@@ -9,7 +9,8 @@ import subprocess
 
 PREREQUISITES = ["docker", "kubectl", "helm"]
 CLUSTER_NAME = "cogniverse"
-NAMESPACE = "cogniverse"
+from cogniverse_cli.constants import NAMESPACE  # noqa: F401
+
 # Host ports k3d's loadbalancer publishes — each must match the chart's
 # service.nodePort. 28xxx/26xxx avoid collisions with common dev ports,
 # 29xxx are inference sidecars that e2e tests probe directly.

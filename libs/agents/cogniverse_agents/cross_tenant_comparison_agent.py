@@ -266,15 +266,13 @@ class CrossTenantComparisonAgent(
                 if _read_metadata(r).get("subject_key") == input.subject_key
             ]
             view_ids = [str(r.get("id") or "") for r in matching]
-            view_excerpts = [
-                str(r.get("memory") or r.get("content") or "")[:200] for r in matching
-            ]
+            view_excerpts = [str(r.get("memory", ""))[:200] for r in matching]
             view_origins = [
                 str(r.get("_federation_origin") or "tenant") for r in matching
             ]
 
             for r in matching:
-                content = str(r.get("memory") or r.get("content") or "").strip().lower()
+                content = str(r.get("memory", "")).strip().lower()
                 all_signatures.add(content)
 
             tenant_views.append(

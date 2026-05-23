@@ -995,16 +995,16 @@ class AgentDispatcher:
         context: Dict[str, Any],
         tenant_id: str,
     ) -> Dict[str, Any]:
-        # Consult + verifyrouting_agent egress policy at dispatch.
-        self.consult_egress_policy("routing_agent")
-        self._verify_routing_egress(tenant_id)
-
         """Route query through GatewayAgent for triage.
 
         Simple queries are dispatched directly to the target execution agent.
         Complex queries are forwarded to OrchestratorAgent for multi-agent
         coordination.
         """
+        # Consult + verify routing_agent egress policy at dispatch.
+        self.consult_egress_policy("routing_agent")
+        self._verify_routing_egress(tenant_id)
+
         from cogniverse_agents.gateway_agent import (
             GatewayAgent,
             GatewayDeps,

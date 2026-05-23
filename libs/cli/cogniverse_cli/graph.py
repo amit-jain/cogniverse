@@ -14,7 +14,7 @@ from rich.table import Table
 
 console = Console()
 
-RUNTIME_URL = "http://localhost:28000"
+from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
 
 
 def _client(runtime_url: str) -> httpx.Client:

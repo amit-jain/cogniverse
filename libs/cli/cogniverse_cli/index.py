@@ -25,7 +25,7 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
-RUNTIME_URL = "http://localhost:28000"
+from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
 
 CODE_EXTENSIONS = {
     ".py",

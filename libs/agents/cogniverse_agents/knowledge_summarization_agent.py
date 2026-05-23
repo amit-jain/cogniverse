@@ -157,7 +157,7 @@ def _format_memories_for_prompt(rows: List[Dict[str, Any]]) -> str:
     lines: List[str] = []
     for i, r in enumerate(rows, start=1):
         mid = str(r.get("id") or f"mem_{i}")
-        content = (r.get("memory") or r.get("content") or "").strip()
+        content = (r.get("memory", "")).strip()
         meta = r.get("metadata") or {}
         subj = (meta.get("subject_key") if isinstance(meta, dict) else None) or "-"
         lines.append(f"=== Memory {i} (id={mid}, subject={subj}) ===\n{content}")

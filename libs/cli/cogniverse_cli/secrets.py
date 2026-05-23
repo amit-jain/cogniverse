@@ -25,7 +25,8 @@ from typing import Optional
 
 from rich.console import Console
 
-NAMESPACE = "cogniverse"
+from cogniverse_cli.constants import NAMESPACE  # noqa: F401
+
 HF_TOKEN_SECRET = "hf-token"
 HF_CACHE_TOKEN_PATH = Path.home() / ".cache" / "huggingface" / "token"
 

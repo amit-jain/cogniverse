@@ -1,6 +1,7 @@
 """Query encoding utilities."""
 
 from cogniverse_core.query.encoders import (
+    ColPaliFamilyQueryEncoder,
     ColPaliQueryEncoder,
     ColQwenQueryEncoder,
     QueryEncoder,
@@ -11,6 +12,7 @@ from cogniverse_core.query.encoders import (
 __all__ = [
     "QueryEncoder",
     "QueryEncoderFactory",
+    "ColPaliFamilyQueryEncoder",
     "ColPaliQueryEncoder",
     "ColQwenQueryEncoder",
     "VideoPrismQueryEncoder",

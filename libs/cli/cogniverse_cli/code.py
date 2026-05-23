@@ -15,7 +15,7 @@ from cogniverse_cli.streaming import (
 
 console = Console()
 
-RUNTIME_URL = "http://localhost:28000"
+from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
 
 
 class CodingSession:

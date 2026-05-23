@@ -1,8 +1,8 @@
 """
 Orchestration Annotation Tab
 
-Provides UI for human annotation of orchestration workflow quality.
-Implements Phase 7.5 orchestration optimization feedback loop.
+Provides UI for human annotation of orchestration workflow quality —
+the human-in-the-loop side of the optimization feedback path.
 """
 
 import asyncio

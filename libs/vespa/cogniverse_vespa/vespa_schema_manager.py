@@ -430,7 +430,7 @@ class VespaSchemaManager:
 
     def upload_audio_content_schema(self, app_name: str = "audiosearch") -> None:
         """
-        Create and upload audio_content schema for Phase 8.
+        Create and upload the audio_content schema.
 
         Supports acoustic + transcript-based search.
 

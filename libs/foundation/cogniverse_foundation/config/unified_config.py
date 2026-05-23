@@ -312,8 +312,12 @@ class RoutingConfigUnified:
 
     tenant_id: Optional[str] = None
 
-    # Routing mode
-    routing_mode: str = "tiered"  # "tiered", "ensemble", "hybrid"
+    # Routing mode. Only "tiered" is implemented end-to-end (fast +
+    # slow + fallback path with enable_* flags below). Other values
+    # are accepted by the schema for forward-compat but produce no
+    # behavior change at dispatch time — do not document them as
+    # supported.
+    routing_mode: str = "tiered"
 
     # Tier configuration
     enable_fast_path: bool = True

@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 RELEASE_NAME = "cogniverse"
-NAMESPACE = "cogniverse"
+from cogniverse_cli.constants import NAMESPACE  # noqa: F401
 
 
 def release_exists(name: str = RELEASE_NAME, namespace: str = NAMESPACE) -> bool:

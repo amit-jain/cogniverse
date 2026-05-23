@@ -282,7 +282,7 @@ class FederatedQueryAgent(
                     FederatedHitOut(
                         tenant_id=tid,
                         memory_id=str(r.get("id") or ""),
-                        excerpt=str(r.get("memory") or r.get("content") or "")[:200],
+                        excerpt=str(r.get("memory", ""))[:200],
                         origin=str(r.get("_federation_origin") or "tenant"),
                     )
                 )

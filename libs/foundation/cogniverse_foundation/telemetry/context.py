@@ -4,8 +4,6 @@ import json
 import logging
 import time
 from contextlib import contextmanager
-from functools import wraps
-from typing import Dict, Optional
 
 from opentelemetry.trace import Status, StatusCode
 
@@ -179,35 +177,3 @@ def add_embedding_details_to_span(span, embeddings):
 
             # Set output.value with just shape info
             span.set_attribute("output.value", str(embeddings.shape))
-
-
-def with_telemetry(
-    span_name: str,
-    tenant_id_param: str = "tenant_id",
-    extract_attributes: Optional[Dict[str, str]] = None,
-):
-    """Decorator for automatic telemetry instrumentation."""
-
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            tenant_id = kwargs.get(tenant_id_param)
-            if not tenant_id:
-                logger.warning(
-                    f"No {tenant_id_param} found in {func.__name__}, skipping telemetry"
-                )
-                return func(*args, **kwargs)
-
-            attributes = {}
-            if extract_attributes:
-                for attr_name, param_name in extract_attributes.items():
-                    if param_name in kwargs:
-                        attributes[attr_name] = kwargs[param_name]
-
-            manager = get_telemetry_manager()
-            with manager.span(span_name, tenant_id=tenant_id, attributes=attributes):
-                return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

@@ -23,7 +23,8 @@ from rich.console import Console
 
 console = Console()
 
-NAMESPACE = "cogniverse"
+from cogniverse_cli.constants import NAMESPACE  # noqa: F401
+
 MTLS_SECRET = "openshell-mtls"
 METADATA_CONFIGMAP = "openshell-metadata"
 ACTIVE_CONFIGMAP = "openshell-active"
