@@ -49,9 +49,12 @@ class TestImageSearchAgent:
         # Access colpali_model property
         model = self.agent.colpali_model
 
-        # Verify model was loaded
-        assert model is not None
-        # Check that it was called with model_name, config, logger
+        # The lazy loader MUST return the exact mock instance — not a
+        # different MagicMock, not a constructed real model.
+        assert model is mock_model
+        # Confirm the loader was called with the right model name + the
+        # config dict that contains the ColPali key (the model loader
+        # depends on both).
         assert mock_get_model.called
         call_args = mock_get_model.call_args[0]
         assert call_args[0] == "vidore/colsmol-500m"  # model_name
@@ -67,11 +70,10 @@ class TestImageSearchAgent:
         # Access query_encoder property
         encoder = self.agent.query_encoder
 
-        # Verify encoder was created
-        assert encoder is not None
+        # The encoder must be a concrete object exposing .model that
+        # holds the exact mock returned by the loader.
         assert hasattr(encoder, "model")
-        # Verify the model is set (don't compare full object due to verbose repr)
-        assert encoder.model is not None
+        assert encoder.model is mock_model
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
