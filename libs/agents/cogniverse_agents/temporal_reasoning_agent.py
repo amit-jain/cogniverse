@@ -246,9 +246,11 @@ class TemporalReasoningAgent(
     async def _process_impl(
         self, input: TemporalReasoningInput
     ) -> TemporalReasoningOutput:
-        from cogniverse_agents._mm_factory import require_tenant_id
+        from cogniverse_agents._mm_factory import tenant_id_from_input_or_deps
 
-        tenant_id = require_tenant_id(input, self.deps, "TemporalReasoningAgent")
+        tenant_id = tenant_id_from_input_or_deps(
+            input, self.deps, "TemporalReasoningAgent"
+        )
 
         agent_name = input.agent_name_filter or "_promoted"
         rows = self._fetch_subject_rows(tenant_id, agent_name, input.subject_key)

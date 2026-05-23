@@ -204,9 +204,11 @@ class AuditExplanationAgent(
     async def _process_impl(
         self, input: AuditExplanationInput
     ) -> AuditExplanationOutput:
-        from cogniverse_agents._mm_factory import require_tenant_id
+        from cogniverse_agents._mm_factory import tenant_id_from_input_or_deps
 
-        tenant_id = require_tenant_id(input, self.deps, "AuditExplanationAgent")
+        tenant_id = tenant_id_from_input_or_deps(
+            input, self.deps, "AuditExplanationAgent"
+        )
         mm = self._mm_factory(tenant_id)
 
         walker = ProvenanceWalker(

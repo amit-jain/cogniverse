@@ -292,9 +292,11 @@ class KnowledgeSummarizationAgent(
     async def _process_impl(
         self, input: KnowledgeSummarizationInput
     ) -> KnowledgeSummarizationOutput:
-        from cogniverse_agents._mm_factory import require_tenant_id
+        from cogniverse_agents._mm_factory import tenant_id_from_input_or_deps
 
-        tenant_id = require_tenant_id(input, self.deps, "KnowledgeSummarizationAgent")
+        tenant_id = tenant_id_from_input_or_deps(
+            input, self.deps, "KnowledgeSummarizationAgent"
+        )
 
         rows = self._fetch_filtered(
             tenant_id,
