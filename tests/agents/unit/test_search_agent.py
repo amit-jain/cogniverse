@@ -10,6 +10,7 @@ import pytest
 
 from cogniverse_agents.search_agent import (
     ContentProcessor,
+    EncoderCapabilityError,
     SearchAgent,
     SearchAgentDeps,
     SearchInput,
@@ -75,7 +76,7 @@ class TestContentProcessor:
         processor = ContentProcessor(mock_query_encoder)
 
         with pytest.raises(
-            NotImplementedError, match="Query encoder does not support video encoding"
+            EncoderCapabilityError, match="does not support video encoding"
         ):
             processor.process_video_file(b"fake_data", "test.mp4")
 
@@ -87,7 +88,7 @@ class TestContentProcessor:
         processor = ContentProcessor(mock_query_encoder)
 
         with pytest.raises(
-            NotImplementedError, match="Query encoder does not support image encoding"
+            EncoderCapabilityError, match="does not support image encoding"
         ):
             processor.process_image_file(b"fake_data", "test.jpg")
 
