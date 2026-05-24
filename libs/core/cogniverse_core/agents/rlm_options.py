@@ -81,6 +81,22 @@ class RLMOptions(BaseModel):
     model: Optional[str] = Field(
         default=None, description="Model override for RLM (defaults to agent's model)"
     )
+    api_base: Optional[str] = Field(
+        default=None,
+        description=(
+            "Override the LLM endpoint URL (e.g. ``http://localhost:29010/v1`` for "
+            "a local vLLM). When ``None``, the mixin inherits the agent's primary "
+            "LLM ``api_base``; passing a value here lets per-query RLM hit a "
+            "separate endpoint without rewiring the agent."
+        ),
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        description=(
+            "Override the LLM API key. ``None`` means inherit the agent's primary "
+            "key (or pass nothing for local OAI-compat servers that ignore keys)."
+        ),
+    )
     include_trajectory: bool = Field(
         default=False,
         description=(

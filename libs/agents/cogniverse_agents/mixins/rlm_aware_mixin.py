@@ -184,7 +184,11 @@ class RLMAwareMixin:
         # Ensure provider prefix is present
         if "/" not in model_name:
             model_name = f"{rlm_options.backend}/{model_name}"
-        rlm_llm_config = LLMEndpointConfig(model=model_name)
+        rlm_llm_config = LLMEndpointConfig(
+            model=model_name,
+            api_base=rlm_options.api_base,
+            api_key=rlm_options.api_key,
+        )
 
         rlm = self.get_rlm(
             llm_config=rlm_llm_config,
@@ -236,7 +240,11 @@ class RLMAwareMixin:
         model_name = rlm_options.model or "gpt-4o"
         if "/" not in model_name:
             model_name = f"{rlm_options.backend}/{model_name}"
-        rlm_llm_config = LLMEndpointConfig(model=model_name)
+        rlm_llm_config = LLMEndpointConfig(
+            model=model_name,
+            api_base=rlm_options.api_base,
+            api_key=rlm_options.api_key,
+        )
 
         rlm = self.get_rlm(
             llm_config=rlm_llm_config,
