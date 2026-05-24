@@ -119,17 +119,16 @@ inference:
     # give DSPy/MIPROv2 longer contexts during optimization.
     extraArgs:
       - "--max-model-len"
-      - "8192"
+      - "16384"
       - "--enforce-eager"
       - "--gpu-memory-utilization"
       - "0.40"
       # Gemma 4 is multimodal (image + video + audio). The visual_judge
       # evaluator feeds keyframes to this endpoint, so the multimodal
-      # encoders stay enabled. The encoder-profile pass on startup
-      # allocates ~5 GiB for the audio/video encoders, which is why
-      # gpu-memory-utilization is 0.40 (≈49 GiB of the unified pool)
-      # and max-model-len is 8192 — a smaller KV cache leaves headroom
-      # for the encoder reservation on the ~25 GiB student budget.
+      # encoders stay enabled. gpu-memory-utilization=0.40 (≈49 GiB of
+      # the unified pool) leaves room for both the ~5 GiB encoder
+      # reservation and the 16k-token KV cache that DSPy/MIPROv2 +
+      # RLM-promoted ClaimExtractor inputs need at higher context.
     resources:
       limits:
         cpu: "4"
