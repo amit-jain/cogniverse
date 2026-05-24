@@ -323,24 +323,37 @@ def test_face_pipeline_is_idempotent(face_embed_url):
 
 
 # --------------------------------------------------------------------- #
-# W5 — Endpoint lookup honours absent env var                             #
+# W5 — Endpoint lookup honours absent / present sidecar config            #
 # --------------------------------------------------------------------- #
 
 
-def test_lookup_face_embed_endpoint_returns_none_without_env(monkeypatch):
+def _config_manager_with_inference_service_urls(urls: dict | None):
+    """Build a stub ``ConfigManager`` whose ``SystemConfig.inference_service_urls``
+    matches what ``main.py`` would set after reading ``INFERENCE_SERVICE_URLS``
+    at startup. The face-embed lookup indexes into the parsed dict, not the
+    raw env var, so the test injects the dict directly."""
+    from unittest.mock import Mock
+
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    sys_cfg = SystemConfig(inference_service_urls=urls or {})
+    cm = Mock(spec=ConfigManager)
+    cm.get_system_config = Mock(return_value=sys_cfg)
+    return cm
+
+
+def test_lookup_face_embed_endpoint_returns_none_without_env():
     from cogniverse_runtime.routers.ingestion import _lookup_face_embed_endpoint
 
-    monkeypatch.delenv("INFERENCE_SERVICE_URLS", raising=False)
-    assert _lookup_face_embed_endpoint() is None
+    cm = _config_manager_with_inference_service_urls(None)
+    assert _lookup_face_embed_endpoint(cm) is None
 
 
-def test_lookup_face_embed_endpoint_returns_url_when_present(monkeypatch):
-    import json as _json
-
+def test_lookup_face_embed_endpoint_returns_url_when_present():
     from cogniverse_runtime.routers.ingestion import _lookup_face_embed_endpoint
 
-    monkeypatch.setenv(
-        "INFERENCE_SERVICE_URLS",
-        _json.dumps({"face_embed": "http://10.0.0.42:8000"}),
+    cm = _config_manager_with_inference_service_urls(
+        {"face_embed": "http://10.0.0.42:8000"}
     )
-    assert _lookup_face_embed_endpoint() == "http://10.0.0.42:8000"
+    assert _lookup_face_embed_endpoint(cm) == "http://10.0.0.42:8000"

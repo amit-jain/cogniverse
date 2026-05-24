@@ -1022,8 +1022,6 @@ def create_module(
     - Predict: Direct prediction
     - ChainOfThought: Reasoning before answer
     - ReAct: Reasoning + Action + Observation loop
-    - MultiChainComparison: Multiple reasoning chains with comparison
-    - ProgramOfThought: Code generation
 
     Example:
         # Register signature
@@ -1600,7 +1598,7 @@ For related modules:
 5. **DSPy Integration**
    - Runtime module/optimizer configuration
    - DynamicDSPyMixin for agent integration
-   - Module types: Predict, ChainOfThought, ReAct, ProgramOfThought
+   - Module types: Predict, ChainOfThought, ReAct
 
 6. **Production Readiness**
    - Configuration versioning with rollback support

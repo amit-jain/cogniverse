@@ -10,7 +10,6 @@ import pytest
 
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import (
-    resolve_bare_model,
     resolve_base_url,
     resolve_prefixed_model,
     resolve_provider,
@@ -29,10 +28,6 @@ def _lm_base() -> str:
 
 def _lm_provider() -> str:
     return resolve_provider()
-
-
-def _lm_bare_model() -> str:
-    return resolve_bare_model()
 
 
 # Short contexts so each test runs in under 30 s.
@@ -87,7 +82,7 @@ class TestRLMInferenceDirect:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.1,
         )
         rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
@@ -106,7 +101,7 @@ class TestRLMInferenceDirect:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.1,
         )
         rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
@@ -185,7 +180,7 @@ class TestRLMABHarness:
         cfg = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.0,
         )
         runner = RLMABRunner(
@@ -229,7 +224,7 @@ class TestRLMABHarness:
             llm_config=LLMEndpointConfig(
                 model=_lm_model(),
                 api_base=_lm_base(),
-                max_tokens=200,
+                max_tokens=800,
                 temperature=0.0,
             ),
             judge=judge,
@@ -265,7 +260,7 @@ class TestRLMTokenAccounting:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.1,
         )
         rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
@@ -289,7 +284,7 @@ class TestRLMTokenAccounting:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.0,  # deterministic to keep the comparison stable
         )
 
@@ -367,7 +362,7 @@ class TestRLMTrajectoryCapture:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.1,
         )
         rlm = RLMInference(llm_config=config, max_iterations=3, timeout_seconds=120)
@@ -434,7 +429,7 @@ class TestRLMFallbackMarker:
         config = LLMEndpointConfig(
             model=_lm_model(),
             api_base=_lm_base(),
-            max_tokens=200,
+            max_tokens=800,
             temperature=0.1,
         )
         # max_iterations=1 forces the parent class to bail out via
@@ -474,10 +469,18 @@ class TestRLMAwareMixinProcess:
         from cogniverse_agents.inference.rlm_inference import RLMResult
         from cogniverse_core.agents.rlm_options import RLMOptions
 
+        # RLMOptions.model is passed straight through to litellm via the
+        # RLMAwareMixin's "if '/' not in model_name: prepend backend" shim,
+        # which assumes the bare model has no '/'. Real vLLM model ids
+        # carry an HF org prefix (google/gemma-4-e4b-it) so the '/' check
+        # fires false-positive and the litellm provider is never set —
+        # pass the fully prefixed form (openai/google/...) so the model
+        # string is already litellm-callable.
         opts = RLMOptions(
             enabled=True,
             backend=_lm_provider(),
-            model=_lm_bare_model(),
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_iterations=3,
             timeout_seconds=120,
         )
@@ -497,7 +500,8 @@ class TestRLMAwareMixinProcess:
         opts = RLMOptions(
             enabled=True,
             backend=_lm_provider(),
-            model=_lm_bare_model(),
+            model=_lm_model(),
+            api_base=_lm_base(),
             max_iterations=3,
             timeout_seconds=120,
         )
@@ -521,6 +525,7 @@ class TestRLMAwareMixinProcess:
             enabled=True,
             backend=_lm_provider(),
             model="nonexistent-model-xyz-9999",
+            api_base=_lm_base(),
             max_iterations=2,
             timeout_seconds=30,
         )
@@ -545,9 +550,18 @@ class TestWikiManagerMergeWithRLM:
     """WikiManager._merge_with_rlm() integrates old and new content via real RLM."""
 
     def _make_wiki_manager(self):
+        """Bypass ``__init__`` so the test doesn't need a real Vespa backend,
+        but set the attributes ``_merge_with_rlm`` actually reads:
+        ``_llm_endpoint_config`` (forwarded to ``RLMInference``) and
+        the always-needed ``_tenant_id`` / ``_backend`` (unused by the
+        merge path but referenced in the surrounding instance state)."""
         from cogniverse_agents.wiki.wiki_manager import WikiManager
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
         wm = WikiManager.__new__(WikiManager)
+        wm._llm_endpoint_config = LLMEndpointConfig(
+            model=_lm_model(), api_base=_lm_base()
+        )
         return wm
 
     def test_merge_combines_old_and_new_facts(self):

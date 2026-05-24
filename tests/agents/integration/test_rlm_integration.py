@@ -3,7 +3,7 @@ Integration tests for RLM (Recursive Language Model) with SearchAgent.
 
 Tests the complete RLM integration pipeline:
 - Query-level RLM configuration via RLMOptions
-- RLM inference with DSPy ProgramOfThought (uses the configured LM)
+- RLM inference via ``dspy.RLM`` wrapped in the configured LM
 - Telemetry generation for A/B testing
 - Integration with Vespa backend for search results
 """
@@ -16,7 +16,6 @@ from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import (
-    resolve_bare_model,
     resolve_base_url,
     resolve_prefixed_model,
     resolve_provider,
@@ -841,11 +840,18 @@ class TestRLMRealInferenceIntegration:
 
         mixin = RLMAwareMixin()
 
+        # RLMOptions.model is passed straight through to litellm via the
+        # RLMAwareMixin's "if '/' not in model_name: prepend backend" shim,
+        # which assumes the bare model has no '/'. Real vLLM model ids
+        # carry an HF org prefix (google/gemma-4-e4b-it) so the '/' check
+        # fires false-positive and the litellm provider is never set —
+        # pass the fully prefixed form (openai/google/...) so the model
+        # string is already litellm-callable.
         rlm_options = RLMOptions(
             enabled=True,
             max_iterations=2,
             backend=resolve_provider(),
-            model=resolve_bare_model(),
+            model=resolve_prefixed_model(),
         )
 
         context = "Python is a popular programming language for data science and ML."

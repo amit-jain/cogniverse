@@ -115,12 +115,24 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
     port, capture = stub
     manager = _make_manager(port)
 
+    from cogniverse_agents.graph.graph_schema import Mention
+
+    anchor = Mention(
+        source_doc_id="src1.py",
+        segment_id="function:alpha_handler",
+        ts_start=0.0,
+        ts_end=0.0,
+        modality="code",
+        evidence_span="def alpha_handler(): ...",
+    )
+
     result = ExtractionResult(
         source_doc_id="src1.py",
         nodes=[
             Node(
                 tenant_id="test_tenant",
                 name="Alpha",
+                mentions=[anchor],
                 kind="entity",
                 description="First node under test",
             )
@@ -207,6 +219,11 @@ def test_edge_upsert_omits_embedding_fields(stub):
                 source="alpha",
                 target="beta",
                 relation="depends_on",
+                evidence_span="from beta import alpha_handler",
+                segment_id="function:alpha_handler",
+                ts_start=0.0,
+                ts_end=0.0,
+                modality="code",
                 source_doc_id="src.py",
             )
         ],

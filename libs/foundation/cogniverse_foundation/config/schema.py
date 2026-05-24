@@ -151,8 +151,6 @@ AGENT_CONFIG_SCHEMA = {
                         "predict",
                         "chain_of_thought",
                         "react",
-                        "multi_chain_comparison",
-                        "program_of_thought",
                     ],
                 },
                 "signature": {"type": "string", "minLength": 1},

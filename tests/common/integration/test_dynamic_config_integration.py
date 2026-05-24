@@ -160,7 +160,13 @@ class TestDynamicConfigIntegration:
         assert len(agent._dynamic_modules) == 0
 
     def test_list_available_modules(self, fresh_agent):
-        """Test GET /config/modules/available lists all module types"""
+        """Test GET /config/modules/available lists all module types.
+
+        Pin against ``DSPyModuleType``'s exact current vocabulary —
+        ``multi_chain_comparison`` and ``program_of_thought`` are NOT
+        admitted by the enum, so a future enum addition has to update
+        this test deliberately.
+        """
         agent, fresh_app = fresh_agent
         client = TestClient(fresh_app)
 
@@ -171,11 +177,10 @@ class TestDynamicConfigIntegration:
         assert data["status"] == "success"
 
         modules = data["available_modules"]
-        assert "predict" in modules
-        assert "chain_of_thought" in modules
-        assert "react" in modules
-        assert "multi_chain_comparison" in modules
-        assert "program_of_thought" in modules
+        assert set(modules.keys()) == {"predict", "chain_of_thought", "react"}
+        assert modules["predict"] == "Predict"
+        assert modules["chain_of_thought"] == "ChainOfThought"
+        assert modules["react"] == "ReAct"
 
     def test_list_available_optimizers(self, fresh_agent):
         """Test GET /config/optimizers/available lists all optimizer types"""
