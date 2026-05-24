@@ -386,7 +386,14 @@ class RLMInference:
             raw_trajectory = getattr(result, "trajectory", [])
             depth_reached = len(raw_trajectory) if raw_trajectory else 1
             total_calls = len(raw_trajectory) if raw_trajectory else 1
-            was_fallback = bool(getattr(result, "was_fallback", False))
+            # dspy's RLM doesn't expose an explicit ``was_fallback`` flag.
+            # When it hits max iterations it calls ``_extract_fallback``
+            # and stamps ``final_reasoning="Extract forced final output"``
+            # on the Prediction (rlm.py:414). Detect that marker.
+            was_fallback = bool(getattr(result, "was_fallback", False)) or (
+                getattr(result, "final_reasoning", None)
+                == "Extract forced final output"
+            )
 
             structured_trajectory = _serialize_trajectory(
                 raw_trajectory, trajectory_max_entries
