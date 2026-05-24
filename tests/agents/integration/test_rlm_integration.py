@@ -852,6 +852,7 @@ class TestRLMRealInferenceIntegration:
             max_iterations=2,
             backend=resolve_provider(),
             model=resolve_prefixed_model(),
+            api_base=resolve_base_url(),
         )
 
         context = "Python is a popular programming language for data science and ML."
