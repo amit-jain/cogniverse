@@ -105,11 +105,15 @@ def _sum_history_tokens(lm: Any, start_index: int = 0) -> int:
 
 
 def _serialize_trajectory(trajectory: Any, max_entries: int) -> List[Dict[str, Any]]:
-    """Convert a dspy RLM trajectory (REPLHistory) into a bounded JSON-friendly list.
+    """Convert a dspy RLM trajectory into a bounded JSON-friendly list.
 
-    Each entry becomes a dict with iteration index plus truncated reasoning,
-    code, and observation fields. Truncation keeps the structure suitable
-    both for response payload and for Phoenix span attributes.
+    DSPy's ``RLM.forward`` returns ``trajectory`` as ``[entry.model_dump()
+    for entry in history]`` — i.e. a list of dicts. ``REPLEntry``
+    contributes ``reasoning`` / ``code`` / ``output`` keys; older
+    versions also surfaced ``observation`` / ``result``. Read by dict
+    lookup with an ``isinstance(..., dict)`` guard so we also tolerate
+    raw REPLEntry objects (for callers that pass the unmaterialized
+    history through).
     """
     if not trajectory:
         return []
@@ -117,9 +121,12 @@ def _serialize_trajectory(trajectory: Any, max_entries: int) -> List[Dict[str, A
     entries: List[Dict[str, Any]] = []
     for idx, raw in enumerate(trajectory[:max_entries]):
         entry: Dict[str, Any] = {"iteration": idx + 1}
-        for field_name in ("reasoning", "code", "observation", "result"):
-            value = getattr(raw, field_name, None)
-            if value is None:
+        for field_name in ("reasoning", "code", "output", "observation", "result"):
+            if isinstance(raw, dict):
+                value = raw.get(field_name)
+            else:
+                value = getattr(raw, field_name, None)
+            if value is None or value == "":
                 continue
             text = str(value)
             if len(text) > _TRAJECTORY_FIELD_TRUNCATE:
