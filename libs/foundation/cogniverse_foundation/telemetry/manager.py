@@ -504,7 +504,7 @@ class TelemetryManager:
 
         # Get provider from registry (auto-discovers via entry points)
         # If config.provider is None, registry auto-selects first available
-        return registry.get_telemetry_provider(
+        return registry.get(
             name=self.config.provider,  # None = auto-detect
             tenant_id=tenant_id,
             config=provider_config,  # Generic dict - provider interprets

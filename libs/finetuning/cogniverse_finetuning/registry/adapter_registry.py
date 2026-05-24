@@ -58,7 +58,7 @@ class AdapterRegistry:
             from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
             bootstrap = BootstrapConfig.from_environment()
-            self.store = AdapterStoreRegistry.get_adapter_store(
+            self.store = AdapterStoreRegistry.get(
                 name=bootstrap.backend_type,
                 config={
                     "backend_url": bootstrap.backend_url,

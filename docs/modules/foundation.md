@@ -17,9 +17,10 @@
    - [TelemetryManager](#telemetrymanager)
    - [Span Context](#span-context)
    - [Session Tracking](#session-tracking)
-5. [Usage Examples](#usage-examples)
-6. [Architecture Position](#architecture-position)
-7. [Testing](#testing)
+5. [Registry System](#registry-system)
+6. [Usage Examples](#usage-examples)
+7. [Architecture Position](#architecture-position)
+8. [Testing](#testing)
 
 ---
 
@@ -42,6 +43,7 @@ flowchart TB
     subgraph Foundation["<span style='color:#000'><b>cogniverse_foundation/</b></span>"]
         ConfigDir["<span style='color:#000'><b>config/</b><br/>Configuration system</span>"]
         TelemetryDir["<span style='color:#000'><b>telemetry/</b><br/>Telemetry system</span>"]
+        RegistryDir["<span style='color:#000'><b>registry/</b><br/>Generic entry-point plugin registry</span>"]
         CacheDir["<span style='color:#000'><b>cache/</b><br/>Empty directory (no files)</span>"]
         UtilsDir["<span style='color:#000'><b>utils/</b><br/>Empty directory (no files)</span>"]
         InitPy["<span style='color:#000'>__init__.py</span>"]
@@ -74,6 +76,7 @@ flowchart TB
 
     Foundation --> ConfigDir
     Foundation --> TelemetryDir
+    Foundation --> RegistryDir
     Foundation --> CacheDir
     Foundation --> UtilsDir
     Foundation --> InitPy
@@ -84,6 +87,7 @@ flowchart TB
     style Foundation fill:#a5d6a7,stroke:#388e3c,color:#000
     style ConfigDir fill:#ffcc80,stroke:#ef6c00,color:#000
     style TelemetryDir fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style RegistryDir fill:#80cbc4,stroke:#00695c,color:#000
     style CacheDir fill:#b0bec5,stroke:#546e7a,color:#000
     style UtilsDir fill:#b0bec5,stroke:#546e7a,color:#000
     style InitPy fill:#90caf9,stroke:#1565c0,color:#000
@@ -471,6 +475,51 @@ telemetry.register_project(
     use_sync_export=True  # Sync export for tests
 )
 ```
+
+---
+
+## Registry System
+
+The `cogniverse_foundation/registry/` subpackage provides
+`EntryPointRegistry[T]` — a generic plugin registry over
+`importlib.metadata` entry points. Subclasses declare an
+entry-point group and a label; the base handles discovery, manual
+registration, conflict detection, tenant-scoped or config-keyed
+caching, and lifecycle-style initialization. Four registries in the
+codebase are thin subclasses of this base:
+
+| Registry | Subpackage | Entry-point group | Tenant-scoped |
+|----------|-----------|-------------------|---------------|
+| `TelemetryRegistry` | `cogniverse_foundation.telemetry.registry` | `cogniverse.telemetry.providers` | yes |
+| `EvaluationRegistry` | `cogniverse_evaluation.providers.registry` | `cogniverse.evaluation.providers` | yes |
+| `WorkflowStoreRegistry` | `cogniverse_core.registries.workflow_store_registry` | `cogniverse.workflow.stores` | no |
+| `AdapterStoreRegistry` | `cogniverse_core.registries.adapter_store_registry` | `cogniverse.adapter.stores` | no |
+
+### Defining a new registry
+
+```python
+from cogniverse_foundation.registry import EntryPointRegistry
+from my_pkg.interfaces import MyStore
+
+
+class MyStoreRegistry(EntryPointRegistry[MyStore]):
+    _entry_point_group = "myapp.stores"
+    _label = "my store"
+    # _tenant_scoped = False (default): klass(**config), cached by backend_url/port
+    # _tenant_scoped = True: klass() + .initialize(config|{tenant_id}), cached by tenant
+```
+
+Implementations register via their `pyproject.toml`:
+
+```toml
+[project.entry-points."myapp.stores"]
+default = "my_pkg.stores.default_impl:DefaultStore"
+```
+
+Callers fetch instances with `MyStoreRegistry.get(name="default",
+config={...})`. Conflict detection is always on — if two installed
+packages both register `name="default"` under the same group,
+`discover()` raises `ValueError` rather than silently picking one.
 
 ---
 

@@ -81,7 +81,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
 
             # Get telemetry provider from singleton registry (shared cache)
             registry = get_telemetry_registry()
-            self._telemetry_provider = registry.get_telemetry_provider(
+            self._telemetry_provider = registry.get(
                 name="phoenix",
                 tenant_id=self.tenant_id,
                 config={
