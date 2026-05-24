@@ -368,10 +368,12 @@ def real_telemetry(phoenix_container):
     get_telemetry_registry().clear_cache()
 
     config = TelemetryConfig(
-        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317"),
+        otlp_endpoint=os.getenv(
+            "TELEMETRY_OTLP_ENDPOINT", phoenix_container["otlp_endpoint"]
+        ),
         provider_config={
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "http://localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["grpc_endpoint"],
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )

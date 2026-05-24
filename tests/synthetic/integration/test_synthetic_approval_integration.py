@@ -100,7 +100,7 @@ def backend_config():
 def telemetry_manager(phoenix_container):
     """TelemetryManager configured for approval tests"""
     # phoenix_container fixture (from tests/conftest.py) ensures env vars are set
-    # and TelemetryManager singleton is reset. Ports: 16006 (HTTP), 14317 (gRPC).
+    # and TelemetryManager singleton is reset. HTTP/gRPC ports allocated per-pid.
     from cogniverse_foundation.telemetry.config import (
         BatchExportConfig,
         TelemetryConfig,
@@ -108,7 +108,7 @@ def telemetry_manager(phoenix_container):
     from cogniverse_foundation.telemetry.manager import TelemetryManager
 
     config = TelemetryConfig(
-        otlp_endpoint="localhost:14317",
+        otlp_endpoint=phoenix_container["otlp_endpoint"],
         batch_config=BatchExportConfig(use_sync_export=True),
     )
     manager = TelemetryManager(config)
@@ -127,8 +127,8 @@ def approval_storage(phoenix_container, telemetry_manager):
     # Depend on phoenix_container to ensure it's running and env vars are set
     # Depend on telemetry_manager to use proper tenant-scoped span creation
     return ApprovalStorageImpl(
-        grpc_endpoint="http://localhost:14317",  # gRPC port for span export
-        http_endpoint="http://localhost:16006",  # HTTP port for span queries
+        grpc_endpoint=phoenix_container["grpc_endpoint"],  # span export
+        http_endpoint=phoenix_container["http_endpoint"],  # span queries
         tenant_id="test-tenant1",
         telemetry_manager=telemetry_manager,
     )

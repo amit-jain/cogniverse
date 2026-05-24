@@ -231,7 +231,9 @@ def seeded_vespa(vespa_instance, colpali_client, config_manager, schema_loader):
 
 
 @pytest.fixture
-def monitor_with_real_search(search_client, real_telemetry, tmp_path):
+def monitor_with_real_search(
+    search_client, real_telemetry, phoenix_container, tmp_path
+):
     """QualityMonitor wired to real search via TestClient bridge."""
     golden_queries = [
         {
@@ -262,7 +264,7 @@ def monitor_with_real_search(search_client, real_telemetry, tmp_path):
     m = QualityMonitor(
         tenant_id="qm_real_test",
         runtime_url="http://testserver",
-        phoenix_http_endpoint="http://localhost:16006",
+        phoenix_http_endpoint=phoenix_container["http_endpoint"],
         llm_base_url=get_llm_base_url(),
         llm_model=get_llm_model(),
         golden_dataset_path=str(golden_path),

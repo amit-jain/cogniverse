@@ -24,7 +24,7 @@ skip_if_no_lm = pytest.mark.skipif(
 
 
 @pytest.fixture
-def trigger_dataset_in_phoenix(real_telemetry):
+def trigger_dataset_in_phoenix(real_telemetry, phoenix_container):
     """Store a trigger dataset in real Phoenix, return the dataset name."""
     import uuid
 
@@ -108,7 +108,7 @@ def trigger_dataset_in_phoenix(real_telemetry):
         ]
     )
 
-    sync_client = Client(base_url="http://localhost:16006")
+    sync_client = Client(base_url=phoenix_container["http_endpoint"])
     sync_client.datasets.create_dataset(
         name=dataset_name,
         dataframe=df,
@@ -126,13 +126,13 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_trigger_dataset_readable_from_phoenix(
-        self, trigger_dataset_in_phoenix
+        self, trigger_dataset_in_phoenix, phoenix_container
     ):
         """Verify trigger dataset stored in Phoenix is readable — same path
         optimization_cli uses to load training data."""
         from phoenix.client import Client
 
-        sync_client = Client(base_url="http://localhost:16006")
+        sync_client = Client(base_url=phoenix_container["http_endpoint"])
         dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
         df = dataset.to_dataframe()
 
@@ -157,7 +157,7 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_strategy_distillation_from_trigger_dataset(
-        self, trigger_dataset_in_phoenix, memory_manager
+        self, trigger_dataset_in_phoenix, memory_manager, phoenix_container
     ):
         """Load trigger dataset from Phoenix and distill strategies into real Vespa memory.
 
@@ -168,7 +168,7 @@ class TestTriggeredOptimization:
 
         from cogniverse_agents.optimizer.strategy_learner import StrategyLearner
 
-        sync_client = Client(base_url="http://localhost:16006")
+        sync_client = Client(base_url=phoenix_container["http_endpoint"])
         dataset = sync_client.datasets.get_dataset(dataset=trigger_dataset_in_phoenix)
         trigger_df = dataset.to_dataframe()
 
@@ -193,7 +193,7 @@ class TestTriggeredOptimization:
 
     @pytest.mark.asyncio
     async def test_run_triggered_optimization_end_to_end(
-        self, trigger_dataset_in_phoenix, config_manager
+        self, trigger_dataset_in_phoenix, config_manager, phoenix_container
     ):
         """Call run_triggered_optimization() with injected config_manager
         and phoenix_endpoint. Verifies the full CLI orchestration path."""
@@ -204,7 +204,7 @@ class TestTriggeredOptimization:
             agents=["search"],
             trigger_dataset=trigger_dataset_in_phoenix,
             config_manager=config_manager,
-            phoenix_endpoint="http://localhost:16006",
+            phoenix_endpoint=phoenix_container["http_endpoint"],
         )
 
         # Should not fail with "status: failed"

@@ -52,8 +52,8 @@ def seeded_dataset(phoenix_container, tenant_id: str) -> str:
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
         }
     )
     dataset_name = f"ab_compare_inputs_{uuid.uuid4().hex[:8]}"
@@ -85,12 +85,14 @@ def seeded_dataset(phoenix_container, tenant_id: str) -> str:
 
 
 def _run_cli(
-    args: list, env_overlay: dict | None = None
+    args: list,
+    phoenix_container: dict,
+    env_overlay: dict | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["BACKEND_URL"] = env.get("BACKEND_URL", "http://localhost:8080")
-    env["PHOENIX_HTTP_ENDPOINT"] = "http://localhost:16006"
-    env["PHOENIX_GRPC_ENDPOINT"] = "localhost:14317"
+    env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
+    env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
     # Avoid Deno requirement at import time inside the subprocess.
     env["COGNIVERSE_RLM_SKIP_DENO_CHECK"] = "1"
     # Stub both arms via a sitecustomize that monkey-patches RLMABRunner.run
@@ -175,14 +177,16 @@ if os.environ.get("COGNIVERSE_AB_TEST_STUB") == "1":
 
 class TestArgumentParsing:
     def test_missing_dataset_rejected(self, phoenix_container):
-        result = _run_cli(["--mode", "ab-compare", "--tenant-id", "any"])
+        result = _run_cli(
+            ["--mode", "ab-compare", "--tenant-id", "any"], phoenix_container
+        )
         assert result.returncode != 0
         assert "queries-dataset" in result.stderr.lower()
 
 
 class TestAbCompareRoundTrip:
     def test_cli_runs_harness_per_row_and_returns_aggregates(
-        self, tenant_id: str, seeded_dataset: str
+        self, tenant_id: str, seeded_dataset: str, phoenix_container
     ):
         result = _run_cli(
             [
@@ -192,7 +196,8 @@ class TestAbCompareRoundTrip:
                 tenant_id,
                 "--queries-dataset",
                 seeded_dataset,
-            ]
+            ],
+            phoenix_container,
         )
         assert result.returncode == 0, (
             f"CLI ab-compare exited non-zero. stdout={result.stdout!r} "
@@ -220,7 +225,7 @@ class TestAbCompareRoundTrip:
         )
 
     def test_judge_substring_populates_avg_judge_delta(
-        self, tenant_id: str, seeded_dataset: str, monkeypatch
+        self, tenant_id: str, seeded_dataset: str, phoenix_container, monkeypatch
     ):
         # The stub doesn't actually run the judge (it returns judge_score=None
         # on each arm). To verify judge_delta wiring, we invoke the CLI with
@@ -238,7 +243,8 @@ class TestAbCompareRoundTrip:
                 seeded_dataset,
                 "--judge-substring",
                 "Paris",
-            ]
+            ],
+            phoenix_container,
         )
         assert result.returncode == 0, result.stderr
         summary = json.loads(result.stdout)
@@ -247,15 +253,17 @@ class TestAbCompareRoundTrip:
         # Aggregation still ran.
         assert summary["rows_compared"] == 3
 
-    def test_missing_columns_returns_failed_status(self, tenant_id: str):
+    def test_missing_columns_returns_failed_status(
+        self, tenant_id: str, phoenix_container
+    ):
         # Seed a dataset *without* the required columns and verify the CLI
         # surfaces a structured failure rather than crashing.
         provider = PhoenixProvider()
         provider.initialize(
             {
                 "tenant_id": tenant_id,
-                "http_endpoint": "http://localhost:16006",
-                "grpc_endpoint": "localhost:14317",
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["otlp_endpoint"],
             }
         )
         bad_dataset = f"ab_bad_{uuid.uuid4().hex[:8]}"
@@ -277,7 +285,8 @@ class TestAbCompareRoundTrip:
                 tenant_id,
                 "--queries-dataset",
                 bad_dataset,
-            ]
+            ],
+            phoenix_container,
         )
         assert result.returncode == 0, result.stderr
         summary = json.loads(result.stdout)

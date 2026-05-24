@@ -39,20 +39,22 @@ def tenant_id() -> str:
 
 @pytest.fixture
 def manager(phoenix_container, tenant_id: str) -> ArtifactManager:
-    """Manager wired to the docker-managed Phoenix on port 16006."""
+    """Manager wired to the docker-managed Phoenix on a per-pid port."""
     provider = PhoenixProvider()
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
 
 
 def _run_cli(
-    args: list, env_overlay: dict | None = None
+    args: list,
+    phoenix_container: dict,
+    env_overlay: dict | None = None,
 ) -> subprocess.CompletedProcess:
     """Run the CLI as a real subprocess. Captures stdout/stderr.
 
@@ -63,9 +65,9 @@ def _run_cli(
     env = dict(os.environ)
     env["BACKEND_URL"] = env.get("BACKEND_URL", "http://localhost:8080")
     # Point the subprocess at the docker-managed Phoenix from
-    # tests/conftest.py (port 16006 / OTLP gRPC 14317).
-    env["PHOENIX_HTTP_ENDPOINT"] = "http://localhost:16006"
-    env["PHOENIX_GRPC_ENDPOINT"] = "localhost:14317"
+    # tests/conftest.py (per-pid HTTP / OTLP gRPC ports).
+    env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
+    env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
     if env_overlay:
         env.update(env_overlay)
     return subprocess.run(
@@ -85,13 +87,17 @@ def _run_cli(
 class TestArgumentParsing:
     def test_missing_agent_rejected(self, phoenix_container):
         result = _run_cli(
-            ["--mode", "rollback", "--tenant-id", "any", "--prompts-version", "1"]
+            ["--mode", "rollback", "--tenant-id", "any", "--prompts-version", "1"],
+            phoenix_container,
         )
         assert result.returncode != 0, "missing --agent must error out"
         assert "--agent" in result.stderr or "agent" in result.stderr.lower()
 
     def test_missing_version_rejected(self, phoenix_container):
-        result = _run_cli(["--mode", "rollback", "--tenant-id", "any", "--agent", "x"])
+        result = _run_cli(
+            ["--mode", "rollback", "--tenant-id", "any", "--agent", "x"],
+            phoenix_container,
+        )
         assert result.returncode != 0
         assert "version" in result.stderr.lower()
 
@@ -99,7 +105,7 @@ class TestArgumentParsing:
 @pytest.mark.asyncio
 class TestRollbackRoundTrip:
     async def test_cli_rollback_restores_versioned_prompts(
-        self, manager: ArtifactManager, tenant_id: str
+        self, manager: ArtifactManager, tenant_id: str, phoenix_container
     ):
         # Save three versions of prompts. save_prompts_versioned auto-
         # increments, so v1 → first call, v2 → second, etc.
@@ -126,7 +132,8 @@ class TestRollbackRoundTrip:
                 "rollback_agent",
                 "--prompts-version",
                 "1",
-            ]
+            ],
+            phoenix_container,
         )
         assert result.returncode == 0, (
             f"CLI rollback exited non-zero. stdout={result.stdout!r} "
@@ -148,7 +155,7 @@ class TestRollbackRoundTrip:
         )
 
     async def test_rollback_is_reversible_via_backup_versions(
-        self, manager: ArtifactManager, tenant_id: str
+        self, manager: ArtifactManager, tenant_id: str, phoenix_container
     ):
         # Save v1 + v2.
         await manager.save_prompts_versioned("reversible_agent", {"system": "V1"})
@@ -167,7 +174,8 @@ class TestRollbackRoundTrip:
                 "reversible_agent",
                 "--prompts-version",
                 "1",
-            ]
+            ],
+            phoenix_container,
         )
         assert first.returncode == 0
         first_summary = json.loads(first.stdout)
@@ -189,7 +197,8 @@ class TestRollbackRoundTrip:
                 "reversible_agent",
                 "--prompts-version",
                 str(backup_v),
-            ]
+            ],
+            phoenix_container,
         )
         assert second.returncode == 0
         # Active is back to v2.

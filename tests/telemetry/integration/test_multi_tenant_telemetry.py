@@ -410,7 +410,7 @@ class TestPhoenixIntegrationWithRealServer:
 
         Uses a per-run UUID in span names so the test is idempotent against a
         persistent Phoenix instance that accumulates spans across test runs.
-        Uses the phoenix_container fixture (ports 16006/14317).
+        Uses the phoenix_container fixture for per-pid HTTP/gRPC ports.
         """
         # Reset singleton
         TelemetryManager._instance = None
@@ -418,10 +418,10 @@ class TestPhoenixIntegrationWithRealServer:
         phoenix_config = TelemetryConfig(
             enabled=True,
             level=TelemetryLevel.VERBOSE,  # test uses default "agents" component
-            otlp_endpoint="http://localhost:14317",
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
             provider_config={
-                "http_endpoint": "http://localhost:16006",
-                "grpc_endpoint": "http://localhost:14317",
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
             },
             service_name="integration-test",
             environment="test",
@@ -475,7 +475,7 @@ class TestPhoenixIntegrationWithRealServer:
         # Query Phoenix API to verify tenant isolation
         from phoenix.client import Client
 
-        client = Client(base_url="http://localhost:16006")
+        client = Client(base_url=phoenix_container["http_endpoint"])
 
         # Verify tenant-alpha spans — filter to this run's spans by name prefix
         alpha_project = phoenix_config.get_project_name("tenant-alpha", "routing")

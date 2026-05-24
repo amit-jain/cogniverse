@@ -33,9 +33,9 @@ def client() -> TestClient:
 
 @pytest.fixture
 def phoenix_env(phoenix_container, monkeypatch):
-    """Point the canary endpoints at the docker-managed Phoenix on 16006."""
-    monkeypatch.setenv("PHOENIX_HTTP_ENDPOINT", "http://localhost:16006")
-    monkeypatch.setenv("PHOENIX_GRPC_ENDPOINT", "localhost:14317")
+    """Point the canary endpoints at the docker-managed Phoenix (per-pid port)."""
+    monkeypatch.setenv("PHOENIX_HTTP_ENDPOINT", phoenix_container["http_endpoint"])
+    monkeypatch.setenv("PHOENIX_GRPC_ENDPOINT", phoenix_container["otlp_endpoint"])
     yield
 
 
@@ -125,7 +125,9 @@ class TestSignatureVariantEndpoints:
 
 
 class TestCanaryEndpoints:
-    def test_promote_then_retire_round_trip(self, client: TestClient, phoenix_env):
+    def test_promote_then_retire_round_trip(
+        self, client: TestClient, phoenix_env, phoenix_container
+    ):
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
         from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
@@ -135,8 +137,8 @@ class TestCanaryEndpoints:
         provider.initialize(
             {
                 "tenant_id": tenant_id,
-                "http_endpoint": "http://localhost:16006",
-                "grpc_endpoint": "localhost:14317",
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["otlp_endpoint"],
             }
         )
         am = ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)

@@ -39,13 +39,13 @@ def monitor_with_xgboost(phoenix_container, tmp_path):
         TelemetryConfig,
     )
 
-    phoenix_url = "http://localhost:16006"
+    phoenix_url = phoenix_container["http_endpoint"]
 
     config = TelemetryConfig(
-        otlp_endpoint="localhost:14317",
+        otlp_endpoint=phoenix_container["otlp_endpoint"],
         provider_config={
             "http_endpoint": phoenix_url,
-            "grpc_endpoint": "http://localhost:14317",
+            "grpc_endpoint": phoenix_container["grpc_endpoint"],
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )

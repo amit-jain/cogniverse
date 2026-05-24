@@ -206,7 +206,9 @@ class TestLoaderAgainstRealPhoenix:
         project_name = f"cogniverse-{tenant_id}"
         resource = Resource.create({"openinference.project.name": project_name})
         provider = TracerProvider(resource=resource)
-        exporter = OTLPSpanExporter(endpoint="localhost:14317", insecure=True)
+        exporter = OTLPSpanExporter(
+            endpoint=phoenix_container["otlp_endpoint"], insecure=True
+        )
         provider.add_span_processor(SimpleSpanProcessor(exporter))
         tracer = provider.get_tracer("test")
         return tracer, tenant_id
@@ -217,7 +219,7 @@ class TestLoaderAgainstRealPhoenix:
         tenant_id = f"b5empty_{uuid.uuid4().hex[:8]}"
         agg = asyncio.run(
             load_ab_compare_data(
-                phoenix_http_endpoint="http://localhost:16006",
+                phoenix_http_endpoint=phoenix_container["http_endpoint"],
                 tenant_id=tenant_id,
                 lookback_hours=24,
             )
@@ -225,7 +227,9 @@ class TestLoaderAgainstRealPhoenix:
         assert agg.rows == 0
         assert agg.avg_latency_delta_ms is None
 
-    def test_real_spans_round_trip_through_loader(self, tracer_to_phoenix):
+    def test_real_spans_round_trip_through_loader(
+        self, tracer_to_phoenix, phoenix_container
+    ):
         """Emit two ab_compare spans and verify the loader picks them up."""
         tracer, tenant_id = tracer_to_phoenix
 
@@ -251,7 +255,7 @@ class TestLoaderAgainstRealPhoenix:
 
         agg = asyncio.run(
             load_ab_compare_data(
-                phoenix_http_endpoint="http://localhost:16006",
+                phoenix_http_endpoint=phoenix_container["http_endpoint"],
                 tenant_id=tenant_id,
                 lookback_hours=1,
             )

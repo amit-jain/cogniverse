@@ -307,12 +307,21 @@ def phoenix_container():
     """
     Start Phoenix Docker container with gRPC support for integration tests.
 
-    Uses non-default ports to avoid conflicts:
-    - HTTP: 16006 (instead of 6006)
-    - gRPC: 14317 (instead of 4317)
+    Allocates per-process unique ports so concurrent pytest sweeps don't
+    fight over the same Docker port bindings or rm -f each other's
+    containers. ``port_offset = (os.getpid() % 1000) * 10`` gives a
+    1000-process range with 10-port spacing (room for HTTP + gRPC + future).
 
-    Sets OTLP_ENDPOINT env var for tests and resets TelemetryManager.
-    Kills any leftover containers on those ports before starting.
+    - HTTP port: 16006 + port_offset (range ~16006-25996)
+    - gRPC port: 14317 + port_offset (range ~14317-24307)
+
+    Yields a dict with both the resolved endpoints and the container name so
+    downstream fixtures and tests can wire themselves to the actual ports
+    without hardcoding 16006/14317.
+
+    Sets TELEMETRY_OTLP_ENDPOINT/TELEMETRY_SYNC_EXPORT env vars for tests and
+    resets TelemetryManager. Cleans up only this process's container on
+    teardown (never rm -f's other processes' containers).
     """
     import subprocess
 
@@ -323,10 +332,22 @@ def phoenix_container():
     original_endpoint = os.environ.get("TELEMETRY_OTLP_ENDPOINT")
     original_sync_export = os.environ.get("TELEMETRY_SYNC_EXPORT")
 
-    # Kill any leftover phoenix_test_* containers from previous runs that
-    # are holding ports 16006/14317 and would cause "port already in use" (exit 125).
+    # Per-process port allocation: keeps parallel pytest sweeps from colliding.
+    port_offset = (os.getpid() % 1000) * 10
+    http_port = 16006 + port_offset
+    grpc_port = 14317 + port_offset
+    http_endpoint = f"http://localhost:{http_port}"
+    grpc_endpoint = f"http://localhost:{grpc_port}"
+
+    # Tag containers with the owning pid so we only ever clean up our own
+    # leftovers — never another concurrent pytest process's container.
+    container_name = f"phoenix_test_pid{os.getpid()}_{int(time.time() * 1000)}"
+
+    # Kill leftover phoenix_test_pid<our-pid>_* containers from PRIOR runs of
+    # this same pid (rare but possible if a previous run crashed). Scoping to
+    # our own pid prevents stomping on parallel sweeps.
     leftover = subprocess.run(
-        ["docker", "ps", "-q", "--filter", "name=phoenix_test_"],
+        ["docker", "ps", "-q", "--filter", f"name=phoenix_test_pid{os.getpid()}_"],
         capture_output=True,
         text=True,
         timeout=10,
@@ -340,13 +361,11 @@ def phoenix_container():
         )
 
     # Set environment for tests
-    os.environ["TELEMETRY_OTLP_ENDPOINT"] = "http://localhost:14317"
+    os.environ["TELEMETRY_OTLP_ENDPOINT"] = grpc_endpoint
     os.environ["TELEMETRY_SYNC_EXPORT"] = "true"
 
     # Reset TelemetryManager to pick up new env vars
     TelemetryManager.reset()
-
-    container_name = f"phoenix_test_{int(time.time() * 1000)}"
 
     try:
         # Start Phoenix container
@@ -358,9 +377,9 @@ def phoenix_container():
                 "--name",
                 container_name,
                 "-p",
-                "16006:6006",  # HTTP port
+                f"{http_port}:6006",  # HTTP port
                 "-p",
-                "14317:4317",  # gRPC port
+                f"{grpc_port}:4317",  # gRPC port
                 "-e",
                 "PHOENIX_WORKING_DIR=/phoenix",
                 "arizephoenix/phoenix:14.2.1",
@@ -378,7 +397,7 @@ def phoenix_container():
 
         while time.time() - start_time < max_wait_time:
             try:
-                response = requests.get("http://localhost:16006", timeout=2)
+                response = requests.get(http_endpoint, timeout=2)
                 if response.status_code == 200:
                     phoenix_ready = True
                     break
@@ -397,7 +416,16 @@ def phoenix_container():
                 f"Phoenix failed to start after {max_wait_time} seconds. Logs:\n{logs_result.stdout}\n{logs_result.stderr}"
             )
 
-        yield container_name
+        yield {
+            "container_name": container_name,
+            "http_endpoint": http_endpoint,
+            "grpc_endpoint": grpc_endpoint,
+            # Bare host:port form (no scheme) for OTLP gRPC exporter consumers
+            # like ConnectionConfig.otlp_endpoint, which expects "host:port".
+            "otlp_endpoint": f"localhost:{grpc_port}",
+            "http_port": http_port,
+            "grpc_port": grpc_port,
+        }
 
     finally:
         # Cleanup
@@ -442,7 +470,7 @@ def phoenix_client(phoenix_container):
     """Phoenix client for querying spans from Docker container"""
     from phoenix.client import Client
 
-    return Client(base_url="http://localhost:16006")
+    return Client(base_url=phoenix_container["http_endpoint"])
 
 
 @pytest.fixture
@@ -457,12 +485,14 @@ def telemetry_config_with_phoenix(phoenix_container):
         TelemetryConfig,
     )
 
-    otlp_endpoint = os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317")
+    otlp_endpoint = os.getenv(
+        "TELEMETRY_OTLP_ENDPOINT", phoenix_container["grpc_endpoint"]
+    )
     config = TelemetryConfig(
         otlp_endpoint=otlp_endpoint,
         provider_config={
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "http://localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["grpc_endpoint"],
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
@@ -1137,16 +1167,25 @@ def config_manager_memory():
 
 @pytest.fixture
 def workflow_store(backend_config_env):
-    """
-    Create VespaWorkflowStore for testing.
+    """Resolve a workflow store via the registry — same path production uses.
 
-    Requires backend_config_env fixture to set environment variables.
-    """
-    from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
+    Going through ``WorkflowStoreRegistry`` (entry-point discovery + cache)
+    instead of ``VespaWorkflowStore(...)`` directly means a new backend
+    (Weaviate, Elasticsearch, …) lights up here automatically once it
+    registers against the ``cogniverse.workflow.stores`` entry-point group;
+    the fixture stays unchanged.
 
-    store = VespaWorkflowStore(
-        backend_url=os.environ.get("BACKEND_URL", "http://localhost"),
-        backend_port=int(os.environ.get("BACKEND_PORT", "8080")),
+    Requires ``backend_config_env`` to set the BACKEND_URL / BACKEND_PORT
+    env vars the registry's config dict reads from.
+    """
+    from cogniverse_core.registries import WorkflowStoreRegistry
+
+    store = WorkflowStoreRegistry.get(
+        name="vespa",
+        config={
+            "backend_url": os.environ.get("BACKEND_URL", "http://localhost"),
+            "backend_port": int(os.environ.get("BACKEND_PORT", "8080")),
+        },
     )
     store.initialize()
     return store

@@ -44,8 +44,8 @@ def artifact_manager(phoenix_container, tenant_id: str) -> ArtifactManager:
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)

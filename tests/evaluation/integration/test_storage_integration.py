@@ -26,8 +26,8 @@ class TestTelemetryStorageIntegration:
     def storage(self, phoenix_container):
         """Create storage instance with test telemetry backend."""
         config = ConnectionConfig(
-            http_endpoint="http://localhost:16006",
-            otlp_endpoint="localhost:14317",
+            http_endpoint=phoenix_container["http_endpoint"],
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
             enable_health_checks=False,
         )
         storage = TelemetryStorage(config)
@@ -38,8 +38,8 @@ class TestTelemetryStorageIntegration:
     def test_connection_lifecycle(self, phoenix_container):
         """Test connection establishment and shutdown."""
         config = ConnectionConfig(
-            http_endpoint="http://localhost:16006",
-            otlp_endpoint="localhost:14317",
+            http_endpoint=phoenix_container["http_endpoint"],
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
             enable_health_checks=False,
         )
 
@@ -148,8 +148,8 @@ class TestTelemetryStorageIntegration:
     def test_health_check_recovery(self, phoenix_container):
         """Test health check and auto-recovery."""
         config = ConnectionConfig(
-            http_endpoint="http://localhost:16006",
-            otlp_endpoint="localhost:14317",
+            http_endpoint=phoenix_container["http_endpoint"],
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
             enable_health_checks=True,
             health_check_interval_seconds=0.5,
         )
@@ -266,8 +266,8 @@ class TestTelemetryStorageIntegration:
     def test_context_manager_cleanup(self, phoenix_container):
         """Test context manager properly cleans up resources."""
         config = ConnectionConfig(
-            http_endpoint="http://localhost:16006",
-            otlp_endpoint="localhost:14317",
+            http_endpoint=phoenix_container["http_endpoint"],
+            otlp_endpoint=phoenix_container["otlp_endpoint"],
             enable_health_checks=False,
         )
 

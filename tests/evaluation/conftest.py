@@ -746,10 +746,12 @@ def eval_search_client(eval_vespa_instance, eval_seeded_documents, phoenix_conta
     get_telemetry_registry().clear_cache()
 
     telemetry_config = TelemetryConfig(
-        otlp_endpoint=os.getenv("TELEMETRY_OTLP_ENDPOINT", "localhost:4317"),
+        otlp_endpoint=os.getenv(
+            "TELEMETRY_OTLP_ENDPOINT", phoenix_container["grpc_endpoint"]
+        ),
         provider_config={
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "http://localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["grpc_endpoint"],
         },
         batch_config=BatchExportConfig(use_sync_export=True),
     )
@@ -821,8 +823,8 @@ def search_evaluator_provider(phoenix_container):
         PhoenixEvaluationProvider,
     )
 
-    phoenix_endpoint = "http://localhost:16006"
-    grpc_endpoint = "http://localhost:14317"
+    phoenix_endpoint = phoenix_container["http_endpoint"]
+    grpc_endpoint = phoenix_container["grpc_endpoint"]
 
     # Set up TelemetryManager singleton with test Phoenix endpoints.
     # PhoenixEvaluationProvider.initialize() calls get_telemetry_manager()

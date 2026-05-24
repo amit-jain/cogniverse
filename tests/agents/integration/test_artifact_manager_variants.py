@@ -36,16 +36,16 @@ def manager(phoenix_container) -> ArtifactManager:
     """ArtifactManager wired to the docker-managed Phoenix container.
 
     `phoenix_container` is a session-scoped fixture in tests/conftest.py
-    that boots a Phoenix instance on port 16006; if Docker isn't
-    available it raises rather than skipping silently.
+    that boots a Phoenix instance on a per-pid HTTP/gRPC port pair; if
+    Docker isn't available it raises rather than skipping silently.
     """
     tenant_id = f"c6_int_{uuid.uuid4().hex[:8]}"
     provider = PhoenixProvider()
     provider.initialize(
         {
             "tenant_id": tenant_id,
-            "http_endpoint": "http://localhost:16006",
-            "grpc_endpoint": "localhost:14317",
+            "http_endpoint": phoenix_container["http_endpoint"],
+            "grpc_endpoint": phoenix_container["otlp_endpoint"],
         }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
