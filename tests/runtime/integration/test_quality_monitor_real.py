@@ -32,7 +32,11 @@ from tests.utils.llm_config import get_llm_base_url, get_llm_model
 logger = logging.getLogger(__name__)
 
 COLPALI_MODEL_NAME = "vidore/colpali-v1.3-hf"
-TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_qm_real_test"
+# Schema name follows the canonicalize-then-replace-colons rule the
+# ``SchemaRegistry.deploy_schema`` path uses: ``qm_real_test`` →
+# canonical ``qm_real_test:qm_real_test`` → schema-safe
+# ``qm_real_test_qm_real_test``.
+TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_qm_real_test_qm_real_test"
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):

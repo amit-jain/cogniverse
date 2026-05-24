@@ -365,6 +365,16 @@ class SchemaRegistry:
         self._validate_tenant_id(tenant_id)
         self._validate_schema_name(base_schema_name)
 
+        # Canonicalize so deploy and search paths converge on the same
+        # tenant-suffixed schema name. ``require_tenant_id`` at request
+        # boundaries canonicalizes (``acme`` → ``acme:acme``); without
+        # matching that here, an admin / fixture that constructs the
+        # registry with the bare form would deploy ``..._acme`` while
+        # search (going through canonicalization) probes ``..._acme_acme``.
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_id = canonical_tenant_id(tenant_id)
+
         # No need to check backend/schema_loader - guaranteed to exist (checked at construction)
 
         # Generate tenant-specific schema name

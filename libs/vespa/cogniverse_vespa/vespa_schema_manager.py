@@ -1440,18 +1440,29 @@ class VespaSchemaManager:
         """
         Generate tenant-specific schema name from base schema and tenant ID.
 
+        ``tenant_id`` is canonicalized first (``acme`` → ``acme:acme``)
+        so deploy and search paths converge on the same schema name
+        regardless of which form the caller passed. Without this,
+        depositories that wrote schemas with the bare form (e.g.
+        admin tooling that hadn't applied ``require_tenant_id`` yet)
+        would be unaddressable from request-handlers that canonicalize
+        before calling here.
+
         Args:
-            tenant_id: Tenant identifier
+            tenant_id: Tenant identifier (bare or canonical form)
             base_schema_name: Base schema name
 
         Returns:
-            Tenant-specific schema name (e.g., "video_colpali_acme")
+            Tenant-specific schema name (e.g., "video_colpali_acme_acme")
         """
         if not tenant_id:
             return base_schema_name
 
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        canonical = canonical_tenant_id(tenant_id)
         # Transform org:tenant to org_tenant for schema naming
-        tenant_suffix = tenant_id.replace(":", "_")
+        tenant_suffix = canonical.replace(":", "_")
         return f"{base_schema_name}_{tenant_suffix}"
 
     _PROTECTED_SCHEMAS = frozenset(
