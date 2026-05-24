@@ -173,8 +173,16 @@ class ArtifactManager:
     def __init__(self, telemetry_provider: TelemetryProvider, tenant_id: str) -> None:
         if not tenant_id:
             raise ValueError("tenant_id is required")
+        # Canonicalize so a bare org id (``acme``) and the canonical
+        # form (``acme:acme``) reach the SAME dataset name. Dispatchers
+        # apply ``require_tenant_id`` at request boundaries which
+        # canonicalizes; without matching that here, an artifact saved
+        # under ``acme`` cannot be loaded by ``_load_artifact`` after
+        # the dispatcher has rewritten the tenant to ``acme:acme``.
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         self._provider = telemetry_provider
-        self._tenant_id = tenant_id
+        self._tenant_id = canonical_tenant_id(tenant_id)
 
     @staticmethod
     def qualified_agent_key(

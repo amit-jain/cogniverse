@@ -116,7 +116,13 @@ class TestArtifactManagerRoundTrip:
             "nowhere (regressed back to the no-op stub?)"
         )
         assert loaded["agent_type"] == "router"
-        assert loaded["tenant_id"] == "roundtrip-test"
+        # ArtifactManager canonicalizes a bare org id (``roundtrip-test``)
+        # to the ``org:tenant`` form (``roundtrip-test:roundtrip-test``)
+        # so its dataset names match what a dispatcher's
+        # ``require_tenant_id`` produces. The stored ``tenant_id`` field
+        # therefore comes back in canonical form regardless of which
+        # form the caller passed.
+        assert loaded["tenant_id"] == "roundtrip-test:roundtrip-test"
         assert "timestamp" in loaded
 
         # Every key the caller wrote round-trips with its exact value.
