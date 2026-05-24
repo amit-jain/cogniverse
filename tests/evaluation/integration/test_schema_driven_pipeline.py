@@ -27,7 +27,13 @@ from cogniverse_evaluation.plugins.document_analyzer import (
 from cogniverse_evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
+# Dual-marked so the CI ``unit-tests`` job (filter ``-m unit``) AND
+# the CI ``integration-tests`` job (filter ``-m "integration and
+# ci_fast"``) both pick it up. The schema-analyzer pipeline is a
+# multi-component integration that runs mock-only — fits both
+# semantics.
 @pytest.mark.unit
+@pytest.mark.integration
 @pytest.mark.ci_fast
 class TestSchemaAnalyzerIntegration:
     """Test that schema analyzers correctly identify and process different schemas."""
@@ -112,6 +118,7 @@ class TestSchemaAnalyzerIntegration:
 
 
 @pytest.mark.unit
+@pytest.mark.integration
 @pytest.mark.ci_fast
 class TestScorerIntegration:
     """Test that scorers work correctly with different schemas."""
@@ -237,6 +244,9 @@ class TestScorerIntegration:
         assert "No schema information" in score.explanation
 
 
+@pytest.mark.unit
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestGroundTruthIntegration:
     """Test ground truth extraction with different schemas."""
 
@@ -292,6 +302,9 @@ class TestGroundTruthIntegration:
         assert result["source"] == "no_backend"
 
 
+@pytest.mark.unit
+@pytest.mark.integration
+@pytest.mark.ci_fast
 class TestEndToEndPipeline:
     """Test the complete evaluation pipeline with different schemas."""
 

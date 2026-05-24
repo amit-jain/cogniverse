@@ -21,7 +21,15 @@ except ImportError:
     RUNTIME_AVAILABLE = False
 
 
+# Dual-marked so the CI ``unit-tests`` job (filter ``-m unit``) AND
+# the CI ``integration-tests`` job (filter ``-m "integration and
+# ci_fast"``) both pick it up. The tests exercise the dashboard's API
+# helper functions against a mocked runtime — they live in unit/
+# because they don't need a real backend, but the API-helper surface
+# they verify IS an integration boundary, so the CI integration job
+# needs them too.
 @pytest.mark.unit
+@pytest.mark.integration
 @pytest.mark.ci_fast
 @pytest.mark.skipif(not RUNTIME_AVAILABLE, reason="cogniverse_runtime not installed")
 class TestDashboardProfileIntegration:

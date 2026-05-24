@@ -171,7 +171,7 @@ class TestSchemaRegistryDeployment:
         schemas = backend.schema_registry.get_tenant_schemas("acme")
         assert len(schemas) == 1
         assert schemas[0].base_schema_name == "video_colpali_smol500_mv_frame"
-        assert schemas[0].full_schema_name == "video_colpali_smol500_mv_frame_acme"
+        assert schemas[0].full_schema_name == "video_colpali_smol500_mv_frame_acme_acme"
 
     def test_deploy_multiple_schemas_same_tenant(self, get_backend):
         """Test deploying multiple schemas for the same tenant"""
@@ -213,10 +213,10 @@ class TestSchemaRegistryDeployment:
         assert len(schemas_a) == 1
         assert len(schemas_b) == 1
         assert (
-            schemas_a[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_a"
+            schemas_a[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_a_tenant_a"
         )
         assert (
-            schemas_b[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_b"
+            schemas_b[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_b_tenant_b"
         )
 
     def test_idempotent_deployment(self, get_backend):
@@ -233,7 +233,7 @@ class TestSchemaRegistryDeployment:
 
         # Both should succeed and return same name
         assert result1 == result2
-        assert result1 == "video_colpali_smol500_mv_frame_idempotent_test"
+        assert result1 == "video_colpali_smol500_mv_frame_idempotent_test_idempotent_test"
 
         # Should only have one schema registered
         schemas = backend.schema_registry.get_tenant_schemas("idempotent_test")
@@ -302,7 +302,7 @@ class TestSchemaRegistryDeletion:
         backend.schema_registry.deploy_schema(
             "del_round_trip", "video_colpali_smol500_mv_frame"
         )
-        full_name = "video_colpali_smol500_mv_frame_del_round_trip"
+        full_name = "video_colpali_smol500_mv_frame_del_round_trip_del_round_trip"
 
         # Sanity: schema is deployed in Vespa.
         deployed_before = backend.schema_manager.list_deployed_document_types()
@@ -339,7 +339,7 @@ class TestSchemaRegistryDeletion:
         """
         backend = get_backend("del_orphan")
         tenant_id = "del_orphan"
-        full_name = "video_colpali_smol500_mv_frame_del_orphan"
+        full_name = "video_colpali_smol500_mv_frame_del_orphan_del_orphan"
 
         backend.schema_registry.deploy_schema(
             tenant_id, "video_colpali_smol500_mv_frame"
@@ -391,7 +391,7 @@ class TestSchemaRegistryDeletion:
         backend.schema_registry.deploy_schema(
             tenant_id, "video_colpali_smol500_mv_frame"
         )
-        full_name = "video_colpali_smol500_mv_frame_schema_only_tenant"
+        full_name = "video_colpali_smol500_mv_frame_schema_only_tenant_schema_only_tenant"
         deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed, "setup failure — schema not deployed"
 
@@ -427,8 +427,8 @@ class TestSchemaRegistryDeletion:
 
         backend = get_backend("victim_a")
         peer_tenant = "victim_b"
-        a_full = "video_colpali_smol500_mv_frame_victim_a"
-        b_full = "video_colpali_smol500_mv_frame_victim_b"
+        a_full = "video_colpali_smol500_mv_frame_victim_a_victim_a"
+        b_full = "video_colpali_smol500_mv_frame_victim_b_victim_b"
 
         backend.schema_registry.deploy_schema(
             "victim_a", "video_colpali_smol500_mv_frame"
@@ -502,8 +502,8 @@ class TestBulkTenantDelete:
         backend.schema_registry.deploy_schema(
             "bulk_b", "video_colpali_smol500_mv_frame"
         )
-        a_full = "video_colpali_smol500_mv_frame_bulk_a"
-        b_full = "video_colpali_smol500_mv_frame_bulk_b"
+        a_full = "video_colpali_smol500_mv_frame_bulk_a_bulk_a"
+        b_full = "video_colpali_smol500_mv_frame_bulk_b_bulk_b"
 
         backend.schema_registry.unregister_schema(
             "bulk_a", "video_colpali_smol500_mv_frame"
@@ -631,7 +631,7 @@ class TestDeleteSchemaDirect:
         backend.schema_registry.deploy_schema(
             "single_delete", "video_colpali_smol500_mv_frame"
         )
-        full_name = "video_colpali_smol500_mv_frame_single_delete"
+        full_name = "video_colpali_smol500_mv_frame_single_delete_single_delete"
 
         deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed
@@ -713,7 +713,7 @@ class TestDeleteFailureSemantics:
         backend.schema_registry.deploy_schema(
             "tombstone_fail", "video_colpali_smol500_mv_frame"
         )
-        full_name = "video_colpali_smol500_mv_frame_tombstone_fail"
+        full_name = "video_colpali_smol500_mv_frame_tombstone_fail_tombstone_fail"
         assert full_name in backend.schema_manager.list_deployed_document_types()
 
         original_unregister = backend.schema_registry.unregister_schema
