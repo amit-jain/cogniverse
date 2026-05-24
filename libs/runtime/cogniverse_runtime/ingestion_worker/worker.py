@@ -22,6 +22,7 @@ job (out of scope here).
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
@@ -221,6 +222,28 @@ async def _default_processor(job: IngestJob) -> dict:
     local_path = await asyncio.to_thread(locator.localize, job.source_url)
 
     config_manager = create_default_config_manager()
+
+    # main.py bridges INFERENCE_SERVICE_URLS env → SystemConfig at API-
+    # startup and persists to Vespa. The worker is a separate pod whose
+    # SystemConfig read can race ahead of that write (or hit a Vespa
+    # instance where main.py hasn't run since the deployment was
+    # changed). Mirror the env bridge in memory so the pipeline's
+    # ``service_urls`` lookup sees the same dict an API-side dispatch
+    # would. Local-only; no Vespa persist (main.py remains
+    # authoritative).
+    _service_urls_env = os.environ.get("INFERENCE_SERVICE_URLS", "")
+    if _service_urls_env:
+        try:
+            _parsed = json.loads(_service_urls_env)
+            if isinstance(_parsed, dict):
+                _sys_cfg = config_manager.get_system_config()
+                if _sys_cfg.inference_service_urls != _parsed:
+                    _sys_cfg.inference_service_urls = _parsed
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(
+                "INFERENCE_SERVICE_URLS env is not valid JSON: %s",
+                _service_urls_env[:200],
+            )
     schemas_dir = Path(os.environ.get("COGNIVERSE_SCHEMAS_DIR", "configs/schemas"))
     schema_loader = FilesystemSchemaLoader(schemas_dir)
 
