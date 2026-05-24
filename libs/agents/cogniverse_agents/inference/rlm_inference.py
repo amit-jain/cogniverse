@@ -126,7 +126,7 @@ def _serialize_trajectory(trajectory: Any, max_entries: int) -> List[Dict[str, A
                 value = raw.get(field_name)
             else:
                 value = getattr(raw, field_name, None)
-            if value is None or value == "":
+            if value is None:
                 continue
             text = str(value)
             if len(text) > _TRAJECTORY_FIELD_TRUNCATE:
