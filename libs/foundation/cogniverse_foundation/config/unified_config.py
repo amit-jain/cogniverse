@@ -583,18 +583,9 @@ class BackendConfig:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        from cogniverse_core.common.tenant_utils import (
-            canonical_tenant_id,
-            require_tenant_id,
-        )
+        from cogniverse_core.common.tenant_utils import require_tenant_id
 
         require_tenant_id(self.tenant_id, source="BackendConfig")
-        # Store the canonical form so schema-name generation matches
-        # whatever ``require_tenant_id`` produces at request boundaries.
-        # Without this, a backend constructed with bare ``acme`` deploys
-        # schemas under ``..._acme`` while dispatched search lookups
-        # (which canonicalize) probe ``..._acme_acme`` and miss.
-        self.tenant_id = canonical_tenant_id(self.tenant_id)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""

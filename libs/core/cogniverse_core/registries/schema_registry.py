@@ -193,7 +193,12 @@ class SchemaRegistry:
         """
         from datetime import datetime, timezone
 
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
         from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        # Canonicalize so register/lookup/deploy paths converge on the
+        # same storage key (matches deploy_schema's canonicalization).
+        tenant_id = canonical_tenant_id(tenant_id)
 
         logger.info(
             f"Registering schema '{base_schema_name}' for tenant '{tenant_id}' "
@@ -503,6 +508,9 @@ class SchemaRegistry:
             # Now deployment won't wipe existing schemas
             deploy_package(app_package)
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_id = canonical_tenant_id(tenant_id)
         try:
             self._load_schemas_from_storage()
         except Exception as exc:
@@ -568,6 +576,9 @@ class SchemaRegistry:
                 # Register after successful deployment
                 registry.register_schema(...)
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_id = canonical_tenant_id(tenant_id)
         key = (tenant_id, base_schema_name)
         return key in self._schemas
 
@@ -590,7 +601,12 @@ class SchemaRegistry:
         """
         from datetime import datetime, timezone
 
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
         from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+        # Canonicalize so register/deploy/exists/unregister all converge
+        # on the same storage key.
+        tenant_id = canonical_tenant_id(tenant_id)
 
         logger.info(
             f"Unregistering schema '{base_schema_name}' for tenant '{tenant_id}'"

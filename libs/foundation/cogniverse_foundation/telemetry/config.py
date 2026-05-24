@@ -138,21 +138,20 @@ class TelemetryConfig:
         User operations: cogniverse-{tenant_id}
         Management operations: cogniverse-{tenant_id}-{service}
 
-        ``tenant_id`` is canonicalized via ``canonical_tenant_id`` so the
-        project name matches whatever ``require_tenant_id`` produces at
-        the request boundary. Without this, a bare ``acme`` from a test
-        or admin lookup would compute ``cogniverse-acme`` while spans
-        were being exported under ``cogniverse-acme:acme``, and the
-        Phoenix query path would never find the spans.
+        ``tenant_id`` passes through unchanged — the function is a pure
+        template format. Callers that need cross-path consistency
+        (request-handlers vs. Phoenix-query helpers) MUST pre-canonicalize
+        the tenant id before calling. The dispatcher's ``require_tenant_id``
+        does this at the request boundary, so production span emission
+        always sees the canonical form. Test/admin lookups that need to
+        query the same project must apply ``canonical_tenant_id`` first
+        themselves.
         """
-        from cogniverse_core.common.tenant_utils import canonical_tenant_id
-
-        canonical = canonical_tenant_id(tenant_id)
         if service:
             return self.tenant_service_template.format(
-                tenant_id=canonical, service=service
+                tenant_id=tenant_id, service=service
             )
-        return self.tenant_project_template.format(tenant_id=canonical)
+        return self.tenant_project_template.format(tenant_id=tenant_id)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary for persistence."""

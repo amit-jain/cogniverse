@@ -135,7 +135,13 @@ class TestAgentTelemetrySpansRealPhoenix:
         # but allow Phoenix a moment to ingest.
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span("SearchAgent.process", project_name, phoenix_url)
 
@@ -162,7 +168,13 @@ class TestAgentTelemetrySpansRealPhoenix:
             AgentType.GATEWAY: GatewayAgent,
         }
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
 
         for agent_type, expected_span_name in SPAN_NAME_BY_AGENT.items():
             agent_cls = agent_classes[agent_type]
@@ -247,7 +259,13 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span("cogniverse.gateway", project_name, phoenix_url)
 
@@ -289,7 +307,13 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span(
             "cogniverse.entity_extraction", project_name, phoenix_url
@@ -332,7 +356,13 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span(
             "cogniverse.query_enhancement", project_name, phoenix_url
@@ -375,7 +405,13 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span(
             "cogniverse.profile_selection", project_name, phoenix_url
@@ -478,7 +514,13 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_real_test")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Span emission canonicalizes via require_tenant_id at the
+        # request boundary; query the same canonical project name.
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_real_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
         span = _query_phoenix_for_span(
             "cogniverse.orchestration", project_name, phoenix_url

@@ -116,7 +116,7 @@ class TestSchemaRegistryDeployment:
         result = schema_registry.deploy_schema("acme", "test_schema")
 
         # Should return tenant-specific name
-        assert result == "test_schema_acme"
+        assert result == "test_schema_acme_acme"
 
         # Should load base schema
         mock_schema_loader.load_schema.assert_called_once_with("test_schema")
@@ -125,8 +125,8 @@ class TestSchemaRegistryDeployment:
         mock_backend.deploy_schemas.assert_called_once()
         call_args = mock_backend.deploy_schemas.call_args[0][0]
         assert len(call_args) == 1  # Only new schema (no existing)
-        assert call_args[0]["name"] == "test_schema_acme"
-        assert call_args[0]["tenant_id"] == "acme"
+        assert call_args[0]["name"] == "test_schema_acme_acme"
+        assert call_args[0]["tenant_id"] == "acme:acme"
         assert call_args[0]["base_schema_name"] == "test_schema"
 
         # Should register in ConfigManager store
@@ -164,9 +164,9 @@ class TestSchemaRegistryDeployment:
         assert call_args[0]["name"] == "existing_schema_existing_tenant"
         assert call_args[0]["tenant_id"] == "existing_tenant"
 
-        # Second should be new
-        assert call_args[1]["name"] == "new_schema_new_tenant"
-        assert call_args[1]["tenant_id"] == "new_tenant"
+        # Second should be new (tenant_id canonicalized to org:tenant)
+        assert call_args[1]["name"] == "new_schema_new_tenant_new_tenant"
+        assert call_args[1]["tenant_id"] == "new_tenant:new_tenant"
 
     def test_deploy_schema_idempotent(self, schema_registry):
         """Test deploying same schema twice is idempotent"""
@@ -177,7 +177,7 @@ class TestSchemaRegistryDeployment:
         result2 = schema_registry.deploy_schema("acme", "test_schema")
 
         assert result1 == result2
-        assert result1 == "test_schema_acme"
+        assert result1 == "test_schema_acme_acme"
 
     def test_deploy_schema_force_flag_bypasses_exists_check(
         self, schema_registry, mock_backend
@@ -192,7 +192,7 @@ class TestSchemaRegistryDeployment:
         # Second deployment with force=True should redeploy
         result = schema_registry.deploy_schema("acme", "test_schema", force=True)
 
-        assert result == "test_schema_acme"
+        assert result == "test_schema_acme_acme"
         # Should have called backend again
         mock_backend.deploy_schemas.assert_called_once()
 
@@ -300,8 +300,8 @@ class TestSchemaRegistryTracking:
         schema_registry.register_schema(
             tenant_id="acme",
             base_schema_name="test_schema",
-            full_schema_name="test_schema_acme",
-            schema_definition='{"name": "test_schema_acme"}',
+            full_schema_name="test_schema_acme_acme",
+            schema_definition='{"name": "test_schema_acme_acme"}',
             config={"profile": "test"},
         )
 
@@ -311,7 +311,7 @@ class TestSchemaRegistryTracking:
         # Should be in tenant schemas
         schemas = schema_registry.get_tenant_schemas("acme")
         assert len(schemas) == 1
-        assert schemas[0].full_schema_name == "test_schema_acme"
+        assert schemas[0].full_schema_name == "test_schema_acme_acme"
         assert schemas[0].config == {"profile": "test"}
 
     def test_unregister_schema_removes_from_tracking(
@@ -322,8 +322,8 @@ class TestSchemaRegistryTracking:
         schema_registry.register_schema(
             tenant_id="acme",
             base_schema_name="test_schema",
-            full_schema_name="test_schema_acme",
-            schema_definition='{"name": "test_schema_acme"}',
+            full_schema_name="test_schema_acme_acme",
+            schema_definition='{"name": "test_schema_acme_acme"}',
         )
 
         assert schema_registry.schema_exists("acme", "test_schema") is True
@@ -374,21 +374,23 @@ class TestSchemaRegistryInitialization:
     ):
         """Test that existing schemas are loaded from ConfigManager on init"""
         # Mock schema entries in store format (ConfigEntry with config_value)
+        # Tenant_id stored in canonical org:tenant form — matches what
+        # register_schema's canonical-id normalization produces today.
         entry1 = MagicMock()
         entry1.config_value = {
-            "tenant_id": "acme",
+            "tenant_id": "acme:acme",
             "base_schema_name": "schema1",
-            "full_schema_name": "schema1_acme",
-            "schema_definition": '{"name": "schema1_acme"}',
+            "full_schema_name": "schema1_acme_acme",
+            "schema_definition": '{"name": "schema1_acme_acme"}',
             "deployment_time": "2024-01-01T00:00:00",
             "config": {},
         }
         entry2 = MagicMock()
         entry2.config_value = {
-            "tenant_id": "startup",
+            "tenant_id": "startup:startup",
             "base_schema_name": "schema2",
-            "full_schema_name": "schema2_startup",
-            "schema_definition": '{"name": "schema2_startup"}',
+            "full_schema_name": "schema2_startup_startup",
+            "schema_definition": '{"name": "schema2_startup_startup"}',
             "deployment_time": "2024-01-01T00:00:00",
             "config": {},
         }
@@ -400,6 +402,7 @@ class TestSchemaRegistryInitialization:
             schema_loader=mock_schema_loader,
         )
 
-        # Should have loaded both schemas
+        # Should have loaded both schemas — schema_exists canonicalizes
+        # the lookup tenant so the bare-form arg resolves the same.
         assert registry.schema_exists("acme", "schema1") is True
         assert registry.schema_exists("startup", "schema2") is True

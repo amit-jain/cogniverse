@@ -899,7 +899,13 @@ class OrchestratorAgent(
                     )
 
         query = input.query
-        tenant_id = input.tenant_id
+        # Canonicalize so every downstream span / artifact lookup in
+        # this request uses the same form. Without this the orchestrator
+        # emits ``cogniverse.orchestration`` under the raw project and
+        # later request-handler callers query under the canonical one.
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        tenant_id = canonical_tenant_id(input.tenant_id)
         session_id = input.session_id
         self._current_tenant_id = tenant_id
         workflow_id = f"workflow_{uuid.uuid4().hex[:8]}"
