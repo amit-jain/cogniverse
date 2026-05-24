@@ -167,10 +167,25 @@ def orchestrator_with_real_agents(real_dspy_lm):
     registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
     registry.agents = agent_endpoints
 
+    # Real SystemConfig (not a Mock) — the iterative-retrieval loop reads
+    # int caps from ``config_manager.get_system_config().iter_retrieval_*``
+    # and ``range(Mock)`` raises TypeError. A real SystemConfig with test
+    # defaults keeps the loop's int-arithmetic paths exercised.
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+
+    _stub_sys_cfg = SystemConfig(
+        iter_retrieval_max_iter=3,
+        iter_retrieval_token_budget=10000,
+        iter_retrieval_wall_clock_ms=10000,
+    )
+    _stub_config_manager = Mock(spec=ConfigManager)
+    _stub_config_manager.get_system_config = Mock(return_value=_stub_sys_cfg)
+
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
         registry=registry,
-        config_manager=Mock(),
+        config_manager=_stub_config_manager,
         port=8015,
     )
 

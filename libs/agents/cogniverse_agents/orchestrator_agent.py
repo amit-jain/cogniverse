@@ -379,6 +379,15 @@ _ITER_GATE_RLM_PROMOTION_CHARS = 6000
 # JSON. See ``test_d9_token_budget_breach_exits_at_iter1``.
 _GATE_PROMPT_SCAFFOLDING_CHARS = 2400
 
+# Test-hook overrides — when not None, take precedence over
+# SystemConfig.iter_retrieval_* for the iterative-retrieval loop. Used
+# by tests to override caps without constructing a per-test
+# SystemConfig. Production deploys leave these at None and rely on the
+# SystemConfig values supplied at runtime startup.
+_ITER_RETRIEVAL_MAX_ITER: Optional[int] = None
+_ITER_RETRIEVAL_TOKEN_BUDGET: Optional[int] = None
+_ITER_RETRIEVAL_WALL_CLOCK_MS: Optional[int] = None
+
 
 @dataclass
 class AccumulatedEvidence:
@@ -2053,9 +2062,23 @@ class OrchestratorAgent(
         # /process call so a live ConfigManager update between
         # requests takes effect.
         _sys_cfg = self._config_manager.get_system_config()
-        _max_iter = _sys_cfg.iter_retrieval_max_iter
-        _token_budget = _sys_cfg.iter_retrieval_token_budget
-        _wall_clock_ms = _sys_cfg.iter_retrieval_wall_clock_ms
+        # Module-level overrides (set by tests via monkeypatch) take
+        # precedence over SystemConfig. Production leaves them None.
+        _max_iter = (
+            _ITER_RETRIEVAL_MAX_ITER
+            if _ITER_RETRIEVAL_MAX_ITER is not None
+            else _sys_cfg.iter_retrieval_max_iter
+        )
+        _token_budget = (
+            _ITER_RETRIEVAL_TOKEN_BUDGET
+            if _ITER_RETRIEVAL_TOKEN_BUDGET is not None
+            else _sys_cfg.iter_retrieval_token_budget
+        )
+        _wall_clock_ms = (
+            _ITER_RETRIEVAL_WALL_CLOCK_MS
+            if _ITER_RETRIEVAL_WALL_CLOCK_MS is not None
+            else _sys_cfg.iter_retrieval_wall_clock_ms
+        )
         for iter_idx in range(_max_iter):
             iteration_started = time.monotonic()
 

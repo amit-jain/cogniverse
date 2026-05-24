@@ -420,11 +420,20 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         for agent in agents:
             registry.register_agent(agent)
 
-        mock_cm = MagicMock()
-        mock_cm.get_system_config.return_value = MagicMock(
+        # Use a real SystemConfig (not a MagicMock) so the iterative-
+        # retrieval loop can call ``range(iter_retrieval_max_iter)`` on
+        # an int rather than a MagicMock.
+        from cogniverse_foundation.config.unified_config import SystemConfig
+
+        _stub_sys_cfg = SystemConfig(
             backend_url="http://localhost",
             backend_port=8080,
+            iter_retrieval_max_iter=3,
+            iter_retrieval_token_budget=10000,
+            iter_retrieval_wall_clock_ms=10000,
         )
+        mock_cm = MagicMock()
+        mock_cm.get_system_config.return_value = _stub_sys_cfg
         mock_cm.get_config.return_value = {}
 
         deps = OrchestratorDeps()

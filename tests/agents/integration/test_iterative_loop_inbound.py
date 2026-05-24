@@ -36,11 +36,30 @@ from typing import Any, Dict, List
 import pytest
 
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent
+from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_runtime.messaging import (
     InboundMessage,
     get_inbound_queue_registry,
     reset_inbound_queue_registry_for_testing,
 )
+
+
+class _StubConfigManager:
+    """Minimal ``ConfigManager`` stand-in exposing only ``get_system_config()``.
+
+    ``OrchestratorAgent._iterative_retrieval_loop`` reads the three
+    iter-retrieval tuning caps off ``self._config_manager.get_system_config()``;
+    the stub orchestrator instances below carry one of these so the
+    loop pulls real ``SystemConfig`` values (no Mock, real dataclass)
+    with test-friendly defaults that keep the loop bounded.
+    """
+
+    def __init__(self, system_config: SystemConfig) -> None:
+        self._system_config = system_config
+
+    def get_system_config(self) -> SystemConfig:
+        return self._system_config
+
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -67,6 +86,17 @@ class _StubOrchestrator:
     def __init__(self) -> None:
         self._reformulate_calls: List[List[str]] = []
         self._execute_calls: int = 0
+        # ``_iterative_retrieval_loop`` reads tuning caps off
+        # ``self._config_manager.get_system_config()``; supply a real
+        # ``SystemConfig`` with bounded test defaults so the loop
+        # terminates deterministically.
+        self._config_manager = _StubConfigManager(
+            SystemConfig(
+                iter_retrieval_max_iter=3,
+                iter_retrieval_token_budget=10000,
+                iter_retrieval_wall_clock_ms=10000,
+            )
+        )
 
     async def _reformulate_query(
         self, query: str, missing_aspects: List[str]
