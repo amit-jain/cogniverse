@@ -242,9 +242,13 @@ class MessagingGateway:
                 )
         elif subcmd == "index":
             result = await self.runtime_client.get_wiki_index(tenant_id=tenant_id)
-            await update.message.reply_text(
-                str(result.get("content", "(empty wiki)"))[:3500]
-            )
+            # ``content`` is a string from the runtime; treat both
+            # missing-key AND empty-string as "empty wiki" so the
+            # Telegram reply is always a non-empty message the
+            # operator can see (an empty reply otherwise looks like
+            # the command was dropped).
+            content = result.get("content") or "(empty wiki)"
+            await update.message.reply_text(str(content)[:3500])
         elif subcmd == "lint":
             result = await self.runtime_client.lint_wiki(tenant_id=tenant_id)
             issues = result.get("issues", [])
