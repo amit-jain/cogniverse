@@ -1612,15 +1612,18 @@ async def run_synthetic_generation(
 
     # Synthetic generators that wrap DSPy modules (RoutingGenerator)
     # need a configured LM. The other optimizer modes (simba, profile,
-    # entity-extraction) call ``dspy.configure(lm=create_dspy_lm(...))``;
-    # matching that pattern here so any DSPy-backed generator finds a
-    # default LM at module-construction time.
+    # entity-extraction) call ``dspy.configure(lm=create_dspy_lm(...))``
+    # at the synchronous top level; this function runs in an asyncio task
+    # so ``dspy.configure`` would raise (it can only be called from the
+    # same async task that first called it). Use a process-wide thread-
+    # local equivalent: set ``dspy.settings.lm`` directly. DSPy modules
+    # read this attribute when no explicit ``lm=`` is passed.
     import dspy
 
     from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
     llm_endpoint = config.get_llm_config().primary
-    dspy.configure(lm=create_dspy_lm(llm_endpoint))
+    dspy.settings.lm = create_dspy_lm(llm_endpoint)
 
     from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
