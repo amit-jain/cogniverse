@@ -213,10 +213,12 @@ class TestSchemaRegistryDeployment:
         assert len(schemas_a) == 1
         assert len(schemas_b) == 1
         assert (
-            schemas_a[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_a_tenant_a"
+            schemas_a[0].full_schema_name
+            == "video_colpali_smol500_mv_frame_tenant_a_tenant_a"
         )
         assert (
-            schemas_b[0].full_schema_name == "video_colpali_smol500_mv_frame_tenant_b_tenant_b"
+            schemas_b[0].full_schema_name
+            == "video_colpali_smol500_mv_frame_tenant_b_tenant_b"
         )
 
     def test_idempotent_deployment(self, get_backend):
@@ -233,7 +235,9 @@ class TestSchemaRegistryDeployment:
 
         # Both should succeed and return same name
         assert result1 == result2
-        assert result1 == "video_colpali_smol500_mv_frame_idempotent_test_idempotent_test"
+        assert (
+            result1 == "video_colpali_smol500_mv_frame_idempotent_test_idempotent_test"
+        )
 
         # Should only have one schema registered
         schemas = backend.schema_registry.get_tenant_schemas("idempotent_test")
@@ -391,7 +395,9 @@ class TestSchemaRegistryDeletion:
         backend.schema_registry.deploy_schema(
             tenant_id, "video_colpali_smol500_mv_frame"
         )
-        full_name = "video_colpali_smol500_mv_frame_schema_only_tenant_schema_only_tenant"
+        full_name = (
+            "video_colpali_smol500_mv_frame_schema_only_tenant_schema_only_tenant"
+        )
         deployed = backend.schema_manager.list_deployed_document_types()
         assert full_name in deployed, "setup failure — schema not deployed"
 
