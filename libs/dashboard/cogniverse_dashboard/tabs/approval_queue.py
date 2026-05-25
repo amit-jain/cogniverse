@@ -59,6 +59,7 @@ def render_approval_queue_tab():
 def _initialize_approval_agent():
     """Initialize approval agent with synthetic data configuration"""
     try:
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         # ApprovalStorageImpl needs the telemetry endpoints + tenant to scope
@@ -77,10 +78,13 @@ def _initialize_approval_agent():
             tenant_id=tenant_id,
         )
 
-        agent = HumanApprovalAgent(
+        # Auto-approval threshold comes from ApprovalConfig (typed single
+        # source of truth) instead of a hard-coded value.
+        approval_config = ApprovalConfig()
+        agent = HumanApprovalAgent.from_approval_config(
+            approval_config,
             confidence_extractor=confidence_extractor,
             feedback_handler=feedback_handler,
-            confidence_threshold=0.85,
             storage=storage,
         )
 

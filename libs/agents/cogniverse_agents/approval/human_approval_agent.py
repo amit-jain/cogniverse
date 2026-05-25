@@ -72,6 +72,27 @@ class HumanApprovalAgent:
             f"storage: {'configured' if storage else 'none'})"
         )
 
+    @classmethod
+    def from_approval_config(
+        cls,
+        approval_config: Any,
+        *,
+        confidence_extractor: ConfidenceExtractor,
+        feedback_handler: Optional[FeedbackHandler] = None,
+        storage: Optional[ApprovalStorage] = None,
+    ) -> "HumanApprovalAgent":
+        """Build an agent using the auto-approval threshold from an
+        ``ApprovalConfig`` (``cogniverse_foundation.config.unified_config``)
+        rather than a hard-coded value, so the threshold has a single typed
+        source of truth.
+        """
+        return cls(
+            confidence_extractor=confidence_extractor,
+            feedback_handler=feedback_handler,
+            confidence_threshold=approval_config.confidence_threshold,
+            storage=storage,
+        )
+
     async def process_batch(
         self, items: List[Dict[str, Any]], batch_id: str, context: Dict[str, Any]
     ) -> ApprovalBatch:

@@ -199,6 +199,37 @@ class TestHumanApprovalAgent:
         assert stats["overall_approval_rate"] == 0.5
         assert "avg_confidence" in stats
 
+    @pytest.mark.asyncio
+    async def test_from_approval_config_threshold_drives_auto_approval(self):
+        """The auto-approval threshold comes from ApprovalConfig and actually
+        gates auto-approval: an item at confidence 0.75 auto-approves under a
+        0.70 threshold but needs review under 0.80."""
+        from cogniverse_foundation.config.unified_config import ApprovalConfig
+
+        class _FixedConfidence:
+            def extract(self, data):
+                return 0.75
+
+        items = [{"query": "q"}]
+
+        agent_low = HumanApprovalAgent.from_approval_config(
+            ApprovalConfig(confidence_threshold=0.70),
+            confidence_extractor=_FixedConfidence(),
+        )
+        assert agent_low.threshold == 0.70
+        batch_low = await agent_low.process_batch(items, "b_low", {})
+        assert len(batch_low.auto_approved) == 1
+        assert len(batch_low.pending_review) == 0
+
+        agent_high = HumanApprovalAgent.from_approval_config(
+            ApprovalConfig(confidence_threshold=0.80),
+            confidence_extractor=_FixedConfidence(),
+        )
+        assert agent_high.threshold == 0.80
+        batch_high = await agent_high.process_batch(items, "b_high", {})
+        assert len(batch_high.auto_approved) == 0
+        assert len(batch_high.pending_review) == 1
+
 
 class TestFeedbackHandler:
     """Test SyntheticDataFeedbackHandler"""
