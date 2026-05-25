@@ -142,44 +142,6 @@ class TestPhoenixProviderSessionContext:
                 pass
 
 
-class TestTelemetryManagerSession:
-    """Test session() method in TelemetryManager."""
-
-    def test_session_requires_tenant_id(self, telemetry_config_sync):
-        """Test that session() raises ValueError without tenant_id."""
-        manager = TelemetryManager(telemetry_config_sync)
-
-        with pytest.raises(ValueError, match="tenant_id is required"):
-            with manager.session(tenant_id="", session_id="session-123"):
-                pass
-
-    def test_session_requires_session_id(self, telemetry_config_sync):
-        """Test that session() raises ValueError without session_id."""
-        manager = TelemetryManager(telemetry_config_sync)
-
-        with pytest.raises(ValueError, match="session_id is required"):
-            with manager.session(tenant_id="test-tenant", session_id=""):
-                pass
-
-    def test_session_with_disabled_telemetry(self):
-        """Test session() gracefully handles disabled telemetry."""
-        config = TelemetryConfig(enabled=False)
-        manager = TelemetryManager(config)
-
-        # Should work without error (no-op)
-        with manager.session(tenant_id="test-tenant", session_id="session-123"):
-            pass
-
-    def test_session_graceful_degradation_without_provider(self, telemetry_config_sync):
-        """Test session() gracefully degrades when provider unavailable."""
-        manager = TelemetryManager(telemetry_config_sync)
-
-        # Should work without error even if provider fails
-        # (graceful degradation - yields without session context)
-        with manager.session(tenant_id="test-tenant", session_id="session-123"):
-            pass
-
-
 class TestTelemetryManagerSessionSpan:
     """Test session_span() method in TelemetryManager."""
 

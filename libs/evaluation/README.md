@@ -29,7 +29,6 @@ cogniverse_evaluation/
 │   ├── _media_helpers.py    # Shared source_url resolution + frame extraction
 │   ├── reference_free.py    # Reference-free evaluation
 │   └── routing_evaluator.py # Routing agent evaluation
-├── inspect_tasks/           # Inspect AI task definitions
 ├── metrics/                 # Evaluation metrics
 │   ├── custom.py            # Custom metric definitions
 │   └── reference_free.py    # Reference-free metrics
@@ -83,12 +82,14 @@ Standardized metrics for evaluation:
 - Coherence and consistency scoring
 - Fluency and readability metrics
 
-### Inspect AI Integration (`cogniverse_evaluation.inspect_tasks`)
+### Inspect AI Integration (`cogniverse_evaluation.core`)
 
-Integration with Inspect AI framework:
-- Task definitions for LLM evaluation
-- Automated test suite generation
-- Benchmark integration
+Integration with the Inspect AI framework lives in `core/task.py`
+(`evaluation_task` builds the Inspect `Task`), `core/solvers.py`, and
+`core/inspect_scorers.py`:
+- Inspect `Task` construction per evaluation mode (experiment/batch/live)
+- Retrieval/batch/live solvers
+- Configured Inspect scorers
 - Result analysis and reporting
 
 ### Span Evaluation (`cogniverse_evaluation.span_evaluator`)

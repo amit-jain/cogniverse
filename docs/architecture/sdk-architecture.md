@@ -249,7 +249,6 @@ cogniverse_evaluation/
 ├── core/           # Tasks, solvers, scorers, experiment tracking
 ├── data/           # Datasets, storage, traces
 ├── evaluators/     # LLM judge, visual judge, routing evaluator, etc.
-├── inspect_tasks/  # Inspect AI video retrieval tasks
 ├── metrics/        # Custom and reference-free metrics
 ├── plugins/        # Video, document, visual analyzers
 └── providers/      # EvaluationProvider abstraction and registry

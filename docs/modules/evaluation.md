@@ -52,10 +52,6 @@ libs/evaluation/cogniverse_evaluation/
 │   ├── video_analyzer.py                # Video schema analyzer
 │   ├── document_analyzer.py             # Document schema analyzer
 │   └── visual_evaluator.py              # Visual evaluator plugin
-├── inspect_tasks/                       # Pre-built Inspect AI tasks
-│   ├── video_retrieval.py               # Video retrieval tasks
-│   ├── scorers.py                       # Task-specific scorers
-│   └── solvers.py                       # Task-specific solvers
 └── analysis/                            # Analysis utilities
     └── root_cause_analysis.py           # Root cause analysis
 ```
@@ -2280,38 +2276,6 @@ live_solver = create_live_solver(
     }
 )
 ```
-
-### Inspect Tasks (inspect_tasks/)
-
-Pre-built Inspect AI tasks for video evaluation:
-
-```python
-from cogniverse_evaluation.inspect_tasks.video_retrieval import (
-    video_retrieval_accuracy,
-    temporal_understanding,
-    multimodal_alignment
-)
-
-# Video retrieval evaluation
-task = video_retrieval_accuracy(
-    profiles=["video_colpali_smol500_mv_frame"],
-    strategies=["hybrid_float_bm25"],
-    dataset_path="data/golden_queries.csv"
-)
-
-# Temporal understanding evaluation
-temporal_task = temporal_understanding(
-    profiles=["video_videoprism_lvt_base_sv_global"],
-    dataset_path="data/temporal_queries.csv"
-)
-
-# Cross-modal alignment
-alignment_task = multimodal_alignment(
-    profiles=["video_colpali_smol500_mv_frame"]
-)
-```
-
----
 
 ## Plugin System
 

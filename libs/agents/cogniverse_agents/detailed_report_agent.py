@@ -159,26 +159,6 @@ class ReportRequest:
 
 
 @dataclass
-class EnhancedReportRequest:
-    """Enhanced report request with relationship context"""
-
-    original_query: str
-    enhanced_query: Optional[str]
-    search_results: List[Dict[str, Any]]
-    entities: List[Dict[str, Any]]
-    relationships: List[Dict[str, Any]]
-    routing_metadata: Dict[str, Any]
-    routing_confidence: float
-    report_type: str = "comprehensive"
-    include_visual_analysis: bool = True
-    include_technical_details: bool = True
-    include_recommendations: bool = True
-    max_results_to_analyze: int = 20
-    context: Optional[Dict[str, Any]] = None
-    focus_on_relationships: bool = True
-
-
-@dataclass
 class ThinkingPhase:
     """Agent's thinking process for report generation"""
 
