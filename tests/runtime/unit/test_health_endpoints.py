@@ -51,11 +51,11 @@ class TestLivenessProbe:
 class TestReadinessProbe:
     @patch("cogniverse_runtime.routers.health.BackendRegistry")
     def test_readiness_no_backends(self, mock_registry_cls, health_client):
-        """GET /health/ready returns not_ready when no backends registered."""
+        """GET /health/ready returns 503 + not_ready when no backends registered."""
         mock_registry_cls.get_instance.return_value.list_backends.return_value = []
 
         resp = health_client.get("/health/ready")
-        assert resp.status_code == 200
+        assert resp.status_code == 503
         data = resp.json()
         assert data["status"] == "not_ready"
         assert "reason" in data

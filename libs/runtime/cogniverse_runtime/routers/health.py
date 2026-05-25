@@ -4,6 +4,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -47,16 +48,21 @@ async def liveness_probe() -> Dict[str, str]:
 
 
 @router.get("/health/ready")
-async def readiness_probe() -> Dict[str, Any]:
-    """Kubernetes readiness probe - checks if service is ready to accept traffic."""
+async def readiness_probe() -> Any:
+    """Kubernetes readiness probe - checks if service is ready to accept traffic.
+
+    Returns HTTP 503 when not ready so a k8s readinessProbe (which gates on
+    the status code, not the body) actually keeps the pod out of the Service
+    until backends are registered.
+    """
     backend_registry = BackendRegistry.get_instance()
     backends = backend_registry.list_backends()
 
     if not backends:
-        return {
-            "status": "not_ready",
-            "reason": "No backends registered",
-        }
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "reason": "No backends registered"},
+        )
 
     return {
         "status": "ready",

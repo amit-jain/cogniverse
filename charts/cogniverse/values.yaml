@@ -375,7 +375,10 @@ runtime:
 
   readinessProbe:
     httpGet:
-      path: /health/live
+      # /health/ready is a lightweight in-memory backend-registration check
+      # (returns 503 until backends register) — unlike the heavy /health
+      # endpoint, so it won't stall under DSPy/CPU-LLM load.
+      path: /health/ready
       port: 8000
     initialDelaySeconds: 30
     periodSeconds: 15
