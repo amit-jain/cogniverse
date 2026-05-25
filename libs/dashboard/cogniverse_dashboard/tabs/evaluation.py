@@ -10,11 +10,21 @@ import requests
 import streamlit as st
 
 
+def _phoenix_base_url() -> str:
+    """Phoenix base URL from the dashboard's configured telemetry URL.
+
+    The app shell sets ``st.session_state["phoenix_url"]`` from the system
+    config's ``telemetry_url``; fall back to the local default only when the
+    tab is rendered outside that shell.
+    """
+    return st.session_state.get("phoenix_url") or "http://localhost:6006"
+
+
 def query_phoenix_graphql(query: str) -> Dict[str, Any]:
     """Execute a GraphQL query against Phoenix"""
     try:
         response = requests.post(
-            "http://localhost:6006/graphql",
+            f"{_phoenix_base_url()}/graphql",
             json={"query": query},
             headers={"Content-Type": "application/json"},
         )
@@ -71,7 +81,7 @@ def get_phoenix_datasets() -> List[Dict[str, Any]]:
 def get_experiment_runs(experiment_id: str) -> Dict[str, Any]:
     """Get experiment runs using Phoenix REST API"""
     try:
-        response = requests.get(f"http://localhost:6006/v1/experiments/{experiment_id}")
+        response = requests.get(f"{_phoenix_base_url()}/v1/experiments/{experiment_id}")
         if response.status_code == 200:
             return response.json()
         else:
@@ -122,7 +132,7 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
     try:
         # Use the correct API endpoint: /v1/datasets/{dataset_id}/experiments
         response = requests.get(
-            f"http://localhost:6006/v1/datasets/{dataset_id}/experiments"
+            f"{_phoenix_base_url()}/v1/datasets/{dataset_id}/experiments"
         )
         if response.status_code == 200:
             experiments_response = response.json()
@@ -148,14 +158,14 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
         try:
             # Use the /json endpoint which has the actual run data
             response = requests.get(
-                f"http://localhost:6006/v1/experiments/{exp_id}/json"
+                f"{_phoenix_base_url()}/v1/experiments/{exp_id}/json"
             )
             if response.status_code == 200:
                 runs = response.json()
 
                 # Get experiment metadata
                 meta_response = requests.get(
-                    f"http://localhost:6006/v1/experiments/{exp_id}"
+                    f"{_phoenix_base_url()}/v1/experiments/{exp_id}"
                 )
                 exp_metadata = {}
                 if meta_response.status_code == 200:
@@ -308,11 +318,11 @@ def render_evaluation_tab():
         st.metric("Created", created_date)
     with col3:
         st.markdown(
-            f"[View in Phoenix](http://localhost:6006/datasets/{selected_dataset['id']})"
+            f"[View in Phoenix]({_phoenix_base_url()}/datasets/{selected_dataset['id']})"
         )
 
     # Phoenix comparison link
-    compare_url = f"http://localhost:6006/datasets/{selected_dataset['id']}/compare"
+    compare_url = f"{_phoenix_base_url()}/datasets/{selected_dataset['id']}/compare"
     st.info(f"📊 **[Open Full Phoenix Comparison View]({compare_url})**")
 
     # Load all experiment data for this dataset
