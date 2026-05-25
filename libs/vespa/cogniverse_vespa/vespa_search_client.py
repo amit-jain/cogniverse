@@ -922,63 +922,6 @@ class VespaVideoSearchClient:
             speed_priority=speed_priority,
         ).value
 
-    def benchmark_strategies(
-        self,
-        query_params: Dict[str, Any],
-        embeddings: Optional[np.ndarray] = None,
-        strategies: Optional[List[str]] = None,
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Benchmark multiple ranking strategies on the same query.
-
-        Args:
-            query_params: Query parameters (without ranking strategy)
-            embeddings: Visual embeddings if available
-            strategies: List of strategies to test (default: all applicable)
-
-        Returns:
-            Dict mapping strategy names to results and performance metrics
-        """
-        import time
-
-        if strategies is None:
-            # Default to strategies that work with/without embeddings
-            if embeddings is not None:
-                strategies = [s.value for s in RankingStrategy]
-            else:
-                strategies = [RankingStrategy.BM25_ONLY.value]
-
-        results = {}
-        base_params = query_params.copy()
-
-        for strategy in strategies:
-            try:
-                start_time = time.time()
-
-                # Skip strategies requiring embeddings if not provided
-                strategy_info = RankingStrategy.get_strategy_info()[strategy]
-                if strategy_info["requires_embeddings"] != "No" and embeddings is None:
-                    continue
-
-                # Execute search
-                search_params = base_params.copy()
-                search_params["ranking"] = strategy
-                search_results = self.search(search_params, embeddings)
-
-                end_time = time.time()
-
-                results[strategy] = {
-                    "results": search_results,
-                    "response_time": end_time - start_time,
-                    "result_count": len(search_results),
-                    "strategy_info": strategy_info,
-                }
-
-            except Exception as e:
-                results[strategy] = {"error": str(e), "strategy_info": strategy_info}
-
-        return results
-
     def _build_time_filters(
         self, start_date: Optional[str], end_date: Optional[str]
     ) -> List[str]:

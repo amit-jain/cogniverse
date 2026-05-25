@@ -5,7 +5,7 @@ Converts JSON schema definitions to PyVespa objects
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from vespa.package import (
     Document,
@@ -187,42 +187,3 @@ class JsonSchemaParser:
             error_msg = f"Failed to load schema from {json_file_path}: {str(e)}"
             self.logger.error(error_msg)
             raise RuntimeError(error_msg)
-
-    def load_schema_from_json_string(self, json_string: str) -> Schema:
-        """Load and parse schema from JSON string"""
-
-        try:
-            schema_config = json.loads(json_string)
-            return self.parse_schema(schema_config)
-
-        except Exception as e:
-            error_msg = f"Failed to parse JSON schema: {str(e)}"
-            self.logger.error(error_msg)
-            raise RuntimeError(error_msg)
-
-    def validate_schema_config(self, schema_config: Dict[str, Any]) -> List[str]:
-        """Validate schema configuration and return list of errors"""
-
-        errors = []
-
-        if "name" not in schema_config:
-            errors.append("Schema must have a 'name' field")
-
-        if "document" not in schema_config:
-            errors.append("Schema must have a 'document' field")
-        else:
-            doc_config = schema_config["document"]
-            if "fields" not in doc_config:
-                errors.append("Document must have a 'fields' array")
-            elif not isinstance(doc_config["fields"], list):
-                errors.append("Document 'fields' must be an array")
-
-        if "rank_profiles" in schema_config:
-            if not isinstance(schema_config["rank_profiles"], list):
-                errors.append("'rank_profiles' must be an array")
-            else:
-                for i, rp in enumerate(schema_config["rank_profiles"]):
-                    if "name" not in rp:
-                        errors.append(f"Rank profile {i} must have a 'name' field")
-
-        return errors

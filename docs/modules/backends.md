@@ -74,9 +74,8 @@ libs/vespa/cogniverse_vespa/
 ├── registry/
 │   ├── __init__.py
 │   └── adapter_store.py            # Adapter registry storage
-├── search_backend.py               # Search backend implementation
+├── search_backend.py               # Tenant-scoped search backend (VespaSearchBackend)
 ├── strategy_aware_processor.py     # Strategy-aware processing
-├── tenant_aware_search_client.py   # Tenant-aware search wrapper
 ├── vespa_schema_manager.py         # Multi-tenant schema management
 ├── vespa_search_client.py          # Search operations
 └── workflow/
@@ -1275,7 +1274,7 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_core.registries.backend_registry import get_backend_registry
 
-# Basic initialization (for read_sd_file, parse_sd_schema, get_tenant_schema_name only)
+# Basic initialization (for get_tenant_schema_name and JSON schema uploads only)
 schema_manager = VespaSchemaManager(
     backend_endpoint="http://localhost",  # REQUIRED
     backend_port=8080                      # REQUIRED
@@ -1298,15 +1297,16 @@ schema_manager = backend.schema_manager  # Already has schema_registry, schema_l
 #### Key Methods
 
 ```python
-# Read and parse a Vespa schema definition file (.sd files)
-# Note: .sd files are Vespa's native schema format, typically exported from
-# a running Vespa instance or written manually. Schema configurations in
-# configs/schemas/ are JSON format used by the ingestion pipeline.
-sd_content = schema_manager.read_sd_file("path/to/exported_schema.sd")
+# Deploy metadata schemas (organization/tenant) for multi-tenant management.
+# Schema-aware: preserves existing tenant schemas to avoid Vespa removal errors.
+schema_manager.upload_metadata_schemas(app_name="cogniverse")
 
-# Parse .sd content to pyvespa Schema object
-schema = schema_manager.parse_sd_schema(sd_content)
-# Returns: pyvespa Schema object for use with ApplicationPackage
+# Deploy content-type schemas together in one application package
+schema_manager.upload_content_type_schemas(
+    app_name="contenttypes",
+    schemas=["image_content", "audio_content", "document_visual", "document_text"],
+)
+# Schema definitions live in configs/schemas/ as JSON (single source of truth).
 
 # Get tenant-specific schema name (colon in tenant_id converted to underscore)
 schema_name = schema_manager.get_tenant_schema_name(
@@ -1670,24 +1670,24 @@ Base schemas are stored in `configs/schemas/`:
 
 ```python
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-# Parse JSON schema
+# Parse JSON schema (pyvespa Schema object) directly when needed
 parser = JsonSchemaParser()
 schema = parser.load_schema_from_json_file(
     "configs/schemas/video_colpali_smol500_mv_frame_schema.json"
 )
 
-# Deploy schema
-schema_manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=19071  # Config server port
+# Deploy a tenant-scoped schema — primary entry point.
+# deploy_schema() loads the base JSON definition, transforms it to a
+# tenant-specific schema, and deploys it via the backend.
+registry = SchemaRegistry(...)  # constructed with backend + schema_loader
+tenant_schema_name = registry.deploy_schema(
+    tenant_id="acme:production",
+    base_schema_name="video_colpali_smol500_mv_frame",
 )
-
-schema_manager.upload_schema_from_json_file(
-    json_file_path="configs/schemas/video_colpali_smol500_mv_frame_schema.json",
-    app_name="cogniverse"
-)
+# Returns the deployed tenant schema name, e.g.
+# "video_colpali_smol500_mv_frame_acme_production"
 ```
 
 ---
@@ -2497,56 +2497,52 @@ print(strategy.query_tensors_needed)    # ["qt"]
 
 ---
 
-## TenantAwareVespaSearchClient
+## Tenant-Scoped Search via VespaSearchBackend
 
-**Location:** `tenant_aware_search_client.py`
+**Location:** `search_backend.py`
 
-Wrapper providing automatic tenant schema routing with lazy creation.
+`VespaSearchBackend` is the tenant-scoped search entry point. Tenant isolation is
+enforced per query: `tenant_id` is required in the `query_dict` passed to `search()`,
+and the backend resolves the tenant-specific schema name before issuing the Vespa
+query.
 
 ### Key Features
 
+- Per-query tenant scoping: `tenant_id` is **required** in `query_dict`
 - Automatic schema name resolution: `base_schema + tenant_id → tenant_schema`
-- Lazy schema creation on first use
-- Transparent delegation to VespaVideoSearchClient
-- Thread-safe tenant isolation
+- Schema/profile resolved at query time when constructed with `config`
+- Thread-safe profile management
 
 ### Usage
 
 ```python
-from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-client = TenantAwareVespaSearchClient(
-    tenant_id="acme",                              # REQUIRED
-    base_schema_name="video_colpali_smol500_mv_frame",
-    config_manager=config_manager,                 # REQUIRED (DI)
-    schema_loader=schema_loader,                   # REQUIRED (DI)
-    backend_url="http://localhost",
-    backend_port=8080,
-    auto_create_schema=True  # Deploy if not exists
+backend = VespaSearchBackend(
+    config=backend_config,        # preferred; carries url/port/profiles
+    query_encoder=query_encoder,
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# All methods automatically use tenant schema
-results = client.search(
-    query_text="robots playing soccer",
-    strategy="hybrid_float_bm25",
-    top_k=10
-)
-# Searches: video_colpali_smol500_mv_frame_acme
-
-# Hybrid search with embeddings
-results = client.hybrid_search(
-    query_text="cooking tutorial",
-    query_embedding=embedding_array,
-    strategy="hybrid_float_bm25",
-    top_k=10
-)
+# tenant_id is REQUIRED in query_dict; search() raises if it is missing
+results = backend.search({
+    "query": "robots playing soccer",
+    "tenant_id": "acme",                                # REQUIRED
+    "schema": "video_colpali_smol500_mv_frame",         # base schema name
+    "profile": "video_colpali_smol500_mv_frame",
+    "strategy": "hybrid_float_bm25",
+    "top_k": 10,
+})
+# Searches tenant-scoped schema: video_colpali_smol500_mv_frame_acme
 ```
 
 ### Schema Resolution
 
 ```python
-# Pattern: {base_schema}_{tenant_id}
-client.tenant_schema_name  # "video_colpali_smol500_mv_frame_acme"
+# Pattern: {base_schema}_{tenant_id} (colon in tenant_id replaced with underscore)
+# Input: tenant_id="acme", base schema "video_colpali_smol500_mv_frame"
+# Result: "video_colpali_smol500_mv_frame_acme"
 
 # For org:tenant format
 # Input: tenant_id="acme:production"

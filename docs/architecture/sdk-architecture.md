@@ -1038,7 +1038,9 @@ from cogniverse_core.common.tenant_utils import (
 ```python
 # Tenant management
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient
+
+# Tenant-scoped search backend (tenant_id required per query)
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Search clients
 from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient

@@ -114,7 +114,7 @@ Foundation Layer
 
 **Key Files**:
 
-- `libs/vespa/cogniverse_vespa/tenant_aware_search_client.py` — TenantAwareVespaSearchClient
+- `libs/vespa/cogniverse_vespa/search_backend.py` — VespaSearchBackend (tenant-scoped search, tenant_id required per query)
 - `libs/vespa/cogniverse_vespa/vespa_schema_manager.py` — VespaSchemaManager (schema-per-tenant)
 - `libs/synthetic/cogniverse_synthetic/service.py` — Synthetic data generation
 

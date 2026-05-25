@@ -306,17 +306,18 @@ exists = manager.tenant_schema_exists(
     base_schema_name="video_colpali_smol500_mv_frame"
 )
 
-# Deploy schema from JSON definition
-manager.deploy_schema_from_json(
-    schema_json=schema_definition,
-    app_name="cogniverse"
-)
+# Deploy a tenant-scoped schema from its JSON base definition.
+# SchemaRegistry.deploy_schema() is the primary entry point: it loads the
+# base JSON schema from configs/schemas/, transforms it to a tenant-specific
+# schema, and deploys via the backend.
+from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-# Or deploy from JSON file
-manager.upload_schema_from_json_file(
-    json_file_path="configs/schemas/video_colpali_smol500_mv_frame_schema.json",
-    app_name="cogniverse"
+registry = SchemaRegistry(...)  # constructed with backend + schema_loader
+tenant_schema_name = registry.deploy_schema(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame",
 )
+# Returns: "video_colpali_smol500_mv_frame_acme"
 
 # Delete all schemas for a tenant (unregisters from registry + redeploys to Vespa)
 deleted = manager.delete_tenant_schemas(tenant_id="acme")
@@ -327,8 +328,7 @@ deleted = manager.delete_tenant_schemas(tenant_id="acme")
 - `get_tenant_schema_name(tenant_id, base_schema_name)` - Generate tenant schema name
 - `tenant_schema_exists(tenant_id, base_schema_name)` - Check schema existence
 - `delete_tenant_schemas(tenant_id)` - Unregister tenant schemas and immediately redeploy to Vespa with `allow_schema_removal=True`
-- `deploy_schema_from_json(schema_json, app_name)` - Deploy from dict
-- `upload_schema_from_json_file(json_file_path, app_name)` - Deploy from file
+- `SchemaRegistry.deploy_schema(tenant_id, base_schema_name)` - Primary entry point for deploying a tenant-scoped schema from its JSON base definition
 
 ### Profile to Schema Mapping
 

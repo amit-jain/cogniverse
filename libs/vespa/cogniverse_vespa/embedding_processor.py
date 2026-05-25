@@ -156,14 +156,3 @@ class VespaEmbeddingProcessor:
 
         hex_list = [float_to_bfloat16_hex(float(val)) for val in arr_f32]
         return "".join(hex_list)
-
-    def _numpy_to_hex_float32(self, array: np.ndarray) -> str:
-        """Convert numpy array to hex-encoded 32-bit float format for tensor<float>"""
-        arr_f32 = np.asarray(array, dtype=np.float32).flatten()
-
-        def float_to_float32_hex(f: float) -> str:
-            packed_float = struct.pack("=f", f)
-            return hexlify(packed_float).decode("utf-8").upper()
-
-        hex_list = [float_to_float32_hex(float(val)) for val in arr_f32]
-        return "".join(hex_list)

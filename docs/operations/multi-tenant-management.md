@@ -25,7 +25,7 @@ flowchart TB
     Client --> Agents["<span style='color:#000'>Multi-Tenant Agents</span>"]
 
     TenantAPI --> TenantMgr["<span style='color:#000'>VespaSchemaManager</span>"]
-    Agents --> TenantSearch["<span style='color:#000'>TenantAwareVespaSearchClient</span>"]
+    Agents --> TenantSearch["<span style='color:#000'>VespaSearchBackend</span>"]
 
     TenantMgr --> OrgMeta[("<span style='color:#000'>organization_metadata</span>")]
     TenantMgr --> TenantMeta[("<span style='color:#000'>tenant_metadata</span>")]
@@ -456,30 +456,23 @@ sequenceDiagram
 sequenceDiagram
     participant Client
     participant Agent as SearchAgent
-    participant SearchClient as TenantAwareVespaSearchClient
-    participant Parser as parse_tenant_id()
-    participant SchemaManager as VespaSchemaManager
+    participant Backend as VespaSearchBackend
     participant Vespa
 
     Client->>Agent: search(query="tutorial",<br/>tenant_id="acme:production")
 
-    Agent->>SearchClient: search(query, tenant_id)
+    Agent->>Backend: search({query, tenant_id, schema, profile})
 
-    SearchClient->>Parser: parse_tenant_id("acme:production")
-    Parser-->>SearchClient: ("acme", "production")
-
-    alt Invalid tenant_id
-        Parser-->>SearchClient: ValueError
-        SearchClient-->>Client: 400 Bad Request
+    alt tenant_id missing from query_dict
+        Backend-->>Client: ValueError (tenant_id required)
     end
 
-    SearchClient->>SchemaManager: get_tenant_schema_name(tenant_id, base_schema_name)
-    SchemaManager-->>SearchClient: "video_colpali_smol500_mv_frame_acme_production"
+    Note over Backend: Apply tenant scoping —<br/>replace ":" with "_",<br/>build base_schema + "_" + safe_tenant_id
 
-    SearchClient->>Vespa: Query schema:<br/>video_colpali_acme_production
-    Vespa-->>SearchClient: Results (isolated to tenant)
+    Backend->>Vespa: Query schema:<br/>video_colpali_smol500_mv_frame_acme_production
+    Vespa-->>Backend: Results (isolated to tenant)
 
-    SearchClient-->>Agent: Search results
+    Backend-->>Agent: Search results
     Agent-->>Client: Results
 ```
 
@@ -579,45 +572,44 @@ schema_name = schema_manager.get_tenant_schema_name(
 # Returns: "video_colpali_smol500_mv_frame_acme_production"
 ```
 
-### TenantAwareVespaSearchClient
+### VespaSearchBackend (Tenant-Scoped Search)
 
-**Location**: `libs/vespa/cogniverse_vespa/tenant_aware_search_client.py` (implementation layer)
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (implementation layer)
 
-**Purpose**: Automatic tenant-aware query routing ensuring all search operations are isolated to the correct tenant schema.
+**Purpose**: Tenant-scoped search entry point ensuring all search operations are isolated to the correct tenant schema.
 
 **Key Responsibilities**:
 
-- Parse and validate tenant_id from requests
-- Route queries to tenant-specific schemas
+- Require `tenant_id` in every `query_dict` (raises if missing)
+- Route queries to tenant-specific schemas (`base_schema + "_" + tenant_id`)
 - Prevent cross-tenant data access
-- Handle tenant-not-found errors
 
 **Usage**:
 ```python
-from cogniverse_vespa.tenant_aware_search_client import TenantAwareVespaSearchClient  # Implementation layer
+from cogniverse_vespa.search_backend import VespaSearchBackend  # Implementation layer
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# Initialize dependencies (all REQUIRED)
+# Initialize dependencies
 config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))  # REQUIRED for schema operations
+schema_loader = FilesystemSchemaLoader(base_path=Path("configs/schemas"))
 
-search_client = TenantAwareVespaSearchClient(
-    tenant_id="acme:production",
-    base_schema_name="video_colpali_smol500_mv_frame",
+backend = VespaSearchBackend(
+    config=backend_config,        # carries url/port/profiles
     config_manager=config_manager,
     schema_loader=schema_loader,
-    backend_url="http://localhost",
-    backend_port=8080
 )
 
-# Search with automatic tenant isolation
-results = search_client.search(
-    query_text="machine learning tutorial",
-    strategy="hybrid_float_bm25",
-    top_k=10
-)
+# tenant_id is REQUIRED in query_dict; search() raises if it is missing
+results = backend.search({
+    "query": "machine learning tutorial",
+    "tenant_id": "acme:production",                  # REQUIRED
+    "schema": "video_colpali_smol500_mv_frame",      # base schema name
+    "profile": "video_colpali_smol500_mv_frame",
+    "strategy": "hybrid_float_bm25",
+    "top_k": 10,
+})
 # Automatically routes to: video_colpali_smol500_mv_frame_acme_production
 ```
 
@@ -815,7 +807,7 @@ curl -X DELETE http://localhost:9000/admin/tenants/acme:staging
 
 - **Schema-per-tenant**: Each tenant has dedicated Vespa schemas
 - **No shared schemas**: Zero possibility of cross-tenant data leakage
-- **Automatic routing**: TenantAwareVespaSearchClient enforces tenant boundaries
+- **Automatic routing**: VespaSearchBackend enforces tenant boundaries
 - **Validation at entry**: All API requests validate tenant_id before processing
 
 ### Storage Isolation

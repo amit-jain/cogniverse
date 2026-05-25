@@ -27,9 +27,10 @@ schema_manager = VespaSchemaManager(
     backend_endpoint="http://localhost",
     backend_port=8080
 )
-# Note: VespaSchemaManager provides read_sd_file() and parse_sd_schema() methods
-# for parsing .sd schema files. Tenant-specific schema naming is handled at
-# the application level when deploying schemas.
+# Note: Schemas are defined as JSON in configs/schemas/. SchemaRegistry.deploy_schema(
+# tenant_id, base_schema_name) is the primary path for deploying a tenant-scoped
+# schema; it loads the JSON base definition and transforms it per tenant.
+# VespaSchemaManager.get_tenant_schema_name() resolves the tenant schema name.
 schema_name = "video_colpali_smol500_mv_frame_customer_a"
 
 # 2. Deploy to Vespa

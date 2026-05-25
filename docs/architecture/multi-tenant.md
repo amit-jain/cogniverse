@@ -349,25 +349,24 @@ The Schema Manager handles tenant-specific backend schema lifecycle. The Vespa i
 - **Thread-Safe**: Concurrent tenant schema operations
 - **Schema Naming**: Utilities for generating tenant-specific schema names
 - **Validation**: Schema and tenant ID validation
-- **Schema Parsing**: Read and parse Vespa .sd schema files
+- **JSON Schema Loading**: Load schema definitions from `configs/schemas/` JSON files
 
 ### API Reference
 
-> **Note**: VespaSchemaManager provides low-level schema parsing and deployment utilities.
-> Tenant-specific schema naming conventions are handled at the application layer.
+> **Note**: Schemas are defined as JSON in `configs/schemas/`.
+> `SchemaRegistry.deploy_schema()` is the primary deployment entry point;
+> `VespaSchemaManager` provides tenant naming and JSON schema uploads.
 
-#### Schema Parsing
+#### Loading a JSON Schema
 
 ```python
-schema_manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080
-)
+from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
-# Read and parse a Vespa .sd schema file (if using .sd format)
-# Note: Current schemas in configs/schemas/ are JSON format
-sd_content = schema_manager.read_sd_file("path/to/schema.sd")
-schema = schema_manager.parse_sd_schema(sd_content)
+# Schemas in configs/schemas/ are JSON; parse to a pyvespa Schema object
+parser = JsonSchemaParser()
+schema = parser.load_schema_from_json_file(
+    "configs/schemas/video_colpali_smol500_mv_frame_schema.json"
+)
 ```
 
 #### Tenant Schema Naming Convention
@@ -386,33 +385,28 @@ schema_name = schema_manager.get_tenant_schema_name("acme", "video_colpali_smol5
 
 #### Schema Deployment
 
-VespaSchemaManager provides schema parsing; deployment is done via pyvespa:
+`SchemaRegistry.deploy_schema()` is the primary entry point. It loads the base
+JSON schema, transforms it to a tenant-specific schema, collects all existing
+schemas (cross-tenant), and deploys the complete set via the backend:
 
 ```python
-from vespa.package import ApplicationPackage
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_core.registries.schema_registry import SchemaRegistry
 
-# 1. Parse the base schema
-schema_manager = VespaSchemaManager(
-    backend_endpoint="http://localhost",
-    backend_port=8080
+registry = SchemaRegistry(...)  # constructed with backend + schema_loader
+tenant_schema_name = registry.deploy_schema(
+    tenant_id="acme",
+    base_schema_name="video_colpali_smol500_mv_frame",
 )
-schema = schema_manager.parse_sd_schema(sd_content)
-
-# 2. Create application package with tenant-specific name
-tenant_schema_name = f"video_colpali_smol500_mv_frame_{tenant_id}"
-app_package = ApplicationPackage(name=tenant_schema_name)
-
-# 3. Deploy via Vespa client
-vespa_connection.deploy(app_package)
+# Returns: "video_colpali_smol500_mv_frame_acme"
 ```
 
-**Deployment Steps**:
+**Deployment Steps** (handled internally by `deploy_schema()`):
 
-1. Load base schema from `configs/schemas/`
-2. Parse via VespaSchemaManager.parse_sd_schema()
-3. Create tenant-prefixed ApplicationPackage
-4. Deploy via pyvespa
+1. Validate inputs and check whether the schema is already deployed
+2. Load the base JSON schema definition from `configs/schemas/`
+3. Transform it to a tenant-specific schema
+4. Collect all existing schemas (cross-tenant) and deploy the complete set
+5. Register the newly deployed schema
 
 #### Listing Schemas
 
