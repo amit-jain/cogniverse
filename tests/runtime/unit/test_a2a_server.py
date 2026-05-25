@@ -11,7 +11,14 @@ import pytest
 from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCapabilities, AgentCard, AgentSkill, Message, TextPart
+from a2a.types import (
+    AgentCapabilities,
+    AgentCard,
+    AgentSkill,
+    Message,
+    TaskState,
+    TextPart,
+)
 from starlette.testclient import TestClient
 
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
@@ -461,3 +468,71 @@ class TestExtractConversationHistory:
         assert len(result) == 2
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "agent"
+
+
+class _CapturingQueue:
+    """Minimal EventQueue stand-in that records enqueued events in order."""
+
+    def __init__(self):
+        self.events = []
+
+    async def enqueue_event(self, event):
+        self.events.append(event)
+
+
+class _FakeStreamAgent:
+    """Agent whose process(stream=True) yields a fixed list of event dicts."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def process(self, typed_input, stream=False):
+        events = self._events
+
+        async def _gen():
+            for e in events:
+                yield e
+
+        return _gen()
+
+
+@pytest.mark.asyncio
+class TestTerminalEventFinalFlag:
+    """A2A clients read the stream until final=True; terminal events must set it."""
+
+    async def test_non_streaming_emits_single_final_true(self, mock_dispatcher):
+        mock_dispatcher.dispatch = AsyncMock(
+            return_value={"status": "ok", "answer": "hi"}
+        )
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+
+        await executor._execute_non_streaming(
+            "summarizer_agent", "q", {}, 10, "task-1", "ctx-1", queue
+        )
+
+        assert len(queue.events) == 1
+        assert queue.events[0].final is True
+        assert queue.events[0].status.state == TaskState.input_required
+
+    async def test_streaming_marks_only_terminal_event_final(self, mock_dispatcher):
+        agent = _FakeStreamAgent(
+            [
+                {"type": "partial", "phase": "thinking", "data": {}},
+                {"type": "final", "data": {"summary": "done"}},
+            ]
+        )
+        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+
+        await executor._execute_streaming(
+            "summarizer_agent", "q", "test:unit", "task-1", "ctx-1", queue
+        )
+
+        assert len(queue.events) == 2
+        assert queue.events[0].final is False
+        assert queue.events[0].status.state == TaskState.working
+        assert queue.events[1].final is True
+        assert queue.events[1].status.state == TaskState.input_required
+        assert sum(1 for e in queue.events if e.final) == 1

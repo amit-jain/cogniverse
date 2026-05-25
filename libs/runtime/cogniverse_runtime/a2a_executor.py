@@ -68,8 +68,8 @@ class CogniverseAgentExecutor(AgentExecutor):
 
     Streaming: For agents with streaming capabilities, emits intermediate
     TaskStatusUpdateEvents (state=working, final=False) followed by a
-    final event (state=input_required, final=False for multi-turn).
-    Clients using /tasks/sendSubscribe receive these as SSE.
+    terminal event (state=input_required, final=True) that ends the SSE
+    stream. Clients using /tasks/sendSubscribe receive these as SSE.
 
     Multi-turn: When the same contextId is reused across calls,
     Task.history accumulates previous messages. This executor extracts
@@ -153,7 +153,7 @@ class CogniverseAgentExecutor(AgentExecutor):
         event = TaskStatusUpdateEvent(
             task_id=task_id,
             context_id=context_id,
-            final=False,
+            final=True,
             status=TaskStatus(
                 state=TaskState.input_required,
                 message=response_message,
@@ -209,7 +209,7 @@ class CogniverseAgentExecutor(AgentExecutor):
                 a2a_event = TaskStatusUpdateEvent(
                     task_id=task_id,
                     context_id=context_id,
-                    final=False,
+                    final=is_final,
                     status=TaskStatus(
                         state=state,
                         message=new_agent_text_message(event_text),
@@ -225,7 +225,7 @@ class CogniverseAgentExecutor(AgentExecutor):
             error_event = TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
-                final=False,
+                final=True,
                 status=TaskStatus(
                     state=TaskState.input_required,
                     message=new_agent_text_message(error_text),
