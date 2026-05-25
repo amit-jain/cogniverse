@@ -490,6 +490,30 @@ async def _submit_cron_workflow(manifest: dict) -> None:
         logger.error("Failed to submit CronWorkflow to Argo: %s", exc)
 
 
+async def _delete_cron_workflow(name: str, namespace: str) -> None:
+    """Delete a CronWorkflow from Argo. Logs on failure; does not raise.
+
+    A 404 from Argo means the CronWorkflow is already gone, which is the
+    desired end state, so it counts as success.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.delete(
+                f"{_argo_api_url}/api/v1/cronworkflows/{namespace}/{name}",
+                headers=_argo_auth_headers(),
+            )
+            if response.status_code in (200, 404):
+                logger.info("Deleted CronWorkflow: %s", name)
+            else:
+                logger.error(
+                    "Argo CronWorkflow delete failed (%s): %s",
+                    response.status_code,
+                    response.text[:500],
+                )
+    except Exception as exc:
+        logger.error("Failed to delete CronWorkflow from Argo: %s", exc)
+
+
 # Modes accepted by POST /{tenant_id}/optimize. Matches the `--mode` choices
 # declared by cogniverse_runtime.optimization_cli (minus `triggered` and
 # `cleanup`, which aren't intended for interactive dashboard use, and
@@ -895,7 +919,11 @@ async def list_jobs(tenant_id: str):
 
 @router.delete("/{tenant_id}/jobs/{job_id}")
 async def delete_job(tenant_id: str, job_id: str):
-    """Delete a scheduled job by ID."""
+    """Delete a scheduled job by ID.
+
+    Removes the backing Argo CronWorkflow (so it stops firing) and then
+    tombstones the ConfigStore entry. An already-deleted job returns 404.
+    """
     cm = _require_config_manager()
     entry = cm.store.get_config(
         tenant_id=tenant_id,
@@ -903,15 +931,21 @@ async def delete_job(tenant_id: str, job_id: str):
         service=_JOBS_SERVICE,
         config_key=f"job_{job_id}",
     )
-    if entry is None or not entry.config_value:
+    value = entry.config_value if entry is not None else None
+    if not isinstance(value, dict) or not value or value.get("deleted"):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    # Stop the schedule on the cluster before tombstoning the config — a
+    # config-only delete leaves the CronWorkflow firing indefinitely.
+    if _argo_api_url:
+        await _delete_cron_workflow(f"tenant-job-{tenant_id}-{job_id}", _argo_namespace)
 
     cm.set_config_value(
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
         service=_JOBS_SERVICE,
         config_key=f"job_{job_id}",
-        config_value={"deleted": True},
+        config_value={"job_id": job_id, "deleted": True},
     )
     logger.info("Deleted job %s for tenant %s", job_id, tenant_id)
     return {"status": "deleted", "job_id": job_id}

@@ -140,3 +140,41 @@ class TestArgoWiringRoundTrip:
         assert any(j.get("name") == "test_job" for j in jobs), (
             "Job should be persisted to ConfigStore even when Argo is unconfigured"
         )
+
+    def test_delete_job_removes_cron_workflow_and_tombstones(
+        self, monkeypatch, tenant_client
+    ):
+        """DELETE /jobs must remove the backing Argo CronWorkflow (not just
+        the config marker), and a repeat delete must 404. Pre-fix, delete
+        only wrote a config tombstone, so the CronWorkflow kept firing."""
+        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
+        _wire_argo_from_environment()
+
+        with patch(
+            "cogniverse_runtime.routers.tenant._submit_cron_workflow",
+            new_callable=AsyncMock,
+        ):
+            created = tenant_client.post(
+                "/admin/tenant/test_argo_del/jobs",
+                json={"name": "j", "schedule": "0 9 * * *", "query": "q"},
+            )
+        assert created.status_code == 200, created.text
+        job_id = created.json()["job_id"]
+
+        with patch(
+            "cogniverse_runtime.routers.tenant._delete_cron_workflow",
+            new_callable=AsyncMock,
+        ) as mock_delete:
+            resp = tenant_client.delete(f"/admin/tenant/test_argo_del/jobs/{job_id}")
+            assert resp.status_code == 200, resp.text
+            mock_delete.assert_awaited_once_with(
+                f"tenant-job-test_argo_del-{job_id}", tenant._argo_namespace
+            )
+
+        # Repeat delete must 404 (already tombstoned).
+        resp2 = tenant_client.delete(f"/admin/tenant/test_argo_del/jobs/{job_id}")
+        assert resp2.status_code == 404
+
+        # And it no longer appears in the listing.
+        listed = tenant_client.get("/admin/tenant/test_argo_del/jobs").json()["jobs"]
+        assert all(j["job_id"] != job_id for j in listed)
