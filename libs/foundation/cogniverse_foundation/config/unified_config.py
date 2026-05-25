@@ -58,6 +58,8 @@ class LLMEndpointConfig:
             result["adapter_path"] = self.adapter_path
         if self.extra_body is not None:
             result["extra_body"] = self.extra_body
+        if self.seed is not None:
+            result["seed"] = self.seed
         return result
 
     @classmethod

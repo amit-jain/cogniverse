@@ -65,3 +65,36 @@ class TestModelPassthrough:
         endpoint = LLMEndpointConfig(model="", api_base="http://x")
         with pytest.raises(ValueError, match="model is required"):
             create_dspy_lm(endpoint)
+
+
+class TestLLMEndpointConfigSerialization:
+    """to_dict()/from_dict() must round-trip every field that affects behavior."""
+
+    def test_seed_survives_round_trip(self):
+        cfg = LLMEndpointConfig(model="hosted_vllm/m", temperature=0.0, seed=1234)
+        assert cfg.to_dict()["seed"] == 1234
+        assert LLMEndpointConfig.from_dict(cfg.to_dict()).seed == 1234
+
+    def test_seed_omitted_when_none(self):
+        cfg = LLMEndpointConfig(model="hosted_vllm/m")
+        assert "seed" not in cfg.to_dict()
+        assert LLMEndpointConfig.from_dict(cfg.to_dict()).seed is None
+
+    def test_full_round_trip_preserves_behavioral_fields(self):
+        cfg = LLMEndpointConfig(
+            model="hosted_vllm/m",
+            api_base="http://x:8000/v1",
+            temperature=0.0,
+            max_tokens=2048,
+            extra_body={"reasoning": "auto"},
+            seed=7,
+        )
+        rt = LLMEndpointConfig.from_dict(cfg.to_dict())
+        assert (rt.model, rt.api_base, rt.temperature, rt.max_tokens) == (
+            "hosted_vllm/m",
+            "http://x:8000/v1",
+            0.0,
+            2048,
+        )
+        assert rt.extra_body == {"reasoning": "auto"}
+        assert rt.seed == 7
