@@ -37,6 +37,7 @@ import requests
 
 from cogniverse_agents.graph.graph_manager import GraphManager
 from cogniverse_agents.graph.graph_schema import Edge, normalize_name
+from tests.utils.vespa_test_helpers import schema_full_name
 
 logger = logging.getLogger(__name__)
 
@@ -173,10 +174,13 @@ pytestmark = [
 TENANT_ID = "test"
 VIDEO_ID = "marie_curie_30s"
 GRAPH_BASE_SCHEMA = "knowledge_graph"
-GRAPH_TENANT_SCHEMA = f"{GRAPH_BASE_SCHEMA}_{TENANT_ID}"
+# Deployed name mirrors SchemaRegistry.deploy_schema: tenant_id is
+# canonicalized ("test" -> "test:test") then ":" -> "_", so the suffix
+# is doubled ("..._test_test").
+GRAPH_TENANT_SCHEMA = schema_full_name(GRAPH_BASE_SCHEMA, TENANT_ID)
 
 CONTENT_BASE_FRAME = "video_colpali_smol500_mv_frame"
-CONTENT_TENANT_FRAME = f"{CONTENT_BASE_FRAME}_{TENANT_ID}"
+CONTENT_TENANT_FRAME = schema_full_name(CONTENT_BASE_FRAME, TENANT_ID)
 
 # The content doc this test PATCHes.
 FRAME_DOC_ID = f"{VIDEO_ID}__seg_3"
@@ -448,8 +452,15 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
         backend_url="http://localhost", backend_port=http_port
     )
     cm = ConfigManager(store=config_store)
+    # Empty telemetry endpoints so _lookup_artifact_manager returns None
+    # (no Phoenix init) — the ClaimExtractor here is stubbed anyway.
     cm.set_system_config(
-        SystemConfig(backend_url="http://localhost", backend_port=http_port)
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=http_port,
+            telemetry_url="",
+            telemetry_collector_endpoint="",
+        )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
@@ -470,12 +481,22 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
         return GraphManager(
             backend=backend,
             tenant_id=tenant_id,
-            schema_name=f"{GRAPH_BASE_SCHEMA}_{tenant_id}",
+            schema_name=schema_full_name(GRAPH_BASE_SCHEMA, tenant_id),
             colbert_endpoint_url=colbert_endpoint,
         )
 
     prior_factory = graph_router._graph_manager_factory
     graph_router.set_graph_manager_factory(_factory)
+
+    # Point the ConfigManager singleton (which DocExtractor consults for the
+    # GLiNER endpoint) at this fixture's config_manager. Its empty
+    # inference_service_urls make _discover_gliner_url return None so GLiNER
+    # loads locally instead of hitting the unresolvable in-cluster sidecar
+    # URL — otherwise entity extraction silently degrades and entity_ids drift.
+    import cogniverse_foundation.config.utils as _cfg_utils
+
+    _prev_singleton = _cfg_utils._config_manager_singleton
+    _cfg_utils._config_manager_singleton = cm
 
     yield {
         "http_port": http_port,
@@ -487,6 +508,7 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
         "config_port": shared_memory_vespa["config_port"],
     }
 
+    _cfg_utils._config_manager_singleton = _prev_singleton
     graph_router._graph_manager_factory = prior_factory
     if prior_vespa_url is None:
         os.environ.pop("VESPA_URL", None)
@@ -505,7 +527,12 @@ def content_backref_env(shared_memory_vespa, colbert_endpoint):
 
 
 def _content_doc_url(base_url: str, schema: str, doc_id: str) -> str:
-    return f"{base_url}/document/v1/{schema}/{schema}/docid/{doc_id}"
+    # Content docs live under the ``content`` namespace (the embedding feed
+    # writes ``id:content:<schema>::<id>``; see cogniverse_vespa
+    # ingestion_client/backend). The runtime back-ref PATCH targets
+    # ``/document/v1/content/<schema>/docid/<id>`` — seed + read here under
+    # the same namespace so the PATCH lands on the doc the test inspects.
+    return f"{base_url}/document/v1/content/{schema}/docid/{doc_id}"
 
 
 def _feed_empty_content_doc(
@@ -593,7 +620,9 @@ def _build_processing_results(*, schema: str, doc_id: str) -> Dict[str, Any]:
     }
 
 
-async def _run_extract(processing_results: Dict[str, Any]) -> Dict[str, Any]:
+async def _run_extract(
+    processing_results: Dict[str, Any], config_manager: Any
+) -> Dict[str, Any]:
     """Invoke ``_extract_graph_per_segment`` with a deterministic ClaimExtractor.
 
     Monkey-patches ``ClaimExtractor`` inside the routers module so the
@@ -618,6 +647,7 @@ async def _run_extract(processing_results: Dict[str, Any]) -> Dict[str, Any]:
             processing_results=processing_results,
             source_doc_id=VIDEO_ID,
             tenant_id=TENANT_ID,
+            config_manager=config_manager,
         )
     finally:
         ce_module.ClaimExtractor = real_cls
@@ -642,7 +672,8 @@ class TestContentBackrefsEntityIds:
             _run_extract(
                 _build_processing_results(
                     schema=env["content_frame_schema"], doc_id=FRAME_DOC_ID
-                )
+                ),
+                env["config_manager"],
             )
         )
 
@@ -678,7 +709,8 @@ class TestContentBackrefsRelationIds:
             _run_extract(
                 _build_processing_results(
                     schema=env["content_frame_schema"], doc_id=FRAME_DOC_ID
-                )
+                ),
+                env["config_manager"],
             )
         )
 
@@ -720,7 +752,8 @@ class TestContentBackrefsClaimIdsEqualRelationIds:
             _run_extract(
                 _build_processing_results(
                     schema=env["content_frame_schema"], doc_id=FRAME_DOC_ID
-                )
+                ),
+                env["config_manager"],
             )
         )
 
@@ -801,7 +834,7 @@ class TestContentBackrefsPerModalityCoverage:
             config_manager=env["config_manager"],
         )
 
-        tenant_schema = f"{base_schema}_{TENANT_ID}"
+        tenant_schema = schema_full_name(base_schema, TENANT_ID)
         doc_id = f"{VIDEO_ID}__seg_3__{modality_label}"
 
         # Seed the placeholder with ONLY fields the per-modality schema
@@ -816,7 +849,10 @@ class TestContentBackrefsPerModalityCoverage:
         )
 
         asyncio.run(
-            _run_extract(_build_processing_results(schema=tenant_schema, doc_id=doc_id))
+            _run_extract(
+                _build_processing_results(schema=tenant_schema, doc_id=doc_id),
+                env["config_manager"],
+            )
         )
 
         doc = _get_content_doc(env["base_url"], tenant_schema, doc_id)
@@ -852,7 +888,8 @@ class TestContentBackrefsYqlJoin:
                 _run_extract(
                     _build_processing_results(
                         schema=env["content_frame_schema"], doc_id=doc_id
-                    )
+                    ),
+                    env["config_manager"],
                 )
             )
 

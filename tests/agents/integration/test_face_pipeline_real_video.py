@@ -178,7 +178,7 @@ def graph_manager_live():
     from cogniverse_foundation.config.manager import ConfigManager
     from cogniverse_foundation.config.unified_config import SystemConfig
     from cogniverse_vespa.config.config_store import VespaConfigStore
-    from tests.utils.vespa_test_helpers import deploy_tenant_schema
+    from tests.utils.vespa_test_helpers import deploy_tenant_schema, schema_full_name
 
     BackendRegistry._backend_instances.clear()
     config_store = VespaConfigStore(
@@ -202,7 +202,10 @@ def graph_manager_live():
         config_manager=config_manager,
     )
 
-    schema_name = f"knowledge_graph_{TENANT_ID}"
+    # deploy_schema canonicalizes the tenant_id ("test_face_real" ->
+    # "test_face_real:test_face_real") before the colon->underscore swap, so
+    # the deployed name carries a doubled suffix. schema_full_name mirrors it.
+    schema_name = schema_full_name("knowledge_graph", TENANT_ID)
 
     # Wait for schema to come up.
     import httpx  # noqa: PLC0415

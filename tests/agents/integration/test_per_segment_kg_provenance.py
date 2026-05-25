@@ -41,6 +41,7 @@ from tests.fixtures.llm import (
     resolve_prefixed_model,
 )
 from tests.utils.docker_utils import generate_unique_ports  # noqa: F401
+from tests.utils.vespa_test_helpers import schema_full_name
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -138,7 +139,10 @@ pytestmark = [
 
 VIDEO_ID = "marie_curie_30s"
 TENANT_ID = "test"
-GRAPH_SCHEMA = "knowledge_graph_test"
+# Matches what SchemaRegistry.deploy_schema produces: tenant_id is
+# canonicalized ("test" -> "test:test") then colons become underscores,
+# yielding "knowledge_graph_test_test".
+GRAPH_SCHEMA = schema_full_name("knowledge_graph", TENANT_ID)
 
 SEG_3_TEXT = "Marie Curie discovered radium in 1898 at the Sorbonne."
 SEG_3_START = 12.0
@@ -356,10 +360,32 @@ def graph_manager(graph_vespa, pylate_server):
         backend_port=http_port,
     )
     config_manager = ConfigManager(store=config_store)
+    # Empty telemetry endpoints so _lookup_artifact_manager returns None and
+    # ClaimExtractor uses its default (uncompiled) module — the conditions the
+    # locked goldens were recorded under.
     config_manager.set_system_config(
-        SystemConfig(backend_url="http://localhost", backend_port=http_port)
+        SystemConfig(
+            backend_url="http://localhost",
+            backend_port=http_port,
+            telemetry_url="",
+            telemetry_collector_endpoint="",
+        )
     )
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+    # DocExtractor resolves the GLiNER endpoint via the ConfigManager
+    # singleton. Against a k3d-backed singleton that returns the in-cluster
+    # service URL (``http://cogniverse-gliner:8080``, unresolvable from the
+    # host), GLiNER prediction fails and entity extraction silently degrades
+    # to a capitalized-phrase heuristic — which drops lowercase/number
+    # entities (``radium``/``1898``) and leaks pronouns (``She``), diverging
+    # from the goldens. Point the singleton at this fixture's config_manager
+    # (empty ``inference_service_urls``) so ``_discover_gliner_url`` returns
+    # None and GLiNER loads locally and deterministically.
+    import cogniverse_foundation.config.utils as _cfg_utils
+
+    _prev_singleton = _cfg_utils._config_manager_singleton
+    _cfg_utils._config_manager_singleton = config_manager
 
     backend = BackendRegistry.get_instance().get_ingestion_backend(
         name="vespa",
@@ -382,8 +408,9 @@ def graph_manager(graph_vespa, pylate_server):
         colbert_endpoint_url=pylate_server,
     )
     try:
-        yield manager, http_port
+        yield manager, http_port, config_manager
     finally:
+        _cfg_utils._config_manager_singleton = _prev_singleton
         BackendRegistry._backend_instances.clear()
 
 
@@ -394,6 +421,7 @@ def graph_manager(graph_vespa, pylate_server):
 
 async def _run_extraction(
     manager: GraphManager,
+    config_manager: Any,
     processing_results: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Invoke the real ``_extract_graph_per_segment`` path against the
@@ -408,6 +436,7 @@ async def _run_extraction(
             processing_results=processing_results,
             source_doc_id=VIDEO_ID,
             tenant_id=TENANT_ID,
+            config_manager=config_manager,
         )
     finally:
         graph_router._graph_manager_factory = original_factory
@@ -471,8 +500,10 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_node_set_after_ingestion(self, graph_manager):
         """Six nodes, names sorted by normalize_name byte-equal the locked set."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         nodes = [
             n for n in _sorted_nodes(manager) if n.get("name") not in (None, "probe")
@@ -497,8 +528,10 @@ class TestPerSegmentKGProvenance:
     async def test_marie_curie_mentions(self, graph_manager):
         """Marie Curie's mentions list is byte-equal to the locked golden
         (two mentions: seg_3 transcript + seg_4 transcript)."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         node = _node_by_name(manager, "Marie Curie")
         mentions = _parse_mentions(node)
@@ -511,8 +544,10 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_radium_single_mention(self, graph_manager):
         """Radium has exactly one mention — seg_3 transcript."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         node = _node_by_name(manager, "radium")
         mentions = _parse_mentions(node)
@@ -522,8 +557,10 @@ class TestPerSegmentKGProvenance:
     async def test_marie_curie_outgoing_edges(self, graph_manager):
         """Four outgoing edges from marie_curie, sorted (target, relation)
         tuples byte-equal the locked list."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         edges = _edges_from_source(manager, "marie_curie")
         tuples = sorted([(e.get("target_node_id"), e.get("relation")) for e in edges])
@@ -536,8 +573,10 @@ class TestPerSegmentKGProvenance:
     async def test_radium_edge_full_fields(self, graph_manager):
         """(marie_curie, discovered, radium) edge full field dict
         byte-equal to golden (evidence_span, segment_id, ts_*, modality, confidence)."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         edges = [
             e
@@ -555,8 +594,10 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_sorbonne_edge_full_fields(self, graph_manager):
         """(marie_curie, worked_at, sorbonne) edge full field dict locked."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         edges = [
             e
@@ -575,8 +616,10 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_nobel_edge_seg4_anchor(self, graph_manager):
         """(marie_curie, won, nobel_prize) edge anchored to seg_4."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         edges = [
             e
@@ -600,8 +643,10 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_no_mentioned_with_or_self_loops(self, graph_manager):
         """Zero "mentioned_with" edges, zero self-loops."""
-        manager, _ = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, _, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         edges = _sorted_edges(manager)
         mentioned_with = [e for e in edges if e.get("relation") == "mentioned_with"]
@@ -624,15 +669,19 @@ class TestPerSegmentKGProvenance:
     @pytest.mark.asyncio
     async def test_idempotency_byte_equal(self, graph_manager):
         """Re-running ingestion produces byte-equal node+edge state."""
-        manager, _ = graph_manager
+        manager, _, config_manager = graph_manager
 
         # First run
-        await _run_extraction(manager, _marie_curie_processing_results())
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
         before_nodes = [_strip_volatile(n) for n in _sorted_nodes(manager)]
         before_edges = [_strip_volatile(e) for e in _sorted_edges(manager)]
 
         # Second run — should be a no-op (deterministic edge_id + node_id).
-        await _run_extraction(manager, _marie_curie_processing_results())
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
         after_nodes = [_strip_volatile(n) for n in _sorted_nodes(manager)]
         after_edges = [_strip_volatile(e) for e in _sorted_edges(manager)]
 
@@ -651,8 +700,10 @@ class TestPerSegmentKGProvenance:
     async def test_marie_curie_full_node_doc(self, graph_manager):
         """Full Vespa-side document for kg_node_test_marie_curie
         byte-equal to golden (stable fields only)."""
-        manager, port = graph_manager
-        await _run_extraction(manager, _marie_curie_processing_results())
+        manager, port, config_manager = graph_manager
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
 
         doc = _get_vespa_doc(port, "kg_node_test_marie_curie")
         assert doc is not None, "kg_node_test_marie_curie missing from Vespa"
@@ -672,12 +723,14 @@ class TestPerSegmentKGProvenance:
         """Re-ingesting with seg_3 replaced grows Marie Curie's
         mentions to 3 (seg_3 original, seg_3 new, seg_4). New mention
         byte-equal to golden; original two byte-equal to the locked golden."""
-        manager, _ = graph_manager
+        manager, _, config_manager = graph_manager
 
         # Original ingest.
-        await _run_extraction(manager, _marie_curie_processing_results())
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
         # Re-ingest with the additive seg_3 text.
-        await _run_extraction(manager, _marie_curie_reingest_results())
+        await _run_extraction(manager, config_manager, _marie_curie_reingest_results())
 
         node = _node_by_name(manager, "Marie Curie")
         mentions = _parse_mentions(node)
@@ -712,10 +765,12 @@ class TestPerSegmentKGProvenance:
         re-ingesting is a byte-equal no-op, which is itself the
         idempotency guarantee being checked.
         """
-        manager, _ = graph_manager
+        manager, _, config_manager = graph_manager
 
-        await _run_extraction(manager, _marie_curie_processing_results())
-        await _run_extraction(manager, _marie_curie_reingest_results())
+        await _run_extraction(
+            manager, config_manager, _marie_curie_processing_results()
+        )
+        await _run_extraction(manager, config_manager, _marie_curie_reingest_results())
         after = _edges_from_source(manager, "marie_curie")
 
         born_in = [

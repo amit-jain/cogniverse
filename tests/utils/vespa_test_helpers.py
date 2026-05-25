@@ -93,13 +93,16 @@ def deploy_tenant_schema(
 def schema_full_name(base_schema_name: str, tenant_id: str) -> str:
     """The naming convention SchemaRegistry uses for tenant-scoped schemas.
 
-    Mirrors ``schema_registry.py::deploy_schema``'s
-    ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` — tests that
-    need to compute the deployed schema name without going through deploy
-    (e.g. to construct a Vespa query) use this so the rule lives in one
-    place.
+    Mirrors ``schema_registry.py::deploy_schema`` exactly: it canonicalizes
+    the tenant_id (``test`` → ``test:test``) before replacing colons with
+    underscores, so a bare tenant id resolves to the same double-suffixed
+    name deploy produces (``knowledge_graph_test`` → ``knowledge_graph_test_test``).
+    Tests that need the deployed schema name without going through deploy
+    (to construct a Vespa query/probe) use this so the rule lives in one place.
     """
-    return f"{base_schema_name}_{tenant_id.replace(':', '_')}"
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    return f"{base_schema_name}_{canonical_tenant_id(tenant_id).replace(':', '_')}"
 
 
 def load_raw_schema_json(base_schema_name: str) -> Dict[str, Any]:
