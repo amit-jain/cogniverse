@@ -2873,12 +2873,14 @@ with main_tabs[10]:
             if st.button("💾 Save Evaluation", type="primary"):
                 if session_outcome != "Not Rated":
                     try:
-                        # Log session evaluation via evaluation registry
+                        # Log session evaluation via the evaluation provider.
+                        # get_evaluation_provider is a module-level helper, not
+                        # a classmethod on EvaluationRegistry.
                         from cogniverse_evaluation.providers.registry import (
-                            EvaluationRegistry,
+                            get_evaluation_provider,
                         )
 
-                        eval_provider = EvaluationRegistry.get_evaluation_provider(
+                        eval_provider = get_evaluation_provider(
                             name="phoenix",
                             tenant_id=st.session_state.get("current_tenant"),
                             config={
