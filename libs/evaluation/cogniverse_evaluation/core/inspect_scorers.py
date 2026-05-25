@@ -32,6 +32,12 @@ def get_configured_scorers(config: dict[str, Any]) -> list:
     if config.get("use_result_count", True):
         scorers.append(result_count_scorer())
 
+    # Precision@k / recall@k against the sample's ground-truth target.
+    # Requires a target on the sample (experiment/batch modes); in live mode
+    # with no ground truth these score vacuously (1.0), so disable there.
+    if config.get("use_precision_recall", True):
+        scorers.extend([precision_scorer(), recall_scorer()])
+
     # Always have at least one scorer
     if not scorers:
         scorers.append(relevance_scorer())
@@ -237,6 +243,135 @@ def result_count_scorer():
 
         except Exception as e:
             logger.error(f"Error in result count scorer: {e}")
+            return Score(value=0.0, explanation=f"Scorer error: {e}")
+
+    return score
+
+
+def _retrieved_ids(results: list) -> set[str]:
+    """Extract retrieved item ids from a config's results list."""
+    ids: set[str] = set()
+    for r in results:
+        item_id = (
+            r.get("video_id") or r.get("item_id") or r.get("document_id") or r.get("id")
+        )
+        if item_id:
+            ids.add(str(item_id))
+    return ids
+
+
+def _expected_ids(target: Any) -> set[str]:
+    """Ground-truth ids from the Inspect ``Target`` (the sample's target).
+
+    Accepts an Inspect ``Target`` (``.target`` holds the value), a plain
+    list, or a string. Returns an empty set when there is no ground truth.
+    """
+    if target is None:
+        return set()
+    raw = getattr(target, "target", target)
+    if isinstance(raw, str):
+        raw = [raw]
+    try:
+        return {str(t).strip() for t in raw if str(t).strip()}
+    except TypeError:
+        return set()
+
+
+@scorer(metrics=[mean()])
+def precision_scorer():
+    """Precision@k against the sample's ground-truth target.
+
+    precision = |retrieved ∩ relevant| / |retrieved|, averaged across search
+    configs. Vacuously 1.0 when the sample carries no ground-truth target.
+    """
+
+    async def score(state, target: Target) -> Score:
+        try:
+            output_str = ""
+            if state.output and state.output.choices and len(state.output.choices) > 0:
+                output_str = state.output.choices[0].message.content or ""
+            eval_output = unpack_solver_output(output_str)
+            expected = _expected_ids(target)
+
+            config_scores = {}
+            for config_key, results_data in eval_output.search_configs.items():
+                if not results_data.get("success", False):
+                    config_scores[config_key] = 0.0
+                    continue
+                retrieved = _retrieved_ids(results_data.get("results", []))
+                if not expected:
+                    config_scores[config_key] = 1.0
+                elif not retrieved:
+                    config_scores[config_key] = 0.0
+                else:
+                    config_scores[config_key] = len(retrieved & expected) / len(
+                        retrieved
+                    )
+
+            avg_score = (
+                sum(config_scores.values()) / len(config_scores)
+                if config_scores
+                else 0.0
+            )
+            explanation = f"Precision@k: {', '.join(f'{k}={v:.3f}' for k, v in config_scores.items())}"
+            return Score(
+                value=avg_score,
+                explanation=explanation,
+                metadata={
+                    "individual_scores": config_scores,
+                    "expected_count": len(expected),
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error in precision scorer: {e}")
+            return Score(value=0.0, explanation=f"Scorer error: {e}")
+
+    return score
+
+
+@scorer(metrics=[mean()])
+def recall_scorer():
+    """Recall@k against the sample's ground-truth target.
+
+    recall = |retrieved ∩ relevant| / |relevant|, averaged across search
+    configs. Vacuously 1.0 when the sample carries no ground-truth target.
+    """
+
+    async def score(state, target: Target) -> Score:
+        try:
+            output_str = ""
+            if state.output and state.output.choices and len(state.output.choices) > 0:
+                output_str = state.output.choices[0].message.content or ""
+            eval_output = unpack_solver_output(output_str)
+            expected = _expected_ids(target)
+
+            config_scores = {}
+            for config_key, results_data in eval_output.search_configs.items():
+                if not results_data.get("success", False):
+                    config_scores[config_key] = 0.0
+                    continue
+                if not expected:
+                    config_scores[config_key] = 1.0
+                    continue
+                retrieved = _retrieved_ids(results_data.get("results", []))
+                config_scores[config_key] = len(retrieved & expected) / len(expected)
+
+            avg_score = (
+                sum(config_scores.values()) / len(config_scores)
+                if config_scores
+                else 0.0
+            )
+            explanation = f"Recall@k: {', '.join(f'{k}={v:.3f}' for k, v in config_scores.items())}"
+            return Score(
+                value=avg_score,
+                explanation=explanation,
+                metadata={
+                    "individual_scores": config_scores,
+                    "expected_count": len(expected),
+                },
+            )
+        except Exception as e:
+            logger.error(f"Error in recall scorer: {e}")
             return Score(value=0.0, explanation=f"Scorer error: {e}")
 
     return score

@@ -2208,9 +2208,10 @@ def get_or_evaluate_span(span_id, evaluator):
 
 The evaluation module integrates with [Inspect AI](https://github.com/UKGovernmentBEIS/inspect_ai) for structured evaluation tasks.
 
-### Scorers (core/scorers.py)
+### Scorers (core/inspect_scorers.py)
 
-Schema-driven scorers that work with any data type.
+Scorers that unpack the structured solver output and score the search
+results. Precision/recall score against the sample's ground-truth target.
 
 **Available Scorers:**
 
@@ -2218,21 +2219,20 @@ Schema-driven scorers that work with any data type.
 |--------|-------------|
 | `relevance_scorer()` | Keyword-based relevance (schema-agnostic) |
 | `diversity_scorer()` | Result diversity using video_id deduplication |
-| `precision_scorer()` | Precision from ground truth (requires expected_items) |
-| `recall_scorer()` | Recall from ground truth |
-| `schema_aware_temporal_scorer()` | Temporal constraint satisfaction |
+| `result_count_scorer()` | Normalized count of returned results |
+| `precision_scorer()` | Precision@k vs the sample's ground-truth target |
+| `recall_scorer()` | Recall@k vs the sample's ground-truth target |
 
 **Configuration:**
 
 ```python
-from cogniverse_evaluation.core.scorers import get_configured_scorers
+from cogniverse_evaluation.core.inspect_scorers import get_configured_scorers
 
 scorers = get_configured_scorers({
     "use_relevance": True,
     "use_diversity": True,
-    "use_temporal": False,
-    "use_precision_recall": False,
-    "enable_llm_evaluators": False,  # Adds visual scorers
+    "use_result_count": True,
+    "use_precision_recall": True,  # precision@k / recall@k vs target
 })
 ```
 
