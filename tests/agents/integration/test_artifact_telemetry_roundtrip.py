@@ -615,6 +615,64 @@ class TestDSPyAgentArtifactRoundTrip:
         assert demos[0]["modality"] == "video"
 
     @pytest.mark.asyncio
+    async def test_claim_extractor_loads_real_dspy_state(self, real_provider):
+        """Save compiled DSPy state → ClaimExtractor loads it → demos applied.
+
+        Guards the wiring bug where ``_load_compiled_state`` called the async
+        ``load_for_request`` synchronously with bogus kwargs: the artifact was
+        never loaded and the failure was swallowed by a bare ``except``. This
+        exercises the real save_blob → load_blob → load_state round-trip.
+        """
+        import json
+
+        import dspy
+
+        from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+        from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
+
+        tenant_id = "claim-extractor-artifact-roundtrip"
+        mgr = ArtifactManager(real_provider, tenant_id)
+
+        # A fresh ChainOfThought has no demos; locate its predictor sub-state.
+        fresh = dspy.ChainOfThought(ClaimExtractionSignature)
+        default_state = json.loads(json.dumps(fresh.dump_state(), default=str))
+        predict_key = next(
+            k for k, v in default_state.items() if isinstance(v, dict) and "demos" in v
+        )
+        assert default_state[predict_key]["demos"] == []
+
+        injected_demos = [
+            {
+                "text_segment": "Marie Curie discovered radium in 1898.",
+                "entity_hints": "Marie Curie|radium|1898",
+                "modality_hint": "transcript",
+                "claims": '[{"subject":"Marie Curie","predicate":"discovered","object":"radium"}]',
+                "rationale": "Subject-verb-object over a named discovery.",
+            },
+            {
+                "text_segment": "She later won the Nobel Prize in Physics.",
+                "entity_hints": "Marie Curie|Nobel Prize|Physics",
+                "modality_hint": "transcript",
+                "claims": '[{"subject":"Marie Curie","predicate":"won","object":"Nobel Prize"}]',
+                "rationale": "Pronoun resolved to the prior subject.",
+            },
+        ]
+        optimized_state = json.loads(json.dumps(default_state, default=str))
+        optimized_state[predict_key]["demos"] = injected_demos
+
+        dataset_id = await mgr.save_blob(
+            "model", "claim_extraction", json.dumps(optimized_state, default=str)
+        )
+        assert dataset_id
+
+        # Construct the extractor with the real manager and force a load.
+        extractor = ClaimExtractor(artifact_manager=mgr)
+        extractor._select_module(text="short transcript", tenant_id=tenant_id)
+
+        loaded_demos = extractor._cot_module.dump_state()[predict_key]["demos"]
+        assert loaded_demos == injected_demos
+
+    @pytest.mark.asyncio
     async def test_orchestrator_loads_workflow_templates(self, real_provider):
         """Save workflow data → OrchestratorAgent loads via load_historical_data."""
         import json

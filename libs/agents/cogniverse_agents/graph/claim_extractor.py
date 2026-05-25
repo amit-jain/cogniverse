@@ -3,12 +3,14 @@ ClaimExtractionSignature, producing real SPO Edge objects anchored to
 a per-segment Mention.
 
 Replaces the old co-occurrence "mentioned_with" edges from DocExtractor.
-Compiled state lives under ``dspy-prompts-{tenant}-claim_extraction`` and
-loads via the existing ArtifactManager canary/active promotion harness.
+Compiled DSPy state persists as a JSON blob under ``("model",
+"claim_extraction")`` via ``ArtifactManager.save_blob`` and is restored
+with ``ArtifactManager.load_blob`` + ``module.load_state``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, List, Optional
 
@@ -227,33 +229,50 @@ class ClaimExtractor:
         return self._cot_module
 
     def _load_compiled_state(self, module: dspy.Module, tenant_id: str) -> None:
-        """Load compiled prompts/demos from the ArtifactManager if available."""
+        """Restore compiled DSPy state from the ArtifactManager if present.
+
+        Mirrors EntityExtractionAgent / QueryEnhancementAgent: the compiled
+        module state is persisted as a JSON blob under
+        ``("model", "claim_extraction")`` and restored via
+        ``module.load_state``. The ArtifactManager is already bound to its
+        tenant at construction, so ``tenant_id`` here is only for logging.
+        """
         if self._artifact_manager is None:
             return
         try:
-            artifact = self._artifact_manager.load_for_request(
-                tenant_id=tenant_id, agent="claim_extraction"
+            blob = self._run_async(
+                self._artifact_manager.load_blob("model", "claim_extraction")
             )
+            if not blob:
+                return
+            module.load_state(json.loads(blob))
+            logger.info("ClaimExtractor loaded compiled state for tenant %s", tenant_id)
         except Exception as exc:
             logger.warning(
-                "Failed to load claim_extraction artifact for tenant %s: %s",
+                "No claim_extraction artifact loaded for tenant %s (using defaults): %s",
                 tenant_id,
                 exc,
             )
-            return
-        if not artifact:
-            return
+
+    @staticmethod
+    def _run_async(coro: Any) -> Any:
+        """Run an async ArtifactManager call from this sync code path.
+
+        Uses a worker thread when a loop is already running (the ingestion
+        request path), otherwise drives the coroutine directly.
+        """
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
         try:
-            module.load_state(artifact)
-        except AttributeError:
-            demos = artifact.get("demos") if isinstance(artifact, dict) else None
-            if demos:
-                try:
-                    module.demos = demos
-                except Exception:
-                    logger.warning(
-                        "Compiled artifact present but module rejected demos assignment"
-                    )
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(asyncio.run, coro).result()
+        return asyncio.run(coro)
 
     @staticmethod
     def _coerce_claims(prediction: dspy.Prediction) -> List[dict]:

@@ -2,8 +2,8 @@
 
 These signatures are loaded by ``ClaimExtractor`` and compiled via the
 existing optimizer harness (``BootstrapFewShot`` / ``MIPROv2``).
-Compiled artifacts persist under ``dspy-prompts-{tenant}-claim_extraction``
-in the ``ArtifactManager``.
+Compiled state persists as a JSON blob under ``("model",
+"claim_extraction")`` in the ``ArtifactManager``.
 """
 
 from typing import List

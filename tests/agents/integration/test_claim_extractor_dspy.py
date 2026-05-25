@@ -463,15 +463,23 @@ class TestClaimExtractorArtifact:
     """Compiled-artifact dataset equality + demo count."""
 
     @pytest.mark.asyncio
-    async def test_artifact_load_byte_equal(self, configured_dspy_lm):
-        """ArtifactManager.load_for_request(tenant_id="test",
-        agent_type="claim_extraction") returns a dict whose canonical JSON
-        serialization is byte-equal to the locked golden. ``len(demos) == 8``
-        (BootstrapFewShot k=8).
+    async def test_artifact_blob_round_trip(self, configured_dspy_lm):
+        """Compiled ClaimExtractor state persists as a ``("model",
+        "claim_extraction")`` JSON blob and round-trips byte-for-byte through
+        ArtifactManager, then restores into a fresh ChainOfThought via
+        ``load_state``.
 
-        Skips when no Phoenix endpoint is reachable — the artifact storage
-        backend is the live Phoenix instance, not a local file.
+        This is the mechanism ``ClaimExtractor._load_compiled_state`` actually
+        uses (``save_blob`` / ``load_blob`` + ``module.load_state``) — not the
+        prompts dataset that ``load_for_request`` serves, whose ``{"prompts":
+        ...}`` shape ``load_state`` cannot consume. The test populates its own
+        blob, so it does not depend on externally pre-seeded Phoenix state.
+
+        Fails (does not skip) when no Phoenix endpoint is reachable — the
+        artifact storage backend is the live Phoenix instance.
         """
+        import dspy
+
         try:
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
             from cogniverse_telemetry_phoenix.provider import PhoenixProvider
@@ -513,32 +521,43 @@ class TestClaimExtractorArtifact:
             }
         )
         manager = ArtifactManager(telemetry_provider=provider, tenant_id=TENANT_ID)
-        loaded = await manager.load_for_request(
-            agent_type="claim_extraction",
-            request_seed="b6-test",
-        )
 
-        # Canonicalize: drop the "served_from" / "version" fields that
-        # vary across canary/active routing; lock the artifact CONTENT.
-        prompts = loaded.get("prompts") or {}
-        # Sort demos by stable key when present for golden determinism.
-        canonical = {
-            "prompts": prompts,
-            "variant_id": loaded.get("variant_id"),
-        }
-        assert_golden(canonical, "claim_extractor_artifact.json")
-
-        # k=8 demos check — pulled from the loaded artifact if surfaced.
-        demos = (
-            loaded.get("demos")
-            or (prompts.get("demos") if isinstance(prompts, dict) else None)
-            or []
+        # Build a compiled state carrying a known 8-demo set (the
+        # BootstrapFewShot k=8 the optimizer harness targets).
+        module = dspy.ChainOfThought(ClaimExtractionSignature)
+        state = json.loads(json.dumps(module.dump_state(), default=str))
+        predict_key = next(
+            k for k, v in state.items() if isinstance(v, dict) and "demos" in v
         )
-        if demos:
-            assert len(demos) == 8, (
-                f"BootstrapFewShot was configured with k=8 but loaded artifact "
-                f"has {len(demos)} demos"
-            )
+        state[predict_key]["demos"] = [
+            {
+                "text_segment": f"Person {i} discovered element {i} in 18{i:02d}.",
+                "entity_hints": f"Person {i}|element {i}|18{i:02d}",
+                "modality_hint": "transcript",
+                "claims": (
+                    f'[{{"subject":"Person {i}","predicate":"discovered",'
+                    f'"object":"element {i}"}}]'
+                ),
+                "rationale": f"Subject-verb-object claim number {i}.",
+            }
+            for i in range(8)
+        ]
+        state_json = json.dumps(state, default=str)
+
+        dataset_id = await manager.save_blob("model", "claim_extraction", state_json)
+        assert dataset_id
+
+        loaded_json = await manager.load_blob("model", "claim_extraction")
+        assert loaded_json is not None
+        loaded_state = json.loads(loaded_json)
+        assert loaded_state == state
+        assert len(loaded_state[predict_key]["demos"]) == 8
+
+        # The blob restores into a fresh module via the same load_state path
+        # ClaimExtractor uses.
+        fresh = dspy.ChainOfThought(ClaimExtractionSignature)
+        fresh.load_state(loaded_state)
+        assert fresh.dump_state()[predict_key]["demos"] == state[predict_key]["demos"]
 
 
 class TestClaimExtractorPredicateVocabulary:
