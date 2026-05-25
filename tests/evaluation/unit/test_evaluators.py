@@ -8,7 +8,6 @@ import pytest
 
 from cogniverse_evaluation.evaluators.reference_free import (
     CompositeEvaluator,
-    LLMRelevanceEvaluator,
     QueryResultRelevanceEvaluator,
     ResultDiversityEvaluator,
     RetrievalContext,
@@ -352,40 +351,6 @@ class TestTemporalCoverageEvaluator:
         assert result.metadata["total_duration"] == 0.0  # No duration
 
 
-class TestLLMRelevanceEvaluator:
-    """Test LLMRelevanceEvaluator."""
-
-    @pytest.fixture
-    def evaluator(self):
-        return LLMRelevanceEvaluator(model_name="gpt-4")
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_evaluate_placeholder(self, evaluator):
-        """Test placeholder LLM evaluation."""
-        output = [{"score": 0.9}, {"score": 0.8}]
-
-        result = await evaluator.evaluate("test query", output)
-
-        assert result.score == 0.75
-        assert result.label == "llm_evaluated"
-        assert "LLM evaluation placeholder" in result.explanation
-        assert result.metadata["model"] == "gpt-4"
-        assert result.metadata["evaluation_type"] == "relevance"
-
-    @pytest.mark.unit
-    def test_init_default_model(self):
-        """Test initialization with default model."""
-        evaluator = LLMRelevanceEvaluator()
-        assert evaluator.model_name == "gpt-4"
-
-    @pytest.mark.unit
-    def test_init_custom_model(self):
-        """Test initialization with custom model."""
-        evaluator = LLMRelevanceEvaluator(model_name="custom-model")
-        assert evaluator.model_name == "custom-model"
-
-
 class TestCompositeEvaluator:
     """Test CompositeEvaluator."""
 
@@ -465,17 +430,15 @@ class TestReferenceFreeFunctions:
         """Test creating reference-free evaluators."""
         evaluators = create_reference_free_evaluators()
 
-        assert len(evaluators) == 5
+        assert len(evaluators) == 4
         assert "relevance" in evaluators
         assert "diversity" in evaluators
         assert "temporal_coverage" in evaluators
-        assert "llm_relevance" in evaluators
         assert "composite" in evaluators
 
         assert isinstance(evaluators["relevance"], QueryResultRelevanceEvaluator)
         assert isinstance(evaluators["diversity"], ResultDiversityEvaluator)
         assert isinstance(evaluators["temporal_coverage"], TemporalCoverageEvaluator)
-        assert isinstance(evaluators["llm_relevance"], LLMRelevanceEvaluator)
         assert isinstance(evaluators["composite"], CompositeEvaluator)
 
         # Check composite evaluator has 3 component evaluators

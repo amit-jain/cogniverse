@@ -188,41 +188,6 @@ class TemporalCoverageEvaluator(Evaluator):
         )
 
 
-class LLMRelevanceEvaluator(Evaluator):
-    """
-    Uses an LLM to evaluate query-result relevance
-    Note: This is a placeholder - in real implementation would call an LLM
-    """
-
-    def __init__(self, model_name: str = "gpt-4"):
-        self.model_name = model_name
-
-    async def evaluate(self, input: str, output: list[dict[str, Any]], **kwargs) -> Any:
-        """
-        Use LLM to evaluate relevance
-
-        Args:
-            input: The search query
-            output: List of retrieved results
-
-        Returns:
-            EvaluationResult with LLM-based relevance score
-        """
-        # Placeholder implementation
-        # In real implementation, this would:
-        # 1. Format query and results into a prompt
-        # 2. Call LLM API to judge relevance
-        # 3. Parse LLM response into score and explanation
-
-        # For now, return a mock evaluation
-        return create_evaluation_result(
-            score=0.75,
-            label="llm_evaluated",
-            explanation="LLM evaluation placeholder - would analyze query-result relevance",
-            metadata={"model": self.model_name, "evaluation_type": "relevance"},
-        )
-
-
 class CompositeEvaluator(Evaluator):
     """
     Combines multiple evaluators into a single evaluation
@@ -296,7 +261,6 @@ def create_reference_free_evaluators() -> dict[str, Evaluator]:
         "relevance": QueryResultRelevanceEvaluator(),
         "diversity": ResultDiversityEvaluator(),
         "temporal_coverage": TemporalCoverageEvaluator(),
-        "llm_relevance": LLMRelevanceEvaluator(),
         "composite": CompositeEvaluator(
             [
                 QueryResultRelevanceEvaluator(),
