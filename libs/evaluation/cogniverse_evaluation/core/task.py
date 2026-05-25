@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 # Provider import moved to function scope to avoid circular deps
-from inspect_ai import Task, eval
+from inspect_ai import Task
 from inspect_ai.dataset import MemoryDataset, Sample
 from inspect_ai.model import GenerateConfig
 
@@ -189,79 +189,3 @@ def evaluation_task(
             "strategies": strategies,
         },
     )
-
-
-def run_evaluation(
-    mode: str,
-    dataset_name: str,
-    profiles: list[str] | None = None,
-    strategies: list[str] | None = None,
-    trace_ids: list[str] | None = None,
-    config: dict[str, Any] | None = None,
-    use_phoenix_experiments: bool = False,
-) -> dict[str, Any]:
-    """
-    Helper function to create and run evaluation task.
-
-    Args:
-        mode: Evaluation mode
-        dataset_name: Dataset name
-        profiles: Video processing profiles
-        strategies: Ranking strategies
-        trace_ids: Trace IDs for batch mode
-        config: Configuration
-        use_phoenix_experiments: Use Phoenix experiment API instead of Inspect AI
-
-    Returns:
-        Evaluation results dictionary
-    """
-    # If Phoenix experiment tracking requested
-    if use_phoenix_experiments and mode == "experiment":
-        from cogniverse_evaluation.plugins.phoenix_experiment import (
-            PhoenixExperimentPlugin,
-            get_phoenix_evaluators,
-        )
-
-        # Get evaluators (these can be Inspect scorers wrapped for Phoenix)
-        evaluators = get_phoenix_evaluators(config or {})
-
-        # Run Inspect evaluation with Phoenix tracking
-        # This uses Inspect AI's evaluation logic but stores everything in Phoenix
-        return PhoenixExperimentPlugin.run_inspect_with_phoenix_tracking(
-            dataset_name=dataset_name,
-            profiles=profiles,
-            strategies=strategies,
-            evaluators=evaluators,
-            config=config,
-        )
-
-    # Use Inspect AI with its own logging system
-    task = evaluation_task(
-        mode=mode,
-        dataset_name=dataset_name,
-        profiles=profiles,
-        strategies=strategies,
-        trace_ids=trace_ids,
-        config=config,
-    )
-
-    # Run the evaluation - Inspect handles its own logging
-    # Inspect logs to local filesystem for review and visualization
-    results = eval(task)
-
-    # Inspect creates EvalLog files that can be:
-    # - Viewed with inspect view command
-    # - Used for visualizations
-    # - Analyzed for performance trends
-
-    logger.info("Evaluation complete. Inspect logs saved locally.")
-    if hasattr(results, "log_file"):
-        logger.info(f"Log file: {results.log_file}")
-
-    # Process and return results
-    return {
-        "mode": mode,
-        "dataset": dataset_name,
-        "results": results,  # This includes Inspect's EvalLog
-        "timestamp": datetime.now().isoformat(),
-    }

@@ -190,50 +190,6 @@ class TraceManager:
         logger.info(f"Retrieved {len(df)} traces for {profile}/{strategy}")
         return df
 
-    def get_unevaluated_traces(self, hours_back: int = 24) -> List[Dict[str, Any]]:
-        """
-        Get traces that haven't been evaluated yet.
-
-        Args:
-            hours_back: Number of hours to look back
-
-        Returns:
-            List of unevaluated trace data
-        """
-        df = self.get_recent_traces(hours_back=hours_back, limit=1000)
-        traces = self.extract_trace_data(df)
-
-        # Filter for unevaluated traces
-        unevaluated = []
-        for trace in traces:
-            # Check if evaluated flag exists and is False/None
-            if not trace.get("evaluated", False):
-                unevaluated.append(trace)
-
-        logger.info(f"Found {len(unevaluated)} unevaluated traces")
-        return unevaluated
-
-    def mark_trace_evaluated(
-        self, trace_id: str, evaluation_scores: Dict[str, float]
-    ) -> bool:
-        """
-        Mark a trace as evaluated.
-
-        Args:
-            trace_id: Trace ID to mark
-            evaluation_scores: Evaluation scores
-
-        Returns:
-            True if successful
-        """
-        metadata = {
-            "evaluated": True,
-            "evaluation_scores": evaluation_scores,
-            "evaluated_at": datetime.now().isoformat(),
-        }
-
-        return self.storage.update_trace_metadata(trace_id, metadata)
-
     def get_trace_statistics(self, hours_back: int = 24) -> Dict[str, Any]:
         """
         Get statistics about traces.

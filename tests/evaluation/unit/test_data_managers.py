@@ -40,7 +40,6 @@ class TestDatasetManager:
             mock_dataset.id = "test_id"
             mock_dataset.name = "test_dataset"
             manager.storage.get_dataset = Mock(return_value=mock_dataset)
-            manager.storage.update_trace_metadata = Mock(return_value=True)
             return manager
 
     @pytest.mark.unit
@@ -350,63 +349,6 @@ class TestTraceManager:
         manager.storage.get_traces_for_evaluation.assert_called()
         call_kwargs = manager.storage.get_traces_for_evaluation.call_args[1]
         assert "filter_condition" in call_kwargs
-
-    @pytest.mark.unit
-    def test_get_unevaluated_traces(self, manager):
-        """Test getting traces that haven't been evaluated."""
-        # Mock dataframe that will be processed by extract_trace_data
-        df = pd.DataFrame(
-            [
-                {
-                    "trace_id": "trace1",
-                    "attributes.input.value": "query 1",
-                    "attributes.output.value": [],
-                    "attributes.metadata.profile": "profile1",
-                    "attributes.metadata.strategy": "strategy1",
-                    "timestamp": datetime.now(),
-                    "duration_ms": 100,
-                    "evaluated": True,
-                },
-                {
-                    "trace_id": "trace2",
-                    "attributes.input.value": "query 2",
-                    "attributes.output.value": [],
-                    "attributes.metadata.profile": "profile1",
-                    "attributes.metadata.strategy": "strategy1",
-                    "timestamp": datetime.now(),
-                    "duration_ms": 200,
-                    # No evaluated field - counts as unevaluated
-                },
-                {
-                    "trace_id": "trace3",
-                    "attributes.input.value": "query 3",
-                    "attributes.output.value": [],
-                    "attributes.metadata.profile": "profile1",
-                    "attributes.metadata.strategy": "strategy1",
-                    "timestamp": datetime.now(),
-                    "duration_ms": 150,
-                    # No evaluated field - counts as unevaluated
-                },
-            ]
-        )
-        manager.storage.get_traces_for_evaluation.return_value = df
-
-        unevaluated = manager.get_unevaluated_traces(hours_back=1)
-
-        # All 3 traces are actually unevaluated since extract_trace_data doesn't check the evaluated field
-        # It just extracts the standard fields from the dataframe
-        assert len(unevaluated) == 3
-
-    @pytest.mark.unit
-    def test_mark_trace_evaluated(self, manager):
-        """Test marking trace as evaluated."""
-        # The new implementation uses _log_trace_data helper
-        # which doesn't require mocking px.trace
-        success = manager.mark_trace_evaluated(
-            trace_id="trace1", evaluation_scores={"mrr": 0.8, "recall": 0.7}
-        )
-
-        assert success is True
 
     @pytest.mark.unit
     def test_get_trace_statistics(self, manager):
