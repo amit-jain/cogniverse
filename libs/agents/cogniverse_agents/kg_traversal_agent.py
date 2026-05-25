@@ -25,18 +25,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
 
 from cogniverse_agents.graph.graph_schema import normalize_name
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +197,7 @@ def _node_passes_mention_filter(
 
 
 class KnowledgeGraphTraversalAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[KGTraversalInput, KGTraversalOutput, KGTraversalDeps],
 ):
@@ -227,11 +226,6 @@ class KnowledgeGraphTraversalAgent(
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
         self._llm_config = llm_config
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.traverse`` can read Node/Edge rows."""
-        self._graph_manager = graph_manager
 
     def traverse(
         self, node_name: str, filters: Optional[Dict[str, Any]] = None
@@ -248,17 +242,13 @@ class KnowledgeGraphTraversalAgent(
         Returns ``{"nodes": [<target_node_id>, ...], "edges": [{"source":..,
         "relation":.., "target":..}, ...]}``.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "KnowledgeGraphTraversalAgent.traverse requires a GraphManager — "
-                "call set_graph_manager(...) before invoking .traverse()."
-            )
+        graph_manager = self._require_graph_manager("traverse")
         filters = filters or {}
         video_id = filters.get("video_id")
         ts_range: Optional[Tuple[float, float]] = filters.get("ts_range")
 
         source_id = normalize_name(node_name)
-        out_edges = self._graph_manager._visit_edges(source_node_id=source_id)
+        out_edges = graph_manager._visit_edges(source_node_id=source_id)
 
         kept_edges: List[Dict[str, str]] = []
         target_ids: List[str] = []
@@ -286,7 +276,7 @@ class KnowledgeGraphTraversalAgent(
         if video_id is not None or ts_range is not None:
             unique_targets = list(dict.fromkeys(target_ids))
             allowed: List[str] = []
-            all_nodes = self._graph_manager._visit(doc_type="node", top_k=500)
+            all_nodes = graph_manager._visit(doc_type="node", top_k=500)
             node_by_id: Dict[str, Dict[str, Any]] = {}
             for n in all_nodes:
                 nid = normalize_name(str(n.get("name") or ""))

@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.temporal_reasoning_agent import _parse_iso
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -41,9 +42,6 @@ from cogniverse_core.memory.schema import (
     SchemaViolationError,
     build_default_registry,
 )
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +163,7 @@ def _format_memories_for_prompt(rows: List[Dict[str, Any]]) -> str:
 
 
 class KnowledgeSummarizationAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[
         KnowledgeSummarizationInput,
@@ -204,11 +203,6 @@ class KnowledgeSummarizationAgent(
         self._llm_config = llm_config
         self._dspy_module = dspy.ChainOfThought(_SummarizationSignature)
         self._ensure_summary_kind_registered()
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.summarize`` can read Edges for one video."""
-        self._graph_manager = graph_manager
 
     def summarize(self, video_id: str) -> Dict[str, str]:
         """One-line-per-segment summary for a single video.
@@ -221,12 +215,8 @@ class KnowledgeSummarizationAgent(
         ``(subject, ts_range)`` collapse into a single line whose body joins
         the predicate/object pairs with ``"; "``.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "KnowledgeSummarizationAgent.summarize requires a "
-                "GraphManager — call set_graph_manager(...) first."
-            )
-        all_edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        graph_manager = self._require_graph_manager("summarize")
+        all_edges = graph_manager._visit(doc_type="edge", top_k=2000)
         # Group by (subject, segment_id, ts_start, ts_end), preserving the
         # original subject name (from source_node_id) for readability.
         grouped: Dict[tuple, List[Dict[str, Any]]] = {}

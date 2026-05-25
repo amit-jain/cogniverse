@@ -20,11 +20,12 @@ on demand and passes the joined context to the LLM. RLM-compatible
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -35,9 +36,6 @@ from cogniverse_core.memory.provenance import (
     attach_to_metadata,
     make_provenance,
 )
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +147,7 @@ def _format_documents_for_prompt(refs: List[DocumentRef], contents: List[str]) -
 
 
 class MultiDocumentSynthesisAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[MultiDocSynthesisInput, MultiDocSynthesisOutput, MultiDocSynthesisDeps],
 ):
@@ -178,11 +177,6 @@ class MultiDocumentSynthesisAgent(
         self._config_manager = config_manager
         self._llm_config = llm_config
         self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.synthesize`` can read Edges across videos."""
-        self._graph_manager = graph_manager
 
     def synthesize(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
         """Group all known claims by source video for the orchestrator to render.
@@ -194,12 +188,8 @@ class MultiDocumentSynthesisAgent(
         but not used for filtering at this layer — the orchestrator scopes
         which subjects the synthesis ranges over upstream.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "MultiDocumentSynthesisAgent.synthesize requires a GraphManager — "
-                "call set_graph_manager(...) first."
-            )
-        all_edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        graph_manager = self._require_graph_manager("synthesize")
+        all_edges = graph_manager._visit(doc_type="edge", top_k=2000)
         by_video: Dict[str, List[Dict[str, Any]]] = {}
         for edge_fields in all_edges:
             video_id = str(edge_fields.get("source_doc_id") or "")

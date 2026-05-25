@@ -2522,6 +2522,51 @@ class MemoryAwareMixin:
         ...
 ```
 
+### GraphBindableMixin
+
+**Location**: `libs/agents/cogniverse_agents/graph_bindable.py`
+
+Binds a single `GraphManager` to a KG-aware agent. The seven single-graph
+KG agents — `CitationTracingAgent`, `TemporalReasoningAgent`,
+`AuditExplanationAgent`, `KnowledgeGraphTraversalAgent`,
+`KnowledgeSummarizationAgent`, `MultiDocumentSynthesisAgent`,
+`ContradictionReconciliationAgent` — mix this in to share one setter and one
+guard instead of redeclaring them:
+
+```python
+class GraphBindableMixin:
+    """Bind a single GraphManager to a KG-aware agent."""
+
+    _graph_manager: Optional["GraphManager"] = None
+
+    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
+        """Bind the GraphManager this agent reads Node/Edge rows from."""
+        self._graph_manager = graph_manager
+
+    def _require_graph_manager(self, method: str) -> "GraphManager":
+        """Return the bound GraphManager or raise, naming the calling method."""
+        ...
+```
+
+Usage in an agent (mixed in ahead of `MemoryAwareMixin` so the binding API
+sits at the front of the MRO):
+
+```python
+class CitationTracingAgent(
+    GraphBindableMixin,
+    MemoryAwareMixin,
+    A2AAgent[CitationTracingInput, CitationTracingOutput, CitationTracingDeps],
+):
+    def trace(self, claim_id: str) -> Dict[str, Any]:
+        graph_manager = self._require_graph_manager("trace")
+        edges = graph_manager._visit(doc_type="edge", top_k=2000)
+        ...
+```
+
+Agents that bind *multiple* managers (`FederatedQueryAgent`,
+`CrossTenantComparisonAgent`) keep their own plural `set_graph_managers`
+and do **not** use this mixin.
+
 ### TenantAwareAgentMixin
 
 **Location**: `libs/core/cogniverse_core/agents/tenant_aware_mixin.py`

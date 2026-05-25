@@ -20,19 +20,17 @@ time.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.memory.contradiction import ContradictionDetector
 from cogniverse_core.memory.provenance import ProvenanceWalker
 from cogniverse_core.memory.trust import apply_decay, extract_trust
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +128,7 @@ def _format_explanation(
 
 
 class AuditExplanationAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[AuditExplanationInput, AuditExplanationOutput, AuditExplanationDeps],
 ):
@@ -155,11 +154,6 @@ class AuditExplanationAgent(
         from cogniverse_agents._mm_factory import make_mm_factory
 
         self._mm_factory = make_mm_factory(memory_manager_factory)
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.explain`` can read Edges (claims)."""
-        self._graph_manager = graph_manager
 
     def explain(self, answer_id: str) -> Dict[str, str]:
         """Render a human-readable audit block for a claim (Edge).
@@ -173,12 +167,8 @@ class AuditExplanationAgent(
             Evidence: "<evidence_span>"
             Confidence: <confidence>
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "AuditExplanationAgent.explain requires a GraphManager — "
-                "call set_graph_manager(...) first."
-            )
-        for edge_fields in self._graph_manager._visit(doc_type="edge", top_k=2000):
+        graph_manager = self._require_graph_manager("explain")
+        for edge_fields in graph_manager._visit(doc_type="edge", top_k=2000):
             doc_id = str(edge_fields.get("doc_id") or "")
             suffix = doc_id.split("_")[-1] if doc_id else ""
             if suffix != answer_id and not doc_id.endswith(f"_{answer_id}"):

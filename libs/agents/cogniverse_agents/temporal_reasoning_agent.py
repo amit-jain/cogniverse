@@ -22,18 +22,16 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field, field_validator
 
 from cogniverse_agents.graph.graph_schema import normalize_name
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +166,7 @@ class TemporalReasoningDeps(AgentDeps):
 
 
 class TemporalReasoningAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[TemporalReasoningInput, TemporalReasoningOutput, TemporalReasoningDeps],
 ):
@@ -195,11 +194,6 @@ class TemporalReasoningAgent(
 
         self._mm_factory = make_mm_factory(memory_manager_factory)
         self._llm_config = llm_config
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.compare_over_time`` can read Edges."""
-        self._graph_manager = graph_manager
 
     def compare_over_time(
         self, node_name: str, videos: List[str]
@@ -212,13 +206,9 @@ class TemporalReasoningAgent(
         Each entry: ``{ts_start, ts_end, video_id, segment_id, claim,
         evidence_span}`` where ``claim`` is ``"<relation>:<target_node_id>"``.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "TemporalReasoningAgent.compare_over_time requires a "
-                "GraphManager — call set_graph_manager(...) first."
-            )
+        graph_manager = self._require_graph_manager("compare_over_time")
         source_id = normalize_name(node_name)
-        all_edges = self._graph_manager._visit_edges(source_node_id=source_id)
+        all_edges = graph_manager._visit_edges(source_node_id=source_id)
         video_set = {str(v) for v in videos}
 
         timeline: List[Dict[str, Any]] = []

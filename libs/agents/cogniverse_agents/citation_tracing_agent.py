@@ -18,16 +18,14 @@ agent that returned a memory id.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +108,7 @@ class CitationTracingDeps(AgentDeps):
 
 
 class CitationTracingAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[CitationTracingInput, CitationTracingOutput, CitationTracingDeps],
 ):
@@ -133,11 +132,6 @@ class CitationTracingAgent(
         )
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.trace`` can read structured Edge rows."""
-        self._graph_manager = graph_manager
 
     def trace(self, claim_id: str) -> Dict[str, Any]:
         """Walk an Edge (claim) back to its grounding Mention(s).
@@ -150,13 +144,8 @@ class CitationTracingAgent(
         normalised triple+segment), matching ``edge_id_of(source, relation, target)``
         in the test fixtures.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "CitationTracingAgent.trace requires a GraphManager — call "
-                "set_graph_manager(...) before invoking .trace()."
-            )
-
-        edges = self._graph_manager._visit(doc_type="edge", top_k=2000)
+        graph_manager = self._require_graph_manager("trace")
+        edges = graph_manager._visit(doc_type="edge", top_k=2000)
         chain: List[Dict[str, Any]] = []
         for edge_fields in edges:
             doc_id = str(edge_fields.get("doc_id") or "")

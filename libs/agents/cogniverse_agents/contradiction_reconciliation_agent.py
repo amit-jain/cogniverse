@@ -21,11 +21,12 @@ sentinel kind) when policy = ``preserve_both`` so audit history persists.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import Field
 
 from cogniverse_agents.graph.graph_schema import normalize_name
+from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -35,9 +36,6 @@ from cogniverse_core.memory.schema import (
     KnowledgeRegistry,
     build_default_registry,
 )
-
-if TYPE_CHECKING:
-    from cogniverse_agents.graph.graph_manager import GraphManager
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +120,7 @@ class ContradictionReconciliationDeps(AgentDeps):
 
 
 class ContradictionReconciliationAgent(
+    GraphBindableMixin,
     MemoryAwareMixin,
     A2AAgent[
         ContradictionReconciliationInput,
@@ -154,11 +153,6 @@ class ContradictionReconciliationAgent(
         super().__init__(deps=deps, config=config)
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()
-        self._graph_manager: Optional["GraphManager"] = None
-
-    def set_graph_manager(self, graph_manager: "GraphManager") -> None:
-        """Bind a GraphManager so ``.detect`` can read Edge rows for a predicate."""
-        self._graph_manager = graph_manager
 
     def detect(self, node_name: str, predicate: str) -> Dict[str, Dict[str, Any]]:
         """Group Edges on ``(node_name, predicate)`` across videos into a conflict set.
@@ -170,13 +164,9 @@ class ContradictionReconciliationAgent(
         ``(video, value)`` is observed). Each entry: ``{video_id,
         segment_id, ts_start, ts_end, value, confidence}``.
         """
-        if self._graph_manager is None:
-            raise RuntimeError(
-                "ContradictionReconciliationAgent.detect requires a "
-                "GraphManager — call set_graph_manager(...) first."
-            )
+        graph_manager = self._require_graph_manager("detect")
         source_id = normalize_name(node_name)
-        edges = self._graph_manager._visit_edges(source_node_id=source_id)
+        edges = graph_manager._visit_edges(source_node_id=source_id)
         entries: List[Dict[str, Any]] = []
         for edge_fields in edges:
             if str(edge_fields.get("relation") or "") != predicate:
