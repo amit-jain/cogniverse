@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from cogniverse_agents.graph.code_extractor import CodeExtractor
-from cogniverse_agents.graph.doc_extractor import DocExtractor
+from cogniverse_agents.graph.doc_extractor import DocExtractor, _is_blocked_entity
 from cogniverse_agents.graph.graph_schema import (
     Edge,
     Node,
@@ -297,3 +297,35 @@ class TestDocExtractor:
             f.write_text("def foo(): pass")
             result = DocExtractor().extract(f, "t1", "sample.py")
         assert result is None
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestIsBlockedEntity:
+    """Entity-candidate noise filter — pronouns, verbs, and verb phrases."""
+
+    def test_blocks_bare_pronoun(self):
+        assert _is_blocked_entity("She") is True
+
+    def test_blocks_bare_verb(self):
+        assert _is_blocked_entity("discovered") is True
+
+    def test_blocks_adverb_plus_verb_phrase(self):
+        # GLiNER emits "later won" as an Event span; it is verb-phrase noise.
+        assert _is_blocked_entity("later won") is True
+
+    def test_blocks_then_verb_phrase(self):
+        assert _is_blocked_entity("then discovered") is True
+
+    def test_keeps_person_entity(self):
+        assert _is_blocked_entity("Marie Curie") is False
+
+    def test_keeps_award_entity(self):
+        assert _is_blocked_entity("Nobel Prize") is False
+
+    def test_keeps_substance_entity(self):
+        assert _is_blocked_entity("radium") is False
+
+    def test_keeps_multiword_proper_noun_with_no_blocked_tokens(self):
+        # Neither token is pronoun/verb/adverb noise — a real place name.
+        assert _is_blocked_entity("New York") is False

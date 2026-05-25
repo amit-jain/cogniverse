@@ -134,10 +134,47 @@ _COMMON_VERB_BLOCKLIST = frozenset(
 )
 
 
+# Adverbs/fillers GLiNER sometimes glues onto a verb to form a span like
+# "later won" or "then discovered". On their own they're never entities;
+# combined with a blocked verb the whole span is verb-phrase noise.
+_ADVERB_BLOCKLIST = frozenset(
+    {
+        "later",
+        "then",
+        "also",
+        "now",
+        "soon",
+        "again",
+        "once",
+        "ever",
+        "never",
+        "just",
+        "still",
+        "yet",
+        "already",
+        "only",
+        "subsequently",
+        "eventually",
+        "recently",
+    }
+)
+
+_NOISE_TOKENS = _PRONOUN_BLOCKLIST | _COMMON_VERB_BLOCKLIST | _ADVERB_BLOCKLIST
+
+
 def _is_blocked_entity(name: str) -> bool:
-    """Return True for pronouns and common verbs that aren't real entities."""
+    """Return True for entity candidates that carry no real noun content.
+
+    Blocks bare pronouns/verbs ("She", "discovered") and multi-word spans
+    whose every token is a pronoun, common verb, or adverb ("later won",
+    "then discovered") — GLiNER emits these as Event/Concept entities but
+    they pollute the KG.
+    """
     lower = name.strip().lower()
-    return lower in _PRONOUN_BLOCKLIST or lower in _COMMON_VERB_BLOCKLIST
+    if lower in _PRONOUN_BLOCKLIST or lower in _COMMON_VERB_BLOCKLIST:
+        return True
+    tokens = lower.split()
+    return len(tokens) > 1 and all(t in _NOISE_TOKENS for t in tokens)
 
 
 _MAX_CHARS_PER_CHUNK = 2000
