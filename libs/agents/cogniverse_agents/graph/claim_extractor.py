@@ -18,6 +18,7 @@ import dspy
 
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Edge, Mention
+from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +241,7 @@ class ClaimExtractor:
         if self._artifact_manager is None:
             return
         try:
-            blob = self._run_async(
+            blob = run_coro_blocking(
                 self._artifact_manager.load_blob("model", "claim_extraction")
             )
             if not blob:
@@ -253,26 +254,6 @@ class ClaimExtractor:
                 tenant_id,
                 exc,
             )
-
-    @staticmethod
-    def _run_async(coro: Any) -> Any:
-        """Run an async ArtifactManager call from this sync code path.
-
-        Uses a worker thread when a loop is already running (the ingestion
-        request path), otherwise drives the coroutine directly.
-        """
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                return executor.submit(asyncio.run, coro).result()
-        return asyncio.run(coro)
 
     @staticmethod
     def _coerce_claims(prediction: dspy.Prediction) -> List[dict]:

@@ -39,6 +39,7 @@ from cogniverse_agents.orchestrator.sufficient_context_signature import (
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
 # Per-session inbound messaging — looked up lazily so the orchestrator
 # can run without the runtime layer wired (e.g. agent-only unit tests
@@ -650,23 +651,11 @@ class OrchestratorAgent(
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
 
             async def _load():
                 await self.workflow_intelligence.load_historical_data()
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None and loop.is_running():
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(asyncio.run, _load())
-                    future.result()
-            else:
-                asyncio.run(_load())
+            run_coro_blocking(_load())
 
             logger.info(
                 "OrchestratorAgent loaded %d workflow templates from artifact",

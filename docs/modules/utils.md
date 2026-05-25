@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 ## Package Structure
 ```text
 libs/core/cogniverse_core/common/utils/
+├── async_bridge.py                    # Run a coroutine to completion from sync code
 ├── async_polling.py                   # Production async polling utilities
 ├── comprehensive_query_utils.py       # Query building for all ranking strategies
 ├── logging_config.py                  # Centralized logging configuration

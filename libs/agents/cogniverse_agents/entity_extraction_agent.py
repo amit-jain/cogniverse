@@ -20,6 +20,7 @@ from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +185,7 @@ class EntityExtractionAgent(
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
-            import asyncio
             import json
-            from concurrent.futures import ThreadPoolExecutor
 
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -202,17 +201,7 @@ class EntityExtractionAgent(
             async def _load():
                 return await am.load_blob("model", "entity_extraction")
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None and loop.is_running():
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(asyncio.run, _load())
-                    blob = future.result()
-            else:
-                blob = asyncio.run(_load())
+            blob = run_coro_blocking(_load())
 
             if blob:
                 state = json.loads(blob)

@@ -16,6 +16,7 @@ from pydantic import Field
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.utils.async_bridge import run_coro_blocking
 
 logger = logging.getLogger(__name__)
 
@@ -163,9 +164,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
-            import asyncio
             import json
-            from concurrent.futures import ThreadPoolExecutor
 
             from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
@@ -181,18 +180,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             async def _load() -> Optional[str]:
                 return await am.load_blob("config", "gateway_thresholds")
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None and loop.is_running():
-                # Called from within an async context — run in a separate thread
-                with ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(asyncio.run, _load())
-                    blob = future.result()
-            else:
-                blob = asyncio.run(_load())
+            blob = run_coro_blocking(_load())
 
             if blob:
                 config = json.loads(blob)
