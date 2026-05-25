@@ -658,43 +658,6 @@ class TelemetryManager:
                 cls._instance = None
                 logger.info("TelemetryManager singleton reset")
 
-    def unregister_project(self, tenant_id: str, project_name: str) -> None:
-        """
-        Unregister and shutdown specific project's tracer provider.
-
-        Args:
-            tenant_id: Tenant identifier
-            project_name: Project name (e.g., "search", "synthetic_data")
-        """
-        project_key = f"{tenant_id}:{project_name}"
-
-        with self._lock:
-            # Shutdown and remove tracer provider
-            if project_key in self._tenant_providers:
-                provider = self._tenant_providers[project_key]
-                try:
-                    if hasattr(provider, "force_flush"):
-                        provider.force_flush(timeout_millis=5000)
-                    if hasattr(provider, "shutdown"):
-                        provider.shutdown()
-                    del self._tenant_providers[project_key]
-                    logger.debug(f"Shutdown tracer provider for {project_key}")
-                except Exception as e:
-                    logger.error(f"Error shutting down provider for {project_key}: {e}")
-
-            # Remove cached tracers for this project
-            tracers_to_remove = [
-                k for k in self._tenant_tracers if k.startswith(project_key)
-            ]
-            for k in tracers_to_remove:
-                del self._tenant_tracers[k]
-                logger.debug(f"Removed cached tracer: {k}")
-
-            # Remove project config
-            self._project_configs.pop(project_key, None)
-
-            logger.info(f"Unregistered project {project_key}")
-
 
 class NoOpSpan:
     """No-op span for graceful degradation."""

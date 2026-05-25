@@ -401,7 +401,6 @@ with telemetry.span("search.execute", tenant_id="acme") as span:
 | `get_tracer(tenant_id, project_name)` | Get tracer (legacy) |
 | `get_provider(tenant_id, project_name)` | Get telemetry provider for queries |
 | `register_project(tenant_id, project_name, **kwargs)` | Register project with config |
-| `unregister_project(tenant_id, project_name)` | Unregister and shutdown project |
 | `force_flush(timeout_millis)` | Flush all pending spans |
 | `shutdown()` | Graceful shutdown |
 | `get_stats()` | Get telemetry statistics |

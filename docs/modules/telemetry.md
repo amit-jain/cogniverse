@@ -85,14 +85,11 @@ libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
 ├── provider.py              # PhoenixProvider implementation
 └── evaluation/              # Phoenix evaluation subsystem
     ├── __init__.py
-    ├── analytics.py         # Analytics utilities
-    ├── analytics_provider.py    # PhoenixAnalyticsProvider
+    ├── analytics.py         # Analytics utilities (PhoenixAnalytics)
     ├── evaluation_provider.py   # PhoenixEvaluationProvider
     ├── experiments.py       # Experiment management
     ├── framework.py         # Evaluation framework
-    ├── monitoring.py        # Monitoring utilities
-    ├── monitoring_provider.py   # PhoenixMonitoringProvider
-    └── provider.py          # Evaluation provider base
+    └── monitoring.py        # Monitoring utilities (RetrievalMonitor)
 ```
 
 **Purpose:** Phoenix-specific implementation of telemetry interfaces. Auto-discovered via Python entry points.
@@ -655,51 +652,6 @@ run_id = await provider.experiments.log_run(
     experiment_id="routing_eval_001",
     inputs={"query": "find videos"},
     outputs={"agent": "video_search", "confidence": 0.95}
-)
-```
-
-### PhoenixAnalyticsProvider
-
-**File:** `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/analytics_provider.py`
-
-Provides analytics operations using Phoenix client.
-
-```python
-from cogniverse_telemetry_phoenix.evaluation.analytics_provider import PhoenixAnalyticsProvider
-
-analytics = PhoenixAnalyticsProvider(phoenix_client)
-
-# Get trace statistics
-stats = await analytics.get_trace_statistics(
-    project="cogniverse-acme-routing",
-    start_time=datetime.now() - timedelta(hours=24)
-)
-# Returns: {count, mean_latency_ms, p50_latency_ms, p95_latency_ms, p99_latency_ms, error_rate}
-```
-
-### PhoenixMonitoringProvider
-
-**File:** `libs/telemetry-phoenix/cogniverse_telemetry_phoenix/evaluation/monitoring_provider.py`
-
-Provides monitoring operations including alerts and metrics windows.
-
-```python
-from cogniverse_telemetry_phoenix.evaluation.monitoring_provider import PhoenixMonitoringProvider
-
-monitoring = PhoenixMonitoringProvider(phoenix_client)
-
-# Create alert
-alert_id = await monitoring.create_alert(
-    name="high_latency",
-    condition="latency > threshold",
-    threshold=1000.0,  # 1s
-    project="cogniverse-acme-routing"
-)
-
-# Get recent metrics window
-metrics = await monitoring.get_metrics_window(
-    project="cogniverse-acme-routing",
-    window_minutes=5
 )
 ```
 

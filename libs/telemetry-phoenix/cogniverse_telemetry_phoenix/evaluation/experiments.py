@@ -208,12 +208,6 @@ class PhoenixExperimentPlugin:
         return result
 
 
-def register():
-    """Register the Phoenix experiment plugin."""
-    logger.info("Phoenix experiment plugin registered")
-    return True
-
-
 def get_phoenix_evaluators(config: dict[str, Any]) -> list[Any]:
     """
     Get Phoenix-compatible evaluators based on configuration.

@@ -9,7 +9,6 @@ import pytest
 from cogniverse_telemetry_phoenix.evaluation.experiments import (
     PhoenixExperimentPlugin,
     get_phoenix_evaluators,
-    register,
 )
 
 
@@ -350,12 +349,6 @@ class TestPhoenixExperimentPlugin:
 
 class TestPhoenixExperimentPluginUtilities:
     """Test utility functions in Phoenix experiment plugin."""
-
-    @pytest.mark.unit
-    def test_register_function(self):
-        """Test plugin registration function."""
-        result = register()
-        assert result is True
 
     @pytest.mark.unit
     def test_get_phoenix_evaluators_no_evaluators(self):
