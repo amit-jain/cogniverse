@@ -436,16 +436,13 @@ def get_config_value(
     return config.get(key, default)
 
 
-def create_default_config_manager(cache_size: int = 100) -> ConfigManager:
+def create_default_config_manager() -> ConfigManager:
     """
     Factory function to create ConfigManager with backend store.
 
     Requires:
         Environment variables: BACKEND_URL, BACKEND_PORT (optional)
         Config file: configs/config.json with backend.type
-
-    Args:
-        cache_size: LRU cache size (number of configs per tenant)
 
     Returns:
         ConfigManager instance with appropriate backend store
@@ -478,7 +475,7 @@ def create_default_config_manager(cache_size: int = 100) -> ConfigManager:
     else:
         raise ValueError(f"Unsupported backend type: {bootstrap.backend_type}")
 
-    return ConfigManager(store=store, cache_size=cache_size)
+    return ConfigManager(store=store)
 
 
 # Singleton instance for convenience (optional, can use factory directly)

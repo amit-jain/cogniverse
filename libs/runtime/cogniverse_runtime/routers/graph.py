@@ -1,8 +1,9 @@
 """Knowledge graph endpoints — upsert, search, neighbors, path, stats.
 
 Follows the same dependency-injection pattern as the wiki router:
-GraphManager is injected via set_graph_manager() at startup. All
-operations are tenant-scoped.
+a GraphManager factory is injected via set_graph_manager_factory() at
+startup, and per-tenant managers are built from it. All operations are
+tenant-scoped.
 """
 
 import logging

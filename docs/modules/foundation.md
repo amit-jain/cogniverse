@@ -28,7 +28,7 @@
 
 The Foundation module provides **infrastructure services** that all other modules depend on:
 
-- **Configuration Management**: Multi-tenant, versioned configuration with pluggable backend persistence (Vespa, SQLite)
+- **Configuration Management**: Multi-tenant, versioned configuration with pluggable `ConfigStore` persistence (default: Vespa)
 - **Telemetry Infrastructure**: OpenTelemetry-based tracing with tenant isolation
 - **Provider Abstraction**: Pluggable backends for telemetry (Phoenix, etc.)
 
@@ -131,7 +131,7 @@ flowchart TB
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 # Initialize config manager
-config_manager = create_default_config_manager(cache_size=100)
+config_manager = create_default_config_manager()
 
 # Get system configuration for tenant
 system_config = config_manager.get_system_config(tenant_id="acme")

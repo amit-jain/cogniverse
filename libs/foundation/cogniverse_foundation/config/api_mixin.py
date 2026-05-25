@@ -62,7 +62,7 @@ class ConfigAPIMixin:
         - self.update_optimizer_config(OptimizerConfig): method
 
     Features:
-        - All config changes persist to SQLite via ConfigManager
+        - All config changes persist via ConfigManager's ConfigStore (Vespa)
         - Supports multi-tenant configuration (tenant_id parameter)
         - Version tracking for all changes
         - Hot reload without restart

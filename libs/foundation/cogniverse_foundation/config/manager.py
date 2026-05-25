@@ -42,14 +42,13 @@ class ConfigManager:
     All configurations are:
     - Versioned (full history tracking)
     - Tenant-scoped (multi-tenant ready)
-    - Cached (LRU cache with configurable size)
-    - Persistent (SQLite storage)
+    - Persisted through a pluggable ConfigStore (default: VespaConfigStore)
+    - Backed by an in-process cache of the system config (hot path)
     """
 
     def __init__(
         self,
         store: ConfigStore,
-        cache_size: int = 100,
         profile_change_listener: Optional[ProfileChangeListener] = None,
     ):
         """
@@ -57,7 +56,6 @@ class ConfigManager:
 
         Args:
             store: ConfigStore implementation (REQUIRED, no fallback)
-            cache_size: LRU cache size (number of configs per tenant)
             profile_change_listener: Optional callable invoked when a
                 backend profile is added or removed. Signature
                 ``(event_type, profile_name, profile_config_or_none)``
@@ -75,7 +73,6 @@ class ConfigManager:
             raise ValueError("store is required")
 
         self.store = store
-        self.cache_size = cache_size
         self._backend_lock = threading.Lock()
         self._profile_change_listener = profile_change_listener
         # System config doesn't change after the runtime applies its env
@@ -90,10 +87,8 @@ class ConfigManager:
         self._system_config_cache: Optional[SystemConfig] = None
 
         logger.info(
-            "ConfigManager initialized with %s, cache size: %d, "
-            "profile_change_listener=%s",
+            "ConfigManager initialized with %s, profile_change_listener=%s",
             type(self.store).__name__,
-            cache_size,
             "set" if profile_change_listener else "unset",
         )
 

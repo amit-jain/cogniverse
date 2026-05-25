@@ -208,7 +208,7 @@ class ContradictionReconcileRequest(BaseModel):
 async def contradiction_reconcile(
     tenant_id: str, body: ContradictionReconcileRequest
 ) -> Dict[str, Any]:
-    """apply schema policy to a conflict set (write-capable)."""
+    """apply schema policy to a conflict set (read-only — returns the resolved view)."""
     from cogniverse_agents.contradiction_reconciliation_agent import (
         ContradictionReconciliationAgent,
         ContradictionReconciliationDeps,

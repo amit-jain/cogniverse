@@ -18,7 +18,7 @@ The configuration system provides centralized management for all system configur
 
 - **Type-safe schemas**: Strongly typed configuration dataclasses
 
-- **Caching**: LRU cache for configuration access performance
+- **Caching**: In-process cache of the system config (the hot-path read)
 
 - **DSPy integration**: Dynamic optimizer and module configuration
 
@@ -235,7 +235,7 @@ vespa_store = VespaConfigStore(
 )
 
 # Use with ConfigManager (tenant isolation handled via document IDs)
-manager = ConfigManager(store=vespa_store, cache_size=100)
+manager = ConfigManager(store=vespa_store)
 ```
 
 **Schema Deployment:**
