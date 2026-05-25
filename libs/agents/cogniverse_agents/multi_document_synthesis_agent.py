@@ -343,24 +343,9 @@ class MultiDocumentSynthesisAgent(
         documents_block: str,
         rlm_options: RLMOptions,
     ) -> str:
-        from cogniverse_agents.inference.rlm_inference import RLMInference
-        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
-        # If the agent was constructed with an LLMEndpointConfig, use it;
-        # otherwise build one from the rlm options' backend/model fields.
-        llm_config = self._llm_config or LLMEndpointConfig(
-            model=(
-                f"{rlm_options.backend}/{rlm_options.model}"
-                if rlm_options.model
-                else f"{rlm_options.backend}/gpt-4o"
-            )
-        )
-        rlm = RLMInference(
-            llm_config=llm_config,
-            max_iterations=rlm_options.max_iterations,
-            max_llm_calls=rlm_options.max_llm_calls,
-            timeout_seconds=rlm_options.timeout_seconds,
-        )
+        rlm = build_rlm_from_options(self._llm_config, rlm_options)
         result = rlm.process(
             query=query,
             context=documents_block,

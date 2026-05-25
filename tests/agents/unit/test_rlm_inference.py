@@ -480,3 +480,47 @@ class TestSearchInputWithRLM:
         # Reconstruct from dict
         reconstructed = SearchInput.model_validate(data_dict)
         assert reconstructed.rlm.enabled is True
+
+
+class TestBuildRlmFromOptions:
+    """The shared RLMOptions -> RLMInference constructor for the KG agents."""
+
+    def test_model_from_options_when_no_llm_config(self):
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+
+        opts = RLMOptions(
+            backend="openai",
+            model="gpt-4o-mini",
+            max_iterations=7,
+            max_llm_calls=3,
+            timeout_seconds=42,
+        )
+        rlm = build_rlm_from_options(None, opts)
+        assert rlm.model == "openai/gpt-4o-mini"
+        assert rlm.max_iterations == 7
+        assert rlm.max_llm_calls == 3
+        assert rlm.timeout_seconds == 42
+
+    def test_default_model_when_options_model_unset(self):
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+
+        rlm = build_rlm_from_options(None, RLMOptions(backend="openai"))
+        assert rlm.model == "openai/gpt-4o"
+
+    def test_explicit_llm_config_wins_over_options(self):
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+
+        cfg = LLMEndpointConfig(model="anthropic/claude-sonnet-4-6")
+        opts = RLMOptions(
+            backend="openai",
+            model="gpt-4o-mini",
+            max_iterations=9,
+            max_llm_calls=4,
+            timeout_seconds=11,
+        )
+        rlm = build_rlm_from_options(cfg, opts)
+        assert rlm.model == "anthropic/claude-sonnet-4-6"
+        # caps still come from the per-request options, not the endpoint config
+        assert rlm.max_iterations == 9
+        assert rlm.max_llm_calls == 4
+        assert rlm.timeout_seconds == 11

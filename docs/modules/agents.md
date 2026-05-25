@@ -3207,6 +3207,21 @@ print(f"Depth: {result.depth_reached}, Calls: {result.total_calls}")
 print(f"Latency: {result.latency_ms}ms")
 ```
 
+`build_rlm_from_options(llm_config, rlm_options)` (same module) is the shared
+constructor used by the KG summariser agents (`FederatedQueryAgent`,
+`TemporalReasoningAgent`, `KnowledgeGraphTraversalAgent`,
+`KnowledgeSummarizationAgent`, `MultiDocumentSynthesisAgent`). It resolves the
+endpoint config — falling back to an `RLMOptions`-derived default model when
+the agent has none wired — and applies the option's iteration / call / timeout
+caps:
+
+```python
+from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+
+rlm = build_rlm_from_options(self._llm_config, rlm_options)
+result = rlm.process(query=query, context=block)
+```
+
 #### RLMAwareMixin (Agent Integration)
 
 Agents inherit from `RLMAwareMixin` to gain RLM capabilities:

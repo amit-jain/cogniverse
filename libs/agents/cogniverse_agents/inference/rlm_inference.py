@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import dspy
 
 if TYPE_CHECKING:
+    from cogniverse_core.agents.rlm_options import RLMOptions
     from cogniverse_core.events import EventQueue
 
 from cogniverse_agents.inference.deno_check import assert_deno_available
@@ -437,3 +438,29 @@ class RLMInference:
                 "trajectory_summary": trajectory_summary,
             },
         )
+
+
+def build_rlm_from_options(
+    llm_config: Optional[LLMEndpointConfig],
+    rlm_options: "RLMOptions",
+) -> RLMInference:
+    """Build an ``RLMInference`` from an agent's LLM config + per-request options.
+
+    Resolves the endpoint config (falling back to an ``RLMOptions``-derived
+    default model when the agent has none wired) and applies the option's
+    iteration / call / timeout caps. Shared by the KG summariser agents whose
+    ``_summarise_with_rlm`` setup was otherwise identical.
+    """
+    resolved = llm_config or LLMEndpointConfig(
+        model=(
+            f"{rlm_options.backend}/{rlm_options.model}"
+            if rlm_options.model
+            else f"{rlm_options.backend}/gpt-4o"
+        )
+    )
+    return RLMInference(
+        llm_config=resolved,
+        max_iterations=rlm_options.max_iterations,
+        max_llm_calls=rlm_options.max_llm_calls,
+        timeout_seconds=rlm_options.timeout_seconds,
+    )
