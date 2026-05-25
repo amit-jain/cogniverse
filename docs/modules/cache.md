@@ -47,9 +47,7 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
    - Currently implemented: structured_filesystem backend
 
 3. **Specialized Cache Types**
-   - **EmbeddingCache**: Optimized for numpy arrays with binary serialization
    - **PipelineArtifactCache**: Handles keyframes, transcripts, descriptions, segments
-   - **FileSystemPipelineCache**: Direct filesystem access for existing outputs
 
 4. **Efficient Data Formats**
    - Binary embeddings (tobytes/frombuffer)
@@ -71,7 +69,6 @@ libs/core/cogniverse_core/common/cache/
 ├── __init__.py                      # Package exports
 ├── base.py                          # Abstract base classes (CacheBackend, CacheManager)
 ├── registry.py                      # Backend plugin registry
-├── embedding_cache.py               # Specialized embedding cache
 ├── pipeline_cache.py                # Video processing artifact cache
 └── backends/
     ├── __init__.py
@@ -991,212 +988,7 @@ backend = StructuredFilesystemBackend(config)
 
 ## Specialized Caches
 
-### 1. EmbeddingCache (embedding_cache.py:53-200)
-
-**Purpose:** Optimized cache for embedding vectors with binary serialization.
-
-**Key Features:**
-
-- Binary storage (50%+ space savings vs JSON)
-
-- Deterministic key generation (same text → same key)
-
-- Zero-copy deserialization
-
-- Model-specific namespacing
-
-- Batch operations
-
-**Initialization:**
-```python
-from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
-
-embedding_cache = EmbeddingCache(
-    cache_manager=cache_manager,
-    ttl=86400  # 24 hours
-)
-```
-
-**Key Methods:**
-
-#### `_generate_key(text: str, model: str, prefix: str = "embedding") -> str`
-Generate deterministic cache key.
-
-**Process:**
-
-1. Create content string: `{model}:{text}`
-
-2. Hash with SHA256
-
-3. Take first 16 hex digits
-
-4. Format: `{prefix}:{model}:{hash}`
-
-**Example:**
-```python
-key = embedding_cache._generate_key(
-    text="Marie Curie radioactivity",
-    model="colpali"
-)
-# → "embedding:colpali:a3f2e9d8c7b6a5f4"
-```
-
----
-
-#### `async get_embedding(text: str, model: str) -> Optional[np.ndarray]`
-Get cached embedding.
-
-**Parameters:**
-
-- `text`: Text that was embedded
-
-- `model`: Model name (e.g., "colpali", "videoprism")
-
-**Returns:** Numpy array if cached, None otherwise
-
-**Process:**
-
-1. Generate cache key from text + model
-
-2. Retrieve from cache
-
-3. Deserialize binary data to numpy array
-
-4. Update statistics
-
-**Example:**
-```python
-embedding = await embedding_cache.get_embedding(
-    text="Marie Curie radioactivity",
-    model="colpali"
-)
-
-if embedding is not None:
-    print(f"Cache hit! Shape: {embedding.shape}")
-else:
-    print("Cache miss - need to compute embedding")
-```
-
----
-
-#### `async set_embedding(text: str, model: str, embedding: np.ndarray) -> bool`
-Store embedding in cache.
-
-**Parameters:**
-
-- `text`: Text that was embedded
-
-- `model`: Model name
-
-- `embedding`: Numpy array to cache
-
-**Returns:** True if stored successfully
-
-**Storage Format:**
-```python
-{
-    "dtype": "float32",
-    "shape": [128],
-    "data": b"\x00\x00\x80?...",  # Binary bytes via tobytes()
-    "text_preview": "Marie Curie...",  # First 100 chars
-    "model": "colpali",
-    "timestamp": "2025-10-07T12:00:00"
-}
-```
-
-**Example:**
-```python
-import numpy as np
-
-embedding = np.random.randn(128).astype(np.float32)
-
-success = await embedding_cache.set_embedding(
-    text="Marie Curie radioactivity",
-    model="colpali",
-    embedding=embedding
-)
-```
-
----
-
-#### `async get_batch_embeddings(texts: list[str], model: str) -> Dict[str, Optional[np.ndarray]]`
-Get multiple embeddings from cache.
-
-**Parameters:**
-
-- `texts`: List of texts
-
-- `model`: Model name
-
-**Returns:** Dict mapping text → embedding (or None if not cached)
-
-**Example:**
-```python
-texts = [
-    "Marie Curie radioactivity",
-    "Albert Einstein relativity",
-    "Isaac Newton gravity"
-]
-
-results = await embedding_cache.get_batch_embeddings(texts, "colpali")
-
-for text, embedding in results.items():
-    if embedding is not None:
-        print(f"Cached: {text} → {embedding.shape}")
-    else:
-        print(f"Not cached: {text}")
-```
-
----
-
-#### `async set_batch_embeddings(embeddings: Dict[str, np.ndarray], model: str) -> Dict[str, bool]`
-Store multiple embeddings.
-
-**Parameters:**
-
-- `embeddings`: Dict mapping text → embedding
-
-- `model`: Model name
-
-**Returns:** Dict mapping text → success status
-
-**Example:**
-```python
-embeddings = {
-    "Marie Curie radioactivity": np.random.randn(128).astype(np.float32),
-    "Albert Einstein relativity": np.random.randn(128).astype(np.float32)
-}
-
-results = await embedding_cache.set_batch_embeddings(embeddings, "colpali")
-
-for text, success in results.items():
-    print(f"{text}: {'✓' if success else '✗'}")
-```
-
----
-
-#### `get_stats() -> Dict[str, Any]`
-Get cache statistics.
-
-**Returns:**
-```python
-{
-    "hits": 1234,
-    "misses": 567,
-    "total_requests": 1801,
-    "hit_rate": 0.685
-}
-```
-
-**Example:**
-```python
-stats = embedding_cache.get_stats()
-print(f"Embedding cache hit rate: {stats['hit_rate']:.2%}")
-```
-
----
-
-### 2. PipelineArtifactCache (pipeline_cache.py:47-478)
+### 1. PipelineArtifactCache (pipeline_cache.py:47-420)
 
 **Purpose:** Comprehensive caching for video processing pipeline artifacts.
 
@@ -1779,92 +1571,7 @@ print(f"Total size: {stats['manager']['size_bytes']} bytes")
 
 ---
 
-### Example 2: Embedding Cache with Binary Serialization
-
-```python
-"""
-Use specialized embedding cache for efficient vector storage.
-"""
-import numpy as np
-from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
-from cogniverse_core.common.cache.base import CacheManager, CacheConfig
-
-# Setup cache manager
-config = CacheConfig(
-    backends=[
-        {
-            "backend_type": "structured_filesystem",
-            "priority": 0,
-            "base_path": "~/.cache/cogniverse/embeddings",
-            "serialization_format": "pickle"
-        }
-    ],
-    default_ttl=86400  # 24 hours
-)
-cache_manager = CacheManager(config)
-
-# Initialize embedding cache
-embedding_cache = EmbeddingCache(
-    cache_manager=cache_manager,
-    ttl=86400
-)
-
-# Query embeddings
-queries = [
-    "Marie Curie radioactivity discovery",
-    "Albert Einstein theory of relativity",
-    "Isaac Newton laws of motion"
-]
-
-model = "colpali"
-
-# Check which embeddings are cached
-cached_embeddings = await embedding_cache.get_batch_embeddings(queries, model)
-
-for query, embedding in cached_embeddings.items():
-    if embedding is not None:
-        print(f"✓ Cached: {query} → {embedding.shape}")
-    else:
-        print(f"✗ Not cached: {query}")
-
-# Compute missing embeddings
-to_compute = [q for q, emb in cached_embeddings.items() if emb is None]
-
-if to_compute:
-    print(f"Computing {len(to_compute)} embeddings...")
-
-    # Simulate encoder
-    new_embeddings = {
-        query: np.random.randn(128).astype(np.float32)
-        for query in to_compute
-    }
-
-    # Store in cache
-    results = await embedding_cache.set_batch_embeddings(new_embeddings, model)
-
-    for query, success in results.items():
-        print(f"{'✓' if success else '✗'} Stored: {query}")
-
-# Get cache statistics
-stats = embedding_cache.get_stats()
-print(f"\nEmbedding Cache Stats:")
-print(f"  Hits: {stats['hits']}")
-print(f"  Misses: {stats['misses']}")
-print(f"  Hit rate: {stats['hit_rate']:.2%}")
-
-# Show storage efficiency
-embedding = np.random.randn(128).astype(np.float32)
-binary_size = len(embedding.tobytes())  # ~512 bytes
-json_size = len(str(embedding.tolist()))  # ~1200+ bytes
-print(f"\nStorage efficiency:")
-print(f"  Binary: {binary_size} bytes")
-print(f"  JSON: {json_size} bytes")
-print(f"  Savings: {(1 - binary_size/json_size)*100:.1f}%")
-```
-
----
-
-### Example 3: Pipeline Artifact Caching
+### Example 2: Pipeline Artifact Caching
 
 ```python
 """
@@ -2035,7 +1742,7 @@ print(f"  Descriptions: {'✓' if artifacts.frame_descriptions else '✗'}")
 
 ---
 
-### Example 4: Segment-Based Caching
+### Example 3: Segment-Based Caching
 
 ```python
 """
@@ -2129,7 +1836,7 @@ print(f"  Hit rate: {stats['overall']['manager']['hit_rate']:.2%}")
 
 ---
 
-### Example 5: Cache Invalidation and Cleanup
+### Example 4: Cache Invalidation and Cleanup
 
 ```python
 """
@@ -2244,27 +1951,18 @@ config = CacheConfig(
     ]
 )
 
-# 2. Use binary serialization for embeddings
-embedding_cache = EmbeddingCache(
-    cache_manager,
-    ttl=86400  # Long TTL for stable embeddings
-)
-
-# 3. Adjust TTL based on data volatility
+# 2. Adjust TTL based on data volatility
 # Stable data (embeddings): 24 hours
 # Semi-stable (keyframes): 7 days
 # Volatile (search results): 1 hour
 
-# 4. Pre-populate cache for common queries
+# 3. Pre-populate cache for common queries
 common_queries = ["machine learning", "robotics", "AI research"]
 for query in common_queries:
-    if not await embedding_cache.get_embedding(query, model):
+    key = f"embedding:{model}:{query}"
+    if await cache_manager.get(key) is None:
         embedding = encoder.encode(query)
-        await embedding_cache.set_embedding(query, model, embedding)
-
-# 5. Batch operations when possible
-texts = ["query1", "query2", "query3"]
-embeddings = await embedding_cache.get_batch_embeddings(texts, model)
+        await cache_manager.set(key, embedding, ttl=86400)
 ```
 
 ---
@@ -2656,35 +2354,7 @@ async def test_filesystem_cache():
     assert backend_value == "test_value"
 ```
 
-#### 4. Embedding Cache Binary Serialization
-
-```python
-import numpy as np
-from cogniverse_core.common.cache.embedding_cache import EmbeddingCache
-
-@pytest.mark.asyncio
-async def test_embedding_binary_serialization():
-    """Test embeddings stored and retrieved as binary."""
-    cache_manager = CacheManager(config)
-    embedding_cache = EmbeddingCache(cache_manager, ttl=3600)
-
-    # Create test embedding
-    original = np.random.randn(128).astype(np.float32)
-
-    # Store
-    success = await embedding_cache.set_embedding("test", "model", original)
-    assert success
-
-    # Retrieve
-    retrieved = await embedding_cache.get_embedding("test", "model")
-
-    assert retrieved is not None
-    assert retrieved.shape == original.shape
-    assert retrieved.dtype == original.dtype
-    np.testing.assert_array_almost_equal(retrieved, original)
-```
-
-#### 5. Pipeline Artifact Caching
+#### 4. Pipeline Artifact Caching
 
 ```python
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
@@ -2744,7 +2414,7 @@ async def test_keyframe_caching():
     assert "1" in cached_images
 ```
 
-#### 6. Cache Statistics
+#### 5. Cache Statistics
 
 ```python
 @pytest.mark.asyncio
@@ -2783,7 +2453,7 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 - Currently implemented: structured filesystem backend
 
-- Specialized caches for embeddings and pipeline artifacts
+- Specialized cache for pipeline artifacts
 
 - Efficient binary serialization for vectors and images
 
@@ -2830,8 +2500,6 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 - Base Classes: `libs/core/cogniverse_core/common/cache/base.py`
 
 - Registry: `libs/core/cogniverse_core/common/cache/registry.py`
-
-- Embedding Cache: `libs/core/cogniverse_core/common/cache/embedding_cache.py`
 
 - Pipeline Cache: `libs/core/cogniverse_core/common/cache/pipeline_cache.py`
 

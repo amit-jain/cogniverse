@@ -433,10 +433,7 @@ from cogniverse_core.common.dspy_module_registry import DSPyModuleRegistry
 from cogniverse_foundation.config.agent_config import DSPyModuleType
 import dspy
 
-# Register custom DSPy module type
-DSPyModuleRegistry.register_module(DSPyModuleType.CHAIN_OF_THOUGHT, dspy.ChainOfThought)
-
-# Create module instance
+# Create module instance from a built-in module type
 class QASignature(dspy.Signature):
     question = dspy.InputField()
     answer = dspy.OutputField()
@@ -1113,26 +1110,6 @@ await manager.set("key", value, ttl=3600)
 result = await manager.get("key")
 ```
 
-### EmbeddingCache (embedding_cache.py)
-
-Specialized cache for embeddings with efficient storage:
-
-```python
-from cogniverse_core.common.cache import EmbeddingCache
-
-cache = EmbeddingCache(cache_manager, ttl=86400)  # 24 hours
-
-# Get/set individual embeddings
-embedding = await cache.get_embedding("query text", model="vidore/colpali-v1.3-hf")
-await cache.set_embedding("query text", "vidore/colpali-v1.3-hf", embedding_array)
-
-# Batch operations
-results = await cache.get_batch_embeddings(["text1", "text2"], model="...")
-
-# Statistics
-stats = cache.stats.to_dict()  # {"hits": 100, "misses": 20, "hit_rate": 0.833}
-```
-
 ### PipelineArtifactCache (pipeline_cache.py)
 
 Caches video processing pipeline artifacts:
@@ -1220,18 +1197,7 @@ def process_item(item):
 ### async_polling.py - Semantic Wait Functions
 
 ```python
-from cogniverse_core.common.utils.async_polling import (
-    wait_for_service_ready,
-    wait_for_retry_backoff
-)
-
-# Wait for service readiness
-ready = wait_for_service_ready(
-    check_fn=lambda: service.is_healthy(),
-    timeout=30.0,
-    poll_interval=1.0,
-    description="Vespa"
-)
+from cogniverse_core.common.utils.async_polling import wait_for_retry_backoff
 
 # Wait with backoff for retries
 wait_for_retry_backoff(
@@ -1292,20 +1258,12 @@ vlm = VLMInterface(
     tenant_id="acme"
 )
 
-# Basic visual analysis
+# Visual analysis
 result = await vlm.analyze_visual_content(
     image_paths=["frame1.jpg", "frame2.jpg"],
     query="Find manufacturing defects"
 )
 # Returns: {descriptions, themes, key_objects, insights, relevance_score}
-
-# Detailed analysis for reporting
-result = await vlm.analyze_visual_content_detailed(
-    image_paths=["frame1.jpg"],
-    query="Technical analysis",
-    context="Quality inspection report"
-)
-# Returns: {detailed_descriptions, technical_analysis, visual_patterns, quality_assessment (dict), annotations}
 ```
 
 **DSPy Signatures:**
@@ -1313,7 +1271,6 @@ result = await vlm.analyze_visual_content_detailed(
 | Signature | Purpose |
 |-----------|---------|
 | `VisualAnalysisSignature` | Basic analysis (descriptions, themes, objects, insights, relevance_score) |
-| `DetailedVisualAnalysisSignature` | Detailed analysis with technical findings and quality_assessment dict |
 
 ---
 

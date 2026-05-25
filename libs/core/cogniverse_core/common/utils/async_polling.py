@@ -6,39 +6,6 @@ generic time.sleep() calls with meaningful, purpose-specific waits.
 """
 
 import time
-from typing import Callable, Optional
-
-
-def wait_for_service_ready(
-    check_fn: Optional[Callable[[], bool]] = None,
-    timeout: float = 30.0,
-    poll_interval: float = 1.0,
-    description: str = "service",
-) -> bool:
-    """
-    Wait for a service to be ready using a check function.
-
-    Args:
-        check_fn: Function that returns True when service is ready
-        timeout: Maximum time to wait in seconds
-        poll_interval: Time between polls in seconds
-        description: Description of what we're waiting for
-
-    Returns:
-        True if service became ready, False if timeout exceeded
-    """
-    if check_fn is None:
-        # Simple delay if no check function provided
-        time.sleep(min(poll_interval, timeout))
-        return True
-
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        if check_fn():
-            return True
-        time.sleep(poll_interval)
-
-    return False
 
 
 def wait_for_retry_backoff(

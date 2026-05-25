@@ -62,27 +62,6 @@ class TestDSPyModuleRegistry:
 
         assert isinstance(module, dspy.Predict)
 
-    def test_register_custom_module_type(self):
-        """Test registering custom module type"""
-
-        class CustomModule(dspy.Module):
-            def __init__(self, signature):
-                super().__init__()
-                self.signature = signature
-
-        # Create custom enum value (would need to extend DSPyModuleType)
-        # For now, test the register method exists and works with existing enum
-
-        # Register predict again with custom class
-        DSPyModuleRegistry.register_module(DSPyModuleType.PREDICT, CustomModule)
-
-        # Verify it was updated
-        module_class = DSPyModuleRegistry.get_module_class(DSPyModuleType.PREDICT)
-        assert module_class == CustomModule
-
-        # Restore original
-        DSPyModuleRegistry.register_module(DSPyModuleType.PREDICT, dspy.Predict)
-
 
 class TestDSPyOptimizerRegistry:
     """Test DSPyOptimizerRegistry"""
@@ -105,23 +84,6 @@ class TestDSPyOptimizerRegistry:
             OptimizerType.MIPRO_V2
         )
         assert optimizer_class == dspy.MIPROv2
-
-    def test_register_custom_optimizer_type(self):
-        """Test registering custom optimizer type"""
-
-        class CustomOptimizer:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-
-        # Register copro again with custom class
-        DSPyOptimizerRegistry.register_optimizer(OptimizerType.COPRO, CustomOptimizer)
-
-        # Verify it was updated
-        optimizer_class = DSPyOptimizerRegistry.get_optimizer_class(OptimizerType.COPRO)
-        assert optimizer_class == CustomOptimizer
-
-        # Restore original
-        DSPyOptimizerRegistry.register_optimizer(OptimizerType.COPRO, dspy.COPRO)
 
 
 if __name__ == "__main__":

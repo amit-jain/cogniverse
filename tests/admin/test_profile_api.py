@@ -913,7 +913,7 @@ class TestProfileAPISchemaDeployment:
 
         import numpy as np
 
-        from cogniverse_core.common.document import Document
+        from cogniverse_sdk.document import Document
 
         prod_schema_dir = Path("configs/schemas")
         prod_schema_dir.mkdir(parents=True, exist_ok=True)

@@ -27,26 +27,6 @@ class VisualAnalysisSignature(dspy.Signature):
     relevance_score = dspy.OutputField(desc="Relevance to query (0.0-1.0)")
 
 
-class DetailedVisualAnalysisSignature(dspy.Signature):
-    """Analyze visual content for detailed reporting."""
-
-    images = dspy.InputField(desc="Description of images to analyze")
-    query = dspy.InputField(desc="Original search query for context")
-    context = dspy.InputField(desc="Additional context for analysis")
-
-    detailed_descriptions = dspy.OutputField(
-        desc="Detailed visual descriptions (comma-separated)"
-    )
-    technical_analysis = dspy.OutputField(
-        desc="Technical analysis findings (comma-separated)"
-    )
-    visual_patterns = dspy.OutputField(
-        desc="Visual patterns identified (comma-separated)"
-    )
-    quality_score = dspy.OutputField(desc="Overall quality assessment (0.0-1.0)")
-    annotations = dspy.OutputField(desc="Key annotations (comma-separated)")
-
-
 class VLMInterface:
     """Interface for Vision Language Model operations using DSPy"""
 
@@ -107,40 +87,4 @@ class VLMInterface:
                 "relevance_score": float(result.relevance_score)
                 if result.relevance_score
                 else 0.0,
-            }
-
-    async def analyze_visual_content_detailed(
-        self, image_paths: List[str], query: str, context: str = ""
-    ) -> Dict[str, Any]:
-        """Perform detailed visual analysis using DSPy"""
-        with dspy.context(lm=self._dspy_lm):
-            visual_analysis = dspy.Predict(DetailedVisualAnalysisSignature)
-
-            image_descriptions = []
-            for image_path in image_paths:
-                image_descriptions.append(f"Image: {image_path}")
-
-            logger.info(
-                f"Analyzing {len(image_paths)} images with detailed VLM analysis"
-            )
-
-            result = visual_analysis(
-                images=", ".join(image_descriptions),
-                query=query,
-                context=context or "No additional context",
-            )
-
-            return {
-                "detailed_descriptions": result.detailed_descriptions.split(", "),
-                "technical_analysis": result.technical_analysis.split(", "),
-                "visual_patterns": result.visual_patterns.split(", "),
-                "quality_assessment": {
-                    "overall": float(result.quality_score),
-                    "clarity": float(result.quality_score),
-                    "relevance": float(result.quality_score),
-                },
-                "annotations": [
-                    {"element": ann, "confidence": float(result.quality_score)}
-                    for ann in result.annotations.split(", ")
-                ],
             }

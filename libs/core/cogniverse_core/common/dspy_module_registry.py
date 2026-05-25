@@ -75,20 +75,6 @@ class DSPyModuleRegistry:
             ) from e
 
     @classmethod
-    def register_module(
-        cls, module_type: DSPyModuleType, module_class: Type[dspy.Module]
-    ):
-        """
-        Register a custom DSPy module type.
-
-        Args:
-            module_type: Module type enum
-            module_class: DSPy module class
-        """
-        cls._module_registry[module_type] = module_class
-        logger.info(f"Registered custom module type: {module_type.value}")
-
-    @classmethod
     def list_modules(cls) -> Dict[str, str]:
         """
         List all registered module types.
@@ -160,20 +146,6 @@ class DSPyOptimizerRegistry:
             raise RuntimeError(
                 f"Failed to create optimizer {optimizer_type.value}: {e}"
             ) from e
-
-    @classmethod
-    def register_optimizer(
-        cls, optimizer_type: OptimizerType, optimizer_class: Callable
-    ):
-        """
-        Register a custom DSPy optimizer type.
-
-        Args:
-            optimizer_type: Optimizer type enum
-            optimizer_class: DSPy optimizer class
-        """
-        cls._optimizer_registry[optimizer_type] = optimizer_class
-        logger.info(f"Registered custom optimizer type: {optimizer_type.value}")
 
     @classmethod
     def list_optimizers(cls) -> Dict[str, str]:

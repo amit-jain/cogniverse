@@ -3,14 +3,12 @@ Pipeline artifact caching system for video processing results
 """
 
 import hashlib
-import json
 import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import aiofiles
 import cv2
 import numpy as np
 
@@ -418,70 +416,3 @@ class PipelineArtifactCache:
                 "descriptions": "Not implemented",
             },
         }
-
-
-class FileSystemPipelineCache(PipelineArtifactCache):
-    """
-    File system optimized version that can directly use existing file structure
-    """
-
-    def __init__(self, base_path: Path, cache_manager: Optional[CacheManager] = None):
-        """
-        Initialize with direct file system access
-
-        Args:
-            base_path: Base directory for pipeline outputs
-            cache_manager: Optional cache manager for metadata caching
-        """
-        super().__init__(cache_manager) if cache_manager else None
-        self.base_path = Path(base_path)
-
-    async def get_keyframes_from_disk(
-        self, video_id: str
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, np.ndarray]]]:
-        """Load keyframes directly from disk"""
-        metadata_file = self.base_path / "metadata" / f"{video_id}_keyframes.json"
-        keyframes_dir = self.base_path / "keyframes" / video_id
-
-        if not metadata_file.exists():
-            return None, None
-
-        # Load metadata
-        async with aiofiles.open(metadata_file, "r") as f:
-            metadata = json.loads(await f.read())
-
-        # Load keyframe images
-        images = {}
-        for frame_info in metadata.get("keyframes", []):
-            frame_path = keyframes_dir / frame_info["filename"]
-            if frame_path.exists():
-                # Read image asynchronously
-                image = cv2.imread(str(frame_path))
-                if image is not None:
-                    images[str(frame_info["frame_id"])] = image
-
-        return metadata, images
-
-    async def get_transcript_from_disk(self, video_id: str) -> Optional[Dict[str, Any]]:
-        """Load transcript directly from disk"""
-        transcript_file = self.base_path / "transcripts" / f"{video_id}.json"
-
-        if not transcript_file.exists():
-            return None
-
-        async with aiofiles.open(transcript_file, "r") as f:
-            return json.loads(await f.read())
-
-    async def get_descriptions_from_disk(
-        self, video_id: str
-    ) -> Optional[Dict[str, Any]]:
-        """Load descriptions directly from disk"""
-        descriptions_file = (
-            self.base_path / "descriptions" / f"{video_id}_descriptions.json"
-        )
-
-        if not descriptions_file.exists():
-            return None
-
-        async with aiofiles.open(descriptions_file, "r") as f:
-            return json.loads(await f.read())

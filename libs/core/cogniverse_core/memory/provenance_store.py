@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
@@ -339,10 +338,6 @@ class ProvenanceStore:
             derived_from_other=[d for d in derived_other if isinstance(d, dict)],
             trace_id=row.get("trace_id") or None,
         )
-
-
-def _generate_id() -> str:
-    return uuid.uuid4().hex
 
 
 def _escape(value: str) -> str:

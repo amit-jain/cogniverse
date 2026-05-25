@@ -20,7 +20,6 @@ import numpy as np
 # Add project to path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from cogniverse_core.common.document import ContentType, Document
 from cogniverse_core.registries.backend_registry import (
     BackendRegistry,
     get_backend_registry,
@@ -28,6 +27,7 @@ from cogniverse_core.registries.backend_registry import (
     register_ingestion_backend,
     register_search_backend,
 )
+from cogniverse_sdk.document import ContentType, Document
 from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchBackend
 
 

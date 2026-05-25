@@ -118,53 +118,6 @@ class TestVLMInterface:
                 config_manager=create_default_config_manager(), tenant_id="test:unit"
             )
 
-    @patch("cogniverse_foundation.config.llm_factory.create_dspy_lm")
-    @patch("cogniverse_core.common.vlm_interface.get_config")
-    @patch("cogniverse_core.common.vlm_interface.dspy.Predict")
-    @pytest.mark.asyncio
-    async def test_analyze_visual_content_detailed(
-        self, mock_predict, mock_get_config, mock_create_dspy_lm
-    ):
-        """Test detailed visual content analysis"""
-        mock_config = Mock()
-        mock_llm_config = Mock()
-        mock_endpoint = Mock()
-        mock_endpoint.model = "test-model"
-        mock_endpoint.api_base = "http://localhost:11434"
-        mock_llm_config.resolve.return_value = mock_endpoint
-        mock_config.get_llm_config.return_value = mock_llm_config
-        mock_get_config.return_value = mock_config
-        mock_create_dspy_lm.return_value = Mock()
-
-        # Mock DSPy prediction result
-        mock_result = Mock()
-        mock_result.detailed_descriptions = "desc1, desc2"
-        mock_result.technical_analysis = "tech1, tech2"
-        mock_result.visual_patterns = "pattern1, pattern2"
-        mock_result.quality_score = "0.85"
-        mock_result.annotations = "ann1, ann2"
-
-        mock_predict_instance = Mock()
-        mock_predict_instance.return_value = mock_result
-        mock_predict.return_value = mock_predict_instance
-
-        vlm = VLMInterface(
-            config_manager=create_default_config_manager(), tenant_id="test:unit"
-        )
-        result = await vlm.analyze_visual_content_detailed(
-            ["/path/to/image1.jpg", "/path/to/image2.jpg"], "test query", "test context"
-        )
-
-        assert "detailed_descriptions" in result
-        assert "technical_analysis" in result
-        assert "visual_patterns" in result
-        assert "quality_assessment" in result
-        assert "annotations" in result
-
-        assert result["detailed_descriptions"] == ["desc1", "desc2"]
-        assert result["technical_analysis"] == ["tech1", "tech2"]
-        assert result["visual_patterns"] == ["pattern1", "pattern2"]
-
 
 @pytest.mark.unit
 class TestDetailedReportAgent:

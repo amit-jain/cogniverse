@@ -5,7 +5,6 @@ Provides centralized registry for all available agents with health monitoring.
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -18,16 +17,6 @@ if TYPE_CHECKING:
     from cogniverse_foundation.config.manager import ConfigManager
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class AgentCapability:
-    """Agent capability definition"""
-
-    name: str
-    description: str
-    input_types: List[str]
-    output_types: List[str]
 
 
 class AgentRegistry:
