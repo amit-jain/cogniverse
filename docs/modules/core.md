@@ -141,7 +141,7 @@ class MySearchOutput(AgentOutput):
     total_count: int
 
 class MySearchDeps(AgentDeps):
-    search_client: Any  # In practice: VespaVideoSearchClient from cogniverse_vespa
+    search_client: Any  # In practice: VespaSearchBackend from cogniverse_vespa
     embedding_model: str = "colpali"
 
 class MySearchAgent(AgentBase[MySearchInput, MySearchOutput, MySearchDeps]):

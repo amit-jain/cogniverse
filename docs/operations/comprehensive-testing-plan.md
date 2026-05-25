@@ -505,16 +505,23 @@ print(component.get_info())
 
 **Test backend usage:**
 ```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# VespaVideoSearchClient requires config_manager (REQUIRED parameter)
+# VespaSearchBackend resolves schema/profile at query time
 config_manager = create_default_config_manager()
-backend = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=19071,  # Use your Vespa instance's actual port
-    tenant_id="your_org:production",
-    config_manager=config_manager  # REQUIRED - no default value
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,  # Use your Vespa instance's actual port
+        "profiles": {"video_colpali_smol500_mv_frame": {}},
+        "default_profiles": {"video": "video_colpali_smol500_mv_frame"},
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
 print(f"Backend type: {type(backend).__name__}")
@@ -562,26 +569,34 @@ if "video_colpali_smol500_mv_frame" in profiles:
 **Test schema deployment:**
 ```python
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 # Initialize schema parser
 parser = JsonSchemaParser()
 schema = parser.load_schema_from_json_file("configs/schemas/video_colpali_smol500_mv_frame_schema.json")
 
-# Initialize Vespa client for tenant
+# Initialize the search backend
 config_manager = create_default_config_manager()
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=19071,  # Use your Vespa instance's actual port
-    tenant_id="test_tenant",
-    config_manager=config_manager
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,  # Use your Vespa instance's actual port
+        "profiles": {"video_colpali_smol500_mv_frame": {}},
+        "default_profiles": {"video": "video_colpali_smol500_mv_frame"},
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Schema deployment is handled automatically during ingestion
-# Tenant-specific schemas follow pattern: {profile}_{tenant_id}
-print(f"Schema will be deployed for tenant: test_tenant")
-print(f"Schema naming: video_colpali_smol500_mv_frame_test_tenant")
+# Schema deployment is handled automatically during ingestion.
+# Tenant scoping is applied per query via the query_dict tenant_id;
+# tenant-specific schemas follow the pattern {profile}_{tenant_id}.
+print("Schema will be deployed for tenant: test_tenant")
+print("Schema naming: video_colpali_smol500_mv_frame_test_tenant")
 ```
 
 **Learning Points:**
@@ -596,24 +611,24 @@ print(f"Schema naming: video_colpali_smol500_mv_frame_test_tenant")
 
 **Test search via backend:**
 ```python
-# Simple search using VespaVideoSearchClient
-query_params = {
+# Simple search using VespaSearchBackend.search(query_dict)
+# strategy is a rank-profile-name string; query_embeddings is optional
+# (a numpy array) for visual/hybrid strategies.
+results = backend.search({
     "query": "test video",
-    "ranking": "bm25_only",  # or "hybrid_float_bm25", "binary_binary", etc.
-    "top_k": 5
-}
+    "type": "video",
+    "profile": "video_colpali_smol500_mv_frame",
+    "strategy": "bm25_only",  # or "hybrid_float_bm25", "binary_binary", etc.
+    "top_k": 5,
+    "tenant_id": "your_org:production",  # REQUIRED
+    # "query_embeddings": <numpy array>,  # for visual/hybrid strategies
+})
 
-results = backend.search(
-    query_params=query_params,
-    embeddings=None,  # Optional: provide embeddings for visual strategies
-    schema="video_colpali_smol500_mv_frame_default"  # Tenant-specific schema
-)
-
+# search() returns List[SearchResult]
 print(f"Search results: {len(results)} found")
 for i, result in enumerate(results[:3], 1):
-    print(f"\n{i}. {result.get('video_title', 'Unknown')}")
-    print(f"   Video ID: {result.get('video_id')}")
-    print(f"   Frame: {result.get('frame_number')}")
+    print(f"\n{i}. score={result.score:.4f}")
+    print(f"   Source ID: {result.document.metadata['source_id']}")
 ```
 
 **Learning Points:**

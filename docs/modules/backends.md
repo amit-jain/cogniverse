@@ -77,22 +77,20 @@ libs/vespa/cogniverse_vespa/
 ├── search_backend.py               # Tenant-scoped search backend (VespaSearchBackend)
 ├── strategy_aware_processor.py     # Strategy-aware processing
 ├── vespa_schema_manager.py         # Multi-tenant schema management
-├── vespa_search_client.py          # Search operations
 └── workflow/
     ├── __init__.py
     └── workflow_store.py           # Workflow intelligence storage
 ```
 
-**Total Files**: 21 Python files (including 3 subdirectories: config/, workflow/, registry/)
+**Total Files**: 15 Python modules (excluding `__init__.py`), including 3 subdirectories: config/, workflow/, registry/
 
 **Key Files**:
 
-- `vespa_schema_manager.py`: 1537 lines - Core tenant management
-- `vespa_search_client.py`: 1156 lines - Search operations
-- `json_schema_parser.py`: 235 lines - Schema parsing
-- `ingestion_client.py`: 521 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1525 lines - Search backend with connection pooling
-- `backend.py`: 1102 lines - Unified backend abstraction
+- `vespa_schema_manager.py`: 1081 lines - Core tenant management
+- `json_schema_parser.py`: 189 lines - Schema parsing
+- `ingestion_client.py`: 543 lines - PyVespa wrapper for ingestion
+- `search_backend.py`: 1501 lines - Search backend with connection pooling
+- `backend.py`: 1524 lines - Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
@@ -557,8 +555,7 @@ flowchart TB
     VespaBackend --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
     VespaBackend --> TenantManager["<span style='color:#000'>VespaSchemaManager</span>"]
 
-    SearchBackend --> VespaVideoSearchClient["<span style='color:#000'>VespaVideoSearchClient</span>"]
-    VespaVideoSearchClient --> VespaInst["<span style='color:#000'>Vespa Instance</span>"]
+    SearchBackend --> VespaInst["<span style='color:#000'>Vespa Instance</span>"]
 
     IngestionClient --> PyVespa["<span style='color:#000'>PyVespa feed_iterable</span>"]
     PyVespa --> VespaInst
@@ -572,13 +569,12 @@ flowchart TB
     style IngestionClient fill:#ffcc80,stroke:#ef6c00,color:#000
     style SchemaManager fill:#ffcc80,stroke:#ef6c00,color:#000
     style TenantManager fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VespaVideoSearchClient fill:#b0bec5,stroke:#546e7a,color:#000
     style VespaInst fill:#a5d6a7,stroke:#388e3c,color:#000
     style PyVespa fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 **Why VespaBackend?**
-- **Eliminates Vespa-specific imports**: Application code doesn't import VespaVideoSearchClient or VespaPyClient directly
+- **Eliminates Vespa-specific imports**: Application code doesn't import VespaSearchBackend or VespaPyClient directly
 - **Simplified API**: One class instead of multiple clients
 - **Consistent interface**: Same initialization and method signatures
 - **Future-proof**: Can swap Vespa with other backends without changing application code
@@ -1249,7 +1245,7 @@ flowchart TB
     Deploy --> Cache["<span style='color:#000'>Cache deployment</span>"]
     Cache --> UseSchema
 
-    UseSchema --> VespaClient["<span style='color:#000'>VespaVideoSearchClient<br/>schema=video_frames_acme</span>"]
+    UseSchema --> VespaClient["<span style='color:#000'>VespaSearchBackend<br/>schema=video_frames_acme</span>"]
     VespaClient --> Search["<span style='color:#000'>Search tenant data</span>"]
 
     style API fill:#90caf9,stroke:#1565c0,color:#000
@@ -1353,108 +1349,134 @@ deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 
 ---
 
-## Search Client
+## Search Backend
 
-### VespaVideoSearchClient
+### VespaSearchBackend
 
-**Location**: `libs/vespa/cogniverse_vespa/vespa_search_client.py`
-**Purpose**: Search operations with tenant-specific schema routing
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py`
+**Purpose**: Production search backend with tenant-scoped schema routing, connection pooling, retries, and metrics
 
-#### Tenant-Aware Initialization
+#### Construction
+
+`VespaSearchBackend` is dependency-injected with a `config` dict, a
+`config_manager`, and a `schema_loader`. Profiles come from the same
+config the search router uses, so a query's `profile` resolves to the
+correct tenant schema and its `strategy` is validated against that
+schema's rank profiles.
 
 ```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-# 1. Create config manager (required for dependency injection)
-config_manager = create_default_config_manager()
-
-# 2. Initialize client with tenant_id and config_manager
-# The client uses tenant_id to route to the correct tenant schema automatically
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="acme",
-    config_manager=config_manager  # REQUIRED
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": backend_section["profiles"],
+        "default_profiles": backend_section["default_profiles"],
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 ```
 
-#### Search Operations
+#### search(query_dict)
+
+`search(query_dict: Dict[str, Any]) -> List[SearchResult]`. The
+`query_dict` accepts these keys:
+
+| Key | Type | Required | Notes |
+|-----|------|----------|-------|
+| `query` | str | yes* | Text query (*or `query_embeddings`) |
+| `type` | str | yes | Content type, e.g. `"video"` |
+| `tenant_id` | str | yes | Tenant scope, e.g. `"acme:prod"` — routes to the tenant schema |
+| `profile` | str | no | Profile name, e.g. `"test_colpali"` (auto-selected if only one for the type) |
+| `strategy` | str | no | Rank-profile name (auto-selected if only one available) |
+| `top_k` | int | no | Result count (defaults to 10) |
+| `query_embeddings` | numpy array | no | Pre-computed embeddings for visual/hybrid strategies |
+| `filters` | dict | no | Optional metadata filters |
 
 ```python
 # Text search (tenant-scoped)
-results = client.search({
+results = backend.search({
     "query": "cooking videos",
+    "type": "video",
+    "profile": "test_colpali",
+    "strategy": "hybrid_bm25_binary",
     "top_k": 10,
-    "ranking": "hybrid_binary_bm25"
+    "tenant_id": "acme:prod",
 })
-# Searches ONLY video_colpali_smol500_mv_frame_acme
+# Searches ONLY the acme:prod tenant schema
 # Physical isolation - no access to other tenants' data
 
-# Results structure
+# SearchResult shape (from cogniverse_sdk.document)
 for result in results:
-    print(f"Video: {result['video_title']}")
-    print(f"Frame: {result['frame_id']}")
-    print(f"Score: {result['relevance']}")
-    print(f"Time: {result['start_time']}s")
+    print(f"Score: {result.score}")                          # float
+    print(f"Source video: {result.document.metadata['source_id']}")
 ```
 
 #### Multi-Tenant Search Example
 
+One backend instance serves every tenant; the `tenant_id` in each
+`query_dict` selects the tenant schema, so there is no per-tenant
+client.
+
 ```python
-# Two tenants searching independently
+# Tenant A: acme:prod
+results_acme = backend.search({
+    "query": "cooking videos",
+    "type": "video",
+    "profile": "test_colpali",
+    "tenant_id": "acme:prod",
+})
 
-# Create config manager (required for all clients)
-config_manager = create_default_config_manager()
-
-# Tenant A: acme
-client_acme = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="acme",
-    config_manager=config_manager  # REQUIRED
-)
-results_acme = client_acme.search("cooking videos")
-# Only searches tenant-specific schema
-
-# Tenant B: startup
-client_startup = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="startup",
-    config_manager=config_manager  # REQUIRED
-)
-results_startup = client_startup.search("cooking videos")
-# Only searches tenant-specific schema
+# Tenant B: startup:prod
+results_startup = backend.search({
+    "query": "cooking videos",
+    "type": "video",
+    "profile": "test_colpali",
+    "tenant_id": "startup:prod",
+})
 
 # Complete physical isolation via tenant-specific schemas
 ```
 
 #### Ranking Strategies
 
-The client supports multiple ranking strategies:
+`strategy` is a plain string equal to a rank-profile name defined in the
+profile's schema. The backend validates each query's `strategy` against
+the schema's available rank profiles (there is no enum). Valid names:
 
-| Strategy | Type | Use Case |
-|----------|------|----------|
-| bm25_only | Text | Pure text search (no embeddings) |
-| float_float | Visual | Highest accuracy (slow) |
-| binary_binary | Visual | Fast visual search |
-| hybrid_float_bm25 | Hybrid | Best accuracy (visual + text) |
-| hybrid_binary_bm25 | Hybrid | Fast hybrid search |
+| Strategy | Type | Notes |
+|----------|------|-------|
+| `bm25_only`, `bm25_no_description` | Text | Pure text search, no embeddings |
+| `float_float`, `binary_binary`, `float_binary`, `phased` | Visual | Require `query_embeddings` |
+| `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float` | Hybrid | Visual + text; embeddings required |
+| `hybrid_*_no_description` variants | Hybrid | Same as above, ignoring the description field |
 
 ```python
-# Pure text search (fast)
-results = client.search({
+# Pure text search (fast, no embeddings)
+results = backend.search({
     "query": "machine learning tutorial",
-    "ranking": "bm25_only"
+    "type": "video",
+    "profile": "test_colpali",
+    "strategy": "bm25_only",
+    "tenant_id": "acme:prod",
 })
 
-# Visual + text hybrid (best accuracy)
-results = client.search({
+# Visual + text hybrid (requires query_embeddings)
+results = backend.search({
     "query": "robot arm demonstration",
-    "ranking": "hybrid_float_bm25"
+    "type": "video",
+    "profile": "test_colpali",
+    "strategy": "hybrid_float_bm25",
+    "tenant_id": "acme:prod",
+    "query_embeddings": query_embeddings,  # numpy array
 })
 ```
+
+Real-Vespa integration coverage for every ranking strategy lives in
+`tests/runtime/integration/test_ranking_strategies_real.py`, which drives
+`VespaSearchBackend.search` against real Vespa and real ColPali.
 
 ---
 
@@ -1905,41 +1927,33 @@ for base_schema in schemas_to_deploy:
 ### Example 2: Tenant-Scoped Search
 
 ```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-def search_for_tenant(tenant_id: str, query: str, config_manager) -> list:
+def search_for_tenant(backend: VespaSearchBackend, tenant_id: str, query: str) -> list:
     """
     Search videos for specific tenant.
 
     Args:
-        tenant_id: Tenant identifier
+        backend: Shared VespaSearchBackend instance
+        tenant_id: Tenant identifier (e.g. "acme:prod")
         query: Search query
-        config_manager: ConfigManager instance (required)
 
     Returns:
-        Search results from tenant-specific schema
+        List[SearchResult] from the tenant-specific schema
     """
-    # Initialize client with tenant_id
-    client = VespaVideoSearchClient(
-        backend_url="http://localhost",
-        backend_port=8080,
-        tenant_id=tenant_id,
-        config_manager=config_manager  # REQUIRED
-    )
-
-    # Search
-    results = client.search({
+    # tenant_id in the query_dict routes to the tenant schema
+    return backend.search({
         "query": query,
+        "type": "video",
+        "profile": "test_colpali",
+        "strategy": "hybrid_float_bm25",
         "top_k": 10,
-        "ranking": "hybrid_float_bm25"
+        "tenant_id": tenant_id,
     })
 
-    return results
-# Use for different tenants
-config_manager = create_default_config_manager()
-acme_results = search_for_tenant("acme", "cooking videos", config_manager)
-startup_results = search_for_tenant("startup", "cooking videos", config_manager)
+# One backend instance serves every tenant
+acme_results = search_for_tenant(backend, "acme:prod", "cooking videos")
+startup_results = search_for_tenant(backend, "startup:prod", "cooking videos")
 
 # Completely isolated - different data sets
 ```
@@ -2119,58 +2133,49 @@ class TestTenantSchemaLifecycle:
         return "test_tenant_integration"
 
     @pytest.fixture
-    def client(self, tenant_id):
-        """Create client with real Vespa connection"""
-        schema_manager = VespaSchemaManager(
-            backend_endpoint="http://localhost",
-            backend_port=8080
+    def backend(self):
+        """Create a search backend wired to a real Vespa connection"""
+        from cogniverse_vespa.search_backend import VespaSearchBackend
+
+        return VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+                "profiles": self.config_manager.get("backend")["profiles"],
+                "default_profiles": self.config_manager.get("backend")["default_profiles"],
+            },
+            config_manager=self.config_manager,
+            schema_loader=self.schema_loader,
         )
 
-        # Get tenant schema name
-        tenant_schema = schema_manager.get_tenant_schema_name(
-            tenant_id,
-            "video_colpali_smol500_mv_frame"
-        )
-
-        # Create client with tenant_id
-        client = VespaVideoSearchClient(
-            backend_url="http://localhost",
-            backend_port=8080,
-            tenant_id=tenant_id,
-            config_manager=self.config_manager  # REQUIRED
-        )
-        return client
-
-    def test_search_with_tenant_schema(self, client):
+    def test_search_with_tenant_schema(self, backend, tenant_id):
         """Test search uses tenant schema"""
-        results = client.search({
+        results = backend.search({
             "query": "test query",
-            "top_k": 5
+            "type": "video",
+            "profile": "test_colpali",
+            "top_k": 5,
+            "tenant_id": tenant_id,
         })
 
         assert isinstance(results, list)
         # Results depend on ingested data
 
-    def test_tenant_isolation(self):
+    def test_tenant_isolation(self, backend):
         """Verify tenants cannot access each other's data"""
-        # Create clients for different tenants
-        client_a = VespaVideoSearchClient(
-            backend_url="http://localhost",
-            backend_port=8080,
-            tenant_id="tenant_a",
-            config_manager=self.config_manager  # REQUIRED
-        )
-
-        client_b = VespaVideoSearchClient(
-            backend_url="http://localhost",
-            backend_port=8080,
-            tenant_id="tenant_b",
-            config_manager=self.config_manager  # REQUIRED
-        )
-
-        # Search with both clients
-        results_a = client_a.search("test")
-        results_b = client_b.search("test")
+        # The tenant_id in each query routes to a different schema
+        results_a = backend.search({
+            "query": "test",
+            "type": "video",
+            "profile": "test_colpali",
+            "tenant_id": "tenant_a",
+        })
+        results_b = backend.search({
+            "query": "test",
+            "type": "video",
+            "profile": "test_colpali",
+            "tenant_id": "tenant_b",
+        })
 
         # Results are from different schemas (different data)
         # Physical isolation ensures no cross-tenant access
@@ -2211,38 +2216,39 @@ def cleanup_tenant_schemas(test_tenant_id, schema_manager):
 
 ## Best Practices
 
-### 1. Always Use VespaSchemaManager
+### 1. Always Pass tenant_id in the Query
 
 ```python
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-# ✅ Good: Use tenant_id with config_manager
-config_manager = create_default_config_manager()
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="acme",
-    config_manager=config_manager  # REQUIRED
-)
+# ✅ Good: tenant_id is supplied with every query
+results = backend.search({
+    "query": "cooking videos",
+    "type": "video",
+    "profile": "test_colpali",
+    "tenant_id": "acme:prod",  # REQUIRED
+})
 
-# ❌ Bad: Missing config_manager (will raise ValueError)
-# client = VespaVideoSearchClient(tenant_id="acme")  # ValueError!
+# ❌ Bad: Missing tenant_id (will raise ValueError)
+# backend.search({"query": "cooking videos", "type": "video"})  # ValueError!
 ```
 
-### 2. Always Pass config_manager
+### 2. Construct the Backend with Injected Dependencies
 
 ```python
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-# Create config manager once
-config_manager = create_default_config_manager()
-
-# Create client with tenant_id and config_manager
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id=tenant_id,
-    config_manager=config_manager  # REQUIRED - raises ValueError if None
+# config_manager and schema_loader are injected once at construction;
+# tenant_id is then provided per query.
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": backend_section["profiles"],
+        "default_profiles": backend_section["default_profiles"],
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 ```
 

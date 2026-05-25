@@ -1,10 +1,12 @@
-# Search Client Testing Guide
+# Ranking Strategy Testing Guide
 
-This guide covers testing the Vespa search client with all available
-ranking strategies. Coverage lives in
+This guide covers testing the production Vespa search path
+(`VespaSearchBackend.search(query_dict)`) with all available ranking
+strategies. Coverage lives in
 `tests/runtime/integration/test_ranking_strategies_real.py` — a
-parametrized integration test that drives every `RankingStrategy`
-variant against a real Vespa container with seeded ColPali embeddings.
+parametrized integration test that drives every ranking strategy (each a
+rank-profile-name string) against a real Vespa container with seeded
+ColPali embeddings.
 
 ## Run the test
 
@@ -26,18 +28,20 @@ The test fixture chain builds the full real backend on demand:
   embeddings (sunset / ocean / forest scenes with matching transcripts)
   fed into Vespa via `seeded_ranking_corpus`.
 
-Each `RankingStrategy` enum variant is exercised end-to-end:
+Each ranking strategy is a plain rank-profile-name string passed as the
+`strategy` key of the `query_dict`. Every strategy is exercised
+end-to-end through `VespaSearchBackend.search`:
 
 | Class | Strategies | Inputs |
 |---|---|---|
 | Text-only | `bm25_only`, `bm25_no_description` | Text query |
-| Visual | `float_float`, `binary_binary`, `float_binary`, `phased` | Query embeddings via `RemoteColPaliLoader.client.process_queries` |
-| Hybrid | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`, plus `_no_description` variants | Text + query embeddings |
+| Visual | `float_float`, `binary_binary`, `float_binary`, `phased` | `query_embeddings` via `RemoteColPaliLoader.client.process_queries` |
+| Hybrid | `hybrid_float_bm25`, `hybrid_binary_bm25`, `hybrid_bm25_binary`, `hybrid_bm25_float`, plus `_no_description` variants | Text + `query_embeddings` |
 
-Each case asserts:
+Each case asserts on the returned `List[SearchResult]`:
 - Non-empty results from the seeded corpus.
-- Descending relevance order.
-- Result `video_id` falls within the seeded corpus.
+- Descending relevance order by `result.score`.
+- `result.document.metadata["source_id"]` falls within the seeded corpus.
 
 ## Prerequisites
 
@@ -69,26 +73,39 @@ Each case asserts:
 ## Manual usage from a Python REPL
 
 ```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
 config_manager = create_default_config_manager()
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="test_tenant",
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": {"test_colpali": {"schema_name": "video_colpali_smol500_mv_frame"}},
+        "default_profiles": {"video": "test_colpali"},
+    },
     config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Text-only
-results = client.search({
+# Text-only — strategy is a rank-profile-name string
+results = backend.search({
     "query": "buck",
-    "ranking": "bm25_only",
+    "type": "video",
+    "profile": "test_colpali",
+    "strategy": "bm25_only",
     "top_k": 3,
-    "schema": "video_colpali_smol500_mv_frame",
+    "tenant_id": "test:unit",
 })
 
-# Visual / hybrid — pass pre-computed embeddings via `embeddings=`
+for result in results:
+    print(result.score, result.document.metadata["source_id"])
+
+# Visual / hybrid — pass pre-computed embeddings via `query_embeddings`
 # (see test_ranking_strategies_real.py for how to encode a query
 # through the vLLM sidecar via RemoteColPaliLoader.process_queries).
 ```

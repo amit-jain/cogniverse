@@ -896,8 +896,10 @@ Integration tests validate cross-package interactions:
 
 ```python
 # tests/routing/integration/test_orchestrator_with_vespa.py
+from pathlib import Path
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.manager import ConfigManager
 
@@ -905,12 +907,17 @@ from cogniverse_foundation.config.manager import ConfigManager
 async def test_orchestrator_agent_with_vespa_backend(config_manager, tenant_id):
     """Test orchestrator agent with real Vespa backend"""
 
-    # Initialize Vespa backend (config_manager required)
-    vespa_client = VespaVideoSearchClient(
-        backend_url="http://localhost",
-        backend_port=8080,
-        tenant_id=tenant_id,
-        config_manager=config_manager
+    # Initialize Vespa backend (config_manager + schema_loader required)
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    search_backend = VespaSearchBackend(
+        config={
+            "url": "http://localhost",
+            "port": 8080,
+            "profiles": {},
+            "default_profiles": {},
+        },
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
 
     # Initialize orchestrator agent
@@ -1040,9 +1047,6 @@ from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 
 # Tenant-scoped search backend (tenant_id required per query)
 from cogniverse_vespa.search_backend import VespaSearchBackend
-
-# Search clients
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
 
 # Ingestion
 from cogniverse_vespa.ingestion_client import VespaPyClient

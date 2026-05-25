@@ -755,7 +755,7 @@ class TestOrchestratorAgent:
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
 @pytest.mark.integration
 @pytest.mark.asyncio

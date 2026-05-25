@@ -281,7 +281,8 @@ uv run python scripts/run_ingestion.py \
 Combine multiple search methods for better results:
 
 ```python
-# Available ranking strategies (from RankingStrategy enum):
+# Ranking strategies are plain rank-profile-name strings (validated against
+# the deployed Vespa schema), not an enum:
 strategies = [
     "bm25_only",           # Text-only BM25 (fastest for keyword queries)
     "float_float",         # Dense float embeddings (highest visual accuracy)
@@ -292,10 +293,12 @@ strategies = [
     "hybrid_binary_bm25",  # Fast hybrid (binary visual + text)
     "hybrid_bm25_binary",  # Text-first with binary visual rerank
     "hybrid_bm25_float",   # Text-first with precise float rerank
+    # plus the "_no_description" hybrid variants for ColPali/ColQwen schemas
 ]
 
-# Strategies are selected at the Vespa backend level via the ranking parameter
-# The SearchAgent handles this automatically based on profile configuration
+# A strategy string is passed at query time via the `strategy` field of the
+# /search/ request (or the query_dict given to VespaSearchBackend.search).
+# The SearchAgent handles this automatically based on profile configuration.
 ```
 
 ### 5. Memory-Aware Search
@@ -410,20 +413,20 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 
 #### Check Ingestion Status
 
-```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-from cogniverse_foundation.config.utils import create_default_config_manager
+```bash
+# Confirm documents are searchable via the production /search/ endpoint.
+# A non-empty results list means content was indexed for the tenant.
+curl -X POST http://localhost:8000/search/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "test",
+    "tenant_id": "acme",
+    "profile": "video_colpali_smol500_mv_frame",
+    "top_k": 1
+  }'
 
-config_manager = create_default_config_manager()
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="acme",
-    config_manager=config_manager
-)
-
-# Count indexed videos (via Vespa query)
-# Note: Use the search service for production queries
+# For an async ingestion job, poll its status instead:
+# curl http://localhost:8000/ingestion/status/{job_id}
 ```
 
 ### Searching Videos

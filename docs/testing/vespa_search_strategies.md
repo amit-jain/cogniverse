@@ -130,7 +130,7 @@ All BM25 strategies use fieldsets to search across:
 
 - `audio_transcript`: Transcribed audio content
 
-**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. VideoPrism schemas use `segment_id` but have no description field. The search client handles these variations automatically.
+**Note**: Different schemas use different field names and available fields. ColPali schemas use `segment_description` and `segment_id`. VideoPrism schemas use `segment_id` but have no description field. `VespaSearchBackend` handles these variations automatically.
 
 ## Technical Implementation
 
@@ -154,7 +154,7 @@ All BM25 strategies use fieldsets to search across:
 ## Architecture Integration
 
 ### Package Roles
-- **cogniverse-vespa** (Implementation Layer): Implements all 14 search strategies and VespaVideoSearchClient
+- **cogniverse-vespa** (Implementation Layer): Implements all 14 search strategies in `VespaSearchBackend` (and the higher-level `VespaBackend`)
 - **cogniverse-core** (Core Layer): Manages backend configuration and profile selection
 - **cogniverse-foundation** (Foundation Layer): Provides configuration management and telemetry interfaces
 
@@ -179,12 +179,16 @@ Backend profiles are configured in system config files. Ranking strategies are s
 }
 ```
 
-Ranking strategy is specified in the search query:
+Ranking strategy is specified in the search query as a plain
+rank-profile-name string under the `strategy` key:
 ```python
-results = client.search({
+results = backend.search({
     "query": "person walking",
-    "ranking": "hybrid_float_bm25",
-    "top_k": 10
+    "type": "video",
+    "profile": "video_colpali_smol500_mv_frame",
+    "strategy": "hybrid_float_bm25",
+    "top_k": 10,
+    "tenant_id": "your_org:production",
 })
 ```
 
@@ -219,29 +223,40 @@ These strategies support all content types:
 
 ## Strategy Selection
 
-### Automatic Recommendation
-The search client provides automatic strategy selection:
+### Specifying a Strategy
+Ranking strategies are plain rank-profile-name strings, validated against
+the deployed schema. Pass the chosen string as the `strategy` key of the
+`query_dict` you hand to `VespaSearchBackend.search`:
+
 ```python
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 
-# Initialize client with required parameters
-# config_manager must be provided via dependency injection
-client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="your_org:production",
-    config_manager=config_manager
+backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": {"video_colpali_smol500_mv_frame": {}},
+        "default_profiles": {"video": "video_colpali_smol500_mv_frame"},
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Get recommended strategy based on query characteristics
-strategy = client.recommend_strategy(
-    query_text="your query",
-    has_embeddings=True,
-    speed_priority=False
-)
+results = backend.search({
+    "query": "your query",
+    "type": "video",
+    "profile": "video_colpali_smol500_mv_frame",
+    "strategy": "hybrid_float_bm25",
+    "top_k": 10,
+    "tenant_id": "your_org:production",
+    # "query_embeddings": <numpy array> for visual/hybrid strategies
+})
 ```
 
-### Manual Selection
+If `strategy` is omitted, the backend resolves a default rank profile for
+the content type.
+
+### Choosing the Right Strategy
 Choose based on:
 1. **Query type**: Text, visual, or hybrid
 2. **Speed requirements**: Real-time vs batch processing

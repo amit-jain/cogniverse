@@ -501,25 +501,35 @@ class TestVespaIntegration:
     """Integration tests requiring Vespa."""
 
     @pytest.fixture
-    def vespa_client(self, config_manager):
-        """Create real Vespa client."""
+    def search_backend(self, config_manager, schema_loader):
+        """Create real VespaSearchBackend."""
         import os
-        from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+        from cogniverse_vespa.search_backend import VespaSearchBackend
         backend_url = os.getenv("BACKEND_URL", "http://localhost")
         backend_port = int(os.getenv("BACKEND_PORT", "8080"))
-        return VespaVideoSearchClient(
-            backend_url=backend_url,
-            backend_port=backend_port,
-            tenant_id="test-tenant",
-            config_manager=config_manager
+        return VespaSearchBackend(
+            config={
+                "url": backend_url,
+                "port": backend_port,
+                "profiles": {"video_colpali_smol500_mv_frame": {}},
+                "default_profiles": {"video": "video_colpali_smol500_mv_frame"},
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
-    def test_real_search(self, vespa_client):
+    def test_real_search(self, search_backend):
         """Test search against real Vespa."""
-        # VespaVideoSearchClient.search() accepts query_params (str or dict)
-        results = vespa_client.search(
-            query_params="test"  # Can also pass dict with query, ranking, top_k
-        )
+        # VespaSearchBackend.search() takes a query_dict and returns
+        # List[SearchResult]. strategy is a rank-profile-name string.
+        results = search_backend.search({
+            "query": "test",
+            "type": "video",
+            "profile": "video_colpali_smol500_mv_frame",
+            "strategy": "bm25_only",
+            "top_k": 5,
+            "tenant_id": "test:unit",
+        })
         assert isinstance(results, list)
 ```
 

@@ -70,8 +70,10 @@ tests/
 │   ├── integration/           # Tiered routing integration
 │   └── test_comprehensive_routing.py  # Multi-model benchmarks
 ├── backends/                   # Vespa backend tests
-│   ├── test_vespa_search_client.py   # Search operations
 │   └── test_tenant_schema_manager.py # Multi-tenant schemas
+├── runtime/                    # Runtime integration tests
+│   └── integration/
+│       └── test_ranking_strategies_real.py  # VespaSearchBackend ranking strategies (real Vespa + ColPali)
 ├── ingestion/                  # Application layer - runtime
 │   ├── unit/                  # Processor unit tests
 │   ├── integration/           # Pipeline integration tests

@@ -477,8 +477,10 @@ exists = schema_manager.tenant_schema_exists(
 **Backend Initialization**:
 
 ```python
+from pathlib import Path
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
 # Initialize schema manager
 # Optional: Pass schema_registry for tenant schema operations (delete, exists checks)
@@ -492,18 +494,38 @@ schema_manager = VespaSchemaManager(
 video_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
 memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 
-# Create search client with tenant schema
-# IMPORTANT: config_manager is REQUIRED (raises ValueError if None)
-# VespaVideoSearchClient enforces dependency injection - no defaults
+# Create the search backend
+# IMPORTANT: config_manager and schema_loader are REQUIRED (dependency injection,
+# no defaults). tenant_id is NOT a construction argument — it is supplied per query
+# in the query_dict passed to search().
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()  # Create config manager first
-search_client = VespaVideoSearchClient(
-    backend_url="http://vespa.prod.internal",
-    backend_port=8080,
-    tenant_id="acme",
-    config_manager=config_manager  # REQUIRED parameter
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+search_backend = VespaSearchBackend(
+    config={
+        "url": "http://vespa.prod.internal",
+        "port": 8080,
+        "profiles": {},
+        "default_profiles": {},
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
+
+# Run a tenant-scoped search. tenant_id is REQUIRED in the query_dict; strategy
+# is a rank-profile name string (e.g. "bm25_only", "hybrid_float_bm25").
+results = search_backend.search(
+    {
+        "query": "quarterly results",
+        "type": "video",
+        "strategy": "hybrid_float_bm25",
+        "top_k": 10,
+        "tenant_id": "acme:prod",
+    }
+)
+# results: List[SearchResult] — each has .score and .document
+# (source video id at result.document.metadata["source_id"])
 ```
 
 **Agent Initialization**:

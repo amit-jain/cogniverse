@@ -103,12 +103,20 @@ class TestRealVespaIntegration:
         config_manager = create_default_config_manager()
 
         # cogniverse-vespa package
-        from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
-        vespa_client = VespaVideoSearchClient(
-            backend_url="http://localhost",
-            backend_port=8080,
-            tenant_id="test",
-            config_manager=config_manager
+        from pathlib import Path
+        from cogniverse_vespa.search_backend import VespaSearchBackend
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        search_backend = VespaSearchBackend(
+            config={
+                "url": "http://localhost",
+                "port": 8080,
+                "profiles": {},
+                "default_profiles": {},
+            },
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
 
         # cogniverse-agents package - OrchestratorAgent is tenant-agnostic at construction
@@ -184,31 +192,42 @@ assert result.result is not None
 ### 3. Backend Integration
 
 ```python
-# Example: Test Vespa connection via VespaVideoSearchClient
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+# Example: Test Vespa connection via VespaSearchBackend
+from pathlib import Path
+from cogniverse_vespa.search_backend import VespaSearchBackend
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
-vespa_client = VespaVideoSearchClient(
-    backend_url="http://localhost",
-    backend_port=8080,
-    tenant_id="test",
-    config_manager=config_manager
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+search_backend = VespaSearchBackend(
+    config={
+        "url": "http://localhost",
+        "port": 8080,
+        "profiles": {},
+        "default_profiles": {},
+    },
+    config_manager=config_manager,
+    schema_loader=schema_loader,
 )
 
-# Health check
-assert vespa_client.health_check()
-
-# Execute search query (query_params can be dict or string)
-results = vespa_client.search(
-    query_params={"query": "cooking tutorial", "ranking": "bm25_only", "top_k": 10}
+# Execute search query. strategy is a rank-profile name string (e.g.
+# "bm25_only"); tenant_id is required.
+results = search_backend.search(
+    {
+        "query": "cooking tutorial",
+        "type": "video",
+        "strategy": "bm25_only",
+        "top_k": 10,
+        "tenant_id": "acme:prod",
+    }
 )
 
-# Validate results (list of dicts with relevance and video metadata at top level)
+# Validate results (list of SearchResult with .score and .document)
 assert len(results) > 0
 for result in results:
-    assert "relevance" in result
-    assert "video_id" in result
+    assert result.score is not None
+    assert result.document.metadata["source_id"]
 ```
 
 ### 4. Telemetry Integration

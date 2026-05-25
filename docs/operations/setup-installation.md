@@ -738,7 +738,7 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Vespa - Backend and Schema Management
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_vespa.vespa_search_client import VespaVideoSearchClient
+from cogniverse_vespa.search_backend import VespaSearchBackend
 from cogniverse_vespa.json_schema_parser import JsonSchemaParser
 
 # Synthetic - Data Generation
