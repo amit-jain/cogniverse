@@ -223,3 +223,22 @@ class TestEvaluationTask:
                         )
 
                         mock_register.assert_called_once()
+
+
+class TestCustomPluginRegistration:
+    """auto_register_plugins resolves custom plugins under the real package.
+
+    Regression guard: the import path was `src.evaluation.plugins.*`, a
+    namespace that does not exist post-workspace-migration, so every custom
+    plugin silently ImportError'd. It must resolve to
+    `cogniverse_evaluation.plugins.*`.
+    """
+
+    def test_custom_plugin_module_register_is_invoked(self):
+        import cogniverse_evaluation.plugins.visual_evaluator as ve
+        from cogniverse_evaluation.plugins import auto_register_plugins
+
+        with patch.object(ve, "register") as mock_register:
+            auto_register_plugins({"evaluation": {"plugins": ["visual_evaluator"]}})
+
+        mock_register.assert_called_once()

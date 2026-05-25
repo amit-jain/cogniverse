@@ -96,7 +96,7 @@ def auto_register_plugins(config: dict = None):
                 import importlib
 
                 module = importlib.import_module(
-                    f"src.evaluation.plugins.{plugin_name}"
+                    f"cogniverse_evaluation.plugins.{plugin_name}"
                 )
                 if hasattr(module, "register"):
                     module.register()
