@@ -1269,7 +1269,11 @@ class AgentDispatcher:
         )
 
         analysis_type = context.get("analysis_type", "summary")
-        result = agent.analyze_text(text=query, analysis_type=analysis_type)
+        # analyze_text() invokes a DSPy module (blocking LLM call); run it off
+        # the event loop so concurrent A2A requests aren't stalled.
+        result = await asyncio.to_thread(
+            agent.analyze_text, text=query, analysis_type=analysis_type
+        )
 
         return {
             "status": "success",
