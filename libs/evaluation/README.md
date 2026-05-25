@@ -49,7 +49,6 @@ Built-in evaluators for different evaluation scenarios:
 
 **Dataset Evaluators:**
 - `GoldenDatasetEvaluator`: Evaluate against golden datasets
-- `SyncGoldenDatasetEvaluator`: Synchronous golden dataset evaluation
 - `RoutingEvaluator`: Specialized routing agent evaluation
 
 **LLM-Based Evaluators:**

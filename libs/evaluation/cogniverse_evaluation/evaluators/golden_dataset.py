@@ -4,7 +4,6 @@ Golden dataset evaluator for spans marked with dataset identifiers
 This evaluator can evaluate spans that have been marked as belonging to a test dataset
 """
 
-import json
 import logging
 from typing import Any
 
@@ -176,37 +175,6 @@ class GoldenDatasetEvaluator(Evaluator):
         return metrics
 
 
-def load_golden_dataset_from_file(file_path: str = None) -> dict[str, dict[str, Any]]:
-    """
-    Load golden dataset from a JSON file
-
-    Args:
-        file_path: Path to the JSON file containing golden dataset
-
-    Returns:
-        Dictionary mapping queries to expected results and metadata
-    """
-    from pathlib import Path
-
-    if file_path and Path(file_path).exists():
-        with open(file_path) as f:
-            return json.load(f)
-
-    # Try to find the latest auto-generated dataset
-    datasets_dir = Path("data/golden_datasets")
-    if datasets_dir.exists():
-        json_files = list(datasets_dir.glob("auto_golden_dataset_*.json"))
-        if json_files:
-            # Use the most recent one
-            latest = max(json_files, key=lambda x: x.stat().st_mtime)
-            logger.info(f"Loading golden dataset from {latest}")
-            with open(latest) as f:
-                return json.load(f)
-
-    # Fall back to hardcoded dataset
-    return create_low_scoring_golden_dataset()
-
-
 def create_low_scoring_golden_dataset() -> dict[str, dict[str, Any]]:
     """
     Create a golden dataset with queries known to have low scores
@@ -263,18 +231,3 @@ def create_low_scoring_golden_dataset() -> dict[str, dict[str, Any]]:
             "relevance_scores": {"v_0NIKVT3kmT4": 0.4, "v_gkSMwfO1q1I": 0.4},
         },
     }
-
-
-def mark_span_as_test_query(
-    span_attributes: dict[str, Any], dataset_id: str = "golden_test_v1"
-):
-    """
-    Helper function to mark a span as belonging to a test dataset
-
-    Args:
-        span_attributes: The span attributes dictionary to update
-        dataset_id: The dataset identifier
-    """
-    span_attributes.update(
-        {"is_test_query": True, "dataset_id": dataset_id, "evaluation_enabled": True}
-    )

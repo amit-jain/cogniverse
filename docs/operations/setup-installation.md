@@ -720,7 +720,10 @@ from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_stor
 # Evaluation - Experiment Tracking and Metrics
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 from cogniverse_evaluation.metrics.custom import calculate_mrr, calculate_ndcg
-from cogniverse_evaluation.metrics.reference_free import DiversityEvaluator
+from cogniverse_evaluation.evaluators.reference_free import (
+    ResultDiversityEvaluator,
+    TemporalCoverageEvaluator,
+)
 from cogniverse_evaluation.providers.registry import EvaluationRegistry
 
 # Telemetry Phoenix - Phoenix Provider (Plugin)

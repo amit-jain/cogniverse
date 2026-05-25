@@ -159,78 +159,6 @@ class DefaultSchemaAnalyzer(SchemaAnalyzer):
         return False
 
 
-class TemporalSchemaAnalyzer(SchemaAnalyzer):
-    """Analyzer for schemas with temporal data."""
-
-    def can_handle(self, schema_name: str, schema_fields: dict[str, Any]) -> bool:
-        """Check if schema has temporal fields."""
-        temporal_fields = schema_fields.get("temporal_fields", [])
-        return bool(temporal_fields)
-
-    def analyze_query(
-        self, query: str, schema_fields: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Analyze temporal queries."""
-        query_lower = query.lower()
-
-        constraints = {
-            "query_type": "temporal",
-            "temporal_constraints": {},
-            "available_fields": schema_fields,
-        }
-
-        temporal_fields = schema_fields.get("temporal_fields", [])
-
-        # Only extract temporal patterns if we have the fields to support them
-        if "start_time" in temporal_fields or "start" in temporal_fields:
-            patterns = [
-                (r"after (\d+)", "after_time"),
-                (r"from (\d+)", "from_time"),
-            ]
-            for pattern, constraint_type in patterns:
-                match = re.search(pattern, query_lower)
-                if match:
-                    constraints["temporal_constraints"][constraint_type] = (
-                        match.groups()
-                    )
-
-        if "end_time" in temporal_fields or "end" in temporal_fields:
-            patterns = [
-                (r"before (\d+)", "before_time"),
-                (r"until (\d+)", "until_time"),
-                (r"first (\d+)", "first_n"),
-            ]
-            for pattern, constraint_type in patterns:
-                match = re.search(pattern, query_lower)
-                if match:
-                    constraints["temporal_constraints"][constraint_type] = (
-                        match.groups()
-                    )
-
-        if "duration" in temporal_fields:
-            patterns = [
-                (r"(\d+) seconds? long", "duration"),
-                (r"duration (\d+)", "duration"),
-            ]
-            for pattern, constraint_type in patterns:
-                match = re.search(pattern, query_lower)
-                if match:
-                    constraints["temporal_constraints"][constraint_type] = (
-                        match.groups()
-                    )
-
-        return constraints
-
-    def extract_item_id(self, document: Any) -> str | None:
-        """Extract ID from temporal document."""
-        # Delegate to default analyzer
-        return DefaultSchemaAnalyzer().extract_item_id(document)
-
-    def get_expected_field_name(self) -> str:
-        """Temporal expected field name."""
-        return "expected_items"
-
-
 class SchemaAnalyzerRegistry:
     """Registry for schema analyzers with plugin support."""
 
@@ -282,31 +210,6 @@ class SchemaAnalyzerRegistry:
         # Should never reach here due to DefaultSchemaAnalyzer
         return DefaultSchemaAnalyzer()
 
-    def register_plugin(self, plugin_module: str):
-        """
-        Register analyzers from a plugin module.
-
-        Args:
-            plugin_module: Module path like 'src.evaluation.plugins.video'
-        """
-        try:
-            import importlib
-
-            module = importlib.import_module(plugin_module)
-
-            # Look for classes that inherit from SchemaAnalyzer
-            for name in dir(module):
-                obj = getattr(module, name)
-                if (
-                    isinstance(obj, type)
-                    and issubclass(obj, SchemaAnalyzer)
-                    and obj != SchemaAnalyzer
-                ):
-                    self.register(obj())
-
-        except ImportError as e:
-            logger.warning(f"Could not load plugin {plugin_module}: {e}")
-
 
 # Global registry
 _registry = SchemaAnalyzerRegistry()
@@ -322,8 +225,3 @@ def get_schema_analyzer(
 def register_analyzer(analyzer: SchemaAnalyzer):
     """Register a custom analyzer."""
     _registry.register(analyzer)
-
-
-def register_plugin(plugin_module: str):
-    """Register a plugin module."""
-    _registry.register_plugin(plugin_module)

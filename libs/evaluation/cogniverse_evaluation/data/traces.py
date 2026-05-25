@@ -119,51 +119,6 @@ class TraceManager:
         logger.info(f"Extracted data from {len(trace_data)} traces")
         return trace_data
 
-    def filter_traces_by_query(
-        self, traces: List[Dict[str, Any]], query: str
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Find trace matching a specific query.
-
-        Args:
-            traces: List of trace data
-            query: Query to match
-
-        Returns:
-            Matching trace data or None
-        """
-        for trace in traces:
-            if trace.get("query") == query:
-                return trace
-        return None
-
-    def group_traces_by_config(
-        self, traces: List[Dict[str, Any]]
-    ) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Group traces by profile and strategy.
-
-        Args:
-            traces: List of trace data
-
-        Returns:
-            Dictionary grouped by configuration
-        """
-        grouped = {}
-
-        for trace in traces:
-            profile = trace.get("profile", "unknown")
-            strategy = trace.get("strategy", "unknown")
-            config_key = f"{profile}_{strategy}"
-
-            if config_key not in grouped:
-                grouped[config_key] = []
-
-            grouped[config_key].append(trace)
-
-        logger.info(f"Grouped traces into {len(grouped)} configurations")
-        return grouped
-
     def get_traces_by_experiment(
         self, profile: str, strategy: str, hours_back: int = 24
     ) -> pd.DataFrame:
