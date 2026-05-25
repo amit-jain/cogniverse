@@ -34,10 +34,7 @@ libs/runtime/cogniverse_runtime/ingestion/
 ├── exceptions.py                  # Pipeline-specific exceptions
 └── processors/
     ├── keyframe_processor.py      # Histogram-based keyframe extraction
-    ├── keyframe_extractor.py      # Keyframe extraction algorithms
-    ├── keyframe_extractor_fps.py  # FPS-based keyframe extraction
     ├── chunk_processor.py         # FFmpeg-based chunk extraction
-    ├── video_chunk_extractor.py   # Video chunk extraction utilities
     ├── audio_processor.py         # Whisper transcription
     ├── audio_transcriber.py       # Audio transcription core logic
     ├── audio_embedding_generator.py # Audio embedding generation
@@ -48,7 +45,6 @@ libs/runtime/cogniverse_runtime/ingestion/
         ├── embedding_generator.py      # Base classes and interfaces
         ├── embedding_generator_impl.py # Backend-agnostic embedding implementation
         ├── embedding_generator_factory.py # Factory for creating generators
-        ├── embedding_processors.py     # Model inference (ColPali, VideoPrism, ColQwen)
         ├── document_builders.py        # Vespa document construction
         └── backend_factory.py          # Backend client creation
 ```
@@ -375,8 +371,8 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant Strategy as Embedding Strategy
-    participant Generator as EmbeddingGenerator
-    participant Processor as Embedding Processor
+    participant Generator as EmbeddingGeneratorImpl
+    participant Processor as Generation Method
     participant Model as Embedding Model
     participant Builder as Document Builder
     participant Backend as Vespa Backend
@@ -1011,66 +1007,34 @@ audio_proc = manager.get_processor("audio")
 - `vlm`: VLMProcessor
 - `single_vector`: SingleVectorVideoProcessor
 
-### 5. EmbeddingGenerator
+### 5. BaseEmbeddingGenerator / EmbeddingResult
 
-**Purpose**: Backend-agnostic embedding generation and document feeding
+**Purpose**: Abstract base and result type for backend-agnostic embedding generation.
 
-**Constructor**:
-```python
-def __init__(
-    self,
-    config: dict[str, Any],
-    logger: logging.Logger | None = None,
-    profile_config: dict[str, Any] = None,
-    backend_client: Any = None,
-)
-```
-
-**Key Method**:
-
-#### `def generate_embeddings(video_data: dict[str, Any], output_dir: Path) -> EmbeddingResult`
-
-Generate embeddings based on processing type.
+`BaseEmbeddingGenerator` defines the
+`generate_embeddings(video_data, output_dir) -> EmbeddingResult` contract.
+`EmbeddingResult` is the dataclass returned by every generator:
 
 ```python
-generator = EmbeddingGenerator(
-    config=app_config,
-    profile_config=profile_config,
-    backend_client=vespa_client
-)
-
-result = generator.generate_embeddings(
-    video_data={
-        "video_id": "video",
-        "video_path": "/path/to/video.mp4",
-        "processing_type": "frame_based",
-        "keyframes": [...]  # Keyframe data
-    },
-    output_dir=Path("outputs/processing/")
-)
-
-# Returns EmbeddingResult:
-# - video_id: str
-# - total_documents: int
-# - documents_processed: int
-# - documents_fed: int
-# - processing_time: float
-# - errors: list[str]
-# - metadata: dict
+@dataclass
+class EmbeddingResult:
+    video_id: str
+    total_documents: int
+    documents_processed: int
+    documents_fed: int
+    processing_time: float
+    errors: list[str]
+    metadata: dict
 ```
 
-**Processing Methods Registry**:
-
-- `_generate_frame_based_embeddings()` - For ColPali frame-by-frame
-- `_generate_video_chunks_embeddings()` - For ColQwen chunks
-- `_generate_direct_video_embeddings()` - For VideoPrism direct encoding
-- `_generate_single_vector_embeddings()` - For pre-segmented data
+The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
+`EmbeddingGeneratorFactory` / `create_embedding_generator`.
 
 ### 6. EmbeddingGeneratorImpl
 
-**Purpose**: Extended embedding generator supporting document and audio content types via `model_loader` dispatch.
+**Purpose**: Concrete embedding generator supporting frame, chunk, video, document and audio content types via `model_loader` dispatch.
 
-**Extends**: `BaseEmbeddingGenerator` (not `EmbeddingGenerator`)
+**Extends**: `BaseEmbeddingGenerator`
 
 **Model Loading**: Uses `ModelLoaderFactory` with the `model_loader` config key to select the loader class directly:
 
@@ -1448,7 +1412,7 @@ class VideoSegment:
    • Return: {"full_text": "...", "segments": [{start, end, text}, ...]}
    ↓
 6. EMBEDDING GENERATION (MultiVectorEmbeddingStrategy)
-   • EmbeddingGenerator.generate_embeddings()
+   • EmbeddingGeneratorImpl.generate_embeddings()
    • Model: ColPali (vidore/colpali-v1.3-hf)
    • Processing:
      - Load keyframe images (150 images)
@@ -2043,10 +2007,12 @@ async def test_concurrent_video_processing():
 
 # Test embedding generation
 def test_colpali_embedding_generation():
-    generator = EmbeddingGenerator(
+    generator = create_embedding_generator(
         config=test_config,
-        profile_config={"embedding_model": "vidore/colpali-v1.3-hf"},
-        backend_client=mock_vespa_client
+        schema_name="video_colpali_mv_frame",
+        tenant_id="test",
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
 
     result = generator.generate_embeddings(video_data, output_dir)
@@ -2154,7 +2120,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 - Pipeline: `libs/runtime/cogniverse_runtime/ingestion/pipeline.py`
 - StrategyFactory: `libs/runtime/cogniverse_runtime/ingestion/strategy_factory.py`
 - Strategies: `libs/runtime/cogniverse_runtime/ingestion/strategies.py`
-- EmbeddingGenerator: `libs/runtime/cogniverse_runtime/ingestion/processors/embedding_generator/embedding_generator.py`
+- EmbeddingGeneratorImpl: `libs/runtime/cogniverse_runtime/ingestion/processors/embedding_generator/embedding_generator_impl.py`
 - KeyframeProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/keyframe_processor.py`
 - ChunkProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/chunk_processor.py`
 - AudioProcessor: `libs/runtime/cogniverse_runtime/ingestion/processors/audio_processor.py`

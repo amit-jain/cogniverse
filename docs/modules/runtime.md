@@ -86,11 +86,8 @@ cogniverse_runtime/
 │   ├── processing_strategy_set.py
 │   ├── exceptions.py
 │   └── processors/                  # Per-processor implementations
-│       ├── keyframe_extractor.py
-│       ├── keyframe_extractor_fps.py
 │       ├── keyframe_processor.py
 │       ├── chunk_processor.py
-│       ├── video_chunk_extractor.py
 │       ├── audio_transcriber.py
 │       ├── audio_processor.py
 │       ├── audio_embedding_generator.py
@@ -101,7 +98,6 @@ cogniverse_runtime/
 │           ├── embedding_generator.py
 │           ├── embedding_generator_impl.py
 │           ├── embedding_generator_factory.py
-│           ├── embedding_processors.py
 │           ├── document_builders.py
 │           └── backend_factory.py
 └── ingestion_worker/                # Async Redis-Streams ingestion worker
@@ -378,7 +374,6 @@ manager.list_processors()
 | `AudioProcessor` | `audio` | Audio processing utilities |
 | `VLMProcessor` | `vlm` | Generate frame descriptions via Modal VLM service |
 | `SingleVectorProcessor` | `single_vector` | Process for single-vector embeddings |
-| `EmbeddingProcessor` | `embedding` | Generate and store embeddings |
 
 ---
 
@@ -1060,51 +1055,47 @@ class ProfileDetail(BaseModel):
 
 The embedding generator subsystem provides backend-agnostic embedding generation.
 
-### EmbeddingGenerator
+### BaseEmbeddingGenerator / EmbeddingResult
 
 **Location:** `embedding_generator.py`
 
-Backend-agnostic embedding generator that passes raw embeddings:
+`BaseEmbeddingGenerator` is the abstract base for embedding generators; it
+defines the `generate_embeddings(video_data, output_dir) -> EmbeddingResult`
+contract. `EmbeddingResult` is the dataclass returned by every generator:
+
+```python
+@dataclass
+class EmbeddingResult:
+    video_id: str
+    total_documents: int
+    documents_processed: int
+    documents_fed: int
+    processing_time: float
+    errors: list[str]
+    metadata: dict
+```
+
+### EmbeddingGeneratorImpl
+
+**Location:** `embedding_generator_impl.py`
+
+`EmbeddingGeneratorImpl` is the concrete `BaseEmbeddingGenerator` used in
+production. It processes all segment types (frames, chunks, sliding windows)
+uniformly and feeds documents to the backend client. Construct it through
+`EmbeddingGeneratorFactory` / `create_embedding_generator` (below) rather than
+directly:
 
 ```python
 from cogniverse_runtime.ingestion.processors.embedding_generator import (
-    EmbeddingGenerator,
+    EmbeddingGeneratorImpl,
     EmbeddingResult,
 )
 
-generator = EmbeddingGenerator(
-    config=config,
-    logger=logger,
-    profile_config={
-        "process_type": "frame_based",
-        "embedding_model": "vidore/colpali-v1.3-hf"
-    },
-    backend_client=vespa_backend
-)
-
-result = generator.generate_embeddings(
+result: EmbeddingResult = generator.generate_embeddings(
     video_data={"video_id": "vid123", "frames": frames},
-    output_dir=Path("outputs/")
+    output_dir=Path("outputs/"),
 )
-
-# EmbeddingResult contains:
-# - video_id: str
-# - total_documents: int
-# - documents_processed: int
-# - documents_fed: int
-# - processing_time: float
-# - errors: list[str]
-# - metadata: dict
 ```
-
-**Processing Types:**
-
-| Type | Method | Use Case |
-|------|--------|----------|
-| `single_vector` | `_generate_single_vector_embeddings` | VideoPrism LVT |
-| `multi_vector` | `_generate_video_chunks_embeddings` | ColQwen, VideoPrism |
-| `direct_video` | `_generate_direct_video_embeddings` | Direct video processing |
-| `multi_vector` | `_generate_frame_based_embeddings` | ColPali frame-by-frame |
 
 ### EmbeddingGeneratorFactory
 
@@ -1145,7 +1136,7 @@ generator = create_embedding_generator(
 
 The document builder classes (`DocumentBuilder`, `DocumentBuilderFactory`, `DocumentMetadata`) exist in the codebase but are **not exported** from the embedding_generator package. They are used internally by the backend implementations and are not part of the public API.
 
-**Note:** Document building is now handled internally by backend implementations. Users should not need to create documents manually - the `EmbeddingGenerator` and backend clients handle this automatically.
+**Note:** Document building is now handled internally by backend implementations. Users should not need to create documents manually - the `EmbeddingGeneratorImpl` and backend clients handle this automatically.
 
 **Internal Document Fields** (for reference):
 

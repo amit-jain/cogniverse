@@ -9,7 +9,7 @@
 > - No duration calculation for visual scenes
 > - No audio-to-visual boundary mapping (audio is processed separately)
 >
-> **Video chunks** (`video_chunk_extractor.py`):
+> **Video chunks** (`chunk_processor.py`, `ChunkProcessor`):
 > - Full temporal boundaries with `start_time`, `end_time`, and `duration` fields
 > - Fixed-duration chunking (e.g., 6s or 30s segments)
 >

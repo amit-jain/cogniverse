@@ -14,25 +14,20 @@ from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 from .backend_factory import BackendFactory
 from .embedding_generator import (
     BaseEmbeddingGenerator,
-    EmbeddingGenerator,
     EmbeddingResult,
-    ProcessingConfig,
 )
 from .embedding_generator_factory import (
     EmbeddingGeneratorFactory,
     create_embedding_generator,
 )
 from .embedding_generator_impl import EmbeddingGeneratorImpl
-from .embedding_processors import EmbeddingProcessor
 
 __all__ = [
     # Main classes
     "BaseEmbeddingGenerator",
-    "EmbeddingGenerator",
     "EmbeddingGeneratorImpl",
     "EmbeddingGeneratorFactory",
     "EmbeddingResult",
-    "ProcessingConfig",
     "Document",
     "ContentType",
     "ProcessingStatus",
@@ -45,7 +40,6 @@ __all__ = [
     "ColQwenModelLoader",
     "VideoPrismModelLoader",
     # Processors and factories
-    "EmbeddingProcessor",
     "BackendFactory",
     # Factory function
     "create_embedding_generator",

@@ -92,7 +92,7 @@ Workflow execution that survives failures via checkpointing. Completed tasks are
 Vector representation of content for similarity search. Different models produce different dimensions (128, 768, 1024).
 
 ### EmbeddingGenerator
-Component that generates embeddings and feeds them to backends. Handles multi-vector and single-vector strategies.
+Embedding subsystem that generates embeddings and feeds them to backends, handling multi-vector and single-vector strategies. The concrete implementation is `EmbeddingGeneratorImpl`, constructed via `EmbeddingGeneratorFactory` / `create_embedding_generator`.
 
 ### EventQueue
 A2A-compatible real-time notification system for streaming task progress to multiple subscribers. Supports pub/sub pattern, reconnection with replay, and graceful cancellation. Used by orchestrator and ingestion pipeline.
@@ -212,7 +212,7 @@ Record attached to every memory write describing its origin. Fields: `written_by
 Evaluation metric: fraction of top-K results that are relevant.
 
 ### Processor
-Pluggable component in ingestion pipeline. Examples: `KeyframeExtractor`, `AudioTranscriber`, `VLMDescriptor`.
+Pluggable component in ingestion pipeline. Examples: `KeyframeProcessor`, `AudioTranscriber`, `VLMDescriptor`.
 
 ### Profile
 Named configuration for backend, embedding model, and search strategy. Examples: `video_colpali_mv_frame`.

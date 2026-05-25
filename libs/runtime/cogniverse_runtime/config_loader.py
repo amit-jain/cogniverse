@@ -232,10 +232,6 @@ class ConfigLoader:
         agents_config = self.config.get("agents", {})
         return agents_config.get(agent_name)
 
-    def get_runtime_config(self) -> Dict[str, Any]:
-        """Get runtime configuration."""
-        return self.config.get("runtime", {})
-
     def reload_config(self) -> None:
         """Reload configuration and re-initialize components.
 
