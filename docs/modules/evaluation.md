@@ -1285,26 +1285,36 @@ await evaluator.upload_evaluations(eval_results)
 
 ---
 
-#### `async run_evaluation_pipeline(hours: int = 6, operation_name: str | None = "search_service.search", evaluator_names: list[str] | None = None, upload_evaluations: bool = True) -> dict[str, Any]`
+#### `async run_evaluation_pipeline(hours: int = 6, operation_name: str | None = "search_service.search", evaluator_names: list[str] | None = None, upload_evaluations: bool = True, incremental: bool = True) -> dict[str, Any]`
 Run complete evaluation pipeline on recent spans.
 
-**Returns:** Summary with num_spans_evaluated, evaluators_run, results
+When `incremental=True` (default), (span, evaluator) pairs that already
+carry that evaluator's annotation are skipped — so re-running over the
+same window only evaluates new spans / new evaluators instead of
+re-annotating everything. The skip set comes from querying the span
+annotations already in the telemetry backend (see
+`SpanEvaluator._already_evaluated_span_ids`). Pass `incremental=False` to
+re-evaluate every retrieved span.
+
+**Returns:** Summary with `num_spans_retrieved`, `num_skipped`,
+`incremental`, `evaluators_run`, and per-evaluator `results` (each with
+`num_evaluated`, `num_skipped`, `mean_score`, `score_distribution`).
 
 **Example:**
 ```python
-evaluator = SpanEvaluator()
+evaluator = SpanEvaluator(tenant_id="acme", project_name="cogniverse-acme")
 
-# Run full pipeline
+# Run full pipeline (incremental by default)
 summary = await evaluator.run_evaluation_pipeline(
     hours=24,
     evaluator_names=["relevance", "diversity", "golden_dataset"],
-    upload_evaluations=True
+    upload_evaluations=True,
 )
 
-print(f"Evaluated {summary['num_spans_evaluated']} spans")
-print(f"Evaluators: {summary['evaluators_run']}")
+print(f"Retrieved {summary['num_spans_retrieved']} spans")
+print(f"Skipped {summary['num_skipped']} already-evaluated (span, evaluator) pairs")
 for eval_name, stats in summary["results"].items():
-    print(f"{eval_name}: {stats['mean_score']:.3f}")
+    print(f"{eval_name}: evaluated={stats['num_evaluated']} skipped={stats['num_skipped']}")
 ```
 
 ---

@@ -318,10 +318,13 @@ class TestRunEvaluationPipeline:
             upload_evaluations=False,
         )
 
-        assert "num_spans_evaluated" in result
+        assert "num_spans_retrieved" in result
+        assert "num_skipped" in result
         assert "evaluators_run" in result
         assert "results" in result
-        assert result["num_spans_evaluated"] > 0
+        assert result["num_spans_retrieved"] > 0
+        # No prior annotations in this mock setup → nothing skipped.
+        assert result["num_skipped"] == 0
         assert "relevance" in result["evaluators_run"]
 
     @pytest.mark.asyncio
@@ -391,13 +394,15 @@ class TestUploadEvaluations:
         )
         await evaluator.upload_evaluations({"relevance": eval_df})
 
+        # add_annotation takes no ``explanation`` kwarg and requires
+        # ``project``; the evaluator's explanation is carried in metadata.
         mock_annotations.add_annotation.assert_called_once_with(
             span_id="s1",
             name="relevance",
             label="relevant",
             score=0.8,
-            explanation="good",
-            metadata={"evaluator": "relevance"},
+            metadata={"evaluator": "relevance", "explanation": "good"},
+            project="test-project",
         )
 
     @pytest.mark.asyncio

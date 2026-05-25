@@ -5,7 +5,7 @@ This module evaluates existing spans using both reference-free and golden datase
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
@@ -80,7 +80,11 @@ class SpanEvaluator:
         """
         try:
             # Use provider to get spans
-            end_time = datetime.now()
+            # Timezone-aware UTC: the Phoenix trace store passes aware
+            # datetimes through unchanged but mislabels naive ones as UTC,
+            # which skews the window by the local offset and finds no spans
+            # off-UTC (then falls back to mock data).
+            end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(hours=hours)
 
             # Get spans dataframe from telemetry provider
@@ -224,7 +228,10 @@ class SpanEvaluator:
         return pd.DataFrame(mock_spans)
 
     async def evaluate_spans(
-        self, spans_df: pd.DataFrame, evaluator_names: list[str] | None = None
+        self,
+        spans_df: pd.DataFrame,
+        evaluator_names: list[str] | None = None,
+        skip_span_ids: dict[str, set[str]] | None = None,
     ) -> dict[str, pd.DataFrame]:
         """
         Evaluate spans using specified evaluators
@@ -232,6 +239,10 @@ class SpanEvaluator:
         Args:
             spans_df: DataFrame containing spans to evaluate
             evaluator_names: List of evaluator names to use (None = all)
+            skip_span_ids: Optional ``{evaluator_name: {span_id, ...}}`` of
+                spans already evaluated for that evaluator. Such (span,
+                evaluator) pairs are skipped so a re-run doesn't duplicate
+                annotations. See ``_already_evaluated_span_ids``.
 
         Returns:
             Dictionary mapping evaluator name to evaluation results DataFrame
@@ -241,6 +252,7 @@ class SpanEvaluator:
                 "golden_dataset"
             ]
 
+        skip_span_ids = skip_span_ids or {}
         evaluation_results = {}
 
         for eval_name in evaluator_names:
@@ -255,12 +267,18 @@ class SpanEvaluator:
                 logger.warning(f"Evaluator '{eval_name}' not found")
                 continue
 
+            already_done = skip_span_ids.get(eval_name, set())
+
             # Prepare evaluation data
             eval_records = []
 
             for _, span in spans_df.iterrows():
                 # Extract span data
                 span_id = span.get("span_id")
+                if span_id in already_done:
+                    # Already carries this evaluator's annotation — skip so
+                    # the re-run is incremental and doesn't double-annotate.
+                    continue
                 attributes = span.get("attributes", {})
                 outputs = span.get("outputs", {})
 
@@ -297,6 +315,70 @@ class SpanEvaluator:
 
         return evaluation_results
 
+    async def _already_evaluated_span_ids(
+        self,
+        hours: int,
+        operation_name: str | None,
+        evaluator_names: list[str],
+        limit: int = 1000,
+    ) -> dict[str, set[str]]:
+        """Return ``{evaluator_name: {span_id, ...}}`` for spans that already
+        carry that evaluator's annotation in the time window.
+
+        Queries the telemetry provider's annotation store per evaluator name
+        (``get_annotations`` takes the raw spans DataFrame and filters by
+        annotation name). This is the incremental gate: spans already
+        annotated for an evaluator are not re-evaluated. A query failure
+        degrades to an empty set (the span is treated as un-evaluated and
+        re-run) rather than dropping it silently.
+        """
+        result: dict[str, set[str]] = {name: set() for name in evaluator_names}
+
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=hours)
+        try:
+            raw_spans_df = await self.provider.telemetry.traces.get_spans(
+                project=self.project_name,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+            )
+        except Exception as e:
+            logger.warning("Incremental gate: failed to fetch spans (%s)", e)
+            return result
+
+        if raw_spans_df is None or raw_spans_df.empty:
+            return result
+        if operation_name and "name" in raw_spans_df.columns:
+            raw_spans_df = raw_spans_df[raw_spans_df["name"] == operation_name]
+        if raw_spans_df.empty:
+            return result
+
+        for name in evaluator_names:
+            try:
+                annotations_df = (
+                    await self.provider.telemetry.annotations.get_annotations(
+                        spans_df=raw_spans_df,
+                        project=self.project_name,
+                        annotation_names=[name],
+                    )
+                )
+            except Exception as e:
+                logger.warning(
+                    "Incremental gate: annotation query failed for %s (%s)", name, e
+                )
+                continue
+            if annotations_df is not None and not annotations_df.empty:
+                # Phoenix returns the annotations frame indexed by span_id
+                # (no ``span_id`` column); fall back to the index.
+                if "span_id" in annotations_df.columns:
+                    span_ids = annotations_df["span_id"].dropna().tolist()
+                else:
+                    span_ids = [s for s in annotations_df.index.tolist() if s]
+                result[name] = set(span_ids)
+
+        return result
+
     async def upload_evaluations(self, evaluations: dict[str, pd.DataFrame]):
         """
         Upload evaluation results as annotations
@@ -310,15 +392,21 @@ class SpanEvaluator:
                 continue
 
             try:
-                # Upload evaluations as annotations via provider
+                # Upload evaluations as annotations via provider. The
+                # annotation store derives its own explanation from
+                # name/label, so the evaluator's explanation is carried in
+                # metadata. ``project`` is required by add_annotation.
                 for _, row in eval_df.iterrows():
                     await self.provider.telemetry.annotations.add_annotation(
                         span_id=row["span_id"],
                         name=eval_name,
                         label=row["label"],
                         score=row["score"],
-                        explanation=row.get("explanation", ""),
-                        metadata={"evaluator": eval_name},
+                        metadata={
+                            "evaluator": eval_name,
+                            "explanation": row.get("explanation", ""),
+                        },
+                        project=self.project_name,
                     )
 
                 logger.info(f"Uploaded {len(eval_df)} evaluations for {eval_name}")
@@ -332,6 +420,7 @@ class SpanEvaluator:
         operation_name: str | None = "search_service.search",
         evaluator_names: list[str] | None = None,
         upload_evaluations: bool = True,
+        incremental: bool = True,
     ) -> dict[str, Any]:
         """
         Run complete evaluation pipeline on recent spans
@@ -341,9 +430,16 @@ class SpanEvaluator:
             operation_name: Filter by operation name
             evaluator_names: List of evaluators to use
             upload_evaluations: Whether to upload results as annotations
+            incremental: When True (default), skip (span, evaluator) pairs
+                that already carry that evaluator's annotation, so a re-run
+                over the same window only evaluates new spans / new
+                evaluators instead of re-annotating everything.
 
         Returns:
-            Summary of evaluation results
+            Summary of evaluation results. ``num_spans_retrieved`` is the
+            window size; per-evaluator ``num_evaluated`` / ``num_skipped``
+            report the incremental split; top-level ``num_skipped`` is the
+            total (span, evaluator) pairs skipped.
         """
         logger.info(f"Starting span evaluation pipeline for last {hours} hours")
 
@@ -354,43 +450,55 @@ class SpanEvaluator:
         if spans_df.empty:
             return {"error": "No spans found"}
 
-        # Run evaluations
-        evaluations = await self.evaluate_spans(spans_df, evaluator_names)
+        if evaluator_names is None:
+            evaluator_names = list(self.reference_free_evaluators.keys()) + [
+                "golden_dataset"
+            ]
+
+        present_ids = (
+            set(spans_df["span_id"].dropna())
+            if "span_id" in spans_df.columns
+            else set()
+        )
+        skip_span_ids: dict[str, set[str]] = {}
+        if incremental:
+            skip_span_ids = await self._already_evaluated_span_ids(
+                hours, operation_name, evaluator_names
+            )
+
+        # Run evaluations (skipping already-annotated pairs)
+        evaluations = await self.evaluate_spans(
+            spans_df, evaluator_names, skip_span_ids=skip_span_ids
+        )
 
         # Upload evaluations if requested
         if upload_evaluations:
             await self.upload_evaluations(evaluations)
 
-        # Generate summary
-        summary = {
-            "num_spans_evaluated": len(spans_df),
-            "evaluators_run": list(evaluations.keys()),
+        # Generate summary — per-evaluator evaluated/skipped split.
+        per_eval_skipped = {
+            name: len(present_ids & skip_span_ids.get(name, set()))
+            for name in evaluator_names
+        }
+        summary: dict[str, Any] = {
+            "num_spans_retrieved": len(spans_df),
+            "num_skipped": sum(per_eval_skipped.values()),
+            "incremental": incremental,
+            "evaluators_run": list(evaluator_names),
             "results": {},
         }
 
-        for eval_name, eval_df in evaluations.items():
-            if not eval_df.empty:
-                summary["results"][eval_name] = {
-                    "num_evaluated": len(eval_df),
-                    "mean_score": eval_df["score"].mean(),
-                    "score_distribution": eval_df["label"].value_counts().to_dict(),
-                }
+        for eval_name in evaluator_names:
+            eval_df = evaluations.get(eval_name, pd.DataFrame())
+            summary["results"][eval_name] = {
+                "num_evaluated": len(eval_df),
+                "num_skipped": per_eval_skipped.get(eval_name, 0),
+                "mean_score": (eval_df["score"].mean() if not eval_df.empty else None),
+                "score_distribution": (
+                    eval_df["label"].value_counts().to_dict()
+                    if not eval_df.empty
+                    else {}
+                ),
+            }
 
         return summary
-
-
-async def evaluate_existing_spans():
-    """
-    Example function to evaluate existing spans
-    """
-    evaluator = SpanEvaluator()
-
-    # Run evaluation on recent spans
-    summary = await evaluator.run_evaluation_pipeline(
-        hours=24,  # Last 24 hours
-        evaluator_names=["relevance", "diversity", "golden_dataset"],
-        upload_evaluations=True,
-    )
-
-    logger.info(f"Evaluation complete: {summary}")
-    return summary
