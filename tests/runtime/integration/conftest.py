@@ -55,10 +55,10 @@ def vespa_instance(shared_vespa):  # noqa: F811
     expect (``http_port``, ``config_port``, ``base_url``, ``container_name``)
     backed by the project-wide ``shared_vespa``.
 
-    Deploys two baseline schemas under tenant ``test_unit`` (the
-    sanitised form of ``test:unit`` runtime tests use):
-    ``video_colpali_smol500_mv_frame_test_unit`` and
-    ``agent_memories_test_unit``. Goes through SchemaRegistry so the
+    Deploys two baseline schemas under tenant ``test:unit`` (which
+    canonicalizes to itself, sanitising to the ``test_unit`` schema
+    suffix runtime tests query): ``video_colpali_smol500_mv_frame_test_unit``
+    and ``agent_memories_test_unit``. Goes through SchemaRegistry so the
     deploy merges with any other tenants' schemas already on
     shared_vespa instead of full-replacing them.
 
@@ -75,12 +75,12 @@ def vespa_instance(shared_vespa):  # noqa: F811
 
     deploy_tenant_schema(
         shared_vespa,
-        tenant_id="test_unit",
+        tenant_id="test:unit",
         base_schema_name="video_colpali_smol500_mv_frame",
     )
     deploy_tenant_schema(
         shared_vespa,
-        tenant_id="test_unit",
+        tenant_id="test:unit",
         base_schema_name="agent_memories",
     )
 
@@ -190,35 +190,37 @@ def config_manager(vespa_instance):
     # whose physical name was materialised in Vespa.
     from datetime import datetime, timezone
 
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
     from cogniverse_sdk.interfaces.config_store import ConfigScope
 
+    # Register under the canonical tenant id so the ConfigStore key matches
+    # what deploy_schema/register_schema write (both canonicalize their
+    # tenant_id). The physical Vespa schema suffix is the sanitised canonical
+    # form ("test:unit" -> "test_unit").
+    seed_tenant_id = "test:unit"
+    seed_suffix = canonical_tenant_id(seed_tenant_id).replace(":", "_")
     baseline_schemas = [
         (
             "video_colpali_smol500_mv_frame",
-            "test_unit",
             "video_colpali_smol500_mv_frame_schema.json",
         ),
-        ("agent_memories", "test_unit", "agent_memories_schema.json"),
+        ("agent_memories", "agent_memories_schema.json"),
     ]
-    for base_name, suffix, schema_filename in baseline_schemas:
+    for base_name, schema_filename in baseline_schemas:
         schema_path = SCHEMAS_DIR / schema_filename
         with open(schema_path) as f:
             reg_schema_json = json.load(f)
-        full_name = f"{base_name}_{suffix}"
+        full_name = f"{base_name}_{seed_suffix}"
         reg_schema_json["name"] = full_name
         reg_schema_json["document"]["name"] = full_name
 
-        # ConfigStore key: (tenant_id=suffix-as-stored, scope=SCHEMA,
-        # service="schema_registry", config_key="schema_{base}").
-        # tenant_id "test_unit" matches the sanitised form of "test:unit"
-        # the backend uses as the actual Vespa schema suffix.
         cm.store.set_config(
-            tenant_id=suffix,
+            tenant_id=seed_tenant_id,
             scope=ConfigScope.SCHEMA,
             service="schema_registry",
             config_key=f"schema_{base_name}",
             config_value={
-                "tenant_id": suffix,
+                "tenant_id": seed_tenant_id,
                 "base_schema_name": base_name,
                 "full_schema_name": full_name,
                 "schema_definition": json.dumps(reg_schema_json),

@@ -79,7 +79,7 @@ def vespa_instance(shared_vespa):  # noqa: F811
 
     deploy_tenant_schema(
         shared_vespa,
-        tenant_id="test_unit",
+        tenant_id="test:unit",
         base_schema_name="video_colpali_smol500_mv_frame",
     )
 
