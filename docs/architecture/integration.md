@@ -591,8 +591,7 @@ response = client.post(
 assert response.status_code == 200
 assert "results" in response.json()
 
-# Example: Verify dashboard utilities work with Phoenix data
-from cogniverse_dashboard.utils.phoenix_data_manager import PhoenixDataManager
+# Example: experiment tracking against Phoenix
 from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 # Create experiment tracker (tenant_id is optional, defaults to "default")
@@ -601,9 +600,9 @@ tracker = ExperimentTracker(
     tenant_id="test"
 )
 
-# Verify Phoenix data manager can manage data directory
-phoenix_manager = PhoenixDataManager(data_dir="./data/phoenix")
-# Dashboard integration happens via Streamlit app, not direct API
+# Phoenix persistent-data management (backup/restore/clean) is handled by
+# the scripts/manage_phoenix_data.py CLI, not an importable dashboard util.
+# Dashboard integration happens via the Streamlit app, not direct API
 ```
 
 ---

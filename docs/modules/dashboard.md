@@ -61,8 +61,6 @@ libs/dashboard/cogniverse_dashboard/
     tenant_management.py
   utils/
     __init__.py
-    phoenix_launcher.py
-    phoenix_data_manager.py
 ```
 
 **Embedding Atlas**: replaced by `scripts/atlas_viewer.py`, launched as a separate Streamlit process (not a tab inside `app.py`).
@@ -399,56 +397,26 @@ flowchart LR
 
 ---
 
-## Phoenix Data Manager
+## Phoenix Data Management
 
-The `PhoenixDataManager` class provides utilities for managing Phoenix persistent data:
-
-```python
-from cogniverse_dashboard.utils.phoenix_data_manager import PhoenixDataManager
-
-manager = PhoenixDataManager(data_dir="./data/phoenix")
-
-# Create backup
-backup_path = manager.backup(name="before_experiment")
-
-# Restore from backup
-manager.restore("before_experiment", force=True)
-
-# List available backups
-backups = manager.list_backups()
-for backup in backups:
-    print(f"{backup['name']}: {backup['size_mb']:.2f} MB")
-
-# Clean old data
-manager.clean(older_than_days=30, dry_run=True)
-
-# Analyze data directory
-analysis = manager.analyze()
-print(f"Total size: {analysis['total_size_mb']:.2f} MB")
-print(f"Traces: {analysis['traces']['count']} files")
-
-# Export/import datasets
-manager.export_datasets("./exports/datasets")
-manager.import_datasets("./imports/datasets")
-```
-
-**CLI Usage:**
+Phoenix persistent data (backup/restore/clean/analyze) is managed by the
+`scripts/manage_phoenix_data.py` CLI:
 
 ```bash
 # Backup
-uv run python libs/dashboard/cogniverse_dashboard/utils/phoenix_data_manager.py backup --name my_backup
+uv run python scripts/manage_phoenix_data.py backup --name my_backup
 
 # Restore
-uv run python libs/dashboard/cogniverse_dashboard/utils/phoenix_data_manager.py restore my_backup --force
+uv run python scripts/manage_phoenix_data.py restore my_backup --force
 
 # List backups
-uv run python libs/dashboard/cogniverse_dashboard/utils/phoenix_data_manager.py list
+uv run python scripts/manage_phoenix_data.py list
 
 # Clean old data
-uv run python libs/dashboard/cogniverse_dashboard/utils/phoenix_data_manager.py clean --older-than 30
+uv run python scripts/manage_phoenix_data.py clean --older-than 30
 
 # Analyze
-uv run python libs/dashboard/cogniverse_dashboard/utils/phoenix_data_manager.py analyze
+uv run python scripts/manage_phoenix_data.py analyze
 ```
 
 ---
@@ -665,4 +633,4 @@ uv run pytest tests/dashboard/ --cov=cogniverse_dashboard --cov-report=html
 
 ---
 
-**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. The `PhoenixDataManager` provides utilities for data backup/restore. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.
+**Summary:** The Dashboard module provides a comprehensive Streamlit UI for Cogniverse. It includes tabs for Phoenix analytics, evaluation management, optimization, HITL workflows, configuration, memory, and backend profile management. Phoenix data backup/restore is handled by the `scripts/manage_phoenix_data.py` CLI. All tabs communicate with the unified Runtime via REST API for search, agent status, and configuration operations.

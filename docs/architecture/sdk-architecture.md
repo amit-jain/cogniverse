@@ -1089,9 +1089,9 @@ from cogniverse_runtime.ingestion.pipeline_builder import VideoIngestionPipeline
 # Dashboard is a Streamlit app - run via:
 #   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
-# Available utility modules
-from cogniverse_dashboard.utils.phoenix_launcher import PhoenixServer
-from cogniverse_dashboard.utils.phoenix_data_manager import PhoenixDataManager
+# Phoenix start + data management are CLI scripts (not dashboard imports):
+#   uv run python scripts/start_phoenix.py
+#   uv run python scripts/manage_phoenix_data.py backup
 ```
 
 ### Cross-Package Imports

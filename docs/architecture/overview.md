@@ -257,7 +257,7 @@ flowchart TB
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
 | **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Administrative endpoints including `POST /messaging/invite`<br>• `search/` — Search service layer<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |
 | **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, `/wiki` (save/search/topic/index), plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | foundation, sdk |
-| **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `utils/` — Utility functions (phoenix_launcher, etc.) | sdk, core, evaluation, runtime |
+| **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `tabs/` — Dashboard tab modules | sdk, core, evaluation, runtime |
 
 ---
 
