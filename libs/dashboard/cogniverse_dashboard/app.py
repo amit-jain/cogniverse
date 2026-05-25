@@ -32,11 +32,10 @@ sys.path.insert(0, str(project_root))
 # Import analytics from workspace packages (migrated from old src/ path)
 # RootCauseAnalyzer already imported above
 # Import A2A client for agent communication
-import asyncio
-
 import httpx
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_evaluation.analysis.root_cause_analysis import (
     RootCauseAnalyzer,
 )
@@ -167,29 +166,6 @@ def display_streaming_result(
         text_placeholder.markdown(accumulated_text)
 
     return final_data
-
-
-def run_async_in_streamlit(coro):
-    """
-    Helper function to run async operations in Streamlit.
-    Handles event loop management properly for Streamlit compatibility.
-    """
-    try:
-        # Try to get the current event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If there's already a running loop, we need to use a thread pool
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        else:
-            # No running loop, safe to use asyncio.run
-            return asyncio.run(coro)
-    except RuntimeError:
-        # No event loop exists, create one
-        return asyncio.run(coro)
 
 
 # Import tab modules early

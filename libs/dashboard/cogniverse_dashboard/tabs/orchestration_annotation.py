@@ -5,7 +5,6 @@ Provides UI for human annotation of orchestration workflow quality —
 the human-in-the-loop side of the optimization feedback path.
 """
 
-import asyncio
 import json
 import sys
 from datetime import datetime, timedelta
@@ -68,23 +67,8 @@ from cogniverse_agents.routing.orchestration_annotation_storage import (
     OrchestrationAnnotation,
     OrchestrationAnnotationStorage,
 )
+from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
-
-
-def run_async_in_streamlit(coro):
-    """Helper to run async operations in Streamlit"""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        else:
-            return asyncio.run(coro)
-    except RuntimeError:
-        return asyncio.run(coro)
 
 
 def render_orchestration_annotation_tab():
