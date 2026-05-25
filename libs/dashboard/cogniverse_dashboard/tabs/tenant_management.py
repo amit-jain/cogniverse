@@ -72,16 +72,20 @@ def _fetch_tenants(org_id: str) -> List[Dict]:
 
 
 def _fetch_profiles() -> List[str]:
-    """Fetch available profile/schema names from the Runtime."""
-    # Try to get base schema names from the filesystem schema loader
-    # These are the schemas available for tenant deployment
-    known_schemas = [
+    """Return the shipped base-schema names available for tenant deployment.
+
+    These are the static set of schema definitions under
+    ``configs/schemas/`` that a tenant can deploy a profile against. This is
+    a fixed list, not a runtime query — the runtime's ``/admin/profiles``
+    endpoint lists a tenant's *deployed* profiles, not the available base
+    schemas, so there is no endpoint to fetch this from today.
+    """
+    return [
         "video_colpali_smol500_mv_frame",
         "video_colqwen_omni_mv_chunk_30s",
         "video_videoprism_base_mv_chunk_30s",
         "video_videoprism_lvt_base_sv_chunk_6s",
     ]
-    return known_schemas
 
 
 def render_tenant_management_tab():

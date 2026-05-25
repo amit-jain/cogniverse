@@ -1198,23 +1198,17 @@ def _render_reranking_optimization_tab():
 
     if st.button("🔧 Train Reranker", disabled=not can_train):
         if can_train:
-            with st.spinner("Training reranker from user feedback..."):
-                st.info("Learning ranking preferences from annotations...")
-
-                # In real implementation:
-                # 1. Query annotated spans from Phoenix
-                # 2. Extract (query, results, ratings) tuples
-                # 3. Train LambdaMART/RankNet model
-                # 4. Optimize BM25/semantic weights
-                # 5. Store optimized reranker
-
-                st.success("✅ Reranker trained successfully!")
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("NDCG@10", "0.72 → 0.84", delta="+0.12")
-                with col2:
-                    st.metric("MRR", "0.65 → 0.78", delta="+0.13")
+            # Reranker training from annotation feedback is not yet
+            # implemented. Surface that honestly rather than reporting a
+            # fabricated success with invented NDCG/MRR deltas. The intended
+            # pipeline (query annotated spans -> extract (query, results,
+            # ratings) -> train LambdaMART/RankNet -> optimize weights ->
+            # persist reranker) lands in a future change.
+            st.warning(
+                "Reranker training from feedback is not implemented yet. "
+                f"{current_annotations} annotations are available; the "
+                "training pipeline will be wired in a future release."
+            )
         else:
             st.warning(f"Need {min_annotations - current_annotations} more annotations")
 
