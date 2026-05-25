@@ -15,7 +15,7 @@ Tests the complete flow:
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -436,6 +436,64 @@ class TestSyntheticApprovalIntegration:
         final = await approval_storage.get_batch(batch_id)
         assert final.items[0].status == ApprovalStatus.APPROVED
         assert final.items[0].reviewed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_record_decision_persists_approval_span(self, approval_storage):
+        """record_decision must emit an ``approval_decision`` span to Phoenix.
+
+        This is what the dashboard approval handlers now call to persist a
+        human decision; previously they discarded the ReviewDecision. Verify
+        the span lands with the decision's attributes against real Phoenix.
+        """
+        item_id = f"decision_item_{int(time.time() * 1000)}"
+        item = ReviewItem(
+            item_id=item_id,
+            data={"query": "is this relevant?"},
+            confidence=0.6,
+        )
+        decision = ReviewDecision(
+            item_id=item_id,
+            approved=True,
+            feedback="clear and specific",
+            reviewer="reviewer@example.com",
+        )
+
+        await approval_storage.record_decision(decision, item)
+        approval_storage.telemetry_manager.force_flush(timeout_millis=10000)
+
+        project = approval_storage.full_project_name
+        provider = approval_storage.provider
+
+        decision_span = None
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            end_time = datetime.now(timezone.utc)
+            spans_df = await provider.traces.get_spans(
+                project=project,
+                start_time=end_time - timedelta(hours=1),
+                end_time=end_time,
+                limit=1000,
+            )
+            if (
+                spans_df is not None
+                and not spans_df.empty
+                and "name" in spans_df.columns
+            ):
+                matches = spans_df[
+                    (spans_df["name"] == "approval_decision")
+                    & (spans_df.get("attributes.item_id") == item_id)
+                ]
+                if not matches.empty:
+                    decision_span = matches.iloc[0]
+                    break
+            time.sleep(2.0)
+
+        assert decision_span is not None, (
+            f"approval_decision span for {item_id} not found in {project}"
+        )
+        assert str(decision_span["attributes.approved"]).lower() == "true"
+        assert decision_span["attributes.reviewer"] == "reviewer@example.com"
+        assert decision_span["attributes.feedback"] == "clear and specific"
 
 
 @pytest.mark.integration

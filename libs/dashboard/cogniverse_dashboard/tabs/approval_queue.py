@@ -59,9 +59,23 @@ def render_approval_queue_tab():
 def _initialize_approval_agent():
     """Initialize approval agent with synthetic data configuration"""
     try:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
+        # ApprovalStorageImpl needs the telemetry endpoints + tenant to scope
+        # its spans; resolve them from SystemConfig (same source app.py uses).
+        sys_cfg = create_default_config_manager().get_system_config()
+        http_endpoint = sys_cfg.telemetry_url
+        grpc = sys_cfg.telemetry_collector_endpoint
+        grpc_endpoint = grpc if grpc.startswith("http") else f"http://{grpc}"
+        tenant_id = st.session_state.get("current_tenant") or "default"
+
         confidence_extractor = SyntheticDataConfidenceExtractor()
         feedback_handler = SyntheticDataFeedbackHandler()
-        storage = ApprovalStorageImpl()
+        storage = ApprovalStorageImpl(
+            grpc_endpoint=grpc_endpoint,
+            http_endpoint=http_endpoint,
+            tenant_id=tenant_id,
+        )
 
         agent = HumanApprovalAgent(
             confidence_extractor=confidence_extractor,
@@ -72,7 +86,7 @@ def _initialize_approval_agent():
 
         st.session_state.approval_agent = agent
         st.session_state.approval_storage = storage
-        logger.info("Initialized approval agent")
+        logger.info("Initialized approval agent (tenant: %s)", tenant_id)
     except Exception as e:
         st.error(f"Failed to initialize approval agent: {e}")
         logger.error(f"Approval agent initialization failed: {e}")
@@ -188,17 +202,33 @@ def _render_review_item(item, idx: int):
                 st.session_state[f"rejecting_{idx}"] = False
 
 
+def _persist_decision(decision: ReviewDecision, item) -> None:
+    """Persist a review decision via the approval storage (sync wrapper).
+
+    ``record_decision`` is async and writes the decision as an
+    ``approval_decision`` telemetry span; run it to completion before the
+    caller mutates session state so a persistence failure surfaces instead
+    of silently dropping the decision.
+    """
+    import asyncio
+
+    storage = st.session_state.get("approval_storage")
+    if storage is None:
+        raise RuntimeError("approval storage not initialized")
+    asyncio.run(storage.record_decision(decision, item))
+
+
 def _handle_approval(item, idx: int):
     """Handle item approval"""
     try:
-        ReviewDecision(
+        decision = ReviewDecision(
             item_id=item.item_id,
             approved=True,
             reviewer=st.session_state.get("user_email", "unknown"),
         )
 
-        # Apply decision (would be async in production)
-        # For now, just update local state
+        # Persist the decision before mutating local state.
+        _persist_decision(decision, item)
         item.status = ApprovalStatus.APPROVED
         item.reviewed_at = pd.Timestamp.now()
 
@@ -232,7 +262,8 @@ def _handle_rejection(item, idx: int, feedback: str, corrections: Dict):
             reviewer=st.session_state.get("user_email", "unknown"),
         )
 
-        # Apply decision (would be async in production)
+        # Persist the decision before mutating local state.
+        _persist_decision(decision, item)
         item.status = ApprovalStatus.REJECTED
         item.reviewed_at = pd.Timestamp.now()
 
