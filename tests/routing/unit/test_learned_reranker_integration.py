@@ -2,7 +2,6 @@
 Integration tests for learned reranking with LiteLLM:
 - Real LiteLLM calls (if API keys available)
 - Hybrid reranking end-to-end
-- ConfigurableMultiModalReranker with real components
 - Config loading from config.json
 """
 
@@ -10,10 +9,7 @@ import pytest
 
 from cogniverse_agents.search.hybrid_reranker import HybridReranker
 from cogniverse_agents.search.learned_reranker import LearnedReranker
-from cogniverse_agents.search.multi_modal_reranker import (
-    ConfigurableMultiModalReranker,
-    MultiModalReranker,
-)
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
 from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 
@@ -329,68 +325,6 @@ class TestRerankingOAICompat:
             assert reranked[0].id == "doc-2"
             assert reranked[1].id == "doc-1"
             assert reranked[0].metadata["reranking_score"] == 0.92
-
-
-@pytest.mark.unit
-class TestConfigurableMultiModalReranker:
-    """Test ConfigurableMultiModalReranker with real components"""
-
-    @pytest.mark.asyncio
-    async def test_configurable_reranker_disabled(
-        self, sample_results, mock_config_manager
-    ):
-        """Test configurable reranker when disabled in config"""
-        from unittest.mock import patch
-
-        # Patch where get_config_value is imported and used
-        with patch("cogniverse_core.config.utils.get_config_value") as mock_config:
-            mock_config.return_value = {"enabled": False}
-
-            reranker = ConfigurableMultiModalReranker(
-                config_manager=mock_config_manager, tenant_id="test:unit"
-            )
-            query = "test query"
-            modalities = [QueryModality.TEXT]
-
-            # Should return original results when disabled
-            results = await reranker.rerank(query, sample_results, modalities)
-            assert results == sample_results
-
-            # Verify info
-            info = reranker.get_reranker_info()
-            assert info["enabled"] is False
-
-    @pytest.mark.asyncio
-    async def test_configurable_reranker_heuristic_only(
-        self, sample_results, mock_config_manager
-    ):
-        """Test configurable reranker with heuristic only"""
-        from unittest.mock import patch
-
-        # Patch where get_config_value is imported and used
-        with patch("cogniverse_core.config.utils.get_config_value") as mock_config:
-            mock_config.return_value = {
-                "enabled": True,
-                "model": "heuristic",
-                "use_hybrid": False,
-            }
-
-            reranker = ConfigurableMultiModalReranker(
-                config_manager=mock_config_manager, tenant_id="test:unit"
-            )
-            query = "machine learning"
-            modalities = [QueryModality.TEXT]
-
-            results = await reranker.rerank(query, sample_results, modalities)
-
-            assert len(results) == len(sample_results)
-            assert all("reranking_score" in r.metadata for r in results)
-
-            # Verify info
-            info = reranker.get_reranker_info()
-            assert info["enabled"] is True
-            assert info["model"] == "heuristic"
-            assert info["learned_available"] is False
 
 
 if __name__ == "__main__":

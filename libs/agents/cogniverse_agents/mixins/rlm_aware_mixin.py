@@ -215,58 +215,6 @@ class RLMAwareMixin:
             trajectory_max_entries=rlm_options.trajectory_max_entries,
         )
 
-    def process_results_with_rlm(
-        self,
-        query: str,
-        results: list[dict],
-        rlm_options: RLMOptions,
-        event_queue: Optional["EventQueue"] = None,
-        task_id: Optional[str] = None,
-    ) -> RLMResult:
-        """
-        Process search results using RLM.
-
-        Args:
-            query: User query
-            results: List of search result dicts
-            rlm_options: RLM configuration from query
-            event_queue: Optional EventQueue for real-time progress events
-            task_id: Task identifier for events
-
-        Returns:
-            RLMResult with synthesized answer
-        """
-        # Build LLMEndpointConfig from RLMOptions
-        model_name = rlm_options.model or "gpt-4o"
-        if "/" not in model_name:
-            model_name = f"{rlm_options.backend}/{model_name}"
-        rlm_llm_config = LLMEndpointConfig(
-            model=model_name,
-            api_base=rlm_options.api_base,
-            api_key=rlm_options.api_key,
-        )
-
-        rlm = self.get_rlm(
-            llm_config=rlm_llm_config,
-            max_iterations=rlm_options.max_iterations,
-            max_llm_calls=rlm_options.max_llm_calls,
-            timeout_seconds=rlm_options.timeout_seconds,
-            event_queue=event_queue,
-            task_id=task_id,
-            tenant_id=self._resolve_tenant_id_for_rlm(None),
-        )
-
-        logger.info(
-            f"Using RLM for result aggregation ({len(results)} results, "
-            f"max_iterations={rlm_options.max_iterations}, timeout={rlm_options.timeout_seconds}s, "
-            f"events={'enabled' if event_queue else 'disabled'})"
-        )
-
-        return rlm.process_search_results(
-            query=query,
-            results=results,
-        )
-
     def get_rlm_telemetry(
         self,
         rlm_result: Optional[RLMResult],

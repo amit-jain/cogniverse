@@ -785,51 +785,6 @@ class TestRLMRealInferenceIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_rlm_process_search_results_with_lm(self):
-        """
-        Test RLM process_search_results against the configured LM.
-
-        Simulates processing Vespa search results with RLM.
-        """
-        from cogniverse_agents.inference.rlm_inference import RLMInference
-
-        rlm = RLMInference(
-            llm_config=LLMEndpointConfig(
-                model=resolve_prefixed_model(), api_base=resolve_base_url()
-            ),
-            max_iterations=2,
-        )
-
-        # Simulate search results from Vespa
-        search_results = [
-            {"id": "doc1", "score": 0.95, "content": "Introduction to neural networks"},
-            {"id": "doc2", "score": 0.90, "content": "Deep learning fundamentals"},
-            {"id": "doc3", "score": 0.85, "content": "Machine learning basics"},
-        ]
-
-        result = rlm.process_search_results(
-            query="What topics are covered?",
-            results=search_results,
-        )
-
-        # VALIDATE: Result structure
-        assert result is not None
-        assert isinstance(result.answer, str)
-        assert len(result.answer) > 0
-        assert result.depth_reached >= 0
-        assert result.total_calls >= 1
-
-        # VALIDATE: Telemetry generation
-        telemetry = result.to_telemetry_dict()
-        assert telemetry["rlm_enabled"] is True
-        assert "rlm_depth_reached" in telemetry
-        assert "rlm_total_calls" in telemetry
-
-        logger.info(
-            f"RLM search results processing completed: {result.answer[:100]}..."
-        )
-
-    @pytest.mark.asyncio
     async def test_rlm_mixin_process_with_rlm_real(self):
         """
         Test RLMAwareMixin.process_with_rlm against the configured LM.

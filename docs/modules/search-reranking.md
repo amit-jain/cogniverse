@@ -35,7 +35,7 @@ libs/agents/cogniverse_agents/search/
 ├── __init__.py
 ├── base.py                    # Base interfaces (SearchResult, SearchBackend)
 ├── service.py                 # Unified search service
-├── multi_modal_reranker.py    # Heuristic multi-modal reranking, ConfigurableMultiModalReranker
+├── multi_modal_reranker.py    # Heuristic multi-modal reranking (MultiModalReranker)
 ├── learned_reranker.py        # LiteLLM neural reranking
 ├── hybrid_reranker.py         # Hybrid fusion strategies
 └── rerankers/                 # Reserved for future reranker implementations
@@ -70,18 +70,18 @@ flowchart TB
 flowchart TB
     InitialResults["<span style='color:#000'>Initial Search Results<br/>• Vespa vector search output top_k = 100<br/>• Multiple modalities: video, image, audio, document</span>"]
 
-    InitialResults --> Configurable["<span style='color:#000'>ConfigurableMultiModalReranker<br/>• Selects strategy based on config.json<br/>• Routes to appropriate reranker</span>"]
+    InitialResults --> Strategy["<span style='color:#000'>Strategy Selection (search router)<br/>• Reads reranking strategy from config<br/>• Routes to appropriate reranker</span>"]
 
-    Configurable --> Heuristic["<span style='color:#000'>Heuristic Reranker<br/>• Cross-modal<br/>• Temporal<br/>• Complementary<br/>• Diversity</span>"]
-    Configurable --> Learned["<span style='color:#000'>Learned Reranker<br/>• LiteLLM API<br/>• Cohere<br/>• Together AI<br/>• Jina AI<br/>• Ollama local</span>"]
-    Configurable --> Hybrid["<span style='color:#000'>Hybrid Reranker<br/>• Weighted<br/>• Cascade<br/>• Consensus</span>"]
+    Strategy --> Heuristic["<span style='color:#000'>Heuristic Reranker<br/>• Cross-modal<br/>• Temporal<br/>• Complementary<br/>• Diversity</span>"]
+    Strategy --> Learned["<span style='color:#000'>Learned Reranker<br/>• LiteLLM API<br/>• Cohere<br/>• Together AI<br/>• Jina AI<br/>• Ollama local</span>"]
+    Strategy --> Hybrid["<span style='color:#000'>Hybrid Reranker<br/>• Weighted<br/>• Cascade<br/>• Consensus</span>"]
 
     Heuristic --> Reranked["<span style='color:#000'>Reranked Results top_n<br/>• Updated relevance scores<br/>• Modality-aware ordering<br/>• Diversity optimization</span>"]
     Learned --> Reranked
     Hybrid --> Reranked
 
     style InitialResults fill:#90caf9,stroke:#1565c0,color:#000
-    style Configurable fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Strategy fill:#ffcc80,stroke:#ef6c00,color:#000
     style Heuristic fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Learned fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Hybrid fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -512,70 +512,32 @@ consensus_score = (h_score * l_score) ** 0.5
 
 ---
 
-### 7. ConfigurableMultiModalReranker (multi_modal_reranker.py:397-546)
+### 7. Strategy Selection (search router)
+
+Strategy routing is performed by the search router
+(`libs/runtime/cogniverse_runtime/routers/search.py`), which reads the
+configured reranking strategy and instantiates the matching reranker
+directly. There is no separate facade class — the router picks one of the
+three rerankers per request.
 
 ```python
-class ConfigurableMultiModalReranker:
-    """
-    Facade pattern for reranking with config-based routing
+# libs/runtime/cogniverse_runtime/routers/search.py
+if strategy == "learned":
+    reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
+elif strategy == "hybrid":
+    reranker = HybridReranker(tenant_id=tenant_id, config_manager=config_manager)
+elif strategy == "multi_modal":
+    reranker = MultiModalReranker()  # heuristic base, no config needed
+else:
+    raise HTTPException(status_code=400, detail=f"Unknown strategy: {strategy}")
 
-    Modes:
-    - Pure heuristic (model="heuristic")
-    - Pure learned (model="cohere", "ollama", etc.)
-    - Hybrid (use_hybrid=true)
-    """
-
-    def __init__(
-        self,
-        tenant_id: str = "default",
-        config_manager: "ConfigManager" = None
-    ):
-        """
-        Initialize configurable reranker from config.json
-
-        Args:
-            tenant_id: Tenant identifier for config scoping
-            config_manager: ConfigManager instance (REQUIRED - raises ValueError if None)
-
-        Example config:
-        {
-          "reranking": {
-            "enabled": true,
-            "model": "cohere",
-            "use_hybrid": true,
-            "hybrid_strategy": "weighted_ensemble"
-          }
-        }
-        """
-        if config_manager is None:
-            raise ValueError("config_manager is required")
-
-        self.enabled = rerank_config.get("enabled", False)
-        self.heuristic_reranker = MultiModalReranker()  # Always available
-        self.learned_reranker = LearnedReranker(config_manager=config_manager) if model != "heuristic" else None
-        self.hybrid_reranker = HybridReranker(config_manager=config_manager) if use_hybrid else None
+reranked = reranker.rerank(query=query, results=results)
 ```
 
-**Key Method:**
-
-```python
-async def rerank(
-    self,
-    query: str,
-    results: List[SearchResult],
-    modalities: List[QueryModality],
-    context: Optional[Dict] = None
-) -> List[SearchResult]:
-    """
-    Route to appropriate reranker based on configuration
-
-    Routing logic:
-    - If disabled: return original results
-    - If hybrid_reranker: use hybrid strategy
-    - Elif learned_reranker: use learned model
-    - Else: use heuristic multi-modal logic
-    """
-```
+**Routing logic:**
+- `learned` → `LearnedReranker` (LiteLLM neural reranking)
+- `hybrid` → `HybridReranker` (weighted/cascade/consensus fusion)
+- `multi_modal` → `MultiModalReranker` (heuristic, no config required)
 
 ---
 
@@ -825,38 +787,32 @@ for result in reranked[:3]:
     print(f"  Strategy: {metadata['fusion_strategy']}")
 ```
 
-### Example 5: Configurable Reranker (Production)
+### Example 5: Strategy Selection (Production)
 
 ```python
-from cogniverse_agents.search.multi_modal_reranker import (
-    ConfigurableMultiModalReranker,
-    QueryModality
-)
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize config manager (REQUIRED)
+# Initialize config manager (REQUIRED for learned/hybrid)
 config_manager = create_default_config_manager()
+tenant_id = "your_org:production"
 
-# Auto-initializes from config.json
-reranker = ConfigurableMultiModalReranker(
-    tenant_id="your_org:production",
-    config_manager=config_manager
-)
+# Mirror the search router: pick the reranker for the configured strategy
+strategy = "hybrid"  # one of: "multi_modal", "learned", "hybrid"
 
-# Check configuration
-info = reranker.get_reranker_info()
-print(f"Enabled: {info['enabled']}")
-print(f"Model: {info['model']}")
-print(f"Hybrid: {info['use_hybrid']}")
+if strategy == "learned":
+    from cogniverse_agents.search.learned_reranker import LearnedReranker
 
-# Rerank (automatically routes to correct strategy)
-if info['enabled']:
-    reranked = await reranker.rerank(
-        query="deep learning frameworks",
-        results=search_results,
-        modalities=[QueryModality.TEXT, QueryModality.VIDEO],
-        context=None
-    )
+    reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
+elif strategy == "hybrid":
+    from cogniverse_agents.search.hybrid_reranker import HybridReranker
+
+    reranker = HybridReranker(tenant_id=tenant_id, config_manager=config_manager)
+else:  # "multi_modal" — heuristic base, no config needed
+    from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+
+    reranker = MultiModalReranker()
+
+reranked = reranker.rerank(query="deep learning frameworks", results=search_results)
 ```
 
 ### Example 6: Cascade Strategy for Efficiency

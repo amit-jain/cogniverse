@@ -45,7 +45,6 @@
 14. [Approval Workflow System](#approval-workflow-system)
 15. [Tools Subsystem](#tools-subsystem)
     - [VideoFileServer](#videofileserver)
-    - [VideoPlayerTool](#videoplayertool)
     - [EnhancedTemporalExtractor](#enhancedtemporalextractor)
 16. [Inference System](#inference-system)
     - [RLMInference](#rlminference)
@@ -4584,7 +4583,7 @@ See [Approval Workflow Module](./approval-workflow.md) for complete documentatio
 
 ## Tools Subsystem
 
-The Tools subsystem provides utilities for video playback and temporal pattern recognition.
+The Tools subsystem provides utilities for video file serving and temporal pattern recognition.
 
 **Location:** `libs/agents/cogniverse_agents/tools/`
 
@@ -4592,18 +4591,15 @@ The Tools subsystem provides utilities for video playback and temporal pattern r
 flowchart LR
     subgraph "Video Tools"
         Server["<span style='color:#000'>VideoFileServer</span>"]
-        Player["<span style='color:#000'>VideoPlayerTool</span>"]
     end
 
     subgraph "Query Processing"
         Temporal["<span style='color:#000'>TemporalExtractor</span>"]
     end
 
-    Server --> Player
-    Player --> Temporal
+    Server --> Temporal
 
     style Server fill:#90caf9,stroke:#1565c0,color:#000
-    style Player fill:#90caf9,stroke:#1565c0,color:#000
     style Temporal fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
@@ -4611,7 +4607,7 @@ flowchart LR
 
 **Location:** `libs/agents/cogniverse_agents/tools/video_file_server.py`
 
-FastAPI-based HTTP server for serving video files to the video player tool.
+FastAPI-based HTTP server for serving video files to clients.
 
 ```python
 from cogniverse_agents.tools.video_file_server import VideoFileServer
@@ -4633,36 +4629,6 @@ await server.start()
 | `/videos` | GET | List available video files |
 | `/player/{video_id}` | GET | Serve video player HTML |
 | `/{path}` | GET | Static file serving for videos |
-
-### VideoPlayerTool
-
-**Location:** `libs/agents/cogniverse_agents/tools/video_player_tool.py`
-
-Google ADK tool for generating interactive HTML video players with search result markers.
-
-```python
-from cogniverse_agents.tools.video_player_tool import VideoPlayerTool
-
-player = VideoPlayerTool(tenant_id="your_org:production", config_manager=manager)
-
-result = await player.execute(
-    video_id="tutorial_001",
-    search_results='[{"start_time": 30, "score": 0.9, "description": "Key moment"}]',
-    start_time=25.0
-)
-
-if result["success"]:
-    html_artifact = result["video_player"]  # ADK Part with HTML
-    print(f"Generated player with {result['frame_count']} markers")
-```
-
-**Features:**
-
-- Timeline markers from search results (color-coded by relevance score)
-- Keyboard shortcuts (space=play/pause, arrows=seek, up/down=volume)
-- Playback speed controls (0.5x, 1x, 1.5x, 2x)
-- Auto-start at specified timestamp
-- Server-based video references (no embedding large files)
 
 ### EnhancedTemporalExtractor
 
@@ -4795,23 +4761,6 @@ rlm = RLMInference(
 result = rlm.process(query="Analyze documents", context=docs)
 ```
 
-**Convenience Methods:**
-
-```python
-# Process multiple documents
-result = rlm.process_documents(
-    query="Compare findings",
-    documents=[{"content": doc1}, {"content": doc2}],
-    doc_key="content"
-)
-
-# Process search results
-result = rlm.process_search_results(
-    query="Synthesize answer",
-    results=[{"score": 0.9, "content": "..."}, ...]
-)
-```
-
 ### RLMResult
 
 Dataclass with telemetry data for A/B testing and monitoring.
@@ -4859,7 +4808,6 @@ rlm = InstrumentedRLM(
     task_id="task_123",
     tenant_id="acme",
     max_iterations=10,
-    emit_artifacts=True  # Emit iteration reasoning
 )
 
 try:
@@ -4874,7 +4822,6 @@ except RLMCancelledError as e:
 |------------|-------|-------------|
 | StatusEvent | `rlm_start` | RLM processing started |
 | ProgressEvent | `iteration_N` | Per-iteration progress (current/total) |
-| ArtifactEvent | `rlm_iteration` | Iteration reasoning (if emit_artifacts=True) |
 | StatusEvent | `rlm_extracting` | Max iterations, extracting fallback |
 | StatusEvent | `rlm_complete` | Processing completed |
 

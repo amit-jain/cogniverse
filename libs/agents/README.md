@@ -59,8 +59,7 @@ cogniverse_agents/
 ├── tools/                  # Agent tools
 │   ├── a2a_utils.py        # A2A utilities
 │   ├── temporal_extractor.py    # Temporal extraction
-│   ├── video_file_server.py     # Video file serving
-│   └── video_player_tool.py     # Video playback
+│   └── video_file_server.py     # Video file serving
 ├── optimizer/              # Optimization module
 ├── orchestrator/           # Orchestration utilities
 ├── query/                  # Query processing
@@ -220,7 +219,6 @@ Agent utilities and A2A tools:
 - `A2AUtils`: Agent-to-Agent communication utilities
 - `TemporalExtractor`: Extract temporal information
 - `VideoFileServer`: Serve video files
-- `VideoPlayerTool`: Video playback integration
 
 ## Installation
 

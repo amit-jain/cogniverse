@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 from cogniverse_core.events.types import (
     TaskState,
-    create_artifact_event,
     create_progress_event,
     create_status_event,
 )
@@ -76,7 +75,6 @@ class InstrumentedRLM(dspy.RLM):
     Subclasses dspy.RLM to emit events at each iteration:
     - StatusEvent(WORKING) on start
     - ProgressEvent after each iteration (current/total)
-    - ArtifactEvent with iteration reasoning (if emit_artifacts=True)
     - StatusEvent(COMPLETED) or ErrorEvent on finish
     - Supports cancellation via CancellationToken
 
@@ -86,7 +84,6 @@ class InstrumentedRLM(dspy.RLM):
         event_queue: Optional EventQueue for emitting progress events
         task_id: Task identifier for events
         tenant_id: Tenant identifier for multi-tenant isolation
-        emit_artifacts: Whether to emit ArtifactEvents with iteration details
     """
 
     def __init__(
@@ -95,7 +92,6 @@ class InstrumentedRLM(dspy.RLM):
         event_queue: Optional["EventQueue"] = None,
         task_id: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        emit_artifacts: bool = False,
         **kwargs,
     ):
         """Initialize InstrumentedRLM.
@@ -105,7 +101,6 @@ class InstrumentedRLM(dspy.RLM):
             event_queue: Optional EventQueue for emitting events
             task_id: Task identifier for events (required if event_queue provided)
             tenant_id: Tenant identifier for events (required if event_queue provided)
-            emit_artifacts: Whether to emit iteration reasoning as ArtifactEvents
             **kwargs: Additional arguments passed to dspy.RLM
         """
         super().__init__(signature, **kwargs)
@@ -117,7 +112,6 @@ class InstrumentedRLM(dspy.RLM):
                 "RLM events must be tenant-scoped"
             )
         self._tenant_id = tenant_id
-        self._emit_artifacts = emit_artifacts
 
     def _emit_sync(self, event) -> None:
         """Emit event synchronously (fire-and-forget in background).
@@ -212,26 +206,6 @@ class InstrumentedRLM(dspy.RLM):
                     repl, variables, history, iteration, input_args, output_field_names
                 )
 
-                if self._emit_artifacts:
-                    if isinstance(result, REPLHistory) and len(result) > 0:
-                        last_entry = result[-1]
-                        if hasattr(last_entry, "reasoning"):
-                            self._emit_sync(
-                                create_artifact_event(
-                                    self._task_id,
-                                    self._tenant_id,
-                                    artifact_type="rlm_iteration",
-                                    data={
-                                        "iteration": iteration + 1,
-                                        "reasoning": str(last_entry.reasoning)[:500],
-                                        "code": str(getattr(last_entry, "code", ""))[
-                                            :500
-                                        ],
-                                    },
-                                    is_partial=True,
-                                )
-                            )
-
                 if isinstance(result, Prediction):
                     self._emit_sync(
                         create_status_event(
@@ -268,107 +242,5 @@ class InstrumentedRLM(dspy.RLM):
                     message=f"Completed via extraction after {self.max_iterations} iterations",
                 )
             )
-
-            return result
-
-    async def aforward(self, **input_args) -> Prediction:
-        """Async version of forward() with proper event emission.
-
-        Overrides dspy.RLM.aforward() to add event emission at each iteration.
-
-        Args:
-            **input_args: Input values matching the signature's input fields
-
-        Returns:
-            Prediction with output field(s) and trajectory for debugging
-
-        Raises:
-            RLMCancelledError: If cancelled via CancellationToken
-            ValueError: If required input fields are missing
-        """
-        self._validate_inputs(input_args)
-
-        # Emit start event (can use await directly in async context)
-        if self._event_queue and self._task_id:
-            await self._event_queue.enqueue(
-                create_status_event(
-                    self._task_id,
-                    self._tenant_id,
-                    TaskState.WORKING,
-                    phase="rlm_start",
-                    message=f"Starting RLM (max {self.max_iterations} iterations)",
-                )
-            )
-
-        output_field_names = list(self.signature.output_fields.keys())
-        execution_tools = self._prepare_execution_tools()
-        variables = self._build_variables(**input_args)
-
-        with self._interpreter_context(execution_tools) as repl:
-            history = REPLHistory()
-
-            for iteration in range(self.max_iterations):
-                # Check cancellation
-                self._check_cancelled()
-
-                # Emit progress event
-                if self._event_queue and self._task_id:
-                    await self._event_queue.enqueue(
-                        create_progress_event(
-                            self._task_id,
-                            self._tenant_id,
-                            current=iteration,
-                            total=self.max_iterations,
-                            step=f"iteration_{iteration + 1}",
-                            details={"iteration": iteration + 1},
-                        )
-                    )
-
-                result = await self._aexecute_iteration(
-                    repl, variables, history, iteration, input_args, output_field_names
-                )
-
-                if isinstance(result, Prediction):
-                    if self._event_queue and self._task_id:
-                        await self._event_queue.enqueue(
-                            create_status_event(
-                                self._task_id,
-                                self._tenant_id,
-                                TaskState.COMPLETED,
-                                phase="rlm_complete",
-                                message=f"Completed in {iteration + 1} iterations",
-                            )
-                        )
-                    return result
-
-                history = result
-
-            # Fallback extraction
-            if self._event_queue and self._task_id:
-                await self._event_queue.enqueue(
-                    create_status_event(
-                        self._task_id,
-                        self._tenant_id,
-                        TaskState.WORKING,
-                        phase="rlm_extracting",
-                        message="Max iterations reached, extracting final output",
-                    )
-                )
-
-            result = await self._aextract_fallback(
-                variables, history, output_field_names
-            )
-            _mark_fallback(result)
-
-            if self._event_queue and self._task_id:
-                await self._event_queue.enqueue(
-                    create_status_event(
-                        self._task_id,
-                        self._tenant_id,
-                        TaskState.COMPLETED,
-                        phase="rlm_complete",
-                        message=f"Completed via extraction after {self.max_iterations} iterations",
-                    )
-                )
 
             return result
