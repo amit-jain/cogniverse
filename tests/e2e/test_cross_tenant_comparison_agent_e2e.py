@@ -8,7 +8,7 @@ Pins:
     write; distinct_signatures_count == 2 (two distinct contents).
   * A target tenant_id from a DIFFERENT org → HTTP 403 with the exact
     "cross-org comparison is forbidden" substring (via the route's
-    _ACLRejected handler).
+    ACLRejected handler).
 """
 
 from __future__ import annotations

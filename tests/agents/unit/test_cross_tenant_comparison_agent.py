@@ -11,8 +11,8 @@ from cogniverse_agents.cross_tenant_comparison_agent import (
     CrossTenantComparisonAgent,
     CrossTenantComparisonDeps,
     CrossTenantComparisonInput,
-    _ACLRejected,
 )
+from cogniverse_core.memory.federation import ACLRejected
 from cogniverse_core.memory.schema import build_default_registry
 
 
@@ -124,7 +124,7 @@ class TestComparisonHappyPath:
 class TestACLs:
     async def test_user_role_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="tenant_admin or org_admin"):
+        with pytest.raises(ACLRejected, match="tenant_admin or org_admin"):
             await agent._process_impl(
                 CrossTenantComparisonInput(
                     tenant_id="acme:production",
@@ -137,7 +137,7 @@ class TestACLs:
 
     async def test_unknown_role_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="unknown actor_role"):
+        with pytest.raises(ACLRejected, match="unknown actor_role"):
             await agent._process_impl(
                 CrossTenantComparisonInput(
                     tenant_id="acme:production",
@@ -150,7 +150,7 @@ class TestACLs:
 
     async def test_cross_org_request_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="cross-org comparison"):
+        with pytest.raises(ACLRejected, match="cross-org comparison"):
             await agent._process_impl(
                 CrossTenantComparisonInput(
                     tenant_id="acme:production",

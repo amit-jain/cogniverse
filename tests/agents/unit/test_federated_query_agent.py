@@ -11,9 +11,9 @@ from cogniverse_agents.federated_query_agent import (
     FederatedQueryAgent,
     FederatedQueryDeps,
     FederatedQueryInput,
-    _ACLRejected,
     _matches_query,
 )
+from cogniverse_core.memory.federation import ACLRejected
 from cogniverse_core.memory.schema import build_default_registry
 
 
@@ -176,7 +176,7 @@ class TestQueryHappyPath:
 class TestACLs:
     async def test_user_role_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="tenant_admin or org_admin"):
+        with pytest.raises(ACLRejected, match="tenant_admin or org_admin"):
             await agent._process_impl(
                 FederatedQueryInput(
                     tenant_id="acme:production",
@@ -189,7 +189,7 @@ class TestACLs:
 
     async def test_unknown_role_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="unknown actor_role"):
+        with pytest.raises(ACLRejected, match="unknown actor_role"):
             await agent._process_impl(
                 FederatedQueryInput(
                     tenant_id="acme:production",
@@ -202,7 +202,7 @@ class TestACLs:
 
     async def test_cross_org_request_rejected(self):
         agent = _build({})
-        with pytest.raises(_ACLRejected, match="cross-org query"):
+        with pytest.raises(ACLRejected, match="cross-org query"):
             await agent._process_impl(
                 FederatedQueryInput(
                     tenant_id="acme:production",

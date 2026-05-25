@@ -65,6 +65,15 @@ class FederationDeniedError(SchemaViolationError):
     """Raised when a promotion is rejected by the schema sensitivity gate."""
 
 
+class ACLRejected(SchemaViolationError):
+    """Raised when a caller's role / tenant scope is invalid for a federated read.
+
+    The federated-query and cross-tenant-comparison agents both gate their
+    read paths on the caller's role and the tenant set belonging to the
+    caller's org; both raise this when that gate fails.
+    """
+
+
 def _read_metadata(memory: Dict[str, Any]) -> Dict[str, Any]:
     meta = memory.get("metadata") or {}
     if isinstance(meta, str):

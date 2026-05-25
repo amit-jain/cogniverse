@@ -27,11 +27,10 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.tenant_utils import parse_tenant_id
-from cogniverse_core.memory.federation import FederationService
+from cogniverse_core.memory.federation import ACLRejected, FederationService
 from cogniverse_core.memory.schema import (
     KnowledgeRegistry,
     Pinnable,
-    SchemaViolationError,
     build_default_registry,
 )
 
@@ -58,10 +57,6 @@ def _parse_mentions(raw: Any) -> List[Dict[str, Any]]:
 
 
 _DEFAULT_PORT = 8024
-
-
-class _ACLRejected(SchemaViolationError):
-    """Raised when the caller's role / tenant scope is invalid."""
 
 
 class FederatedQueryInput(AgentInput):
@@ -245,12 +240,12 @@ class FederatedQueryAgent(
         try:
             actor_role = Pinnable(input.actor_role.lower())
         except ValueError:
-            raise _ACLRejected(
+            raise ACLRejected(
                 f"unknown actor_role={input.actor_role!r}; valid: "
                 f"{[p.value for p in Pinnable]}"
             )
         if actor_role not in (Pinnable.TENANT_ADMIN, Pinnable.ORG_ADMIN):
-            raise _ACLRejected(
+            raise ACLRejected(
                 f"actor_role={actor_role.value} cannot issue federated "
                 "queries; tenant_admin or org_admin required"
             )
@@ -260,7 +255,7 @@ class FederatedQueryAgent(
             for tid in input.tenant_ids:
                 org_id, _ = parse_tenant_id(tid)
                 if org_id != caller_org:
-                    raise _ACLRejected(
+                    raise ACLRejected(
                         f"tenant_id={tid!r} belongs to org={org_id!r} but "
                         f"caller is in org={caller_org!r}; cross-org query "
                         "is forbidden"

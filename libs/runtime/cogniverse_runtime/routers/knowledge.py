@@ -319,7 +319,7 @@ class CrossTenantCompareRequest(BaseModel):
     subject_key: str = Field(..., min_length=1)
     tenant_ids: List[str] = Field(..., min_length=2)
     # actor_role must be a Pinnable enum value (tenant_admin / org_admin)
-    # — the agent rejects everything else via _ACLRejected. Default to
+    # — the agent rejects everything else via ACLRejected. Default to
     # tenant_admin so the route's documented default actually works.
     actor_role: str = Field("tenant_admin")
     actor_id: str = Field("admin")
@@ -342,9 +342,7 @@ async def cross_tenant_compare(
         CrossTenantComparisonDeps,
         CrossTenantComparisonInput,
     )
-    from cogniverse_agents.cross_tenant_comparison_agent import (
-        _ACLRejected as _ACLRejectedCT,
-    )
+    from cogniverse_core.memory.federation import ACLRejected
 
     agent = CrossTenantComparisonAgent(
         deps=CrossTenantComparisonDeps(tenant_id=tenant_id),
@@ -355,7 +353,7 @@ async def cross_tenant_compare(
         out = await agent._process_impl(
             CrossTenantComparisonInput(tenant_id=tenant_id, **body.model_dump())
         )
-    except _ACLRejectedCT as exc:
+    except ACLRejected as exc:
         raise HTTPException(403, str(exc)) from exc
     return out.model_dump()
 
@@ -386,9 +384,7 @@ async def federated_query(
         FederatedQueryDeps,
         FederatedQueryInput,
     )
-    from cogniverse_agents.federated_query_agent import (
-        _ACLRejected as _ACLRejectedFQ,
-    )
+    from cogniverse_core.memory.federation import ACLRejected
 
     agent = FederatedQueryAgent(
         deps=FederatedQueryDeps(tenant_id=tenant_id),
@@ -407,7 +403,7 @@ async def federated_query(
                 agent_name_filter=body.agent_name_filter,
             )
         )
-    except _ACLRejectedFQ as exc:
+    except ACLRejected as exc:
         raise HTTPException(403, str(exc)) from exc
     return out.model_dump()
 

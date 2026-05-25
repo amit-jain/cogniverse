@@ -5,7 +5,7 @@ Pins:
   * Three same-org tenants each with a "lithium"-mentioning fact under
     agent_name="_promoted" → POST /knowledge/federated/query returns
     one hit per tenant whose excerpt contains the exact substring;
-  * A target tenant in a DIFFERENT org → HTTP 403 (route's _ACLRejected
+  * A target tenant in a DIFFERENT org → HTTP 403 (route's ACLRejected
     handler) with the exact "cross-org query is forbidden" substring.
 """
 
