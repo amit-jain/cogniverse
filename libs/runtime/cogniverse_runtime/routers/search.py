@@ -312,8 +312,33 @@ async def rerank_results(
         else:
             raise HTTPException(status_code=400, detail=f"Unknown strategy: {strategy}")
 
-        # Rerank
-        reranked = reranker.rerank(query=query, results=results)
+        # Rerank. All rerankers share an async ``rerank(query, results)`` over
+        # typed RerankerSearchResult objects, so convert the request's result
+        # dicts in, await, then serialize back to dicts in the reranked order.
+        from dataclasses import asdict
+
+        from cogniverse_agents.search.types import RerankerSearchResult
+
+        def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
+            return RerankerSearchResult(
+                id=str(d.get("id") or d.get("source_id") or d.get("document_id") or ""),
+                title=d.get("title", "") or "",
+                content=d.get("content", "") or d.get("description", "") or "",
+                modality=d.get("modality", "") or d.get("content_type", "") or "",
+                score=float(d.get("score", 0.0) or 0.0),
+                metadata=d.get("metadata", {}) or {},
+            )
+
+        def _to_dict(r: RerankerSearchResult) -> Dict[str, Any]:
+            out = asdict(r)
+            if r.timestamp is not None:
+                out["timestamp"] = r.timestamp.isoformat()
+            return out
+
+        reranked_typed = await reranker.rerank(
+            query=query, results=[_to_rsr(r) for r in results]
+        )
+        reranked = [_to_dict(r) for r in reranked_typed]
 
         return {
             "query": query,

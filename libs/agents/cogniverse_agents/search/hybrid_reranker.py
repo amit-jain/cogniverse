@@ -112,6 +112,20 @@ class HybridReranker:
             f"heuristic_weight={self.heuristic_weight}"
         )
 
+    async def rerank(
+        self,
+        query: str,
+        results: List[RerankerSearchResult],
+        modalities: Optional[List[QueryModality]] = None,
+        context: Optional[Dict] = None,
+    ) -> List[RerankerSearchResult]:
+        """Uniform reranker entry point shared by all rerankers.
+
+        Delegates to :meth:`rerank_hybrid`; callers without modality detection
+        pass none and the heuristic/learned scoring degrades gracefully.
+        """
+        return await self.rerank_hybrid(query, results, modalities or [], context)
+
     async def rerank_hybrid(
         self,
         query: str,

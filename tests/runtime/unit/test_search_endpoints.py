@@ -349,3 +349,50 @@ class TestRerankEndpoint:
         )
         assert resp.status_code == 400
         assert "tenant_id" in resp.json()["detail"]
+
+    def test_rerank_multi_modal_happy_path(self, search_client):
+        """POST /search/rerank actually reranks (multi_modal is pure-heuristic,
+        no external model). Guards the regression where the endpoint called a
+        non-existent/un-awaited reranker.rerank: it must await the unified
+        rerank and return the reordered result set."""
+        results = [
+            {
+                "id": "a",
+                "title": "cat",
+                "content": "a cat plays",
+                "modality": "video",
+                "score": 0.3,
+            },
+            {
+                "id": "b",
+                "title": "dog",
+                "content": "a dog runs",
+                "modality": "video",
+                "score": 0.9,
+            },
+            {
+                "id": "c",
+                "title": "bird",
+                "content": "a bird sings",
+                "modality": "video",
+                "score": 0.5,
+            },
+        ]
+        resp = search_client.post(
+            "/search/rerank",
+            json={
+                "tenant_id": "test_tenant",
+                "query": "cat",
+                "results": results,
+                "strategy": "multi_modal",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["strategy"] == "multi_modal"
+        assert body["original_count"] == 3
+        assert body["reranked_count"] == 3
+        returned = body["results"]
+        # Reranking reorders but preserves the id set and scores every result.
+        assert sorted(r["id"] for r in returned) == ["a", "b", "c"]
+        assert all(isinstance(r["score"], (int, float)) for r in returned)

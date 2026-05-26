@@ -58,6 +58,20 @@ class MultiModalReranker:
         if abs(total_weight - 1.0) > 0.01:
             raise ValueError(f"Weights must sum to 1.0, got {total_weight}")
 
+    async def rerank(
+        self,
+        query: str,
+        results: List[RerankerSearchResult],
+        modalities: Optional[List[QueryModality]] = None,
+        context: Optional[Dict] = None,
+    ) -> List[RerankerSearchResult]:
+        """Uniform reranker entry point shared by all rerankers.
+
+        Delegates to :meth:`rerank_results` (modality-aware, but guards the
+        empty-modalities case) so callers can treat every reranker the same.
+        """
+        return await self.rerank_results(results, query, modalities or [], context)
+
     async def rerank_results(
         self,
         results: List[RerankerSearchResult],
