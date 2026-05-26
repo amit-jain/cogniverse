@@ -105,6 +105,10 @@ class CogniverseAgentExecutor(AgentExecutor):
             "tenant_id": tenant_id,
             "context_id": context.context_id,
             "conversation_history": self._extract_conversation_history(context),
+            # Session-sticky seed for canary/variant bucketing; the dispatcher
+            # reads context["request_id"]. context_id keeps a conversation in
+            # one bucket, task_id falls back for one-shot tasks.
+            "request_id": context.context_id or context.task_id or "",
         }
 
         task_id = context.task_id or ""

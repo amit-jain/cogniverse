@@ -176,6 +176,40 @@ class TestA2AMessageSend:
         assert call_kwargs.kwargs["context"]["tenant_id"] == "test_tenant:test_tenant"
 
     @pytest.mark.ci_fast
+    def test_message_send_populates_request_id_from_context_id(
+        self, client, mock_dispatcher
+    ):
+        """Dispatch context carries request_id (the canary/variant bucketing
+        seed), sourced session-sticky from the A2A contextId."""
+        mock_dispatcher.dispatch = AsyncMock(
+            return_value={"status": "success", "agent": "search_agent", "results": []}
+        )
+        agent_ep = MagicMock()
+        agent_ep.capabilities = ["search"]
+        mock_dispatcher._registry.get_agent.return_value = agent_ep
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": "msg-rid",
+                    "contextId": "conv-canary-seed",
+                    "parts": [{"kind": "text", "text": "find videos"}],
+                },
+                "metadata": {"agent_name": "search_agent", "tenant_id": "test_tenant"},
+            },
+        }
+        response = client.post("/", json=payload)
+        assert response.status_code == 200
+
+        mock_dispatcher.dispatch.assert_called_once()
+        ctx = mock_dispatcher.dispatch.call_args.kwargs["context"]
+        assert ctx["request_id"] == "conv-canary-seed"
+
+    @pytest.mark.ci_fast
     def test_message_send_without_agent_name_defaults_to_orchestrator(
         self, client, mock_dispatcher
     ):

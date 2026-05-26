@@ -88,6 +88,29 @@ def set_agent_dependencies(
     logger.info("Agent dependencies (config_manager, schema_loader) injected")
 
 
+def _build_artifact_manager_factory():
+    """Per-tenant ArtifactManager factory for canary-aware artefact routing.
+
+    Returns ``None`` when no telemetry manager is configured — the dispatcher
+    then serves active artefacts to every request (canary disabled). When a
+    manager exists, the factory hands the dispatcher a tenant-scoped
+    ArtifactManager so ``resolve_artefact_for_request`` can read the canary
+    state machine and split live traffic.
+    """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tm = get_telemetry_manager()
+    if tm is None:
+        return None
+
+    def factory(tenant_id: str):
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+
+        return ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
+
+    return factory
+
+
 def _ensure_dispatcher() -> AgentDispatcher:
     """Lazily create the dispatcher once registry + deps are wired."""
     global _dispatcher
@@ -102,6 +125,7 @@ def _ensure_dispatcher() -> AgentDispatcher:
         config_manager=_config_manager,
         schema_loader=_schema_loader,
         sandbox_manager=_sandbox_manager,
+        artifact_manager_factory=_build_artifact_manager_factory(),
     )
     return _dispatcher
 
@@ -383,6 +407,14 @@ async def process_agent_task(agent_name: str, task: AgentTask) -> Dict[str, Any]
         dispatch_context["synthesis_depth"] = task.synthesis_depth
     if task.session_id is not None:
         dispatch_context["session_id"] = task.session_id
+
+    # Stable per-request seed for canary/variant bucketing — session-sticky
+    # when a session/context id is present, else a fresh id so one-shot calls
+    # are still split. The dispatcher reads ``context["request_id"]``.
+    if not dispatch_context.get("request_id"):
+        dispatch_context["request_id"] = (
+            task.session_id or task.context_id or uuid.uuid4().hex
+        )
 
     try:
         return await dispatcher.dispatch(

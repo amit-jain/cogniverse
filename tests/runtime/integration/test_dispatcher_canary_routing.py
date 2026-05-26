@@ -21,6 +21,7 @@ agent is a follow-up wire; this test proves the resolution side.
 from __future__ import annotations
 
 import uuid
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -222,3 +223,58 @@ class TestDispatchPathIntegration:
         # Then verify the resolution result has the canary metadata.
         assert overlay["served_from"] == "canary"
         assert overlay["version"] == 1
+
+
+@pytest.mark.asyncio
+class TestProductionDispatcherWiring:
+    """``_ensure_dispatcher()`` must wire ``artifact_manager_factory`` itself.
+
+    The tests above inject a factory by hand; this one proves the *production*
+    dispatcher built by the runtime router carries one (from the configured
+    telemetry manager), so canary routing is live without any test plumbing.
+    """
+
+    async def test_ensure_dispatcher_wires_factory_and_routes_canary(
+        self, telemetry_manager_with_phoenix, tenant_id
+    ):
+        from cogniverse_runtime.routers import agents as agents_router
+
+        config_manager = create_default_config_manager()
+        registry = AgentRegistry(tenant_id="prod_wire", config_manager=config_manager)
+        agents_router.set_agent_registry(registry)
+        # resolve_artefact_for_request never touches the schema loader, but
+        # _ensure_dispatcher() guards on all three deps being non-None.
+        agents_router.set_agent_dependencies(config_manager, MagicMock())
+        try:
+            dispatcher = agents_router._ensure_dispatcher()
+
+            # Gap closed: the production dispatcher carries a real factory.
+            assert dispatcher._artifact_manager_factory is not None
+
+            # With the factory live but no canary state yet, resolution is
+            # reachable (non-None) and falls through to "default".
+            pre = await dispatcher.resolve_artefact_for_request(
+                "search_agent", tenant_id, request_seed="seed_pre"
+            )
+            assert pre is not None
+            assert pre["served_from"] == "default"
+
+            # Seed a canary at 100% through the same provider the factory uses.
+            tm = telemetry_manager_with_phoenix
+            am = ArtifactManager(tm.get_provider(tenant_id=tenant_id), tenant_id)
+            await am.save_prompts_versioned("search_agent", {"system": "CANARY_V1"})
+            await am.save_prompts("search_agent", {"system": "ACTIVE_V1"})
+            await am.promote_to_canary("search_agent", version=1, traffic_pct=100)
+
+            out = await dispatcher.resolve_artefact_for_request(
+                "search_agent", tenant_id, request_seed="seed_canary"
+            )
+            assert out["served_from"] == "canary"
+            assert out["version"] == 1
+            assert out["prompts"] == {"system": "CANARY_V1"}
+        finally:
+            # Don't leak the wired dispatcher/deps into other tests.
+            agents_router._dispatcher = None
+            agents_router._agent_registry = None
+            agents_router._config_manager = None
+            agents_router._schema_loader = None

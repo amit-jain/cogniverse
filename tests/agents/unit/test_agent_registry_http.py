@@ -363,6 +363,37 @@ class TestProcessAgentTaskDispatch:
             assert response.status_code == 200
             mock_dispatch.assert_called_once()
 
+    def test_dispatch_context_carries_request_id_from_session(self, app_and_client):
+        """REST /process seeds context['request_id'] (the canary/variant
+        bucketing seed) session-sticky from the task's session_id."""
+        _, client, registry = app_and_client
+
+        registry.register_agent(
+            AgentEndpoint(
+                name="search_agent",
+                url="http://localhost:8002",
+                capabilities=["search", "video_search"],
+            )
+        )
+
+        with patch(
+            "cogniverse_runtime.routers.agents.AgentDispatcher.dispatch",
+            new_callable=AsyncMock,
+            return_value={"status": "success", "agent": "search_agent"},
+        ) as mock_dispatch:
+            response = client.post(
+                "/agents/search_agent/process",
+                json={
+                    "agent_name": "search_agent",
+                    "query": "find cats",
+                    "session_id": "sess-9",
+                    "context": {"tenant_id": "test:unit"},
+                },
+            )
+            assert response.status_code == 200
+            ctx = mock_dispatch.call_args.kwargs["context"]
+            assert ctx["request_id"] == "sess-9"
+
     def test_search_capability_dispatches_to_search_task(self, app_and_client):
         """Search agent with 'search' capability uses _execute_search_task."""
         _, client, registry = app_and_client
