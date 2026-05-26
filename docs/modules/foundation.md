@@ -133,8 +133,8 @@ from cogniverse_foundation.config.utils import create_default_config_manager
 # Initialize config manager
 config_manager = create_default_config_manager()
 
-# Get system configuration for tenant
-system_config = config_manager.get_system_config(tenant_id="acme")
+# Get global system configuration (no tenant_id argument — SystemConfig is deployment-wide)
+system_config = config_manager.get_system_config()
 
 # Set agent configuration
 config_manager.set_agent_config(
@@ -148,8 +148,8 @@ config_manager.set_agent_config(
 
 | Method | Description |
 |--------|-------------|
-| `get_system_config(tenant_id="your_org:production")` | Get system configuration |
-| `set_system_config(system_config, tenant_id=None)` | Set system configuration |
+| `get_system_config()` | Get global system configuration (deployment-wide, not per-tenant) |
+| `set_system_config(system_config)` | Set global system configuration |
 | `get_agent_config(tenant_id, agent_name)` | Get agent configuration |
 | `set_agent_config(tenant_id, agent_name, agent_config)` | Set agent configuration |
 | `get_agent_config_history(tenant_id, agent_name, limit=10)` | Get config version history |
@@ -538,7 +538,7 @@ from cogniverse_foundation.config.agent_config import AgentConfig
 # Initialize config manager
 config_manager = create_default_config_manager()
 
-# Set system config for tenant
+# Set global system config (not per-tenant)
 system_config = SystemConfig(
     search_backend="vespa",
     video_agent_url="http://localhost:8002",

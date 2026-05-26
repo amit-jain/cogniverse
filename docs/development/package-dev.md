@@ -754,8 +754,8 @@ assert cogniverse_core.__version__ == "0.1.0"
 # ... verify all 11 packages
 
 # Test basic functionality
-config = SystemConfig(tenant_id="test")
-assert config.tenant_id == "test"
+config = SystemConfig()
+assert config.search_backend == "vespa"
 
 # TelemetryManager is a singleton class
 telemetry = TelemetryManager(config=TelemetryConfig())
@@ -1004,7 +1004,6 @@ dependencies = [
 - Tenant-aware schema deployment
 
 ### Changed
-- Updated SystemConfig to include tenant_id field
 - Refactored TelemetryManager for multi-tenant support
 
 ### Fixed
@@ -1012,7 +1011,6 @@ dependencies = [
 - Resolved race condition in concurrent video processing
 
 ### Breaking Changes
-- `SystemConfig` now requires `tenant_id` parameter
 - Removed deprecated `use_default_config()` method
 ```
 

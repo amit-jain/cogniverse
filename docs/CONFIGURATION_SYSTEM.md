@@ -239,8 +239,8 @@ store = VespaConfigStore(
 # Use with ConfigManager
 manager = ConfigManager(store=store)
 
-# Get system configuration
-system_config = manager.get_system_config(tenant_id="your_org:production")
+# Get system configuration (global — not per-tenant)
+system_config = manager.get_system_config()
 print(f"LLM: {system_config.llm_model}")
 print(f"Backend: {system_config.backend_url}")
 ```
@@ -355,38 +355,34 @@ class RedisConfigStore(ConfigStore):
 
 ### Tenant Isolation
 
-Each tenant has completely isolated configuration:
+Each tenant has completely isolated configuration managed via per-tenant routing and agent configs. The global `SystemConfig` holds deployment-wide infrastructure (Vespa URL, Phoenix URL, LLM endpoint) — it is not per-tenant. Per-tenant configuration is accessed via `get_config()`:
 
 ```python
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 manager = create_default_config_manager()
 
-# Configure Tenant A
-tenant_a_config = SystemConfig(
+# Configure per-tenant routing for Tenant A
+routing_a = RoutingConfigUnified(
     tenant_id="tenant_a",
-    llm_model="gpt-4",
-    base_url="https://api.openai.com/v1",
-    backend_url="http://backend-tenant-a:8080",
-    telemetry_url="http://phoenix-tenant-a:6006"
+    routing_mode="tiered",
+    fast_path_confidence_threshold=0.7,
 )
-manager.set_system_config(tenant_a_config, tenant_id="tenant_a")
+manager.set_routing_config(routing_a, tenant_id="tenant_a")
 
-# Configure Tenant B
-tenant_b_config = SystemConfig(
+# Configure per-tenant routing for Tenant B
+routing_b = RoutingConfigUnified(
     tenant_id="tenant_b",
-    llm_model="claude-3-opus",
-    base_url="https://api.anthropic.com",
-    backend_url="http://backend-tenant-b:8080",
-    telemetry_url="http://phoenix-tenant-b:6006"
+    routing_mode="ensemble",
+    fast_path_confidence_threshold=0.8,
 )
-manager.set_system_config(tenant_b_config, tenant_id="tenant_b")
+manager.set_routing_config(routing_b, tenant_id="tenant_b")
 
-# Configurations are completely isolated
-config_a = manager.get_system_config("tenant_a")
-config_b = manager.get_system_config("tenant_b")
-assert config_a.llm_model != config_b.llm_model
+# Retrieve per-tenant configuration via get_config()
+config_a = get_config(tenant_id="tenant_a", config_manager=manager)
+config_b = get_config(tenant_id="tenant_b", config_manager=manager)
+assert config_a["routing_mode"] != config_b["routing_mode"]
 ```
 
 ### Tenant Lifecycle Management
@@ -441,21 +437,19 @@ exists = schema_manager.tenant_schema_exists(
 )
 ```
 
-For programmatic tenant configuration, create a new SystemConfig for each tenant:
+For programmatic tenant configuration, use per-tenant config APIs (`set_routing_config`, `set_agent_config`, etc.) keyed by `tenant_id`. The global `SystemConfig` (infrastructure settings) is set once for the whole deployment via `set_system_config(system_config)` with no `tenant_id` argument:
 
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+from cogniverse_foundation.config.utils import get_config
 
-# Clone configuration from existing tenant
-source_config = manager.get_system_config("tenant_a")
-
-# Create new config based on source
-import dataclasses
-new_config_dict = dataclasses.asdict(source_config)
-new_config_dict["tenant_id"] = "tenant_a_staging"
-new_config = SystemConfig(**new_config_dict)
-
-manager.set_system_config(new_config, tenant_id="tenant_a_staging")
+# Copy routing config from one tenant to another
+source = get_config(tenant_id="tenant_a", config_manager=manager)
+routing_staging = RoutingConfigUnified(
+    tenant_id="tenant_a_staging",
+    routing_mode=source.get("routing_mode", "tiered"),
+)
+manager.set_routing_config(routing_staging, tenant_id="tenant_a_staging")
 ```
 
 ## DSPy Integration
@@ -635,9 +629,9 @@ Every configuration change creates a new version:
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-# Get configuration history
+# Get configuration history (SystemConfig is stored under "_system" sentinel tenant)
 history = manager.store.get_config_history(
-    tenant_id="your_org:production",
+    tenant_id="_system",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -657,13 +651,13 @@ Rollback is achieved by retrieving a previous version from history and re-applyi
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-# Get current version
-current = manager.get_system_config("default")
+# Get current version (SystemConfig is global — no tenant_id argument)
+current = manager.get_system_config()
 print(f"Current LLM: {current.llm_model}")
 
 # Get configuration history to find version to restore
 history = manager.store.get_config_history(
-    tenant_id="your_org:production",
+    tenant_id="_system",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -675,7 +669,7 @@ target_entry = next((e for e in history if e.version == 5), None)
 if target_entry:
     # Re-apply the historical configuration
     manager.store.set_config(
-        tenant_id="your_org:production",
+        tenant_id="_system",
         scope=ConfigScope.SYSTEM,
         service="system",
         config_key="system_config",
@@ -684,7 +678,7 @@ if target_entry:
     print(f"Rolled back to version {target_entry.version}")
 
 # Verify rollback
-rolled_back = manager.get_system_config("default")
+rolled_back = manager.get_system_config()
 print(f"Rolled back LLM: {rolled_back.llm_model}")
 ```
 
@@ -782,7 +776,7 @@ async def load_test_config(manager, tenant_id: str, iterations: int = 100):
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = [
-            executor.submit(manager.get_system_config, tenant_id)
+            executor.submit(manager.get_system_config)
             for _ in range(iterations)
         ]
         results = [f.result() for f in futures]
@@ -794,73 +788,76 @@ async def load_test_config(manager, tenant_id: str, iterations: int = 100):
 
 ## Best Practices
 
-### 1. Always Use Tenant Context
+### 1. Understand System vs Tenant Config
 ```python
-# Good: Explicit tenant ID
-config = manager.get_system_config(tenant_id="production")
+# SystemConfig is GLOBAL — one config for the whole deployment.
+# Call with no arguments.
+system_config = manager.get_system_config()
+print(f"Backend: {system_config.backend_url}:{system_config.backend_port}")
 
-# Bad: Implicit default tenant
-config = manager.get_system_config()  # Uses "default"
+# Per-tenant config (routing, agent settings) uses tenant-scoped APIs.
+from cogniverse_foundation.config.utils import get_config
+tenant_config = get_config(tenant_id="production", config_manager=manager)
 ```
 
 ### 2. Version Critical Changes
 ```python
 # Before major changes
 backup = manager.store.export_configs(
-    tenant_id="production",
+    tenant_id="_system",
     include_history=True
 )
 
 # Make changes with audit trail (metadata is a field on SystemConfig)
-new_config.metadata = {"changed_by": "admin", "reason": "Performance tuning"}
-manager.set_system_config(new_config, tenant_id="production")
+system_config = manager.get_system_config()
+system_config.metadata = {"changed_by": "admin", "reason": "Performance tuning"}
+manager.set_system_config(system_config)
 ```
 
 ### 3. Use Type-Safe Configurations
 ```python
-# Good: Type-safe dataclass
+# Good: Type-safe dataclass (no tenant_id — SystemConfig is global)
 from cogniverse_foundation.config.unified_config import SystemConfig
 config = SystemConfig(
-    tenant_id="prod",
     llm_model="gpt-4",
-    backend_url="http://backend:8080"
+    backend_url="http://backend",
+    backend_port=8080
 )
 
 # Bad: Raw dictionaries
-config = {"tenant_id": "prod", "llm_model": "gpt-4"}  # No validation
+config = {"llm_model": "gpt-4"}  # No validation
 ```
 
 ### 4. Implement Configuration Templates
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
 
-# Define reusable templates
+# SystemConfig templates for different deployment environments
 TEMPLATES = {
     "development": SystemConfig(
-        tenant_id="",  # Set per-tenant
         llm_model="gpt-3.5-turbo",
-        backend_url="http://localhost:8080"
+        backend_url="http://localhost",
+        backend_port=8080
     ),
     "production": SystemConfig(
-        tenant_id="",
         llm_model="gpt-4",
-        backend_url="http://backend-cluster:8080"
+        backend_url="http://backend-cluster",
+        backend_port=8080
     )
 }
 
-# Apply template with overrides
-def apply_template(manager, tenant_id: str, template_name: str, **overrides):
+# Apply a template to set global system config
+def apply_template(manager, template_name: str, **overrides):
     """Apply a configuration template with optional overrides."""
     import dataclasses
     template = TEMPLATES[template_name]
     config_dict = dataclasses.asdict(template)
-    config_dict["tenant_id"] = tenant_id
     config_dict.update(overrides)
     new_config = SystemConfig(**config_dict)
-    manager.set_system_config(new_config, tenant_id=tenant_id)
+    manager.set_system_config(new_config)
 
 # Usage
-apply_template(manager, "new_customer", "production", llm_model="claude-3-opus")
+apply_template(manager, "production", llm_model="claude-3-opus")
 ```
 
 ## Migration Guide
@@ -873,10 +870,10 @@ import os
 llm_model = os.getenv("LLM_MODEL", "gpt-4")
 backend_url = os.getenv("BACKEND_URL", "http://localhost:8080")
 
-# New: ConfigManager
+# New: ConfigManager (SystemConfig is global — no tenant_id argument)
 from cogniverse_foundation.config.utils import create_default_config_manager
 manager = create_default_config_manager()
-config = manager.get_system_config("default")
+config = manager.get_system_config()
 llm_model = config.llm_model
 backend_url = config.backend_url
 ```
@@ -890,7 +887,7 @@ with open("config.yaml") as f:
 
 # New: Dynamic configuration
 manager = create_default_config_manager()
-config = manager.get_system_config("default")
+config = manager.get_system_config()
 # Hot reload supported automatically
 ```
 
@@ -904,16 +901,16 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 # Check if configuration exists
 configs = manager.store.list_configs(
-    tenant_id="your_org:production",
+    tenant_id="_system",
     scope=ConfigScope.SYSTEM
 )
 print(f"Available configs: {configs}")
 
-# Initialize missing configuration if needed
+# Initialize missing configuration if needed (SystemConfig is global — no tenant_id)
 try:
-    config = manager.get_system_config("default")
+    config = manager.get_system_config()
 except Exception:
-    manager.set_system_config(SystemConfig(tenant_id="your_org:production"), tenant_id="your_org:production")
+    manager.set_system_config(SystemConfig())
 ```
 
 ### Version Conflicts
@@ -921,9 +918,9 @@ except Exception:
 Configuration versioning is tracked automatically via the `get_config_history` method:
 
 ```python
-# Check version history before updates
+# Check version history before updates (SystemConfig stored under "_system" tenant)
 history = manager.store.get_config_history(
-    tenant_id="your_org:production",
+    tenant_id="_system",
     scope=ConfigScope.SYSTEM,
     service="system",
     config_key="system_config",
@@ -935,7 +932,7 @@ if history:
     print(f"Current version: {history[0].version}")
 
 # Make update (creates new version automatically)
-manager.set_system_config(config, tenant_id="your_org:production")
+manager.set_system_config(config)
 ```
 
 ### Storage Backend Issues

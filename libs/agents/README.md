@@ -56,10 +56,7 @@ cogniverse_agents/
 │   ├── multi_modal_reranker.py  # Multi-modal reranking
 │   ├── learned_reranker.py      # Learned reranking
 │   └── rerankers/          # Reranker implementations
-├── tools/                  # Agent tools
-│   ├── a2a_utils.py        # A2A utilities
-│   ├── temporal_extractor.py    # Temporal extraction
-│   └── video_file_server.py     # Video file serving
+├── tools/                  # Agent tools (reserved for future utilities)
 ├── optimizer/              # Optimization module
 ├── orchestrator/           # Orchestration utilities
 ├── query/                  # Query processing
@@ -210,15 +207,6 @@ Search and reranking utilities:
 - `HybridReranker`: Combine multiple ranking signals
 - `MultiModalReranker`: Cross-modal reranking
 - `LearnedReranker`: ML-based reranking
-
-### Tools Module (`cogniverse_agents.tools`)
-
-Agent utilities and A2A tools:
-
-**Components:**
-- `A2AUtils`: Agent-to-Agent communication utilities
-- `TemporalExtractor`: Extract temporal information
-- `VideoFileServer`: Serve video files
 
 ## Installation
 

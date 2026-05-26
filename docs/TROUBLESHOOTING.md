@@ -469,13 +469,10 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 config_manager = create_default_config_manager()
 try:
-    config = config_manager.get_system_config(tenant_id="acme")
+    config = config_manager.get_system_config()
 except (KeyError, ValueError):
     # Create default config
-    config_manager.set_system_config(
-        SystemConfig(tenant_id="acme"),
-        tenant_id="acme"
-    )
+    config_manager.set_system_config(SystemConfig())
 ```
 
 ### Invalid Profile

@@ -125,102 +125,83 @@ flowchart TB
 
 ## Core Components
 
-### 1. RoutingConfig (config.py:20-390)
+### 1. RoutingConfigUnified (unified_config.py:318)
 
-**Purpose**: Complete configuration system for routing with environment variable overrides
+**Purpose**: Complete configuration system for routing with tenant isolation
 
 **Key Attributes**:
 ```python
 @dataclass
-class RoutingConfig:
-    # Routing mode
-    routing_mode: str = "tiered"  # "tiered", "ensemble", "hybrid", "single"
+class RoutingConfigUnified:
+    # tenant_id is REQUIRED — omitting it raises ValueError via __post_init__
+    tenant_id: Optional[str] = None  # runtime-required
 
-    # Tier configuration
-    tier_config: dict = {
-        "enable_fast_path": True,
-        "fast_path_confidence_threshold": 0.7,
-        "slow_path_confidence_threshold": 0.6,
-        "max_routing_time_ms": 1000,
-    }
+    # Routing mode ("tiered" is the only fully-implemented mode)
+    routing_mode: str = "tiered"
 
-    # GLiNER configuration (Tier 1)
-    gliner_config: dict = {
-        "model": "urchade/gliner_large-v2.1",
-        "threshold": 0.3,
-        "labels": [...],  # 16 entity types
-        "device": "cpu",
-    }
+    # Tier enable flags
+    enable_fast_path: bool = True
+    enable_slow_path: bool = True
+    enable_fallback: bool = True
 
-    # LLM configuration (Tier 2)
-    llm_config: dict = {
-        "provider": "local",
-        "model": "google/gemma-4-e4b-it",
-        "endpoint": "http://localhost:11434",
-        "use_chain_of_thought": True,
-        "use_think_mode": True,
-    }
+    # Confidence thresholds
+    fast_path_confidence_threshold: float = 0.7
+    slow_path_confidence_threshold: float = 0.6
+    max_routing_time_ms: int = 1000
 
-    # Optimization config
-    optimization_config: dict = {
-        "enable_auto_optimization": True,
-        "optimization_interval_seconds": 3600,
-        "dspy_enabled": True,
-        "dspy_max_bootstrapped_demos": 10,
-    }
+    # GLiNER configuration (Fast Path)
+    gliner_model: str = "urchade/gliner_large-v2.1"
+    gliner_threshold: float = 0.3
+    gliner_device: str = "cpu"
+    gliner_labels: List[str] = field(default_factory=list)
 
-    # Performance monitoring
-    monitoring_config: dict = {
-        "enable_metrics": True,
-        "metrics_batch_size": 100,
-        "enable_tracing": True,
-    }
+    # LLM configuration (Slow Path)
+    llm_provider: str = "local"
+    llm_endpoint: str = "http://localhost:11434"
+    llm_temperature: float = 0.1
+    llm_max_tokens: int = 150
+    use_chain_of_thought: bool = True
+
+    # Optimization settings
+    enable_auto_optimization: bool = True
+    optimization_interval_seconds: int = 3600
+    min_samples_for_optimization: int = 100
+    dspy_enabled: bool = True
+    dspy_max_bootstrapped_demos: int = 10
+    dspy_max_labeled_demos: int = 50
 
     # Caching
-    cache_config: dict = {
-        "enable_caching": True,
-        "cache_ttl_seconds": 300,
-        "max_cache_size": 1000,
-    }
+    enable_caching: bool = True
+    cache_ttl_seconds: int = 300
+    max_cache_size: int = 1000
 
-    # Query fusion (ComposableQueryAnalysisModule always generates variants)
-    query_fusion_config: dict = {
-        "include_original": True,  # Include unmodified query as a variant
-        "rrf_k": 60,             # RRF constant for fusing variant results
-    }
-
-    # Composable module path selection thresholds
-    entity_confidence_threshold: float = 0.6  # GLiNER confidence for Path A vs Path B
-    min_entities_for_fast_path: int = 1       # Minimum entities required for Path A
+    # Metadata
+    metadata: Dict[str, Any] = field(default_factory=dict)
 ```
 
 **Key Methods**:
 ```python
 @classmethod
-def from_file(cls, filepath: Path) -> "RoutingConfig":
-    """Load configuration from JSON/YAML file"""
-
-@classmethod
-def from_dict(cls, data: dict) -> "RoutingConfig":
-    """Create config from a dictionary"""
+def from_dict(cls, data: dict) -> "RoutingConfigUnified":
+    """Create config from a dictionary. Raises if tenant_id is absent."""
 
 def to_dict(self) -> dict:
     """Serialize config to dictionary"""
-
-def save(self, filepath: Path):
-    """Save configuration to file"""
 ```
 
 **Usage**:
 ```python
-# Load from file
-config = RoutingConfig.from_file("configs/routing_config.yaml")
+# tenant_id is REQUIRED — a no-arg RoutingConfigUnified() raises ValueError
+config = RoutingConfigUnified(tenant_id="acme:production")
 
-# Or use defaults
-config = RoutingConfig()
+# Or load from a dictionary (e.g., parsed from a JSON/YAML file)
+import json
+with open("configs/routing_config.json") as f:
+    data = json.load(f)
+config = RoutingConfigUnified.from_dict(data)  # data must include "tenant_id"
 
-# Save example config
-config.save("configs/my_routing.json")
+# Serialize back to a dictionary
+config_dict = config.to_dict()
 ```
 
 ---
@@ -338,8 +319,8 @@ results are fused with RRF (see [Ensemble Composition](../architecture/ensemble-
 # ]
 ```
 
-The `include_original` flag in `query_fusion_config` controls whether the original query is
-prepended as a variant. `rrf_k` is passed through to the fusion algorithm.
+The `include_original` flag controls whether the original query is prepended as a variant.
+`rrf_k` (default 60) is passed through to the RRF fusion algorithm in `SearchAgent`.
 
 ---
 
@@ -835,22 +816,19 @@ print(f"Confidence: {result.confidence}")
 **Optimization Strategies**:
 ```python
 # 1. Enable caching
-config.cache_config["enable_caching"] = True
-config.cache_config["cache_ttl_seconds"] = 3600
+config.enable_caching = True
+config.cache_ttl_seconds = 3600
 
 # 2. Use tiered routing (fast path first)
 config.routing_mode = "tiered"
-config.tier_config["enable_fast_path"] = True
+config.enable_fast_path = True
 
 # 3. Tune confidence thresholds
-config.tier_config["fast_path_confidence_threshold"] = 0.75  # Higher = more fallbacks
-config.tier_config["slow_path_confidence_threshold"] = 0.60
+config.fast_path_confidence_threshold = 0.75  # Higher = more fallbacks
+config.slow_path_confidence_threshold = 0.60
 
-# 4. Enable GRPO optimization (improves over time)
-config.optimization_config["enable_auto_optimization"] = True
-
-# 5. Parallel execution for ensemble
-config.routing_mode = "ensemble"  # Run strategies in parallel
+# 4. Enable auto-optimization (improves over time)
+config.enable_auto_optimization = True
 ```
 
 ### Scalability
@@ -872,12 +850,10 @@ config.routing_mode = "ensemble"  # Run strategies in parallel
 **Vertical Scaling**:
 ```python
 # GLiNER optimization
-gliner_config["device"] = "cuda"  # Use GPU
-gliner_config["batch_size"] = 64  # Batch requests
+config.gliner_device = "cuda"  # Use GPU
 
 # LLM optimization
-llm_config["model"] = "google/gemma-4-e4b-it"  # Smaller model for speed
-llm_config["max_tokens"] = 100  # Limit output length
+config.llm_max_tokens = 100  # Limit output length
 ```
 
 ### Monitoring
@@ -965,35 +941,30 @@ except Exception as e:
 
 ### Configuration Management
 
-**Environment-based Configuration**:
-```bash
-# Override routing config via env vars
-export ROUTING_MODE=tiered
-export ROUTING_LLM_MODEL=google/gemma-4-e4b-it
-export ROUTING_GLINER_DEVICE=cuda
-export ROUTING_CACHE_ENABLE_CACHING=true
-export ROUTING_CACHE_TTL_SECONDS=3600
-export ROUTING_OPTIMIZATION_ENABLE_AUTO_OPTIMIZATION=true
-```
-
+**File-based Configuration**:
 ```python
-# Load config from file
-config = RoutingConfig.from_file("configs/routing_config.yaml")
+# Load config from a dictionary (e.g., parsed from a JSON/YAML file)
+import json
+with open("configs/routing_config.json") as f:
+    data = json.load(f)
+config = RoutingConfigUnified.from_dict(data)  # data must include "tenant_id"
 ```
 
 **Multi-tenant Configuration**:
 ```python
-# Separate config per tenant
+# Separate config per tenant — tenant_id is required for each
 tenant_configs = {
-    "acme": RoutingConfig(
+    "acme": RoutingConfigUnified(
+        tenant_id="acme",
         routing_mode="tiered",
-        gliner_config={"threshold": 0.4},  # Lower threshold
-        cache_config={"cache_ttl_seconds": 7200}  # Longer TTL
+        gliner_threshold=0.4,     # Lower threshold
+        cache_ttl_seconds=7200,   # Longer TTL
     ),
-    "startup": RoutingConfig(
-        routing_mode="ensemble",  # More accurate but slower
-        gliner_config={"threshold": 0.3},
-    )
+    "startup": RoutingConfigUnified(
+        tenant_id="startup",
+        routing_mode="tiered",
+        gliner_threshold=0.3,
+    ),
 }
 
 config = tenant_configs[tenant_id]

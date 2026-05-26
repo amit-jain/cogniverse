@@ -204,7 +204,7 @@ def render_config_management_tab():
 
 def render_system_config_ui(manager, tenant_id):
     """System configuration form"""
-    system_config = manager.get_system_config(tenant_id)
+    system_config = manager.get_system_config()
 
     with st.form("system_config_form"):
         # Agent service URLs

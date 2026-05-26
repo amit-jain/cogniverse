@@ -21,7 +21,7 @@
 flowchart TB
     subgraph "Tenant A - acme_corp"
         TenantA["<span style='color:#000'>Tenant: acme_corp</span>"]
-        ConfigA["<span style='color:#000'>SystemConfig<br/>tenant_id=acme_corp</span>"]
+        ConfigA["<span style='color:#000'>TenantConfig<br/>tenant_id=acme_corp</span>"]
         SchemaA["<span style='color:#000'>Vespa Schemas<br/>video_*_acme_corp</span>"]
         PhoenixA["<span style='color:#000'>Phoenix Project<br/>cogniverse-acme_corp-video-search</span>"]
         MemoryA["<span style='color:#000'>Mem0 Memory<br/>user_id=acme_corp_*</span>"]
@@ -29,7 +29,7 @@ flowchart TB
 
     subgraph "Tenant B - globex_inc"
         TenantB["<span style='color:#000'>Tenant: globex_inc</span>"]
-        ConfigB["<span style='color:#000'>SystemConfig<br/>tenant_id=globex_inc</span>"]
+        ConfigB["<span style='color:#000'>TenantConfig<br/>tenant_id=globex_inc</span>"]
         SchemaB["<span style='color:#000'>Vespa Schemas<br/>video_*_globex_inc</span>"]
         PhoenixB["<span style='color:#000'>Phoenix Project<br/>cogniverse-globex_inc-video-search</span>"]
         MemoryB["<span style='color:#000'>Mem0 Memory<br/>user_id=globex_inc_*</span>"]
@@ -37,7 +37,7 @@ flowchart TB
 
     subgraph "Tenant C - default"
         TenantC["<span style='color:#000'>Tenant: default</span>"]
-        ConfigC["<span style='color:#000'>SystemConfig<br/>tenant_id=default</span>"]
+        ConfigC["<span style='color:#000'>TenantConfig<br/>tenant_id=default</span>"]
         SchemaC["<span style='color:#000'>Vespa Schemas<br/>video_*_default</span>"]
         PhoenixC["<span style='color:#000'>Phoenix Project<br/>cogniverse-default-video-search</span>"]
         MemoryC["<span style='color:#000'>Mem0 Memory<br/>user_id=default_*</span>"]
@@ -107,7 +107,7 @@ flowchart TB
 
     subgraph "Foundation Layer"
         ConfigMgr["<span style='color:#000'>ConfigManager<br/>cogniverse_foundation</span>"]
-        TenantConfig["<span style='color:#000'>Tenant Configuration<br/>(SystemConfig + other configs)</span>"]
+        TenantConfig["<span style='color:#000'>Tenant Configuration<br/>(TenantConfig + RoutingConfigUnified)</span>"]
         TelemetryBase["<span style='color:#000'>TelemetryManager<br/>cogniverse_foundation</span>"]
     end
 
@@ -360,7 +360,7 @@ sequenceDiagram
     User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
 
     Runtime->>Foundation: get_config(tenant_id="acme_corp")
-    Foundation-->>Runtime: SystemConfig with tenant_id
+    Foundation-->>Runtime: ConfigUtils (tenant-scoped config wrapper)
 
     Runtime->>Agent: create_video_search_agent(config, tenant_id)
     Agent->>Backend: get_search_backend(schema_name)
@@ -766,7 +766,7 @@ sequenceDiagram
 
     Admin->>TenantMgr: create_tenant("new_corp")
 
-    TenantMgr->>ConfigStore: Store SystemConfig(tenant_id="new_corp")
+    TenantMgr->>ConfigStore: Store TenantConfig(tenant_id="new_corp")
     ConfigStore-->>TenantMgr: Config saved
 
     TenantMgr->>SchemaManager: deploy_schemas(tenant_id="new_corp")
@@ -1022,7 +1022,7 @@ This diagram collection provides comprehensive visual documentation of multi-ten
 
 **Layered Architecture Integration:**
 
-- **Foundation Layer**: Provides SystemConfig with tenant_id, TelemetryManager base
+- **Foundation Layer**: Provides TenantConfig (per-tenant) and SystemConfig (global, one per deployment), TelemetryManager base
 
 - **Core Layer**: Full Knowledge Subsystem — KnowledgeRegistry, ProvenanceStore, ContradictionDetector, TrustRanker, FederationService, PinService, LifecycleScheduler
 

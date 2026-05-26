@@ -351,13 +351,10 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 class TestConfigManager:
 
-    def test_missing_tenant_raises_error(self, config_manager):
-        """Test that missing tenant raises ValueError or KeyError."""
-        with pytest.raises((ValueError, KeyError)) as exc_info:
-            config_manager.get_system_config(tenant_id="nonexistent")
-
-        # Error message should indicate the missing tenant
-        assert "nonexistent" in str(exc_info.value).lower() or "not found" in str(exc_info.value).lower()
+    def test_missing_system_config_raises_error(self, config_manager):
+        """Test that accessing system config when none is stored raises an error."""
+        with pytest.raises((ValueError, KeyError)):
+            config_manager.get_system_config()
 ```
 
 ---

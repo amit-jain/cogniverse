@@ -452,7 +452,7 @@ Multi-query fusion is a complementary technique to ensemble search. While **ense
 | **Entry path** | `_process_impl()` → `_search_ensemble()` | `_process_impl()` → `_search_multi_query_fusion()` |
 | **Input** | `SearchInput.profiles` | `SearchInput.query_variants` (enrichment field) |
 | **Fusion** | RRF across profiles | RRF across query variants |
-| **Config** | `SearchInput.profiles` list | `RoutingConfig.query_fusion_config` |
+| **Config** | `SearchInput.profiles` list | `SearchInput.rrf_k` + `SearchInput.query_variants` |
 
 ### How It Works
 
@@ -462,16 +462,14 @@ Multi-query fusion is a complementary technique to ensemble search. While **ense
 
 ### Configuration
 
-```json
-{
-  "query_fusion_config": {
-    "include_original": true,
-    "rrf_k": 60
-  }
-}
-```
+Multi-query fusion has no dedicated config block. The RRF constant rides on the
+request as `SearchInput.rrf_k` (default `60`) — the same field ensemble fusion
+uses — and the orchestrator also reads it from `context.routing_metadata`
+(`rrf_k`, default `60`). The variants themselves arrive on
+`SearchInput.query_variants`.
 
-Additional routing config fields control the composable module's path selection:
+The composable module's path selection is configured on the relationship router
+(`dspy_relationship_router`):
 - `entity_confidence_threshold` (default: 0.6) — GLiNER confidence threshold for Path A vs Path B
 - `min_entities_for_fast_path` (default: 1) — minimum entities required for Path A
 

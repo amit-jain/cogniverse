@@ -476,8 +476,8 @@ pip install --index-url https://test.pypi.org/simple/ \
 # Test package functionality
 python -c "
 from cogniverse_foundation.config.unified_config import SystemConfig
-config = SystemConfig(tenant_id='test')
-print(f'Successfully imported: {config.tenant_id}')
+config = SystemConfig()
+print(f'Successfully imported: {config.search_backend}')
 "
 ```
 

@@ -674,7 +674,7 @@ def test_client(temp_schema_dir, tmp_path):
 
     # Set up system config
     from cogniverse_foundation.config.unified_config import SystemConfig
-    system_config = SystemConfig(tenant_id="test_tenant")
+    system_config = SystemConfig()
     config_manager.set_system_config(system_config)
 
     # Set up test environment

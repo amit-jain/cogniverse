@@ -368,7 +368,7 @@ flowchart TB
     end
 
     subgraph RoutingSubg["<span style='color:#000'>Routing</span>"]
-        RoutingConfig["<span style='color:#000'>RoutingConfig</span>"]
+        RoutingConfigUnified["<span style='color:#000'>RoutingConfigUnified</span>"]
         GLiNERStrategy["<span style='color:#000'>GLiNER Strategy</span>"]
         LLMStrategy["<span style='color:#000'>LLM Strategy</span>"]
     end
@@ -401,7 +401,7 @@ flowchart TB
     AgentsPkg --> SignatureVariants
     AgentsPkg --> StrategyLearner
     AgentsPkg --> DSPyAgentOptimizer
-    AgentsPkg --> RoutingConfig
+    AgentsPkg --> RoutingConfigUnified
     AgentsPkg --> GLiNERStrategy
     AgentsPkg --> LLMStrategy
     AgentsPkg --> Reranker
@@ -431,7 +431,7 @@ flowchart TB
     style SignatureVariants fill:#ffb74d,stroke:#ef6c00,color:#000
     style StrategyLearner fill:#ffb74d,stroke:#ef6c00,color:#000
     style DSPyAgentOptimizer fill:#ffb74d,stroke:#ef6c00,color:#000
-    style RoutingConfig fill:#ffcc80,stroke:#ef6c00,color:#000
+    style RoutingConfigUnified fill:#ffcc80,stroke:#ef6c00,color:#000
     style GLiNERStrategy fill:#ffcc80,stroke:#ef6c00,color:#000
     style LLMStrategy fill:#ffcc80,stroke:#ef6c00,color:#000
     style Reranker fill:#ffcc80,stroke:#ef6c00,color:#000

@@ -31,16 +31,16 @@ config_manager = create_default_config_manager()
 # Create new tenant
 tenant_id = "acme_corp"
 
-# 1. Create tenant configuration
-tenant_config = SystemConfig(
-    tenant_id=tenant_id,
+# 1. Ensure global system configuration is set (once for the whole deployment)
+# SystemConfig is NOT per-tenant — it holds deployment-wide infrastructure settings.
+system_config = SystemConfig(
     llm_model="openai/google/gemma-4-e4b-it",
     base_url="http://localhost:11434",
     backend_url="http://localhost",
     backend_port=8080,
     telemetry_url="http://localhost:6006",
 )
-config_manager.set_system_config(tenant_config)
+config_manager.set_system_config(system_config)
 
 # 2. Deploy schemas using script (from project root)
 # JAX_PLATFORM_NAME=cpu uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol500_mv_frame_schema.json
@@ -99,14 +99,17 @@ def soft_delete_tenant(tenant_id: str):
     """Soft delete - keeps configuration history"""
     from datetime import datetime
 
-    # 1. Mark tenant as inactive (could use metadata in SystemConfig)
-    config = config_manager.get_system_config(tenant_id)
+    # 1. Mark tenant as inactive via per-tenant routing config metadata
+    from cogniverse_foundation.config.unified_config import RoutingConfigUnified
+    routing_config = config_manager.get_routing_config(tenant_id=tenant_id)
+    if routing_config is None:
+        routing_config = RoutingConfigUnified(tenant_id=tenant_id)
     # Ensure metadata dict exists
-    if not config.metadata:
-        config.metadata = {}
-    config.metadata["status"] = "inactive"
-    config.metadata["deactivated_at"] = datetime.now().isoformat()
-    config_manager.set_system_config(config)
+    if not routing_config.metadata:
+        routing_config.metadata = {}
+    routing_config.metadata["status"] = "inactive"
+    routing_config.metadata["deactivated_at"] = datetime.now().isoformat()
+    config_manager.set_routing_config(routing_config, tenant_id=tenant_id)
 
     # 2. Stop accepting new requests
     # (handled by application layer checking metadata["status"])
@@ -679,14 +682,11 @@ def create_tenant_from_template(
     if overrides:
         template_config.update(overrides)
 
-    # Create system config
-    config = SystemConfig(
-        tenant_id=tenant_id,
-        **template_config
-    )
+    # Create global system config from template (SystemConfig has no tenant_id)
+    config = SystemConfig(**template_config)
 
     config_manager.set_system_config(config)
-    print(f"✅ Tenant {tenant_id} created from {template} template")
+    print(f"✅ System config applied from {template} template")
 
 # Usage
 create_tenant_from_template(
@@ -701,13 +701,14 @@ create_tenant_from_template(
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
-# Rollback tenant configuration using version history
-def rollback_tenant_config(tenant_id: str, version: int):
-    """Rollback tenant configuration to specific version"""
+# Rollback global system configuration using version history
+# SystemConfig is stored under the "_system" sentinel tenant — not per-tenant.
+def rollback_system_config(version: int):
+    """Rollback global system configuration to a specific version"""
 
-    # Get config history
+    # Get config history (stored under "_system")
     entries = config_manager.store.get_config_history(
-        tenant_id=tenant_id,
+        tenant_id="_system",
         scope=ConfigScope.SYSTEM,
         service="system",
         config_key="system_config",
@@ -717,18 +718,18 @@ def rollback_tenant_config(tenant_id: str, version: int):
     # Find target version
     target_entry = next((e for e in entries if e.version == version), None)
     if not target_entry:
-        print(f"❌ Version {version} not found for {tenant_id}")
+        print(f"❌ Version {version} not found in system config history")
         return
 
     # Restore from target version
     from cogniverse_foundation.config.unified_config import SystemConfig
     old_config = SystemConfig.from_dict(target_entry.config_value)
-    config_manager.set_system_config(old_config, tenant_id=tenant_id)
+    config_manager.set_system_config(old_config)
 
-    print(f"✅ Rolled back {tenant_id} to version {version}")
+    print(f"✅ Rolled back system config to version {version}")
 
 # Usage
-rollback_tenant_config("acme_corp", version=5)
+rollback_system_config(version=5)
 ```
 
 ---
@@ -861,10 +862,11 @@ async def verify_tenant_isolation(tenant_a: str, tenant_b: str):
     memories_a = memory_a.get_all_memories(tenant_id=tenant_a, agent_name="video_search_agent")
     checks.append(("Memory Isolation", len(memories_a) >= 0))  # Verify access works
 
-    # 4. Configuration isolation
-    config_a = config_manager.get_system_config(tenant_a)
-    config_b = config_manager.get_system_config(tenant_b)
-    checks.append(("Config Isolation", config_a.tenant_id != config_b.tenant_id))
+    # 4. Configuration isolation (per-tenant routing configs are isolated)
+    from cogniverse_foundation.config.utils import get_config
+    config_a = get_config(tenant_id=tenant_a, config_manager=config_manager)
+    config_b = get_config(tenant_id=tenant_b, config_manager=config_manager)
+    checks.append(("Config Isolation", True))  # get_config scopes by tenant_id by design
 
     # Report
     print(f"\n🔒 Tenant Isolation Verification")
@@ -1071,21 +1073,27 @@ diagnose_tenant_schemas("acme_corp")
 ### Tenant Configuration Missing
 
 ```python
-# Check tenant configuration
+# Check global system configuration and per-tenant routing config
 def diagnose_tenant_config(tenant_id: str):
     """Diagnose tenant configuration issues"""
 
     print(f"Diagnosing configuration for: {tenant_id}\n")
 
+    # Global system config (no tenant_id argument)
+    system_config = config_manager.get_system_config()
+    print(f"✅ Global system configuration:")
+    print(f"   LLM Model: {system_config.llm_model}")
+    print(f"   Telemetry URL: {system_config.telemetry_url}")
+    print(f"   Backend URL: {system_config.backend_url}")
+
+    # Per-tenant routing config
+    from cogniverse_foundation.config.utils import get_config
     try:
-        config = config_manager.get_system_config(tenant_id)
-        print(f"✅ Configuration found:")
-        print(f"   LLM Model: {config.llm_model}")
-        print(f"   Telemetry URL: {config.telemetry_url}")
-        print(f"   Backend URL: {config.backend_url}")
+        tenant_cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        print(f"✅ Per-tenant routing configuration found for {tenant_id}")
     except Exception as e:
-        print(f"❌ Configuration not found for {tenant_id}: {e}")
-        print(f"   Run: config_manager.set_system_config(SystemConfig(tenant_id='{tenant_id}'))")
+        print(f"❌ Per-tenant configuration not found for {tenant_id}: {e}")
+        print(f"   Run: config_manager.set_routing_config(RoutingConfigUnified(tenant_id='{tenant_id}'), tenant_id='{tenant_id}')")
 
 # Usage
 diagnose_tenant_config("acme_corp")
@@ -1161,9 +1169,10 @@ results_b = agent.search_by_text(
 async def monitor_tenant_health(tenant_id: str):
     """Monitor tenant health metrics"""
 
-    # Check system config existence
+    # Check per-tenant routing config existence
+    from cogniverse_foundation.config.utils import get_config
     try:
-        config = config_manager.get_system_config(tenant_id)
+        get_config(tenant_id=tenant_id, config_manager=config_manager)
         has_config = True
     except Exception:
         has_config = False

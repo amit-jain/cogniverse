@@ -923,8 +923,8 @@ from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_stor
 # Create config manager (reads from configs/config.json and environment)
 config_manager = create_default_config_manager()
 
-# Get system configuration for tenant
-system_config = config_manager.get_system_config(tenant_id="acme")
+# Get global system configuration (no tenant_id argument)
+system_config = config_manager.get_system_config()
 
 # Tenant utility functions
 org_id, tenant_name = parse_tenant_id("acme:production")  # Returns (org_id, tenant_name)

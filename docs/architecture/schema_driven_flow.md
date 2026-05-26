@@ -587,8 +587,8 @@ from pathlib import Path
 config_store = VespaConfigStore(backend_url="http://localhost", backend_port=8080)
 config_manager = ConfigManager(store=config_store)
 
-# Load system configuration for tenant
-system_config = config_manager.get_system_config(tenant_id="acme")
+# Load global system configuration
+system_config = config_manager.get_system_config()
 
 # Load schema and strategy information
 loader = FilesystemSchemaLoader(Path("configs/schemas"))

@@ -1127,19 +1127,15 @@ flowchart LR
 
 **Initialization**:
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig, BackendConfig
-
-# SystemConfig has individual backend fields (not a nested backend_config attribute)
-config = SystemConfig(tenant_id="acme")
-
-# Access backend fields directly
-assert config.tenant_id == "acme"
-assert config.backend_url == "http://localhost"
-assert config.backend_port == 8080
-
-# To get a BackendConfig object, use ConfigManager
 from cogniverse_foundation.config.utils import create_default_config_manager
+
+# SystemConfig is global (one per deployment). Per-tenant config is retrieved
+# via get_config(tenant_id, config_manager) which returns a ConfigUtils object.
+from cogniverse_foundation.config.utils import get_config
 manager = create_default_config_manager()
+config = get_config(tenant_id="acme", config_manager=manager)
+
+# To get a BackendConfig object, use ConfigManager directly
 backend_config = manager.get_backend_config(tenant_id="acme")
 assert backend_config.tenant_id == "acme"
 

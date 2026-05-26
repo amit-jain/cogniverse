@@ -243,9 +243,8 @@ class SystemConfig:
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
 
-# Create system config
+# Create global system config (no tenant_id field — SystemConfig is deployment-wide)
 config = SystemConfig(
-    tenant_id="acme",
     backend_url="http://prod-vespa.example.com",
     backend_port=8080,
     environment="production"
@@ -1126,31 +1125,30 @@ print(f"Intent: {result.intent}, Confidence: {result.confidence}")
 ### Example 1: Multi-Tenant Configuration
 
 ```python
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
 # Initialize config manager
 config_manager = create_default_config_manager()
 
-# Create configs for multiple tenants
+# Create per-tenant routing configs
 tenants = ["acme", "acme:production", "acme:staging"]
 
 for tenant_id in tenants:
-    # Create tenant-specific system config
-    system_config = SystemConfig(
+    # Create tenant-specific routing config
+    routing_config = RoutingConfigUnified(
         tenant_id=tenant_id,
-        backend_url="http://localhost",
-        backend_port=8080,
-        environment="production" if "production" in tenant_id else "staging"
+        routing_mode="tiered",
     )
-    print(f"Created config for {tenant_id}")
+    config_manager.set_routing_config(routing_config, tenant_id=tenant_id)
+    print(f"Created routing config for {tenant_id}")
 
-# Get tenant config
+# Get per-tenant config via get_config()
+# (SystemConfig is global — use get_system_config() with no args for deployment-wide settings)
 tenant_id = "acme:production"
-system_config = config_manager.get_system_config(tenant_id=tenant_id)
+tenant_cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
 print(f"Loaded config for {tenant_id}:")
-print(f"  Backend URL: {system_config.backend_url}")
-print(f"  Environment: {system_config.environment}")
+print(f"  Routing mode: {tenant_cfg.get('routing_mode', 'tiered')}")
 ```
 
 ---
@@ -1281,19 +1279,16 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 
 environments = {
     "development": SystemConfig(
-        tenant_id="dev",
         backend_url="http://localhost",
         backend_port=8080,
         environment="development"
     ),
     "staging": SystemConfig(
-        tenant_id="staging",
         backend_url="http://staging-vespa.internal",
         backend_port=8080,
         environment="staging"
     ),
     "production": SystemConfig(
-        tenant_id="prod",
         backend_url="http://prod-vespa.example.com",
         backend_port=8080,
         environment="production"
