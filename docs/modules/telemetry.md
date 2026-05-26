@@ -64,17 +64,13 @@ from cogniverse_foundation.telemetry import (
 - `TelemetryManager`, `TelemetryConfig`, `get_telemetry_manager`
 - Submodules: `config`, `context`, `manager`, `providers`, `registry`
 
-### 3. Agents Layer: Modality Metrics (cogniverse-agents)
+### 3. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
 ```text
-libs/agents/cogniverse_agents/routing/
-└── modality_metrics.py      # ModalityMetricsTracker (for video, audio, images, etc.)
+libs/dashboard/cogniverse_dashboard/tabs/
+└── profile_metrics.py       # render_profile_metrics_tab() — per-modality observability
 ```
 
-**Purpose:** Per-modality performance tracking for routing decisions.
-
-**Key Classes:**
-
-- `ModalityMetricsTracker`: Performance tracking per content type (VIDEO, IMAGE, AUDIO, DOCUMENT, TEXT, MIXED)
+**Purpose:** Per-modality runtime observability surfaced in the dashboard. Reads `cogniverse.profile_selection` spans from Phoenix and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
 
 ### 4. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
 ```text
@@ -135,7 +131,7 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 - **Lazy Initialization**: Tracer providers created on-demand with LRU caching
 - **Batch Export**: Configurable batch processing for high-throughput span export
 - **Graceful Degradation**: System continues functioning even when telemetry fails
-- **Performance Metrics**: Per-modality latency tracking, success rates, and error analysis
+- **Per-Modality Observability**: Profile routing metrics aggregated from `cogniverse.profile_selection` spans; surfaced in the "Profile Routing Metrics" dashboard tab
 - **OpenTelemetry Integration**: Standards-based distributed tracing with Phoenix backend
 
 ### Key Features
@@ -155,11 +151,10 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
    - **Testing**: Synchronous export for immediate flush
    - Configurable queue size, batch size, timeout
 
-4. **Modality Performance Tracking**
-   - Rolling window metrics (configurable window size)
-   - P50/P95/P99 latency percentiles
-   - Success rates and error breakdowns
-   - Throughput calculation (QPS)
+4. **Per-Modality Observability**
+   - `cogniverse.profile_selection` spans emitted by `ProfileSelectionAgent` carry a `profile_selection.modality` attribute
+   - The "Profile Routing Metrics" dashboard tab (`profile_metrics.py`) queries those spans from Phoenix and aggregates P50/P95/P99 latency, success rate, and request count per modality
+   - No separate metrics class required — all observability flows through standard OTel spans
 
 5. **Context Helpers**
    - Pre-built span creators for search, encoding, backend operations
@@ -180,10 +175,6 @@ The Telemetry Module provides **multi-tenant observability** infrastructure for 
 
 - `arize-phoenix`: Phoenix observability platform
 - `pandas`: Data structures
-
-**Agents Package** (for ModalityMetricsTracker):
-
-- `numpy`: Statistical calculations for metrics
 
 ---
 
@@ -1280,189 +1271,6 @@ config.should_instrument_component("encoder")         # False (VERBOSE only)
 
 ---
 
-### 3. ModalityMetricsTracker
-
-**File:** `libs/agents/cogniverse_agents/routing/modality_metrics.py`
-
-**Purpose:** Track performance metrics per modality (text, video, image, audio) with rolling window statistics.
-
-**Key Attributes:**
-```python
-window_size: int                              # Rolling window size (default: 1000)
-modality_latencies: Dict[QueryModality, List[float]]  # Latency values per modality
-modality_errors: Dict[QueryModality, Dict[str, int]]  # Error counts by type
-modality_success: Dict[QueryModality, int]    # Success counts
-modality_requests: Dict[QueryModality, int]   # Total requests
-first_request_time: Dict[QueryModality, datetime]  # First request timestamp
-last_request_time: Dict[QueryModality, datetime]   # Last request timestamp
-```
-
-**Main Methods:**
-
-#### `record_modality_execution(modality: QueryModality, latency_ms: float, success: bool, error: Optional[str] = None)`
-Record execution metrics for a modality.
-
-**Parameters:**
-
-- `modality`: Query modality (TEXT, VIDEO, IMAGE, AUDIO)
-
-- `latency_ms`: Execution latency in milliseconds
-
-- `success`: Whether execution succeeded
-
-- `error`: Error message if failed (optional)
-
-**Rolling Window:** Maintains last `window_size` latencies per modality
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker(window_size=1000)
-
-# Record successful execution
-tracker.record_modality_execution(
-    modality=QueryModality.VIDEO,
-    latency_ms=234.5,
-    success=True
-)
-
-# Record failed execution
-tracker.record_modality_execution(
-    modality=QueryModality.TEXT,
-    latency_ms=150.0,
-    success=False,
-    error="Connection timeout"
-)
-```
-
----
-
-#### `get_modality_stats(modality: QueryModality) -> Dict[str, Any]`
-Get aggregated statistics for a modality.
-
-**Parameters:**
-
-- `modality`: Query modality
-
-**Returns:**
-```python
-{
-    "modality": "video",
-    "total_requests": 1000,
-    "success_count": 980,
-    "error_count": 20,
-    "success_rate": 0.98,
-    "p50_latency": 120.5,      # Median latency
-    "p95_latency": 450.2,      # 95th percentile
-    "p99_latency": 890.7,      # 99th percentile
-    "avg_latency": 200.3,
-    "min_latency": 45.1,
-    "max_latency": 1200.5,
-    "error_breakdown": {
-        "connection_timeout": 15,
-        "invalid_format": 5
-    },
-    "throughput_qps": 12.5     # Queries per second
-}
-```
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker()
-
-# ... record executions ...
-
-stats = tracker.get_modality_stats(QueryModality.VIDEO)
-print(f"Video search P95 latency: {stats['p95_latency']:.0f}ms")
-print(f"Success rate: {stats['success_rate']:.2%}")
-```
-
----
-
-#### `get_all_stats() -> Dict[str, Dict[str, Any]]`
-Get stats for all modalities with activity.
-
-**Returns:** Dictionary mapping modality names to stats (only includes modalities with requests)
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker()
-
-# ... record executions ...
-
-all_stats = tracker.get_all_stats()
-for modality, stats in all_stats.items():
-    print(f"{modality}: {stats['total_requests']} requests, {stats['success_rate']:.2%} success")
-```
-
----
-
-#### `get_summary_stats() -> Dict[str, Any]`
-Get summary statistics across all modalities.
-
-**Returns:**
-```python
-{
-    "total_requests": 5000,
-    "overall_success_rate": 0.96,
-    "active_modalities": 3,
-    "avg_latency_p95": 350.5,
-    "modality_breakdown": {
-        "video": 3000,
-        "text": 1500,
-        "image": 500
-    }
-}
-```
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker()
-summary = tracker.get_summary_stats()
-print(f"Overall success rate: {summary['overall_success_rate']:.2%}")
-print(f"Active modalities: {summary['active_modalities']}")
-```
-
----
-
-#### `get_slowest_modalities(top_k: int = 3) -> List[Dict[str, Any]]`
-Get slowest modalities by P95 latency.
-
-**Parameters:**
-
-- `top_k`: Number of slowest modalities to return
-
-**Returns:** List of `{modality, p95_latency, total_requests}` sorted by P95 latency (descending)
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker()
-slowest = tracker.get_slowest_modalities(top_k=3)
-for entry in slowest:
-    print(f"{entry['modality']}: P95={entry['p95_latency']:.0f}ms ({entry['total_requests']} requests)")
-```
-
----
-
-#### `get_error_prone_modalities(min_error_rate: float = 0.1) -> List[Dict[str, Any]]`
-Get modalities with high error rates.
-
-**Parameters:**
-
-- `min_error_rate`: Minimum error rate to include (0-1, default: 0.1 = 10%)
-
-**Returns:** List of `{modality, error_rate, error_count, error_breakdown}` sorted by error rate (descending)
-
-**Example:**
-```python
-tracker = ModalityMetricsTracker()
-error_prone = tracker.get_error_prone_modalities(min_error_rate=0.05)
-for entry in error_prone:
-    print(f"{entry['modality']}: {entry['error_rate']:.2%} error rate")
-    print(f"  Error breakdown: {entry['error_breakdown']}")
-```
-
----
-
 ### 4. Telemetry Context Helpers
 
 **File:** `libs/foundation/cogniverse_foundation/telemetry/context.py`
@@ -1750,68 +1558,17 @@ def search_videos_with_telemetry(tenant_id: str, query: str):
 
 ---
 
-### Example 4: Per-Modality Performance Tracking
+### Example 4: Per-Modality Observability via Dashboard
 
-```python
-"""
-Track performance metrics per query modality.
-"""
-from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
-import time
+Per-modality runtime metrics (P50/P95/P99 latency, success rate, request count) are available in the **Profile Routing Metrics** tab of the Cogniverse dashboard (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
 
-# Initialize tracker
-tracker = ModalityMetricsTracker(window_size=1000)
+The tab queries `cogniverse.profile_selection` spans from Phoenix for the selected tenant and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. No additional code is needed in the application — drive traffic through the routing agent and the dashboard reflects real-time modality breakdown.
 
-def search_with_metrics(query: str, modality: QueryModality):
-    """Search with modality-specific performance tracking."""
-    start_time = time.time()
-    success = False
-    error = None
-
-    try:
-        # Perform search
-        results = perform_search(query, modality)
-        success = True
-        return results
-
-    except Exception as e:
-        error = str(e)
-        raise
-
-    finally:
-        # Record metrics
-        latency_ms = (time.time() - start_time) * 1000
-        tracker.record_modality_execution(
-            modality=modality,
-            latency_ms=latency_ms,
-            success=success,
-            error=error
-        )
-
-# Execute searches
-search_with_metrics("Marie Curie", QueryModality.VIDEO)
-search_with_metrics("Show me documents", QueryModality.TEXT)
-search_with_metrics("Find similar images", QueryModality.IMAGE)
-
-# Get statistics
-video_stats = tracker.get_modality_stats(QueryModality.VIDEO)
-print(f"Video Search Performance:")
-print(f"  P95 Latency: {video_stats['p95_latency']:.0f}ms")
-print(f"  Success Rate: {video_stats['success_rate']:.2%}")
-print(f"  Throughput: {video_stats['throughput_qps']:.1f} QPS")
-
-# Find slowest modalities
-slowest = tracker.get_slowest_modalities(top_k=3)
-for entry in slowest:
-    print(f"{entry['modality']}: {entry['p95_latency']:.0f}ms")
-
-# Find error-prone modalities
-error_prone = tracker.get_error_prone_modalities(min_error_rate=0.05)
-for entry in error_prone:
-    print(f"{entry['modality']}: {entry['error_rate']:.2%} errors")
-    print(f"  Breakdown: {entry['error_breakdown']}")
+To view:
+```bash
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 ```
+Then select a tenant in the sidebar and open the "Profile Routing Metrics" tab.
 
 ---
 
@@ -2016,16 +1773,6 @@ Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
 (created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`).
 Tune `max_queue_size` to control the point at which spans start being dropped.
 
-**Memory Management:**
-
-- Modality metrics use rolling window (default: 1000 samples)
-
-- Adjust window size based on available memory:
-```python
-tracker = ModalityMetricsTracker(window_size=500)  # Lower memory
-tracker = ModalityMetricsTracker(window_size=5000)  # More history
-```
-
 **Throughput Benchmarks:**
 
 - Single tenant: 10,000+ spans/second
@@ -2098,21 +1845,7 @@ if stats['failed_initializations'] > 0:
     alert("Telemetry provider initialization failures", severity="error")
 ```
 
-3. **Modality Performance:**
-```python
-tracker = ModalityMetricsTracker()
-
-# Alert on high latency
-slowest = tracker.get_slowest_modalities(top_k=1)
-if slowest and slowest[0]['p95_latency'] > 1000:  # 1s threshold
-    alert(f"High {slowest[0]['modality']} latency: {slowest[0]['p95_latency']}ms")
-
-# Alert on high error rate
-error_prone = tracker.get_error_prone_modalities(min_error_rate=0.10)
-if error_prone:
-    for entry in error_prone:
-        alert(f"High {entry['modality']} error rate: {entry['error_rate']:.2%}")
-```
+3. **Per-Modality Performance:** Monitor via the "Profile Routing Metrics" dashboard tab, which aggregates P95 latency and success rate per modality from `cogniverse.profile_selection` spans. Set Phoenix alerts for `cogniverse.profile_selection` span P95 duration or error rate thresholds directly in Phoenix.
 
 4. **Export Queue Health:**
 ```python
@@ -2385,7 +2118,7 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 
 - Search operations use pre-built context helpers
 
-- Modality metrics track per-query-type performance
+- Per-modality observability flows through `cogniverse.profile_selection` spans and the Profile Routing Metrics dashboard tab
 
 - Phoenix provides analytics and visualization
 
@@ -2405,6 +2138,6 @@ The Telemetry Module provides **production-ready, multi-tenant observability** w
 
 - Config: `libs/foundation/cogniverse_foundation/telemetry/config.py`
 
-- Metrics: `libs/agents/cogniverse_agents/routing/modality_metrics.py`
+- Per-Modality Dashboard: `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
 - Context: `libs/foundation/cogniverse_foundation/telemetry/context.py`

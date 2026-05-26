@@ -15,7 +15,7 @@ The Instrumentation module provides production-grade observability through:
 
 - **Phoenix Backend**: Arize Phoenix for trace collection and analysis
 
-- **Performance Metrics**: Modality-specific performance tracking
+- **Per-Modality Observability**: `cogniverse.profile_selection` spans aggregated by modality in the Profile Routing Metrics dashboard tab
 
 - **Analytics**: Trace analysis and visualization
 
@@ -23,7 +23,7 @@ The Instrumentation module provides production-grade observability through:
 - Lazy initialization with LRU caching for tracer providers
 - Batch vs synchronous span export modes
 - Graceful degradation when telemetry unavailable
-- Per-modality performance metrics (latency percentiles, success rates)
+- Per-modality observability via `cogniverse.profile_selection` spans and the Profile Routing Metrics dashboard tab
 - Phoenix analytics with Plotly visualizations
 - **Session Tracking**: Multi-turn conversation tracking with `session_span()` method
 - **Phoenix Sessions View**: Grouped trace visualization for conversation trajectories
@@ -294,79 +294,30 @@ Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
 when the queue reaches `max_queue_size` the processor drops new spans rather
 than blocking the calling thread.
 
-### 3. ModalityMetricsTracker
+### 3. Profile Routing Metrics Dashboard Tab
 
-**File:** `libs/agents/cogniverse_agents/routing/modality_metrics.py`
+**File:** `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`
 
-**Package:** `cogniverse-agents` (implementation layer)
+**Package:** `cogniverse-dashboard` (application layer)
 
-Tracks per-modality performance metrics with rolling windows.
+Provides per-modality runtime observability by querying `cogniverse.profile_selection` spans from Phoenix and aggregating them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
 
 #### Key Features
-- **Latency Percentiles**: P50, P95, P99
-- **Success Rates**: Per modality error tracking
-- **Throughput**: Queries per second
-- **Rolling Windows**: Configurable window size (default 1000)
+- **Latency Percentiles**: P50, P95, P99 per modality, computed from span durations
+- **Success Rates**: Per modality, derived from span `status_code`
+- **Request Counts**: Per modality, from span count
+- **Pie + Bar charts**: Query distribution and latency visualisation via Plotly
+- **Lookback window**: Configurable (1–720 hours)
 
 #### Usage
 
-```python
-from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+The tab is rendered automatically when the dashboard is running. To view per-modality metrics:
 
-tracker = ModalityMetricsTracker(window_size=1000)
-
-# Record execution
-tracker.record_modality_execution(
-    modality=QueryModality.VIDEO,
-    latency_ms=234.5,
-    success=True
-)
-
-# Get stats for specific modality
-stats = tracker.get_modality_stats(QueryModality.VIDEO)
-print(f"P95 latency: {stats['p95_latency']:.2f}ms")
-print(f"Success rate: {stats['success_rate']:.2%}")
-
-# Get all stats
-all_stats = tracker.get_all_stats()
-for modality, stats in all_stats.items():
-    print(f"{modality}: {stats['total_requests']} requests")
-
-# Get slowest modalities
-slowest = tracker.get_slowest_modalities(top_k=3)
-for entry in slowest:
-    print(f"{entry['modality']}: {entry['p95_latency']:.0f}ms")
-
-# Get error-prone modalities
-error_prone = tracker.get_error_prone_modalities(min_error_rate=0.1)
-for entry in error_prone:
-    print(f"{entry['modality']}: {entry['error_rate']:.2%}")
-    print(f"  Errors: {entry['error_breakdown']}")
+```bash
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
 ```
 
-#### Metrics Structure
-
-```python
-{
-    "modality": "video",
-    "total_requests": 1000,
-    "success_count": 950,
-    "error_count": 50,
-    "success_rate": 0.95,
-    "p50_latency": 150.0,
-    "p95_latency": 450.0,
-    "p99_latency": 850.0,
-    "avg_latency": 200.5,
-    "min_latency": 50.0,
-    "max_latency": 2000.0,
-    "error_breakdown": {
-        "timeout": 30,
-        "connection_error": 20
-    },
-    "throughput_qps": 5.2
-}
-```
+Select a tenant in the sidebar and open the "Profile Routing Metrics" tab. No extra instrumentation is required — metrics are derived entirely from `cogniverse.profile_selection` spans already emitted by `ProfileSelectionAgent`.
 
 ### 4. PhoenixAnalytics
 
@@ -722,9 +673,6 @@ curl http://localhost:6006
 # Reduce cached tenants
 config = TelemetryConfig(max_cached_tenants=50)
 
-# Reduce modality metrics window
-tracker = ModalityMetricsTracker(window_size=500)
-
 # Reduce batch queue size
 config.batch_config.max_queue_size = 1024
 ```
@@ -801,8 +749,8 @@ def test_multi_tenant_span_isolation():
 ### Core Layer - Evaluation & Experiment Tracking
 - `libs/evaluation/cogniverse_evaluation/core/experiment_tracker.py` - Experiment tracking
 
-### Implementation Layer - Agent Metrics
-- `libs/agents/cogniverse_agents/routing/modality_metrics.py` - Performance metrics tracking
+### Dashboard Layer - Per-Modality Observability
+- `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py` - Profile Routing Metrics tab (aggregates `cogniverse.profile_selection` spans by modality)
 
 ### Tests
 - `tests/telemetry/unit/test_session_tracking.py` - Session tracking tests

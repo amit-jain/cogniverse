@@ -926,27 +926,14 @@ def search_acme_videos(query: str, caller_tenant_id: str, config_manager):
 
 ### Per-Tenant Performance Metrics
 
-```python
-from cogniverse_agents.routing.modality_metrics import ModalityMetricsTracker
-from cogniverse_agents.search.multi_modal_reranker import QueryModality
+Per-modality runtime metrics (request counts, P50/P95/P99 latency, success rate) are available per tenant in the **Profile Routing Metrics** dashboard tab (`libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py`).
 
-# Track performance per tenant (Note: ModalityMetricsTracker doesn't have tenant_id,
-# tenant isolation is handled at application level by maintaining separate instances)
-metrics_acme = ModalityMetricsTracker(window_size=1000)
+The tab reads `cogniverse.profile_selection` spans from the tenant's Phoenix project and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch. Tenant isolation is provided natively by the telemetry layer — each tenant has its own Phoenix project (`cogniverse-{tenant_id}-cogniverse-orchestration`), so span queries are scoped automatically.
 
-# Record modality executions for this tenant
-# (called from routing agent during execution)
-
-# Get performance stats
-stats = metrics_acme.get_modality_stats(QueryModality.VIDEO)
-
-print(f"Tenant: acme_corp (VIDEO modality)")
-print(f"  Total Requests: {stats.get('total_requests', 0)}")
-print(f"  Success Rate: {stats.get('success_rate', 0.0):.1%}")
-print(f"  P50 Latency: {stats.get('p50_latency', 0)}ms")
-print(f"  P95 Latency: {stats.get('p95_latency', 0)}ms")
-print(f"  P99 Latency: {stats.get('p99_latency', 0)}ms")
-```
+To view metrics for a specific tenant:
+1. Open the dashboard: `uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501`
+2. Select the tenant from the sidebar.
+3. Navigate to the "Profile Routing Metrics" tab.
 
 ### Tenant-Specific Optimization
 
