@@ -380,13 +380,35 @@ class WorkflowIntelligence:
         return max_task_time / actual_time if actual_time > 0 else 0.0
 
     def _calculate_execution_order(self, tasks: List[WorkflowTask]) -> List[List[str]]:
-        """Calculate execution order considering dependencies (simplified version)"""
-        # This is a simplified version - full implementation would be in the orchestrator
+        """Group tasks into dependency-ordered phases.
+
+        Each phase contains every task whose intra-plan dependencies are
+        satisfied by earlier phases, so independent tasks run in parallel
+        (layered topological sort / Kahn's algorithm by layers). Dependencies
+        on task ids not in this plan are ignored. A dependency cycle can't be
+        layered, so any tasks left when nothing is ready are emitted together
+        in a final phase rather than looping forever.
+        """
         if not tasks:
             return []
 
-        # Simple sequential execution for now
-        return [[task.task_id] for task in tasks]
+        task_ids = {t.task_id for t in tasks}
+        remaining = {
+            t.task_id: {d for d in t.dependencies if d in task_ids} for t in tasks
+        }
+
+        phases: List[List[str]] = []
+        done: set = set()
+        while remaining:
+            ready = [tid for tid, deps in remaining.items() if deps <= done]
+            if not ready:
+                # Unsatisfiable (cycle / dangling dep) — emit the rest at once.
+                ready = list(remaining)
+            phases.append(sorted(ready))
+            done.update(ready)
+            for tid in ready:
+                remaining.pop(tid, None)
+        return phases
 
     def get_intelligence_statistics(self) -> Dict[str, Any]:
         """Get workflow intelligence performance statistics"""

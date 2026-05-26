@@ -259,5 +259,53 @@ class TestSimplifiedWorkflowIntelligence:
         assert templates[0].template_id == "t1"
 
 
+@pytest.mark.unit
+class TestExecutionOrder:
+    """_calculate_execution_order groups tasks into dependency-layered phases
+    (independent tasks share a phase) instead of forcing strict sequence."""
+
+    def _task(self, tid, deps=()):
+        return WorkflowTask(
+            task_id=tid, agent_name="a", query="q", dependencies=set(deps)
+        )
+
+    def test_independent_tasks_share_one_phase(self):
+        wi = _make_intelligence()
+        order = wi._calculate_execution_order(
+            [self._task("t1"), self._task("t2"), self._task("t3")]
+        )
+        assert order == [["t1", "t2", "t3"]]
+
+    def test_linear_chain_one_task_per_phase(self):
+        wi = _make_intelligence()
+        order = wi._calculate_execution_order(
+            [self._task("t1"), self._task("t2", {"t1"}), self._task("t3", {"t2"})]
+        )
+        assert order == [["t1"], ["t2"], ["t3"]]
+
+    def test_diamond_runs_middle_tasks_in_parallel(self):
+        wi = _make_intelligence()
+        order = wi._calculate_execution_order(
+            [
+                self._task("t1"),
+                self._task("t2", {"t1"}),
+                self._task("t3", {"t1"}),
+                self._task("t4", {"t2", "t3"}),
+            ]
+        )
+        assert order == [["t1"], ["t2", "t3"], ["t4"]]
+
+    def test_dependency_cycle_emitted_once_without_infinite_loop(self):
+        wi = _make_intelligence()
+        order = wi._calculate_execution_order(
+            [self._task("t1", {"t2"}), self._task("t2", {"t1"})]
+        )
+        assert order == [["t1", "t2"]]
+
+    def test_empty_tasks(self):
+        wi = _make_intelligence()
+        assert wi._calculate_execution_order([]) == []
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
