@@ -1870,3 +1870,41 @@ class TestConversationalQueryRewrite:
             )
 
             assert result.rewritten_query == "machine learning tutorials"
+
+
+@pytest.mark.unit
+class TestDateFilter:
+    """SearchAgent._build_date_filter converts ISO date strings into a
+    creation_timestamp epoch-MILLISECONDS range the Vespa backend pushes into
+    the query. Milliseconds match what ingestion writes
+    (ingestion_client: int(time.time() * 1000))."""
+
+    def test_both_bounds_to_epoch_ms_range(self):
+        # 2024-01-01T00:00:00Z = 1704067200000 ms; 2024-01-31 = 1706659200000 ms
+        f = SearchAgent._build_date_filter("2024-01-01", "2024-01-31")
+        assert f == {
+            "creation_timestamp": {"gte": 1704067200000, "lte": 1706659200000}
+        }
+
+    def test_only_start(self):
+        assert SearchAgent._build_date_filter("2024-01-01", None) == {
+            "creation_timestamp": {"gte": 1704067200000}
+        }
+
+    def test_only_end(self):
+        assert SearchAgent._build_date_filter(None, "2024-01-31") == {
+            "creation_timestamp": {"lte": 1706659200000}
+        }
+
+    def test_no_dates_returns_empty(self):
+        assert SearchAgent._build_date_filter(None, None) == {}
+
+    def test_datetime_with_time_and_tz_is_honored(self):
+        # 2024-01-01T12:00:00Z = 1704110400000 ms
+        assert SearchAgent._build_date_filter("2024-01-01T12:00:00+00:00", None) == {
+            "creation_timestamp": {"gte": 1704110400000}
+        }
+
+    def test_unparseable_date_raises_rather_than_dropping(self):
+        with pytest.raises(ValueError):
+            SearchAgent._build_date_filter("not-a-date", None)

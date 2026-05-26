@@ -867,7 +867,10 @@ class SearchAgent(
                     "type": modality,
                     "query_embeddings": query_embeddings,
                     "top_k": top_k * 2,  # Fetch 2x results for better fusion
-                    "filters": None,
+                    "filters": self._build_date_filter(
+                        kwargs.get("start_date"), kwargs.get("end_date")
+                    )
+                    or None,
                     "strategy": kwargs.get("ranking", "binary_binary"),
                     "profile": profile_name,
                     "tenant_id": tenant_id,
@@ -939,6 +942,35 @@ class SearchAgent(
 
         return fused_results
 
+    @staticmethod
+    def _build_date_filter(
+        start_date: Optional[str], end_date: Optional[str]
+    ) -> Dict[str, Any]:
+        """Build a ``creation_timestamp`` epoch-milliseconds range filter from
+        ISO date strings; the Vespa backend pushes it into the YQL where-clause.
+
+        Returns ``{}`` when neither bound is set. Raises ``ValueError`` on an
+        unparseable date so a bad filter fails loudly instead of being silently
+        dropped. Bounds are emitted in epoch **milliseconds** to match the unit
+        ingestion writes (``ingestion_client`` stores ``int(time.time()*1000)``).
+        """
+        from datetime import datetime, timezone
+
+        def _epoch_ms(v: Any) -> int:
+            if isinstance(v, (int, float)):
+                return int(v)
+            dt = datetime.fromisoformat(str(v))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return int(dt.timestamp() * 1000)
+
+        rng: Dict[str, int] = {}
+        if start_date:
+            rng["gte"] = _epoch_ms(start_date)
+        if end_date:
+            rng["lte"] = _epoch_ms(end_date)
+        return {"creation_timestamp": rng} if rng else {}
+
     def _search_by_text(
         self,
         query: str,
@@ -973,17 +1005,16 @@ class SearchAgent(
             query_embeddings = self.query_encoder.encode(query)
 
             # Execute search with backend
-            if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning(
-                    "Date filters (start_date/end_date) not yet supported by backend"
-                )
 
             query_dict = {
                 "query": query,
                 "type": modality,
                 "query_embeddings": query_embeddings,
                 "top_k": top_k,
-                "filters": None,
+                "filters": self._build_date_filter(
+                    kwargs.get("start_date"), kwargs.get("end_date")
+                )
+                or None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
@@ -1100,17 +1131,16 @@ class SearchAgent(
             )
 
             # Execute search with backend
-            if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning(
-                    "Date filters (start_date/end_date) not yet supported by backend"
-                )
 
             query_dict = {
                 "query": f"Video similarity search for {filename}",
                 "type": modality,
                 "query_embeddings": query_embeddings,
                 "top_k": top_k,
-                "filters": None,
+                "filters": self._build_date_filter(
+                    kwargs.get("start_date"), kwargs.get("end_date")
+                )
+                or None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
@@ -1203,17 +1233,16 @@ class SearchAgent(
             )
 
             # Execute search with backend
-            if kwargs.get("start_date") or kwargs.get("end_date"):
-                logger.warning(
-                    "Date filters (start_date/end_date) not yet supported by backend"
-                )
 
             query_dict = {
                 "query": f"Image similarity search for {filename}",
                 "type": modality,
                 "query_embeddings": query_embeddings,
                 "top_k": top_k,
-                "filters": None,
+                "filters": self._build_date_filter(
+                    kwargs.get("start_date"), kwargs.get("end_date")
+                )
+                or None,
                 "strategy": kwargs.get("ranking", "binary_binary"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
@@ -1413,17 +1442,15 @@ class SearchAgent(
                 # Single query path (existing behavior)
                 query_embeddings = self.query_encoder.encode(search_query)
 
-                if search_params.start_date or search_params.end_date:
-                    logger.warning(
-                        "Date filters (start_date/end_date) not yet supported by backend"
-                    )
-
                 query_dict = {
                     "query": search_query,
                     "type": search_params.modality,
                     "query_embeddings": query_embeddings,
                     "top_k": top_k,
-                    "filters": None,
+                    "filters": self._build_date_filter(
+                        search_params.start_date, search_params.end_date
+                    )
+                    or None,
                     "strategy": search_params.ranking_strategy
                     or kwargs.get("ranking", "binary_binary"),
                     "profile": self.active_profile,

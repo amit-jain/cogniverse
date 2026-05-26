@@ -332,3 +332,35 @@ def test_search_uses_newly_added_profile():
     # Whatever fails next (network, strategies cache, etc.) is fine —
     # but it must NOT be the "profile not found" path.
     assert "Requested profile 'fresh' not found" not in str(exc_info.value)
+
+
+@pytest.mark.unit
+class TestFilterConditions:
+    """_build_filter_conditions builds the Vespa YQL where-clause from a
+    filters dict, including numeric/epoch range filters (used for date
+    filtering on creation_timestamp)."""
+
+    @staticmethod
+    def _build(filters):
+        # The method doesn't touch instance state, so a bare instance is fine.
+        return VespaSearchBackend._build_filter_conditions(
+            object.__new__(VespaSearchBackend), filters
+        )
+
+    def test_range_filter_emits_gte_and_lte(self):
+        assert (
+            self._build({"creation_timestamp": {"gte": 100, "lte": 200}})
+            == "creation_timestamp >= 100 AND creation_timestamp <= 200"
+        )
+
+    def test_range_filter_gt_and_lt(self):
+        assert self._build({"ts": {"gt": 5, "lt": 9}}) == "ts > 5 AND ts < 9"
+
+    def test_range_combined_with_string_equality(self):
+        assert (
+            self._build({"tenant_id": "acme", "creation_timestamp": {"gte": 100}})
+            == 'tenant_id contains "acme" AND creation_timestamp >= 100'
+        )
+
+    def test_empty_filters(self):
+        assert self._build({}) == ""

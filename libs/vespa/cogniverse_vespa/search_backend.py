@@ -867,16 +867,28 @@ class VespaSearchBackend(SearchBackend):
 
         conditions = []
         for field_name, value in filters.items():
-            if isinstance(value, str):
+            if isinstance(value, dict):
+                # Range filter, e.g. {"gte": 100, "lte": 200} ->
+                # 'field >= 100 AND field <= 200'. Used for numeric/epoch
+                # ranges such as creation_timestamp date filtering.
+                for key, sql_op in (
+                    ("gte", ">="),
+                    ("gt", ">"),
+                    ("lte", "<="),
+                    ("lt", "<"),
+                ):
+                    if key in value:
+                        conditions.append(f"{field_name} {sql_op} {value[key]}")
+            elif isinstance(value, bool):
+                # Boolean values (checked before int — bool is an int subclass)
+                conditions.append(f"{field_name} = {str(value).lower()}")
+            elif isinstance(value, str):
                 # String attributes use 'contains' for matching
                 # This works for string attributes in Vespa
                 conditions.append(f'{field_name} contains "{value}"')
             elif isinstance(value, (int, float)):
                 # Numeric values use equality
                 conditions.append(f"{field_name} = {value}")
-            elif isinstance(value, bool):
-                # Boolean values
-                conditions.append(f"{field_name} = {str(value).lower()}")
             else:
                 # For other types, convert to string and use contains
                 conditions.append(f'{field_name} contains "{str(value)}"')
