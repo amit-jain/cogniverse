@@ -713,7 +713,7 @@ from cogniverse_foundation.telemetry.config import TelemetryConfig
 # ===== CORE LAYER =====
 # Core - Base Classes and Registries
 from cogniverse_core.agents.base import AgentBase
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_core.common.tenant_utils import parse_tenant_id, get_tenant_storage_path
 

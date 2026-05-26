@@ -775,7 +775,7 @@ class SummarizationAgent(A2AAgent[SummarizationInput, SummarizationOutput, Summa
 
 - **Add streaming**: Call `self.emit_progress()` in `_process_impl()` for progressive results
 - **Add telemetry**: Use `TelemetryManager` from `cogniverse_foundation.telemetry`
-- **Add memory**: Use `MemoryAwareMixin` from `cogniverse_core.agents.memory_aware_mixin` for conversation context
+- **Add memory**: Use `MemoryAwareMixin` from `cogniverse_agents.memory_aware_mixin` for conversation context
 - **Optimize with DSPy**: Train the module with synthetic data
 
 See [Core Module](../modules/core.md) for mixin documentation.

@@ -315,7 +315,7 @@ decision = await agent._process_impl(OrchestratorInput(query="cooking videos", t
 ```python
 # 1. Initialize search agent with memory
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader

@@ -304,7 +304,7 @@ def initialize_memory(
 **Usage Example:**
 
 ```python
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 class MyAgent(AgentBase[...], MemoryAwareMixin):
     def __init__(self, deps, config_manager, schema_loader):

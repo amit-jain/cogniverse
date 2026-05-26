@@ -1022,7 +1022,7 @@ from cogniverse_core.agents.base import (
     AgentOutput,    # Base class for agent outputs (Pydantic model)
     AgentDeps,      # Base class for agent dependencies (requires tenant_id)
 )
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 # Telemetry
 from cogniverse_foundation.telemetry.manager import TelemetryManager
@@ -1105,7 +1105,7 @@ from cogniverse_runtime.ingestion.pipeline_builder import VideoIngestionPipeline
 # In cogniverse_agents/orchestrator_agent.py (located at package root)
 
 from cogniverse_core.agents.base import AgentBase
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 class OrchestratorAgent(AgentBase, MemoryAwareMixin):
@@ -1279,7 +1279,7 @@ bump2version minor  # 0.1.0 -> 0.2.0
 ```python
 # libs/agents/cogniverse_agents/my_agent/my_new_agent.py
 from cogniverse_core.agents.base import AgentBase
-from cogniverse_core.agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
 class MyNewAgent(AgentBase, MemoryAwareMixin):
     """New agent implementation"""
