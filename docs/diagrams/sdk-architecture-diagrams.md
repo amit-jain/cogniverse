@@ -365,7 +365,6 @@ flowchart TB
         SignatureVariants["<span style='color:#000'>SignatureVariantRegistry<br/>signature_variants.py</span>"]
         StrategyLearner["<span style='color:#000'>StrategyLearner<br/>strategy_learner.py</span>"]
         DSPyAgentOptimizer["<span style='color:#000'>DSPyAgentPromptOptimizer<br/>dspy_agent_optimizer.py</span>"]
-        RouterOptimizer["<span style='color:#000'>OptimizedRouter<br/>router_optimizer.py</span>"]
     end
 
     subgraph RoutingSubg["<span style='color:#000'>Routing</span>"]
@@ -402,7 +401,6 @@ flowchart TB
     AgentsPkg --> SignatureVariants
     AgentsPkg --> StrategyLearner
     AgentsPkg --> DSPyAgentOptimizer
-    AgentsPkg --> RouterOptimizer
     AgentsPkg --> RoutingConfig
     AgentsPkg --> GLiNERStrategy
     AgentsPkg --> LLMStrategy
@@ -433,7 +431,6 @@ flowchart TB
     style SignatureVariants fill:#ffb74d,stroke:#ef6c00,color:#000
     style StrategyLearner fill:#ffb74d,stroke:#ef6c00,color:#000
     style DSPyAgentOptimizer fill:#ffb74d,stroke:#ef6c00,color:#000
-    style RouterOptimizer fill:#ffb74d,stroke:#ef6c00,color:#000
     style RoutingConfig fill:#ffcc80,stroke:#ef6c00,color:#000
     style GLiNERStrategy fill:#ffcc80,stroke:#ef6c00,color:#000
     style LLMStrategy fill:#ffcc80,stroke:#ef6c00,color:#000

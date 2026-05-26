@@ -22,33 +22,7 @@ def test_imports():
     tests_passed = 0
     total_tests = 0
 
-    # Test 1: Core schemas
-    total_tests += 1
-    try:
-        from cogniverse_agents.optimizer.schemas import (  # noqa: F401
-            AgenticRouter,
-            AgenticRoutingDecision,
-        )
-
-        print("✅ schemas: AgenticRoutingDecision, AgenticRouter")
-        tests_passed += 1
-    except ImportError as e:
-        print(f"❌ schemas: {e}")
-
-    # Test 2: Router optimizer
-    total_tests += 1
-    try:
-        from cogniverse_agents.optimizer.router_optimizer import (  # noqa: F401
-            OptimizedRouter,
-            RouterModule,
-        )
-
-        print("✅ router_optimizer: RouterModule, OptimizedRouter")
-        tests_passed += 1
-    except ImportError as e:
-        print(f"❌ router_optimizer: {e}")
-
-    # Test 3: DSPy agent optimizer
+    # Test: DSPy agent optimizer
     total_tests += 1
     try:
         from cogniverse_agents.optimizer.dspy_agent_optimizer import (  # noqa: F401
@@ -78,8 +52,6 @@ def test_structure_integrity():
 
     parent_dir = Path(__file__).parent.parent
     required_paths = [
-        "libs/agents/cogniverse_agents/optimizer/schemas.py",
-        "libs/agents/cogniverse_agents/optimizer/router_optimizer.py",
         "libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py",
     ]
 

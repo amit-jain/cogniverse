@@ -17,9 +17,7 @@ libs/agents/cogniverse_agents/optimizer/
 ├── artifact_manager.py            # ArtifactManager: ExperimentMetrics, promote_if_better,
 │                                  #   promote_to_canary, rollback_to_version, snapshot_active
 ├── signature_variants.py          # SignatureVariantRegistry: per-tenant DSPy signature variants
-├── schemas.py                     # Optimization data schemas
-├── strategy_learner.py            # StrategyLearner: pattern + LLM distillation from traces
-└── router_optimizer.py            # RoutingOptimizer base
+└── strategy_learner.py            # StrategyLearner: pattern + LLM distillation from traces
 
 libs/runtime/cogniverse_runtime/
 ├── optimization_cli.py            # CLI for per-agent optimization modes
@@ -1088,7 +1086,6 @@ flowchart TB
     end
 
     subgraph "DSPy Optimization"
-        Router["<span style='color:#000'>RouterModule</span>"]
         AgentOpt["<span style='color:#000'>DSPyAgentPromptOptimizer</span>"]
         MIPRO["<span style='color:#000'>MIPROv2</span>"]
     end
@@ -1105,11 +1102,10 @@ flowchart TB
     Factory --> Local
     Factory --> API
 
-    Modal --> Router
-    Local --> Router
-    API --> Router
+    Modal --> AgentOpt
+    Local --> AgentOpt
+    API --> AgentOpt
 
-    Router --> MIPRO
     AgentOpt --> MIPRO
     MIPRO --> Artifacts
 
@@ -1120,7 +1116,6 @@ flowchart TB
     style Modal fill:#90caf9,stroke:#1565c0,color:#000
     style Local fill:#90caf9,stroke:#1565c0,color:#000
     style API fill:#90caf9,stroke:#1565c0,color:#000
-    style Router fill:#ce93d8,stroke:#7b1fa2,color:#000
     style AgentOpt fill:#ce93d8,stroke:#7b1fa2,color:#000
     style MIPRO fill:#ffcc80,stroke:#ef6c00,color:#000
     style Artifacts fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -1240,83 +1235,20 @@ await pipeline.save_optimized_prompts(
 | `summary_generation` | `SummaryGenerationSignature` | Summary quality optimization |
 | `detailed_report` | `DetailedReportSignature` | Report structure optimization |
 
-### RouterModule & MIPROv2 Optimization
+### Live Routing Optimization
 
-**Location:** `libs/agents/cogniverse_agents/optimizer/router_optimizer.py`
-
-DSPy module for routing decisions with MIPROv2 optimization.
-
-```python
-from cogniverse_agents.optimizer.router_optimizer import (
-    RouterModule,
-    optimize_router,
-    OptimizedRouter,
-    evaluate_routing_accuracy,
-)
-from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
-
-# Create router module
-router = RouterModule()
-
-# Run MIPROv2 optimization (artifacts saved to telemetry via ArtifactManager)
-results = optimize_router(
-    student_config=LLMEndpointConfig(
-        model="openai/google/gemma-3-1b-it",
-        api_base="https://your-inference-endpoint",
-    ),
-    tenant_id="production",
-    telemetry_provider=telemetry_provider,
-    teacher_config=LLMEndpointConfig(
-        model="anthropic/claude-3-5-sonnet-20241022",
-        api_key="sk-ant-...",
-    ),
-    num_teacher_examples=50,
-)
-
-# Load optimized router for production (artifacts loaded from telemetry)
-optimized = OptimizedRouter(
-    tenant_id="production",
-    telemetry_provider=telemetry_provider,
-    lm_config=LLMEndpointConfig(
-        model="openai/google/gemma-3-1b-it",
-        api_base="https://your-inference-endpoint",
-    ),
-)
-decision = optimized.route(
-    user_query="Show me how to bake a cake",
-    conversation_history=""
-)
-# Returns: RoutingDecision(search_modality="video", generation_type="raw_results")
-```
-
-### Schemas
-
-**Location:** `libs/agents/cogniverse_agents/optimizer/schemas.py`
-
-```python
-from cogniverse_agents.optimizer.schemas import RoutingDecision, AgenticRouter
-
-# Pydantic model for routing output
-decision = RoutingDecision(
-    search_modality="video",      # "video" or "text"
-    generation_type="raw_results" # "detailed_report", "summary", "raw_results"
-)
-
-# DSPy signature for router
-class AgenticRouter(dspy.Signature):
-    conversation_history: str = dspy.InputField()
-    user_query: str = dspy.InputField()
-    routing_decision: RoutingDecision = dspy.OutputField()
-```
+The A2A entry point is the GLiNER-based `GatewayAgent`, whose routing
+thresholds are tuned by the `gateway-thresholds` optimization mode in
+`optimization_cli.py` (persists the `gateway_thresholds` artifact via
+`run_gateway_thresholds_optimization`). Agent prompts
+(query_analysis / summary / detailed_report) are optimized separately by
+`DSPyAgentPromptOptimizer`.
 
 ### CLI Usage
 
 ```bash
-# Run router optimizer directly
-uv run python -m cogniverse_agents.optimizer.router_optimizer \
-    --student-model google/gemma-3-1b-it \
-    --teacher-model claude-3-5-sonnet-20241022 \
-    --num-examples 50
+# Optimize gateway routing thresholds
+uv run python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds
 
 # Run agent prompt optimization
 uv run python -m cogniverse_agents.optimizer.dspy_agent_optimizer
@@ -1355,8 +1287,6 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 | File | Purpose |
 |------|---------|
 | `optimizer/dspy_agent_optimizer.py` | Multi-agent prompt optimization |
-| `optimizer/router_optimizer.py` | Router MIPROv2 optimization |
-| `optimizer/schemas.py` | RoutingDecision, AgenticRouter schemas |
 | `optimizer/artifact_manager.py` | Artifact persistence via Phoenix DatasetStore |
 
 ---
@@ -1392,8 +1322,6 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 - `libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py` - Multi-agent DSPy prompt optimization
 
 - `libs/runtime/cogniverse_runtime/optimization_cli.py` - CLI entry point for all optimization modes
-
-- `libs/agents/cogniverse_agents/optimizer/router_optimizer.py` - Router MIPROv2 optimization
 
 - `libs/runtime/cogniverse_runtime/optimization_cli.py` - On-demand CLI modes (gateway-thresholds, simba, workflow, etc.)
 

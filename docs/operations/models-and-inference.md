@@ -59,8 +59,8 @@ is determined by `api_base`, not the prefix.
 | `--max-model-len` | 262144 |
 
 The teacher is **scaled to zero by default** because it's only needed
-when `cogniverse_runtime.optimization_cli` runs MIPROv2 with
-`--use-teacher` (the larger model proposes few-shot demos for the
+when `cogniverse_runtime.optimization_cli` runs prompt optimization with
+a teacher configured (the larger model proposes few-shot demos for the
 optimizer to evaluate). Bring it up before optimization runs:
 
 ```bash
@@ -71,8 +71,9 @@ kubectl scale deployment/cogniverse-vllm-llm-teacher -n cogniverse --replicas=0
 ```
 
 The agent code wires it via `LLMConfig.teacher` → `create_dspy_lm()` →
-`MIPROv2(prompt_model=teacher_lm)` in
-`libs/agents/cogniverse_agents/optimizer/router_optimizer.py`. See the
+`teacher_settings` on `BootstrapFewShot` in
+`libs/agents/cogniverse_agents/optimizer/dspy_agent_optimizer.py`, driven
+by `cogniverse_runtime.optimization_cli`. See the
 [ColPali/ColQwen embedding flow](#visual-embeddings) for the runtime
 side that consumes the optimized program.
 

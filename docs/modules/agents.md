@@ -161,8 +161,6 @@ graph TD
     OptDir --> OptInit["<span style='color:#000'>__init__.py</span>"]
     OptDir --> ArtifactMgr["<span style='color:#000'>artifact_manager.py</span>"]
     OptDir --> DspyAgentOpt["<span style='color:#000'>dspy_agent_optimizer.py</span>"]
-    OptDir --> RouterOpt["<span style='color:#000'>router_optimizer.py</span>"]
-    OptDir --> Schemas["<span style='color:#000'>schemas.py</span>"]
     OptDir --> SigVariants["<span style='color:#000'>signature_variants.py</span>"]
     OptDir --> StrategyLearner["<span style='color:#000'>strategy_learner.py</span>"]
 

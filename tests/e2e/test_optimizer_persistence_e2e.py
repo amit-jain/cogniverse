@@ -1,13 +1,12 @@
 """E2E persistence coverage for the workflow optimizer and the
 synthetic generation pipeline.
 
-The router_optimizer test (`test_router_optimization_e2e.py`) surfaced
-seven real bugs the first time it ran end-to-end against a live
-cluster — wrong import paths, factory model-id rewriting, ConfigMap
-contract drift, persistence stubs that silently dropped metrics. The
-workflow optimizer and synthetic generator share the same chart +
-ArtifactManager + telemetry-provider plumbing but were not exercised
-end-to-end before this module. Tests bring each through the full
+End-to-end runs against a live cluster have historically surfaced real
+bugs invisible to unit tests — wrong import paths, factory model-id
+rewriting, ConfigMap contract drift, persistence stubs that silently
+dropped metrics. The workflow optimizer and synthetic generator share
+the same chart + ArtifactManager + telemetry-provider plumbing. Tests
+bring each through the full
 save → persist → load round-trip against the live runtime pod and
 Phoenix dataset store.
 
