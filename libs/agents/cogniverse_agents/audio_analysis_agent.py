@@ -6,7 +6,7 @@ for real audio search. Supports both transcript-based and acoustic similarity se
 """
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -111,37 +111,6 @@ class TranscriptionResult:
     segments: List[Dict[str, Any]]
     language: str
     confidence: float
-
-
-@dataclass
-class AudioEvent:
-    """Detected audio event"""
-
-    event_type: str  # speech, music, applause, etc.
-    start_time: float
-    end_time: float
-    confidence: float
-
-
-@dataclass
-class SpeakerSegment:
-    """Speaker diarization segment"""
-
-    speaker_id: str
-    start_time: float
-    end_time: float
-    text: Optional[str] = None
-
-
-@dataclass
-class MusicClassification:
-    """Music classification result"""
-
-    genre: str
-    mood: str
-    tempo: float  # BPM
-    key: Optional[str] = None
-    instruments: List[str] = field(default_factory=list)
 
 
 class AudioAnalysisAgent(
@@ -524,62 +493,6 @@ class AudioAnalysisAgent(
             logger.error(f"❌ Hybrid search failed: {e}")
             return []
 
-    async def detect_audio_events(
-        self, audio_url: str, event_types: Optional[List[str]] = None
-    ) -> List[AudioEvent]:
-        """
-        Detect sounds, music, speech segments
-
-        Args:
-            audio_url: URL or path to audio file
-            event_types: Specific event types to detect
-
-        Returns:
-            List of detected audio events
-
-        Note: Placeholder implementation - would integrate with audio event detection model
-        """
-        logger.info(f"🔍 Detecting audio events: {audio_url}")
-        logger.warning("⚠️  Audio event detection not yet fully implemented")
-        return []
-
-    async def identify_speakers(
-        self, audio_url: str, num_speakers: Optional[int] = None
-    ) -> List[SpeakerSegment]:
-        """
-        Speaker diarization - identify who spoke when
-
-        Args:
-            audio_url: URL or path to audio file
-            num_speakers: Expected number of speakers (auto-detect if None)
-
-        Returns:
-            List of speaker segments
-
-        Note: Placeholder implementation - would integrate with pyannote.audio or similar
-        """
-        logger.info(f"👥 Speaker diarization: {audio_url}")
-        logger.warning("⚠️  Speaker diarization not yet fully implemented")
-        return []
-
-    async def classify_music(self, audio_url: str) -> MusicClassification:
-        """
-        Classify music genre, mood, tempo, key
-
-        Args:
-            audio_url: URL or path to audio file
-
-        Returns:
-            MusicClassification with genre, mood, tempo, etc.
-
-        Note: Placeholder implementation - would integrate with music classification model
-        """
-        logger.info(f"🎵 Classifying music: {audio_url}")
-        logger.warning("⚠️  Music classification not yet fully implemented")
-        return MusicClassification(
-            genre="unknown", mood="unknown", tempo=0.0, key=None, instruments=[]
-        )
-
     async def find_similar_audio(
         self,
         reference_audio_url: str,
@@ -683,28 +596,6 @@ class AudioAnalysisAgent(
                     "text": "string",
                     "language": "string",
                     "segments": "list",
-                },
-            },
-            {
-                "name": "detect_audio_events",
-                "description": "Detect audio events like speech, music, sounds",
-                "input_schema": {"audio_url": "string", "event_types": "list"},
-                "output_schema": {"events": "list"},
-            },
-            {
-                "name": "identify_speakers",
-                "description": "Identify and segment speakers in audio",
-                "input_schema": {"audio_url": "string", "num_speakers": "integer"},
-                "output_schema": {"segments": "list"},
-            },
-            {
-                "name": "classify_music",
-                "description": "Classify music genre, mood, tempo",
-                "input_schema": {"audio_url": "string"},
-                "output_schema": {
-                    "genre": "string",
-                    "mood": "string",
-                    "tempo": "float",
                 },
             },
             {

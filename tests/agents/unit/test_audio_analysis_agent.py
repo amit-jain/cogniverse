@@ -12,7 +12,6 @@ from cogniverse_agents.audio_analysis_agent import (
     AudioAnalysisAgent,
     AudioAnalysisDeps,
     AudioResult,
-    MusicClassification,
     TranscriptionResult,
 )
 
@@ -235,36 +234,6 @@ class TestAudioAnalysisAgent:
         assert result.segments == []
 
     @pytest.mark.asyncio
-    async def test_detect_audio_events(self):
-        """Test audio event detection (placeholder)"""
-        # This is a placeholder method
-        results = await self.agent.detect_audio_events("http://example.com/audio.mp3")
-
-        # Should return empty list as it's not fully implemented
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_identify_speakers(self):
-        """Test speaker diarization (placeholder)"""
-        # This is a placeholder method
-        results = await self.agent.identify_speakers("http://example.com/audio.mp3")
-
-        # Should return empty list as it's not fully implemented
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_classify_music(self):
-        """Test music classification (placeholder)"""
-        # This is a placeholder method
-        result = await self.agent.classify_music("http://example.com/music.mp3")
-
-        # Should return default MusicClassification
-        assert isinstance(result, MusicClassification)
-        assert result.genre == "unknown"
-        assert result.mood == "unknown"
-        assert result.tempo == 0.0
-
-    @pytest.mark.asyncio
     @patch.object(AudioAnalysisAgent, "audio_transcriber", new_callable=PropertyMock)
     @patch("requests.post")
     async def test_find_similar_audio_semantic(
@@ -371,15 +340,17 @@ class TestAudioAnalysisAgent:
         """Test agent skills definition"""
         skills = self.agent._get_agent_skills()
 
-        # Verify skills
-        assert len(skills) >= 4
+        # Verify skills — exactly the three real ones after removing the
+        # dead stub skills (event detection / diarization / music classify).
+        assert len(skills) == 3
         skill_names = [s["name"] for s in skills]
         assert "search_audio" in skill_names
         assert "transcribe_audio" in skill_names
-        assert "detect_audio_events" in skill_names
-        assert "identify_speakers" in skill_names
-        assert "classify_music" in skill_names
         assert "find_similar_audio" in skill_names
+        # Removed dead stub skills must no longer be advertised.
+        assert "detect_audio_events" not in skill_names
+        assert "identify_speakers" not in skill_names
+        assert "classify_music" not in skill_names
 
 
 if __name__ == "__main__":
