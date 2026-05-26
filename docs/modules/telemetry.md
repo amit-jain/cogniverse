@@ -27,7 +27,6 @@ libs/foundation/cogniverse_foundation/telemetry/
 ├── manager.py               # TelemetryManager singleton
 ├── config.py                # TelemetryConfig and BatchExportConfig
 ├── context.py               # Span context helpers
-├── exporter.py              # OTLP exporter utilities
 ├── registry.py              # Provider registry for auto-discovery
 └── providers/               # Provider interfaces
     ├── __init__.py
@@ -54,7 +53,6 @@ from cogniverse_foundation.telemetry import (
     TelemetryManager,
     config,
     context,
-    exporter,
     get_telemetry_manager,
     manager,
     providers,
@@ -64,7 +62,7 @@ from cogniverse_foundation.telemetry import (
 
 **What's Re-exported:**
 - `TelemetryManager`, `TelemetryConfig`, `get_telemetry_manager`
-- Submodules: `config`, `context`, `exporter`, `manager`, `providers`, `registry`
+- Submodules: `config`, `context`, `manager`, `providers`, `registry`
 
 ### 3. Agents Layer: Modality Metrics (cogniverse-agents)
 ```text
@@ -279,9 +277,13 @@ batch_config = BatchExportConfig(
     max_export_batch_size=512,     # Spans per export
     export_timeout_millis=30_000,  # Export timeout
     schedule_delay_millis=500,     # Export interval
-    drop_on_queue_full=True,       # Drop vs block when full
 )
 ```
+
+Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
+(created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`): when
+the queue reaches `max_queue_size` the processor drops new spans rather than
+blocking the calling thread.
 
 ---
 
@@ -1195,14 +1197,14 @@ max_export_batch_size: int = 512     # Spans per export batch
 export_timeout_millis: int = 30_000  # Export timeout
 schedule_delay_millis: int = 500     # Export interval
 
-# Queue behavior when full
-drop_on_queue_full: bool = True      # Drop spans vs block
-log_dropped_spans: bool = True
-max_drop_log_rate_per_minute: int = 10
-
 # Test mode
 use_sync_export: bool = False        # Set via TELEMETRY_SYNC_EXPORT env var
 ```
+
+Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
+(created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`): when
+the queue reaches `max_queue_size` the processor drops new spans rather than
+blocking the calling thread.
 
 **Main Methods:**
 
@@ -1248,12 +1250,12 @@ project = config.get_project_name("acme-corp", "routing")
 
 ---
 
-#### `should_instrument_level(component: str) -> bool`
-Check if a component should be instrumented based on level.
+#### `should_instrument_component(component: str) -> bool`
+Check if a component should be instrumented based on the configured level.
 
 **Parameters:**
 
-- `component`: Component name ("search_service", "backend", "encoder", "pipeline", "agents")
+- `component`: Component name ("search_service", "agents", "backend", "pipeline", "encoder")
 
 **Returns:** `True` if component should be instrumented
 
@@ -1263,17 +1265,17 @@ Check if a component should be instrumented based on level.
 
 - `BASIC`: search_service only
 
-- `DETAILED`: search_service, backend, encoder
+- `DETAILED` (default): search_service, agents, backend, pipeline
 
-- `VERBOSE`: All components
+- `VERBOSE`: All components (adds encoder)
 
 **Example:**
 ```python
 config = TelemetryConfig(level=TelemetryLevel.DETAILED)
 
-config.should_instrument_level("search_service")  # True
-config.should_instrument_level("backend")         # True
-config.should_instrument_level("pipeline")        # False (VERBOSE only)
+config.should_instrument_component("search_service")  # True
+config.should_instrument_component("backend")         # True
+config.should_instrument_component("encoder")         # False (VERBOSE only)
 ```
 
 ---
@@ -1586,38 +1588,6 @@ with search_span(tenant_id="acme", query="test") as span:
 
 ---
 
-#### `@with_telemetry(span_name: str, tenant_id_param: str = "tenant_id", extract_attributes: Optional[Dict[str, str]] = None)`
-Decorator for automatic telemetry instrumentation.
-
-**Parameters:**
-
-- `span_name`: Name for the span
-
-- `tenant_id_param`: Function parameter name containing tenant_id (default: "tenant_id")
-
-- `extract_attributes`: Map of span attribute names to function parameter names
-
-**Example:**
-```python
-from cogniverse_foundation.telemetry.context import with_telemetry
-
-@with_telemetry(
-    span_name="video_search.search",
-    extract_attributes={
-        "query": "query_text",
-        "top_k": "max_results"
-    }
-)
-def search_videos(tenant_id: str, query_text: str, max_results: int = 10):
-    # Span automatically created with tenant_id, query, top_k attributes
-    return perform_search(query_text, max_results)
-
-# Usage
-results = search_videos(tenant_id="acme", query_text="test", max_results=5)
-```
-
----
-
 ## Usage Examples
 
 ### Example 1: Basic Multi-Tenant Telemetry Setup
@@ -1860,9 +1830,6 @@ batch_config = BatchExportConfig(
     max_export_batch_size=1024,    # Large batches for efficiency
     export_timeout_millis=60_000,  # 60s timeout
     schedule_delay_millis=1000,    # Export every 1s
-    drop_on_queue_full=True,       # Drop spans instead of blocking
-    log_dropped_spans=True,
-    max_drop_log_rate_per_minute=10
 )
 
 # Production telemetry configuration
@@ -1908,7 +1875,7 @@ print(f"Cached tenants: {stats['cached_tenants']}")
 
 - ✅ Batch exports (1024 spans/batch) for efficiency
 
-- ✅ Drop on queue full (don't block application)
+- ✅ Large queue size prevents back-pressure (OTel BatchSpanProcessor drops on full)
 
 - ✅ TLS enabled for production Phoenix endpoint
 
@@ -2032,10 +1999,9 @@ if hit_rate < 0.95:
 ```python
 # High-throughput configuration
 batch_config = BatchExportConfig(
-    max_queue_size=8192,          # Larger queue for burst traffic
+    max_queue_size=8192,          # Larger queue absorbs burst traffic
     max_export_batch_size=2048,   # Larger batches
     schedule_delay_millis=2000,   # Less frequent exports
-    drop_on_queue_full=True       # Don't block on full queue
 )
 
 # Low-latency configuration
@@ -2043,9 +2009,12 @@ batch_config = BatchExportConfig(
     max_queue_size=1024,
     max_export_batch_size=256,
     schedule_delay_millis=100,    # Frequent exports
-    drop_on_queue_full=False      # Wait for queue space
 )
 ```
+
+Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
+(created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`).
+Tune `max_queue_size` to control the point at which spans start being dropped.
 
 **Memory Management:**
 

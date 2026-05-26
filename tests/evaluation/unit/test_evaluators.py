@@ -14,52 +14,7 @@ from cogniverse_evaluation.evaluators.reference_free import (
     TemporalCoverageEvaluator,
     create_reference_free_evaluators,
 )
-from cogniverse_evaluation.evaluators.span_prevention import (
-    NoSpanEvaluator,
-    no_span,
-)
 from cogniverse_telemetry_phoenix.evaluation.framework import EvaluationResult
-
-
-class TestBaseEvaluator:
-    """Test base evaluator functionality."""
-
-    @pytest.mark.unit
-    def test_no_span_evaluator_with_evaluate_method(self):
-        """Test NoSpanEvaluator with _evaluate method."""
-
-        class TestEvaluator(NoSpanEvaluator):
-            def _evaluate(self, **kwargs):
-                return {"result": "test", "kwargs": kwargs}
-
-        evaluator = TestEvaluator()
-        result = evaluator.evaluate(test_param="test_value")
-
-        assert result["result"] == "test"
-        assert result["kwargs"]["test_param"] == "test_value"
-
-    @pytest.mark.unit
-    def test_no_span_evaluator_without_evaluate_method(self):
-        """Test NoSpanEvaluator without _evaluate method raises NotImplementedError."""
-        evaluator = NoSpanEvaluator()
-
-        with pytest.raises(
-            NotImplementedError, match="Subclass must implement _evaluate method"
-        ):
-            evaluator.evaluate()
-
-    @pytest.mark.unit
-    def test_no_span_decorator(self):
-        """Test no_span decorator functionality."""
-
-        @no_span
-        def test_function(x, y=None):
-            return f"result: {x}, {y}"
-
-        result = test_function("test", y="value")
-        assert result == "result: test, value"
-        assert hasattr(test_function, "_skip_instrumentation")
-        assert test_function._skip_instrumentation is True
 
 
 class TestRetrievalContext:

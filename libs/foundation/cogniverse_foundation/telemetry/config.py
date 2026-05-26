@@ -39,9 +39,6 @@ class BatchExportConfig:
     max_export_batch_size: int = 512
     export_timeout_millis: int = 30_000
     schedule_delay_millis: int = 500
-    drop_on_queue_full: bool = True
-    log_dropped_spans: bool = True
-    max_drop_log_rate_per_minute: int = 10
     use_sync_export: bool = False
 
 
@@ -172,9 +169,6 @@ class TelemetryConfig:
             "max_export_batch_size": self.batch_config.max_export_batch_size,
             "export_timeout_millis": self.batch_config.export_timeout_millis,
             "schedule_delay_millis": self.batch_config.schedule_delay_millis,
-            "drop_on_queue_full": self.batch_config.drop_on_queue_full,
-            "log_dropped_spans": self.batch_config.log_dropped_spans,
-            "max_drop_log_rate_per_minute": self.batch_config.max_drop_log_rate_per_minute,
             "use_sync_export": self.batch_config.use_sync_export,
             "service_name": self.service_name,
             "service_version": self.service_version,
@@ -195,9 +189,6 @@ class TelemetryConfig:
             max_export_batch_size=data.get("max_export_batch_size", 512),
             export_timeout_millis=data.get("export_timeout_millis", 30_000),
             schedule_delay_millis=data.get("schedule_delay_millis", 500),
-            drop_on_queue_full=data.get("drop_on_queue_full", True),
-            log_dropped_spans=data.get("log_dropped_spans", True),
-            max_drop_log_rate_per_minute=data.get("max_drop_log_rate_per_minute", 10),
             use_sync_export=data.get("use_sync_export", False),
         )
 

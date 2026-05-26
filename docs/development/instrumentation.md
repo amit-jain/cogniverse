@@ -285,13 +285,14 @@ class BatchExportConfig:
     export_timeout_millis: int = 30_000
     schedule_delay_millis: int = 500
 
-    # Queue behavior when full
-    drop_on_queue_full: bool = True
-    log_dropped_spans: bool = True
-
     # Test mode - synchronous export
     use_sync_export: bool = False  # Set via TELEMETRY_SYNC_EXPORT=true
 ```
+
+Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
+(created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`):
+when the queue reaches `max_queue_size` the processor drops new spans rather
+than blocking the calling thread.
 
 ### 3. ModalityMetricsTracker
 
@@ -609,9 +610,11 @@ BatchExportConfig(
     max_export_batch_size=512,     # Efficient batch size
     export_timeout_millis=30_000,  # 30s timeout
     schedule_delay_millis=500,     # Export every 500ms or when batch full
-    drop_on_queue_full=True        # Prevent blocking application
 )
 ```
+
+Queue-full drop behaviour is handled natively by OTel's `BatchSpanProcessor`
+(created by `phoenix.otel.register(batch=True)` inside `PhoenixProvider`).
 
 **Memory Management**
 - Rolling window for modality metrics (default 1000 samples)
@@ -726,16 +729,15 @@ tracker = ModalityMetricsTracker(window_size=500)
 config.batch_config.max_queue_size = 1024
 ```
 
-3. **Dropped spans**
-```python
-# Check stats for dropped spans
-stats = telemetry.get_stats()
-if stats.get('dropped_spans', 0) > 0:
-    # Increase queue size
-    config.batch_config.max_queue_size = 4096
+3. **Spans being dropped by OTel BatchSpanProcessor**
 
-    # Decrease export delay
-    config.batch_config.schedule_delay_millis = 250
+When the export queue fills up, OTel's `BatchSpanProcessor` (created by
+`phoenix.otel.register(batch=True)`) drops new spans rather than blocking.
+To reduce drops, increase `max_queue_size` and/or lower `schedule_delay_millis`:
+```python
+# Increase queue capacity and export frequency
+config.batch_config.max_queue_size = 4096
+config.batch_config.schedule_delay_millis = 250
 ```
 
 4. **Tenant isolation issues**
