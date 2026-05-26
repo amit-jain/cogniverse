@@ -1,71 +1,70 @@
-"""Unit tests for CodingAgent wiring (audit fix #9).
+"""Unit tests for CodingAgent memory/context wiring (audit fix #9).
 
-Verifies that CodingAgent inherits MemoryAwareMixin and that its
-``_process_impl`` calls ``inject_context_into_prompt`` to enrich the
-coding task with the FULL context stack (instructions + learned
-strategies + tenant memories) — same pattern as SearchAgent and
-SummarizerAgent.
-
-Before this fix CodingAgent had RLM but no memory wiring, so coding
-tasks ran with only the raw user query and no learned context.
+CodingAgent must inherit MemoryAwareMixin (the extended one with strategies)
+and its ``_process_impl`` must enrich the task via inject_context_into_prompt
+and pass the ENRICHED task to planning — not the raw input. The wiring is
+verified by *executing* ``_process_impl`` with the calls spied, not by grepping
+the source (which would pass even if the call were dead).
 """
 
-import inspect
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+
+from cogniverse_agents.coding_agent import CodingAgent, CodingInput
 
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestCodingAgentMemoryWiring:
     def test_inherits_memory_aware_mixin(self):
-        """CodingAgent must inherit from cogniverse_agents.memory_aware_mixin
-        — the EXTENDED mixin with get_strategies, not the deleted base."""
-        from cogniverse_agents.coding_agent import CodingAgent
+        """CodingAgent must inherit the EXTENDED MemoryAwareMixin (with
+        get_strategies), not the deleted base."""
         from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
         assert issubclass(CodingAgent, MemoryAwareMixin)
-        # Confirm it's the extended one with strategies.
         assert hasattr(MemoryAwareMixin, "get_strategies")
 
     def test_inherits_rlm_aware_mixin_too(self):
-        """CodingAgent should retain its RLM wiring after the memory addition.
-        Multi-mixin inheritance is the whole point of MRO, so confirm the
-        new addition didn't accidentally drop a base class."""
-        from cogniverse_agents.coding_agent import CodingAgent
+        """Adding the memory mixin must not drop the RLM base (MRO check)."""
         from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
         assert issubclass(CodingAgent, RLMAwareMixin)
 
-    def test_process_impl_calls_inject_context_into_prompt(self):
-        """Pin the wiring at the source level. A regression where someone
-        removes the inject_context_into_prompt call would silently drop
-        learned strategies for the coding agent."""
-        from cogniverse_agents.coding_agent import CodingAgent
+    @pytest.mark.asyncio
+    async def test_process_impl_enriches_task_and_passes_it_to_plan(self):
+        """Run _process_impl with the context wiring spied: it must set the
+        tenant, call inject_context_into_prompt(task), and pass the ENRICHED
+        result — not the raw task — into _plan. Aborts at _plan to stay focused
+        on the wiring rather than the downstream code-generation loop.
+        """
+        agent = object.__new__(CodingAgent)  # bare instance: exercise wiring only
+        captured: dict = {}
 
-        source = inspect.getsource(CodingAgent._process_impl)
-        assert "inject_context_into_prompt" in source, (
-            "CodingAgent._process_impl must call self.inject_context_into_prompt() "
-            "to inject the FULL context stack. Audit fix #9 requires this — see "
-            "docs/superpowers/audits/2026-04-07-orphan-and-wiring-audit.md"
+        agent.set_tenant_for_context = Mock(
+            side_effect=lambda t: captured.__setitem__("tenant", t)
         )
-        assert "set_tenant_for_context" in source, (
-            "CodingAgent._process_impl must call self.set_tenant_for_context() "
-            "before inject_context_into_prompt() so the instructions/strategies "
-            "are loaded for the right tenant"
-        )
+        agent.inject_context_into_prompt = Mock(return_value="ENRICHED_TASK")
+        agent.emit_progress = Mock()
+        agent._search_code_context = AsyncMock(return_value=[])
 
-    def test_enriched_task_is_passed_to_planner(self):
-        """The enriched task (output of inject_context_into_prompt) must
-        flow into the planning step, not the raw input.task. Otherwise the
-        wiring exists but is dead code."""
-        from cogniverse_agents.coding_agent import CodingAgent
+        class _StopAfterPlan(Exception):
+            pass
 
-        source = inspect.getsource(CodingAgent._process_impl)
-        # The enriched task must be passed to _plan(), not the raw input.task.
-        # We look for "self._plan(enriched_task" or similar.
-        assert "_plan(enriched_task" in source, (
-            "_process_impl must pass `enriched_task` (the output of "
-            "inject_context_into_prompt) to self._plan(), not the raw "
-            "input.task. Otherwise the wiring is dead code."
+        async def _capture_plan(enriched, code_context, language):
+            captured["plan_task"] = enriched
+            raise _StopAfterPlan
+
+        agent._plan = _capture_plan
+
+        inp = CodingInput(task="write a quicksort", tenant_id="acme:prod")
+        with pytest.raises(_StopAfterPlan):
+            await agent._process_impl(inp)
+
+        # Tenant set for context; raw task enriched; the ENRICHED task (not the
+        # raw one) is what reaches the planner — proving the wiring is live.
+        assert captured["tenant"] == "acme:prod"
+        agent.inject_context_into_prompt.assert_called_once_with(
+            "write a quicksort", "write a quicksort"
         )
+        assert captured["plan_task"] == "ENRICHED_TASK"
