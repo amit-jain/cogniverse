@@ -361,7 +361,10 @@ class TestSummarizerAgentCoreFunctionality:
     async def test_generate_brief_summary_logic(
         self, agent_with_mocks, sample_summary_request
     ):
-        """Test brief summary generation"""
+        """Brief summary builds a "- title: type" content block from the top
+        results and returns the DSPy summary verbatim. Assert the exact content
+        handed to DSPy and the exact summary returned, not just length/keywords.
+        """
         agent = agent_with_mocks
 
         thinking_phase = ThinkingPhase(
@@ -372,26 +375,37 @@ class TestSummarizerAgentCoreFunctionality:
             reasoning="Analysis of AI technology content",
         )
 
-        # Mock the agent's summarization_module.forward
-        mock_prediction = Mock()
-        mock_prediction.summary = (
-            "Brief summary of AI technology content including demos and tutorials."
-        )
+        captured = {}
 
-        agent.summarization_module.forward = Mock(return_value=mock_prediction)
+        async def _fake_call_dspy(
+            module, *, output_field, content, query, summary_type
+        ):
+            captured.update(
+                output_field=output_field,
+                content=content,
+                query=query,
+                summary_type=summary_type,
+            )
+            return Mock(summary="AI demos, an ML tutorial, and a research paper.")
 
-        # Need to provide the results parameter as well
+        agent.call_dspy = _fake_call_dspy
+
         results = sample_summary_request.search_results
         brief_summary = await agent._generate_brief_summary(
             sample_summary_request, results, thinking_phase
         )
 
-        assert isinstance(brief_summary, str)
-        assert len(brief_summary) > 10  # Should be substantive
-        # Should mention some key information from the results
-        assert any(
-            word in brief_summary.lower()
-            for word in ["ai", "technology", "demo", "tutorial", "research", "brief"]
+        # DSPy output is returned verbatim — the agent does not post-process it.
+        assert brief_summary == "AI demos, an ML tutorial, and a research paper."
+        # The brief path requests the "summary" field with summary_type="brief"
+        # and hands DSPy a "- {title}: {content_type}" block for the top results.
+        assert captured["output_field"] == "summary"
+        assert captured["summary_type"] == "brief"
+        assert captured["query"] == "AI technology overview"
+        assert captured["content"] == (
+            "- AI Technology Demo: video\n"
+            "- Machine Learning Tutorial: video\n"
+            "- AI Research Paper: text"
         )
 
     @pytest.mark.ci_fast
@@ -881,6 +895,9 @@ class TestA2AExecutorStreaming:
         mock_dispatcher.create_streaming_agent = Mock(
             return_value=(mock_agent, mock_typed_input)
         )
+        # Streaming resolves the canary/variant overlay before iterating; provide
+        # the async hook (no overlay here) so the path runs end to end.
+        mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=None)
 
         executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
 
@@ -911,6 +928,11 @@ class TestA2AExecutorStreaming:
         assert events[0].status.state == TaskState.working
         # Second event: final (input_required for multi-turn)
         assert events[1].status.state == TaskState.input_required
+        # Overlay resolution is seeded by context_id (session-sticky) so canary
+        # traffic-splitting is stable across a streaming conversation.
+        mock_dispatcher.resolve_artefact_for_request.assert_awaited_once_with(
+            "summarizer_agent", TEST_TENANT_ID, request_seed="ctx_456"
+        )
 
     @pytest.mark.asyncio
     async def test_executor_non_streaming_when_not_requested(self):

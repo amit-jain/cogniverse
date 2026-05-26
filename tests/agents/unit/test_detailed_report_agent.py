@@ -432,34 +432,50 @@ class TestDetailedReportAgentCoreFunctionality:
     async def test_generate_report_full_workflow(
         self, agent_with_mocks, sample_report_request
     ):
-        """Test the main generate_report method with real workflow"""
+        """The full report pipeline derives the thinking phase deterministically
+        from the 3 fixture results (2 video + 1 image) and surfaces the DSPy
+        executive summary verbatim. Assert exact derived values, not just types.
+        """
         agent = agent_with_mocks
+        # The only LLM-dependent step is the executive summary (via call_dspy);
+        # pin it so the assertion is deterministic and proves the wiring carries
+        # the DSPy output through to the result.
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="3 results analyzed for test query")
+        )
 
-        # Mock DSPy modules for thinking phase
-        with patch("dspy.ChainOfThought") as mock_cot:
-            mock_prediction = Mock()
-            mock_prediction.content_analysis = {
-                "total_results": 3,
-                "content_types": ["video", "image"],
-            }
-            mock_prediction.visual_assessment = {"has_visual_content": True}
-            mock_prediction.technical_findings = ["high quality videos"]
-            mock_prediction.patterns_identified = ["educational content"]
-            mock_prediction.gaps_and_limitations = []
-            mock_prediction.reasoning = "Analysis of diverse content types"
+        result = await agent._generate_report(sample_report_request)
 
-            mock_cot_instance = Mock()
-            mock_cot_instance.forward = Mock(return_value=mock_prediction)
-            mock_cot.return_value = mock_cot_instance
+        assert isinstance(result, ReportResult)
+        assert result.executive_summary == "3 results analyzed for test query"
 
-            result = await agent._generate_report(sample_report_request)
+        # Thinking phase is computed from the search results, NOT from any LLM:
+        # 2 videos + 1 image, durations 120/300/none, scores 0.9/0.7/0.6.
+        ca = result.thinking_phase.content_analysis
+        assert ca["total_results"] == 3
+        assert ca["content_types"] == {"video": 2, "image": 1}
+        assert ca["duration_distribution"] == {"short": 1, "medium": 1, "long": 1}
+        assert ca["quality_metrics"] == {"high": 1, "medium": 2, "low": 0}
+        assert ca["avg_relevance"] == pytest.approx((0.9 + 0.7 + 0.6) / 3)
 
-            assert isinstance(result, ReportResult)
-            assert result.executive_summary is not None
-            assert len(result.executive_summary) > 0
-            assert isinstance(result.detailed_findings, list)
-            assert isinstance(result.recommendations, list)
-            assert isinstance(result.thinking_phase, ThinkingPhase)
+        # First detailed finding is always the content-analysis summary; its
+        # significance is "high" because avg_relevance (0.733) > 0.7.
+        first = result.detailed_findings[0]
+        assert first["category"] == "Content Analysis"
+        assert first["finding"] == "Analyzed 3 results"
+        assert first["significance"] == "high"
+        assert first["details"] == ca
+
+        # avg_relevance 0.733 sits between the 0.5 and 0.8 thresholds, so NEITHER
+        # relevance-based recommendation is emitted.
+        assert (
+            "Consider refining the search query to improve result relevance"
+            not in result.recommendations
+        )
+        assert (
+            "High relevance scores indicate good query formulation"
+            not in result.recommendations
+        )
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
