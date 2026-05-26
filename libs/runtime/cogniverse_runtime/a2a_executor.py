@@ -190,6 +190,21 @@ class CogniverseAgentExecutor(AgentExecutor):
                 tenant_id,
             )
 
+            # Streaming bypasses dispatch(), so resolve + inject the canary /
+            # variant artefact overlay here too — otherwise streaming traffic
+            # always serves active prompts, ignoring canary traffic-split and
+            # admin signature-variant selection. Seed is session-sticky:
+            # context_id, falling back to task_id.
+            request_seed = context_id or task_id
+            if request_seed:
+                overlay = await self._dispatcher.resolve_artefact_for_request(
+                    agent_name, tenant_id, request_seed=request_seed
+                )
+                if overlay is not None:
+                    self._dispatcher._apply_artefact_overlay(
+                        agent, {"_artefact_overlay": overlay}
+                    )
+
             agent_lm = getattr(agent, "_dspy_lm", None)
             if agent_lm is not None:
                 import dspy

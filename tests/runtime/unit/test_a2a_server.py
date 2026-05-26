@@ -21,6 +21,7 @@ from a2a.types import (
 )
 from starlette.testclient import TestClient
 
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
 from cogniverse_runtime.agent_dispatcher import AgentDispatcher
 
@@ -570,6 +571,68 @@ class TestTerminalEventFinalFlag:
         assert queue.events[1].final is True
         assert queue.events[1].status.state == TaskState.input_required
         assert sum(1 for e in queue.events if e.final) == 1
+
+
+class _MemoryStreamAgent(MemoryAwareMixin):
+    """Memory-aware streaming agent stub — exposes set/get_dispatched_artefact
+    and yields a fixed event list from process(stream=True)."""
+
+    def __init__(self, events):
+        self._events = events
+
+    async def process(self, typed_input, stream=False):
+        events = self._events
+
+        async def _gen():
+            for e in events:
+                yield e
+
+        return _gen()
+
+
+@pytest.mark.asyncio
+class TestStreamingCanaryOverlay:
+    """Streaming bypasses dispatch(); the executor must still resolve + inject
+    the canary/variant artefact overlay, else streaming traffic ignores canary
+    traffic-split and admin signature-variant selection."""
+
+    async def test_streaming_resolves_and_applies_overlay(self, mock_dispatcher):
+        agent = _MemoryStreamAgent([{"type": "final", "data": {"ok": True}}])
+        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        canary = {
+            "served_from": "canary",
+            "version": 4,
+            "variant_id": "default",
+            "prompts": {"system": "CANARY_PROMPT"},
+        }
+        mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=canary)
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+
+        await executor._execute_streaming(
+            "summarizer_agent", "q", "test:unit", "task-1", "ctx-canary", queue
+        )
+
+        # Session-sticky seed = context_id; overlay reaches the streaming agent.
+        mock_dispatcher.resolve_artefact_for_request.assert_awaited_once_with(
+            "summarizer_agent", "test:unit", request_seed="ctx-canary"
+        )
+        assert agent._dispatched_artefact == canary
+        assert agent.get_dispatched_prompts() == {"system": "CANARY_PROMPT"}
+
+    async def test_streaming_no_overlay_when_resolve_returns_none(self, mock_dispatcher):
+        agent = _MemoryStreamAgent([{"type": "final", "data": {}}])
+        mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
+        mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=None)
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+
+        await executor._execute_streaming(
+            "summarizer_agent", "q", "test:unit", "task-1", "ctx-1", queue
+        )
+
+        # No factory / no canary -> overlay not applied (back-compat, no regression).
+        assert getattr(agent, "_dispatched_artefact", None) is None
 
 
 @pytest.mark.asyncio
