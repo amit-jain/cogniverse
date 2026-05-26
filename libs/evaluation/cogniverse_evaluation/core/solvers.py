@@ -270,13 +270,15 @@ def create_batch_solver(
 
         logger.info(f"Loaded {len(traces)} traces with ground truth extraction")
 
-        # Apply reranking if configured
+        # Apply reranking if configured — uses the live production rerankers.
         reranking_strategy = config.get("reranking_strategy")
         if reranking_strategy and reranking_strategy != "none":
             from .reranking import apply_reranking_to_traces
 
+            rerank_cfg = dict(config.get("reranking_config", {}))
+            rerank_cfg.setdefault("tenant_id", config.get("tenant_id", ""))
             traces = await apply_reranking_to_traces(
-                traces, reranking_strategy, config.get("reranking_config", {})
+                traces, reranking_strategy, rerank_cfg
             )
             logger.info(f"Applied {reranking_strategy} reranking strategy")
 

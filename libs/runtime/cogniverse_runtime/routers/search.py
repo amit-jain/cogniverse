@@ -284,61 +284,18 @@ async def rerank_results(
                 status_code=400, detail="Query and results are required"
             )
 
-        # Import reranker based on strategy. Learned/hybrid rerankers
-        # load tenant-scoped config (model name, weights); MultiModalReranker
-        # is the heuristic base class and doesn't need config.
-        if strategy == "learned":
-            from cogniverse_agents.search.learned_reranker import (
-                LearnedReranker,
-            )
+        # Select + run the reranker via the shared service (same path the
+        # evaluation harness uses). Unknown strategy raises ValueError →
+        # surfaced as 400 by the handler below.
+        from cogniverse_agents.search.rerank_service import rerank_result_dicts
 
-            reranker = LearnedReranker(
-                tenant_id=tenant_id, config_manager=config_manager
-            )
-        elif strategy == "hybrid":
-            from cogniverse_agents.search.hybrid_reranker import (
-                HybridReranker,
-            )
-
-            reranker = HybridReranker(
-                tenant_id=tenant_id, config_manager=config_manager
-            )
-        elif strategy == "multi_modal":
-            from cogniverse_agents.search.multi_modal_reranker import (
-                MultiModalReranker,
-            )
-
-            reranker = MultiModalReranker()
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown strategy: {strategy}")
-
-        # Rerank. All rerankers share an async ``rerank(query, results)`` over
-        # typed RerankerSearchResult objects, so convert the request's result
-        # dicts in, await, then serialize back to dicts in the reranked order.
-        from dataclasses import asdict
-
-        from cogniverse_agents.search.types import RerankerSearchResult
-
-        def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
-            return RerankerSearchResult(
-                id=str(d.get("id") or d.get("source_id") or d.get("document_id") or ""),
-                title=d.get("title", "") or "",
-                content=d.get("content", "") or d.get("description", "") or "",
-                modality=d.get("modality", "") or d.get("content_type", "") or "",
-                score=float(d.get("score", 0.0) or 0.0),
-                metadata=d.get("metadata", {}) or {},
-            )
-
-        def _to_dict(r: RerankerSearchResult) -> Dict[str, Any]:
-            out = asdict(r)
-            if r.timestamp is not None:
-                out["timestamp"] = r.timestamp.isoformat()
-            return out
-
-        reranked_typed = await reranker.rerank(
-            query=query, results=[_to_rsr(r) for r in results]
+        reranked = await rerank_result_dicts(
+            query=query,
+            results=results,
+            strategy=strategy,
+            tenant_id=tenant_id,
+            config_manager=config_manager,
         )
-        reranked = [_to_dict(r) for r in reranked_typed]
 
         return {
             "query": query,
