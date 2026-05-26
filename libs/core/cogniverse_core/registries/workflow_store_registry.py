@@ -5,10 +5,10 @@ Implementations register via the ``cogniverse.workflow.stores`` entry-point
 group, e.g.::
 
     [project.entry-points."cogniverse.workflow.stores"]
-    vespa = "cogniverse_vespa.workflow.workflow_store:VespaWorkflowStore"
+    telemetry = "cogniverse_agents.workflow.telemetry_workflow_store:TelemetryWorkflowStore"
 
-Callers fetch instances with ``WorkflowStoreRegistry.get(name="vespa",
-config={"backend_url": ..., "backend_port": ...})``.
+Callers fetch instances with ``WorkflowStoreRegistry.get(name="telemetry",
+config={"telemetry_provider": provider})``.
 """
 
 from __future__ import annotations

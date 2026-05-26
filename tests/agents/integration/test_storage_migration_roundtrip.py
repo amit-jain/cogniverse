@@ -247,10 +247,8 @@ class TestWorkflowIntelligenceRoundTrip:
     @pytest.mark.asyncio
     async def test_record_execution_is_noop(self, real_provider):
         """record_execution no longer persists inline."""
-        from cogniverse_agents.workflow.intelligence import (
-            WorkflowExecution,
-            WorkflowIntelligence,
-        )
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
         wi = WorkflowIntelligence(
             telemetry_provider=real_provider,

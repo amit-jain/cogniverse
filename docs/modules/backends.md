@@ -76,13 +76,10 @@ libs/vespa/cogniverse_vespa/
 │   └── adapter_store.py            # Adapter registry storage
 ├── search_backend.py               # Tenant-scoped search backend (VespaSearchBackend)
 ├── strategy_aware_processor.py     # Strategy-aware processing
-├── vespa_schema_manager.py         # Multi-tenant schema management
-└── workflow/
-    ├── __init__.py
-    └── workflow_store.py           # Workflow intelligence storage
+└── vespa_schema_manager.py         # Multi-tenant schema management
 ```
 
-**Total Files**: 15 Python modules (excluding `__init__.py`), including 3 subdirectories: config/, workflow/, registry/
+**Total Files**: 13 Python modules (excluding `__init__.py`), including 2 subdirectories: config/, registry/
 
 **Key Files**:
 
@@ -1735,7 +1732,6 @@ configs/schemas/
 ├── config_metadata_schema.json         # Configuration storage (VespaConfigStore)
 ├── adapter_registry_schema.json        # Trained adapter metadata
 ├── agent_memories_schema.json          # Agent memory storage
-├── workflow_intelligence_schema.json   # Workflow tracking
 └── video_*_schema.json                 # Video content schemas (profiles)
 ```
 

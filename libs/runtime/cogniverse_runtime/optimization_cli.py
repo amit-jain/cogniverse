@@ -1007,13 +1007,6 @@ async def run_workflow_optimization(
             "workflows_extracted": 0,
         }
 
-    # Generate templates from workflow history
-    import json as _json
-
-    from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-
-    artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
-
     # Drop executions whose agent_sequence references an agent that no
     # longer exists in the current configuration. Phoenix retains
     # historical spans across schema changes (e.g. an old agent that was
@@ -1059,70 +1052,27 @@ async def run_workflow_optimization(
             seq = [a.strip() for a in seq.split(",") if a.strip()]
         return bool(seq) and all(a in _live_agents for a in seq)
 
-    # Save workflow executions as demonstrations
-    execution_demos = []
-    for execution in intelligence.workflow_history:
-        if not _agents_live(execution.agent_sequence):
-            logger.debug(
-                "Skipping stale workflow demo (agents %r not all in registry)",
-                execution.agent_sequence,
-            )
-            continue
-        execution_demos.append(
-            {
-                "input": _json.dumps(
-                    {
-                        "workflow_id": execution.workflow_id,
-                        "query": execution.query,
-                        "query_type": execution.query_type,
-                        "execution_time": execution.execution_time,
-                        "success": execution.success,
-                        "agent_sequence": execution.agent_sequence,
-                        "task_count": execution.task_count,
-                        "parallel_efficiency": execution.parallel_efficiency,
-                        "confidence_score": execution.confidence_score,
-                        "timestamp": datetime.now().isoformat(),
-                    },
-                    default=str,
-                ),
-                "output": _json.dumps(
-                    {
-                        "success": execution.success,
-                        "execution_time": execution.execution_time,
-                    },
-                    default=str,
-                ),
-            }
-        )
+    # Persist through the workflow store — the same registry-resolved store
+    # WorkflowIntelligence reads back at orchestrator startup. Stale demos
+    # (agents no longer in the live config) are dropped first; the store owns
+    # serialization and the demonstration/blob layout.
+    from cogniverse_core.registries import WorkflowStoreRegistry
 
-    if execution_demos:
-        await artifact_manager.save_demonstrations("workflow", execution_demos)
+    store = WorkflowStoreRegistry.get(name="telemetry")
 
-    # Save agent performance profiles
-    perf_report = intelligence.get_agent_performance_report()
-    if perf_report:
-        profile_demos = [
-            {
-                "input": _json.dumps(
-                    {
-                        "agent_name": agent_name,
-                        **perf_data,
-                        "last_updated": datetime.now().isoformat(),
-                    },
-                    default=str,
-                ),
-                "output": _json.dumps({"agent_name": agent_name}, default=str),
-            }
-            for agent_name, perf_data in perf_report.items()
-        ]
-        await artifact_manager.save_demonstrations("agent_profiles", profile_demos)
+    live_executions = [
+        execution
+        for execution in intelligence.workflow_history
+        if _agents_live(execution.agent_sequence)
+    ]
+    await store.save_executions(tenant_id, live_executions)
 
-    # Save query type patterns
+    profiles = list(intelligence.agent_performance.values())
+    await store.save_agent_profiles(tenant_id, profiles)
+
     if intelligence.query_type_patterns:
-        await artifact_manager.save_blob(
-            kind="workflow",
-            key="query_patterns",
-            content=_json.dumps(dict(intelligence.query_type_patterns)),
+        await store.save_query_patterns(
+            tenant_id, dict(intelligence.query_type_patterns)
         )
 
     logger.info("Workflow optimization complete")
@@ -1130,8 +1080,8 @@ async def run_workflow_optimization(
         "status": "success",
         "spans_found": len(spans_df),
         "workflows_extracted": workflows_extracted,
-        "execution_demos_saved": len(execution_demos),
-        "agent_profiles_saved": len(perf_report),
+        "execution_demos_saved": len(live_executions),
+        "agent_profiles_saved": len(profiles),
     }
 
 

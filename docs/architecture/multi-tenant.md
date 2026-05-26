@@ -289,8 +289,7 @@ configs/schemas/
 ├── video_videoprism_base_mv_chunk_30s_schema.json
 ├── video_videoprism_large_mv_chunk_30s_schema.json
 ├── video_videoprism_lvt_base_sv_chunk_6s_schema.json
-├── video_videoprism_lvt_large_sv_chunk_6s_schema.json
-└── workflow_intelligence_schema.json
+└── video_videoprism_lvt_large_sv_chunk_6s_schema.json
 ```
 
 ### Schema Deployment

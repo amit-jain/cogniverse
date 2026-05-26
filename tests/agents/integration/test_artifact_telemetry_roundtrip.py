@@ -756,6 +756,96 @@ class TestDSPyAgentArtifactRoundTrip:
         )
 
 
+class TestWorkflowStoreRoundTrip:
+    """Save through the WorkflowStore registry, read back via WorkflowIntelligence.
+
+    Exercises the full abstraction round-trip against real Phoenix: the writer
+    (registry-resolved telemetry store) persists executions / agent profiles /
+    query patterns / templates, and a fresh WorkflowIntelligence loads them all
+    back through the same store the orchestrator uses at startup.
+    """
+
+    @pytest.mark.asyncio
+    async def test_save_via_store_load_via_intelligence(self, real_provider):
+        import uuid
+        from datetime import datetime
+
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_core.registries import WorkflowStoreRegistry
+        from cogniverse_sdk.interfaces.workflow_store import (
+            AgentPerformance,
+            WorkflowExecution,
+            WorkflowTemplate,
+        )
+
+        tenant_id = f"wf-store-rt-{uuid.uuid4().hex[:8]}"
+
+        executions = [
+            WorkflowExecution(
+                workflow_id="wf-rt-1",
+                query="find cats",
+                query_type="video_search",
+                execution_time=1.5,
+                success=True,
+                agent_sequence=["gateway_agent", "video_search_agent"],
+                task_count=2,
+                parallel_efficiency=0.8,
+                confidence_score=0.91,
+                user_satisfaction=0.75,
+                error_details=None,
+                timestamp=datetime(2026, 5, 26, 12, 0, 0),
+                metadata={"source": "roundtrip"},
+            )
+        ]
+        profiles = [
+            AgentPerformance(
+                agent_name="video_search_agent",
+                total_executions=10,
+                successful_executions=9,
+                average_execution_time=2.3,
+                average_confidence=0.88,
+                error_rate=0.1,
+                preferred_query_types=["visual"],
+                performance_trend="improving",
+                last_updated=datetime(2026, 5, 26, 9, 0, 0),
+            )
+        ]
+        patterns = {"video_search": ["find *", "show me *"]}
+        template = WorkflowTemplate(
+            template_id="tmpl-rt-1",
+            name="fast_path",
+            description="single-agent search",
+            query_patterns=["find *"],
+            task_sequence=[{"agent": "video_search_agent"}],
+            expected_execution_time=1.2,
+            success_rate=0.95,
+            usage_count=3,
+            created_at=datetime(2026, 5, 1, 0, 0, 0),
+            last_used=None,
+        )
+
+        # Resolve the writer store via the registry (the production path) with
+        # the test's real Phoenix provider. Clear the cache so this test's
+        # provider is not shadowed by an instance another test cached.
+        WorkflowStoreRegistry.clear_cache()
+        store = WorkflowStoreRegistry.get(
+            name="telemetry", config={"telemetry_provider": real_provider}
+        )
+        await store.save_executions(tenant_id, executions)
+        await store.save_agent_profiles(tenant_id, profiles)
+        await store.save_query_patterns(tenant_id, patterns)
+        await store.save_template(tenant_id, template)
+
+        # Fresh WorkflowIntelligence loads everything back through the store.
+        wi = WorkflowIntelligence(real_provider, tenant_id)
+        await wi.load_historical_data()
+
+        assert list(wi.workflow_history) == executions
+        assert wi.agent_performance == {"video_search_agent": profiles[0]}
+        assert dict(wi.query_type_patterns) == patterns
+        assert wi.workflow_templates == {"tmpl-rt-1": template}
+
+
 class TestDispatcherArtifactWiring:
     """Verify AgentDispatcher.dispatch() triggers _load_artifact on agents."""
 

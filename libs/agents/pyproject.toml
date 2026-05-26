@@ -53,3 +53,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cogniverse_agents"]
+
+[project.entry-points."cogniverse.workflow.stores"]
+telemetry = "cogniverse_agents.workflow.telemetry_workflow_store:TelemetryWorkflowStore"

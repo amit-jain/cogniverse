@@ -9,12 +9,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from cogniverse_agents.workflow.intelligence import (
-    WorkflowExecution,
-    WorkflowIntelligence,
-)
+from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
 from cogniverse_foundation.telemetry.config import SPAN_NAME_ORCHESTRATION
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
 if TYPE_CHECKING:
     from cogniverse_foundation.telemetry.providers.base import TelemetryProvider

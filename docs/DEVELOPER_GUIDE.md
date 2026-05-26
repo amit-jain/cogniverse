@@ -137,7 +137,7 @@ flowchart TB
 | **evaluation** | Core | Experiments, metrics, datasets, quality monitor | core/, metrics/, evaluators/, quality_monitor.py |
 | **synthetic** | Core | Synthetic data generation | service.py, generators/ |
 | **agents** | Implementation | Routing, search, orchestration, strategy learner, wiki knowledge base | routing/, search/, tools/, optimizer/, wiki/ |
-| **vespa** | Implementation | Vespa backend, schema management | config/, registry/, workflow/ |
+| **vespa** | Implementation | Vespa backend, schema management | config/, registry/ |
 | **finetuning** | Implementation | LLM fine-tuning (SFT, DPO) | training/, dataset/, registry/ |
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |
 | **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |

@@ -9,9 +9,9 @@ import pytest
 from cogniverse_agents.workflow.intelligence import (
     OptimizationStrategy,
     WorkflowIntelligence,
-    WorkflowTemplate,
 )
 from cogniverse_agents.workflow_types import WorkflowPlan, WorkflowStatus, WorkflowTask
+from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
 
 
 def _make_intelligence(**kwargs) -> WorkflowIntelligence:
@@ -35,7 +35,7 @@ class TestWorkflowIntelligence:
             optimization_strategy=OptimizationStrategy.BALANCED,
         )
 
-        assert intelligence._artifact_manager is not None
+        assert intelligence._store is not None
         assert intelligence.max_history_size == 1000
         assert intelligence.optimization_strategy == OptimizationStrategy.BALANCED
 
@@ -178,7 +178,7 @@ class TestSimplifiedWorkflowIntelligence:
     @pytest.mark.asyncio
     async def test_record_execution_appends_to_history(self):
         """record_execution appends a WorkflowExecution to history."""
-        from cogniverse_agents.workflow.intelligence import WorkflowExecution
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
         intelligence = _make_intelligence()
         execution = WorkflowExecution(
@@ -200,7 +200,7 @@ class TestSimplifiedWorkflowIntelligence:
     @pytest.mark.asyncio
     async def test_record_execution_respects_max_history_size(self):
         """record_execution should respect max_history_size limit."""
-        from cogniverse_agents.workflow.intelligence import WorkflowExecution
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
         intelligence = _make_intelligence(max_history_size=2)
         for i in range(3):

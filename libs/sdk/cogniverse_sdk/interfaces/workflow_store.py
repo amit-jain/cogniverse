@@ -1,368 +1,191 @@
-"""WorkflowStore Abstract Interface
+"""WorkflowStore interface — typed persistence for workflow intelligence.
 
-Defines the interface for workflow intelligence storage backends.
-Supports multiple implementations: Vespa, Elasticsearch, etc.
+Defines the storage contract that ``WorkflowIntelligence`` (the reader, loaded
+at orchestrator startup) and the batch optimizer (the writer) share: workflow
+executions, agent performance profiles, query-type patterns, and reusable
+templates. Implementations register against the ``cogniverse.workflow.stores``
+entry-point group and are resolved through ``WorkflowStoreRegistry``.
+
+The domain dataclasses live here rather than in the agents package so the
+interface is fully typed to them without the core registry having to import
+agents. The data methods are ``async`` because the only backend today
+(telemetry/Phoenix via ``ArtifactManager``) and both callers are async; the
+trivial lifecycle/health methods stay sync.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
 @dataclass
-class ExecutionRecord:
-    """Workflow execution record."""
+class WorkflowExecution:
+    """Historical workflow execution record."""
 
-    execution_id: str
-    tenant_id: str
-    workflow_name: str
-    status: str
-    metrics: Dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage."""
-        return {
-            "execution_id": self.execution_id,
-            "tenant_id": self.tenant_id,
-            "workflow_name": self.workflow_name,
-            "status": self.status,
-            "metrics": self.metrics,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "ExecutionRecord":
-        """Create from dictionary."""
-        return cls(
-            execution_id=data["execution_id"],
-            tenant_id=data["tenant_id"],
-            workflow_name=data["workflow_name"],
-            status=data["status"],
-            metrics=data.get("metrics", {}),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-        )
-
-
-@dataclass
-class AgentPerformanceRecord:
-    """Agent performance record for a single execution."""
-
-    performance_id: str
-    tenant_id: str
-    agent_type: str
-    duration_ms: float
+    workflow_id: str
+    query: str
+    query_type: str
+    execution_time: float
     success: bool
-    metrics: Dict[str, Any]
-    created_at: datetime
+    agent_sequence: List[str]
+    task_count: int
+    parallel_efficiency: float
+    confidence_score: float
+    user_satisfaction: Optional[float] = None
+    error_details: Optional[str] = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage."""
-        return {
-            "performance_id": self.performance_id,
-            "tenant_id": self.tenant_id,
-            "agent_type": self.agent_type,
-            "duration_ms": self.duration_ms,
-            "success": self.success,
-            "metrics": self.metrics,
-            "created_at": self.created_at.isoformat(),
-        }
+        data = asdict(self)
+        data["timestamp"] = self.timestamp.isoformat()
+        return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformanceRecord":
-        """Create from dictionary."""
-        return cls(
-            performance_id=data["performance_id"],
-            tenant_id=data["tenant_id"],
-            agent_type=data["agent_type"],
-            duration_ms=data.get("duration_ms", 0.0),
-            success=data.get("success", True),
-            metrics=data.get("metrics", {}),
-            created_at=datetime.fromisoformat(data["created_at"]),
-        )
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowExecution":
+        data = dict(data)
+        ts = data.get("timestamp")
+        if isinstance(ts, str):
+            data["timestamp"] = datetime.fromisoformat(ts)
+        return cls(**data)
 
 
 @dataclass
-class AgentStats:
-    """Aggregated agent performance statistics."""
+class AgentPerformance:
+    """Agent performance profile aggregated across executions."""
 
-    agent_type: str
-    tenant_id: str
-    total_executions: int
-    avg_duration_ms: float
-    success_rate: float
-    last_execution: Optional[datetime]
+    agent_name: str
+    total_executions: int = 0
+    successful_executions: int = 0
+    average_execution_time: float = 0.0
+    average_confidence: float = 0.0
+    error_rate: float = 0.0
+    preferred_query_types: List[str] = field(default_factory=list)
+    performance_trend: str = "stable"  # improving, degrading, stable
+    last_updated: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data["last_updated"] = self.last_updated.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "AgentPerformance":
+        data = dict(data)
+        lu = data.get("last_updated")
+        if isinstance(lu, str):
+            data["last_updated"] = datetime.fromisoformat(lu)
+        return cls(**data)
 
 
 @dataclass
 class WorkflowTemplate:
-    """Workflow template configuration."""
+    """Reusable workflow template."""
 
     template_id: str
-    tenant_id: str
-    template_name: str
-    config: Dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
+    name: str
+    description: str
+    query_patterns: List[str]
+    task_sequence: List[Dict[str, Any]]
+    expected_execution_time: float
+    success_rate: float
+    usage_count: int = 0
+    created_at: datetime = field(default_factory=datetime.now)
+    last_used: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for storage."""
-        return {
-            "template_id": self.template_id,
-            "tenant_id": self.tenant_id,
-            "template_name": self.template_name,
-            "config": self.config,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-        }
+        data = asdict(self)
+        data["created_at"] = self.created_at.isoformat()
+        data["last_used"] = self.last_used.isoformat() if self.last_used else None
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowTemplate":
-        """Create from dictionary."""
-        return cls(
-            template_id=data["template_id"],
-            tenant_id=data["tenant_id"],
-            template_name=data["template_name"],
-            config=data.get("config", {}),
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-        )
+        data = dict(data)
+        ca = data.get("created_at")
+        if isinstance(ca, str):
+            data["created_at"] = datetime.fromisoformat(ca)
+        lu = data.get("last_used")
+        if isinstance(lu, str):
+            data["last_used"] = datetime.fromisoformat(lu)
+        return cls(**data)
 
 
 class WorkflowStore(ABC):
-    """
-    Abstract interface for workflow intelligence storage.
+    """Typed persistence for workflow intelligence.
 
     Implementations:
-    - VespaWorkflowStore: Vespa backend storage
-    - ElasticsearchWorkflowStore: Elasticsearch backend storage (future)
+    - TelemetryWorkflowStore: persists through the telemetry substrate
+      (Phoenix datasets/blobs via ArtifactManager), following whatever
+      observability backend the active TelemetryProvider targets.
+
+    Save methods replace the stored set for the tenant (the optimizer rebuilds
+    history from spans each batch run); ``save_template`` upserts one template.
     """
 
-    @abstractmethod
     def initialize(self) -> None:
-        """
-        Initialize the workflow store.
+        """Provision backing storage. Default: no-op (lazy creation)."""
+        return None
 
-        Creates necessary tables/schemas/indices for storage.
-        """
-        pass
-
-    # ==================== Execution Records ====================
+    # ==================== Workflow Executions ====================
 
     @abstractmethod
-    def record_execution(
-        self,
-        tenant_id: str,
-        workflow_name: str,
-        status: str,
-        metrics: Dict[str, Any],
-    ) -> str:
-        """
-        Record workflow execution.
-
-        Args:
-            tenant_id: Tenant identifier
-            workflow_name: Name of the workflow
-            status: Execution status (e.g., "completed", "failed")
-            metrics: Execution metrics (duration, steps, etc.)
-
-        Returns:
-            execution_id: Unique identifier for this execution
-        """
-        pass
+    async def save_executions(
+        self, tenant_id: str, executions: List[WorkflowExecution]
+    ) -> None:
+        """Replace the tenant's stored executions with ``executions``."""
 
     @abstractmethod
-    def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
-        """
-        Get execution by ID.
+    async def load_executions(self, tenant_id: str) -> List[WorkflowExecution]:
+        """Load all stored executions for the tenant."""
 
-        Args:
-            execution_id: Unique execution identifier
-
-        Returns:
-            ExecutionRecord if found, None otherwise
-        """
-        pass
+    # ==================== Agent Performance Profiles ====================
 
     @abstractmethod
-    def list_executions(
-        self,
-        tenant_id: str,
-        workflow_name: Optional[str] = None,
-        limit: int = 100,
-    ) -> List[ExecutionRecord]:
-        """
-        List executions with optional filters.
-
-        Args:
-            tenant_id: Tenant identifier
-            workflow_name: Filter by workflow name (None = all workflows)
-            limit: Maximum number of records to return
-
-        Returns:
-            List of ExecutionRecord sorted by created_at (newest first)
-        """
-        pass
-
-    # ==================== Agent Performance ====================
+    async def save_agent_profiles(
+        self, tenant_id: str, profiles: List[AgentPerformance]
+    ) -> None:
+        """Replace the tenant's stored agent performance profiles."""
 
     @abstractmethod
-    def record_agent_performance(
-        self,
-        tenant_id: str,
-        agent_type: str,
-        duration_ms: float,
-        success: bool,
-        metrics: Dict[str, Any],
-    ) -> str:
-        """
-        Record agent performance for a single execution.
+    async def load_agent_profiles(self, tenant_id: str) -> List[AgentPerformance]:
+        """Load all stored agent performance profiles for the tenant."""
 
-        Args:
-            tenant_id: Tenant identifier
-            agent_type: Type of agent (e.g., "routing", "search")
-            duration_ms: Execution duration in milliseconds
-            success: Whether execution was successful
-            metrics: Additional performance metrics
-
-        Returns:
-            performance_id: Unique identifier for this record
-        """
-        pass
+    # ==================== Query-Type Patterns ====================
 
     @abstractmethod
-    def get_agent_stats(
-        self,
-        tenant_id: str,
-        agent_type: str,
-    ) -> Optional[AgentStats]:
-        """
-        Get aggregated agent statistics.
-
-        Args:
-            tenant_id: Tenant identifier
-            agent_type: Type of agent
-
-        Returns:
-            AgentStats with aggregated metrics, None if no data
-        """
-        pass
+    async def save_query_patterns(
+        self, tenant_id: str, patterns: Dict[str, List[str]]
+    ) -> None:
+        """Replace the tenant's query-type → patterns mapping."""
 
     @abstractmethod
-    def list_agent_performance(
-        self,
-        tenant_id: str,
-        agent_type: Optional[str] = None,
-        limit: int = 100,
-    ) -> List[AgentPerformanceRecord]:
-        """
-        List agent performance records.
-
-        Args:
-            tenant_id: Tenant identifier
-            agent_type: Filter by agent type (None = all agents)
-            limit: Maximum number of records to return
-
-        Returns:
-            List of AgentPerformanceRecord sorted by created_at (newest first)
-        """
-        pass
+    async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]:
+        """Load the tenant's query-type → patterns mapping ({} if none)."""
 
     # ==================== Workflow Templates ====================
 
     @abstractmethod
-    def save_template(
-        self,
-        tenant_id: str,
-        template_name: str,
-        config: Dict[str, Any],
-    ) -> str:
-        """
-        Save workflow template.
-
-        Creates new or updates existing template.
-
-        Args:
-            tenant_id: Tenant identifier
-            template_name: Unique name for this template
-            config: Template configuration
-
-        Returns:
-            template_id: Unique identifier for this template
-        """
-        pass
+    async def save_template(self, tenant_id: str, template: WorkflowTemplate) -> str:
+        """Create or update a template; returns its ``template_id``."""
 
     @abstractmethod
-    def get_template(
-        self,
-        tenant_id: str,
-        template_name: str,
-    ) -> Optional[WorkflowTemplate]:
-        """
-        Get template by name.
-
-        Args:
-            tenant_id: Tenant identifier
-            template_name: Template name
-
-        Returns:
-            WorkflowTemplate if found, None otherwise
-        """
-        pass
+    async def load_templates(self, tenant_id: str) -> List[WorkflowTemplate]:
+        """Load all templates for the tenant."""
 
     @abstractmethod
-    def list_templates(self, tenant_id: str) -> List[WorkflowTemplate]:
-        """
-        List all templates for tenant.
+    async def delete_template(self, tenant_id: str, template_id: str) -> bool:
+        """Delete a template by id; returns False if it did not exist."""
 
-        Args:
-            tenant_id: Tenant identifier
-
-        Returns:
-            List of WorkflowTemplate
-        """
-        pass
-
-    @abstractmethod
-    def delete_template(
-        self,
-        tenant_id: str,
-        template_name: str,
-    ) -> bool:
-        """
-        Delete a template.
-
-        Args:
-            tenant_id: Tenant identifier
-            template_name: Template name
-
-        Returns:
-            True if deleted, False if not found
-        """
-        pass
-
-    # ==================== Utility Methods ====================
+    # ==================== Utility ====================
 
     @abstractmethod
     def health_check(self) -> bool:
-        """
-        Check if storage backend is healthy.
-
-        Returns:
-            True if healthy, False otherwise
-        """
-        pass
+        """Whether the backing store is reachable/usable."""
 
     @abstractmethod
     def get_stats(self) -> Dict[str, Any]:
-        """
-        Get storage statistics.
-
-        Returns:
-            Dictionary with stats (total executions, templates, etc.)
-        """
-        pass
+        """Backend-identifying stats (backend name, cache sizes, …)."""

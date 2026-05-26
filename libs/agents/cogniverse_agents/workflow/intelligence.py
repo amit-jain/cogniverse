@@ -7,21 +7,24 @@ in-memory history (used by OrchestrationEvaluator in batch jobs). Does NOT run
 DSPy optimization inline.
 """
 
-import json
 import logging
 import statistics
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 from cogniverse_agents.workflow_types import (
     WorkflowPlan,
     WorkflowTask,
 )
+from cogniverse_core.registries import WorkflowStoreRegistry
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+from cogniverse_sdk.interfaces.workflow_store import (
+    AgentPerformance,
+    WorkflowExecution,
+    WorkflowTemplate,
+)
 
 
 class OptimizationStrategy(Enum):
@@ -32,56 +35,6 @@ class OptimizationStrategy(Enum):
     LATENCY_OPTIMIZED = "latency_optimized"
     COST_OPTIMIZED = "cost_optimized"
     BALANCED = "balanced"
-
-
-@dataclass
-class WorkflowExecution:
-    """Historical workflow execution record"""
-
-    workflow_id: str
-    query: str
-    query_type: str
-    execution_time: float
-    success: bool
-    agent_sequence: List[str]
-    task_count: int
-    parallel_efficiency: float
-    confidence_score: float
-    user_satisfaction: Optional[float] = None
-    error_details: Optional[str] = None
-    timestamp: datetime = field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class AgentPerformance:
-    """Agent performance metrics"""
-
-    agent_name: str
-    total_executions: int = 0
-    successful_executions: int = 0
-    average_execution_time: float = 0.0
-    average_confidence: float = 0.0
-    error_rate: float = 0.0
-    preferred_query_types: List[str] = field(default_factory=list)
-    performance_trend: str = "stable"  # improving, degrading, stable
-    last_updated: datetime = field(default_factory=datetime.now)
-
-
-@dataclass
-class WorkflowTemplate:
-    """Reusable workflow template"""
-
-    template_id: str
-    name: str
-    description: str
-    query_patterns: List[str]
-    task_sequence: List[Dict[str, Any]]
-    expected_execution_time: float
-    success_rate: float
-    usage_count: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
-    last_used: Optional[datetime] = None
 
 
 class WorkflowIntelligence:
@@ -107,7 +60,11 @@ class WorkflowIntelligence:
         self.tenant_id = tenant_id
         self.max_history_size = max_history_size
         self.optimization_strategy = optimization_strategy
-        self._artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        # Persistence goes through the WorkflowStore abstraction, resolved via
+        # the registry (same path the backend/adapter registries use). The
+        # telemetry impl rides ArtifactManager → Phoenix and resolves the
+        # per-tenant provider itself, so no provider is threaded through here.
+        self._store = WorkflowStoreRegistry.get(name="telemetry")
 
         # In-memory data structures (loaded at startup, read-only at runtime)
         self.workflow_history: deque = deque(maxlen=max_history_size)
@@ -129,69 +86,20 @@ class WorkflowIntelligence:
         return list(self.workflow_templates.values())
 
     async def load_historical_data(self) -> None:
-        """Load historical data from telemetry."""
+        """Load historical data through the workflow store."""
         try:
-            # Load workflow executions
-            demos = await self._artifact_manager.load_demonstrations("workflow")
-            if demos:
-                for demo in demos:
-                    try:
-                        data = json.loads(demo["input"])
-                        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
-                        execution = WorkflowExecution(**data)
-                        self.workflow_history.append(execution)
-                    except Exception as e:
-                        self.logger.warning(f"Skipping malformed execution: {e}")
+            for execution in await self._store.load_executions(self.tenant_id):
+                self.workflow_history.append(execution)
 
-            # Load agent performance
-            profiles = await self._artifact_manager.load_demonstrations(
-                "agent_profiles"
-            )
-            if profiles:
-                for profile in profiles:
-                    try:
-                        data = json.loads(profile["input"])
-                        data["last_updated"] = datetime.fromisoformat(
-                            data["last_updated"]
-                        )
-                        perf = AgentPerformance(**data)
-                        self.agent_performance[perf.agent_name] = perf
-                    except Exception as e:
-                        self.logger.warning(f"Skipping malformed agent profile: {e}")
+            for perf in await self._store.load_agent_profiles(self.tenant_id):
+                self.agent_performance[perf.agent_name] = perf
 
-            # Load query patterns
-            patterns_json = await self._artifact_manager.load_blob(
-                "workflow", "query_patterns"
-            )
-            if patterns_json:
-                self.query_type_patterns = defaultdict(list, json.loads(patterns_json))
+            patterns = await self._store.load_query_patterns(self.tenant_id)
+            if patterns:
+                self.query_type_patterns = defaultdict(list, patterns)
 
-            # Load workflow templates
-            template_index_json = await self._artifact_manager.load_blob(
-                "workflow", "template_index"
-            )
-            if template_index_json:
-                template_ids = json.loads(template_index_json)
-                for tid in template_ids:
-                    tmpl_json = await self._artifact_manager.load_blob(
-                        "workflow", f"template_{tid}"
-                    )
-                    if tmpl_json:
-                        try:
-                            data = json.loads(tmpl_json)
-                            data["created_at"] = datetime.fromisoformat(
-                                data["created_at"]
-                            )
-                            if data.get("last_used"):
-                                data["last_used"] = datetime.fromisoformat(
-                                    data["last_used"]
-                                )
-                            template = WorkflowTemplate(**data)
-                            self.workflow_templates[tid] = template
-                        except Exception as e:
-                            self.logger.warning(
-                                f"Skipping malformed template {tid}: {e}"
-                            )
+            for template in await self._store.load_templates(self.tenant_id):
+                self.workflow_templates[template.template_id] = template
 
             self.logger.info(
                 f"Loaded {len(self.workflow_history)} executions, "

@@ -1149,10 +1149,8 @@ class TestWorkflowIntelligence:
         """Test workflow intelligence statistics"""
         from unittest.mock import Mock
 
-        from cogniverse_agents.workflow.intelligence import (
-            WorkflowExecution,
-            WorkflowIntelligence,
-        )
+        from cogniverse_agents.workflow.intelligence import WorkflowIntelligence
+        from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 
         intelligence = WorkflowIntelligence(
             telemetry_provider=Mock(), tenant_id="test_tenant"

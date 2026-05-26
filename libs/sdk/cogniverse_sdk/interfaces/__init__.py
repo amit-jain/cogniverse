@@ -14,9 +14,8 @@ from cogniverse_sdk.interfaces.backend import Backend, IngestionBackend, SearchB
 from cogniverse_sdk.interfaces.config_store import ConfigStore
 from cogniverse_sdk.interfaces.schema_loader import SchemaLoader
 from cogniverse_sdk.interfaces.workflow_store import (
-    AgentPerformanceRecord,
-    AgentStats,
-    ExecutionRecord,
+    AgentPerformance,
+    WorkflowExecution,
     WorkflowStore,
     WorkflowTemplate,
 )
@@ -29,8 +28,7 @@ __all__ = [
     "ConfigStore",
     "SchemaLoader",
     "WorkflowStore",
-    "ExecutionRecord",
-    "AgentPerformanceRecord",
-    "AgentStats",
+    "WorkflowExecution",
+    "AgentPerformance",
     "WorkflowTemplate",
 ]

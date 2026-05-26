@@ -1166,26 +1166,28 @@ def config_manager_memory():
 
 
 @pytest.fixture
-def workflow_store(backend_config_env):
+def workflow_store(telemetry_manager_with_phoenix):
     """Resolve a workflow store via the registry — same path production uses.
 
     Going through ``WorkflowStoreRegistry`` (entry-point discovery + cache)
-    instead of ``VespaWorkflowStore(...)`` directly means a new backend
-    (Weaviate, Elasticsearch, …) lights up here automatically once it
-    registers against the ``cogniverse.workflow.stores`` entry-point group;
-    the fixture stays unchanged.
+    rather than constructing ``TelemetryWorkflowStore(...)`` directly means a
+    new backend lights up here automatically once it registers against the
+    ``cogniverse.workflow.stores`` entry-point group; the fixture is unchanged.
 
-    Requires ``backend_config_env`` to set the BACKEND_URL / BACKEND_PORT
-    env vars the registry's config dict reads from.
+    Backed by a real Phoenix provider so the store exercises the true
+    ``ArtifactManager`` → Phoenix round-trip rather than an in-memory double.
     """
     from cogniverse_core.registries import WorkflowStoreRegistry
 
+    provider = telemetry_manager_with_phoenix.get_provider(
+        tenant_id="workflow-store-test"
+    )
+    # Telemetry store is process-wide (multi-tenant internally); evict any
+    # instance cached under a stale provider so each test gets a clean resolve.
+    WorkflowStoreRegistry.clear_cache()
     store = WorkflowStoreRegistry.get(
-        name="vespa",
-        config={
-            "backend_url": os.environ.get("BACKEND_URL", "http://localhost"),
-            "backend_port": int(os.environ.get("BACKEND_PORT", "8080")),
-        },
+        name="telemetry",
+        config={"telemetry_provider": provider},
     )
     store.initialize()
     return store

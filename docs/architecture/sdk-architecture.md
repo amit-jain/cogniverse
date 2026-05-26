@@ -375,8 +375,7 @@ cogniverse_vespa/
 ├── __init__.py
 ├── *.py           # Backend, search, ingestion, schema management, embedding processing
 ├── config/        # VespaConfigStore
-├── registry/      # VespaAdapterStore (entry point)
-└── workflow/      # VespaWorkflowStore (entry point)
+└── registry/      # VespaAdapterStore (entry point)
 ```
 
 > See `libs/vespa/cogniverse_vespa/` for complete structure
@@ -389,7 +388,7 @@ cogniverse_vespa/
 - **Data Ingestion**: Batch ingestion with schema validation via VespaPyClient
 - **Tenant Isolation**: Schema-per-tenant pattern implementation
 - **Embedding Processing**: Strategy-aware embedding processing
-- **Plugin Architecture**: Workflow and adapter stores via entry points
+- **Plugin Architecture**: Adapter store via entry points
 
 ---
 

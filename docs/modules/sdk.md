@@ -418,100 +418,104 @@ strategies = loader.load_ranking_strategies()
 
 Storage for workflow execution records and agent performance:
 
+The interface is typed to the workflow domain. The reader
+(`WorkflowIntelligence`, at orchestrator startup) and the writer (the batch
+optimizer) share this contract. Save methods replace the stored set for the
+tenant; `save_template` upserts one template. Data methods are async (the
+telemetry backend and both callers are async). Implementations register against
+the `cogniverse.workflow.stores` entry-point group and are resolved via
+`WorkflowStoreRegistry`.
+
 ```python
-from cogniverse_sdk.interfaces.workflow_store import WorkflowStore, ExecutionRecord, AgentStats
+from cogniverse_sdk.interfaces.workflow_store import (
+    WorkflowStore,
+    WorkflowExecution,
+    AgentPerformance,
+    WorkflowTemplate,
+)
 
 class WorkflowStore(ABC):
-    """Interface for workflow intelligence storage"""
+    """Typed persistence for workflow intelligence."""
 
-    @abstractmethod
     def initialize(self) -> None:
-        """Initialize the workflow store."""
-        pass
+        """Provision backing storage. Default: no-op (lazy creation)."""
 
     @abstractmethod
-    def record_execution(
-        self,
-        tenant_id: str,
-        workflow_name: str,
-        status: str,
-        metrics: Dict[str, Any],
-    ) -> str:
-        """Record workflow execution. Returns execution_id."""
-        pass
+    async def save_executions(
+        self, tenant_id: str, executions: List[WorkflowExecution]
+    ) -> None: ...
+    @abstractmethod
+    async def load_executions(self, tenant_id: str) -> List[WorkflowExecution]: ...
 
     @abstractmethod
-    def get_execution(self, execution_id: str) -> Optional[ExecutionRecord]:
-        """Get execution by ID."""
-        pass
+    async def save_agent_profiles(
+        self, tenant_id: str, profiles: List[AgentPerformance]
+    ) -> None: ...
+    @abstractmethod
+    async def load_agent_profiles(self, tenant_id: str) -> List[AgentPerformance]: ...
 
     @abstractmethod
-    def list_executions(
-        self,
-        tenant_id: str,
-        workflow_name: Optional[str] = None,
-        limit: int = 100,
-    ) -> List[ExecutionRecord]:
-        """List executions with optional filters."""
-        pass
+    async def save_query_patterns(
+        self, tenant_id: str, patterns: Dict[str, List[str]]
+    ) -> None: ...
+    @abstractmethod
+    async def load_query_patterns(self, tenant_id: str) -> Dict[str, List[str]]: ...
 
     @abstractmethod
-    def record_agent_performance(
-        self,
-        tenant_id: str,
-        agent_type: str,
-        duration_ms: float,
-        success: bool,
-        metrics: Dict[str, Any],
-    ) -> str:
-        """Record agent performance. Returns performance_id."""
-        pass
+    async def save_template(self, tenant_id: str, template: WorkflowTemplate) -> str: ...
+    @abstractmethod
+    async def load_templates(self, tenant_id: str) -> List[WorkflowTemplate]: ...
+    @abstractmethod
+    async def delete_template(self, tenant_id: str, template_id: str) -> bool: ...
 
     @abstractmethod
-    def get_agent_stats(
-        self,
-        tenant_id: str,
-        agent_type: str,
-    ) -> Optional[AgentStats]:
-        """Get aggregated agent statistics."""
-        pass
-
+    def health_check(self) -> bool: ...
     @abstractmethod
-    def save_template(
-        self,
-        tenant_id: str,
-        template_name: str,
-        config: Dict[str, Any],
-    ) -> str:
-        """Save workflow template. Returns template_id."""
-        pass
-
-    @abstractmethod
-    def health_check(self) -> bool:
-        """Check if storage backend is healthy."""
-        pass
+    def get_stats(self) -> Dict[str, Any]: ...
 ```
 
 **Data Classes:**
 ```python
 @dataclass
-class ExecutionRecord:
-    execution_id: str
-    tenant_id: str
-    workflow_name: str
-    status: str
-    metrics: Dict[str, Any]
-    created_at: datetime
-    updated_at: datetime
+class WorkflowExecution:
+    workflow_id: str
+    query: str
+    query_type: str
+    execution_time: float
+    success: bool
+    agent_sequence: List[str]
+    task_count: int
+    parallel_efficiency: float
+    confidence_score: float
+    user_satisfaction: Optional[float] = None
+    error_details: Optional[str] = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass
-class AgentStats:
-    agent_type: str
-    tenant_id: str
-    total_executions: int
-    avg_duration_ms: float
+class AgentPerformance:
+    agent_name: str
+    total_executions: int = 0
+    successful_executions: int = 0
+    average_execution_time: float = 0.0
+    average_confidence: float = 0.0
+    error_rate: float = 0.0
+    preferred_query_types: List[str] = field(default_factory=list)
+    performance_trend: str = "stable"
+    last_updated: datetime = field(default_factory=datetime.now)
+
+@dataclass
+class WorkflowTemplate:
+    template_id: str
+    name: str
+    description: str
+    query_patterns: List[str]
+    task_sequence: List[Dict[str, Any]]
+    expected_execution_time: float
     success_rate: float
-    last_execution: Optional[datetime]
+    usage_count: int = 0
+    created_at: datetime = field(default_factory=datetime.now)
+    last_used: Optional[datetime] = None
 ```
 
 ### 6. Adapter Store Interface
@@ -721,29 +725,24 @@ cogniverse_sdk/
 
 **Key Classes:**
 
-- `WorkflowStore`: Abstract workflow storage
-- `ExecutionRecord`: Dataclass for workflow execution records
-- `AgentPerformanceRecord`: Dataclass for agent performance records
-- `AgentStats`: Dataclass for aggregated agent statistics
-- `WorkflowTemplate`: Dataclass for workflow template configuration
+- `WorkflowStore`: Abstract workflow storage (typed to the workflow domain)
+- `WorkflowExecution`: Dataclass for a historical workflow execution
+- `AgentPerformance`: Dataclass for an agent performance profile
+- `WorkflowTemplate`: Dataclass for a reusable workflow template
 
-**Methods:**
+**Methods** (data methods are async; save methods replace the tenant's set):
 
-- `initialize()`: Initialize the workflow store
-- `record_execution(tenant_id, workflow_name, status, metrics)`: Record workflow execution
-- `get_execution(execution_id)`: Get execution by ID
-- `list_executions(tenant_id, workflow_name, limit)`: List executions
-- `record_agent_performance(tenant_id, agent_type, duration_ms, success, metrics)`: Record agent performance
-- `get_agent_stats(tenant_id, agent_type)`: Get aggregated agent statistics
-- `list_agent_performance(tenant_id, agent_type, limit)`: List agent performance records
-- `save_template(tenant_id, template_name, config)`: Save workflow template
-- `get_template(tenant_id, template_name)`: Get template by name
-- `list_templates(tenant_id)`: List all templates for tenant
-- `delete_template(tenant_id, template_name)`: Delete a template
+- `initialize()`: Provision backing storage (default no-op)
+- `save_executions(tenant_id, executions)` / `load_executions(tenant_id)`
+- `save_agent_profiles(tenant_id, profiles)` / `load_agent_profiles(tenant_id)`
+- `save_query_patterns(tenant_id, patterns)` / `load_query_patterns(tenant_id)`
+- `save_template(tenant_id, template)`: Create or update a template
+- `load_templates(tenant_id)`: Load all templates for tenant
+- `delete_template(tenant_id, template_id)`: Delete a template by id
 - `health_check()`: Check storage health
 - `get_stats()`: Get storage statistics
 
-**Lines of Code**: ~368
+**Lines of Code**: ~191
 
 #### `interfaces/adapter_store.py`
 **Purpose**: Adapter registry and activation management

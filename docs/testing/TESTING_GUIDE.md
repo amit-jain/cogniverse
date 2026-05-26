@@ -390,12 +390,16 @@ def config_manager_memory():
     return ConfigManager(store=store)
 
 @pytest.fixture
-def workflow_store(backend_config_env):
-    """Create VespaWorkflowStore for testing."""
-    from cogniverse_vespa.workflow.workflow_store import VespaWorkflowStore
-    store = VespaWorkflowStore(
-        backend_url=os.environ.get("BACKEND_URL", "http://localhost"),
-        backend_port=int(os.environ.get("BACKEND_PORT", "8080")),
+def workflow_store(telemetry_manager_with_phoenix):
+    """Resolve the telemetry-backed workflow store via the registry."""
+    from cogniverse_core.registries import WorkflowStoreRegistry
+
+    provider = telemetry_manager_with_phoenix.get_provider(
+        tenant_id="workflow-store-test"
+    )
+    store = WorkflowStoreRegistry.get(
+        name="telemetry",
+        config={"telemetry_provider": provider},
     )
     store.initialize()
     return store

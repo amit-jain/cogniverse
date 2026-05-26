@@ -98,7 +98,6 @@ cogniverse/
 │   │   └── cogniverse_vespa/
 │   │       ├── config/           # Config store
 │   │       ├── registry/         # Adapter store
-│   │       ├── workflow/         # Workflow store
 │   │       ├── vespa_schema_manager.py
 │   │       ├── search_backend.py
 │   │       └── ingestion_client.py
@@ -252,7 +251,7 @@ flowchart TB
 | **Core** | **cogniverse_evaluation** | Provider-agnostic evaluation framework | • `core/` — Experiment tracking, scorers, solvers<br>• `evaluators/` — LLM judges, visual evaluators<br>• `metrics/` — Provider-agnostic metrics (accuracy, relevance)<br>• `data/` — Dataset handling and storage | sdk, foundation |
 | **Implementation** | **cogniverse_telemetry_phoenix** | Phoenix-specific telemetry provider (plugin architecture) | • `provider.py` — Phoenix telemetry provider implementation<br>• `evaluation/` — Evaluation, analytics, and monitoring providers | core, evaluation |
 | **Implementation** | **cogniverse_agents** | Agent implementations, routing logic, and strategy learning | • `routing/` — Routing agent, strategies, evaluators<br>• `search/` — Search service, base classes, rerankers<br>• `orchestrator/` — Multi-agent orchestrator<br>• `tools/` — Agent tools and A2A protocol<br>• `memory_aware_mixin.py` — `MemoryAwareMixin` with `get_strategies()`<br>• `optimizer/strategy_learner.py` — `StrategyLearner` (pattern + LLM distillation)<br>• `wiki/` — `WikiManager` (Topic + Session pages in Vespa), `WikiPage`, `WikiIndex` | sdk, core, synthetic |
-| **Implementation** | **cogniverse_vespa** | Backend integration and tenant management | • `config/` — Configuration store and profile mapping<br>• `registry/` — Backend registry for Vespa<br>• `workflow/` — Deployment workflows<br>• Core modules: `vespa_schema_manager.py`, `search_backend.py`, `ingestion_client.py` | sdk, core |
+| **Implementation** | **cogniverse_vespa** | Backend integration and tenant management | • `config/` — Configuration store and profile mapping<br>• `registry/` — Backend registry for Vespa<br>• Core modules: `vespa_schema_manager.py`, `search_backend.py`, `ingestion_client.py` | sdk, core |
 | **Core** | **cogniverse_synthetic** | Synthetic data generation for optimizer training | • `service.py` — Main SyntheticDataService<br>• `generators/` — Optimizer-specific generators (GEPA, MIPRO, etc.)<br>• `profile_selector.py` — LLM-based profile selection<br>• `backend_querier.py` — Backend content sampling | sdk |
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
 | **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Administrative endpoints including `POST /messaging/invite`<br>• `search/` — Search service layer<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |

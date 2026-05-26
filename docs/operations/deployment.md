@@ -408,7 +408,7 @@ route that preserves peer-tenant schemas through redeploys.
 The `configs/schemas/` directory contains multiple schema types:
 - Video schemas: `video_*_schema.json` (for video search)
 - Metadata schemas: `organization_metadata_schema.json`, `tenant_metadata_schema.json`, `config_metadata_schema.json`, `adapter_registry_schema.json`
-- Other schemas: `agent_memories_schema.json`, `workflow_intelligence_schema.json`, `ranking_strategies.json`
+- Other schemas: `agent_memories_schema.json`, `ranking_strategies.json`
 
 The schema names inside the JSON files do not include the `_schema.json` suffix.
 

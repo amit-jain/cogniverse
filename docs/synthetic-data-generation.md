@@ -545,7 +545,7 @@ request = SyntheticDataRequest(optimizer="workflow", count=200)
 response = await service.generate(request)
 
 # Convert to WorkflowExecution
-from cogniverse_agents.workflow.intelligence import WorkflowExecution
+from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 executions = [WorkflowExecution(**ex) for ex in response.data]
 
 # Record workflow executions and optimize

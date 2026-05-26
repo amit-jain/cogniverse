@@ -1,130 +1,176 @@
-"""Unit tests for TelemetryWorkflowStore CRUD logic.
+"""Unit tests for TelemetryWorkflowStore over its demonstration+blob layout.
 
-The store's record/list/get/aggregate/template logic is exercised against an
-in-memory ArtifactManager double (keyed by tenant+kind+key, mirroring the real
-blob store). The real Phoenix/ArtifactManager round-trip is covered separately
-once the store is wired into WorkflowIntelligence.
+The store's save/load logic is exercised against an in-memory ArtifactManager
+double that mirrors the real channels: ``save_demonstrations``/
+``load_demonstrations`` (executions, agent profiles) and ``save_blob``/
+``load_blob`` (query patterns, templates), keyed by tenant. The real
+Phoenix/ArtifactManager round-trip is covered by the integration suite.
 """
+
+from datetime import datetime
 
 import pytest
 
 from cogniverse_agents.workflow.telemetry_workflow_store import TelemetryWorkflowStore
+from cogniverse_sdk.interfaces.workflow_store import (
+    AgentPerformance,
+    WorkflowExecution,
+    WorkflowTemplate,
+)
 
 
 class _FakeArtifactManager:
-    """Async save_blob/load_blob backed by a shared dict, per tenant."""
+    """Async demonstration + blob store backed by shared dicts, per tenant."""
 
-    def __init__(self, tenant_id, shared):
+    def __init__(self, tenant_id, demos, blobs):
         self._tenant = tenant_id
-        self._shared = shared
+        self._demos = demos  # {(tenant, kind): [demo, ...]}
+        self._blobs = blobs  # {(tenant, kind, key): content}
+
+    async def save_demonstrations(self, kind, demos):
+        self._demos[(self._tenant, kind)] = list(demos)
+        return f"ds_{kind}"
+
+    async def load_demonstrations(self, kind):
+        return self._demos.get((self._tenant, kind))
 
     async def save_blob(self, kind, key, content):
-        self._shared[(self._tenant, kind, key)] = content
+        self._blobs[(self._tenant, kind, key)] = content
         return f"ds_{kind}_{key}"
 
     async def load_blob(self, kind, key):
-        return self._shared.get((self._tenant, kind, key))
+        return self._blobs.get((self._tenant, kind, key))
 
 
 @pytest.fixture
 def store():
     s = TelemetryWorkflowStore(telemetry_provider=object())
-    shared: dict = {}
-    s._am = lambda tenant_id, _s=shared: _FakeArtifactManager(tenant_id, _s)
+    demos: dict = {}
+    blobs: dict = {}
+    s._am = lambda tenant_id: _FakeArtifactManager(tenant_id, demos, blobs)
     return s
 
 
+def _execution(
+    workflow_id="wf_1", query="find cats", query_type="search"
+) -> WorkflowExecution:
+    return WorkflowExecution(
+        workflow_id=workflow_id,
+        query=query,
+        query_type=query_type,
+        execution_time=1.5,
+        success=True,
+        agent_sequence=["routing", "video_search"],
+        task_count=2,
+        parallel_efficiency=0.8,
+        confidence_score=0.91,
+        user_satisfaction=0.75,
+        error_details=None,
+        timestamp=datetime(2026, 5, 26, 12, 0, 0),
+        metadata={"source": "test"},
+    )
+
+
 class TestExecutions:
-    def test_record_then_get_and_list_round_trip(self, store):
-        eid = store.record_execution(
-            "acme:prod", "search_then_summarize", "completed", {"steps": 3}
+    async def test_save_then_load_round_trip_exact(self, store):
+        original = _execution()
+        await store.save_executions("acme:prod", [original])
+
+        loaded = await store.load_executions("acme:prod")
+        assert loaded == [original]
+        # Spot-check the typed fields survived the demonstration round-trip.
+        assert loaded[0].confidence_score == 0.91
+        assert loaded[0].agent_sequence == ["routing", "video_search"]
+        assert loaded[0].timestamp == datetime(2026, 5, 26, 12, 0, 0)
+        assert loaded[0].metadata == {"source": "test"}
+
+    async def test_save_replaces_previous_set(self, store):
+        await store.save_executions("t:t", [_execution(workflow_id="old")])
+        await store.save_executions("t:t", [_execution(workflow_id="new")])
+        loaded = await store.load_executions("t:t")
+        assert [e.workflow_id for e in loaded] == ["new"]
+
+    async def test_tenant_isolation(self, store):
+        await store.save_executions("acme:prod", [_execution()])
+        assert await store.load_executions("globex:prod") == []
+
+    async def test_load_missing_returns_empty(self, store):
+        assert await store.load_executions("t:t") == []
+
+
+class TestAgentProfiles:
+    async def test_round_trip_exact(self, store):
+        profile = AgentPerformance(
+            agent_name="video_search",
+            total_executions=10,
+            successful_executions=9,
+            average_execution_time=2.3,
+            average_confidence=0.88,
+            error_rate=0.1,
+            preferred_query_types=["visual", "temporal"],
+            performance_trend="improving",
+            last_updated=datetime(2026, 5, 26, 9, 30, 0),
         )
-        assert eid.startswith("acme:prod|exec|")
+        await store.save_agent_profiles("t:t", [profile])
+        loaded = await store.load_agent_profiles("t:t")
+        assert loaded == [profile]
+        assert loaded[0].preferred_query_types == ["visual", "temporal"]
+        assert loaded[0].performance_trend == "improving"
 
-        rec = store.get_execution(eid)
-        assert rec is not None
-        assert rec.execution_id == eid
-        assert rec.tenant_id == "acme:prod"
-        assert rec.workflow_name == "search_then_summarize"
-        assert rec.status == "completed"
-        assert rec.metrics == {"steps": 3}
-
-        listed = store.list_executions("acme:prod")
-        assert [r.execution_id for r in listed] == [eid]
-
-    def test_list_filters_by_workflow_name_and_limit(self, store):
-        store.record_execution("t:t", "alpha", "completed", {})
-        store.record_execution("t:t", "beta", "completed", {})
-        store.record_execution("t:t", "alpha", "failed", {})
-
-        alpha = store.list_executions("t:t", workflow_name="alpha")
-        assert len(alpha) == 2
-        assert {r.workflow_name for r in alpha} == {"alpha"}
-        assert len(store.list_executions("t:t", limit=1)) == 1
-
-    def test_tenant_isolation(self, store):
-        store.record_execution("acme:prod", "wf", "completed", {})
-        assert store.list_executions("globex:prod") == []
-
-    def test_get_missing_execution_returns_none(self, store):
-        assert store.get_execution("acme:prod|exec|deadbeef") is None
+    async def test_load_missing_returns_empty(self, store):
+        assert await store.load_agent_profiles("t:t") == []
 
 
-class TestAgentPerformance:
-    def test_stats_aggregate_exact(self, store):
-        store.record_agent_performance("t:t", "search", 100.0, True, {})
-        store.record_agent_performance("t:t", "search", 300.0, False, {})
-        store.record_agent_performance("t:t", "summary", 50.0, True, {})
+class TestQueryPatterns:
+    async def test_round_trip_exact(self, store):
+        patterns = {"search": ["find", "show me"], "summary": ["summarize"]}
+        await store.save_query_patterns("t:t", patterns)
+        assert await store.load_query_patterns("t:t") == patterns
 
-        stats = store.get_agent_stats("t:t", "search")
-        assert stats is not None
-        assert stats.total_executions == 2
-        assert stats.avg_duration_ms == 200.0
-        assert stats.success_rate == 0.5
-        assert stats.last_execution is not None
-
-    def test_stats_none_when_no_data(self, store):
-        assert store.get_agent_stats("t:t", "search") is None
-
-    def test_list_filters_by_agent_type(self, store):
-        store.record_agent_performance("t:t", "search", 1.0, True, {})
-        store.record_agent_performance("t:t", "summary", 1.0, True, {})
-        assert len(store.list_agent_performance("t:t", agent_type="search")) == 1
-        assert len(store.list_agent_performance("t:t")) == 2
+    async def test_load_missing_returns_empty_dict(self, store):
+        assert await store.load_query_patterns("t:t") == {}
 
 
 class TestTemplates:
-    def test_save_get_list_delete_round_trip(self, store):
-        tid = store.save_template("acme:prod", "fast_path", {"steps": ["search"]})
-        assert tid == "acme:prod:tmpl:fast_path"
+    def _template(self, template_id="fast_path") -> WorkflowTemplate:
+        return WorkflowTemplate(
+            template_id=template_id,
+            name="Fast Path",
+            description="single-agent search",
+            query_patterns=["find *"],
+            task_sequence=[{"agent": "video_search"}],
+            expected_execution_time=1.2,
+            success_rate=0.95,
+            usage_count=3,
+            created_at=datetime(2026, 5, 1, 0, 0, 0),
+            last_used=datetime(2026, 5, 20, 0, 0, 0),
+        )
 
-        tmpl = store.get_template("acme:prod", "fast_path")
-        assert tmpl is not None
-        assert tmpl.template_name == "fast_path"
-        assert tmpl.config == {"steps": ["search"]}
+    async def test_save_load_delete_round_trip(self, store):
+        tid = await store.save_template("acme:prod", self._template())
+        assert tid == "fast_path"
 
-        assert [t.template_name for t in store.list_templates("acme:prod")] == [
-            "fast_path"
-        ]
+        loaded = await store.load_templates("acme:prod")
+        assert loaded == [self._template()]
+        assert loaded[0].query_patterns == ["find *"]
+        assert loaded[0].task_sequence == [{"agent": "video_search"}]
 
-        assert store.delete_template("acme:prod", "fast_path") is True
-        assert store.get_template("acme:prod", "fast_path") is None
-        assert store.list_templates("acme:prod") == []
+        assert await store.delete_template("acme:prod", "fast_path") is True
+        assert await store.load_templates("acme:prod") == []
 
-    def test_delete_missing_returns_false(self, store):
-        assert store.delete_template("acme:prod", "nope") is False
+    async def test_delete_missing_returns_false(self, store):
+        assert await store.delete_template("acme:prod", "nope") is False
 
-    def test_save_preserves_created_at_on_update(self, store):
-        store.save_template("t:t", "x", {"v": 1})
-        first = store.get_template("t:t", "x")
-        store.save_template("t:t", "x", {"v": 2})
-        second = store.get_template("t:t", "x")
-        assert second.config == {"v": 2}
-        assert second.created_at == first.created_at
-        assert second.updated_at >= first.updated_at
+    async def test_two_templates_indexed(self, store):
+        await store.save_template("t:t", self._template("a"))
+        await store.save_template("t:t", self._template("b"))
+        loaded = await store.load_templates("t:t")
+        assert sorted(t.template_id for t in loaded) == ["a", "b"]
 
 
-def test_health_and_stats(store):
+async def test_health_and_stats(store):
     assert store.health_check() is True
-    store.record_execution("t:t", "wf", "completed", {})
-    assert store.get_stats()["backend"] == "telemetry"
+    await store.save_executions("t:t", [_execution()])
+    stats = store.get_stats()
+    assert stats["backend"] == "telemetry"
+    assert stats["tenants_cached"] == 0  # fixture overrides _am, never populating cache
