@@ -12,7 +12,7 @@ MemoryAwareMixin had ``is_memory_enabled() == False`` and silently skipped
 strategy/memory injection.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -133,56 +133,118 @@ class TestInitAgentMemory:
         assert agent.set_tenant_calls == ["acme"]
 
 
+class _StopAfterInit(Exception):
+    """Raised by the _init_agent_memory spy to abort before heavy agent work."""
+
+
 @pytest.mark.unit
 @pytest.mark.ci_fast
-class TestExecuteCodingTaskWiresMemory:
-    """End-to-end pin: verify _execute_coding_task calls _init_agent_memory.
-    A regression where someone removes the call would silently turn off
-    memory for the coding agent."""
+class TestDispatchPathsWireMemory:
+    """Each agent-execution path must call _init_agent_memory at runtime.
+    Verified by EXECUTING the path with the call spied (it raises to abort
+    before the agent actually runs), not by grepping the method source."""
 
-    def test_execute_coding_task_calls_init_agent_memory(self):
-        import inspect
+    async def _capture_init_call(self, dispatcher, coro):
+        seen = []
 
-        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+        def _spy(agent, name, tenant):
+            seen.append((name, tenant))
+            raise _StopAfterInit
 
-        source = inspect.getsource(AgentDispatcher._execute_coding_task)
-        assert "_init_agent_memory" in source, (
-            "_execute_coding_task must call self._init_agent_memory() so the "
-            "coding agent receives learned strategies and tenant memories. "
-            "Audit fix #14 — see "
-            "docs/superpowers/audits/2026-04-07-orphan-and-wiring-audit.md"
+        dispatcher._init_agent_memory = _spy
+        with pytest.raises(_StopAfterInit):
+            await coro
+        return seen
+
+    @pytest.mark.asyncio
+    async def test_coding_task_initializes_agent_memory(
+        self, mock_dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **k: MagicMock()
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            lambda *a, **k: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.coding_agent.CodingAgent", lambda *a, **k: MagicMock()
+        )
+        seen = await self._capture_init_call(
+            mock_dispatcher, mock_dispatcher._execute_coding_task("q", "acme:prod")
+        )
+        assert seen == [("coding_agent", "acme:prod")]
+
+    @pytest.mark.asyncio
+    async def test_summarization_task_initializes_agent_memory(
+        self, mock_dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "cogniverse_agents.summarizer_agent.SummarizerAgent",
+            lambda *a, **k: MagicMock(),
+        )
+        seen = await self._capture_init_call(
+            mock_dispatcher,
+            mock_dispatcher._execute_summarization_task("q", "acme:prod", {}),
+        )
+        assert seen == [("summarizer_agent", "acme:prod")]
+
+    @pytest.mark.asyncio
+    async def test_detailed_report_task_initializes_agent_memory(
+        self, mock_dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "cogniverse_agents.detailed_report_agent.DetailedReportAgent",
+            lambda *a, **k: MagicMock(),
+        )
+        seen = await self._capture_init_call(
+            mock_dispatcher,
+            mock_dispatcher._execute_detailed_report_task("q", "acme:prod"),
+        )
+        assert seen == [("detailed_report_agent", "acme:prod")]
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestGatewayAgentCaching:
+    """GatewayAgent must be cached on the dispatcher (GLiNER reload is
+    expensive). Verified by constructing twice and counting, not by source."""
+
+    @pytest.mark.asyncio
+    async def test_gateway_agent_constructed_once_across_requests(
+        self, mock_dispatcher, monkeypatch
+    ):
+        count = {"n": 0}
+
+        class _FakeGateway:
+            def __init__(self, *a, **k):
+                count["n"] += 1
+                self.telemetry_manager = None
+
+            def _load_artifact(self):
+                pass
+
+            async def _process_impl(self, input_data):
+                return MagicMock(complexity="simple", recommended_agent="search_agent")
+
+        monkeypatch.setattr(
+            "cogniverse_agents.gateway_agent.GatewayAgent", _FakeGateway
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.gateway_agent.GatewayDeps", lambda *a, **k: MagicMock()
+        )
+        monkeypatch.setattr(mock_dispatcher, "_resolve_gliner_url", lambda: None)
+        monkeypatch.setattr(mock_dispatcher, "_get_rail_chains", lambda t: None)
+        # Gateway's "simple" path dispatches downstream — stub it so the test
+        # stays focused on the cache, not on a real downstream agent.
+        monkeypatch.setattr(
+            mock_dispatcher,
+            "_execute_downstream_agent",
+            AsyncMock(return_value={"status": "success"}),
         )
 
-    def test_execute_summarization_task_calls_init_agent_memory(self):
-        import inspect
+        await mock_dispatcher._execute_gateway_task("first", {}, "acme:prod")
+        await mock_dispatcher._execute_gateway_task("second", {}, "acme:prod")
 
-        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-
-        source = inspect.getsource(AgentDispatcher._execute_summarization_task)
-        assert "_init_agent_memory" in source, (
-            "_execute_summarization_task must call _init_agent_memory()"
-        )
-
-    def test_execute_detailed_report_task_calls_init_agent_memory(self):
-        import inspect
-
-        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-
-        source = inspect.getsource(AgentDispatcher._execute_detailed_report_task)
-        assert "_init_agent_memory" in source, (
-            "_execute_detailed_report_task must call _init_agent_memory()"
-        )
-
-    def test_gateway_agent_cached_on_dispatcher(self):
-        """GatewayAgent must be cached on the dispatcher to avoid GLiNER
-        model reload per request. Verify _execute_gateway_task uses the
-        cached _gateway_agent attribute."""
-        import inspect
-
-        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
-
-        source = inspect.getsource(AgentDispatcher._execute_gateway_task)
-        assert "_gateway_agent" in source, (
-            "_execute_gateway_task must cache GatewayAgent as self._gateway_agent "
-            "to avoid GLiNER model reload on every request."
-        )
+        assert count["n"] == 1
+        assert mock_dispatcher._gateway_agent is not None

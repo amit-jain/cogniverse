@@ -327,29 +327,51 @@ class TestAgentDispatcherCapabilityRouting:
 
 
 @pytest.mark.unit
-class TestNoMultiAgentOrchestrator:
-    """Verify that MultiAgentOrchestrator is no longer used in agent_dispatcher."""
+class TestOrchestrationUsesOrchestratorAgent:
+    """MultiAgentOrchestrator was replaced by OrchestratorAgent. Proven by
+    EXECUTING the orchestration dispatch path — it constructs OrchestratorAgent
+    and initializes that agent's memory under "orchestrator_agent" — and by
+    asserting the removed optimizer-lookup methods are gone. Not by grepping
+    the dispatcher source (which would pass even on a stale, never-run path)."""
 
     @pytest.mark.ci_fast
-    def test_no_multi_agent_orchestrator_import(self):
-        """agent_dispatcher must not reference MultiAgentOrchestrator anywhere."""
-        import inspect
-
-        source = inspect.getsource(AgentDispatcher)
-        assert "MultiAgentOrchestrator" not in source, (
-            "MultiAgentOrchestrator is replaced by OrchestratorAgent. "
-            "Remove all references from agent_dispatcher."
+    @pytest.mark.asyncio
+    async def test_orchestration_path_wires_orchestrator_agent(
+        self, dispatcher, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "cogniverse_agents.orchestrator_agent.OrchestratorAgent",
+            lambda *a, **k: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.orchestrator_agent.OrchestratorDeps",
+            lambda *a, **k: MagicMock(),
+        )
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            lambda: None,
         )
 
-    @pytest.mark.ci_fast
-    def test_no_get_optimizer_calls(self):
-        """agent_dispatcher must not call _get_optimizer — optimizer-lookup
-        was removed from the routing path when optimization moved to Argo."""
-        import inspect
+        class _StopAfterInit(Exception):
+            pass
 
-        source = inspect.getsource(AgentDispatcher)
-        assert "_get_optimizer" not in source
-        assert "get_routing_statistics" not in source
+        seen = []
+
+        def _spy(agent, name, tenant):
+            seen.append((name, tenant))
+            raise _StopAfterInit
+
+        dispatcher._init_agent_memory = _spy
+        with pytest.raises(_StopAfterInit):
+            await dispatcher._execute_orchestration_task("q", {}, "acme:prod")
+        assert seen == [("orchestrator_agent", "acme:prod")]
+
+    @pytest.mark.ci_fast
+    def test_optimizer_lookup_methods_removed(self):
+        """Optimizer lookup moved to Argo — the dispatcher must not carry the
+        old _get_optimizer / get_routing_statistics methods."""
+        assert not hasattr(AgentDispatcher, "_get_optimizer")
+        assert not hasattr(AgentDispatcher, "get_routing_statistics")
 
 
 # ── Annotation Queue HTTP endpoints ──────────────────────────────────────
