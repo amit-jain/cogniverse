@@ -278,3 +278,60 @@ class TestProductionDispatcherWiring:
             agents_router._agent_registry = None
             agents_router._config_manager = None
             agents_router._schema_loader = None
+
+
+class _CapturingQueue:
+    """Minimal A2A EventQueue stand-in."""
+
+    def __init__(self):
+        self.events = []
+
+    async def enqueue_event(self, event):
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+class TestStreamingCanaryRealPhoenix:
+    """Real-Phoenix end-to-end: a STREAMING request must serve canary prompts.
+
+    Drives the actual ``CogniverseAgentExecutor._execute_streaming`` against a
+    real-Phoenix-backed dispatcher (the streaming path that previously bypassed
+    canary routing). create_streaming_agent is swapped for a bare memory-aware
+    stub so the test exercises the real resolve(real Phoenix)+inject without
+    constructing a full SearchAgent.
+    """
+
+    async def test_streaming_serves_canary_resolved_from_real_phoenix(
+        self, artifact_manager, dispatcher_with_factory, tenant_id
+    ):
+        from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+        from cogniverse_runtime.a2a_executor import CogniverseAgentExecutor
+
+        # Promote a canary at 100% in REAL Phoenix for search_agent.
+        await artifact_manager.save_prompts_versioned(
+            "search_agent", {"system": "CANARY_STREAM_V1"}
+        )
+        await artifact_manager.promote_to_canary(
+            "search_agent", version=1, traffic_pct=100
+        )
+
+        class _StreamAgent(MemoryAwareMixin):
+            async def process(self, typed_input, stream=False):
+                async def _gen():
+                    yield {"type": "final", "data": {}}
+
+                return _gen()
+
+        agent = _StreamAgent()
+        dispatcher_with_factory.create_streaming_agent = lambda *a, **k: (agent, None)
+
+        executor = CogniverseAgentExecutor(dispatcher=dispatcher_with_factory)
+        await executor._execute_streaming(
+            "search_agent", "q", tenant_id, "task-1", "ctx-stream", _CapturingQueue()
+        )
+
+        # The streaming agent received the canary overlay resolved from real
+        # Phoenix — proving streaming traffic now honours canary routing.
+        assert agent._dispatched_artefact["served_from"] == "canary"
+        assert agent._dispatched_artefact["version"] == 1
+        assert agent.get_dispatched_prompts() == {"system": "CANARY_STREAM_V1"}

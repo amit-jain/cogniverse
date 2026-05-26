@@ -327,5 +327,94 @@ class TestRerankingOAICompat:
             assert reranked[0].metadata["reranking_score"] == 0.92
 
 
+@pytest.mark.unit
+class TestRerankingCorrectsRetrievalOrder:
+    """A complex query where lexical retrieval ranks the wrong doc first and the
+    reranker must correct it. The cross-encoder is mocked (no reranker model is
+    deployed in this env), but the relevance values mirror what a query-aware
+    cross-encoder produces: the misleading high-retrieval doc is penalised and
+    the true answer is promoted. Assertions are on the *resulting order*, not
+    just the id set."""
+
+    @pytest.fixture
+    def thaw_results(self):
+        # Retrieval order (by score, descending) is deliberately WRONG for the
+        # query: the microwave doc wins on keyword overlap ("frozen"/"defrost")
+        # but the query explicitly excludes microwaves; the cold-water doc is
+        # the real answer yet retrieves lowest.
+        return [
+            RerankerSearchResult(
+                id="doc-microwave",
+                title="Quick microwave defrosting for any frozen meat",
+                content="Defrost frozen meat fast in the microwave on low power.",
+                modality="text",
+                score=0.92,  # highest retrieval score
+                metadata={},
+            ),
+            RerankerSearchResult(
+                id="doc-recipe",
+                title="Grilled salmon dinner recipes",
+                content="Twelve salmon recipes for weeknight dinners.",
+                modality="text",
+                score=0.70,
+                metadata={},
+            ),
+            RerankerSearchResult(
+                id="doc-coldwater",
+                title="Thawing fish safely in cold water, step by step",
+                content="Submerge sealed frozen fish in cold water to thaw safely without a microwave.",
+                modality="text",
+                score=0.55,  # lowest retrieval score, but the real answer
+                metadata={},
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_reranker_promotes_true_answer_over_misleading_top_hit(
+        self, thaw_results, mock_config_manager
+    ):
+        from unittest.mock import Mock, patch
+
+        query = "how to safely thaw frozen salmon without using a microwave"
+
+        with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
+            # Query-aware relevance (what a cross-encoder yields): cold-water
+            # answer top, recipe tangential, microwave doc penalised despite its
+            # keyword overlap. response.results is relevance-sorted; .index maps
+            # back to the input list [microwave=0, recipe=1, coldwater=2].
+            mock_response = Mock()
+            mock_response.results = [
+                Mock(index=2, relevance_score=0.94),  # doc-coldwater
+                Mock(index=1, relevance_score=0.38),  # doc-recipe
+                Mock(index=0, relevance_score=0.05),  # doc-microwave
+            ]
+            mock_arerank.return_value = mock_response
+
+            reranker = LearnedReranker(
+                model="openai/bge-reranker-v2-m3",
+                config_manager=mock_config_manager,
+                tenant_id="test:unit",
+            )
+            reranked = await reranker.rerank(query, thaw_results)
+
+            # The reranker passed the right query + docs to the cross-encoder.
+            call_kwargs = mock_arerank.call_args.kwargs
+            assert call_kwargs["query"] == query
+            assert call_kwargs["documents"][0].startswith("Quick microwave defrosting")
+
+            # Exact corrected order — the true answer rose from retrieval-rank 3
+            # to #1, the misleading top retrieval hit sank to last.
+            assert [r.id for r in reranked] == [
+                "doc-coldwater",
+                "doc-recipe",
+                "doc-microwave",
+            ]
+            # Reranking actually changed the top result (not a pass-through).
+            assert reranked[0].id != thaw_results[0].id
+            assert reranked[0].id == "doc-coldwater"
+            assert reranked[-1].id == "doc-microwave"
+            assert reranked[0].metadata["reranking_score"] == 0.94
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
