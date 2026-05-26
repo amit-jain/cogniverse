@@ -4,17 +4,20 @@ Auto-selection of training method based on available data.
 Integrates with existing infrastructure:
 - TelemetryProvider for querying spans/annotations
 - SyntheticDataService for generating additional data
-- ApprovalOrchestrator for mandatory human approval
+- HumanApprovalAgent for mandatory human approval
 """
 
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import pandas as pd
 
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
+
+if TYPE_CHECKING:
+    from cogniverse_agents.approval import HumanApprovalAgent
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ class TrainingMethodSelector:
 
     2. If synthetic needed:
        - Use existing SyntheticDataService
-       - Send through existing ApprovalOrchestrator
+       - Submit through HumanApprovalAgent.submit_for_review
        - MANDATORY human approval (no bypass)
 
     3. Return analysis + approved synthetic batch (if generated)
@@ -53,20 +56,21 @@ class TrainingMethodSelector:
     def __init__(
         self,
         synthetic_service: Optional[any] = None,
-        approval_orchestrator: Optional[any] = None,
+        approval_agent: Optional["HumanApprovalAgent"] = None,
     ):
         """
         Initialize selector with optional synthetic + approval services.
 
         Args:
             synthetic_service: Optional SyntheticDataService instance
-            approval_orchestrator: Optional ApprovalOrchestrator instance
+            approval_agent: Optional HumanApprovalAgent that gates synthetic
+                data through human review before training.
 
         Note: Services are optional for analysis-only mode.
               Required for synthetic data generation.
         """
         self.synthetic_service = synthetic_service
-        self.approval_orchestrator = approval_orchestrator
+        self.approval_agent = approval_agent
 
     async def analyze_data(
         self,
@@ -214,10 +218,10 @@ class TrainingMethodSelector:
         # 2. Generate synthetic if needed
         approved_batch = None
         if analysis.needs_synthetic and generate_synthetic:
-            if not self.synthetic_service or not self.approval_orchestrator:
+            if not self.synthetic_service or not self.approval_agent:
                 raise ValueError(
                     "Synthetic data generation requested but services not configured. "
-                    "Pass synthetic_service and approval_orchestrator to constructor."
+                    "Pass synthetic_service and approval_agent to constructor."
                 )
 
             # Calculate how many examples needed
@@ -235,7 +239,9 @@ class TrainingMethodSelector:
             )
 
             logger.info(
-                f"Synthetic generation complete: {approved_batch.approved_count} approved"
+                "Synthetic batch submitted: %d auto-approved, %d pending review",
+                approved_batch.approved_count,
+                len(approved_batch.pending_review),
             )
 
         return analysis, approved_batch
@@ -367,28 +373,26 @@ class TrainingMethodSelector:
             },
         )
 
-        # 4. Send for approval (MANDATORY - no bypass)
+        # 4. Submit for approval (MANDATORY - no bypass). Review is
+        #    asynchronous: items below the agent's confidence threshold land
+        #    in PENDING_REVIEW for a human to resolve in the dashboard, so we
+        #    do NOT block here or treat "0 approved right now" as failure —
+        #    training resumes from the persisted batch after human approval.
         logger.info(
             f"Submitting {len(items)} synthetic examples for human approval. "
-            "Awaiting review in dashboard..."
+            "Pending items await review in the dashboard."
         )
 
-        approved_batch = await self.approval_orchestrator.submit_for_review(batch)
+        submitted_batch = await self.approval_agent.submit_for_review(batch)
 
-        # 5. Verify sufficient approvals
-        if approved_batch.approved_count == 0:
-            raise ValueError(
-                f"No synthetic examples approved (0/{len(items)}). Cannot proceed with training."
-            )
-
-        if approved_batch.approved_count < len(items) * 0.5:
-            logger.warning(
-                f"Low approval rate: {approved_batch.approved_count}/{len(items)} "
-                f"({approved_batch.approved_count / len(items) * 100:.1f}%)"
-            )
+        if not submitted_batch.items:
+            raise ValueError("No synthetic examples were generated to submit.")
 
         logger.info(
-            f"Approval complete: {approved_batch.approved_count}/{len(items)} approved"
+            "Submitted batch %s: %d auto-approved, %d pending human review",
+            submitted_batch.batch_id,
+            submitted_batch.approved_count,
+            len(submitted_batch.pending_review),
         )
 
-        return approved_batch
+        return submitted_batch

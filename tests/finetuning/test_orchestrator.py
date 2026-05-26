@@ -146,7 +146,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         # Create config for SFT (LLM with routing agent)
@@ -246,7 +246,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         # Create config for DPO (LLM with routing agent)
@@ -346,7 +346,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         # Create config for embedding (video modality)
@@ -419,7 +419,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         # Config without agent_type
@@ -441,7 +441,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         # Config without modality
@@ -463,7 +463,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         config = OrchestrationConfig(
@@ -489,7 +489,7 @@ class TestOrchestrationFlows:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         config = OrchestrationConfig(
@@ -532,7 +532,7 @@ class TestMultiTurnOrchestrationFlow:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         config = OrchestrationConfig(
@@ -618,7 +618,7 @@ class TestMultiTurnOrchestrationFlow:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         config = OrchestrationConfig(
@@ -682,7 +682,7 @@ class TestMultiTurnOrchestrationFlow:
         orchestrator = FinetuningOrchestrator(
             telemetry_provider=mock_provider,
             synthetic_service=None,
-            approval_orchestrator=None,
+            approval_agent=None,
         )
 
         config = OrchestrationConfig(

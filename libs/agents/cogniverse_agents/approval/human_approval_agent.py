@@ -93,6 +93,39 @@ class HumanApprovalAgent:
             storage=storage,
         )
 
+    async def submit_for_review(self, batch: ApprovalBatch) -> ApprovalBatch:
+        """Register a pre-built batch for human review and persist it.
+
+        Unlike :meth:`process_batch` (which builds a batch from raw items via
+        the confidence extractor), this accepts a caller-built
+        :class:`ApprovalBatch` whose items already carry confidence scores —
+        e.g. the finetuning synthetic-data path. Each item is (re)classified
+        against ``confidence_threshold``: ``>= threshold`` is auto-approved,
+        the rest stay ``PENDING_REVIEW`` for a human to resolve in the
+        dashboard. The batch is persisted (when storage is configured) so the
+        approval queue surfaces it, then returned immediately — review is
+        asynchronous, so callers must resume work from the persisted batch
+        after a human acts (via :meth:`apply_decision` /
+        :meth:`apply_batch_decisions`), not from this return value's pending
+        items.
+        """
+        for item in batch.items:
+            item.status = (
+                ApprovalStatus.AUTO_APPROVED
+                if item.confidence >= self.threshold
+                else ApprovalStatus.PENDING_REVIEW
+            )
+
+        if self.storage:
+            await self.storage.save_batch(batch)
+
+        logger.info(
+            f"Submitted batch {batch.batch_id} for review: "
+            f"{len(batch.auto_approved)} auto-approved, "
+            f"{len(batch.pending_review)} pending human review"
+        )
+        return batch
+
     async def process_batch(
         self, items: List[Dict[str, Any]], batch_id: str, context: Dict[str, Any]
     ) -> ApprovalBatch:

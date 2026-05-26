@@ -359,3 +359,48 @@ class TestAgentFiltering:
         assert len(filtered) == 2
         assert "span1" in filtered["context.span_id"].values
         assert "span3" in filtered["context.span_id"].values
+
+
+@pytest.mark.unit
+class TestSyntheticApprovalWiring:
+    """The synthetic-data path submits through HumanApprovalAgent (async review).
+
+    Regression guard: this previously called a phantom
+    ``ApprovalOrchestrator.submit_for_review`` (AttributeError) and then
+    raised on ``approved_count == 0``. The wired path submits to the real
+    HumanApprovalAgent and returns the pending batch without raising.
+    """
+
+    @pytest.mark.asyncio
+    async def test_generate_submits_pending_batch_without_raising(self):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.approval import HumanApprovalAgent
+
+        class _Extractor:
+            def extract(self, data):  # unused by submit_for_review path
+                return 0.0
+
+        synthetic_service = Mock()
+        synthetic_service.generate = AsyncMock(
+            return_value=SimpleNamespace(
+                count=3, data=[{"q": "a"}, {"q": "b"}, {"q": "c"}]
+            )
+        )
+        # Threshold above the synthetic default confidence (0.8): every item
+        # requires human review, none auto-approves.
+        agent = HumanApprovalAgent(
+            confidence_extractor=_Extractor(), confidence_threshold=0.85
+        )
+        selector = TrainingMethodSelector(
+            synthetic_service=synthetic_service, approval_agent=agent
+        )
+
+        batch = await selector._generate_and_approve_synthetic(
+            agent_type="routing", num_needed=3, tenant_id="t"
+        )
+
+        assert len(batch.items) == 3
+        assert batch.approved_count == 0
+        assert len(batch.pending_review) == 3
+        synthetic_service.generate.assert_awaited_once()

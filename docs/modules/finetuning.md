@@ -163,7 +163,7 @@ async def finetune(
     min_turns_per_session: int = 2,
     system_prompt: str = "You are a helpful assistant.",
     synthetic_service: Optional[any] = None,
-    approval_orchestrator: Optional[any] = None,
+    approval_agent: Optional[any] = None,
     output_dir: str = "outputs/adapters"
 ) -> OrchestrationResult
 ```
@@ -350,7 +350,7 @@ ELSE:
 ```python
 selector = TrainingMethodSelector(
     synthetic_service=synthetic_svc,
-    approval_orchestrator=approval_orch
+    approval_agent=approval_agent
 )
 
 analysis, approved_batch = await selector.analyze_and_prepare(
@@ -742,7 +742,7 @@ config = OrchestrationConfig(
 orchestrator = FinetuningOrchestrator(
     telemetry_provider=provider,
     synthetic_service=synthetic_svc,
-    approval_orchestrator=approval_orch
+    approval_agent=approval_agent
 )
 
 result = await orchestrator.run(config)
@@ -1453,7 +1453,7 @@ batch = ApprovalBatch(
 )
 
 # Submit for review
-approved_batch = await approval_orchestrator.submit_for_review(batch)
+approved_batch = await approval_agent.submit_for_review(batch)
 
 # Only approved items used for training
 ```

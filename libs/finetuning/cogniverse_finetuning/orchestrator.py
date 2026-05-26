@@ -217,7 +217,7 @@ class FinetuningOrchestrator:
         self,
         telemetry_provider: TelemetryProvider,
         synthetic_service: Optional[any] = None,
-        approval_orchestrator: Optional[any] = None,
+        approval_agent: Optional[any] = None,
         registry: Optional[any] = None,
     ):
         """
@@ -226,12 +226,12 @@ class FinetuningOrchestrator:
         Args:
             telemetry_provider: TelemetryProvider for querying spans/annotations
             synthetic_service: Optional SyntheticDataService for data generation
-            approval_orchestrator: Optional ApprovalOrchestrator for human approval
+            approval_agent: Optional HumanApprovalAgent for human approval
             registry: Optional AdapterRegistry for adapter registration
         """
         self.provider = telemetry_provider
         self.synthetic_service = synthetic_service
-        self.approval_orchestrator = approval_orchestrator
+        self.approval_agent = approval_agent
         self.registry = registry
 
     def _upload_adapter_to_storage(
@@ -541,7 +541,7 @@ class FinetuningOrchestrator:
         logger.info("Step 1: Analyzing available data...")
         selector = TrainingMethodSelector(
             synthetic_service=self.synthetic_service,
-            approval_orchestrator=self.approval_orchestrator,
+            approval_agent=self.approval_agent,
         )
 
         analysis, approved_batch = await selector.analyze_and_prepare(
@@ -1001,7 +1001,7 @@ async def finetune(
     system_prompt: str = "You are a helpful assistant.",
     # Synthetic and approval
     synthetic_service: Optional[any] = None,
-    approval_orchestrator: Optional[any] = None,
+    approval_agent: Optional[any] = None,
     # Output
     output_dir: str = "outputs/adapters",
 ) -> OrchestrationResult:
@@ -1032,7 +1032,7 @@ async def finetune(
         min_turns_per_session: Minimum conversation turns to include a trajectory
         system_prompt: System prompt prepended to each ChatML conversation
         synthetic_service: Optional SyntheticDataService
-        approval_orchestrator: Optional ApprovalOrchestrator
+        approval_agent: Optional HumanApprovalAgent
 
     Returns:
         OrchestrationResult
@@ -1088,7 +1088,7 @@ async def finetune(
     orchestrator = FinetuningOrchestrator(
         telemetry_provider=telemetry_provider,
         synthetic_service=synthetic_service,
-        approval_orchestrator=approval_orchestrator,
+        approval_agent=approval_agent,
     )
 
     return await orchestrator.run(config)
@@ -1134,7 +1134,7 @@ async def analyze_dataset_status(
     # Create selector
     selector = TrainingMethodSelector(
         synthetic_service=None,  # No synthetic for status check
-        approval_orchestrator=None,
+        approval_agent=None,
     )
 
     # Analyze data

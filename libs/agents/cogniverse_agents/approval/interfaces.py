@@ -101,13 +101,17 @@ class ApprovalBatch:
         return [item for item in self.items if item.status == ApprovalStatus.REJECTED]
 
     @property
+    def approved_count(self) -> int:
+        """Number of items approved (auto-approved + human-approved)."""
+        return len(self.auto_approved) + len(self.approved)
+
+    @property
     def approval_rate(self) -> float:
         """Percentage of items approved (auto + human)"""
         total = len(self.items)
         if total == 0:
             return 0.0
-        approved_count = len(self.auto_approved) + len(self.approved)
-        return approved_count / total
+        return self.approved_count / total
 
 
 class ConfidenceExtractor(ABC):

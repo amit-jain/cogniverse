@@ -230,6 +230,48 @@ class TestHumanApprovalAgent:
         assert len(batch_high.auto_approved) == 0
         assert len(batch_high.pending_review) == 1
 
+    @pytest.mark.asyncio
+    async def test_submit_for_review_classifies_and_persists_prebuilt_batch(self):
+        """submit_for_review re-classifies a caller-built batch against the
+        threshold (>= auto-approve, else pending) using each item's own
+        confidence, and persists it so the dashboard surfaces it. This is the
+        path the finetuning synthetic-data flow uses."""
+
+        class _Extractor:
+            def extract(self, data):  # unused: submit_for_review uses item.confidence
+                return 0.0
+
+        class _FakeStorage:
+            def __init__(self):
+                self.saved = []
+
+            async def save_batch(self, batch):
+                self.saved.append(batch.batch_id)
+                return batch.batch_id
+
+        storage = _FakeStorage()
+        agent = HumanApprovalAgent(
+            confidence_extractor=_Extractor(),
+            confidence_threshold=0.85,
+            storage=storage,
+        )
+        batch = ApprovalBatch(
+            batch_id="synthetic_b1",
+            items=[
+                ReviewItem(item_id="i_hi", data={}, confidence=0.9),
+                ReviewItem(item_id="i_lo", data={}, confidence=0.8),
+            ],
+            context={},
+        )
+
+        result = await agent.submit_for_review(batch)
+
+        assert result is batch
+        assert [i.item_id for i in batch.auto_approved] == ["i_hi"]
+        assert [i.item_id for i in batch.pending_review] == ["i_lo"]
+        assert batch.approved_count == 1
+        assert storage.saved == ["synthetic_b1"]
+
 
 class TestFeedbackHandler:
     """Test SyntheticDataFeedbackHandler"""
