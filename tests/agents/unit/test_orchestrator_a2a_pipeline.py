@@ -171,7 +171,7 @@ class TestA2APipelineFlow:
         # (the orchestrator nests them under body["context"]).
         assert len(captured_bodies) >= 1
         ctx = captured_bodies[0].get("context", {})
-        assert ctx.get("tenant_id") == "acme_corp"
+        assert ctx.get("tenant_id") == "acme_corp:acme_corp"
         assert ctx.get("session_id") == "sess-123"
 
 

@@ -51,19 +51,19 @@ class FakeProvider:
 
 
 def _ds_prompts(agent: str) -> str:
-    return f"dspy-prompts-acme-{agent}"
+    return f"dspy-prompts-acme:acme-{agent}"
 
 
 def _ds_demos(agent: str) -> str:
-    return f"dspy-demos-acme-{agent}"
+    return f"dspy-demos-acme:acme-{agent}"
 
 
 def _ds_prompts_v(agent: str, v: int) -> str:
-    return f"dspy-prompts-acme-{agent}-v{v}"
+    return f"dspy-prompts-acme:acme-{agent}-v{v}"
 
 
 def _ds_demos_v(agent: str, v: int) -> str:
-    return f"dspy-demos-acme-{agent}-v{v}"
+    return f"dspy-demos-acme:acme-{agent}-v{v}"
 
 
 @pytest.fixture

@@ -130,7 +130,7 @@ class TestArtifactManagerExperiments:
     async def test_save_first_creates_then_appends(self, manager_and_provider):
         mgr, provider = manager_and_provider
         first = ExperimentMetrics(
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_type="search_agent",
             run_id="r1",
             timestamp="2026-05-08T01:00:00+00:00",
@@ -138,7 +138,7 @@ class TestArtifactManagerExperiments:
             promoted=True,
         )
         second = ExperimentMetrics(
-            tenant_id="acme",
+            tenant_id="acme:acme",
             agent_type="search_agent",
             run_id="r2",
             timestamp="2026-05-08T02:00:00+00:00",
@@ -150,7 +150,7 @@ class TestArtifactManagerExperiments:
         await mgr.save_experiment(second)
 
         # Single dataset created the first time, append on the second.
-        ds_name = "dspy-experiments-acme-search_agent"
+        ds_name = "dspy-experiments-acme:acme-search_agent"
         assert ds_name in provider.datasets.created
         assert len(provider.datasets.append_calls) == 1
         assert provider.datasets.append_calls[0][0] == ds_name
@@ -222,7 +222,7 @@ class TestArtifactManagerExperiments:
 
         legacy = await mgr.load_optimization_run("search_agent")
         assert legacy is not None
-        assert legacy["tenant_id"] == "acme"
+        assert legacy["tenant_id"] == "acme:acme"
         assert legacy["agent_type"] == "search_agent"
         assert legacy["metrics"]["optimizer"] == "BootstrapFewShot"
         assert legacy["metrics"]["candidate_score"] == 0.6

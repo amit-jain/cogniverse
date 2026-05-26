@@ -79,15 +79,15 @@ class FakeProvider:
 
 
 def _ds_prompts(agent: str) -> str:
-    return f"dspy-prompts-acme-{agent}"
+    return f"dspy-prompts-acme:acme-{agent}"
 
 
 def _ds_demos(agent: str) -> str:
-    return f"dspy-demos-acme-{agent}"
+    return f"dspy-demos-acme:acme-{agent}"
 
 
 def _ds_experiments(agent: str) -> str:
-    return f"dspy-experiments-acme-{agent}"
+    return f"dspy-experiments-acme:acme-{agent}"
 
 
 CANDIDATE_PROMPTS = {"system": "v1"}
