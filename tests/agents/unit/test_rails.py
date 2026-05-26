@@ -29,10 +29,28 @@ class TestTopicBoundaryRail:
         rail = TopicBoundaryRail(allowed_topics=["video", "search", "document"])
         rail.check({"query": "search for videos about cats"})
 
-    def test_blocks_off_topic(self):
-        rail = TopicBoundaryRail(allowed_topics=["video", "search"])
+    def test_blocks_off_topic_when_not_advisory(self):
+        rail = TopicBoundaryRail(allowed_topics=["video", "search"], advisory=False)
         with pytest.raises(RailBlockedError, match="outside allowed topics"):
             rail.check({"query": "what is the weather today"})
+
+    def test_advisory_off_topic_passes_and_logs(self, caplog):
+        """Default advisory mode: an off-topic query is logged, NOT blocked —
+        so coarse keyword matching can't reject legitimate natural queries."""
+        import logging
+
+        rail = TopicBoundaryRail(allowed_topics=["video", "search"])  # advisory default
+        with caplog.at_level(logging.WARNING):
+            rail.check({"query": "what is the weather today"})  # must not raise
+        assert any("topic_boundary (advisory)" in r.message for r in caplog.records)
+
+    def test_advisory_on_topic_does_not_log(self, caplog):
+        import logging
+
+        rail = TopicBoundaryRail(allowed_topics=["video"])
+        with caplog.at_level(logging.WARNING):
+            rail.check({"query": "find a video"})
+        assert not any("advisory" in r.message for r in caplog.records)
 
     def test_case_insensitive(self):
         rail = TopicBoundaryRail(allowed_topics=["Video"])
@@ -123,7 +141,7 @@ class TestRailChain:
     def test_first_failure_raises(self):
         chain = RailChain(
             [
-                TopicBoundaryRail(allowed_topics=["video"]),
+                TopicBoundaryRail(allowed_topics=["video"], advisory=False),
                 ContentSafetyRail(blocked_patterns=["cats"]),
             ]
         )
@@ -216,7 +234,7 @@ class TestAgentBaseRailsIntegration:
         agent = _TestAgent(deps=_TestDeps())
         input_chain = RailChain(
             [
-                TopicBoundaryRail(allowed_topics=["video"]),
+                TopicBoundaryRail(allowed_topics=["video"], advisory=False),
             ]
         )
         agent.set_rails(input_rails=input_chain)

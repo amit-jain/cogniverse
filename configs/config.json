@@ -320,6 +320,7 @@
       {
         "type": "topic_boundary",
         "params": {
+          "advisory": true,
           "allowed_topics": [
             "video",
             "search",

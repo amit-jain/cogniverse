@@ -9,11 +9,14 @@ directly into the AgentBase.process() pipeline.
 
 from __future__ import annotations
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class RailBlockedError(Exception):
@@ -48,14 +51,19 @@ class Rail(ABC):
 
 class TopicBoundaryRail(Rail):
     """
-    Blocks queries outside allowed topic domains.
+    Flags queries outside allowed topic domains.
 
-    Matches query text against a list of allowed topic keywords.
-    If none match, the query is considered off-topic.
+    Matches query text against a list of allowed topic keywords. If none
+    match, the query is considered off-topic. Because keyword matching is
+    coarse (a perfectly on-topic natural-language query may use none of the
+    listed keywords), the rail defaults to ``advisory`` mode: an off-topic
+    query is logged but allowed through. Set ``advisory=False`` to hard-block
+    instead — only sensible with a deliberately broad ``allowed_topics`` list.
     """
 
-    def __init__(self, allowed_topics: List[str]):
+    def __init__(self, allowed_topics: List[str], advisory: bool = True):
         self._allowed_topics = [t.lower() for t in allowed_topics]
+        self._advisory = advisory
 
     @property
     def name(self) -> str:
@@ -70,6 +78,14 @@ class TopicBoundaryRail(Rail):
         for topic in self._allowed_topics:
             if topic in query_lower:
                 return
+
+        if self._advisory:
+            logger.warning(
+                "topic_boundary (advisory): query outside allowed topics %s: %r",
+                self._allowed_topics,
+                query[:120],
+            )
+            return
 
         raise RailBlockedError(
             self.name,

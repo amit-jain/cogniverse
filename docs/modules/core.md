@@ -50,6 +50,7 @@ cogniverse_core/
 │   ├── health_mixin.py          # Health check mixin
 │   ├── a2a_mixin.py             # A2A communication mixin
 │   ├── dynamic_dspy_mixin.py    # Dynamic DSPy loading
+│   ├── rails.py                 # Content rails (topic/safety/format) for agent I/O
 │   └── rlm_options.py           # Remote LM configuration options
 ├── registries/                  # Component registries
 │   ├── agent_registry.py        # Agent class registration
@@ -236,6 +237,42 @@ agent = MyAgent(deps=deps, config=config)
 | `/schema` | GET | Input/output JSON schemas |
 
 Individual agents also expose a `/process` endpoint accepting a dict payload (not A2A Task objects).
+
+---
+
+## Content Rails
+
+`agents/rails.py` provides lightweight input/output guardrails. `AgentBase.process()`
+runs the configured chains around `_process_impl()`, and the runtime enforces them
+at the **gateway front door** (the dispatcher's `_execute_gateway_task` runs input
+rails on the incoming query and output rails on the final response), so internal
+agent-to-agent calls aren't gated.
+
+Three concrete rails (raise `RailBlockedError` on violation):
+
+- **`TopicBoundaryRail(allowed_topics, advisory=True)`** — flags queries that contain
+  none of the allowed-topic keywords. Defaults to **advisory** (logs a warning, does
+  not block) because coarse keyword matching would otherwise reject legitimate
+  natural-language queries; set `advisory=False` to hard-block (only with a
+  deliberately broad `allowed_topics`).
+- **`ContentSafetyRail(blocked_patterns)`** — blocks input/output matching any regex
+  (e.g. prompt-injection phrases, `<script>`).
+- **`OutputFormatRail(required_fields)`** — enforces required output fields + types.
+
+Rails are configured under the `rails` block in `config.json`
+(`enabled`, `input_rails`, `output_rails`); `RailsConfig.build_input_chain()` /
+`build_output_chain()` compile the definitions into `RailChain`s.
+
+```json
+"rails": {
+  "enabled": true,
+  "input_rails": [
+    {"type": "topic_boundary", "params": {"advisory": true, "allowed_topics": ["video", "search"]}},
+    {"type": "content_safety", "params": {"blocked_patterns": ["ignore previous instructions", "<script>"]}}
+  ],
+  "output_rails": []
+}
+```
 
 ---
 

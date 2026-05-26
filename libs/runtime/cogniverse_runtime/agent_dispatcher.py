@@ -989,6 +989,36 @@ class AgentDispatcher:
         rewritten = (result.rewritten_query or "").strip()
         return rewritten if rewritten else query
 
+    def _get_rail_chains(self, tenant_id: str):
+        """Build and cache the (input, output) content-rail chains per tenant.
+
+        Loads the ``rails`` block from config (config.json / ConfigStore) and
+        compiles it into RailChains once per tenant. Returns ``None`` when
+        rails are absent or disabled. Rails are enforced at the gateway —
+        the request front door — so internal agent-to-agent calls aren't
+        gated.
+        """
+        if not hasattr(self, "_rail_chains_cache"):
+            self._rail_chains_cache: Dict[str, Optional[tuple]] = {}
+        if tenant_id not in self._rail_chains_cache:
+            chains: Optional[tuple] = None
+            try:
+                from cogniverse_core.agents.rails import RailsConfig
+                from cogniverse_foundation.config.utils import get_config
+
+                rails_cfg = get_config(tenant_id, self._config_manager).get("rails", {})
+                if rails_cfg:
+                    rc = RailsConfig(**rails_cfg)
+                    if rc.enabled:
+                        chains = (rc.build_input_chain(), rc.build_output_chain())
+            except Exception as exc:  # noqa: BLE001 — rails must never break dispatch
+                logger.warning(
+                    "Failed to build content rails for tenant %s: %s", tenant_id, exc
+                )
+                chains = None
+            self._rail_chains_cache[tenant_id] = chains
+        return self._rail_chains_cache[tenant_id]
+
     async def _execute_gateway_task(
         self,
         query: str,
@@ -999,11 +1029,30 @@ class AgentDispatcher:
 
         Simple queries are dispatched directly to the target execution agent.
         Complex queries are forwarded to OrchestratorAgent for multi-agent
-        coordination.
+        coordination. Content rails run here (the front door): input rails on
+        the incoming query, output rails on the final response.
         """
         # Consult + verify routing_agent egress policy at dispatch.
         self.consult_egress_policy("routing_agent")
         self._verify_routing_egress(tenant_id)
+
+        from cogniverse_core.agents.rails import RailBlockedError
+
+        rail_chains = self._get_rail_chains(tenant_id)
+        if rail_chains is not None:
+            try:
+                rail_chains[0].check({"query": query})
+            except RailBlockedError as exc:
+                logger.info(
+                    "Request blocked by input rail '%s': %s", exc.rail_name, exc.reason
+                )
+                return {
+                    "status": "blocked",
+                    "agent": "gateway_agent",
+                    "rail": exc.rail_name,
+                    "reason": exc.reason,
+                    "message": f"Request blocked by {exc.rail_name}",
+                }
 
         from cogniverse_agents.gateway_agent import (
             GatewayAgent,
@@ -1025,7 +1074,7 @@ class AgentDispatcher:
         result = await self._gateway_agent._process_impl(input_data)
 
         if result.complexity == "complex":
-            return await self._execute_orchestration_task(
+            final = await self._execute_orchestration_task(
                 query,
                 context,
                 tenant_id,
@@ -1035,29 +1084,48 @@ class AgentDispatcher:
                     "confidence": result.confidence,
                 },
             )
+        else:
+            # Simple: route directly to the execution agent
+            conversation_history = context.get("conversation_history", [])
+            downstream = await self._execute_downstream_agent(
+                agent_name=result.routed_to,
+                query=query,
+                tenant_id=tenant_id,
+                top_k=context.get("top_k", 10),
+                conversation_history=conversation_history,
+            )
+            final = {
+                "status": "success",
+                "agent": "gateway_agent",
+                "message": f"Routed '{query[:50]}' to {result.routed_to} (simple)",
+                "gateway": {
+                    "complexity": result.complexity,
+                    "modality": result.modality,
+                    "generation_type": result.generation_type,
+                    "routed_to": result.routed_to,
+                    "confidence": result.confidence,
+                },
+                "downstream_result": downstream,
+            }
 
-        # Simple: route directly to the execution agent
-        conversation_history = context.get("conversation_history", [])
-        downstream = await self._execute_downstream_agent(
-            agent_name=result.routed_to,
-            query=query,
-            tenant_id=tenant_id,
-            top_k=context.get("top_k", 10),
-            conversation_history=conversation_history,
-        )
-        return {
-            "status": "success",
-            "agent": "gateway_agent",
-            "message": f"Routed '{query[:50]}' to {result.routed_to} (simple)",
-            "gateway": {
-                "complexity": result.complexity,
-                "modality": result.modality,
-                "generation_type": result.generation_type,
-                "routed_to": result.routed_to,
-                "confidence": result.confidence,
-            },
-            "downstream_result": downstream,
-        }
+        # Output rails on the final user-facing response (front-door exit).
+        if rail_chains is not None and isinstance(final, dict):
+            try:
+                rail_chains[1].check(final)
+            except RailBlockedError as exc:
+                logger.info(
+                    "Response blocked by output rail '%s': %s",
+                    exc.rail_name,
+                    exc.reason,
+                )
+                return {
+                    "status": "blocked",
+                    "agent": "gateway_agent",
+                    "rail": exc.rail_name,
+                    "reason": exc.reason,
+                    "message": f"Response blocked by {exc.rail_name}",
+                }
+        return final
 
     async def _execute_orchestration_task(
         self,
