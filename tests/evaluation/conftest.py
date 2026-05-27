@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
-import numpy as np
 import pandas as pd
 import pytest
 import requests
@@ -455,16 +454,6 @@ def reset_singletons():
     yield
 
 
-def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
-    """Convert (num_patches, 128) float32 embeddings to Vespa tensor dict format."""
-    float_dict = {str(idx): vector.tolist() for idx, vector in enumerate(embeddings)}
-    binarized = np.packbits(
-        np.where(embeddings > 0, 1, 0).astype(np.uint8), axis=1
-    ).astype(np.int8)
-    binary_dict = {str(idx): vector.tolist() for idx, vector in enumerate(binarized)}
-    return float_dict, binary_dict
-
-
 @pytest.fixture(scope="module")
 def eval_vespa_instance(shared_vespa):  # noqa: F811
     """Compatibility shim: yields the dict shape evaluation tests expect,
@@ -528,18 +517,12 @@ def eval_colpali_model():
 def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
     """Feed real ColPali-embedded documents into Vespa for evaluation tests.
 
-    Documents are assembled via :class:`DocumentBuilder` with a populated
-    ``source_url`` pointing at the on-disk test videos so visual evaluators
-    can resolve frames through the unified MediaLocator path. The schema name
-    used (``EVAL_TENANT_SCHEMA``) is tenant-namespaced; the builder's default
-    ``video_*`` schema layout (used by production ingestion) is identical at
-    the field level.
+    Documents are mapped through the production ingestion path
+    (``VespaPyClient.process``) with a populated ``source_url`` pointing at the
+    on-disk test videos so visual evaluators can resolve frames through the
+    unified MediaLocator path. Using the prod mapping means eval search runs
+    against the same document shape live ingestion writes.
     """
-    from cogniverse_runtime.ingestion.processors.embedding_generator.document_builders import (
-        DocumentBuilder,
-        DocumentMetadata,
-    )
-
     model, processor, device = eval_colpali_model
     test_videos_dir = (
         Path(__file__).resolve().parents[1] / "system" / "resources" / "videos"
@@ -569,8 +552,23 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
         },
     ]
 
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_sdk.document import ContentType, Document
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
     http_port = eval_vespa_instance["http_port"]
-    builder = DocumentBuilder(EVAL_TENANT_SCHEMA)
+    # Map documents through the real ingestion field+embedding mapping
+    # (VespaPyClient.process) — the same path live ingestion uses — so eval
+    # search runs against prod-shaped documents, not a test-only builder.
+    ingest_client = VespaPyClient(
+        {
+            "schema_name": EVAL_TENANT_SCHEMA,
+            "base_schema_name": "video_colpali_smol500_mv_frame",
+            "url": "http://localhost",
+            "port": http_port,
+            "schema_loader": FilesystemSchemaLoader(EVAL_SCHEMAS_DIR),
+        }
+    )
 
     for i, doc_info in enumerate(test_docs):
         img = Image.new("RGB", (224, 224), color=doc_info["color"])
@@ -579,39 +577,36 @@ def eval_seeded_documents(eval_vespa_instance, eval_colpali_model):
             doc_embeddings = model(**batch_inputs)
         embeddings_np = doc_embeddings.squeeze(0).cpu().float().numpy()
 
-        float_dict, binary_dict = _embeddings_to_vespa_tensors(embeddings_np)
-
         # Cycle through the available test videos so each seeded doc has a
         # real, locator-resolvable source_url.
         video_path = available_videos[i % len(available_videos)]
         source_url = f"file://{video_path.resolve()}"
         doc_info["source_url"] = source_url
 
-        metadata = DocumentMetadata(
-            video_id=doc_info["video_id"],
-            video_title=doc_info["title"],
-            segment_idx=0,
-            start_time=0.0,
-            end_time=5.0,
-            source_url=source_url,
+        document = Document(
+            id=f"eval_test_doc_{i}",
+            content_type=ContentType.VIDEO,
+            content_id=doc_info["video_id"],
         )
-        doc = builder.build_document(
-            metadata,
-            embeddings={},  # Embeddings are added below in float/binary form.
-            additional_fields={
-                "segment_description": doc_info["title"],
-                "audio_transcript": "",
-            },
+        document.add_embedding(
+            "embedding", embeddings_np, {"type": "float", "raw": True}
         )
-        # The colsmol-500m schema uses tensor fields the helper doesn't
-        # populate by default; inject the prebuilt float/binary tensors here.
-        doc["fields"]["embedding"] = float_dict
-        doc["fields"]["embedding_binary"] = binary_dict
+        document.add_metadata("video_id", doc_info["video_id"])
+        document.add_metadata("video_title", doc_info["title"])
+        document.add_metadata("source_url", source_url)
+        document.add_metadata("segment_index", 0)
+        document.add_metadata("start_time", 0.0)
+        document.add_metadata("end_time", 5.0)
+        document.add_metadata("description", doc_info["title"])
+
+        # process() converts embeddings to the schema's tensor format and maps
+        # metadata to fields exactly as production ingestion does.
+        fields = ingest_client.process(document)["fields"]
 
         doc_id = f"eval_test_doc_{i}"
         resp = requests.post(
             f"http://localhost:{http_port}/document/v1/video/{EVAL_TENANT_SCHEMA}/docid/{doc_id}",
-            json={"fields": doc["fields"]},
+            json={"fields": fields},
             timeout=10,
         )
         assert resp.status_code in [200, 201], (

@@ -9,9 +9,9 @@ Exercises the full unified-MediaLocator chain at the ingestion boundary:
    ``locator.list``).
 4. ``pipeline.locator.localize(uri)`` fetches each video from MinIO into the
    tenant-scoped cache (real fsspec/s3fs download).
-5. The orchestrator-shaped pipeline state is used to build a Vespa document
-   via ``DocumentBuilder.build_document``; ``source_url`` carries the
-   canonical ``s3://`` URI.
+5. A Vespa document is built through the production ingestion field mapping
+   (``VespaPyClient.process``); ``source_url`` carries the canonical
+   ``s3://`` URI.
 6. The document is fed to a real Vespa container and queried back; the
    ``source_url`` field round-trips exactly.
 
@@ -32,10 +32,7 @@ from cogniverse_core.common.media import (
     MediaLocator,
     S3BackendConfig,
 )
-from cogniverse_runtime.ingestion.processors.embedding_generator.document_builders import (
-    DocumentBuilder,
-    DocumentMetadata,
-)
+from tests.ingestion.integration.conftest import feed_document_via_prod_mapping
 
 SCHEMA = "video_colpali_smol500_mv_frame"
 VIDEO_SCHEMA_JSON = (
@@ -179,10 +176,9 @@ class TestPipelineMinioRoundTrip:
         assert second == local
 
     def test_doc_with_minio_source_url_round_trips_through_vespa(
-        self, media_locator, populated_minio_corpus, vespa_app
+        self, media_locator, populated_minio_corpus, vespa_app, ingestion_vespa_backend
     ):
-        """End-to-end: MinIO URI → locator → DocumentBuilder → Vespa → query → assert."""
-        builder = DocumentBuilder(SCHEMA)
+        """End-to-end: MinIO URI → locator → prod ingestion mapping → Vespa → query."""
         video_id, key = populated_minio_corpus["uploaded"][0]
         canonical_uri = f"s3://{populated_minio_corpus['bucket']}/{key}"
 
@@ -190,24 +186,17 @@ class TestPipelineMinioRoundTrip:
         local = media_locator.localize(canonical_uri)
         assert local.exists()
 
-        metadata = DocumentMetadata(
+        doc_id = feed_document_via_prod_mapping(
+            vespa_app,
+            ingestion_vespa_backend["http_port"],
+            SCHEMA,
+            VIDEO_SCHEMA_JSON.parent,
             video_id=f"minio_e2e_{video_id}",
             video_title="MinIO end-to-end round-trip",
-            segment_idx=0,
-            start_time=0.0,
-            end_time=5.0,
             source_url=canonical_uri,
         )
-        doc = builder.build_document(metadata, {}, {})
 
-        result = vespa_app.feed_data_point(
-            schema=SCHEMA,
-            data_id=doc["id"],
-            fields=doc["fields"],
-        )
-        assert result.is_successful(), f"feed failed: {result.json}"
-
-        fields = _wait_for_doc(vespa_app, doc["id"])
+        fields = _wait_for_doc(vespa_app, doc_id)
         assert fields is not None, "document never landed in Vespa"
         assert fields.get("source_url") == canonical_uri
         assert fields.get("source_url").startswith("s3://")

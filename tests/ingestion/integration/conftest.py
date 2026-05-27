@@ -22,6 +22,59 @@ from tests.utils.markers import (
     is_vespa_running,
 )
 
+
+def feed_document_via_prod_mapping(
+    vespa_app,
+    http_port: int,
+    schema_name: str,
+    schemas_dir: Path,
+    *,
+    video_id: str,
+    video_title: str,
+    source_url: str,
+) -> str:
+    """Feed a production ``Document`` into Vespa through the real ingestion
+    field mapping (``VespaPyClient.process``) and return the doc id.
+
+    Round-trip tests use this instead of a test-only document builder so they
+    actually validate that the production mapping carries ``source_url`` (and
+    the other fields) into Vespa — a test-only builder would prove nothing
+    about what live ingestion writes.
+    """
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_sdk.document import ContentType, Document
+    from cogniverse_vespa.ingestion_client import VespaPyClient
+
+    client = VespaPyClient(
+        {
+            "schema_name": schema_name,
+            "url": "http://localhost",
+            "port": http_port,
+            "schema_loader": FilesystemSchemaLoader(schemas_dir),
+        }
+    )
+    doc = Document(
+        id=f"{video_id}_seg_0",
+        content_type=ContentType.VIDEO,
+        content_id=video_id,
+    )
+    doc.add_metadata("video_id", video_id)
+    doc.add_metadata("video_title", video_title)
+    doc.add_metadata("source_url", source_url)
+    doc.add_metadata("start_time", 0.0)
+    doc.add_metadata("end_time", 5.0)
+    doc.add_metadata("segment_index", 0)
+
+    # process() returns the full Vespa put envelope {schema, put, fields};
+    # feed the inner fields (feed_data_point supplies the id/schema itself).
+    fields = client.process(doc)["fields"]
+    result = vespa_app.feed_data_point(
+        schema=schema_name, data_id=doc.id, fields=fields
+    )
+    assert result.is_successful(), f"feed failed: {result.json}"
+    return doc.id
+
+
 TEST_VIDEO_RESOURCE_DIR = (
     Path(__file__).resolve().parents[2] / "system" / "resources" / "videos"
 )

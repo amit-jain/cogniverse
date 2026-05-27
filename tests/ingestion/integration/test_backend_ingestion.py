@@ -413,7 +413,7 @@ class TestVespaIngestionViaMinio:
 
     Heavy model invocation (ColPali / VideoPrism / ColQwen) is disabled so
     the test is runnable without GPU/large model weights — the focus is the
-    URI → locator → orchestrator → DocumentBuilder → Vespa chain, not the
+    URI → locator → orchestrator → Vespa chain, not the
     embedding model itself.
     """
 
