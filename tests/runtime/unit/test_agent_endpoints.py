@@ -374,6 +374,90 @@ class TestOrchestrationUsesOrchestratorAgent:
         assert not hasattr(AgentDispatcher, "get_routing_statistics")
 
 
+@pytest.mark.unit
+class TestModalitySearchDispatchSerialization:
+    """image/audio/document dispatch returns Pydantic result objects, which must
+    be serialized with model_dump() — dataclasses.asdict() raises TypeError on
+    them. These exercise the dispatch path with REAL result objects (a Mock
+    result would serialize fine and hide the bug)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_image_search_dispatch_serializes_results(
+        self, dispatcher, monkeypatch
+    ):
+        from cogniverse_agents.image_search_agent import ImageResult
+
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        stub = MagicMock()
+        stub.search_images = AsyncMock(
+            return_value=[ImageResult(image_id="img1", image_url="http://x/1.jpg")]
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.image_search_agent.ImageSearchAgent",
+            lambda *a, **k: stub,
+        )
+
+        result = await dispatcher._execute_image_search_task("cats", "acme:prod", 5)
+
+        assert result["status"] == "success"
+        assert result["results_count"] == 1
+        assert result["results"][0]["image_id"] == "img1"
+        assert result["results"][0]["image_url"] == "http://x/1.jpg"
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_audio_search_dispatch_serializes_results(
+        self, dispatcher, monkeypatch
+    ):
+        from cogniverse_agents.audio_analysis_agent import AudioResult
+
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        stub = MagicMock()
+        stub.search_audio = AsyncMock(
+            return_value=[AudioResult(audio_id="aud1", audio_url="http://x/1.mp3")]
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.audio_analysis_agent.AudioAnalysisAgent",
+            lambda *a, **k: stub,
+        )
+
+        result = await dispatcher._execute_audio_search_task("speech", "acme:prod", 5)
+
+        assert result["status"] == "success"
+        assert result["results_count"] == 1
+        assert result["results"][0]["audio_id"] == "aud1"
+        assert result["results"][0]["audio_url"] == "http://x/1.mp3"
+
+    @pytest.mark.asyncio
+    @pytest.mark.ci_fast
+    async def test_document_search_dispatch_serializes_results(
+        self, dispatcher, monkeypatch
+    ):
+        from cogniverse_agents.document_agent import DocumentResult
+
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        monkeypatch.setattr(dispatcher, "_init_agent_memory", lambda *a, **k: None)
+        stub = MagicMock()
+        stub.search_documents = AsyncMock(
+            return_value=[
+                DocumentResult(
+                    document_id="doc1", document_url="http://x/1.pdf", title="Doc One"
+                )
+            ]
+        )
+        monkeypatch.setattr(
+            "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
+        )
+
+        result = await dispatcher._execute_document_search_task("report", "acme:prod", 5)
+
+        assert result["status"] == "success"
+        assert result["results_count"] == 1
+        assert result["results"][0]["document_id"] == "doc1"
+        assert result["results"][0]["title"] == "Doc One"
+
+
 # ── Annotation Queue HTTP endpoints ──────────────────────────────────────
 
 

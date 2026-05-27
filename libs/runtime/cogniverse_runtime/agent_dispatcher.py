@@ -1396,7 +1396,7 @@ class AgentDispatcher:
 
         results = await agent.search_images(query=query, limit=top_k)
 
-        result_list = [dataclasses.asdict(r) for r in results]
+        result_list = [r.model_dump() for r in results]
         return {
             "status": "success",
             "agent": "image_search_agent",
@@ -1422,7 +1422,7 @@ class AgentDispatcher:
 
         results = await agent.search_audio(query=query, limit=top_k)
 
-        result_list = [dataclasses.asdict(r) for r in results]
+        result_list = [r.model_dump() for r in results]
         return {
             "status": "success",
             "agent": "audio_analysis_agent",
@@ -1451,7 +1451,7 @@ class AgentDispatcher:
 
         results = await agent.search_documents(query=query, limit=top_k)
 
-        result_list = [dataclasses.asdict(r) for r in results]
+        result_list = [r.model_dump() for r in results]
         return {
             "status": "success",
             "agent": "document_agent",
