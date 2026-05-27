@@ -587,9 +587,14 @@ class VideoIngestionPipeline:
 
     def _extract_base_video_data(self, results: dict[str, Any]) -> dict[str, Any]:
         """Extract base video metadata from results"""
+        video_path = results.get("video_path")
         return {
             "video_id": results.get("video_id"),
-            "video_path": results.get("video_path"),
+            "video_path": video_path,
+            # Canonical source URI so every emitted document carries source_url
+            # (visual evaluators / frame extractors resolve bytes from it).
+            "source_url": getattr(self, "video_uri", None)
+            or (self._canonical_uri(video_path) if video_path else ""),
             "duration": results.get("duration", 0),
             "output_dir": str(self.profile_output_dir),
         }

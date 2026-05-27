@@ -255,6 +255,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     embeddings=embeddings,
                     transcript=transcript_text,
                     description=descriptions.get(str(idx), ""),
+                    source_url=video_data.get("source_url", ""),
                 )
 
                 documents_processed += 1
@@ -407,6 +408,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 doc.add_metadata("document_path", doc_info.get("path", ""))
                 doc.add_metadata("full_text", text)
                 doc.add_metadata("page_count", doc_info.get("page_count", 1))
+                if video_data.get("source_url"):
+                    doc.add_metadata("source_url", video_data["source_url"])
 
                 documents_processed += 1
                 if self._feed_document(doc):
@@ -506,6 +509,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 doc.add_metadata("audio_title", audio_path.stem)
                 doc.add_metadata("audio_path", str(audio_path))
                 doc.add_metadata("audio_transcript", transcript_text)
+                if video_data.get("source_url"):
+                    doc.add_metadata("source_url", video_data["source_url"])
 
                 documents_processed += 1
                 if self._feed_document(doc):
@@ -864,6 +869,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         embeddings: np.ndarray,
         transcript: str = "",
         description: str = "",
+        source_url: str = "",
     ) -> Document:
         """Create a Document for a single segment."""
         # All segments use generic Document now - no MediaType needed
@@ -897,6 +903,11 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Add basic metadata
         document.add_metadata("video_id", video_id)
         document.add_metadata("video_title", video_id)
+
+        # Canonical source URI — declared in the schema; consumers resolve bytes
+        # (visual evaluators / frame extraction) from it.
+        if source_url:
+            document.add_metadata("source_url", source_url)
 
         # Add description if available
         if description:
@@ -947,6 +958,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Add basic metadata
         document.add_metadata("video_id", video_id)
         document.add_metadata("video_title", video_id)
+
+        # Canonical source URI — declared in the schema; consumers resolve bytes
+        # (visual evaluators / frame extraction) from it.
+        source_url = video_data.get("source_url", "")
+        if source_url:
+            document.add_metadata("source_url", source_url)
 
         return document
 
