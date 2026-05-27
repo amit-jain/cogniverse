@@ -81,7 +81,6 @@ libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
     ├── __init__.py
     ├── analytics.py         # Analytics utilities (PhoenixAnalytics)
     ├── evaluation_provider.py   # PhoenixEvaluationProvider
-    ├── experiments.py       # Experiment management
     ├── framework.py         # Evaluation framework
     └── monitoring.py        # Monitoring utilities (RetrievalMonitor)
 ```

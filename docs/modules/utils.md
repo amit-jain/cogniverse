@@ -18,14 +18,12 @@
 ## Module Overview
 
 ### Purpose
-The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling, structured logging, and query processing.
+The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling and output management.
 
 ### Key Capabilities
 - **Retry Logic**: Exponential backoff with jitter for transient failure handling
-- **Logging Configuration**: Structured, multi-level logging with file and console output
-- **Query Utilities**: Comprehensive query building for all 9 Vespa ranking strategies
-- **Profile Resolution**: Strategy profile to ranking strategy mapping
 - **Output Management**: Centralized directory structure for all output files
+- **Async Utilities**: Helpers for bridging async code from sync contexts and polled waits
 
 ### Dependencies
 ```python
@@ -44,12 +42,8 @@ import torch
 libs/core/cogniverse_core/common/utils/
 ├── async_bridge.py                    # Run a coroutine to completion from sync code
 ├── async_polling.py                   # Production async polling utilities
-├── comprehensive_query_utils.py       # Query building for all ranking strategies
-├── logging_config.py                  # Centralized logging configuration
 ├── output_manager.py                  # Output directory management
-├── profile_utils.py                   # Profile to strategy mapping
-├── retry.py                           # Retry utilities with exponential backoff
-└── vespa_query_utils.py              # Vespa-specific query construction
+└── retry.py                           # Retry utilities with exponential backoff
 ```
 
 ---
@@ -73,54 +67,6 @@ flowchart TB
     style DEC fill:#ffcc80,stroke:#ef6c00,color:#000
     style CTX fill:#ce93d8,stroke:#7b1fa2,color:#000
     style FORMULA fill:#a5d6a7,stroke:#388e3c,color:#000
-```
-
-### 2. Logging System Architecture
-
-```mermaid
-flowchart TB
-    SETUP["<span style='color:#000'>setup_logging<br/>• Component name<br/>• Log level INFO DEBUG ERROR<br/>• File/console output options</span>"]
-    OM["<span style='color:#000'>OutputManager Integration<br/>• Centralized log directory<br/>• Timestamped log files<br/>• Component-specific log files</span>"]
-
-    subgraph DUAL["<span style='color:#000'>Dual Handlers</span>"]
-        FH["<span style='color:#000'>File Handler<br/>• Detailed logs<br/>• Timestamp<br/>• Full context</span>"]
-        CH["<span style='color:#000'>Console Handler<br/>• Simple format<br/>• Colored output<br/>• Real-time display</span>"]
-    end
-
-    FMTS["<span style='color:#000'>Formats:<br/>File: 2025-10-07 14:30:15 - VideoAgent - INFO - Processing...<br/>Console: 14:30:15 - INFO - Processing...</span>"]
-
-    SETUP --> OM
-    OM --> DUAL
-    DUAL --> FMTS
-
-    style SETUP fill:#90caf9,stroke:#1565c0,color:#000
-    style OM fill:#ffcc80,stroke:#ef6c00,color:#000
-    style DUAL fill:#b0bec5,stroke:#546e7a,color:#000
-    style FH fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style CH fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style FMTS fill:#a5d6a7,stroke:#388e3c,color:#000
-```
-
-### 3. Query Building Architecture
-
-```mermaid
-flowchart TB
-    INPUT["<span style='color:#000'>Input Processing<br/>• Query text for BM25<br/>• Float tensors ColPali VideoPrism<br/>• Binary tensors binarized embeddings</span>"]
-
-    BUILD["<span style='color:#000'>build_query_params ranking_profile ...<br/>Routing to 9 Ranking Strategies:<br/>1. bm25_only → Text-only search<br/>2. float_float → Float visual search<br/>3. binary_binary → Binary visual search<br/>4. float_binary → Float→Binary 2-phase<br/>5. phased → Multi-phase ranking<br/>6. hybrid_float_bm25 → Hybrid float + text<br/>7. binary_bm25 → Hybrid binary + text<br/>8. bm25_binary_rerank → BM25 candidates binary rerank<br/>9. bm25_float_rerank → BM25 candidates float rerank</span>"]
-
-    ASSEMBLE["<span style='color:#000'>Query Parameter Assembly<br/>• YQL Vespa query language<br/>• Ranking profile<br/>• Tensor inputs qt qtb<br/>• Hits count</span>"]
-
-    OUTPUT["<span style='color:#000'>Example Output for float_binary:<br/>yql: select * from sources * where true<br/>ranking: float_binary<br/>hits: 10<br/>input.query qt .querytoken0: 0.1 0.2 ...<br/>input.query qtb .querytoken0: a1b2c3d4...</span>"]
-
-    INPUT --> BUILD
-    BUILD --> ASSEMBLE
-    ASSEMBLE --> OUTPUT
-
-    style INPUT fill:#90caf9,stroke:#1565c0,color:#000
-    style BUILD fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ASSEMBLE fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style OUTPUT fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ---
@@ -237,263 +183,7 @@ class RetryableOperation:
 
 ---
 
-### 2. Logging Configuration (`logging_config.py`)
-
-#### setup_logging()
-Centralized logging configuration for components.
-
-```python
-def setup_logging(
-    name: str,
-    log_level: int = logging.INFO,
-    log_to_file: bool = True,
-    log_to_console: bool = True
-) -> logging.Logger:
-    """
-    Setup logging configuration for a component
-
-    Args:
-        name: Logger name (e.g., "VideoAgent", "OrchestratorAgent")
-        log_level: Logging level (default: INFO)
-        log_to_file: Whether to log to file (default: True)
-        log_to_console: Whether to log to console (default: True)
-
-    Returns:
-        Configured logger instance
-    """
-```
-
-**Key Features:**
-
-- Dual output (file + console) with different formats
-
-- Integration with OutputManager for centralized log directory
-
-- Timestamped log files per component
-
-- Prevents duplicate handlers
-
-**File Output Format:**
-```text
-2025-10-07 14:30:15 - VideoAgent - INFO - Processing query: "fire scene"
-2025-10-07 14:30:16 - VideoAgent - DEBUG - Encoded query with 2 tokens
-```
-
-**Console Output Format:**
-```text
-14:30:15 - INFO - Processing query: "fire scene"
-14:30:16 - DEBUG - Encoded query with 2 tokens
-```
-
-**Source:** `libs/core/cogniverse_core/common/utils/logging_config.py:9-69`
-
----
-
-### 3. Comprehensive Query Utilities (`comprehensive_query_utils.py`)
-
-#### binarize_token_vectors_hex()
-Convert float vectors to binary hex format for Vespa.
-
-```python
-def binarize_token_vectors_hex(vectors: torch.Tensor) -> Dict[str, str]:
-    """
-    Convert float token vectors to binary hex format for Vespa queries.
-
-    Args:
-        vectors: Token vectors (num_tokens, 128)
-
-    Returns:
-        Dictionary mapping token indices to hex-encoded binary strings
-    """
-    binarized = np.packbits(np.where(vectors > 0, 1, 0), axis=1).astype(np.int8)
-    vespa_token_feed = dict()
-    for index in range(len(binarized)):
-        vespa_token_feed[index] = str(hexlify(binarized[index].tobytes()), 'utf-8')
-    return vespa_token_feed
-```
-
-**Binarization Process:**
-
-1. Threshold at 0: `vectors > 0` → {0, 1}
-
-2. Pack bits: 8 binary values → 1 byte
-
-3. Convert to hex string for Vespa
-
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:11-22`
-
----
-
-#### build_query_params()
-Build Vespa query parameters for any ranking strategy.
-
-```python
-def build_query_params(
-    ranking_profile: str,
-    float_tensors: Dict[str, List[float]] = None,
-    binary_tensors: Dict[str, str] = None,
-    text_query: str = "",
-    hits: int = 10
-) -> Dict[str, Any]:
-    """
-    Build query parameters for any of the 9 ranking strategies.
-
-    Ranking Profiles:
-    - bm25_only: Pure text search
-    - float_float: Float visual search
-    - binary_binary: Binary visual search
-    - float_binary: Float→Binary 2-phase
-    - phased: Multi-phase ranking
-    - hybrid_float_bm25: Hybrid float + text
-    - binary_bm25: Hybrid binary + text
-    - bm25_binary_rerank: BM25 candidates, binary rerank
-    - bm25_float_rerank: BM25 candidates, float rerank
-    """
-```
-
-**Strategy-Specific Logic:**
-
-- **Text-only (bm25_only)**: Uses YQL text search on `video_title`, `frame_description`, `audio_transcript`
-
-- **Visual-only (float_float, binary_binary)**: Uses tensor inputs, YQL "where true"
-
-- **Hybrid**: Combines text filtering with visual ranking
-
-- **Rerank**: BM25 candidates, then neural reranking
-
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:32-115`
-
----
-
-#### benchmark_all_strategies()
-Benchmark all 9 ranking strategies with a single query.
-
-```python
-def benchmark_all_strategies(
-    query_text: str = "",
-    num_tokens: int = 2,
-    hits: int = 5,
-    vespa_url: str = "http://localhost:8080"
-) -> Dict[str, Any]:
-    """
-    Benchmark all 9 ranking strategies with a single query.
-
-    Returns:
-        Results from all ranking strategies with timing and hit counts
-    """
-```
-
-**Output Example:**
-```python
-{
-  "float_float": {
-    "status": "success",
-    "hits_count": 5,
-    "query_time_ms": 45.2,
-    "sample_scores": [0.892, 0.761, 0.643]
-  },
-  "binary_binary": {
-    "status": "success",
-    "hits_count": 5,
-    "query_time_ms": 12.8,
-    "sample_scores": [0.854, 0.732, 0.621]
-  }
-}
-```
-
-**Source:** `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py:117-209`
-
----
-
-### 4. Vespa Query Utilities (`vespa_query_utils.py`)
-
-#### build_binary_query_params()
-Build 2-phase ColPali query: binary candidates + float reranking.
-
-```python
-def build_binary_query_params(
-    binary_query_tensors: Dict[str, str],
-    float_query_tensors: Dict[str, List[float]],
-    target_hits: int = 100
-) -> Dict[str, Any]:
-    """
-    Build query parameters for 2-phase ColPali search:
-    1. Binary nearestNeighbor for candidate retrieval
-    2. Float reranking for final results
-
-    Returns:
-        {
-          "yql": "select * from sources * where (nearestNeighbor...)",
-          "ranking": "colpali_binary_float",
-          "input.query(binary_vector_0)": "a1b2c3...",
-          "input.query(qt).querytoken0": "[0.1, 0.2, ...]"
-        }
-    """
-```
-
-**2-Phase Strategy:**
-
-1. **Phase 1 (Binary)**: Fast candidate retrieval using binary embeddings
-
-2. **Phase 2 (Float)**: Accurate reranking using float embeddings
-
-**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:48-93`
-
----
-
-#### build_hybrid_query_params()
-Build hybrid (text + visual) search query.
-
-```python
-def build_hybrid_query_params(
-    float_query_tensors: Dict[str, List[float]],
-    text_query: str = "",
-    hits: int = 10
-) -> Dict[str, Any]:
-    """
-    Build query parameters for hybrid (text + visual) search.
-
-    Combines:
-    - Text search on video_title, frame_description, audio_transcript
-    - Visual search using float embeddings
-    - Hybrid ranking profile with weighted fusion
-    """
-```
-
-**Source:** `libs/core/cogniverse_core/common/utils/vespa_query_utils.py:140-178`
-
----
-
-### 5. Profile Utilities (`profile_utils.py`)
-
-#### get_supported_ranking_strategies()
-Map video processing profile to supported ranking strategies.
-
-```python
-def get_supported_ranking_strategies(profile: str) -> list:
-    """
-    Get the ranking strategies supported by each profile.
-
-    Profile Support Matrix:
-    - multi_vector_colpali: ALL strategies (text data + visual embeddings)
-    - direct_video_frame*: Visual + Hybrid strategies (video_title field)
-    - colqwen profiles: Visual-only strategies (no text fields)
-    """
-```
-
-**Profile → Strategy Mapping:**
-
-| Profile | Text-Only | Visual-Only | Hybrid (with text fields) |
-|---------|-----------|-------------|---------------------------|
-| `multi_vector_colpali` | ✅ bm25_only, bm25_no_description | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float (all with optional no_description variants) |
-| `direct_video_frame*` | ✅ bm25_only | ✅ float_float, binary_binary, float_binary, phased | ✅ hybrid_float_bm25, hybrid_binary_bm25, hybrid_bm25_binary, hybrid_bm25_float |
-| `colqwen profiles` | ❌ | ✅ float_float, binary_binary, float_binary, phased | ❌ |
-
-**Source:** `libs/core/cogniverse_core/common/utils/profile_utils.py:6-62`
-
----
-
-### 6. Output Manager (`output_manager.py`)
+### 2. Output Manager (`output_manager.py`)
 
 #### OutputManager
 Centralized directory management for all output files.
@@ -601,111 +291,7 @@ Total time: ~15 seconds with jitter
 
 ---
 
-### Example 2: Structured Logging for Agents
-
-```python
-from cogniverse_core.common.utils.logging_config import setup_logging
-import logging
-
-# Setup agent logging
-logger = setup_logging(
-    name="VideoSearchAgent",
-    log_level=logging.DEBUG,
-    log_to_file=True,
-    log_to_console=True
-)
-
-# Use throughout agent lifecycle
-logger.info("Agent initialized")
-logger.debug(f"Processing query: {query}")
-logger.warning("ColPali model not found, using fallback")
-logger.error("Vespa connection failed", exc_info=True)
-
-# Log output locations:
-# File: outputs/logs/VideoSearchAgent_1704672015.log
-# Console: Real-time stream with colored output
-```
-
-**Log File Contents:**
-```text
-2025-10-07 14:30:15 - VideoSearchAgent - INFO - Agent initialized
-2025-10-07 14:30:16 - VideoSearchAgent - DEBUG - Processing query: fire scene
-2025-10-07 14:30:17 - VideoSearchAgent - WARNING - ColPali model not found, using fallback
-2025-10-07 14:30:18 - VideoSearchAgent - ERROR - Vespa connection failed
-Traceback (most recent call last):
-  File "agent.py", line 42, in search
-    response = vespa_client.query(params)
-ConnectionError: Connection refused
-```
-
----
-
-### Example 3: Building Queries for All Ranking Strategies
-
-```python
-from cogniverse_core.common.utils.comprehensive_query_utils import (
-    build_query_params,
-    binarize_token_vectors_hex,
-    float_query_token_vectors
-)
-import torch
-
-# Encode query with ColPali
-query_embeddings = model.encode("fire scene")  # (2, 128)
-
-# Prepare tensors
-float_tensors = float_query_token_vectors(query_embeddings)
-binary_tensors = binarize_token_vectors_hex(query_embeddings)
-
-# Build queries for different strategies
-strategies = [
-    "float_float",      # Pure visual search (float)
-    "binary_binary",    # Pure visual search (binary)
-    "float_binary",     # Float→Binary 2-phase
-    "hybrid_float_bm25" # Hybrid text + visual
-]
-
-for strategy in strategies:
-    query_params = build_query_params(
-        ranking_profile=strategy,
-        float_tensors=float_tensors,
-        binary_tensors=binary_tensors,
-        text_query="fire scene",
-        hits=10
-    )
-
-    print(f"\n{strategy}:")
-    print(f"  YQL: {query_params['yql'][:50]}...")
-    print(f"  Ranking: {query_params['ranking']}")
-    print(f"  Tensor inputs: {len([k for k in query_params if 'query' in k])}")
-```
-
-**Output:**
-```text
-float_float:
-  YQL: select * from sources * where true...
-  Ranking: float_float
-  Tensor inputs: 2
-
-binary_binary:
-  YQL: select * from sources * where true...
-  Ranking: binary_binary
-  Tensor inputs: 2
-
-float_binary:
-  YQL: select * from sources * where true...
-  Ranking: float_binary
-  Tensor inputs: 4  # Both float and binary
-
-hybrid_float_bm25:
-  YQL: select * from sources * where (video_title contains...
-  Ranking: hybrid_float_bm25
-  Tensor inputs: 2
-```
-
----
-
-### Example 5: Output Directory Management
+### Example 2: Output Directory Management
 
 ```python
 from cogniverse_core.common.utils.output_manager import get_output_manager
@@ -761,15 +347,9 @@ Optimization results: outputs/optimization/grpo_checkpoint.pt
 
 - ✅ Retry logic: Exponential backoff calculation, jitter, exception filtering
 
-- ✅ Query building: All 9 ranking strategies, tensor format conversion
-
 - ✅ Output management: Directory creation, path resolution
 
 **Integration Tests:**
-
-- ✅ Logging: File and console output verification
-
-- ✅ Vespa queries: End-to-end query execution for all strategies
 
 - ✅ Retry with real services: HTTP retry behavior
 
@@ -818,28 +398,6 @@ python test_retry.py
 # Expected: 3 attempts with exponential delays
 ```
 
-#### Test Query Building
-```bash
-# Run comprehensive benchmark
-python -c "
-from cogniverse_core.common.utils.comprehensive_query_utils import (
-    benchmark_all_strategies,
-    print_benchmark_results
-)
-
-results = benchmark_all_strategies(
-    query_text='fire',
-    num_tokens=2,
-    hits=5,
-    vespa_url='http://localhost:8080'
-)
-
-print_benchmark_results(results)
-"
-
-# Expected: Benchmark results for all 9 strategies
-```
-
 ---
 
 ## Production Considerations
@@ -859,28 +417,6 @@ print_benchmark_results(results)
   - Set `max_delay` to prevent excessive wait times
   - Enable jitter for distributed systems
 
-**Query Building:**
-
-- **Overhead**: ~1-2ms for query parameter assembly
-
-- **Memory**: ~100KB for tensor storage (depends on num_tokens)
-
-- **Recommendations**:
-  - Cache query parameters for repeated queries
-  - Use binary tensors for faster candidate retrieval
-  - Batch multiple queries when possible
-
-**Logging:**
-
-- **File I/O**: ~5-10ms per log write (buffered)
-
-- **Disk usage**: Grows unbounded without log rotation
-
-- **Recommendations**:
-  - Use `logging.handlers.RotatingFileHandler` for production
-  - Set appropriate log levels (INFO for prod, DEBUG for dev)
-  - Use console logging only for critical errors in production
-
 ### 2. Error Handling
 
 **Retry Exhaustion:**
@@ -898,21 +434,6 @@ try:
 except Exception as e:
     # Fallback logic
     result = fallback_handler(e)
-```
-
-**Query Building Errors:**
-```python
-# Validate inputs before building query
-try:
-    query_params = build_query_params(
-        ranking_profile=strategy,
-        float_tensors=float_tensors,
-        text_query=text_query
-    )
-except KeyError as e:
-    logger.error(f"Invalid ranking profile: {strategy}")
-    # Fallback to default strategy
-    query_params = build_query_params("float_float", float_tensors=float_tensors)
 ```
 
 ### 3. Monitoring Points
@@ -942,46 +463,6 @@ def monitored_operation():
     return api.call()
 ```
 
-**Query Performance:**
-```python
-# Monitor query building and execution time
-import time
-
-def benchmark_query_strategy(strategy: str):
-    start_time = time.time()
-
-    # Build query
-    build_start = time.time()
-    query_params = build_query_params(ranking_profile=strategy, ...)
-    build_time = time.time() - build_start
-
-    # Execute query
-    exec_start = time.time()
-    response = vespa_client.query(query_params)
-    exec_time = time.time() - exec_start
-
-    total_time = time.time() - start_time
-
-    logger.info(f"{strategy}: build={build_time*1000:.1f}ms, "
-                f"exec={exec_time*1000:.1f}ms, total={total_time*1000:.1f}ms")
-```
-
-**Log File Monitoring:**
-```bash
-# Set up log rotation
-from logging.handlers import RotatingFileHandler
-
-handler = RotatingFileHandler(
-    filename='outputs/logs/agent.log',
-    maxBytes=10_000_000,  # 10MB
-    backupCount=5          # Keep 5 old log files
-)
-logger.addHandler(handler)
-
-# Monitor disk usage
-du -sh outputs/logs/
-```
-
 ### 4. Common Issues and Solutions
 
 **Issue 1: Retry Loops Never Succeed**
@@ -999,38 +480,6 @@ retry_config = RetryConfig(
 )
 ```
 
-**Issue 2: Log Files Growing Too Large**
-- **Symptom**: Disk space exhausted by large log files
-- **Cause**: No log rotation configured
-- **Solution**: Use RotatingFileHandler or external log rotation
-
-```python
-from logging.handlers import RotatingFileHandler
-
-handler = RotatingFileHandler(
-    'outputs/logs/agent.log',
-    maxBytes=10_000_000,  # 10MB per file
-    backupCount=5          # Keep 5 old files
-)
-```
-
-**Issue 3: Query Parameters Malformed**
-- **Symptom**: Vespa returns 400 Bad Request
-- **Cause**: Missing tensors for ranking profile
-- **Solution**: Validate inputs before building query
-
-```python
-def validate_query_inputs(ranking_profile, float_tensors, binary_tensors):
-    if ranking_profile in ["float_float", "hybrid_float_bm25"]:
-        assert float_tensors is not None, "Float tensors required"
-
-    if ranking_profile in ["binary_binary", "float_binary"]:
-        assert binary_tensors is not None, "Binary tensors required"
-
-    # Build query only after validation
-    return build_query_params(ranking_profile, float_tensors, binary_tensors)
-```
-
 ---
 
 ## Summary
@@ -1040,22 +489,18 @@ The Utils Module provides production-ready utilities that support the entire Cog
 ### Key Takeaways
 
 1. **Retry System**: Exponential backoff with jitter prevents thundering herd and handles transient failures gracefully
-2. **Logging**: Dual output (file + console) with structured formats supports debugging and production monitoring
-3. **Query Building**: Comprehensive support for all 9 Vespa ranking strategies with automatic parameter assembly
-4. **Output Management**: Centralized directory structure keeps outputs organized and prevents main directory pollution
+2. **Output Management**: Centralized directory structure keeps outputs organized and prevents main directory pollution
+3. **Async Utilities**: `async_bridge.py` and `async_polling.py` provide safe bridging and polled-wait helpers for mixed sync/async code
 
 ### Best Practices
 
 1. **Always use retry logic** for external service calls (Vespa, Ollama, HTTP APIs)
-2. **Configure log rotation** in production to prevent disk exhaustion
-3. **Validate query inputs** before building parameters to avoid Vespa errors
-4. **Monitor retry statistics** to identify systemic issues
-5. **Use OutputManager singleton** for all file I/O to maintain consistency
+2. **Monitor retry statistics** to identify systemic issues
+3. **Use OutputManager singleton** for all file I/O to maintain consistency
 
 ### Integration Points
 
-- **Agents**: Use retry logic for Vespa queries, logging for debugging
-- **Routing**: Use query building for all 9 ranking strategies
+- **Agents**: Use retry logic for Vespa queries
 - **Ingestion**: Use output management for processing artifacts
 - **Testing**: All utilities support comprehensive testing
 
@@ -1073,8 +518,8 @@ The Utils Module provides production-ready utilities that support the entire Cog
 
 - `libs/core/cogniverse_core/common/utils/retry.py` - Retry logic
 
-- `libs/core/cogniverse_core/common/utils/logging_config.py` - Logging configuration
-
-- `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py` - Query building
-
 - `libs/core/cogniverse_core/common/utils/output_manager.py` - Output directory management
+
+- `libs/core/cogniverse_core/common/utils/async_bridge.py` - Sync-to-async bridge
+
+- `libs/core/cogniverse_core/common/utils/async_polling.py` - Async polling utilities

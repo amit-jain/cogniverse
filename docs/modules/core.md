@@ -45,17 +45,13 @@ cogniverse_core/
 ├── agents/                      # Agent base classes and mixins
 │   ├── base.py                  # AgentBase[InputT, OutputT, DepsT]
 │   ├── a2a_agent.py             # A2AAgent with A2A protocol + DSPy
-│   ├── memory_aware_mixin.py    # Memory integration mixin
 │   ├── tenant_aware_mixin.py    # Multi-tenancy mixin
-│   ├── health_mixin.py          # Health check mixin
 │   ├── a2a_mixin.py             # A2A communication mixin
-│   ├── dynamic_dspy_mixin.py    # Dynamic DSPy loading
 │   ├── rails.py                 # Content rails (topic/safety/format) for agent I/O
 │   └── rlm_options.py           # Remote LM configuration options
 ├── registries/                  # Component registries
 │   ├── agent_registry.py        # Agent class registration
 │   ├── backend_registry.py      # Backend provider registration
-│   ├── dspy_registry.py         # DSPy module registration
 │   ├── schema_registry.py       # Schema template registration
 │   ├── adapter_store_registry.py # Adapter store registration
 │   ├── workflow_store_registry.py # Workflow store registration
@@ -79,10 +75,9 @@ cogniverse_core/
 │   ├── utils/                   # Utility functions (see Utility Modules section)
 │   ├── tenant_utils.py          # Tenant utilities
 │   ├── dspy_module_registry.py  # DSPy module management
-│   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin (also in agents/)
-│   ├── health_mixin.py          # Health check mixin (also in agents/)
+│   ├── dynamic_dspy_mixin.py    # Dynamic DSPy mixin
+│   ├── health_mixin.py          # Health check mixin
 │   ├── agent_models.py          # AgentEndpoint and shared agent models
-│   ├── document.py              # Document models
 │   └── vlm_interface.py         # Vision Language Model interface
 ├── events/                      # Real-time event notification system
 │   ├── types.py                 # Event type definitions (StatusEvent, ProgressEvent, etc.)
@@ -1250,10 +1245,8 @@ wait_for_retry_backoff(
 | Module | Purpose |
 |--------|---------|
 | `output_manager.py` | Manage output directories and artifacts |
-| `logging_config.py` | Standardized logging configuration |
-| `profile_utils.py` | Profile configuration utilities |
-| `vespa_query_utils.py` | Vespa YQL query building utilities |
-| `comprehensive_query_utils.py` | Query enhancement and analysis |
+| `async_bridge.py` | Run a coroutine to completion from sync code |
+| `async_polling.py` | Async polling with backoff for polled waits |
 
 ---
 

@@ -11,35 +11,30 @@
 libs/evaluation/cogniverse_evaluation/
 ├── __init__.py                          # Package initialization
 ├── cli.py                               # CLI for evaluation tasks
+├── online_evaluator.py                  # Online evaluation pipeline
+├── quality_monitor.py                   # Quality monitoring
 ├── span_evaluator.py                    # SpanEvaluator for retrospective evaluation
 ├── core/                                # Core evaluation framework
 │   ├── __init__.py
 │   ├── experiment_tracker.py            # ExperimentTracker main class
-│   ├── scorers.py                       # Inspect AI scorers
 │   ├── solvers.py                       # Inspect AI solvers
 │   ├── task.py                          # Evaluation task definitions
 │   ├── ground_truth.py                  # Ground truth extraction
 │   ├── schema_analyzer.py               # Schema analysis framework
 │   ├── inspect_scorers.py               # Inspect AI scorer helpers
 │   ├── reranking.py                     # Reranking logic
-│   ├── simple_scorers.py                # Simple metric scorers
-│   ├── solver_output.py                 # Solver output formatting
-│   └── tools.py                         # Evaluation tools
+│   └── solver_output.py                 # Solver output formatting
 ├── evaluators/                          # Evaluator implementations
 │   ├── routing_evaluator.py             # Routing decision evaluator
 │   ├── reference_free.py                # Reference-free evaluators
 │   ├── golden_dataset.py                # Golden dataset evaluator
 │   ├── llm_judge.py                     # LLM-based evaluators
-│   ├── sync_golden_dataset.py           # Synchronous golden dataset evaluator
 │   ├── sync_reference_free.py           # Synchronous reference-free evaluators
 │   ├── configurable_visual_judge.py     # Visual judge (provider/model from config)
 │   ├── _media_helpers.py                # source_url resolution + frame extraction
 │   ├── base.py                          # Base evaluator classes
-│   ├── base_evaluator.py                # Base evaluator interface
-│   ├── base_no_trace.py                 # Evaluator without tracing
 │   └── metadata_fetcher.py              # Metadata fetching utilities
 ├── metrics/                             # Metric definitions
-│   ├── reference_free.py                # Reference-free metrics
 │   └── custom.py                        # Custom metrics
 ├── data/                                # Data loaders and datasets
 │   ├── datasets.py                      # Dataset management
