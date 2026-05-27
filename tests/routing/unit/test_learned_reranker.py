@@ -186,10 +186,12 @@ class TestLearnedReranker:
                 assert len(call_args.kwargs["documents"]) == 1
 
     @pytest.mark.asyncio
-    async def test_rerank_handles_litellm_error(
+    async def test_rerank_raises_on_litellm_error(
         self, sample_results, mock_config_manager
     ):
-        """Test rerank returns original results on LiteLLM error"""
+        """A LiteLLM/reranker failure must surface, not silently return the
+        original order as if it were successfully reranked (the old behavior
+        gave a 200 OK with un-reranked results and no signal)."""
         with patch("cogniverse_agents.search.learned_reranker.arerank") as mock_arerank:
             mock_arerank.side_effect = Exception("LiteLLM API error")
 
@@ -202,11 +204,8 @@ class TestLearnedReranker:
                     tenant_id="test_tenant",
                     config_manager=mock_config_manager,
                 )
-                results = await reranker.rerank("test query", sample_results)
-
-                # Should return original results on error
-                assert len(results) == 2
-                assert results == sample_results
+                with pytest.raises(Exception, match="LiteLLM API error"):
+                    await reranker.rerank("test query", sample_results)
 
     def test_rerank_sync_version(self, sample_results, mock_config_manager):
         """Test synchronous rerank_sync method"""

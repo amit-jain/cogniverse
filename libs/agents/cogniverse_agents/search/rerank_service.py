@@ -11,9 +11,25 @@ reranking silently broke before).
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from cogniverse_agents.search.types import RerankerSearchResult
+
+
+def _parse_timestamp(d: Dict[str, Any]) -> Optional[datetime]:
+    """Pull creation_timestamp (epoch ms — ingestion writes int(time()*1000))
+    off a search-result dict so temporal reranking has a real value instead of
+    always falling back to the neutral 0.5 score (the timestamp was never set)."""
+    raw = d.get("creation_timestamp")
+    if raw is None:
+        raw = (d.get("metadata") or {}).get("creation_timestamp")
+    if raw is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
@@ -24,6 +40,7 @@ def _to_rsr(d: Dict[str, Any]) -> RerankerSearchResult:
         modality=d.get("modality", "") or d.get("content_type", "") or "",
         score=float(d.get("score", 0.0) or 0.0),
         metadata=d.get("metadata", {}) or {},
+        timestamp=_parse_timestamp(d),
     )
 
 

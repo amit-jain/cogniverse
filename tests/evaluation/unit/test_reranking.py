@@ -68,3 +68,24 @@ async def test_apply_reranking_unknown_strategy_leaves_results_unchanged():
     traces = [{"trace_id": "t4", "query": "q", "results": list(original)}]
     out = await apply_reranking_to_traces(traces, "nonexistent", {})
     assert out[0]["results"] == original
+
+
+def test_to_rsr_parses_creation_timestamp_for_temporal_reranking():
+    """_to_rsr must populate timestamp from creation_timestamp (epoch ms) so
+    MultiModalReranker temporal scoring uses a real value instead of always
+    returning the neutral 0.5 (the timestamp was never set before)."""
+    from datetime import timezone
+
+    from cogniverse_agents.search.rerank_service import _to_rsr
+
+    # 1704067200000 ms == 2024-01-01T00:00:00Z
+    rsr = _to_rsr({"id": "d1", "metadata": {"creation_timestamp": 1704067200000}})
+    assert rsr.timestamp is not None
+    assert rsr.timestamp.year == 2024
+    assert rsr.timestamp.tzinfo == timezone.utc
+
+    # Top-level creation_timestamp is honored too.
+    assert _to_rsr({"id": "d2", "creation_timestamp": 1704067200000}).timestamp is not None
+
+    # No timestamp data → None (temporal scoring falls back to neutral, by design).
+    assert _to_rsr({"id": "d3"}).timestamp is None

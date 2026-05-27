@@ -162,9 +162,10 @@ class LearnedReranker:
             return reranked
 
         except Exception as e:
+            # Surface the failure. Silently returning the original order as if it
+            # were reranked hides a broken reranker behind a 200 OK with no signal.
             logger.error(f"Reranking failed with model {self.model}: {e}")
-            # Return original results on failure
-            return results
+            raise
 
     def rerank_sync(
         self,
@@ -225,8 +226,10 @@ class LearnedReranker:
             return reranked
 
         except Exception as e:
+            # Surface the failure rather than returning the original order as if
+            # it were reranked (a silent no-op that looks like success).
             logger.error(f"Reranking failed with model {self.model}: {e}")
-            return results
+            raise
 
     def get_model_info(self) -> Dict[str, Any]:
         """
