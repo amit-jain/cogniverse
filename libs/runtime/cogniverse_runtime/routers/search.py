@@ -211,6 +211,10 @@ async def search(
                     session_id=request.session_id,
                 )
 
+        except HTTPException:
+            # Client errors raised above (e.g. 400 "no profile") must keep their
+            # status — the broad handler below would otherwise mask them as 500.
+            raise
         except Exception as e:
             logger.error(f"Search error: {e}")
             raise HTTPException(status_code=500, detail=str(e))

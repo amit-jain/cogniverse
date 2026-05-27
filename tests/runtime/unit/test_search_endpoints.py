@@ -169,6 +169,25 @@ class TestSearchEndpoint:
         resp = search_client.post("/search", json={"top_k": 5})
         assert resp.status_code == 422
 
+    def test_search_no_profile_returns_400_not_500(self, search_client):
+        """No profile on the request and none configured is a client error (400);
+        the broad exception handler must not re-wrap that HTTPException as 500."""
+        from unittest.mock import MagicMock, patch
+
+        no_profile = MagicMock()
+        no_profile.get.side_effect = lambda k, d=None: {
+            "active_video_profile": None,
+            "backend": {},
+        }.get(k, d)
+        with patch(
+            "cogniverse_runtime.routers.search.get_config", return_value=no_profile
+        ):
+            resp = search_client.post(
+                "/search", json={"query": "cats", "tenant_id": "acme"}
+            )
+        assert resp.status_code == 400
+        assert "profile" in resp.json()["detail"].lower()
+
     def test_search_request_defaults(self):
         """SearchRequest model has correct defaults."""
         req = SearchRequest(query="test query")
