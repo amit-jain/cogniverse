@@ -122,6 +122,21 @@ class TestOnlineEvaluationIntegration:
         stats = evaluator.get_statistics()
         assert stats["total_evaluated"] == 1
 
+        # Read the scores back from the real Phoenix annotation store — every
+        # returned result must have been persisted (one annotation per result).
+        annotation_names = [f"online_eval.{r.evaluator_name}" for r in results]
+        persisted = None
+        for _ in range(15):  # annotation indexing is eventually consistent
+            persisted = await real_provider.annotations.get_annotations(
+                spans_df=routing_spans,
+                project=project_name,
+                annotation_names=annotation_names,
+            )
+            if len(persisted) >= len(results):
+                break
+            await asyncio.sleep(1)
+        assert len(persisted) == len(results)
+
 
 class TestOnlineRoutingEvaluationWiring:
     """run_online_routing_evaluation (optimization CLI entry) wires OnlineEvaluator:
