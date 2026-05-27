@@ -458,6 +458,56 @@ class TestModalitySearchDispatchSerialization:
         assert result["results"][0]["title"] == "Doc One"
 
 
+@pytest.mark.unit
+class TestStreamingAgentConstruction:
+    """create_streaming_agent must build (agent, typed_input) for every
+    streamable capability. Previously 7 capabilities (incl. the default
+    orchestrator, image/audio/document search, entity extraction, query
+    enhancement, profile selection) raised "streaming not configured" and
+    every such A2A stream returned only an error event. The agents stream via
+    the shared A2AAgent base; these branches just needed construction."""
+
+    @pytest.mark.parametrize(
+        "agent_name,capability,agent_type,input_type",
+        [
+            ("image_search_agent", "image_search", "ImageSearchAgent",
+             "ImageSearchInput"),
+            ("audio_analysis_agent", "audio_analysis", "AudioAnalysisAgent",
+             "AudioSearchInput"),
+            ("document_agent", "document_analysis", "DocumentAgent",
+             "DocumentSearchInput"),
+            ("entity_extraction_agent", "entity_extraction",
+             "EntityExtractionAgent", "EntityExtractionInput"),
+            ("query_enhancement_agent", "query_enhancement",
+             "QueryEnhancementAgent", "QueryEnhancementInput"),
+            ("profile_selection_agent", "profile_selection",
+             "ProfileSelectionAgent", "ProfileSelectionInput"),
+            ("orchestrator_agent", "orchestration", "OrchestratorAgent",
+             "OrchestratorInput"),
+        ],
+    )
+    def test_create_streaming_agent_builds_each_capability(
+        self, dispatcher, monkeypatch, agent_name, capability, agent_type, input_type
+    ):
+        monkeypatch.setattr(dispatcher, "_get_vespa_endpoint", lambda t: "http://vespa")
+        # Orchestration resolves WorkflowIntelligence from the telemetry manager;
+        # None keeps construction env-independent (workflow_intelligence=None).
+        monkeypatch.setattr(
+            "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+            lambda: None,
+        )
+        entry = MagicMock()
+        entry.capabilities = [capability]
+        dispatcher._registry.get_agent.return_value = entry
+
+        agent, typed_input = dispatcher.create_streaming_agent(
+            agent_name, "find robots", "acme:prod"
+        )
+
+        assert type(agent).__name__ == agent_type
+        assert type(typed_input).__name__ == input_type
+
+
 # ── Annotation Queue HTTP endpoints ──────────────────────────────────────
 
 

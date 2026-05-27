@@ -844,10 +844,106 @@ class AgentDispatcher:
             typed_input = CodingInput(task=query, tenant_id=tenant_id)
             return agent, typed_input
 
+        if capabilities & {"orchestration", "planning"}:
+            from cogniverse_agents.orchestrator_agent import (
+                OrchestratorAgent,
+                OrchestratorDeps,
+                OrchestratorInput,
+            )
+            from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+            workflow_intelligence = None
+            try:
+                tm = get_telemetry_manager()
+                if tm is not None:
+                    from cogniverse_agents.workflow.intelligence import (
+                        WorkflowIntelligence,
+                    )
+
+                    workflow_intelligence = WorkflowIntelligence(
+                        tm.get_provider(tenant_id=tenant_id), tenant_id
+                    )
+            except Exception as exc:
+                logger.debug("WorkflowIntelligence init failed (non-fatal): %s", exc)
+            agent = OrchestratorAgent(
+                deps=OrchestratorDeps(),
+                registry=self._registry,
+                config_manager=self._config_manager,
+                workflow_intelligence=workflow_intelligence,
+            )
+            return agent, OrchestratorInput(query=query, tenant_id=tenant_id)
+
+        # Generic fallback: any registered agent that follows the
+        # Agent/Deps/Input convention (image/audio/document search, entity
+        # extraction, query enhancement, profile selection, …) streams via the
+        # base framework. Construct it exactly as the non-streaming generic
+        # path does so streaming and non-streaming stay in lockstep.
+        agent_input = self._build_generic_streaming_agent(agent_name, query, tenant_id)
+        if agent_input is not None:
+            return agent_input
+
         raise ValueError(
             f"Agent '{agent_name}' streaming not configured. "
             f"Capabilities: {agent_entry.capabilities}"
         )
+
+    def _build_generic_streaming_agent(
+        self, agent_name: str, query: str, tenant_id: str
+    ) -> Optional[tuple]:
+        """Build (agent, typed_input) for a registered agent via the
+        Agent/Deps/Input naming convention. Returns None when the agent isn't
+        generically constructible (no AGENT_CLASSES entry / no Deps or Input)."""
+        import importlib
+
+        from cogniverse_runtime.config_loader import ConfigLoader
+
+        class_path = ConfigLoader.AGENT_CLASSES.get(agent_name) or (
+            ConfigLoader.AGENT_CLASSES.get(f"{agent_name}_agent")
+        )
+        if not class_path:
+            return None
+
+        module_path, class_name = class_path.split(":")
+        module = importlib.import_module(module_path)
+        agent_cls = getattr(module, class_name)
+
+        def _by_suffix(suffix: str, exclude: str):
+            for attr_name in dir(module):
+                attr = getattr(module, attr_name)
+                if (
+                    isinstance(attr, type)
+                    and attr_name.endswith(suffix)
+                    and attr_name != exclude
+                ):
+                    return attr
+            return None
+
+        deps_cls = _by_suffix("Deps", "AgentDeps")
+        input_cls = _by_suffix("Input", "AgentInput")
+        if deps_cls is None or input_cls is None:
+            return None
+
+        deps_kwargs: Dict[str, Any] = {}
+        gliner_url = self._resolve_gliner_url()
+        if gliner_url and "gliner_inference_url" in deps_cls.model_fields:
+            deps_kwargs["gliner_inference_url"] = gliner_url
+        # Search-backed agents (image/audio/document) read deps.vespa_endpoint
+        # and deps.tenant_id — the latter is carried as an extra field on Deps
+        # configured with ``extra="allow"``, so pass it whenever the Deps either
+        # declares it or accepts extras.
+        if "vespa_endpoint" in deps_cls.model_fields:
+            deps_kwargs["vespa_endpoint"] = self._get_vespa_endpoint(tenant_id)
+        if (
+            "tenant_id" in deps_cls.model_fields
+            or deps_cls.model_config.get("extra") == "allow"
+        ):
+            deps_kwargs["tenant_id"] = tenant_id
+        agent = agent_cls(deps=deps_cls(**deps_kwargs))
+
+        input_kwargs: Dict[str, Any] = {"query": query}
+        if "tenant_id" in input_cls.model_fields:
+            input_kwargs["tenant_id"] = tenant_id
+        return agent, input_cls(**input_kwargs)
 
     async def _execute_search_task(
         self,
