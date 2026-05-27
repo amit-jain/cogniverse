@@ -277,7 +277,10 @@ class VespaBackend(Backend):
         return self._vespa_ingestion_clients[target_schema_name]
 
     def ingest_documents(
-        self, documents: List[Document], schema_name: str
+        self,
+        documents: List[Document],
+        schema_name: str,
+        operation_type: str = "feed",
     ) -> Dict[str, Any]:
         """
         Ingest documents into Vespa.
@@ -285,6 +288,9 @@ class VespaBackend(Backend):
         Args:
             documents: List of Document objects to ingest
             schema_name: Schema to ingest documents into
+            operation_type: ``"feed"`` (PUT, full replace) or ``"update"``
+                (partial assign — only the fields present on each Document are
+                written, leaving the rest such as embedding tensors intact).
 
         Returns:
             Ingestion results
@@ -301,7 +307,7 @@ class VespaBackend(Backend):
 
         # Feed documents to Vespa
         success_count, failed_docs = client._feed_prepared_batch(
-            prepared_docs  # Client uses its own schema
+            prepared_docs, operation_type=operation_type  # Client uses its own schema
         )
 
         # Wait for documents to be visible in queries (handle Vespa's eventual consistency)
@@ -440,7 +446,11 @@ class VespaBackend(Backend):
                 logger.error("No schema_name in config for update operation")
                 return False
 
-            results = self.ingest_documents([document], schema_name=schema_name)
+            # Partial update (assign only present fields) so a metadata-only
+            # update does not wipe the stored embedding tensors via a full PUT.
+            results = self.ingest_documents(
+                [document], schema_name=schema_name, operation_type="update"
+            )
             return results["success_count"] > 0
         except Exception as e:
             logger.error(f"Failed to update document {document_id}: {e}")

@@ -362,7 +362,10 @@ class VespaPyClient:
     # Removed duplicate conversion methods - VespaEmbeddingProcessor handles all conversions
 
     def _feed_prepared_batch(
-        self, documents: List[Dict[str, Any]], batch_size: int = 100
+        self,
+        documents: List[Dict[str, Any]],
+        batch_size: int = 100,
+        operation_type: str = "feed",
     ) -> Tuple[int, List[str]]:
         """Feed prepared documents in batches using pyvespa's batch feeding
 
@@ -371,6 +374,10 @@ class VespaPyClient:
         Args:
             documents: List of prepared documents from process()
             batch_size: Number of documents per batch
+            operation_type: ``"feed"`` (PUT, full replace) or ``"update"``
+                (partial assign — only the fields present are updated, leaving
+                others such as embedding tensors intact). Use ``"update"`` for
+                metadata-only updates so embeddings are not wiped.
 
         Returns:
             Tuple of (success_count, list of failed doc IDs)
@@ -456,6 +463,7 @@ class VespaPyClient:
                     iter=feed_batch_iter(),
                     schema=self.schema_name,  # Use this client's schema
                     namespace=self.namespace,
+                    operation_type=operation_type,
                     callback=callback,
                     # Production configuration parameters from self.feed_config
                     max_queue_size=self.feed_config["max_queue_size"],
