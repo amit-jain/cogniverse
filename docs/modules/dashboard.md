@@ -53,17 +53,19 @@ libs/dashboard/cogniverse_dashboard/
     approval_queue.py
     backend_profile.py
     config_management.py
+    embedding_atlas.py
     evaluation.py
     memory_management.py
     optimization.py
     orchestration_annotation.py
+    profile_metrics.py
+    rlm_ab_compare.py
     routing_evaluation.py
     tenant_management.py
   utils/
     __init__.py
+    async_utils.py
 ```
-
-**Embedding Atlas**: replaced by `scripts/atlas_viewer.py`, launched as a separate Streamlit process (not a tab inside `app.py`).
 
 ---
 

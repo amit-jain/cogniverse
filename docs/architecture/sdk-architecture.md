@@ -167,10 +167,11 @@ cogniverse_sdk/
 ```text
 cogniverse_foundation/
 ├── __init__.py
-├── cache/       # Caching utilities
-├── config/      # SystemConfig, ConfigManager, bootstrap, sqlite store
-├── telemetry/   # TelemetryManager, providers, exporters, context
-└── utils/       # Utility functions
+├── caching/     # Caching utilities
+├── config/      # SystemConfig, ConfigManager, AgentConfig, bootstrap
+├── dspy/        # DSPy module utilities
+├── registry/    # Registry infrastructure
+└── telemetry/   # TelemetryManager, providers, context
 ```
 
 > See `libs/foundation/cogniverse_foundation/` for complete structure
@@ -1068,7 +1069,8 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 # Search utilities
 from cogniverse_agents.search.multi_modal_reranker import QueryModality
 from cogniverse_agents.search.hybrid_reranker import HybridReranker
-from cogniverse_agents.search.base import SearchBackend, SearchResult
+from cogniverse_sdk.interfaces.backend import SearchBackend
+from cogniverse_sdk.document import SearchResult
 
 # Mixins
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin

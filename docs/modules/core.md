@@ -362,7 +362,7 @@ class MyAgent(AgentBase[...], TenantAwareAgentMixin):
 Adds health check capabilities:
 
 ```python
-from cogniverse_core.agents.health_mixin import HealthCheckMixin
+from cogniverse_core.common.health_mixin import HealthCheckMixin
 
 class MyAgent(AgentBase[...], HealthCheckMixin):
     def get_health_status(self) -> Dict[str, Any]:

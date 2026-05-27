@@ -18,50 +18,34 @@ All agents build on the base classes from `cogniverse-core` and leverage multi-m
 cogniverse_agents/
 ├── __init__.py
 ├── gateway_agent.py         # A2A gateway entry point
-├── orchestrator_agent.py    # Central A2A orchestration
-├── video_search_agent.py    # Multi-modal video search
+├── orchestrator_agent.py    # Central A2A orchestration (OrchestratorAgent)
 ├── image_search_agent.py    # Image search with visual embeddings
 ├── document_agent.py        # Document retrieval agent
 ├── summarizer_agent.py      # Content summarization
 ├── audio_analysis_agent.py  # Audio content analysis
 ├── text_analysis_agent.py   # Text analysis agent
 ├── detailed_report_agent.py # Report generation
-├── multi_agent_orchestrator.py  # Advanced orchestration
-├── workflow_intelligence.py     # Workflow management
-├── query_analysis_tool_v3.py    # Query analysis utilities
-├── query_encoders.py        # Query encoding
-├── result_aggregator.py     # Result aggregation
-├── result_enhancement_engine.py # Result enhancement
-├── dspy_agent_optimizer.py  # DSPy optimization
-├── dspy_integration_mixin.py    # DSPy integration
-├── memory_aware_mixin.py    # Memory integration
-├── agent_registry.py        # Agent registration
-├── a2a_gateway.py          # A2A gateway
+├── search_agent.py          # General search agent
+├── memory_aware_mixin.py    # Memory integration (MemoryAwareMixin)
+├── adapter_loader.py        # Adapter (LoRA/fine-tune) loading utilities
 ├── routing/                # Routing module
 │   ├── dspy_routing_signatures.py  # DSPy routing signatures
-│   ├── router.py           # Core routing logic
-│   ├── modality_cache.py   # Query modality caching
-│   ├── parallel_executor.py    # Concurrent execution
-│   ├── dspy_routing_signatures.py  # DSPy signatures
-│   ├── modality_optimizer.py       # Modality optimization
-│   ├── cross_modal_optimizer.py    # Cross-modal optimization
-│   ├── profile_performance_optimizer.py  # Profile optimization
+│   ├── dspy_relationship_router.py # Relationship-based routing
 │   ├── annotation_agent.py         # Annotation generation
 │   ├── llm_auto_annotator.py       # Auto-annotation
-│   ├── xgboost_meta_models.py      # XGBoost meta-models
-│   └── unified_optimizer.py        # Unified routing optimizer
-├── search/                 # Search agents
-│   ├── base.py
+│   ├── profile_performance_optimizer.py  # Profile optimization
+│   └── xgboost_meta_models.py      # XGBoost meta-models
+├── search/                 # Search and reranking utilities
 │   ├── hybrid_reranker.py  # Hybrid reranking
 │   ├── multi_modal_reranker.py  # Multi-modal reranking
 │   ├── learned_reranker.py      # Learned reranking
 │   └── rerankers/          # Reranker implementations
-├── tools/                  # Agent tools (reserved for future utilities)
-├── optimizer/              # Optimization module
+├── optimizer/              # DSPy optimization
+│   └── dspy_agent_optimizer.py  # DSPyAgentPromptOptimizer, DSPyAgentOptimizerPipeline
 ├── orchestrator/           # Orchestration utilities
-├── query/                  # Query processing
-├── results/                # Result processing
-├── workflow/               # Workflow management
+│   ├── checkpoint_storage.py    # Checkpoint persistence
+│   └── sufficient_context_signature.py
+├── tools/                  # Agent tools
 └── approval/               # Approval workflows
 ```
 
@@ -81,9 +65,9 @@ Central A2A orchestration entry point with DSPy-based multi-agent planning:
 **Key Classes:**
 - `OrchestratorAgent`: DSPy planning + multi-agent execution coordination
 
-### Video Search Agent (`cogniverse_agents.video_search_agent`)
+### Video Search (see `cogniverse-vespa`)
 
-Multi-modal video search with ColPali and VideoPrism:
+Multi-modal video search with ColPali and VideoPrism is implemented in the `cogniverse-vespa` package. From `cogniverse-agents` the following applies:
 
 **Embedding Models:**
 - **ColPali**: Document and video frame embeddings
@@ -173,31 +157,17 @@ Report generation from search results:
 - Multi-source synthesis
 - Format customization (Markdown, HTML, PDF)
 
-### Multi-Agent Orchestrator (`cogniverse_agents.multi_agent_orchestrator`)
-
-Advanced orchestration capabilities:
-
-**Features:**
-- Dynamic agent graph construction
-- Parallel and sequential execution
-- State management across agents
-- Workflow visualization
-- Performance optimization
-
 ### Routing Module (`cogniverse_agents.routing`)
 
 Comprehensive routing infrastructure:
 
 **Components:**
-- `Router`: Core routing logic
-- `ModalityCache`: Caches query modality predictions
-- `ParallelExecutor`: Execute multiple agents concurrently
-- `Optimizer`: Routing optimization algorithms
-- `CrossModalOptimizer`: Cross-modal understanding
+- DSPy-based routing signatures (`dspy_routing_signatures.py`)
+- Relationship-based routing (`dspy_relationship_router.py`)
 - `AnnotationAgent`: Generate training annotations
 - `LLMAutoAnnotator`: Automatic annotation via LLM
 - `XGBoostMetaModels`: XGBoost-based routing models
-- `MLflowIntegration`: Experiment tracking
+- Profile performance optimization (`profile_performance_optimizer.py`)
 
 ### Search Module (`cogniverse_agents.search`)
 
@@ -249,122 +219,67 @@ pip install cogniverse-agents
 
 ### Video Search Agent
 
-```python
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
-from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from pathlib import Path
-
-# Initialize dependencies
-config_manager = create_default_config_manager()
-schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-
-# Create agent — profile-agnostic, tenant-agnostic at construction
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-)
-
-# Search — profile and tenant_id are per-request (synchronous, not async)
-results = agent.search(
-    query="machine learning tutorial for beginners",
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme",
-    top_k=10,
-)
-
-# Results are SearchResult objects
-for result in results:
-    print(f"Video: {result.document_id}")
-    print(f"Score: {result.score:.3f}")
-    print(f"Timestamps: {result.timestamps}")
-```
+Video search is implemented in the `cogniverse-vespa` package (the backend-specific implementation layer), not in `cogniverse-agents`. Refer to `libs/vespa/README.md` for the concrete `VideoSearchAgent` and its Vespa-backed search API.
 
 ### OrchestratorAgent (Direct Use)
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
 
 # Create orchestrator with agent registry
 registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Execute multi-agent workflow — DSPy plans the pipeline automatically
-result = await orchestrator._process_impl(
+result = await orchestrator.process(
     OrchestratorInput(
         query="show me videos about quantum computing",
         tenant_id="acme:production",
     )
 )
-
-print(result["summary"])
 ```
 
 ### Image Search
 
 ```python
-from cogniverse_agents import ImageSearchAgent
+from cogniverse_agents.image_search_agent import ImageSearchAgent, ImageSearchDeps, ImageSearchInput
 
 # Initialize image search agent
-image_agent = ImageSearchAgent(config=config)
+deps = ImageSearchDeps(vespa_endpoint="http://localhost:8080")
+image_agent = ImageSearchAgent(deps=deps)
 
-# Text-to-image search
-results = await image_agent.search(
+# Text-to-image search via the typed process() interface
+result = await image_agent.process(ImageSearchInput(
     query="red sports car on mountain road",
-    top_k=20
-)
-
-# Image-to-image search
-results = await image_agent.search_by_image(
-    image_path="example_car.jpg",
-    top_k=10
-)
+    limit=20,
+))
+for r in result.results:
+    print(r.image_id, r.relevance_score)
 ```
 
 ### Multi-Agent Orchestration
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
+
+config_manager = create_default_config_manager()
 
 # Create orchestrator with agent registry
 registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
 orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
 # Execute multi-agent workflow — DSPy plans the pipeline automatically
-result = await orchestrator._process_impl(
+result = await orchestrator.process(
     OrchestratorInput(
         query="Find videos about neural networks and create a summary",
         tenant_id="acme:production",
     )
-)
-
-print(result["summary"])
-```
-
-### Advanced Orchestration
-
-```python
-from cogniverse_agents import MultiAgentOrchestrator
-
-# Initialize orchestrator
-orchestrator = MultiAgentOrchestrator(config=config)
-
-# Define complex workflow
-workflow = {
-    "nodes": [
-        {"id": "search_videos", "agent": "video_search", "params": {"top_k": 10}},
-        {"id": "search_docs", "agent": "document_search", "params": {"top_k": 20}},
-        {"id": "aggregate", "agent": "result_aggregator", "depends_on": ["search_videos", "search_docs"]},
-        {"id": "summarize", "agent": "summarizer", "depends_on": ["aggregate"]}
-    ]
-}
-
-# Execute workflow
-result = await orchestrator.execute_workflow(
-    query="quantum computing applications",
-    workflow=workflow
 )
 ```
 
@@ -372,13 +287,13 @@ result = await orchestrator.execute_workflow(
 
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_agents.agent_registry import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 
 config_manager = create_default_config_manager()
-registry = AgentRegistry(config_manager=config_manager)
+registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
 
 # Initialize orchestrator with A2A registry
 deps = OrchestratorDeps(
@@ -388,7 +303,7 @@ deps = OrchestratorDeps(
         api_base="http://localhost:11434",
     ),
 )
-orchestrator = OrchestratorAgent(deps=deps)
+orchestrator = OrchestratorAgent(deps=deps, registry=registry)
 
 # Orchestrator routes and delegates via A2A protocol
 result = await orchestrator.process(OrchestratorInput(
@@ -400,29 +315,17 @@ result = await orchestrator.process(OrchestratorInput(
 ### DSPy Optimization
 
 ```python
-from cogniverse_agents import DSPyAgentOptimizer
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_agents.agent_registry import AgentRegistry
-
-# Initialize orchestrator
-orchestrator = OrchestratorAgent(
-    deps=OrchestratorDeps(),
-    registry=AgentRegistry(tenant_id="acme:production", config_manager=config_manager),
+from cogniverse_agents.optimizer.dspy_agent_optimizer import (
+    DSPyAgentPromptOptimizer,
+    DSPyAgentOptimizerPipeline,
 )
 
-# Create optimizer targeting the orchestrator
-optimizer = DSPyAgentOptimizer(
-    agent=orchestrator,
-    optimizer_type="GEPA",
-    num_iterations=100,
-)
+# DSPyAgentPromptOptimizer: optimizes prompts for individual agent predictors
+optimizer = DSPyAgentPromptOptimizer(config={})
 
-# Optimize on training data
-optimized_agent = await optimizer.optimize(
-    training_data=golden_dataset,
-    validation_data=validation_set,
-    metrics=["accuracy", "precision", "recall"],
-)
+# DSPyAgentOptimizerPipeline: end-to-end optimization pipeline
+# (See cogniverse_agents/optimizer/dspy_agent_optimizer.py for full API)
+pipeline = DSPyAgentOptimizerPipeline()
 ```
 
 ## Multi-Modal Support
@@ -455,18 +358,17 @@ The Agents package provides first-class multi-modal capabilities:
 ### Hierarchy
 
 ```
-BaseAgent (from cogniverse_core)
-    ├── GatewayAgent (A2A entry point)
-    ├── OrchestratorAgent (A2A orchestration, DSPy planning)
-    ├── VideoSearchAgent (multi-modal video search)
-    ├── ImageSearchAgent (visual search)
-    ├── DocumentAgent (document retrieval)
-    ├── AudioAnalysisAgent (audio processing)
-    ├── OrchestratorAgent (A2A entry point, DSPy planning)
-    ├── SummarizerAgent (content summarization)
-    ├── DetailedReportAgent (report generation)
-    ├── TextAnalysisAgent (text processing)
-    └── MultiAgentOrchestrator (advanced orchestration)
+AgentBase (cogniverse_core.agents.base)
+    └── A2AAgent (cogniverse_core.agents.a2a_agent)
+        ├── GatewayAgent
+        ├── OrchestratorAgent (+ MemoryAwareMixin)
+        ├── ImageSearchAgent
+        ├── DocumentAgent
+        ├── AudioAnalysisAgent
+        ├── SummarizerAgent (+ MemoryAwareMixin)
+        └── DetailedReportAgent (+ RLMAwareMixin, MemoryAwareMixin)
+
+# TextAnalysisAgent extends A2AEndpointsMixin / DynamicDSPyMixin (not A2AAgent)
 ```
 
 ### A2A Protocol
@@ -508,7 +410,6 @@ uv pip install -e .
 pytest tests/agents/ tests/routing/
 
 # Run specific agent tests
-pytest tests/agents/test_video_search_agent.py
 pytest tests/agents/unit/test_orchestrator_agent.py
 ```
 

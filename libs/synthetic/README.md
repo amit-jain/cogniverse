@@ -273,20 +273,23 @@ curl -X POST http://localhost:8000/synthetic/batch/generate \
 libs/synthetic/cogniverse_synthetic/
 ├── __init__.py              # Package exports
 ├── schemas.py               # Pydantic schemas for all optimizer types
-├── registry.py              # Optimizer configuration registry
+├── registry.py              # Optimizer configuration registry (OPTIMIZER_REGISTRY dict)
 ├── service.py               # Main orchestrator service
 ├── api.py                   # FastAPI router
 ├── profile_selector.py      # LLM/rule-based profile selection
 ├── backend_querier.py       # Backend-agnostic content sampling
-├── dspy_signatures.py       # DSPy signatures for LLM-driven generation
-├── dspy_modules.py          # Validated DSPy modules with retry logic
+├── dspy_signatures.py       # DSPy signatures (GenerateModalityQuery, GenerateEntityQuery, InferAgentFromModality)
+├── dspy_modules.py          # Validated DSPy module (ValidatedEntityQueryGenerator)
 ├── generators/              # Concrete generator implementations
 │   ├── __init__.py
 │   ├── base.py              # Base generator interface
-│   ├── modality.py          # Modality routing generator
-│   ├── crossmodal.py        # Cross-modal generator
+│   ├── profile.py           # Profile selection generator
 │   ├── routing.py           # Routing strategy generator
 │   └── workflow.py          # Workflow generator
+├── approval/                # Human-in-the-loop approval workflow
+│   ├── __init__.py
+│   ├── confidence_extractor.py
+│   └── feedback_handler.py
 └── utils/                   # Utilities
     ├── __init__.py
     ├── pattern_extraction.py
@@ -355,20 +358,27 @@ export TENANT_ID="acme_corp"
 
 ## DSPy Signatures and Modules
 
-### Query Generation Signature
+### Query Generation Signatures
+
+Three signatures are defined in `dspy_signatures.py`:
+
+- `GenerateModalityQuery` — generates a natural search query for a given content modality
+- `GenerateEntityQuery` — generates a query that must mention at least one provided entity
+- `InferAgentFromModality` — infers the correct agent for a modality/query pair
 
 ```python
-from cogniverse_synthetic.dspy_signatures import QueryGenerationSignature
+from cogniverse_synthetic.dspy_signatures import GenerateModalityQuery, GenerateEntityQuery
 import dspy
 
-class QueryGenerator(dspy.Module):
+class ModalityQueryGenerator(dspy.Module):
     def __init__(self):
-        self.generate = dspy.ChainOfThought(QueryGenerationSignature)
+        self.generate = dspy.ChainOfThought(GenerateModalityQuery)
 
-    def forward(self, document, modality):
+    def forward(self, modality, topics, context):
         result = self.generate(
-            document=document,
-            modality=modality
+            modality=modality,
+            topics=topics,
+            context=context
         )
         return result.query
 ```
@@ -376,38 +386,48 @@ class QueryGenerator(dspy.Module):
 ### Validation and Retry
 
 ```python
-from cogniverse_synthetic.dspy_modules import ValidatedQueryGenerator
+from cogniverse_synthetic.dspy_modules import ValidatedEntityQueryGenerator
 
-generator = ValidatedQueryGenerator()
+generator = ValidatedEntityQueryGenerator(max_retries=3)
 
-# Automatically retries up to 3 times if validation fails
-query = generator.generate(
-    document="Machine learning video tutorial",
-    modality="video"
+# Automatically retries up to 3 times if no entity appears in the query
+result = generator.forward(
+    topics="machine learning, neural networks",
+    entities="PyTorch, TensorFlow",
+    entity_types="TECHNOLOGY, TECHNOLOGY"
 )
+print(result.query)
 ```
 
 ---
 
 ## Optimizer Registry
 
-The package includes a registry of optimizer configurations:
+The package includes a registry of optimizer configurations. There is no
+`OptimizerRegistry` class — the registry is a module-level dict
+`OPTIMIZER_REGISTRY` mapping optimizer names to `OptimizerConfig` objects,
+with helper functions for lookup and listing.
 
 ```python
-from cogniverse_synthetic.registry import OptimizerRegistry
+from cogniverse_synthetic.registry import (
+    OPTIMIZER_REGISTRY,
+    OptimizerConfig,
+    get_optimizer_config,
+    list_optimizers,
+)
 
-registry = OptimizerRegistry()
+# Get optimizer config by name
+config = get_optimizer_config("routing")
+print(config.name)         # "routing"
+print(config.description)  # "Advanced routing with entity extraction..."
 
-# Get optimizer config
-config = registry.get("modality")
-print(config.name)  # "modality"
-print(config.description)  # "Modality routing optimizer"
-print(config.supported_modalities)  # ["video", "image", "pdf"]
+# List all registered optimizers
+for name, description in list_optimizers().items():
+    print(f"{name}: {description}")
 
-# List all optimizers
-optimizers = registry.list_all()
-for optimizer in optimizers:
-    print(f"{optimizer.name}: {optimizer.description}")
+# Direct registry access
+print(list(OPTIMIZER_REGISTRY.keys()))
+# ['routing', 'workflow', 'profile', 'unified', 'cross_modal']
 ```
 
 ---

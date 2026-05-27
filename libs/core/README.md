@@ -18,26 +18,27 @@ This package bridges the foundation layers (`sdk`, `foundation`, `evaluation`) a
 cogniverse_core/
 ├── __init__.py
 ├── agents/                  # Agent base classes and mixins
-│   ├── a2a_mixin.py         # Agent-to-Agent communication mixin
-│   ├── dspy_a2a_base.py     # DSPy A2A base class
-│   ├── dspy_integration_mixin.py  # DSPy integration
-│   ├── dynamic_dspy_mixin.py      # Dynamic DSPy capabilities
-│   ├── health_mixin.py      # Health check mixin
-│   ├── memory_aware_mixin.py      # Memory integration mixin
-│   └── tenant_aware_mixin.py      # Multi-tenancy mixin
+│   ├── a2a_agent.py         # A2A protocol agent
+│   ├── a2a_mixin.py         # A2A endpoints mixin
+│   ├── base.py              # AgentBase, AgentInput, AgentOutput, AgentDeps
+│   ├── rails.py             # Input/output rail chains
+│   ├── rlm_options.py       # RLM configuration
+│   └── tenant_aware_mixin.py      # Multi-tenancy mixin (TenantAwareAgentMixin)
 ├── backends/                # Backend abstractions
 ├── common/                  # Shared utilities
-│   ├── caching/             # Caching utilities
-│   ├── memory/              # Memory management
-│   └── tenant/              # Tenant utilities
-├── config/                  # System configuration
+│   ├── agent_models.py      # Shared agent data models
+│   ├── dspy_module_registry.py    # DSPy module registry
+│   ├── dynamic_dspy_mixin.py      # Dynamic DSPy capabilities
+│   ├── health_mixin.py      # Health check mixin (HealthCheckMixin)
+│   ├── tenant_utils.py      # Tenant parsing and validation utilities
+│   └── vlm_interface.py     # Vision-language model interface
+├── config/                  # Backward-compat shim → cogniverse_foundation.config
 ├── factories/               # Factory patterns for components
 ├── interfaces/              # Core interfaces
-├── memory/                  # Memory system interfaces
+├── memory/                  # Memory system (Mem0MemoryManager)
 ├── registries/              # Component registries
-│   ├── agent_registry.py    # Agent registration
-│   ├── backend_registry.py  # Backend registration
-│   ├── dspy_registry.py     # DSPy module registration
+│   ├── agent_registry.py    # Agent registration (AgentRegistry)
+│   ├── backend_registry.py  # Backend registration (BackendRegistry)
 │   ├── schema_registry.py   # Schema registration
 │   └── registry.py          # Base registry
 ├── schemas/                 # Data schemas
@@ -52,35 +53,34 @@ cogniverse_core/
 Foundation classes and mixins for all agent implementations:
 
 **Base Classes:**
-- `BaseAgent`: Abstract base class for all agents
-- `DSPyA2ABase`: Base class for DSPy-powered A2A agents
+- `AgentBase`: Generic type-safe base class for all agents (in `cogniverse_core.agents.base`)
+- `A2AAgent`: A2A protocol + DSPy integration on top of `AgentBase` (in `cogniverse_core.agents.a2a_agent`)
+- `AgentInput`, `AgentOutput`, `AgentDeps`: Pydantic base models for typed I/O
 
-**Mixins:**
-- `MemoryAwareMixin`: Memory integration for agents
-- `TenantAwareMixin`: Multi-tenancy support
-- `HealthCheckMixin`: Health monitoring capabilities
-- `A2AMixin`: Agent-to-Agent communication
-- `DSPyIntegrationMixin`: DSPy framework integration
-- `DynamicDSPyMixin`: Dynamic DSPy module loading
+**Mixins (separate modules):**
+- `MemoryAwareMixin`: Memory integration for agents (in `cogniverse_agents.memory_aware_mixin`)
+- `TenantAwareAgentMixin`: Multi-tenancy support (in `cogniverse_core.agents.tenant_aware_mixin`)
+- `HealthCheckMixin`: Health monitoring / FastAPI endpoint setup (in `cogniverse_core.common.health_mixin`)
+- `A2AEndpointsMixin`: A2A endpoint helpers (in `cogniverse_core.agents.a2a_mixin`)
+- `DynamicDSPyMixin`: Dynamic DSPy module loading (in `cogniverse_core.common.dynamic_dspy_mixin`)
 
 **Key Features:**
 - **Composable Design**: Mix and match capabilities via mixins
 - **Multi-Tenancy**: Built-in tenant isolation
-- **Memory Support**: Persistent agent memory
-- **Health Monitoring**: Built-in health checks
+- **Memory Support**: Persistent agent memory via `MemoryAwareMixin`
+- **Health Monitoring**: Built-in health checks via `HealthCheckMixin`
 - **A2A Protocol**: Agent-to-agent communication
-- **DSPy Integration**: Native DSPy support
+- **DSPy Integration**: Native DSPy support via `A2AAgent`
 
 ### Registries (`cogniverse_core.registries`)
 
 Component registration and discovery system:
 
 **Core Registries:**
-- `AgentRegistry`: Agent class registration and lookup
-- `BackendRegistry`: Backend provider registration
-- `DSPyRegistry`: DSPy module registration and management
-- `SchemaRegistry`: Schema template registration
-- `BaseRegistry`: Abstract base registry
+- `AgentRegistry`: Agent endpoint registration and health monitoring (in `cogniverse_core.registries.agent_registry`)
+- `BackendRegistry`: Backend provider registration (in `cogniverse_core.registries.backend_registry`)
+- `SchemaRegistry`: Schema template registration (in `cogniverse_core.registries.schema_registry`)
+- `WorkflowStoreRegistry`: Workflow store backend registration (in `cogniverse_core.registries.workflow_store_registry`)
 
 **Features:**
 - **Plugin Discovery**: Automatic plugin detection via entry points
@@ -115,14 +115,14 @@ Backend provider abstractions and utilities:
 - Provider-specific optimizations
 - Error handling and retries
 
-### Configuration (`cogniverse_core.config`)
+### Configuration (`cogniverse_foundation.config`)
 
-System-wide configuration management:
-- `SystemConfig`: Unified system configuration
-- `AgentConfig`: Agent-specific configuration
+System-wide configuration management (re-exported via `cogniverse_core.config` shim):
+- `SystemConfig`: Unified system configuration (in `cogniverse_foundation.config.unified_config`)
+- `LLMEndpointConfig`, `LLMConfig`: LLM endpoint and model configuration
+- `create_default_config_manager`: Build a default `ConfigManager` (in `cogniverse_foundation.config.utils`)
 - Environment-based config loading
 - Configuration validation
-- Tenant-specific overrides
 
 ### Common Utilities (`cogniverse_core.common`)
 
@@ -134,14 +134,11 @@ Shared functionality across the platform:
 - Embedding cache
 - TTL-based expiration
 
-**Memory:**
-- `Mem0MemoryManager`: Mem0 integration wrapper
-- Memory utilities and helpers
-
 **Tenant:**
-- `TenantUtils`: Tenant context management
-- Tenant isolation utilities
-- Multi-tenant data partitioning
+- `parse_tenant_id`: Parse `org:tenant` or simple `tenant` format (in `cogniverse_core.common.tenant_utils`)
+- `require_tenant_id`: Enforce an explicit `tenant_id` on a request (in `cogniverse_core.common.tenant_utils`)
+- `validate_tenant_id`: Validate tenant ID format
+- `get_tenant_storage_path`: Build tenant-scoped storage paths
 
 ### Telemetry (`cogniverse_core.telemetry`)
 
@@ -192,143 +189,103 @@ pip install cogniverse-core
 ### Creating Custom Agents
 
 ```python
-from cogniverse_core.agents import (
-    BaseAgent,
-    MemoryAwareMixin,
-    TenantAwareMixin,
-    HealthCheckMixin
-)
+from cogniverse_core.agents import AgentBase, AgentInput, AgentOutput, AgentDeps
+from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
+from cogniverse_core.common.health_mixin import HealthCheckMixin
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+
+
+class MyInput(AgentInput):
+    query: str
+    tenant_id: str
+
+
+class MyOutput(AgentOutput):
+    result: str
+
+
+class MyDeps(AgentDeps):
+    pass
+
 
 class MyCustomAgent(
-    BaseAgent,
-    MemoryAwareMixin,
-    TenantAwareMixin,
-    HealthCheckMixin
+    AgentBase[MyInput, MyOutput, MyDeps],
+    TenantAwareAgentMixin,
+    HealthCheckMixin,
 ):
-    """Custom agent with memory, multi-tenancy, and health checks."""
+    """Custom agent with multi-tenancy and health checks."""
 
-    def __init__(self, tenant_id: str, config):
-        BaseAgent.__init__(self)
-        TenantAwareMixin.__init__(self, tenant_id=tenant_id)
-        MemoryAwareMixin.__init__(self, tenant_id=tenant_id)
-        self.config = config
+    def __init__(self, tenant_id: str, deps: MyDeps):
+        AgentBase.__init__(self, deps=deps)
+        TenantAwareAgentMixin.__init__(self, tenant_id=tenant_id)
 
-    async def execute(self, query: str):
-        """Execute agent logic with memory and tenant isolation."""
-        # Use tenant-aware memory
-        memories = await self.memory.search(
-            query=query,
-            user_id=self.tenant_id
-        )
-
+    async def _process_impl(self, input: MyInput) -> MyOutput:
+        """Core agent logic."""
         # Your business logic here
-        result = await self._process_with_context(query, memories)
+        result = f"Processed: {input.query}"
+        return MyOutput(result=result)
 
-        # Store result in memory
-        await self.memory.add(
-            messages=[
-                {"role": "user", "content": query},
-                {"role": "assistant", "content": result}
-            ],
-            user_id=self.tenant_id
-        )
-
-        return result
-
-    async def health_check(self) -> dict:
-        """Health check implementation."""
+    def get_health_status(self) -> dict:
+        """Health check implementation (HealthCheckMixin)."""
         return {
             "status": "healthy",
             "tenant_id": self.tenant_id,
-            "memory_available": self.memory is not None
         }
 ```
 
 ### Using Agent Registry
 
+`AgentRegistry` manages live agent endpoints and is instantiated per-tenant.
+
 ```python
-from cogniverse_core.registries import AgentRegistry
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Register an agent class
-AgentRegistry.register("my_custom_agent", MyCustomAgent)
+config_manager = create_default_config_manager()
+registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
 
-# List registered agents
-available_agents = AgentRegistry.list()
+# List registered agent names
+available_agents = registry.list_agents()
 print(f"Available agents: {available_agents}")
 
-# Get and instantiate registered agent
-agent_class = AgentRegistry.get("my_custom_agent")
-agent = agent_class(tenant_id="acme", config=config)
+# Look up a specific agent endpoint
+agent_endpoint = registry.get_agent("video_search_agent")
 
-# Execute agent
-result = await agent.execute("What is machine learning?")
-```
-
-### DSPy Integration
-
-```python
-from cogniverse_core.agents import DSPyIntegrationMixin
-from cogniverse_core.registries import DSPyRegistry
-import dspy
-
-class MyDSPyAgent(DSPyIntegrationMixin):
-    """Agent with DSPy optimization support."""
-
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.setup_dspy()
-
-    def setup_dspy(self):
-        """Setup DSPy modules."""
-        # Configure LLM
-        lm = dspy.OpenAI(model="gpt-4", max_tokens=2000)
-        dspy.settings.configure(lm=lm)
-
-        # Register DSPy signature
-        class QASignature(dspy.Signature):
-            """Answer questions based on context."""
-            context = dspy.InputField(desc="background context")
-            question = dspy.InputField(desc="question to answer")
-            answer = dspy.OutputField(desc="concise answer")
-
-        self.qa_module = dspy.ChainOfThought(QASignature)
-
-    async def answer(self, question: str, context: str):
-        """Answer question using DSPy."""
-        result = self.qa_module(context=context, question=question)
-        return result.answer
+# Find agents by capability
+search_agents = registry.find_agents_by_capability("video_search")
 ```
 
 ### Memory Management
 
 ```python
-from cogniverse_core.common.memory import Mem0MemoryManager
+from cogniverse_core.memory.manager import Mem0MemoryManager
 
-# Get memory manager for tenant (singleton pattern)
-memory = Mem0MemoryManager.get_instance(tenant_id="acme")
+# Per-tenant singleton (LRU-bounded); call initialize() before first use
+memory = Mem0MemoryManager(tenant_id="acme:production")
 
-# Add conversation to memory
-memory.add(
-    messages=[
-        {"role": "user", "content": "What is RAG?"},
-        {"role": "assistant", "content": "RAG stands for Retrieval-Augmented Generation..."}
-    ],
-    user_id="user_123"
+# Add content to agent memory
+memory.add_memory(
+    content="RAG stands for Retrieval-Augmented Generation.",
+    tenant_id="acme:production",
+    agent_name="search_agent",
 )
 
 # Search memories
-relevant_memories = memory.search(
+relevant_memories = memory.search_memory(
     query="retrieval augmented generation",
-    user_id="user_123",
-    limit=5
+    tenant_id="acme:production",
+    agent_name="search_agent",
+    top_k=5,
 )
 
-# Get all memories for user
-all_memories = memory.get_all(user_id="user_123")
+# Get all memories for an agent
+all_memories = memory.get_all_memories(
+    tenant_id="acme:production",
+    agent_name="search_agent",
+)
 
-# Delete specific memory
-memory.delete(memory_id="mem_xyz")
+# Delete a specific memory by ID
+memory.delete_memory(memory_id="mem_xyz")
 ```
 
 ### Backend Registry
@@ -340,66 +297,55 @@ from cogniverse_sdk.interfaces.backend import Backend
 class MyCustomBackend(Backend):
     """Custom backend implementation."""
 
-    def _initialize_backend(self, config):
-        self.client = CustomVectorDB(config)
-
     async def search(self, query, embedding=None, **kwargs):
         # Implementation
         pass
 
-# Register backend
-BackendRegistry.register("my_backend", MyCustomBackend)
+# Register a backend class
+BackendRegistry.register_backend("my_backend", MyCustomBackend)
 
-# Get backend
-backend = BackendRegistry.get("my_backend")(config=backend_config)
+# Retrieve the registry singleton and look up a backend class
+registry = BackendRegistry.get_instance()
 ```
 
 ### Multi-Tenant Configuration
 
 ```python
-from cogniverse_core.config import SystemConfig
-from cogniverse_core.common.tenant import TenantUtils
+from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_core.common.tenant_utils import parse_tenant_id, require_tenant_id
 
-# Load base configuration
-base_config = SystemConfig.from_file("config.yaml")
-
-# Get tenant-specific configuration
-tenant_config = TenantUtils.get_tenant_config(
-    base_config=base_config,
-    tenant_id="acme"
-)
-
-# Apply tenant overrides
-tenant_config.update_overrides({
-    "max_concurrent_requests": 100,
-    "embedding_model": "custom-model-v2"
+# Build a SystemConfig from a dict (e.g. loaded from YAML)
+config = SystemConfig.from_dict({
+    "llm": {"model": "ollama/qwen3:4b"},
 })
+
+# Parse an org:tenant identifier
+org_id, tenant_name = parse_tenant_id("acme:production")
+# → ("acme", "production")
+
+# Enforce that a request carries an explicit tenant_id
+# (raises ValueError if missing or empty)
+tenant_id = require_tenant_id("acme:production", source="MyRequest")
 ```
 
 ### A2A (Agent-to-Agent) Communication
 
+`A2AAgent` (in `cogniverse_core.agents.a2a_agent`) combines `AgentBase` with DSPy integration and A2A endpoint helpers. Subclass it when your agent needs to receive or dispatch A2A protocol messages.
+
 ```python
-from cogniverse_core.agents import A2AMixin
+from cogniverse_core.agents import AgentBase, AgentInput, AgentOutput, AgentDeps, A2AAgent, A2AAgentConfig
+from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-class CollaborativeAgent(BaseAgent, A2AMixin):
-    """Agent that can communicate with other agents."""
+config_manager = create_default_config_manager()
+registry = AgentRegistry(tenant_id="acme:production", config_manager=config_manager)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
 
-    async def execute(self, query: str):
-        # Invoke another agent
-        search_results = await self.invoke_agent(
-            agent_name="video_search_agent",
-            method="search",
-            params={"query": query, "top_k": 10}
-        )
-
-        # Process results
-        summary = await self.invoke_agent(
-            agent_name="summarizer_agent",
-            method="summarize",
-            params={"content": search_results}
-        )
-
-        return summary
+result = await orchestrator.process(OrchestratorInput(
+    query="Find and summarize videos about AI",
+    tenant_id="acme:production",
+))
 ```
 
 ## Architecture Position

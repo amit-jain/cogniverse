@@ -63,67 +63,50 @@ Application Layer (Light Blue/Purple)
 
 ### 1. Phoenix Trace Visualization
 
-View and analyze OpenTelemetry traces from Phoenix:
+View and analyze OpenTelemetry traces from Phoenix. The evaluation tab
+renders Phoenix dataset and experiment data directly via GraphQL:
 
 ```python
-import streamlit as st
-from cogniverse_dashboard.pages import phoenix_traces
+# The dashboard is a Streamlit app; tabs are rendered via render_*() functions.
+# Example: launching the dashboard and loading the evaluation tab
+from cogniverse_dashboard.tabs import evaluation
 
-# Display traces for tenant
-phoenix_traces.show_traces(
-    tenant_id="acme_corp",
-    project="acme_corp_project",
-    time_range="last_24h"
-)
+# render_evaluation_tab() is called automatically by app.py inside st.tabs
+evaluation.get_phoenix_datasets()   # returns list of datasets from Phoenix
 ```
 
-### 2. Experiment Comparison
+### 2. Experiment and Evaluation
 
-Compare DSPy experiments side-by-side:
+DSPy experiments and routing evaluation are rendered by dedicated tabs:
 
 ```python
-from cogniverse_dashboard.pages import experiments
+from cogniverse_dashboard.tabs import routing_evaluation, evaluation
 
-# Compare modality routing experiments
-experiments.compare_experiments(
-    experiment_ids=["exp_001", "exp_002", "exp_003"],
-    metrics=["accuracy", "f1_score", "latency"]
-)
+# Each tab module exposes a top-level render function called by app.py
+# routing_evaluation.render_routing_evaluation_tab()
+# evaluation tab queries Phoenix and renders results inline
 ```
 
-### 3. Dataset Management
+### 3. Profile and Optimization
 
-Create and manage evaluation datasets:
+Backend profile metrics and optimization live in their own tabs:
 
 ```python
-from cogniverse_dashboard.pages import datasets
+from cogniverse_dashboard.tabs import profile_metrics, optimization
 
-# Upload new dataset
-datasets.upload_dataset(
-    name="video_search_queries",
-    format="csv",
-    file_path="/data/queries.csv"
-)
-
-# View dataset statistics
-datasets.show_statistics(dataset_id="dataset_001")
+# profile_metrics.render_profile_metrics_tab()
+# optimization.render_optimization_tab()
 ```
 
-### 4. System Monitoring
+### 4. System and Tenant Management
 
-Monitor system health and performance:
+Tenant management and approval queue:
 
 ```python
-from cogniverse_dashboard.pages import monitoring
+from cogniverse_dashboard.tabs import tenant_management, approval_queue
 
-# Show Vespa metrics
-monitoring.show_vespa_metrics(tenant_id="acme_corp")
-
-# Show ingestion pipeline status
-monitoring.show_ingestion_status(tenant_id="acme_corp")
-
-# Show search performance
-monitoring.show_search_metrics(tenant_id="acme_corp")
+# tenant_management.render_tenant_management_tab()
+# approval_queue.render_approval_queue_tab()
 ```
 
 ---
@@ -175,133 +158,61 @@ export VESPA_URL="http://localhost:8080"
 uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 ```
 
-### Custom Dashboard
+### Running the Dashboard
 
-```python
-import streamlit as st
-from cogniverse_dashboard import (
-    PhoenixTraceViewer,
-    ExperimentComparison,
-    DatasetManager,
-    SystemMonitor
-)
+The dashboard is a single Streamlit application (`app.py`) that renders
+all functionality through tab modules. There are no importable viewer or
+manager classes — the entry point is `streamlit run`:
 
-# Set page config
-st.set_page_config(
-    page_title="Cogniverse Dashboard",
-    page_icon="🧠",
-    layout="wide"
-)
+```bash
+# Run with default settings
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
-# Sidebar tenant selector
-tenant_id = st.sidebar.selectbox(
-    "Select Tenant",
-    ["acme_corp", "globex_inc", "default"]
-)
-
-# Main content
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Phoenix Traces",
-    "Experiments",
-    "Datasets",
-    "Monitoring"
-])
-
-with tab1:
-    viewer = PhoenixTraceViewer(tenant_id=tenant_id)
-    viewer.render()
-
-with tab2:
-    comparison = ExperimentComparison(tenant_id=tenant_id)
-    comparison.render()
-
-with tab3:
-    datasets = DatasetManager(tenant_id=tenant_id)
-    datasets.render()
-
-with tab4:
-    monitor = SystemMonitor(tenant_id=tenant_id)
-    monitor.render()
+# Run with custom environment
+export PHOENIX_ENDPOINT="http://localhost:6006"
+export RUNTIME_API_URL="http://localhost:8000"
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py \
+  --server.port 8501
 ```
 
 ---
 
-## Dashboard Pages
+## Dashboard Tabs
 
-### Phoenix Traces
+The dashboard is a single-page Streamlit app (`app.py`) with the following
+top-level tabs rendered via `st.tabs`:
 
-**URL**: `/Phoenix_Traces`
-
-Features:
-- View all traces for tenant
-- Filter by time range, status, operation
-- Drill down into spans
-- View span attributes, events, links
-- Export traces to CSV/JSON
-
-### Experiments
-
-**URL**: `/Experiments`
-
-Features:
-- List all experiments
-- Compare experiment results
-- View optimizer settings
-- Visualize metric trends
-- Export experiment data
-
-### Datasets
-
-**URL**: `/Datasets`
-
-Features:
-- List all datasets
-- View dataset statistics
-- Upload new datasets
-- Preview dataset samples
-- Validate dataset format
-- Export datasets
-
-### Monitoring
-
-**URL**: `/Monitoring`
-
-Features:
-- Vespa health and metrics
-- Ingestion pipeline status
-- Search performance metrics
-- Agent performance
-- Resource utilization
-
-### Admin
-
-**URL**: `/Admin`
-
-Features:
-- Tenant management
-- User management
-- System configuration
-- Schema deployment
-- Backup/restore
+| Tab | What it shows |
+|---|---|
+| Analytics | Phoenix trace overview, time series, distributions, heatmaps, outliers, trace explorer |
+| Evaluation | Phoenix datasets and experiment results via GraphQL |
+| Embedding Atlas | Embedding space visualization |
+| Routing Evaluation | Routing agent decision metrics |
+| Orchestration Annotation | Annotation UI for orchestration traces |
+| Profile Routing Metrics | Backend profile performance statistics |
+| Optimization | DSPy optimizer run management |
+| Synthetic Data & Optimization | Synthetic data generation and optimizer triggers |
+| Approval Queue | Human-in-the-loop review of synthetic examples |
+| Ingestion Testing | Trigger and monitor ingestion jobs |
+| Interactive Search | Run search queries against the runtime |
+| Chat | Multi-turn agent chat interface |
+| Configuration | System configuration management |
+| Tenant Management | Organization and tenant CRUD |
+| Memory | Agent memory state viewer |
+| RLM A/B Compare | RLM A/B comparison view |
 
 ---
 
 ## Configuration
 
-Configuration via `SystemConfig` from `cogniverse-foundation`:
+The dashboard reads its configuration from environment variables at
+startup. There is no `create_dashboard` factory function — the app is
+launched directly via `streamlit run`:
 
-```python
-from cogniverse_dashboard import create_dashboard
-from cogniverse_foundation.config.unified_config import SystemConfig
-
-config = SystemConfig(
-    tenant_id="acme_corp",
-    telemetry_url="http://localhost:6006",
-    backend_url="http://localhost",
-    backend_port=8080,
-)
-
-dashboard = create_dashboard(config=config)
+```bash
+export PHOENIX_ENDPOINT="http://localhost:6006"
+export RUNTIME_API_URL="http://localhost:8000"
+uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 ```
 
 ### Environment Variables
@@ -489,104 +400,27 @@ spec:
 
 ---
 
-## Components
+## Tab Modules
 
-### Phoenix Trace Viewer
+The dashboard has no importable component classes or visualization
+objects. All UI is rendered by tab modules in `cogniverse_dashboard.tabs`.
+Each module exposes a single `render_*_tab()` function that `app.py`
+calls inside an `st.tabs` context.
 
-```python
-from cogniverse_dashboard.components import PhoenixTraceViewer
-
-viewer = PhoenixTraceViewer(
-    tenant_id="acme_corp",
-    project="acme_corp_project"
-)
-
-# Render trace viewer
-viewer.render()
-
-# Get selected trace
-if viewer.selected_trace:
-    st.write(f"Selected trace: {viewer.selected_trace.trace_id}")
-```
-
-### Experiment Comparison
-
-```python
-from cogniverse_dashboard.components import ExperimentComparison
-
-comparison = ExperimentComparison(
-    tenant_id="acme_corp"
-)
-
-# Render comparison view
-comparison.render()
-
-# Get comparison data
-if comparison.selected_experiments:
-    data = comparison.get_comparison_data()
-    st.write(data)
-```
-
-### Dataset Manager
-
-```python
-from cogniverse_dashboard.components import DatasetManager
-
-manager = DatasetManager(
-    tenant_id="acme_corp"
-)
-
-# Render dataset manager
-manager.render()
-
-# Upload dataset
-if st.button("Upload"):
-    manager.upload_dataset(
-        file=uploaded_file,
-        name="new_dataset"
-    )
-```
-
----
-
-## Visualizations
-
-### Trace Timeline
-
-```python
-from cogniverse_dashboard.viz import TraceTimeline
-import plotly.graph_objects as go
-
-timeline = TraceTimeline(traces=traces)
-fig = timeline.create_figure()
-
-st.plotly_chart(fig, use_container_width=True)
-```
-
-### Experiment Metrics
-
-```python
-from cogniverse_dashboard.viz import ExperimentMetrics
-
-metrics = ExperimentMetrics(experiments=experiments)
-fig = metrics.create_comparison_chart(
-    metrics=["accuracy", "f1_score"],
-    chart_type="bar"
-)
-
-st.plotly_chart(fig, use_container_width=True)
-```
-
-### Dataset Distribution
-
-```python
-from cogniverse_dashboard.viz import DatasetDistribution
-
-dist = DatasetDistribution(dataset=dataset)
-fig = dist.create_histogram(column="query_length")
-
-st.plotly_chart(fig, use_container_width=True)
-```
+| Module | Render function | What it shows |
+|---|---|---|
+| `tabs.evaluation` | `render_evaluation_tab()` | Phoenix datasets and experiments |
+| `tabs.routing_evaluation` | `render_routing_evaluation_tab()` | Routing agent metrics |
+| `tabs.profile_metrics` | `render_profile_metrics_tab()` | Backend profile performance |
+| `tabs.optimization` | `render_enhanced_optimization_tab()` | DSPy optimizer runs |
+| `tabs.approval_queue` | `render_approval_queue_tab()` | Synthetic data review queue |
+| `tabs.tenant_management` | `render_tenant_management_tab()` | Tenant and org CRUD |
+| `tabs.memory_management` | `render_memory_management_tab()` | Agent memory state |
+| `tabs.config_management` | `render_config_management_tab()` | System configuration |
+| `tabs.backend_profile` | `render_backend_profile_tab()` | Vespa profile selection |
+| `tabs.embedding_atlas` | `render_embedding_atlas_tab()` | Embedding space visualization |
+| `tabs.rlm_ab_compare` | `render_rlm_ab_compare_tab()` | RLM A/B comparison |
+| `tabs.orchestration_annotation` | `render_orchestration_annotation_tab()` | Orchestration annotation |
 
 ---
 
@@ -610,23 +444,11 @@ st.session_state.tenant_id = tenant_id
 
 ### Tenant-Specific Data
 
-```python
-# Phoenix traces for tenant
-traces = phoenix_provider.get_traces(
-    project=f"{tenant_id}_project",
-    limit=100
-)
-
-# Experiments for tenant
-experiments = eval_tracker.list_experiments(
-    tenant_id=tenant_id
-)
-
-# Datasets for tenant
-datasets = dataset_manager.list_datasets(
-    tenant_id=tenant_id
-)
-```
+All dashboard tabs scope their data to the active tenant set in the
+sidebar. The evaluation tab fetches Phoenix datasets and experiments by
+querying the configured Phoenix endpoint; analytics fetches traces from
+the same Phoenix instance. The active tenant is stored in
+`st.session_state["current_tenant"]` and propagated to every tab.
 
 ---
 
@@ -680,43 +502,31 @@ curl http://localhost:6006/v1/projects
 
 ### Caching
 
+The dashboard uses `@st.cache_data` to avoid redundant API calls. The
+30-second TTL on agent connectivity checks and the 60-second TTL on
+heavier analytics queries keep the UI responsive without hammering Phoenix:
+
 ```python
 import streamlit as st
+from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds
-def load_traces(tenant_id: str):
-    return phoenix_provider.get_traces(
-        project=f"{tenant_id}_project"
-    )
+analytics = PhoenixAnalytics(telemetry_url="http://localhost:6006")
 
-# Use cached function
-traces = load_traces(tenant_id)
+@st.cache_data(ttl=60)
+def load_traces(start_time, end_time):
+    return analytics.get_traces(start_time=start_time, end_time=end_time, limit=1000)
 ```
 
 ### Pagination
 
-```python
-# Paginate large datasets
-page_size = 100
-page_number = st.number_input("Page", min_value=1)
-
-offset = (page_number - 1) * page_size
-traces = phoenix_provider.get_traces(
-    limit=page_size,
-    offset=offset
-)
-```
-
-### Lazy Loading
+Streamlit's `st.number_input` and manual offset slicing are used for trace
+pagination within the Trace Explorer tab:
 
 ```python
-# Load data only when tab is selected
-tab1, tab2, tab3 = st.tabs(["Traces", "Experiments", "Datasets"])
-
-with tab1:
-    if st.session_state.get("load_traces", False):
-        traces = load_traces(tenant_id)
-        render_traces(traces)
+page_size = 20
+page = st.selectbox("Page", range(1, num_pages + 1))
+start_idx = (page - 1) * page_size
+end_idx = min(start_idx + page_size, len(traces_df))
 ```
 
 ---

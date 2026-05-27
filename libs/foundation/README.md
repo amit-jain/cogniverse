@@ -20,15 +20,15 @@ cogniverse_foundation/
 ├── config/
 │   ├── agent_config.py      # Agent configuration base classes
 │   ├── api_mixin.py         # API configuration mixins
+│   ├── bootstrap.py         # Bootstrap configuration helpers
+│   ├── config.py            # Configuration base classes
+│   ├── llm_factory.py       # LLM endpoint factory
 │   ├── manager.py           # Configuration manager
-│   ├── schema.py            # Configuration schemas
 │   ├── unified_config.py    # Unified config interface
-│   ├── utils.py             # Config utilities
-│   └── sqlite/              # SQLite-based config storage
+│   └── utils.py             # Config utilities
 └── telemetry/
     ├── config.py            # Telemetry configuration
-    ├── context.py           # Telemetry context management
-    ├── exporter.py          # Telemetry exporters
+    ├── context.py           # Span-helper functions (search_span, etc.)
     ├── manager.py           # Telemetry manager
     ├── registry.py          # Telemetry provider registry
     └── providers/           # Provider implementations
@@ -41,23 +41,15 @@ cogniverse_foundation/
 Base classes and utilities for configuration management across the platform:
 
 **Core Components:**
-- `AgentConfig`: Base configuration class for agent settings
-- `SystemConfig`: System-level configuration (agent URLs, backends, telemetry)
-- `ConfigManager`: Centralized configuration management
-- `APIMixin`: API configuration integration mixin
-- `ConfigSchema`: Pydantic schemas for configuration validation
-- `ConfigUtils`: Helper utilities for config loading and validation
-
-**SQLite Storage:**
-- Persistent configuration storage using SQLite
-- Tenant-aware configuration management
-- Configuration versioning and history
+- `AgentConfig` (`cogniverse_foundation.config.agent_config`): Base configuration class for agent settings
+- `SystemConfig` (`cogniverse_foundation.config.unified_config`): System-level configuration (agent URLs, backends, telemetry)
+- `ConfigManager` (`cogniverse_foundation.config.manager`): Centralized configuration management
+- `APIMixin` (`cogniverse_foundation.config.api_mixin`): API configuration integration mixin
 
 **Key Features:**
 - **Type-Safe**: Full Pydantic validation
 - **Multi-Tenant**: Tenant-aware configuration isolation
 - **Extensible**: Easy to extend for custom config types
-- **Persistent**: SQLite-backed configuration storage
 
 ### Telemetry System (`cogniverse_foundation.telemetry`)
 
@@ -65,10 +57,9 @@ Provider-agnostic telemetry and observability infrastructure:
 
 **Core Components:**
 - `TelemetryConfig`: Base configuration for telemetry providers
-- `TelemetryContext`: Context management for distributed tracing
 - `TelemetryManager`: Centralized telemetry management
-- `TelemetryRegistry`: Provider registration and discovery
-- `TelemetryExporter`: Export telemetry to various backends
+- `TelemetryRegistry` (`cogniverse_foundation.telemetry.registry`): Provider registration and discovery
+- `context` module: Span-helper functions for tenant-aware instrumentation (e.g., `search_span`)
 
 **Provider Support:**
 - **OpenTelemetry**: Built-in OpenTelemetry integration
@@ -109,7 +100,8 @@ pip install cogniverse-foundation
 ### Configuration Management
 
 ```python
-from cogniverse_foundation.config import AgentConfig, ConfigManager
+from cogniverse_foundation.config.agent_config import AgentConfig
+from cogniverse_foundation.config.manager import ConfigManager
 
 # Define custom agent configuration
 class MyAgentConfig(AgentConfig):
@@ -142,11 +134,7 @@ config = config_manager.load_config(
 ### Telemetry Integration
 
 ```python
-from cogniverse_foundation.telemetry import (
-    TelemetryManager,
-    TelemetryConfig,
-    TelemetryContext
-)
+from cogniverse_foundation.telemetry import TelemetryManager, TelemetryConfig
 
 # Initialize telemetry
 telemetry_config = TelemetryConfig(
@@ -156,23 +144,17 @@ telemetry_config = TelemetryConfig(
 )
 
 telemetry_manager = TelemetryManager(telemetry_config)
-tracer = telemetry_manager.get_tracer("my-service")
 
 # Create spans for distributed tracing
-with tracer.start_as_current_span("process_request") as span:
-    span.set_attribute("user.id", "user_123")
-    span.set_attribute("tenant.id", "acme")
-
+with telemetry_manager.span("process_request", tenant_id="acme") as span:
     # Your business logic here
     result = process_query(query)
-
-    span.set_attribute("result.count", len(result))
 ```
 
 ### Custom Telemetry Provider
 
 ```python
-from cogniverse_foundation.telemetry import TelemetryRegistry
+from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 from opentelemetry import trace
 
 class CustomTelemetryProvider:
@@ -274,7 +256,6 @@ The foundation package includes:
 - Unit tests for configuration management
 - Telemetry integration tests
 - Provider registry tests
-- SQLite storage tests
 
 ## License
 

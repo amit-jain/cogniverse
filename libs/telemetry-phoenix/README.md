@@ -439,7 +439,7 @@ uv run mypy libs/telemetry-phoenix
 The package implements the `TelemetryProvider` interface:
 
 ```python
-from cogniverse_foundation.telemetry.interfaces import TelemetryProvider
+from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 class PhoenixProvider(TelemetryProvider):
     """Phoenix telemetry provider implementation."""

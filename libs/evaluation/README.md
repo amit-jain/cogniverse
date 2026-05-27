@@ -19,19 +19,30 @@ cogniverse_evaluation/
 ├── __init__.py
 ├── cli.py                   # Command-line interface for evaluations
 ├── span_evaluator.py        # Span-level evaluation
+├── online_evaluator.py      # Online (live) evaluation
+├── quality_monitor.py       # Quality monitoring
 ├── analysis/                # Evaluation analysis tools
 ├── core/                    # Core evaluation primitives
+│   ├── task.py              # Inspect AI Task construction
+│   ├── solvers.py           # Retrieval/batch/live solvers
+│   ├── inspect_scorers.py   # Configured Inspect scorers
+│   ├── experiment_tracker.py
+│   ├── ground_truth.py
+│   ├── reranking.py
+│   ├── schema_analyzer.py
+│   └── solver_output.py
 ├── evaluators/              # Built-in evaluators
-│   ├── base_evaluator.py
-│   ├── golden_dataset.py    # Golden dataset evaluation
-│   ├── llm_judge.py         # LLM-as-judge evaluation
-│   ├── configurable_visual_judge.py # Visual judge wired to a configured LLM provider
+│   ├── base.py              # BaseEvaluator abstract class
+│   ├── golden_dataset.py    # GoldenDatasetEvaluator
+│   ├── llm_judge.py         # LLMJudgeCore, SyncLLMReferenceFreeEvaluator, etc.
+│   ├── configurable_visual_judge.py # ConfigurableVisualJudge
 │   ├── _media_helpers.py    # Shared source_url resolution + frame extraction
-│   ├── reference_free.py    # Reference-free evaluation
-│   └── routing_evaluator.py # Routing agent evaluation
+│   ├── reference_free.py    # QueryResultRelevanceEvaluator, etc. (async)
+│   ├── sync_reference_free.py # SyncQueryResultRelevanceEvaluator, etc.
+│   ├── metadata_fetcher.py  # Metadata fetching helpers
+│   └── routing_evaluator.py # RoutingEvaluator
 ├── metrics/                 # Evaluation metrics
-│   ├── custom.py            # Custom metric definitions
-│   └── reference_free.py    # Reference-free metrics
+│   └── custom.py            # calculate_mrr, calculate_ndcg, etc. (no CustomMetric class)
 ├── plugins/                 # Plugin system for providers
 └── providers/               # Evaluation provider implementations
 ```
@@ -42,23 +53,32 @@ cogniverse_evaluation/
 
 Built-in evaluators for different evaluation scenarios:
 
-**Base Evaluators:**
-- `BaseEvaluator`: Abstract base class for all evaluators
-- `BaseEvaluatorNoTrace`: Evaluator without trace dependencies
+**Base Evaluators** (in `cogniverse_evaluation.evaluators.base`):
+- `Evaluator`: Abstract base class for all evaluators
+- `EvaluationResult`: Dataclass returned by all evaluators
 
 **Dataset Evaluators:**
 - `GoldenDatasetEvaluator`: Evaluate against golden datasets
 - `RoutingEvaluator`: Specialized routing agent evaluation
 
-**LLM-Based Evaluators:**
-- `LLMJudge`: Use LLMs as judges for quality assessment
+**LLM-Based Evaluators** (in `cogniverse_evaluation.evaluators.llm_judge`):
+- `LLMJudgeCore`: Base class for LLM judge evaluators (OAI-compatible endpoint)
+- `SyncLLMReferenceFreeEvaluator`: Synchronous LLM reference-free evaluation
+- `SyncLLMReferenceBasedEvaluator`: Synchronous LLM reference-based evaluation
+- `SyncLLMHybridEvaluator`: Combines reference-free and reference-based
 - `ConfigurableVisualJudge`: Visual evaluation; provider, model, and endpoint
   come from the evaluator config. Resolves frames from each result's
   ``source_url`` via :class:`MediaLocator`.
 
-**Reference-Free Evaluators:**
-- `ReferenceFreeEvaluator`: Evaluate without ground truth
-- `SyncReferenceFreeEvaluator`: Synchronous reference-free evaluation
+**Reference-Free Evaluators** (in `cogniverse_evaluation.evaluators.reference_free`):
+- `QueryResultRelevanceEvaluator`: Heuristic query-result relevance (async)
+- `ResultDiversityEvaluator`: Evaluates result set diversity
+- `TemporalCoverageEvaluator`: Evaluates temporal coverage
+- `CompositeEvaluator`: Combines multiple evaluators
+
+**Synchronous Reference-Free** (in `cogniverse_evaluation.evaluators.sync_reference_free`):
+- `SyncQueryResultRelevanceEvaluator`: Synchronous query-result relevance
+- `SyncResultDiversityEvaluator`: Synchronous diversity evaluation
 
 ### Metrics (`cogniverse_evaluation.metrics`)
 
@@ -143,52 +163,51 @@ pip install cogniverse-evaluation
 ### Golden Dataset Evaluation
 
 ```python
-from cogniverse_evaluation.evaluators import GoldenDatasetEvaluator
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_evaluation.evaluators.golden_dataset import GoldenDatasetEvaluator
 
-# Initialize evaluator with golden dataset
-evaluator = GoldenDatasetEvaluator(
-    dataset_path="golden_dataset_v1.csv",
-    metrics=["accuracy", "precision", "recall", "f1"]
+# Initialize evaluator with a dict mapping query -> expected results
+golden_dataset = {
+    "machine learning tutorial": {
+        "expected_videos": ["v_abc123", "v_def456"],
+        "relevance_scores": {"v_abc123": 1.0, "v_def456": 0.8},
+    }
+}
+evaluator = GoldenDatasetEvaluator(golden_dataset=golden_dataset)
+
+# Evaluate a retrieval result
+result = await evaluator.evaluate(
+    input="machine learning tutorial",
+    output=[{"source_id": "v_abc123"}, {"source_id": "v_xyz789"}],
+    metadata={"is_test_query": True},
 )
 
-# Evaluate orchestrator agent
-orchestrator_agent = OrchestratorAgent(deps=OrchestratorDeps(...))
-results = await evaluator.evaluate(
-    agent=orchestrator_agent,
-    num_samples=100
-)
-
-print(f"Accuracy: {results['accuracy']:.3f}")
-print(f"F1 Score: {results['f1']:.3f}")
+print(f"Score (MRR): {result.score:.3f}")
+print(f"Label: {result.label}")
 ```
 
 ### LLM-as-Judge Evaluation
 
 ```python
-from cogniverse_evaluation.evaluators import LLMJudge
-
-# Initialize LLM judge
-judge = LLMJudge(
-    model="claude-sonnet-4.5",
-    criteria=[
-        "relevance",
-        "accuracy",
-        "completeness",
-        "coherence"
-    ]
+from cogniverse_evaluation.evaluators.llm_judge import (
+    LLMJudgeCore,
+    SyncLLMReferenceFreeEvaluator,
 )
 
-# Evaluate search results
-judgment = await judge.evaluate(
-    query="machine learning tutorials",
-    response=search_results,
-    context={"expected_modality": "video"}
+# Synchronous LLM-based reference-free evaluator
+# (used directly in Phoenix experiment runners)
+judge = SyncLLMReferenceFreeEvaluator(
+    model_name="qwen2-vl",
+    base_url="http://localhost:11434",
 )
 
-print(f"Relevance: {judgment['relevance']}/10")
-print(f"Overall Score: {judgment['overall']:.2f}")
-print(f"Reasoning: {judgment['reasoning']}")
+# Evaluate a query-result pair
+result = judge.evaluate(
+    input={"query": "machine learning tutorials"},
+    output=[{"source_id": "v_abc123", "score": 0.92}],
+)
+
+print(f"Score: {result.score:.2f}")
+print(f"Label: {result.label}")
 ```
 
 ### Multi-Modal Visual Evaluation
@@ -220,55 +239,41 @@ print(f"Score: {result.score:.2f} ({result.label})")
 ### Reference-Free Evaluation
 
 ```python
-from cogniverse_evaluation.evaluators import ReferenceFreeEvaluator
+from cogniverse_evaluation.evaluators.reference_free import QueryResultRelevanceEvaluator
 
-# Initialize reference-free evaluator
-evaluator = ReferenceFreeEvaluator(
-    metrics=["coherence", "fluency", "consistency"]
+# Heuristic reference-free evaluator (no ground truth required)
+evaluator = QueryResultRelevanceEvaluator(min_score_threshold=0.5)
+
+# Evaluate retrieved results for a query
+result = await evaluator.evaluate(
+    input="machine learning video tutorial",
+    output=[{"source_id": "v_abc123", "score": 0.87}],
 )
 
-# Evaluate generated summaries without ground truth
-results = await evaluator.evaluate(
-    generated_texts=summaries,
-    context={"source_documents": docs}
-)
-
-print(f"Coherence: {results['coherence']:.3f}")
-print(f"Fluency: {results['fluency']:.3f}")
+print(f"Score: {result.score:.3f}")
+print(f"Label: {result.label}")
 ```
 
-### Custom Metrics
+### Built-in Metrics
+
+The `cogniverse_evaluation.metrics` module exports function-based metrics
+(there is no `CustomMetric` base class):
 
 ```python
-from cogniverse_evaluation.metrics import CustomMetric
-import numpy as np
+from cogniverse_evaluation.metrics import (
+    calculate_mrr,
+    calculate_ndcg,
+    calculate_precision_at_k,
+    calculate_recall_at_k,
+)
 
-class SemanticSimilarityMetric(CustomMetric):
-    """Custom semantic similarity metric."""
+retrieved = ["v_abc123", "v_def456", "v_xyz789"]
+expected  = ["v_abc123", "v_ghi000"]
 
-    def __init__(self, model_name: str):
-        super().__init__(name="semantic_similarity")
-        self.model = load_embedding_model(model_name)
-
-    def compute(self, predictions, references):
-        pred_embeds = self.model.encode(predictions)
-        ref_embeds = self.model.encode(references)
-
-        # Cosine similarity
-        similarities = np.sum(pred_embeds * ref_embeds, axis=1) / (
-            np.linalg.norm(pred_embeds, axis=1) *
-            np.linalg.norm(ref_embeds, axis=1)
-        )
-
-        return {
-            "mean": float(np.mean(similarities)),
-            "std": float(np.std(similarities)),
-            "scores": similarities.tolist()
-        }
-
-# Use custom metric
-metric = SemanticSimilarityMetric(model_name="all-MiniLM-L6-v2")
-results = metric.compute(predicted_summaries, reference_summaries)
+print(f"MRR:        {calculate_mrr(retrieved, expected):.3f}")
+print(f"NDCG@10:    {calculate_ndcg(retrieved, expected):.3f}")
+print(f"Precision@3:{calculate_precision_at_k(retrieved, expected, k=3):.3f}")
+print(f"Recall@3:   {calculate_recall_at_k(retrieved, expected, k=3):.3f}")
 ```
 
 ### Orchestrator Agent Evaluation

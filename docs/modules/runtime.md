@@ -74,7 +74,6 @@ cogniverse_runtime/
 │   ├── tenant_manager.py
 │   ├── models.py
 │   └── profile_models.py
-├── inference/                       # Remote inference-service client wrappers
 ├── ingestion/                       # In-process video-ingestion pipeline
 │   ├── pipeline.py                  # VideoIngestionPipeline
 │   ├── pipeline_builder.py
@@ -98,10 +97,16 @@ cogniverse_runtime/
 │           ├── embedding_generator.py
 │           ├── embedding_generator_impl.py
 │           ├── embedding_generator_factory.py
-│           ├── document_builders.py
 │           └── backend_factory.py
 └── ingestion_worker/                # Async Redis-Streams ingestion worker
-    └── worker.py                    # Worker entrypoint + queue consumer
+    ├── worker.py                    # Worker entrypoint + queue consumer
+    ├── queue.py
+    ├── redis_client.py
+    ├── minio_client.py
+    ├── submit_api.py
+    ├── status_api.py
+    ├── backpressure.py
+    └── idempotency.py
 ```
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
@@ -1132,11 +1137,7 @@ generator = create_embedding_generator(
 
 ### DocumentBuilder
 
-**Location:** `document_builders.py`
-
-The document builder classes (`DocumentBuilder`, `DocumentBuilderFactory`, `DocumentMetadata`) exist in the codebase but are **not exported** from the embedding_generator package. They are used internally by the backend implementations and are not part of the public API.
-
-**Note:** Document building is now handled internally by backend implementations. Users should not need to create documents manually - the `EmbeddingGeneratorImpl` and backend clients handle this automatically.
+Document building is handled internally by backend implementations. Users should not need to create documents manually — the `EmbeddingGeneratorImpl` and backend clients handle this automatically.
 
 **Internal Document Fields** (for reference):
 

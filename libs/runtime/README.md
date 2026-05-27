@@ -180,39 +180,13 @@ uv run uvicorn cogniverse_runtime.main:app --port 8000
 ### Basic Integration
 
 ```python
-from fastapi import FastAPI
-from cogniverse_runtime import create_app
-
-# Create app with custom config
-app = create_app(
-    title="Cogniverse API",
-    version="0.1.0",
-    enable_docs=True,
-    enable_cors=True
-)
+# The app object is defined at module level in cogniverse_runtime.main
+from cogniverse_runtime.main import app
 
 # Run with uvicorn
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-```
-
-### Custom Middleware
-
-```python
-from cogniverse_runtime import create_app
-from cogniverse_runtime.middleware import (
-    TenantMiddleware,
-    LoggingMiddleware,
-    RateLimitMiddleware
-)
-
-app = create_app()
-
-# Add custom middleware
-app.add_middleware(TenantMiddleware)
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 ```
 
 ---
@@ -287,21 +261,15 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 
 ## Configuration
 
-Configuration via `SystemConfig` from `cogniverse-foundation`:
+Configuration via `SystemConfig` from `cogniverse-foundation`. The server reads config
+at startup through `cogniverse_runtime.config_loader`:
 
 ```python
-from cogniverse_runtime import create_app
 from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_runtime.main import app  # module-level FastAPI instance
 
-config = SystemConfig(
-    tenant_id="acme_corp",
-    backend_url="http://localhost",
-    backend_port=8080,
-    telemetry_url="http://localhost:6006",
-    environment="production",
-)
-
-app = create_app(config=config)
+# Configuration is loaded from environment variables and configs/config.json
+# at startup — see the Environment Variables section below.
 ```
 
 ### Environment Variables
@@ -341,15 +309,10 @@ curl -H "X-Tenant-ID: acme_corp" http://localhost:8000/search
 # Actual: video_colpali_mv_frame_acme_corp
 ```
 
-### 3. Tenant Middleware
+### 3. Tenant Routing
 
-```python
-from cogniverse_runtime.middleware import TenantMiddleware
-
-# Validates tenant_id on every request
-# Rejects requests without valid tenant_id
-# Attaches tenant context to request state
-```
+Tenant context is extracted from the `X-Tenant-ID` header and validated by the
+`cogniverse_runtime.routers.tenant` router on every request.
 
 ---
 
