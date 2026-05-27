@@ -176,8 +176,14 @@ class TestDSPyOptimizerIntegration:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_pipeline_optimization_with_real_lm(self, mock_openai_compatible_api):
-        """Test full pipeline optimization with real DSPy LM."""
+    async def test_pipeline_optimizes_each_configured_module(
+        self, mock_openai_compatible_api
+    ):
+        """The pipeline runs optimize_module for every configured module
+        (query_analysis, agent_routing, summary_generation, detailed_report) and
+        returns each compiled result. The DSPy optimization step itself is
+        mocked — this verifies the pipeline's module-iteration wiring, not real
+        LM-driven optimization."""
         # Initialize optimizer with real LM
         optimizer = DSPyAgentPromptOptimizer()
         from tests.fixtures.llm import resolve_base_url, resolve_prefixed_model

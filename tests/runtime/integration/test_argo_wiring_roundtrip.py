@@ -79,9 +79,11 @@ class TestArgoWiringRoundTrip:
     def test_full_roundtrip_env_var_then_post_submits_workflow(
         self, monkeypatch, tenant_client
     ):
-        """End-to-end: set ARGO_API_URL, run the lifespan helper, POST a
-        job through the real router, assert the CronWorkflow submission
-        was actually attempted with the right manifest.
+        """Set ARGO_API_URL, run the lifespan helper, POST a job through the
+        real router, and assert the CronWorkflow submission was attempted with
+        the manifest built from the request. The Argo HTTP boundary
+        (``_submit_cron_workflow``) is mocked — this verifies the
+        env→endpoint→manifest wiring, not that a live Argo server accepts it.
 
         This is the test that would have caught the audit bug — the
         previous test directly mutated ``tenant._argo_api_url`` and
@@ -108,6 +110,10 @@ class TestArgoWiringRoundTrip:
             manifest = mock_submit.call_args[0][0]
             assert manifest["kind"] == "CronWorkflow"
             assert manifest["spec"]["schedule"] == "0 9 * * 1"
+            # The scheduled workflow must actually run the job executor (the job's
+            # query is fetched by job-id at run time, so it isn't in the manifest).
+            container = manifest["spec"]["workflowSpec"]["templates"][0]["container"]
+            assert "cogniverse_runtime.job_executor" in container["command"]
 
     def test_full_roundtrip_no_env_var_skips_workflow(self, monkeypatch, tenant_client):
         """Symmetric round trip: with no ARGO_API_URL, POST /jobs must

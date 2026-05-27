@@ -287,8 +287,11 @@ class TestVespaBackendIngestion:
         # Process just one video
         result = await pipeline.process_video_async(vespa_test_videos[0])
 
+        # Confirm the right video was processed without error, not merely that
+        # some dict with a video_id key came back.
         assert result is not None
-        assert "video_id" in result
+        assert "error" not in result, f"ingestion errored: {result}"
+        assert result["video_id"] == vespa_test_videos[0].stem
 
     @pytest.mark.local_only
     @pytest.mark.requires_colpali
@@ -551,6 +554,7 @@ class TestComprehensiveIngestion:
             "video_colqwen_omni_mv_chunk_30s",
         ]
 
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
         from cogniverse_runtime.ingestion.pipeline import (
             PipelineConfig,
             VideoIngestionPipeline,
@@ -558,36 +562,32 @@ class TestComprehensiveIngestion:
 
         results = {}
         for profile in profiles_to_test:
-            try:
-                config_manager = create_default_config_manager()
-                config = PipelineConfig.from_config(
-                    tenant_id="test:unit", config_manager=config_manager
-                )
-                config.video_dir = all_test_videos[0].parent
-                config.search_backend = "vespa"
-                config.max_frames_per_video = 1
+            config_manager = create_default_config_manager()
+            config = PipelineConfig.from_config(
+                tenant_id="test:unit", config_manager=config_manager
+            )
+            config.video_dir = all_test_videos[0].parent
+            config.search_backend = "vespa"
+            config.max_frames_per_video = 1
 
-                from cogniverse_core.schemas.filesystem_loader import (
-                    FilesystemSchemaLoader,
-                )
+            schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+            pipeline = VideoIngestionPipeline(
+                tenant_id="test_tenant",
+                config=config,
+                config_manager=config_manager,
+                schema_loader=schema_loader,
+                schema_name=profile,
+            )
+            # No try/except: a per-profile failure must surface, not be
+            # swallowed and masked by "at least one succeeded".
+            results[profile] = await pipeline.process_video_async(all_test_videos[0])
 
-                schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-                pipeline = VideoIngestionPipeline(
-                    tenant_id="test_tenant",
-                    config=config,
-                    config_manager=config_manager,
-                    schema_loader=schema_loader,
-                    schema_name=profile,
-                )
-                result = await pipeline.process_video_async(all_test_videos[0])
-                results[profile] = result
-
-            except Exception as e:
-                # Log but don't fail - some models might not be available
-                print(f"Profile {profile} failed: {e}")
-
-        # At least one profile should succeed
-        assert len(results) > 0
+        # Every gated profile must ingest successfully.
+        assert set(results) == set(profiles_to_test)
+        for profile, result in results.items():
+            assert result is not None and "video_id" in result, (
+                f"Profile {profile} did not ingest: {result}"
+            )
 
     @pytest.mark.benchmark
     @pytest.mark.requires_vespa
