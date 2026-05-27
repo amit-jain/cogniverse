@@ -1623,8 +1623,14 @@ def _render_metrics_dashboard_tab():
         st.subheader("📊 Routing Optimization Metrics")
 
         routing_evaluator = RoutingEvaluator(provider=provider)
-        routing_spans = routing_evaluator.query_routing_spans(
-            start_time=start_time, end_time=end_time, limit=1000
+        # query_routing_spans is async — it must be awaited via
+        # run_async_in_streamlit (as the routing_evaluation tab does). Calling it
+        # bare returns a coroutine that is always truthy and then blows up in
+        # calculate_metrics' `for span in ...`.
+        routing_spans = run_async_in_streamlit(
+            routing_evaluator.query_routing_spans(
+                start_time=start_time, end_time=end_time, limit=1000
+            )
         )
 
         if routing_spans:

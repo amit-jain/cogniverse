@@ -441,3 +441,59 @@ class TestProviderQuery:
 
         with pytest.raises(RuntimeError, match="Failed to query routing spans"):
             await evaluator.query_routing_spans()
+
+
+@pytest.mark.unit
+class TestQueryRoutingSpansAwaited:
+    """query_routing_spans is async; the optimization dashboard tab must await
+    it (via run_async_in_streamlit) before passing the result to
+    calculate_metrics, which iterates it. This guards the await -> list ->
+    metrics sequence the tab performs — the pre-fix bug passed the raw coroutine
+    to calculate_metrics, which then failed iterating a coroutine.
+    """
+
+    def test_awaited_query_yields_list_consumable_by_calculate_metrics(self):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        spans = [
+            {
+                "name": "cogniverse.routing",
+                "parent_id": "p1",
+                "status_code": "OK",
+                "start_time": datetime(2026, 5, 1, 0, 0, 1),
+                "attributes": {
+                    "routing.chosen_agent": "video_search",
+                    "routing.confidence": 0.95,
+                    "routing.processing_time": 50.0,
+                },
+                "events": [],
+            },
+            {
+                "name": "cogniverse.routing",
+                "parent_id": "p2",
+                "status_code": "OK",
+                "start_time": datetime(2026, 5, 1, 0, 0, 2),
+                "attributes": {
+                    "routing.chosen_agent": "video_search",
+                    "routing.confidence": 0.90,
+                    "routing.processing_time": 60.0,
+                },
+                "events": [],
+            },
+        ]
+        provider = MagicMock()
+        provider.traces = MagicMock()
+        provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame(spans))
+        evaluator = RoutingEvaluator(provider=provider)
+
+        result = asyncio.run(evaluator.query_routing_spans(limit=1000))
+        # Must be a concrete list, never a coroutine.
+        assert isinstance(result, list)
+        assert len(result) == 2
+
+        metrics = evaluator.calculate_metrics(result)
+        assert metrics.total_decisions == 2
+        assert metrics.routing_accuracy == 1.0
