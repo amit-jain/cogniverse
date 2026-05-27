@@ -18,13 +18,12 @@
 ## Module Overview
 
 ### Purpose
-The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling, structured logging, query processing, and prompt management.
+The Utils Module provides production-ready utilities that support the entire Cogniverse system with robust error handling, structured logging, and query processing.
 
 ### Key Capabilities
 - **Retry Logic**: Exponential backoff with jitter for transient failure handling
 - **Logging Configuration**: Structured, multi-level logging with file and console output
 - **Query Utilities**: Comprehensive query building for all 9 Vespa ranking strategies
-- **Prompt Management**: Template management with artifact loading and variable substitution
 - **Profile Resolution**: Strategy profile to ranking strategy mapping
 - **Output Management**: Centralized directory structure for all output files
 
@@ -38,12 +37,6 @@ from functools import wraps
 from pathlib import Path
 import numpy as np
 import torch
-
-# Internal (prompt_manager.py only)
-from cogniverse_foundation.config.utils import get_config, create_default_config_manager
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from cogniverse_foundation.config.manager import ConfigManager
 ```
 
 ## Package Structure
@@ -55,7 +48,6 @@ libs/core/cogniverse_core/common/utils/
 ├── logging_config.py                  # Centralized logging configuration
 ├── output_manager.py                  # Output directory management
 ├── profile_utils.py                   # Profile to strategy mapping
-├── prompt_manager.py                  # Prompt template management
 ├── retry.py                           # Retry utilities with exponential backoff
 └── vespa_query_utils.py              # Vespa-specific query construction
 ```
@@ -472,63 +464,7 @@ def build_hybrid_query_params(
 
 ---
 
-### 5. Prompt Manager (`prompt_manager.py`)
-
-#### PromptManager
-Manages optimized prompts and few-shot examples with artifact loading.
-
-```python
-class PromptManager:
-    """Manages routing prompts and few-shot examples"""
-
-    def __init__(self,
-                 config_manager: "ConfigManager" = None,
-                 tenant_id: str = "default"):
-        """
-        Initialize the prompt manager.
-
-        Args:
-            config_manager: ConfigManager instance for dependency injection (required)
-            tenant_id: Tenant identifier for config retrieval
-
-        Artifacts are loaded via telemetry storage (ArtifactManager),
-        not local filesystem. self.artifacts starts as None.
-        """
-```
-
-**Key Methods:**
-
-1. **get_routing_prompt(user_query, conversation_history)**: Build complete routing prompt
-2. **get_model_config()**: Get model configuration from artifacts or defaults
-3. **get_status()**: Get current status (artifacts loaded, num examples, etc.)
-
-**Artifact Format:**
-```json
-{
-  "system_prompt": "You are a precise routing agent...",
-  "few_shot_examples": [
-    {
-      "conversation_history": "",
-      "user_query": "Show me cooking videos",
-      "routing_decision": {
-        "search_modality": "video",
-        "generation_type": "raw_results"
-      }
-    }
-  ],
-  "model_config": {
-    "temperature": 0.1,
-    "max_tokens": 100,
-    "model": "google/gemma-3-1b-it"
-  }
-}
-```
-
-**Source:** `libs/core/cogniverse_core/common/utils/prompt_manager.py:17-155`
-
----
-
-### 6. Profile Utilities (`profile_utils.py`)
+### 5. Profile Utilities (`profile_utils.py`)
 
 #### get_supported_ranking_strategies()
 Map video processing profile to supported ranking strategies.
@@ -557,7 +493,7 @@ def get_supported_ranking_strategies(profile: str) -> list:
 
 ---
 
-### 7. Output Manager (`output_manager.py`)
+### 6. Output Manager (`output_manager.py`)
 
 #### OutputManager
 Centralized directory management for all output files.
@@ -769,56 +705,6 @@ hybrid_float_bm25:
 
 ---
 
-### Example 4: Prompt Management with Artifacts
-
-```python
-from cogniverse_core.common.utils.prompt_manager import PromptManager
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_vespa.config.config_store import VespaConfigStore
-
-# Initialize with required config_manager and store
-store = VespaConfigStore(backend_url="http://localhost", backend_port=8080)
-config_manager = ConfigManager(store=store)
-pm = PromptManager(config_manager=config_manager, tenant_id="your_org:production")
-
-# Check status
-status = pm.get_status()
-print(f"Artifacts loaded: {status['artifacts_loaded']}")
-print(f"Using {status['num_examples']} few-shot examples")
-print(f"Model: {status['model_config']['model']}")
-
-# Build routing prompt
-prompt = pm.get_routing_prompt(
-    user_query="Show me cooking videos",
-    conversation_history="User previously searched for recipes"
-)
-
-print("\nGenerated Prompt:")
-print(prompt)
-
-# Check artifact status
-status = pm.get_status()
-print(f"Artifacts loaded: {status['artifacts_loaded']}")
-print(f"Using defaults: {status['using_defaults']}")
-```
-
-**Generated Prompt Example:**
-```text
-You are a precise and efficient routing agent. Analyze the query and output a JSON object...
-
-Examples:
-
-Conversation History:
-User Query: Show me how to cook pasta
-Output: {"search_modality": "video", "generation_type": "raw_results"}
-
-Conversation History: User previously searched for recipes
-User Query: Show me cooking videos
-Output:
-```
-
----
-
 ### Example 5: Output Directory Management
 
 ```python
@@ -877,8 +763,6 @@ Optimization results: outputs/optimization/grpo_checkpoint.pt
 
 - ✅ Query building: All 9 ranking strategies, tensor format conversion
 
-- ✅ Prompt management: Artifact loading, fallback to defaults
-
 - ✅ Output management: Directory creation, path resolution
 
 **Integration Tests:**
@@ -888,8 +772,6 @@ Optimization results: outputs/optimization/grpo_checkpoint.pt
 - ✅ Vespa queries: End-to-end query execution for all strategies
 
 - ✅ Retry with real services: HTTP retry behavior
-
-- ✅ Prompt optimization: Artifact loading via telemetry storage (ArtifactManager)
 
 ### Key Test Files
 
@@ -903,7 +785,7 @@ tests/common/unit/test_vespa_config_store.py
 tests/common/integration/test_config_persistence.py
 tests/common/integration/test_dynamic_config_integration.py
 
-# Note: Dedicated utils tests (retry, logging, query, prompt, output)
+# Note: Dedicated utils tests (retry, logging, query, output)
 # are tested indirectly through agent and integration tests
 ```
 
@@ -1033,15 +915,6 @@ except KeyError as e:
     query_params = build_query_params("float_float", float_tensors=float_tensors)
 ```
 
-**Prompt Manager Defaults:**
-```python
-# Artifacts loaded via telemetry storage, not local filesystem
-pm = PromptManager(config_manager=config_manager, tenant_id="acme")
-
-if not pm.artifacts:
-    logger.info("No artifacts loaded, using default prompts from config")
-```
-
 ### 3. Monitoring Points
 
 **Retry Metrics:**
@@ -1158,25 +1031,6 @@ def validate_query_inputs(ranking_profile, float_tensors, binary_tensors):
     return build_query_params(ranking_profile, float_tensors, binary_tensors)
 ```
 
-**Issue 4: Prompt Artifacts Not Loading**
-- **Symptom**: PromptManager falls back to defaults every time
-- **Cause**: Artifacts not yet stored via ArtifactManager (DSPy optimizer has not run) or telemetry connectivity issue
-- **Solution**: Verify the DSPy optimizer has run and stored artifacts via ArtifactManager, then populate `manager.artifacts` before use
-
-```python
-# Artifacts are loaded via telemetry storage (ArtifactManager), not local files.
-# manager.artifacts starts as None; the DSPy optimization pipeline populates it.
-pm = PromptManager(config_manager=config_manager, tenant_id="acme")
-
-# Check status before use
-status = pm.get_status()
-if status["using_defaults"]:
-    logger.info("No artifacts available; using default prompts from config")
-
-# To use optimized artifacts, populate manager.artifacts after loading from ArtifactManager:
-# pm.artifacts = artifact_manager.load_latest_artifact(tenant_id="acme")
-```
-
 ---
 
 ## Summary
@@ -1188,8 +1042,7 @@ The Utils Module provides production-ready utilities that support the entire Cog
 1. **Retry System**: Exponential backoff with jitter prevents thundering herd and handles transient failures gracefully
 2. **Logging**: Dual output (file + console) with structured formats supports debugging and production monitoring
 3. **Query Building**: Comprehensive support for all 9 Vespa ranking strategies with automatic parameter assembly
-4. **Prompt Management**: Artifacts loaded via telemetry storage (ArtifactManager) enable continuous prompt optimization
-5. **Output Management**: Centralized directory structure keeps outputs organized and prevents main directory pollution
+4. **Output Management**: Centralized directory structure keeps outputs organized and prevents main directory pollution
 
 ### Best Practices
 
@@ -1203,7 +1056,6 @@ The Utils Module provides production-ready utilities that support the entire Cog
 
 - **Agents**: Use retry logic for Vespa queries, logging for debugging
 - **Routing**: Use query building for all 9 ranking strategies
-- **Optimization**: Use prompt management for artifact loading
 - **Ingestion**: Use output management for processing artifacts
 - **Testing**: All utilities support comprehensive testing
 
@@ -1224,7 +1076,5 @@ The Utils Module provides production-ready utilities that support the entire Cog
 - `libs/core/cogniverse_core/common/utils/logging_config.py` - Logging configuration
 
 - `libs/core/cogniverse_core/common/utils/comprehensive_query_utils.py` - Query building
-
-- `libs/core/cogniverse_core/common/utils/prompt_manager.py` - Prompt management
 
 - `libs/core/cogniverse_core/common/utils/output_manager.py` - Output directory management

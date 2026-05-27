@@ -1245,30 +1245,6 @@ wait_for_retry_backoff(
 )
 ```
 
-### prompt_manager.py - Optimization Artifact Management
-
-```python
-from cogniverse_core.common.utils.prompt_manager import PromptManager
-
-manager = PromptManager(
-    config_manager=config_manager,
-    tenant_id="acme",
-)
-
-# Get routing prompt with context
-prompt = manager.get_routing_prompt(
-    user_query="Find videos about manufacturing",
-    conversation_history=""
-)
-
-# Get model configuration
-model_config = manager.get_model_config()
-
-# Artifacts are loaded via telemetry storage (ArtifactManager),
-# not local filesystem. manager.artifacts starts as None and can
-# be populated by the telemetry pipeline.
-```
-
 ### Other Utilities
 
 | Module | Purpose |

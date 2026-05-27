@@ -15,7 +15,7 @@ Components tested:
 4. XGBoost meta-models — TrainingDecisionModel, TrainingStrategyModel, FusionBenefitModel
 5. WorkflowIntelligence — execution persist/reload
 6. MLflowIntegration — DSPy module save/load via telemetry blobs
-7. PromptManager — no local fallback scanning
+7. DSPyAgentOptimizerPipeline — prompt round-trip
 """
 
 import json
@@ -343,49 +343,7 @@ class TestMLflowIntegrationRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# 7. PromptManager — no local fallback
-# ---------------------------------------------------------------------------
-
-
-class TestPromptManagerNoLocalFallback:
-    """Verify PromptManager does not scan local filesystem for artifacts."""
-
-    def test_no_standard_paths_scanning(self):
-        """PromptManager initializes with artifacts=None (no filesystem scanning)."""
-        from unittest.mock import MagicMock
-
-        from cogniverse_core.common.utils.prompt_manager import PromptManager
-
-        mock_config_manager = MagicMock()
-        mock_config_manager.get_all.return_value = {}
-
-        # Mock get_config to return a config object
-        import cogniverse_core.common.utils.prompt_manager as pm_module
-
-        original_get_config = pm_module.get_config
-
-        def mock_get_config(tenant_id, config_manager):
-            mock = MagicMock()
-            mock.get_all.return_value = {"prompts": {}}
-            return mock
-
-        pm_module.get_config = mock_get_config
-
-        try:
-            pm = PromptManager(
-                config_manager=mock_config_manager,
-                tenant_id="test",
-            )
-
-            # No artifacts_path provided, no config path -> should be None
-            assert pm.artifacts is None
-            assert pm.get_status()["using_defaults"] is True
-        finally:
-            pm_module.get_config = original_get_config
-
-
-# ---------------------------------------------------------------------------
-# 8. DSPyAgentOptimizerPipeline prompt round-trip
+# 7. DSPyAgentOptimizerPipeline prompt round-trip
 # ---------------------------------------------------------------------------
 
 
