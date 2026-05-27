@@ -1,8 +1,9 @@
 """Integration tests for GraphManager against a real Vespa Docker container.
 
-Starts its own Vespa, deploys the knowledge_graph_test_tenant schema,
-exercises the full extract → upsert → query round-trip, then tears down.
-Exactly the same pattern as test_wiki_vespa_integration.py.
+Backed by the project-wide ``shared_memory_vespa`` container; the
+``graph_vespa`` fixture co-deploys the tenant-scoped knowledge_graph schema
+through the canonical SchemaRegistry pathway and exercises the full
+extract → upsert → query round-trip against real multi-vector embeddings.
 """
 
 import json
@@ -23,6 +24,7 @@ from cogniverse_agents.graph.graph_schema import (
     Node,
 )
 from tests.utils.docker_utils import generate_unique_ports
+from tests.utils.vespa_test_helpers import schema_full_name
 
 
 def _test_mention(
@@ -42,7 +44,10 @@ def _test_mention(
 
 
 TENANT_ID = "test_tenant"
-GRAPH_SCHEMA = "knowledge_graph_test_tenant"
+# Must equal the document type the canonical SchemaRegistry pathway actually
+# deploys (see deploy_tenant_schema → deploy_schema), which canonicalizes the
+# tenant id and so double-suffixes: knowledge_graph_test_tenant_test_tenant.
+GRAPH_SCHEMA = schema_full_name("knowledge_graph", TENANT_ID)
 CONTAINER_NAME = "vespa-graph-integration-tests"
 
 _HTTP_PORT, _CONFIG_PORT = generate_unique_ports(__name__)
@@ -138,44 +143,6 @@ def _wait_for_schema_ready(
                 print(f"   readiness attempt {i + 1}: {exc}")
         time.sleep(1)
     return False
-
-
-def _deploy_graph_schema(config_port: int, http_port: int) -> None:
-    """Deploy the knowledge_graph_test_tenant schema via ApplicationPackage."""
-    from vespa.package import ApplicationPackage
-
-    from cogniverse_vespa.json_schema_parser import JsonSchemaParser
-    from cogniverse_vespa.metadata_schemas import (
-        create_adapter_registry_schema,
-        create_config_metadata_schema,
-        create_organization_metadata_schema,
-        create_tenant_metadata_schema,
-    )
-    from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-
-    metadata_schemas = [
-        create_organization_metadata_schema(),
-        create_tenant_metadata_schema(),
-        create_config_metadata_schema(),
-        create_adapter_registry_schema(),
-    ]
-
-    parser = JsonSchemaParser()
-    schema_file = Path("configs/schemas/knowledge_graph_schema.json")
-    with open(schema_file) as f:
-        schema_json = json.load(f)
-    schema_json["name"] = GRAPH_SCHEMA
-    schema_json["document"]["name"] = GRAPH_SCHEMA
-    graph_schema = parser.parse_schema(schema_json)
-
-    app_package = ApplicationPackage(
-        name="cogniverse", schema=metadata_schemas + [graph_schema]
-    )
-    mgr = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=config_port,
-    )
-    mgr._deploy_package(app_package)
 
 
 @pytest.fixture(scope="module")
