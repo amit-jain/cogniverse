@@ -11,10 +11,19 @@ import pytest
 from cogniverse_finetuning.orchestrator import (
     FinetuningOrchestrator,
     OrchestrationConfig,
+    OrchestrationResult,
     validate_dpo_dataset,
     validate_embedding_dataset,
     validate_sft_dataset,
 )
+
+
+class _NoTracerProvider:
+    """Stand-in for the real TelemetryProvider, which exposes NO ``tracer``
+    attribute. The orchestrator's Phoenix logging used ``self.provider.tracer``
+    — with this provider the old code AttributeErrors; the fix emits spans via
+    the per-tenant TelemetryManager instead, so it must not touch the provider.
+    """
 
 
 @pytest.mark.unit
@@ -695,3 +704,51 @@ class TestMultiTurnOrchestrationFlow:
 
         with pytest.raises(ValueError, match="agent_type required"):
             await orchestrator.run(config)
+
+
+@pytest.mark.unit
+class TestPhoenixLoggingUsesTelemetryManager:
+    """Regression guard: ``_log_experiment_to_phoenix`` is called unguarded
+    after every successful training run, and ``_log_evaluation_to_phoenix``
+    after evaluation. Both used ``self.provider.tracer`` (nonexistent), so a
+    real provider crashed the orchestrator after a successful train. They now
+    emit through ``get_telemetry_manager()`` and must not touch the provider.
+    """
+
+    def _config(self) -> OrchestrationConfig:
+        return OrchestrationConfig(
+            tenant_id="tenant1",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+        )
+
+    def test_log_experiment_does_not_touch_provider_tracer(self):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        result = OrchestrationResult(
+            model_type="llm",
+            training_method="sft",
+            adapter_path="/tmp/adapter",
+            metrics={"train_loss": 0.1, "epoch": 3},
+            base_model="m",
+            lora_config={},
+            used_synthetic=False,
+            synthetic_approval_count=0,
+        )
+        # Old code -> AttributeError('... has no attribute tracer'); fixed -> ok.
+        orch._log_experiment_to_phoenix(
+            config=self._config(),
+            result=result,
+            analysis=None,
+            approved_batch=None,
+            formatted_dataset=[],
+        )
+
+    def test_log_evaluation_does_not_touch_provider_tracer(self):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        # ComparisonResult shape — nested metric attrs auto-resolve on the mock.
+        orch._log_evaluation_to_phoenix(
+            config=self._config(),
+            adapter_path="/tmp/adapter",
+            evaluation_result=MagicMock(),
+        )

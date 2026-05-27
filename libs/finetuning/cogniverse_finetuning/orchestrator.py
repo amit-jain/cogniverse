@@ -32,6 +32,7 @@ from cogniverse_finetuning.training.backend import (
     TrainingBackend,
     TrainingJobConfig,
 )
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -414,9 +415,12 @@ class FinetuningOrchestrator:
             "output.adapter_path": result.adapter_path,
         }
 
-        # Create experiment span in Phoenix
-        with self.provider.tracer.start_as_current_span(
+        # Create experiment span in Phoenix. TelemetryProvider exposes no
+        # ``tracer``; spans are emitted through the per-tenant TelemetryManager.
+        with get_telemetry_manager().span(
             f"experiment.{config.agent_type or config.modality}.{result.training_method}",
+            tenant_id=config.tenant_id,
+            project_name="experiments",
             attributes=experiment_span_attributes,
         ) as span:
             span.set_status(Status(StatusCode.OK))
@@ -464,9 +468,12 @@ class FinetuningOrchestrator:
             "improvement.p_value": evaluation_result.p_value,
         }
 
-        # Create evaluation span in Phoenix
-        with self.provider.tracer.start_as_current_span(
+        # Create evaluation span in Phoenix (via the per-tenant TelemetryManager;
+        # TelemetryProvider has no ``tracer``).
+        with get_telemetry_manager().span(
             f"evaluation.{config.agent_type or config.modality}",
+            tenant_id=config.tenant_id,
+            project_name="experiments",
             attributes=eval_span_attributes,
         ) as span:
             span.set_status(Status(StatusCode.OK))
