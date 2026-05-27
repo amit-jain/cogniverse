@@ -210,12 +210,13 @@ class OnlineEvaluator:
                     name=annotation_name,
                     label=result.label,
                     score=result.score,
-                    explanation=result.explanation,
                     metadata={
                         "evaluator": result.evaluator_name,
                         "online": True,
+                        "explanation": result.explanation,
                         "timestamp": result.timestamp.isoformat(),
                     },
+                    project=self.project_name,
                 )
             except Exception as e:
                 logger.warning(f"Failed to persist score for {result.span_id}: {e}")

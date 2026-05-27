@@ -21,8 +21,9 @@ libs/agents/cogniverse_agents/optimizer/
 
 libs/runtime/cogniverse_runtime/
 ├── optimization_cli.py            # CLI for per-agent optimization modes
-│                                  # Modes: simba|gateway-thresholds|entity-extraction|
-│                                  #        workflow|profile|cleanup|triggered|synthetic|rollback
+│                                  # Modes: simba|gateway-thresholds|online-routing-eval|
+│                                  #        entity-extraction|workflow|profile|cleanup|
+│                                  #        triggered|synthetic|rollback
 └── routers/tenant.py              # POST /admin/tenant/{id}/optimize (on-demand submit)
 
 libs/synthetic/                     # Synthetic data generation system
@@ -58,6 +59,7 @@ The Optimization Module provides sophisticated multi-stage optimization for rout
 ### Key Features
 - **Advanced DSPy Optimization**: GEPA, MIPROv2, SIMBA, BootstrapFewShot optimizers
 - **Gateway Threshold Tuning**: `_compute_gateway_thresholds()` derives GLiNER thresholds from Phoenix spans
+- **Online Routing Evaluation**: `run_online_routing_evaluation` scores `cogniverse.routing` spans (routing outcome + confidence calibration) via `OnlineEvaluator` and persists the scores as telemetry annotations; driven by `automation_rules.online_evaluation`
 - **Profile Selection Optimization**: `run_profile_optimization` compiles the ProfileSelectionAgent DSPy module
 - **On-Demand Workflows**: Dashboard triggers POST `/admin/tenant/{id}/optimize`, which submits an Argo Workflow
 
@@ -84,7 +86,7 @@ from cogniverse_synthetic import OPTIMIZER_REGISTRY
 flowchart TB
     Dashboard["<span style='color:#000'>Dashboard / Argo Trigger<br/>POST /admin/tenant/{id}/optimize</span>"]
 
-    Dashboard --> OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>Modes: simba | gateway-thresholds | entity-extraction<br/>workflow | profile | cleanup | triggered</span>"]
+    Dashboard --> OptCLI["<span style='color:#000'>optimization_cli<br/>cogniverse_runtime<br/>Modes: simba | gateway-thresholds | online-routing-eval<br/>entity-extraction | workflow | profile | cleanup | triggered</span>"]
 
     OptCLI --> GatewayOpt["<span style='color:#000'>Gateway Threshold Optimizer<br/>_compute_gateway_thresholds(spans_df)</span>"]
     OptCLI --> Profile["<span style='color:#000'>Profile<br/>Selection</span>"]

@@ -8,6 +8,7 @@ Usage:
     python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id acme:production
+    python -m cogniverse_runtime.optimization_cli --mode online-routing-eval --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode entity-extraction --tenant-id acme:production
     python -m cogniverse_runtime.optimization_cli --mode cleanup --log-retention-days 7
@@ -22,7 +23,7 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -525,7 +526,7 @@ async def _query_spans_by_name(
     telemetry_manager = get_telemetry_manager()
     project_name = telemetry_manager.config.get_project_name(tenant_id)
 
-    end_time = datetime.now()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     try:
@@ -703,7 +704,7 @@ async def run_monthly_reports(
 
     # --- performance ---
     telemetry_manager = get_telemetry_manager()
-    end = datetime.now()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(hours=lookback_hours)
     perf_per_tenant: Dict[str, Any] = {}
     tenant_ids = [
@@ -1251,6 +1252,75 @@ async def run_gateway_thresholds_optimization(
         "spans_found": result["spans_found"],
         "artifact_id": dataset_id,
         "thresholds": threshold_config,
+    }
+
+
+async def run_online_routing_evaluation(
+    tenant_id: str,
+    lookback_hours: float = 24.0,
+) -> dict:
+    """Online routing-span scoring.
+
+    Reads cogniverse.routing spans and scores each one (routing_outcome +
+    confidence_calibration) via OnlineEvaluator, persisting the scores as
+    telemetry annotations for drift detection. Sampling rate, evaluator set,
+    and persistence are driven by automation_rules.online_evaluation in config.
+    """
+    from cogniverse_agents.routing.config import OnlineEvaluationConfig
+    from cogniverse_evaluation.online_evaluator import OnlineEvaluator
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
+    from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    config_manager = create_default_config_manager()
+    cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+    online_dict = (cfg.get_all().get("automation_rules") or {}).get(
+        "online_evaluation"
+    ) or {}
+    online_cfg = OnlineEvaluationConfig(**online_dict)
+
+    if not online_cfg.enabled:
+        logger.info("Online routing evaluation disabled in config")
+        return {"status": "disabled"}
+
+    telemetry_manager = get_telemetry_manager()
+    telemetry_provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    project_name = telemetry_manager.config.get_project_name(tenant_id)
+
+    spans_df = await _query_spans_by_name(
+        telemetry_provider, tenant_id, SPAN_NAME_ROUTING, lookback_hours
+    )
+    if spans_df.empty:
+        logger.info("No routing spans found — nothing to evaluate")
+        return {"status": "no_data", "spans_found": 0}
+
+    logger.info("Found %d routing spans", len(spans_df))
+
+    evaluator = OnlineEvaluator(
+        provider=telemetry_provider,
+        project_name=project_name,
+        config=online_cfg,
+    )
+
+    scores_persisted = 0
+    for _, row in spans_df.iterrows():
+        results = await evaluator.evaluate_span(row.to_dict())
+        scores_persisted += len(results)
+
+    stats = evaluator.get_statistics()
+    logger.info(
+        "Online routing evaluation complete — evaluated %d spans, persisted %d scores",
+        stats["total_evaluated"],
+        scores_persisted,
+    )
+    return {
+        "status": "success",
+        "spans_found": len(spans_df),
+        "scores_persisted": scores_persisted,
+        "statistics": stats,
     }
 
 
@@ -2179,6 +2249,7 @@ def main():
             "simba",
             "workflow",
             "gateway-thresholds",
+            "online-routing-eval",
             "profile",
             "entity-extraction",
             "synthetic",
@@ -2385,6 +2456,13 @@ def main():
     elif args.mode == "gateway-thresholds":
         result = asyncio.run(
             run_gateway_thresholds_optimization(
+                tenant_id=args.tenant_id,
+                lookback_hours=args.lookback_hours,
+            )
+        )
+    elif args.mode == "online-routing-eval":
+        result = asyncio.run(
+            run_online_routing_evaluation(
                 tenant_id=args.tenant_id,
                 lookback_hours=args.lookback_hours,
             )

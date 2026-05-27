@@ -10,6 +10,7 @@ Tests exercise the full round-trip through real telemetry infrastructure:
 NO MOCKS for telemetry/Phoenix. Uses shared phoenix_container fixture.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -120,6 +121,76 @@ class TestOnlineEvaluationIntegration:
 
         stats = evaluator.get_statistics()
         assert stats["total_evaluated"] == 1
+
+
+class TestOnlineRoutingEvaluationWiring:
+    """run_online_routing_evaluation (optimization CLI entry) wires OnlineEvaluator:
+    loads automation_rules.online_evaluation, fetches every cogniverse.routing
+    span in the lookback window, scores each, and persists annotations. Before
+    this wiring OnlineEvaluator was never instantiated in production."""
+
+    @pytest.mark.asyncio
+    async def test_run_scores_every_routing_span_in_lookback(
+        self,
+        telemetry_manager_with_phoenix,
+        real_provider,
+        project_name,
+        test_tenant_id,
+    ):
+        from cogniverse_runtime.optimization_cli import run_online_routing_evaluation
+
+        # Two routing spans under this test's unique tenant/project.
+        _write_routing_spans(
+            telemetry_manager_with_phoenix,
+            test_tenant_id,
+            [
+                ("find cat videos", "search_agent", 0.9),
+                ("summarize the meeting", "summarizer_agent", 0.8),
+            ],
+        )
+
+        result = await run_online_routing_evaluation(
+            tenant_id=test_tenant_id, lookback_hours=1.0
+        )
+
+        # Config default (automation_rules.online_evaluation) is enabled with
+        # sampling_rate=1.0 and both evaluators, so every span is scored twice.
+        assert result["status"] == "success"
+        assert result["spans_found"] == 2
+        assert result["scores_persisted"] == 4
+        assert result["statistics"]["total_evaluated"] == 2
+        assert result["statistics"]["total_skipped"] == 0
+        assert result["statistics"]["evaluators"] == [
+            "routing_outcome",
+            "confidence_calibration",
+        ]
+
+        # Scores were persisted as annotations on the real spans — read them back
+        # through the real Phoenix annotation store (the persistence boundary).
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(minutes=5)
+        spans_df = await real_provider.traces.get_spans(
+            project=project_name, start_time=start_time, end_time=end_time
+        )
+        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
+
+        annotation_names = [
+            "online_eval.routing_outcome",
+            "online_eval.confidence_calibration",
+        ]
+        annotations_df = None
+        for _ in range(15):  # annotation indexing is eventually consistent
+            annotations_df = await real_provider.annotations.get_annotations(
+                spans_df=routing_spans,
+                project=project_name,
+                annotation_names=annotation_names,
+            )
+            if len(annotations_df) >= 4:
+                break
+            await asyncio.sleep(1)
+
+        # 2 spans × 2 evaluators = 4 persisted annotations (one row per annotation).
+        assert len(annotations_df) == 4
 
 
 class TestAnnotationQueueIntegration:
