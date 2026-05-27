@@ -60,14 +60,34 @@ def register_video_plugin():
 
 def register_document_plugin():
     """Register document-specific evaluation components."""
-    # Example for future document search plugin
-    pass
+    try:
+        from cogniverse_evaluation.core.schema_analyzer import register_analyzer
+        from cogniverse_evaluation.plugins.document_analyzer import (
+            DocumentSchemaAnalyzer,
+        )
+
+        register_analyzer(DocumentSchemaAnalyzer())
+        logger.info("Document plugin registered successfully")
+        return True
+
+    except ImportError as e:
+        logger.warning(f"Could not register document plugin: {e}")
+        return False
 
 
 def register_image_plugin():
     """Register image-specific evaluation components."""
-    # Example for future image search plugin
-    pass
+    try:
+        from cogniverse_evaluation.core.schema_analyzer import register_analyzer
+        from cogniverse_evaluation.plugins.document_analyzer import ImageSchemaAnalyzer
+
+        register_analyzer(ImageSchemaAnalyzer())
+        logger.info("Image plugin registered successfully")
+        return True
+
+    except ImportError as e:
+        logger.warning(f"Could not register image plugin: {e}")
+        return False
 
 
 # Auto-registration based on environment

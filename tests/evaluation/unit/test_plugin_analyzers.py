@@ -4,7 +4,10 @@ Unit tests for plugin analyzers (document and video).
 
 import pytest
 
-from cogniverse_evaluation.plugins.document_analyzer import DocumentSchemaAnalyzer
+from cogniverse_evaluation.plugins.document_analyzer import (
+    DocumentSchemaAnalyzer,
+    ImageSchemaAnalyzer,
+)
 from cogniverse_evaluation.plugins.video_analyzer import VideoSchemaAnalyzer
 
 
@@ -295,3 +298,91 @@ class TestVideoSchemaAnalyzer:
         for position in ["beginning", "start", "end", "middle"]:
             result = analyzer.analyze_query(f"scene at the {position}", schema_fields)
             assert result["query_type"] == "video"
+
+
+@pytest.fixture
+def isolated_analyzer_registry():
+    """Reset the global schema-analyzer registry to just the default fallback
+    for the duration of a test, then restore it. Lets registration tests assert
+    a clean before/after without leaking analyzers into other tests."""
+    from cogniverse_evaluation.core import schema_analyzer
+
+    saved = schema_analyzer._registry._analyzers
+    schema_analyzer._registry._analyzers = [schema_analyzer.DefaultSchemaAnalyzer()]
+    try:
+        yield
+    finally:
+        schema_analyzer._registry._analyzers = saved
+
+
+@pytest.mark.unit
+class TestPluginRegistrationWiring:
+    """The register_document_plugin / register_image_plugin hooks must actually
+    register their analyzers so get_schema_analyzer routes matching schemas to
+    them. Before this wiring the hooks were empty `pass` stubs, so document and
+    image schemas always fell through to DefaultSchemaAnalyzer."""
+
+    def test_register_document_plugin_makes_analyzer_discoverable(
+        self, isolated_analyzer_registry
+    ):
+        from cogniverse_evaluation.core.schema_analyzer import (
+            DefaultSchemaAnalyzer,
+            get_schema_analyzer,
+        )
+        from cogniverse_evaluation.plugins import register_document_plugin
+
+        fields = {"id_fields": ["doc_id"], "content_fields": ["title", "content"]}
+
+        # Before wiring: a document schema resolves to the default fallback.
+        assert isinstance(
+            get_schema_analyzer("research_document_index", fields),
+            DefaultSchemaAnalyzer,
+        )
+
+        assert register_document_plugin() is True
+
+        # After: the same schema resolves to the registered DocumentSchemaAnalyzer.
+        resolved = get_schema_analyzer("research_document_index", fields)
+        assert isinstance(resolved, DocumentSchemaAnalyzer)
+
+    def test_register_image_plugin_makes_analyzer_discoverable(
+        self, isolated_analyzer_registry
+    ):
+        from cogniverse_evaluation.core.schema_analyzer import (
+            DefaultSchemaAnalyzer,
+            get_schema_analyzer,
+        )
+        from cogniverse_evaluation.plugins import register_image_plugin
+
+        fields = {"id_fields": ["image_id"], "content_fields": ["caption"]}
+
+        assert isinstance(
+            get_schema_analyzer("product_image_gallery", fields), DefaultSchemaAnalyzer
+        )
+
+        assert register_image_plugin() is True
+
+        resolved = get_schema_analyzer("product_image_gallery", fields)
+        assert isinstance(resolved, ImageSchemaAnalyzer)
+
+    def test_auto_register_plugins_wires_document_and_image(
+        self, isolated_analyzer_registry
+    ):
+        """The production entry point (config-driven) registers both."""
+        from cogniverse_evaluation.core.schema_analyzer import get_schema_analyzer
+        from cogniverse_evaluation.plugins import auto_register_plugins
+
+        auto_register_plugins({"evaluation": {"plugins": ["document", "image"]}})
+
+        assert isinstance(
+            get_schema_analyzer(
+                "doc_index", {"content_fields": ["abstract", "body"]}
+            ),
+            DocumentSchemaAnalyzer,
+        )
+        assert isinstance(
+            get_schema_analyzer(
+                "image_index", {"content_fields": ["alt_text", "caption"]}
+            ),
+            ImageSchemaAnalyzer,
+        )
