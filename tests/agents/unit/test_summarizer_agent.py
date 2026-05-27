@@ -290,11 +290,16 @@ class TestSummarizerAgentCoreFunctionality:
         thinking_phase = await agent._thinking_phase(sample_summary_request)
 
         assert isinstance(thinking_phase, ThinkingPhase)
-        assert len(thinking_phase.key_themes) > 0
-        assert len(thinking_phase.content_categories) > 0
-        assert len(thinking_phase.relevance_scores) > 0
-        assert thinking_phase.reasoning is not None
-        assert len(thinking_phase.reasoning) > 0
+        # Derived deterministically from the 3 fixture results (2 video + 1 text,
+        # relevance 0.9/0.8/0.7) — assert exact values, not just non-emptiness.
+        assert thinking_phase.relevance_scores == {"1": 0.9, "2": 0.8, "3": 0.7}
+        assert set(thinking_phase.content_categories) == {"video", "text", "medium_form"}
+        assert set(thinking_phase.key_themes) == {
+            "video_content",
+            "text_content",
+            "educational_content",
+        }
+        assert thinking_phase.reasoning.strip()
 
     @pytest.mark.ci_fast
     def test_extract_themes_functionality(

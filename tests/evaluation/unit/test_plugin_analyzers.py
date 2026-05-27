@@ -265,11 +265,11 @@ class TestVideoSchemaAnalyzer:
         result = {"video_id": "VID123", "frame_number": 42}
         assert analyzer.extract_item_id(result) == "VID123"
 
-        # Frame ID - the current implementation doesn't parse frame IDs
+        # Frame ID alone is NOT a usable item id — extract_item_id returns None
+        # (it only resolves video_id / source_id). Pin that contract; if frame_id
+        # parsing is added later this fails and forces a deliberate update.
         result = {"frame_id": "VID456_frame_100", "description": "Test"}
-        item_id = analyzer.extract_item_id(result)
-        # Current implementation returns None for frame_id only
-        assert item_id is None or item_id == "VID456_frame_100"
+        assert analyzer.extract_item_id(result) is None
 
         # Source ID fallback
         result = {"source_id": "VID789", "content": "Test"}

@@ -266,6 +266,6 @@ class TestArgoWorkflows:
 
         if argo_active:
             assert has_rbac, "Argo is active but workflow-submitter Role is missing"
-        else:
-            # Argo not active — RBAC absence is correct
-            assert not has_rbac or True  # RBAC may linger from previous deploy
+        # When Argo is not active there is no invariant to assert: the
+        # workflow-submitter RBAC may legitimately linger from a previous
+        # deploy, so its presence or absence is both acceptable.

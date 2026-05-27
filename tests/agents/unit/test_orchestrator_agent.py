@@ -386,10 +386,11 @@ class TestOrchestratorAgent:
 
         results = await orchestrator_agent._execute_plan(plan, tenant_id="test:unit")
 
+        # summarizer_agent IS in the registry, but its A2A endpoint is
+        # unreachable in this unit test, so _execute_plan records a failed
+        # dispatch as status "error" (not a silent pass).
         assert "summarizer_agent" in results
-        assert (
-            results["summarizer_agent"]["status"] == "success" or True
-        )  # Agent exists in registry
+        assert results["summarizer_agent"]["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_execute_plan_agent_error(self, orchestrator_agent):

@@ -77,14 +77,20 @@ class TestCLI:
             yield manager
 
     @pytest.mark.unit
-    def test_cli_verbose_flag(self, runner):
-        """Test CLI with verbose flag."""
-        with patch("cogniverse_evaluation.cli.logging.getLogger") as mock_logger:
-            # Need to provide a subcommand or help flag
-            result = runner.invoke(cli, ["--verbose", "--help"])
-            assert result.exit_code == 0
-            # Verbose flag would set the log level
-            assert mock_logger.called or True  # May not be called with help
+    def test_cli_verbose_flag(self):
+        """--verbose sets the root logger to DEBUG. Invoked with --help the
+        group callback short-circuits and never runs, so test the callback
+        directly against its real effect."""
+        import logging
+
+        root = logging.getLogger()
+        original = root.level
+        try:
+            root.setLevel(logging.WARNING)
+            cli.callback(verbose=True)
+            assert root.level == logging.DEBUG
+        finally:
+            root.setLevel(original)
 
     @pytest.mark.unit
     def test_evaluate_experiment_mode(self, runner, mock_task, mock_inspect_eval):

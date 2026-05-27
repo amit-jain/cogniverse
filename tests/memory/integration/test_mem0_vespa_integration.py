@@ -152,9 +152,9 @@ class TestMem0VespaIntegration:
             infer=False,
         )
 
-        # Verify both memories were added
-        assert mem1_id is not None or mem1_id == ""  # Mem0 might return empty string
-        assert mem2_id is not None or mem2_id == ""
+        # add_memory returns a string id for each stored memory.
+        assert isinstance(mem1_id, str)
+        assert isinstance(mem2_id, str)
 
         wait_for_vespa_indexing(delay=2)
 
@@ -178,29 +178,22 @@ class TestMem0VespaIntegration:
         tenant1_text = " ".join([str(r) for r in results_1]).lower()
         tenant2_text = " ".join([str(r) for r in results_2]).lower()
 
-        # Tenant 1 should have cats but not dogs
-        # Tenant 2 should have dogs but not cats
-        # Note: Mem0 may not return results if it deduplicates or if LLM processing fails
-        # So we check that at least one tenant has their expected content
+        # Stored verbatim (infer=False), so each tenant MUST return its own
+        # content — assert both unconditionally (not "at least one"), then assert
+        # neither leaks the other's content.
         has_tenant1_content = "cat" in tenant1_text or "rescue" in tenant1_text
         has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
 
-        # At least one should have content (if both empty, Mem0/LLM issue)
-        assert has_tenant1_content or has_tenant2_content, (
-            f"Neither tenant has memories. T1: {tenant1_text[:100]}, T2: {tenant2_text[:100]}"
+        assert has_tenant1_content, f"Tenant 1 lost its own content: {tenant1_text[:100]}"
+        assert has_tenant2_content, f"Tenant 2 lost its own content: {tenant2_text[:100]}"
+
+        # Isolation: neither tenant sees the other's content.
+        assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (
+            "Tenant 1 has Tenant 2's content - isolation broken"
         )
-
-        # Verify isolation: tenant1 shouldn't have tenant2's content
-        if has_tenant1_content:
-            assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (
-                "Tenant 1 has Tenant 2's content - isolation broken"
-            )
-
-        # Verify isolation: tenant2 shouldn't have tenant1's content
-        if has_tenant2_content:
-            assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, (
-                "Tenant 2 has Tenant 1's content - isolation broken"
-            )
+        assert "rescue" not in tenant2_text and "shelter" not in tenant2_text, (
+            "Tenant 2 has Tenant 1's content - isolation broken"
+        )
 
         # Cleanup
         memory_manager.clear_agent_memory("tenant_1", "test_agent")
