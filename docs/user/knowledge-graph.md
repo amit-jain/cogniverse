@@ -269,6 +269,38 @@ Response:
 {"status": "upserted", "nodes_upserted": 2, "edges_upserted": 1}
 ```
 
+## Consumer agents (query time)
+
+The knowledge graph built at ingestion is **complementary** to each agent's
+own Mem0 memory — not a competing store. Six knowledge agents expose a public
+graph method (`KnowledgeGraphTraversalAgent.traverse`,
+`TemporalReasoningAgent.compare_over_time`,
+`MultiDocumentSynthesisAgent.synthesize`,
+`ContradictionReconciliationAgent.detect`,
+`KnowledgeSummarizationAgent.summarize`, `CitationTracingAgent.trace`) that
+reads the shared, provenance-rich KG.
+
+At dispatch, the tenant's `GraphManager` is bound onto the agent —
+`agent_dispatcher._bind_graph_manager` on the orchestrator-routing path, and
+`routers/knowledge.py::_bind_graph` on the `/admin/.../knowledge/...` routes.
+With the graph bound, the agent's `_process_impl` walks its own Mem0 memory
+**and** consults the shared KG, merging the KG result into a dedicated typed
+`kg_*` output field:
+
+| Agent | `kg_*` field | Bridge from request |
+|---|---|---|
+| `KnowledgeGraphTraversalAgent` | merged `nodes`/`edges` | `start_subject_key` |
+| `TemporalReasoningAgent` | `kg_timeline` | `subject_key` |
+| `MultiDocumentSynthesisAgent` | `kg_claim_groups` | (query-agnostic; all claims) |
+| `ContradictionReconciliationAgent` | `kg_conflict_entries` | `subject_key` + `predicate` |
+| `KnowledgeSummarizationAgent` | `kg_video_summaries` | `subject_keys` |
+| `CitationTracingAgent` | `kg_primary_sources` | `claim_id` (KG Edge id) |
+
+The complement is fail-safe: with no graph bound (or the backend unconfigured)
+the bind is a no-op, the `kg_*` fields stay empty, and the agent returns its
+Mem0-only answer. See
+[Knowledge System Diagrams → 9-Agent Knowledge Dispatch](../diagrams/knowledge-system-diagrams.md#9-agent-knowledge-dispatch).
+
 ## Storage
 
 One Vespa schema — `knowledge_graph` — holds both nodes and edges in the same document type, discriminated by a `doc_type` field (`node` or `edge`). Tenant isolation is enforced by the `tenant_id` field on every document, not by schema naming.

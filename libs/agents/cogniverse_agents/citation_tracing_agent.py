@@ -43,6 +43,15 @@ class CitationTracingInput(AgentInput):
         ),
     )
     memory_id: str = Field(..., description="ID of the memory whose chain to walk")
+    claim_id: Optional[str] = Field(
+        None,
+        description=(
+            "Optional KG Edge ``edge_id`` to ground. When set and a graph is "
+            "bound at dispatch, the agent surfaces the claim's segment-level "
+            "KG provenance in ``kg_primary_sources``, complementary to the mem0 "
+            "provenance walk over ``memory_id``."
+        ),
+    )
     max_depth: int = Field(
         10,
         ge=1,
@@ -76,6 +85,21 @@ class CitationRefOut(AgentInput):
     label: Optional[str] = None
 
 
+class KGGroundingStepOut(AgentInput):
+    """One segment-level grounding step for a KG claim (Edge), from the shared
+    Vespa knowledge graph (bound at dispatch). Complements the mem0 provenance
+    walk — it carries the media-segment provenance the per-agent memory lacks."""
+
+    source_doc_id: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    modality: str
+    evidence_span: str
+    node_name: str = Field(..., description="The claim subject (source_node_id)")
+    predicate: str = Field(..., description="The claim relation")
+
+
 class CitationTracingOutput(AgentOutput):
     """Walked chain plus structured primary-source list for UI rendering."""
 
@@ -89,6 +113,14 @@ class CitationTracingOutput(AgentOutput):
         description=(
             "Terminal sources — non-memory refs (URLs/docs) and memory leaves "
             "without further provenance"
+        ),
+    )
+    kg_primary_sources: List[KGGroundingStepOut] = Field(
+        default_factory=list,
+        description=(
+            "Segment-level KG grounding for ``claim_id`` from the shared Vespa "
+            "knowledge graph (bound at dispatch). Empty when no graph is bound "
+            "or no claim_id is given. Complements the mem0 provenance walk."
         ),
     )
     truncated: bool = Field(
@@ -169,21 +201,58 @@ class CitationTracingAgent(
             )
         return {"chain": chain}
 
+    def _kg_primary_sources(
+        self, input: CitationTracingInput
+    ) -> List[KGGroundingStepOut]:
+        """Ground ``claim_id`` to its KG segment provenance via the bound graph,
+        complementary to the mem0 provenance walk. Empty when no graph is bound
+        or no claim_id is given."""
+        if self._graph_manager is None or not input.claim_id:
+            return []
+        try:
+            traced = self.trace(input.claim_id)
+        except Exception as exc:
+            logger.debug(
+                "citation: Vespa-KG complement skipped for claim %s: %s",
+                input.claim_id,
+                exc,
+            )
+            return []
+        return [
+            KGGroundingStepOut(
+                source_doc_id=str(step.get("source_doc_id") or ""),
+                segment_id=str(step.get("segment_id") or ""),
+                ts_start=float(step.get("ts_start") or 0.0),
+                ts_end=float(step.get("ts_end") or 0.0),
+                modality=str(step.get("modality") or ""),
+                evidence_span=str(step.get("evidence_span") or ""),
+                node_name=str(step.get("node_name") or ""),
+                predicate=str(step.get("predicate") or ""),
+            )
+            for step in traced.get("chain", [])
+        ]
+
     async def _process_impl(self, input: CitationTracingInput) -> CitationTracingOutput:
         """Walk the chain and return a structured graph."""
         from cogniverse_core.memory.provenance import ProvenanceWalker
 
+        kg_primary_sources = self._kg_primary_sources(input)
+
         if not self.is_memory_enabled() or self.memory_manager is None:
             logger.warning(
                 "CitationTracingAgent invoked without a memory manager; "
-                "returning empty chain"
+                "returning KG-only grounding"
             )
             return CitationTracingOutput(
                 root_memory_id=input.memory_id,
                 nodes=[],
                 primary_sources=[],
+                kg_primary_sources=kg_primary_sources,
                 truncated=False,
-                metadata={"reason": "memory_manager_unavailable"},
+                metadata={
+                    "reason": "memory_manager_unavailable",
+                    "kg_primary_source_count": len(kg_primary_sources),
+                },
             )
 
         walker = ProvenanceWalker(
@@ -229,9 +298,11 @@ class CitationTracingAgent(
             root_memory_id=graph.root_memory_id,
             nodes=nodes_out,
             primary_sources=sources_out,
+            kg_primary_sources=kg_primary_sources,
             truncated=graph.truncated_at_max_depth,
             metadata={
                 "nodes_visited": len(nodes_out),
                 "primary_source_count": len(sources_out),
+                "kg_primary_source_count": len(kg_primary_sources),
             },
         )

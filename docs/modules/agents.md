@@ -2562,6 +2562,28 @@ Agents that bind *multiple* managers (`FederatedQueryAgent`,
 `CrossTenantComparisonAgent`) keep their own plural `set_graph_managers`
 and do **not** use this mixin.
 
+**Binding at dispatch (complementary to Mem0).** `set_graph_manager` is
+called on every request path, not only in tests:
+`agent_dispatcher._bind_graph_manager` binds it on the orchestrator-routing
+path, and `routers/knowledge.py::_bind_graph` binds it on the
+`/admin/.../knowledge/...` routes. With the graph bound, the agent's
+`_process_impl` walks its own Mem0 memory **and** consults the shared,
+provenance-rich Vespa KG, merging the KG result into a dedicated typed
+`kg_*` output field — the two stores are complementary, not competing:
+
+| Agent | `kg_*` field | Graph method called |
+|---|---|---|
+| `KnowledgeGraphTraversalAgent` | merged `nodes`/`edges` | `traverse(seed)` |
+| `TemporalReasoningAgent` | `kg_timeline` | `compare_over_time(subject)` |
+| `MultiDocumentSynthesisAgent` | `kg_claim_groups` | `synthesize()` |
+| `ContradictionReconciliationAgent` | `kg_conflict_entries` | `detect(subject, predicate)` |
+| `KnowledgeSummarizationAgent` | `kg_video_summaries` | `summarize(video)` per video |
+| `CitationTracingAgent` | `kg_primary_sources` | `trace(claim_id)` |
+
+The complement is fail-safe: when no graph is bound (or the backend is
+unconfigured), the bind is a logged no-op, the `kg_*` fields stay empty, and
+the agent returns its Mem0-only answer.
+
 ### TenantAwareAgentMixin
 
 **Location**: `libs/core/cogniverse_core/agents/tenant_aware_mixin.py`

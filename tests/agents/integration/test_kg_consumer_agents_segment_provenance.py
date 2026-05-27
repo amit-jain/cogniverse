@@ -26,10 +26,12 @@ from cogniverse_agents.audit_explanation_agent import (
 from cogniverse_agents.citation_tracing_agent import (
     CitationTracingAgent,
     CitationTracingDeps,
+    CitationTracingInput,
 )
 from cogniverse_agents.contradiction_reconciliation_agent import (
     ContradictionReconciliationAgent,
     ContradictionReconciliationDeps,
+    ContradictionReconciliationInput,
 )
 from cogniverse_agents.cross_tenant_comparison_agent import (
     CrossTenantComparisonAgent,
@@ -47,19 +49,25 @@ from cogniverse_agents.graph.graph_schema import (
 )
 from cogniverse_agents.kg_traversal_agent import (
     KGTraversalDeps,
+    KGTraversalInput,
     KnowledgeGraphTraversalAgent,
 )
 from cogniverse_agents.knowledge_summarization_agent import (
     KnowledgeSummarizationAgent,
     KnowledgeSummarizationDeps,
+    KnowledgeSummarizationInput,
 )
 from cogniverse_agents.multi_document_synthesis_agent import (
+    DocumentRef,
     MultiDocSynthesisDeps,
+    MultiDocSynthesisInput,
     MultiDocumentSynthesisAgent,
 )
 from cogniverse_agents.temporal_reasoning_agent import (
     TemporalReasoningAgent,
     TemporalReasoningDeps,
+    TemporalReasoningInput,
+    TimeWindow,
 )
 
 logger = logging.getLogger(__name__)
@@ -435,6 +443,34 @@ class TestKGConsumerAgentsSegmentProvenance:
         result = agent.traverse("Marie Curie")
         assert_golden_json(result, "kg_traversal_curie_all.json")
 
+    @pytest.mark.asyncio
+    async def test_kg_traversal_dispatch_consults_bound_graph(
+        self, ingested_curie_graph
+    ):
+        """The dispatch path (_process_impl) must consult the bound Vespa KG —
+        not only mem0. Previously the graph methods were never called from
+        dispatch, so an agent with a graph but no mem0 returned an empty graph.
+        Every edge the Vespa KG yields for the seed must surface in the output.
+        """
+        agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        kg_edges = {
+            (e["source"], e["relation"], e["target"])
+            for e in agent.traverse("Marie Curie")["edges"]
+        }
+        assert kg_edges, "fixture graph yielded no Marie Curie edges"
+
+        out = await agent._process_impl(
+            KGTraversalInput(start_subject_key="Marie Curie", tenant_id="test:unit")
+        )
+        dispatch_edges = {
+            (e.from_subject_key, e.relation, e.to_subject_key) for e in out.edges
+        }
+        assert kg_edges <= dispatch_edges, (
+            f"dispatch path missed KG edges: {kg_edges - dispatch_edges}"
+        )
+
     def test_temporal_reasoning_compare_over_time(self, ingested_curie_graph):
         """TemporalReasoningAgent.compare_over_time yields ordered timeline."""
         agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
@@ -445,6 +481,59 @@ class TestKGConsumerAgentsSegmentProvenance:
         )
         assert_golden_json(result, "temporal_reasoning_curie.json")
 
+    @pytest.mark.asyncio
+    async def test_temporal_dispatch_surfaces_kg_timeline(self, ingested_curie_graph):
+        """The dispatch path (_process_impl) must surface the bound KG's media
+        timeline in ``kg_timeline``, complementary to mem0 window views. With no
+        mem0 bound, window_views is empty but kg_timeline must carry every
+        grounded claim the all-videos compare_over_time yields for the subject.
+        """
+        agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        direct = {
+            (e["video_id"], e["segment_id"], e["claim"])
+            for e in agent.compare_over_time("Marie Curie")["timeline"]
+        }
+        assert direct, "fixture graph yielded no Marie Curie timeline claims"
+
+        out = await agent._process_impl(
+            TemporalReasoningInput(
+                subject_key="Marie Curie",
+                tenant_id="test:unit",
+                windows=[
+                    TimeWindow(label="w1", start="2026-01-01T00:00:00+00:00"),
+                    TimeWindow(label="w2", start="2026-06-01T00:00:00+00:00"),
+                ],
+            )
+        )
+        dispatch = {(e.video_id, e.segment_id, e.claim) for e in out.kg_timeline}
+        assert dispatch == direct, (
+            f"dispatch kg_timeline != direct compare_over_time: "
+            f"missing={direct - dispatch} extra={dispatch - direct}"
+        )
+
+    def test_knowledge_route_bind_graph_wires_manager(
+        self, ingested_curie_graph, monkeypatch
+    ):
+        """The admin-router helper ``knowledge._bind_graph`` must bind the
+        tenant's GraphManager onto the agent. Regression guard: those routes
+        previously called ``_process_impl`` without binding the graph, so the
+        ``kg_*`` complement fields came back silently empty. Combined with the
+        dispatch tests above (bound graph -> kg_* surfaces), this proves the
+        full HTTP route -> bind -> kg_* path.
+        """
+        import cogniverse_runtime.routers.graph as graph_router
+        from cogniverse_runtime.routers.knowledge import _bind_graph
+
+        monkeypatch.setattr(
+            graph_router, "get_graph_manager", lambda tid: ingested_curie_graph
+        )
+        agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
+        assert agent._graph_manager is None
+        _bind_graph(agent, "test:unit")
+        assert agent._graph_manager is ingested_curie_graph
+
     def test_citation_tracing_trace(self, ingested_curie_graph):
         """CitationTracingAgent.trace(edge_id) returns one grounded step."""
         extraction = _build_curie_extraction()
@@ -454,6 +543,45 @@ class TestKGConsumerAgentsSegmentProvenance:
         result = agent.trace(claim_id=edge_id)
         assert_golden_json(result, "citation_chain_discovered.json")
 
+    @pytest.mark.asyncio
+    async def test_citation_dispatch_surfaces_kg_grounding(self, ingested_curie_graph):
+        """The dispatch path (_process_impl) must surface the bound KG's
+        segment-level grounding for ``claim_id`` in ``kg_primary_sources``,
+        complementary to the mem0 provenance walk over ``memory_id``.
+        """
+        extraction = _build_curie_extraction()
+        edge_id = _edge_id_of(extraction, "Marie Curie", "discovered", "radium")
+        agent = CitationTracingAgent(deps=CitationTracingDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        direct = {
+            (
+                s["source_doc_id"],
+                s["segment_id"],
+                s["node_name"],
+                s["predicate"],
+                s["evidence_span"],
+            )
+            for s in agent.trace(claim_id=edge_id)["chain"]
+        }
+        assert direct, "fixture graph yielded no grounding for the claim"
+
+        out = await agent._process_impl(
+            CitationTracingInput(
+                memory_id="nonexistent-mem0-id",
+                claim_id=edge_id,
+                tenant_id="test:unit",
+            )
+        )
+        dispatch = {
+            (s.source_doc_id, s.segment_id, s.node_name, s.predicate, s.evidence_span)
+            for s in out.kg_primary_sources
+        }
+        assert dispatch == direct, (
+            f"dispatch kg_primary_sources != direct trace: "
+            f"missing={direct - dispatch} extra={dispatch - direct}"
+        )
+
     def test_contradiction_reconciliation_detect(self, ingested_curie_graph):
         """ContradictionReconciliationAgent.detect groups conflicting Edges."""
         agent = ContradictionReconciliationAgent(deps=ContradictionReconciliationDeps())
@@ -461,12 +589,81 @@ class TestKGConsumerAgentsSegmentProvenance:
         result = agent.detect(node_name="Marie Curie", predicate="born_in")
         assert_golden_json(result, "contradiction_curie_birth.json")
 
+    @pytest.mark.asyncio
+    async def test_contradiction_dispatch_surfaces_kg_conflicts(
+        self, ingested_curie_graph
+    ):
+        """The dispatch path (_process_impl) must surface the bound KG's
+        conflict entries for ``(subject_key, predicate)`` in
+        ``kg_conflict_entries``, complementary to mem0 member reconciliation.
+        Marie Curie born_in has the Paris/Warsaw conflict in the fixture.
+        """
+        agent = ContradictionReconciliationAgent(deps=ContradictionReconciliationDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        direct = {
+            (e["video_id"], e["segment_id"], e["value"], e["confidence"])
+            for e in agent.detect("Marie Curie", "born_in")["conflict_set"]["entries"]
+        }
+        assert len(direct) == 2, f"expected Paris/Warsaw conflict, got {direct}"
+
+        out = await agent._process_impl(
+            ContradictionReconciliationInput(
+                target_kind="kg_edge",
+                tenant_id="test:unit",
+                subject_key="Marie Curie",
+                predicate="born_in",
+                conflict_member_ids=["nonexistent-a", "nonexistent-b"],
+            )
+        )
+        dispatch = {
+            (e.video_id, e.segment_id, e.value, e.confidence)
+            for e in out.kg_conflict_entries
+        }
+        assert dispatch == direct, (
+            f"dispatch kg_conflict_entries != direct detect: "
+            f"missing={direct - dispatch} extra={dispatch - direct}"
+        )
+
     def test_multi_document_synthesis_synthesize(self, ingested_curie_graph):
         """MultiDocumentSynthesisAgent.synthesize groups claims by video."""
         agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps())
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.synthesize(query="Marie Curie biography")
         assert_golden_json(result, "multidoc_synthesis_curie.json")
+
+    @pytest.mark.asyncio
+    async def test_multidoc_dispatch_surfaces_kg_groups(self, ingested_curie_graph):
+        """The dispatch path (_process_impl) must surface the bound KG's claim
+        groups in ``kg_claim_groups``, complementary to the mem0 document
+        synthesis. With no mem0 the input doc is unresolvable, but the KG groups
+        must still equal what synthesize() yields directly.
+        """
+        agent = MultiDocumentSynthesisAgent(deps=MultiDocSynthesisDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        direct = {
+            (g["video_id"], tuple(g["segment_ids"]), tuple(g["claims"]))
+            for g in agent.synthesize(query="")["groups"]
+        }
+        assert direct, "fixture graph yielded no claim groups"
+
+        out = await agent._process_impl(
+            MultiDocSynthesisInput(
+                query="Marie Curie biography",
+                tenant_id="test:unit",
+                documents=[DocumentRef(memory_id="nonexistent-mem0-id")],
+                persist=False,
+            )
+        )
+        dispatch = {
+            (g.video_id, tuple(g.segment_ids), tuple(g.claims))
+            for g in out.kg_claim_groups
+        }
+        assert dispatch == direct, (
+            f"dispatch kg_claim_groups != direct synthesize: "
+            f"missing={direct - dispatch} extra={dispatch - direct}"
+        )
 
     def test_audit_explanation_explain(self, ingested_curie_graph):
         """AuditExplanationAgent.explain renders the canonical claim block."""
@@ -483,6 +680,48 @@ class TestKGConsumerAgentsSegmentProvenance:
         agent.set_graph_manager(ingested_curie_graph)
         result = agent.summarize(video_id="marie_curie_30s")
         assert_golden_text(result["text"], "knowledge_summary_curie.txt")
+
+    @pytest.mark.asyncio
+    async def test_summarization_dispatch_surfaces_kg_videos(
+        self, ingested_curie_graph
+    ):
+        """The dispatch path (_process_impl) must surface a per-video KG claim
+        summary for every video mentioning the requested subject, in
+        ``kg_video_summaries``, complementary to the mem0 summary. With no mem0
+        the summary is empty but kg_video_summaries must cover every Marie Curie
+        video and match summarize() per video.
+        """
+        from cogniverse_agents.graph.graph_schema import normalize_name
+
+        agent = KnowledgeSummarizationAgent(deps=KnowledgeSummarizationDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        videos = sorted(
+            {
+                str(e.get("source_doc_id") or "")
+                for e in ingested_curie_graph._visit_edges(
+                    source_node_id=normalize_name("Marie Curie")
+                )
+                if e.get("source_doc_id")
+            }
+        )
+        assert videos, "fixture graph yielded no Marie Curie videos"
+        expected = {(v, agent.summarize(v)["text"]) for v in videos}
+
+        out = await agent._process_impl(
+            KnowledgeSummarizationInput(
+                subject_keys=["Marie Curie"],
+                title="Marie Curie knowledge",
+                tenant_id="test:unit",
+                actor_id="test-actor",
+                promote=False,
+            )
+        )
+        dispatch = {(s.video_id, s.text) for s in out.kg_video_summaries}
+        assert dispatch == expected, (
+            f"dispatch kg_video_summaries != per-video summarize: "
+            f"missing={expected - dispatch} extra={dispatch - expected}"
+        )
 
     def test_federated_query_query(self, ingested_curie_graph):
         """FederatedQueryAgent.query merges nodes across overlays."""

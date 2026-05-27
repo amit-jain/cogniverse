@@ -80,6 +80,19 @@ class ContradictionReconciliationInput(AgentInput):
             "this resolution. One of: latest_wins / trust_ranked / preserve_both."
         ),
     )
+    subject_key: Optional[str] = Field(
+        None,
+        description=(
+            "Subject to scope the shared Vespa-KG conflict complement on. With "
+            "``predicate``, the dispatch path surfaces cross-document KG "
+            "conflicts about ``(subject_key, predicate)`` alongside the mem0 "
+            "member reconciliation."
+        ),
+    )
+    predicate: Optional[str] = Field(
+        None,
+        description="Relation to scope the KG conflict complement on (with subject_key).",
+    )
 
 
 class ResolvedMemberOut(AgentInput):
@@ -89,6 +102,20 @@ class ResolvedMemberOut(AgentInput):
     survived: bool
     disputed: bool = False
     excerpt: str = ""
+
+
+class KGConflictEntryOut(AgentInput):
+    """One conflicting claim about ``(subject_key, predicate)`` from the shared
+    Vespa knowledge graph (bound at dispatch). Complements the mem0 member
+    reconciliation — it carries the cross-document grounded conflict the
+    per-agent memory store lacks, with segment provenance."""
+
+    video_id: str
+    segment_id: str
+    ts_start: float
+    ts_end: float
+    value: str = Field(..., description="The conflicting target_node_id value")
+    confidence: float
 
 
 class ContradictionReconciliationOutput(AgentOutput):
@@ -103,6 +130,18 @@ class ContradictionReconciliationOutput(AgentOutput):
     survivors: List[str] = Field(
         default_factory=list,
         description="Memory ids that the policy retained as the canonical view",
+    )
+    kg_conflict_entries: List[KGConflictEntryOut] = Field(
+        default_factory=list,
+        description=(
+            "Cross-document conflicting claims about ``(subject_key, predicate)`` "
+            "from the shared Vespa knowledge graph (bound at dispatch). Empty "
+            "when no graph is bound or no subject_key/predicate is given."
+        ),
+    )
+    kg_policy: Optional[str] = Field(
+        None,
+        description="The KG schema's contradiction policy for the complement, if computed",
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
@@ -192,20 +231,59 @@ class ContradictionReconciliationAgent(
 
         return {"conflict_set": {"policy": policy_str, "entries": entries}}
 
+    def _kg_conflict_complement(
+        self, input: ContradictionReconciliationInput
+    ) -> tuple[List[KGConflictEntryOut], Optional[str]]:
+        """Surface cross-document KG conflicts about ``(subject_key, predicate)``
+        from the bound graph, complementary to the mem0 member reconciliation.
+        Returns ``([], None)`` when no graph is bound or no bridge is given."""
+        if self._graph_manager is None or not (input.subject_key and input.predicate):
+            return [], None
+        try:
+            conflict = self.detect(input.subject_key, input.predicate)
+        except Exception as exc:
+            logger.debug(
+                "contradiction: Vespa-KG complement skipped for (%s, %s): %s",
+                input.subject_key,
+                input.predicate,
+                exc,
+            )
+            return [], None
+        cset = conflict.get("conflict_set", {})
+        entries = [
+            KGConflictEntryOut(
+                video_id=str(e.get("video_id") or ""),
+                segment_id=str(e.get("segment_id") or ""),
+                ts_start=float(e.get("ts_start") or 0.0),
+                ts_end=float(e.get("ts_end") or 0.0),
+                value=str(e.get("value") or ""),
+                confidence=float(e.get("confidence") or 0.0),
+            )
+            for e in cset.get("entries", [])
+        ]
+        return entries, (cset.get("policy") or None)
+
     async def _process_impl(
         self, input: ContradictionReconciliationInput
     ) -> ContradictionReconciliationOutput:
+        kg_conflict_entries, kg_policy = self._kg_conflict_complement(input)
+
         if not self.is_memory_enabled() or self.memory_manager is None:
             logger.warning(
                 "ContradictionReconciliationAgent invoked without memory; "
-                "returning empty resolution"
+                "returning KG-only resolution"
             )
             return ContradictionReconciliationOutput(
                 target_kind=input.target_kind,
                 policy_used=ContradictionPolicy.LATEST_WINS.value,
                 resolved=[],
                 survivors=[],
-                metadata={"reason": "memory_manager_unavailable"},
+                kg_conflict_entries=kg_conflict_entries,
+                kg_policy=kg_policy,
+                metadata={
+                    "reason": "memory_manager_unavailable",
+                    "kg_conflict_count": len(kg_conflict_entries),
+                },
             )
 
         # Resolve target policy: explicit override > schema lookup.
@@ -253,11 +331,14 @@ class ContradictionReconciliationAgent(
                 policy_used=policy.value,
                 resolved=[],
                 survivors=[],
+                kg_conflict_entries=kg_conflict_entries,
+                kg_policy=kg_policy,
                 metadata={
                     "input_count": len(input.conflict_member_ids),
                     "missing_count": len(missing),
                     "missing": missing,
                     "policy_overridden": policy_overridden,
+                    "kg_conflict_count": len(kg_conflict_entries),
                 },
             )
 
@@ -294,6 +375,8 @@ class ContradictionReconciliationAgent(
             policy_used=policy.value,
             resolved=per_member,
             survivors=sorted(survivor_ids),
+            kg_conflict_entries=kg_conflict_entries,
+            kg_policy=kg_policy,
             metadata={
                 "input_count": len(input.conflict_member_ids),
                 "fetched_count": len(members),
@@ -301,5 +384,6 @@ class ContradictionReconciliationAgent(
                 "missing": missing,
                 "survivor_count": len(survivor_ids),
                 "policy_overridden": policy_overridden,
+                "kg_conflict_count": len(kg_conflict_entries),
             },
         )

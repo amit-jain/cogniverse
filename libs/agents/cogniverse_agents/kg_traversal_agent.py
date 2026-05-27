@@ -296,13 +296,16 @@ class KnowledgeGraphTraversalAgent(
         return {"nodes": nodes_out, "edges": kept_edges}
 
     async def _process_impl(self, input: KGTraversalInput) -> KGTraversalOutput:
-        if not self.is_memory_enabled() or self.memory_manager is None:
+        memory_available = self.is_memory_enabled() and self.memory_manager is not None
+        graph_available = self._graph_manager is not None
+        if not memory_available and not graph_available:
             logger.warning(
-                "KGTraversal invoked without a memory manager; returning empty graph"
+                "KGTraversal invoked without a memory manager or bound graph; "
+                "returning empty graph"
             )
             return KGTraversalOutput(
                 start_subject_key="",
-                metadata={"reason": "memory_manager_unavailable"},
+                metadata={"reason": "no_backend_available"},
             )
 
         seed_subject = self._resolve_seed_subject(input)
@@ -312,16 +315,19 @@ class KnowledgeGraphTraversalAgent(
                 metadata={"reason": "no_seed_resolved"},
             )
 
-        # Snapshot all memories for the tenant once. For larger graphs a
-        # smarter store (e.g. a real Vespa edge schema) is the right
-        # answer; the V1 walker is correct but not optimal.
-        tenant_id = input.tenant_id or self._memory_tenant_id or ""
-        snapshot = self.memory_manager.get_all_memories(
-            tenant_id=tenant_id, agent_name=getattr(self, "_memory_agent_name", "")
-        )
-
-        nodes_by_subject = self._index_nodes(snapshot)
-        edges_by_from = self._index_edges_by_from(snapshot)
+        # Walk the agent's own mem0 memory (when present). The shared Vespa
+        # knowledge graph, bound at dispatch, is merged in below as a
+        # complement — it carries cross-document nodes/edges the per-agent mem0
+        # store lacks.
+        nodes_by_subject: Dict[str, Any] = {}
+        edges_by_from: Dict[str, List[Any]] = {}
+        if memory_available:
+            tenant_id = input.tenant_id or self._memory_tenant_id or ""
+            snapshot = self.memory_manager.get_all_memories(
+                tenant_id=tenant_id, agent_name=getattr(self, "_memory_agent_name", "")
+            )
+            nodes_by_subject = self._index_nodes(snapshot)
+            edges_by_from = self._index_edges_by_from(snapshot)
 
         visited_nodes: List[KGNodeOut] = []
         visited_edges: List[KGEdgeOut] = []
@@ -383,6 +389,50 @@ class KnowledgeGraphTraversalAgent(
                 relation_counts[relation] = relation_counts.get(relation, 0) + 1
                 if to_subject not in seen_subjects:
                     frontier.append((to_subject, depth + 1))
+
+        # Complement the mem0 walk with the shared Vespa knowledge graph when a
+        # GraphManager is bound (at dispatch). The KG carries cross-document
+        # nodes/edges (with Mention provenance) the per-agent mem0 store lacks;
+        # mem0 results are kept, KG results merged in deduplicated.
+        if graph_available:
+            try:
+                kg = self.traverse(seed_subject)
+            except Exception as exc:
+                logger.debug(
+                    "Vespa-KG complement skipped for %s: %s", seed_subject, exc
+                )
+                kg = None
+            if kg:
+                seen_edges = {
+                    (e.from_subject_key, e.relation, e.to_subject_key)
+                    for e in visited_edges
+                }
+                for edge in kg.get("edges", []):
+                    src = str(edge.get("source") or "")
+                    rel = str(edge.get("relation") or "")
+                    tgt = str(edge.get("target") or "")
+                    if not (src and tgt) or (src, rel, tgt) in seen_edges:
+                        continue
+                    if input.relation_allowlist and rel not in input.relation_allowlist:
+                        continue
+                    seen_edges.add((src, rel, tgt))
+                    visited_edges.append(
+                        KGEdgeOut(
+                            memory_id="",
+                            from_subject_key=src,
+                            to_subject_key=tgt,
+                            relation=rel,
+                        )
+                    )
+                    relation_counts[rel] = relation_counts.get(rel, 0) + 1
+                known_subjects = {n.subject_key for n in visited_nodes}
+                for node_id in kg.get("nodes", []):
+                    nid = str(node_id)
+                    if nid and nid not in known_subjects:
+                        known_subjects.add(nid)
+                        visited_nodes.append(
+                            KGNodeOut(memory_id="", subject_key=nid, label="")
+                        )
 
         # Optional RLM summarisation when enabled / auto-detected.
         used_rlm = False

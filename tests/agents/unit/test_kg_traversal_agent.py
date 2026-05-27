@@ -231,7 +231,7 @@ class TestNoMemoryManager:
         out = await agent._process_impl(
             KGTraversalInput(tenant_id="acme", start_subject_key="a")
         )
-        assert out.metadata.get("reason") == "memory_manager_unavailable"
+        assert out.metadata.get("reason") == "no_backend_available"
 
 
 def test_input_validation_bounds():

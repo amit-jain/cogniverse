@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents.graph.graph_schema import normalize_name
 from cogniverse_agents.graph_bindable import GraphBindableMixin
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.temporal_reasoning_agent import _parse_iso
@@ -96,6 +97,16 @@ class KnowledgeSummarizationInput(AgentInput):
     rlm: Optional[RLMOptions] = Field(None)
 
 
+class KGVideoSummaryOut(AgentInput):
+    """Per-segment claim summary for one video that mentions the requested
+    subject(s), rendered from the shared Vespa knowledge graph (bound at
+    dispatch). Complements the mem0 ``summary`` — it grounds the subjects'
+    claims in segment-level provenance the per-agent memory store lacks."""
+
+    video_id: str
+    text: str
+
+
 class KnowledgeSummarizationOutput(AgentOutput):
     title: str
     summary: str
@@ -104,6 +115,14 @@ class KnowledgeSummarizationOutput(AgentOutput):
     used_rlm: bool = False
     promoted_to_org_trunk: bool = False
     promoted_memory_id: Optional[str] = None
+    kg_video_summaries: List[KGVideoSummaryOut] = Field(
+        default_factory=list,
+        description=(
+            "Per-video KG claim summaries for videos mentioning the requested "
+            "subject_keys (bound graph). Empty when no graph is bound or no "
+            "subject_keys are given. Complements the mem0 ``summary``."
+        ),
+    )
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -279,6 +298,39 @@ class KnowledgeSummarizationAgent(
             )
         )
 
+    def _kg_video_summaries(
+        self, subject_keys: Optional[List[str]]
+    ) -> List[KGVideoSummaryOut]:
+        """Summarise the bound KG's claims for each video that mentions one of
+        ``subject_keys``, complementary to the mem0 summary. Empty when no graph
+        is bound or no subject_keys are given."""
+        if self._graph_manager is None or not subject_keys:
+            return []
+        videos: set = set()
+        for sk in subject_keys:
+            try:
+                edges = self._graph_manager._visit_edges(
+                    source_node_id=normalize_name(sk)
+                )
+            except Exception as exc:
+                logger.debug(
+                    "summarization: KG video lookup failed for %s: %s", sk, exc
+                )
+                continue
+            for e in edges:
+                vid = str(e.get("source_doc_id") or "")
+                if vid:
+                    videos.add(vid)
+        out: List[KGVideoSummaryOut] = []
+        for vid in sorted(videos):
+            try:
+                text = self.summarize(vid).get("text", "")
+            except Exception as exc:
+                logger.debug("summarization: summarize(%s) failed: %s", vid, exc)
+                continue
+            out.append(KGVideoSummaryOut(video_id=vid, text=text))
+        return out
+
     async def _process_impl(
         self, input: KnowledgeSummarizationInput
     ) -> KnowledgeSummarizationOutput:
@@ -287,6 +339,8 @@ class KnowledgeSummarizationAgent(
         tenant_id = tenant_id_from_input_or_deps(
             input, self.deps, "KnowledgeSummarizationAgent"
         )
+
+        kg_video_summaries = self._kg_video_summaries(input.subject_keys)
 
         rows = self._fetch_filtered(
             tenant_id,
@@ -307,7 +361,11 @@ class KnowledgeSummarizationAgent(
                 used_rlm=False,
                 promoted_to_org_trunk=False,
                 promoted_memory_id=None,
-                metadata={"reason": "no_matching_memories"},
+                kg_video_summaries=kg_video_summaries,
+                metadata={
+                    "reason": "no_matching_memories",
+                    "kg_video_summary_count": len(kg_video_summaries),
+                },
             )
 
         block = _format_memories_for_prompt(rows)
@@ -356,6 +414,7 @@ class KnowledgeSummarizationAgent(
             used_rlm=used_rlm,
             promoted_to_org_trunk=promoted,
             promoted_memory_id=promoted_id,
+            kg_video_summaries=kg_video_summaries,
             metadata={
                 "subject_keys": input.subject_keys or [],
                 "kinds": input.kinds or [],
@@ -363,6 +422,7 @@ class KnowledgeSummarizationAgent(
                 "until": input.until,
                 "actor_role": input.actor_role,
                 "actor_id": input.actor_id,
+                "kg_video_summary_count": len(kg_video_summaries),
             },
         )
 

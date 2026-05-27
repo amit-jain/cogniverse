@@ -70,6 +70,23 @@ class AgentDispatcher:
             return None
         return (sys_cfg.inference_service_urls or {}).get("gliner")
 
+    def _bind_graph_manager(self, agent: Any, tenant_id: str) -> None:
+        """Bind the tenant's Vespa knowledge-graph manager to a graph-aware
+        agent (one exposing ``set_graph_manager``) so its graph methods can
+        enrich the mem0 answer with the shared, provenance-rich KG. No-op
+        (logged) when the agent isn't graph-bindable or the graph backend isn't
+        configured — agents fall back to the mem0-only path.
+        """
+        setter = getattr(agent, "set_graph_manager", None)
+        if not callable(setter):
+            return
+        try:
+            from cogniverse_runtime.routers.graph import get_graph_manager
+
+            setter(get_graph_manager(tenant_id))
+        except Exception as exc:  # graph backend not configured / unavailable
+            logger.debug("Graph manager bind skipped for tenant %s: %s", tenant_id, exc)
+
     def _init_agent_memory(self, agent: Any, agent_name: str, tenant_id: str) -> None:
         """Auto-initialize MemoryAwareMixin for any agent that supports it.
 
@@ -665,6 +682,11 @@ class AgentDispatcher:
         deps = deps_cls(**deps_kwargs)
         agent = agent_cls(deps=deps)
         await asyncio.to_thread(self._init_agent_memory, agent, agent_name, tenant_id)
+        # Bind the per-tenant Vespa knowledge-graph manager so KG-aware agents
+        # can consult the shared graph (with cross-document Mention provenance)
+        # complementary to their own mem0 memory. Fail-safe: agents fall back to
+        # the mem0-only path when the graph backend isn't configured.
+        self._bind_graph_manager(agent, tenant_id)
 
         # Inject global TelemetryManager for span emission
         from cogniverse_foundation.telemetry.manager import get_telemetry_manager

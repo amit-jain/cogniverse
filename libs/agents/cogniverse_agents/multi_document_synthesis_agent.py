@@ -88,6 +88,18 @@ class MultiDocSynthesisInput(AgentInput):
     )
 
 
+class KGClaimGroupOut(AgentInput):
+    """Claims grounded in one source video, from the shared Vespa knowledge
+    graph (bound at dispatch). Complements the mem0 document synthesis — it
+    surfaces the cross-document grounded claims the per-agent memory lacks."""
+
+    video_id: str
+    segment_ids: List[str] = Field(default_factory=list)
+    claims: List[str] = Field(
+        default_factory=list, description="``<relation>:<target>`` per claim"
+    )
+
+
 class MultiDocSynthesisOutput(AgentOutput):
     """Synthesised answer plus citation metadata."""
 
@@ -97,6 +109,14 @@ class MultiDocSynthesisOutput(AgentOutput):
         description=(
             "Per-document citation references attached to the synthesis "
             "(``ref_kind``, ``ref_id``, optional ``label``)"
+        ),
+    )
+    kg_claim_groups: List[KGClaimGroupOut] = Field(
+        default_factory=list,
+        description=(
+            "Claims grouped by source video from the shared Vespa knowledge "
+            "graph (bound at dispatch). Empty when no graph is bound. "
+            "Complements the mem0 document synthesis."
         ),
     )
     persisted_memory_id: Optional[str] = Field(
@@ -226,9 +246,30 @@ class MultiDocumentSynthesisAgent(
             )
         return {"groups": groups}
 
+    def _kg_claim_groups(self) -> List[KGClaimGroupOut]:
+        """Group the bound Vespa KG's claims by source video, complementary to
+        the mem0 document synthesis. Empty when no graph is bound."""
+        if self._graph_manager is None:
+            return []
+        try:
+            kg = self.synthesize(query="")
+        except Exception as exc:
+            logger.debug("multidoc: Vespa-KG complement skipped: %s", exc)
+            return []
+        return [
+            KGClaimGroupOut(
+                video_id=str(g.get("video_id") or ""),
+                segment_ids=[str(s) for s in g.get("segment_ids", [])],
+                claims=[str(c) for c in g.get("claims", [])],
+            )
+            for g in kg.get("groups", [])
+        ]
+
     async def _process_impl(
         self, input: MultiDocSynthesisInput
     ) -> MultiDocSynthesisOutput:
+        kg_claim_groups = self._kg_claim_groups()
+
         # Resolve each DocumentRef to (citation_ref, content).
         refs_resolved: List[DocumentRef] = []
         contents: List[str] = []
@@ -248,9 +289,13 @@ class MultiDocumentSynthesisAgent(
             return MultiDocSynthesisOutput(
                 answer="",
                 citation_refs=[],
+                kg_claim_groups=kg_claim_groups,
                 persisted_memory_id=None,
                 used_rlm=False,
-                metadata={"reason": "no_resolvable_documents"},
+                metadata={
+                    "reason": "no_resolvable_documents",
+                    "kg_claim_group_count": len(kg_claim_groups),
+                },
             )
 
         documents_block = _format_documents_for_prompt(refs_resolved, contents)
@@ -294,12 +339,14 @@ class MultiDocumentSynthesisAgent(
                 }
                 for r in citation_refs
             ],
+            kg_claim_groups=kg_claim_groups,
             persisted_memory_id=persisted_id,
             used_rlm=used_rlm,
             metadata={
                 "document_count": len(refs_resolved),
                 "context_chars": context_chars,
                 "derivation_kind": DerivationKind.SYNTHESIS.value,
+                "kg_claim_group_count": len(kg_claim_groups),
             },
         )
 

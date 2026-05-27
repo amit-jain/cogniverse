@@ -111,7 +111,13 @@ async def test_walker_results_serialised_to_typed_output(monkeypatch):
     assert ("url", "https://wiki/x") in keys
     assert ("memory", "m_leaf") in keys
     assert out.truncated is False
-    assert out.metadata == {"nodes_visited": 3, "primary_source_count": 2}
+    # No graph bound -> the KG complement is a fail-safe no-op.
+    assert out.kg_primary_sources == []
+    assert out.metadata == {
+        "nodes_visited": 3,
+        "primary_source_count": 2,
+        "kg_primary_source_count": 0,
+    }
 
 
 @pytest.mark.asyncio

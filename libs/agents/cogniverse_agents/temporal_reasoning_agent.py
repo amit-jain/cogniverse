@@ -142,6 +142,20 @@ class WindowViewOut(AgentInput):
     excerpts: List[str]
 
 
+class KGTimelineEntryOut(AgentInput):
+    """One grounded claim from the shared Vespa knowledge graph, ordered on the
+    media (not wall-clock) timeline. Complements ``window_views`` — those bucket
+    the agent's own mem0 memories by authored-at wall-clock; this carries the
+    cross-document claims about the subject with their segment provenance."""
+
+    ts_start: float
+    ts_end: float
+    video_id: str
+    segment_id: str
+    claim: str = Field(..., description="``<relation>:<target_node_id>`` form")
+    evidence_span: str
+
+
 class TemporalReasoningOutput(AgentOutput):
     subject_key: str
     window_views: List[WindowViewOut]
@@ -155,6 +169,14 @@ class TemporalReasoningOutput(AgentOutput):
     undated_count: int = Field(
         0,
         description="Memories on the subject lacking a parseable written_at",
+    )
+    kg_timeline: List[KGTimelineEntryOut] = Field(
+        default_factory=list,
+        description=(
+            "Media-ordered grounded claims about the subject from the shared "
+            "Vespa knowledge graph (bound at dispatch). Empty when no graph is "
+            "bound. Complements ``window_views``."
+        ),
     )
     summary: Optional[str] = Field(None, description="Set when RLM ran")
     used_rlm: bool = Field(False)
@@ -196,25 +218,27 @@ class TemporalReasoningAgent(
         self._llm_config = llm_config
 
     def compare_over_time(
-        self, node_name: str, videos: List[str]
+        self, node_name: str, videos: Optional[List[str]] = None
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Build a chronological timeline of claims about ``node_name``.
 
-        Reads outgoing Edges whose ``source_node_id == normalize_name(node_name)``
-        and whose ``source_doc_id`` is in ``videos``. Returns
-        ``{"timeline": [<entry>, ...]}`` ordered by ``ts_start`` ascending.
-        Each entry: ``{ts_start, ts_end, video_id, segment_id, claim,
+        Reads outgoing Edges whose ``source_node_id == normalize_name(node_name)``.
+        When ``videos`` is given, only those ``source_doc_id``s are kept; when it
+        is ``None`` or empty, claims from every video are included (the form the
+        dispatch complement uses, since it has no caller-supplied video scope).
+        Returns ``{"timeline": [<entry>, ...]}`` ordered by ``ts_start``
+        ascending. Each entry: ``{ts_start, ts_end, video_id, segment_id, claim,
         evidence_span}`` where ``claim`` is ``"<relation>:<target_node_id>"``.
         """
         graph_manager = self._require_graph_manager("compare_over_time")
         source_id = normalize_name(node_name)
         all_edges = graph_manager._visit_edges(source_node_id=source_id)
-        video_set = {str(v) for v in videos}
+        video_set = {str(v) for v in videos} if videos else None
 
         timeline: List[Dict[str, Any]] = []
         for edge_fields in all_edges:
             video_id = str(edge_fields.get("source_doc_id") or "")
-            if video_id not in video_set:
+            if video_set is not None and video_id not in video_set:
                 continue
             relation = str(edge_fields.get("relation") or "")
             target = str(edge_fields.get("target_node_id") or "")
@@ -267,6 +291,34 @@ class TemporalReasoningAgent(
 
         distinct = len(set(signatures))
 
+        # Complement the mem0 wall-clock windows with the shared Vespa knowledge
+        # graph (bound at dispatch). The KG carries cross-document grounded
+        # claims about the subject on the media timeline that the per-agent mem0
+        # store lacks; the bridge is ``subject_key`` (valid in both stores).
+        kg_timeline: List[KGTimelineEntryOut] = []
+        if self._graph_manager is not None:
+            try:
+                kg = self.compare_over_time(input.subject_key)
+            except Exception as exc:
+                logger.debug(
+                    "temporal: Vespa-KG complement skipped for %s: %s",
+                    input.subject_key,
+                    exc,
+                )
+                kg = None
+            if kg:
+                kg_timeline = [
+                    KGTimelineEntryOut(
+                        ts_start=float(e.get("ts_start") or 0.0),
+                        ts_end=float(e.get("ts_end") or 0.0),
+                        video_id=str(e.get("video_id") or ""),
+                        segment_id=str(e.get("segment_id") or ""),
+                        claim=str(e.get("claim") or ""),
+                        evidence_span=str(e.get("evidence_span") or ""),
+                    )
+                    for e in kg.get("timeline", [])
+                ]
+
         used_rlm = False
         summary: Optional[str] = None
         rlm_options = input.rlm
@@ -283,12 +335,14 @@ class TemporalReasoningAgent(
             window_views=window_views,
             distinct_signatures_count=distinct,
             undated_count=len(undated),
+            kg_timeline=kg_timeline,
             summary=summary,
             used_rlm=used_rlm,
             metadata={
                 "windows_compared": len(input.windows),
                 "total_subject_memories": len(rows),
                 "agent_name_filter": agent_name,
+                "kg_timeline_count": len(kg_timeline),
             },
         )
 

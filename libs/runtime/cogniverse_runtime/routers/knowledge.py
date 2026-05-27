@@ -104,6 +104,25 @@ def _inject_memory(agent, tenant_id: str, agent_name: str):
     return mm
 
 
+def _bind_graph(agent, tenant_id: str) -> None:
+    """Bind the tenant's shared Vespa knowledge-graph manager onto a
+    graph-aware agent so its ``_process_impl`` can complement the mem0 answer
+    with the provenance-rich KG (the ``kg_*`` output fields). No-op when the
+    agent isn't graph-bindable or the graph backend isn't configured — the
+    agent then falls back to its mem0-only path. Mirrors the generic dispatch
+    binding in ``agent_dispatcher._bind_graph_manager``.
+    """
+    setter = getattr(agent, "set_graph_manager", None)
+    if not callable(setter):
+        return
+    try:
+        from cogniverse_runtime.routers.graph import get_graph_manager
+
+        setter(get_graph_manager(tenant_id))
+    except Exception as exc:  # graph backend not configured / unavailable
+        logger.debug("Graph manager bind skipped for tenant %s: %s", tenant_id, exc)
+
+
 # --- AuditExplanationAgent --------------------------------------------
 
 
@@ -139,6 +158,13 @@ async def audit_explain(tenant_id: str, body: AuditExplainRequest) -> Dict[str, 
 
 class CitationTraceRequest(BaseModel):
     memory_id: str = Field(..., min_length=1)
+    claim_id: Optional[str] = Field(
+        None,
+        description=(
+            "Optional KG Edge id to ground via the bound graph, surfaced in "
+            "``kg_primary_sources`` alongside the mem0 provenance walk."
+        ),
+    )
     max_depth: int = Field(10, ge=1, le=25)
     max_nodes: int = Field(100, ge=1, le=500)
 
@@ -154,6 +180,7 @@ async def citation_trace(tenant_id: str, body: CitationTraceRequest) -> Dict[str
 
     agent = CitationTracingAgent(deps=CitationTracingDeps(tenant_id=tenant_id))
     _inject_memory(agent, tenant_id, "citation_tracing_agent")
+    _bind_graph(agent, tenant_id)
     out = await agent._process_impl(
         CitationTracingInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -189,6 +216,7 @@ async def knowledge_summarize(
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
     )
+    _bind_graph(agent, tenant_id)
     out = await agent._process_impl(
         KnowledgeSummarizationInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -202,6 +230,15 @@ class ContradictionReconcileRequest(BaseModel):
     target_kind: str = Field(..., min_length=1)
     conflict_member_ids: List[str] = Field(..., min_length=1)
     policy_override: Optional[str] = None
+    subject_key: Optional[str] = Field(
+        None,
+        description=(
+            "With ``predicate``, surface cross-document KG conflicts about "
+            "``(subject_key, predicate)`` via the bound graph in "
+            "``kg_conflict_entries``, alongside the mem0 member reconciliation."
+        ),
+    )
+    predicate: Optional[str] = Field(None)
 
 
 @router.post("/tenants/{tenant_id}/knowledge/contradictions/reconcile")
@@ -226,6 +263,7 @@ async def contradiction_reconcile(
     agent._memory_initialized = True
     agent._memory_tenant_id = tenant_id
     agent._memory_agent_name = "contradiction_reconciliation_agent"
+    _bind_graph(agent, tenant_id)
     out = await agent._process_impl(
         ContradictionReconciliationInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -269,6 +307,7 @@ async def multi_doc_synthesize(
         llm_config=_runtime_primary_llm_config(config_manager),
     )
     _inject_memory(agent, tenant_id, "multi_document_synthesis_agent")
+    _bind_graph(agent, tenant_id)
     out = await agent._process_impl(
         MultiDocSynthesisInput(tenant_id=tenant_id, **body.model_dump())
     )
@@ -296,6 +335,7 @@ async def kg_traverse(tenant_id: str, body: KGTraverseRequest) -> Dict[str, Any]
 
     agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=tenant_id))
     _inject_memory(agent, tenant_id, "kg_traversal_agent")
+    _bind_graph(agent, tenant_id)
     # KGTraversalInput uses ``relation_allowlist`` / ``max_edges``; the
     # public route field names are ``relation_filter`` / ``max_nodes``
     # for symmetry with the citation-trace request shape. Translate
@@ -436,6 +476,7 @@ async def temporal_reason(
         deps=TemporalReasoningDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
     )
+    _bind_graph(agent, tenant_id)
     out = await agent._process_impl(
         TemporalReasoningInput(tenant_id=tenant_id, **body.model_dump())
     )

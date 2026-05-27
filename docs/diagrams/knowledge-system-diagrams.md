@@ -98,11 +98,40 @@ through `_build_factory(tenant_id)` which constructs
 sets `agent.memory_manager`, `_memory_initialized`,
 `_memory_tenant_id`, `_memory_agent_name`).
 
+**Mem0 and the shared Vespa knowledge graph are complementary, not
+competing.** The six graph-aware routes (citation/trace, summarize,
+contradictions/reconcile, synthesis/multi_doc, kg/traverse,
+temporal/reason) each call `_bind_graph(agent, tenant_id)`, which binds
+the tenant's shared Vespa `GraphManager`
+(`routers/graph.py::get_graph_manager`) onto the agent (those mixing in
+`GraphBindableMixin`). The remaining three routes (audit/explain,
+cross_tenant/compare, federated/query) do not call `_bind_graph` — they
+have no `kg_*` output fields. The generic
+`agent_dispatcher._bind_graph_manager` does the same binding on the
+orchestrator-routing path. With the graph bound, each agent's
+`_process_impl` walks its own mem0 memory **and** consults the shared KG,
+merging the KG's cross-document, provenance-rich claims into a dedicated
+typed `kg_*` output field:
+
+| Agent | mem0 path (per-agent memory) | Vespa-KG complement (typed field) |
+|---|---|---|
+| `KnowledgeGraphTraversalAgent` | mem0 node/edge BFS | `traverse(seed)` merged into `nodes`/`edges` |
+| `TemporalReasoningAgent` | wall-clock `window_views` | `compare_over_time(subject)` → `kg_timeline` |
+| `MultiDocumentSynthesisAgent` | mem0 document synthesis | `synthesize()` → `kg_claim_groups` |
+| `ContradictionReconciliationAgent` | mem0 member reconciliation | `detect(subject, predicate)` → `kg_conflict_entries` |
+| `KnowledgeSummarizationAgent` | mem0 subject summary | per-video `summarize()` → `kg_video_summaries` |
+| `CitationTracingAgent` | mem0 provenance walk | `trace(claim_id)` → `kg_primary_sources` |
+
+The complement is fail-safe: when no graph is bound (or the backend is
+unconfigured), `_bind_graph` is a no-op, the `kg_*` fields stay empty, and
+the agent returns its mem0-only answer.
+
 ```mermaid
 flowchart LR
     Client["<span style='color:#000'>HTTP POST /admin/tenants/{t}/knowledge/&lt;route&gt;</span>"]
     Router["<span style='color:#000'>knowledge.py router</span>"]
     Factory["<span style='color:#000'>_build_factory(tenant_id)<br/>Mem0MemoryManager(t)<br/>lazy_init_memory(mm, t, cfg_mgr)</span>"]
+    Graph["<span style='color:#000'>_bind_graph(agent, t)<br/>get_graph_manager(t)<br/>→ shared Vespa GraphManager</span>"]
 
     Audit["<span style='color:#000'>AuditExplanationAgent<br/>audit/explain</span>"]
     Citation["<span style='color:#000'>CitationTracingAgent<br/>citations/trace</span>"]
@@ -136,9 +165,17 @@ flowchart LR
     Federated --> Factory
     Temporal --> Factory
 
+    Citation -.kg complement.-> Graph
+    Summarize -.kg complement.-> Graph
+    Reconcile -.kg complement.-> Graph
+    MultiDoc -.kg complement.-> Graph
+    KG -.kg complement.-> Graph
+    Temporal -.kg complement.-> Graph
+
     style Client fill:#90caf9,stroke:#1565c0,color:#000
     style Router fill:#b0bec5,stroke:#546e7a,color:#000
     style Factory fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Graph fill:#ffcc80,stroke:#ef6c00,color:#000
     style Audit fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Citation fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Summarize fill:#ce93d8,stroke:#7b1fa2,color:#000
