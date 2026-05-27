@@ -204,41 +204,60 @@ class TestNoOsGetenvInAgentModules:
         ],
     )
     def test_no_os_getenv_in_module(self, module_path):
-        """Agent module source code has no os.getenv or os.environ references."""
+        """Agent modules must not read os.getenv/os.environ except inside
+        ``startup_event`` or ``if __name__ == "__main__"``. Checked via AST
+        (the actual code structure) rather than string-stripping the source,
+        so it isn't fooled by comments/whitespace and scopes correctly."""
+        import ast
         import importlib
         import inspect
 
-        module = importlib.import_module(module_path)
-        source = inspect.getsource(module)
+        tree = ast.parse(inspect.getsource(importlib.import_module(module_path)))
+        violations: list[tuple[int, str]] = []
 
-        # Allow os.environ only in if __name__ == "__main__" blocks and startup_event
-        # Strip those sections before checking
-        lines = source.split("\n")
-        in_startup_or_main = False
-        clean_lines = []
+        class _Checker(ast.NodeVisitor):
+            def __init__(self) -> None:
+                self._allowed_depth = 0  # >0 inside startup_event / __main__
 
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("async def startup_event") or stripped.startswith(
-                'if __name__ == "__main__"'
-            ):
-                in_startup_or_main = True
-                continue
-            if in_startup_or_main and (
-                stripped.startswith("def ")
-                or stripped.startswith("async def ")
-                or stripped.startswith("class ")
-                or (stripped.startswith("@") and "app." not in stripped)
-            ):
-                in_startup_or_main = False
-            if not in_startup_or_main:
-                clean_lines.append(line)
+            def _visit_allowed(self, node: ast.AST) -> None:
+                self._allowed_depth += 1
+                self.generic_visit(node)
+                self._allowed_depth -= 1
 
-        non_startup_source = "\n".join(clean_lines)
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+                if node.name == "startup_event":
+                    self._visit_allowed(node)
+                else:
+                    self.generic_visit(node)
 
-        assert "os.getenv" not in non_startup_source, (
-            f"{module_path} uses os.getenv outside startup boundary"
-        )
-        assert "os.environ" not in non_startup_source, (
-            f"{module_path} uses os.environ outside startup boundary"
+            def visit_If(self, node: ast.If) -> None:
+                t = node.test
+                is_main = (
+                    isinstance(t, ast.Compare)
+                    and isinstance(t.left, ast.Name)
+                    and t.left.id == "__name__"
+                    and any(
+                        isinstance(c, ast.Constant) and c.value == "__main__"
+                        for c in t.comparators
+                    )
+                )
+                if is_main:
+                    self._visit_allowed(node)
+                else:
+                    self.generic_visit(node)
+
+            def visit_Attribute(self, node: ast.Attribute) -> None:
+                if (
+                    isinstance(node.value, ast.Name)
+                    and node.value.id == "os"
+                    and node.attr in ("getenv", "environ")
+                    and self._allowed_depth == 0
+                ):
+                    violations.append((node.lineno, f"os.{node.attr}"))
+                self.generic_visit(node)
+
+        _Checker().visit(tree)
+        assert not violations, (
+            f"{module_path} reads {[v[1] for v in violations]} outside the "
+            f"startup/__main__ boundary at lines {[v[0] for v in violations]}"
         )

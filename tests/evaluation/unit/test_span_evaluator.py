@@ -28,28 +28,11 @@ def evaluator(provider):
 
 @pytest.mark.unit
 class TestSpanEvaluator:
-    def test_create_mock_spans(self, evaluator):
-        mock_df = evaluator._create_mock_spans_df()
-        assert len(mock_df) > 0
-        assert "span_id" in mock_df.columns
-
-    def test_mock_spans_have_required_columns(self, evaluator):
-        df = evaluator._create_mock_spans_df()
-        for col in ("span_id", "trace_id", "operation_name", "attributes", "outputs"):
-            assert col in df.columns, f"Missing column: {col}"
-
-    def test_mock_spans_have_query_in_attributes(self, evaluator):
-        df = evaluator._create_mock_spans_df()
-        for _, row in df.iterrows():
-            assert "query" in row["attributes"]
-            assert len(row["attributes"]["query"]) > 0
-
-    def test_mock_spans_have_results_in_outputs(self, evaluator):
-        df = evaluator._create_mock_spans_df()
-        for _, row in df.iterrows():
-            assert "results" in row["outputs"]
-            assert isinstance(row["outputs"]["results"], list)
-
+    # Tests of `_create_mock_spans_df()` (a fabrication helper) were removed —
+    # they asserted the shape of fabricated mock spans, not any evaluation
+    # behavior. NOTE: production `get_recent_spans` falls back to that same
+    # fabricated data when Phoenix returns nothing, which would silently score
+    # evaluations on fake spans — flagged separately for review.
     def test_tenant_id_stored(self, evaluator):
         assert evaluator.tenant_id == "test"
 

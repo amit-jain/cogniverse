@@ -480,11 +480,10 @@ class TestClaimExtractorArtifact:
         """
         import dspy
 
-        try:
-            from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
-            from cogniverse_telemetry_phoenix.provider import PhoenixProvider
-        except ImportError:
-            pytest.skip("ArtifactManager / PhoenixProvider not importable")
+        # Workspace packages — always importable; a real ImportError should
+        # error loudly, not silently skip (per the "skips = bugs" rule below).
+        from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
         # Default to the k3d cluster's NodePort-exposed Phoenix when env
         # vars aren't set — the test harness expects a live Phoenix and the

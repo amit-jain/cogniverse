@@ -96,13 +96,10 @@ class TestPhoenixProviderSessionContext:
 
     @pytest.fixture
     def phoenix_provider(self):
-        """Import and return PhoenixProvider if available."""
-        try:
-            from cogniverse_telemetry_phoenix.provider import PhoenixProvider
+        """Return a PhoenixProvider instance (workspace package, always present)."""
+        from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-            return PhoenixProvider()
-        except ImportError:
-            pytest.skip("cogniverse-telemetry-phoenix not installed")
+        return PhoenixProvider()
 
     def test_phoenix_provider_implements_session_context(self, phoenix_provider):
         """Verify PhoenixProvider implements session_context."""
@@ -206,13 +203,10 @@ class TestSearchRouterSessionIntegration:
 
     @pytest.fixture
     def search_models(self):
-        """Import search models if available."""
-        try:
-            from cogniverse_runtime.routers.search import SearchRequest, SearchResponse
+        """Return the search request/response models (workspace package)."""
+        from cogniverse_runtime.routers.search import SearchRequest, SearchResponse
 
-            return SearchRequest, SearchResponse
-        except ImportError:
-            pytest.skip("cogniverse-runtime not installed")
+        return SearchRequest, SearchResponse
 
     def test_search_request_accepts_session_id(self, search_models):
         """Test that SearchRequest model accepts session_id field."""
@@ -296,14 +290,6 @@ class TestSessionTrackingWithPhoenix:
 
     def test_session_span_creates_traces_with_session_id(self, phoenix_config):
         """Test that session_span creates traces with session.id attribute."""
-        try:
-            # Check if Phoenix provider is available
-            from cogniverse_telemetry_phoenix.provider import (
-                PhoenixProvider,  # noqa: F401
-            )
-        except ImportError:
-            pytest.skip("cogniverse-telemetry-phoenix not installed")
-
         manager = TelemetryManager(phoenix_config)
         session_id = "integration-test-session"
 
@@ -333,13 +319,6 @@ class TestSessionTrackingWithPhoenix:
 
     def test_multiple_requests_grouped_by_session(self, phoenix_config):
         """Test that multiple requests with same session_id are grouped."""
-        try:
-            from cogniverse_telemetry_phoenix.provider import (
-                PhoenixProvider,  # noqa: F401
-            )
-        except ImportError:
-            pytest.skip("cogniverse-telemetry-phoenix not installed")
-
         manager = TelemetryManager(phoenix_config)
         session_id = "multi-request-session"
 
