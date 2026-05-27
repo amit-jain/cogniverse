@@ -255,7 +255,13 @@ class CogniverseAgentExecutor(AgentExecutor):
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 
+        # task_id/context_id/final are REQUIRED by TaskStatusUpdateEvent; omitting
+        # them raises ValidationError on every cancel (the same defect already
+        # fixed for the working/terminal events above).
         cancel_event = TaskStatusUpdateEvent(
+            task_id=context.task_id or "",
+            context_id=context.context_id or "",
+            final=True,
             status=TaskStatus(
                 state=TaskState.canceled,
                 message=new_agent_text_message(

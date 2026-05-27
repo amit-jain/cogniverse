@@ -550,6 +550,25 @@ class TestTerminalEventFinalFlag:
         assert queue.events[0].final is True
         assert queue.events[0].status.state == TaskState.input_required
 
+    async def test_cancel_emits_valid_terminal_event(self, mock_dispatcher):
+        """cancel() must build a valid TaskStatusUpdateEvent — task_id /
+        context_id / final are required, and omitting them raised
+        ValidationError on every cancel before the fix."""
+        from types import SimpleNamespace
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+        ctx = SimpleNamespace(task_id="task-9", context_id="ctx-9")
+
+        await executor.cancel(ctx, queue)
+
+        assert len(queue.events) == 1
+        evt = queue.events[0]
+        assert evt.task_id == "task-9"
+        assert evt.context_id == "ctx-9"
+        assert evt.final is True
+        assert evt.status.state == TaskState.canceled
+
     async def test_streaming_marks_only_terminal_event_final(self, mock_dispatcher):
         agent = _FakeStreamAgent(
             [
@@ -620,7 +639,9 @@ class TestStreamingCanaryOverlay:
         assert agent._dispatched_artefact == canary
         assert agent.get_dispatched_prompts() == {"system": "CANARY_PROMPT"}
 
-    async def test_streaming_no_overlay_when_resolve_returns_none(self, mock_dispatcher):
+    async def test_streaming_no_overlay_when_resolve_returns_none(
+        self, mock_dispatcher
+    ):
         agent = _MemoryStreamAgent([{"type": "final", "data": {}}])
         mock_dispatcher.create_streaming_agent = MagicMock(return_value=(agent, None))
         mock_dispatcher.resolve_artefact_for_request = AsyncMock(return_value=None)
