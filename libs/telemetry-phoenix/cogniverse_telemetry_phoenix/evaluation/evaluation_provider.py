@@ -32,6 +32,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         self.http_endpoint: str = "http://localhost:6006"
         self.phoenix_client: Optional[Any] = None
         self._telemetry_provider: Optional[Any] = None
+        self._project_name: str = "evaluation"
         self._framework = PhoenixEvaluatorFramework()
 
     @property
@@ -58,6 +59,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
             )
         self.tenant_id = tenant_id
         project_name = config.get("project_name", "evaluation")
+        self._project_name = project_name
 
         # Resolve endpoints from TelemetryManager config (shared singleton)
         # This ensures evaluation providers use the same endpoints as telemetry providers
@@ -361,6 +363,7 @@ class PhoenixEvaluationProvider(EvaluationProvider):
                         label=session_outcome,
                         score=session_score,
                         metadata=annotation_data,
+                        project=self._project_name,
                     )
 
                 # Run async operation
