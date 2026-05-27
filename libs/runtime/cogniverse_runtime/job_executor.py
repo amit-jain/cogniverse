@@ -123,10 +123,23 @@ async def _call_agent(
     query: str,
     context: str = "",
 ) -> str:
-    """POST to orchestrator_agent/process and return the response text."""
-    payload: dict = {"query": query, "tenant_id": tenant_id}
-    if context:
-        payload["context"] = context
+    """POST to orchestrator_agent/process and return the response text.
+
+    ``tenant_id`` must travel INSIDE ``context`` — the ``/agents/{name}/process``
+    route reads ``task.context["tenant_id"]`` and the dispatcher rejects a
+    missing one (HTTP 400). A top-level ``tenant_id`` is silently dropped by the
+    ``AgentTask`` model. The prior-step ``context`` text (post-actions) is folded
+    into the query, since the dispatch contract carries no free-text context
+    field and ``AgentTask.context`` must be a dict.
+    """
+    full_query = (
+        f"{query}\n\nContext from the previous step:\n{context}" if context else query
+    )
+    payload: dict = {
+        "agent_name": "orchestrator_agent",
+        "query": full_query,
+        "context": {"tenant_id": tenant_id},
+    }
 
     url = f"{runtime_url}/agents/orchestrator_agent/process"
     try:

@@ -743,13 +743,17 @@ class TestJobExecutor:
         assert "/agents/orchestrator_agent/process" in call_args[0][0]
         payload = call_args[1]["json"]
         assert payload["query"] == "latest AI papers"
-        assert payload["tenant_id"] == "acme"
-        assert "context" not in payload
+        # agent_name is a required AgentTask body field (422 without it).
+        assert payload["agent_name"] == "orchestrator_agent"
+        # tenant_id MUST be inside context (the AgentTask contract); a top-level
+        # tenant_id is silently dropped by the model and the dispatch 400s.
+        assert payload["context"] == {"tenant_id": "acme"}
+        assert "tenant_id" not in payload
 
         assert result == "here are the results"
 
     def test_passes_context_for_post_actions(self):
-        """When context is given, it is included in the payload."""
+        """A prior-step result is folded into the query (context stays a dict)."""
         import asyncio
 
         from cogniverse_runtime.job_executor import _call_agent
@@ -772,7 +776,11 @@ class TestJobExecutor:
         )
 
         payload = mock_client.post.call_args[1]["json"]
-        assert payload["context"] == "previous result text"
+        # context is the typed dict the route requires, NOT a raw string.
+        assert payload["context"] == {"tenant_id": "acme"}
+        # the prior result is carried in the query so the agent actually sees it.
+        assert payload["query"].startswith("summarize this")
+        assert "previous result text" in payload["query"]
 
     def test_pure_delivery_detected(self):
         """Pure delivery actions skip agent processing."""
@@ -783,6 +791,104 @@ class TestJobExecutor:
         assert _is_pure_delivery("notify me") is True
         assert _is_pure_delivery("summarize and save to wiki") is False
         assert _is_pure_delivery("create a report and send on telegram") is False
+
+
+@pytest.mark.integration
+class TestJobExecutorRoundTrip:
+    """Drive the REAL job_executor._call_agent against the REAL
+    /agents/orchestrator_agent/process route. The unit tests above mock httpx
+    and only check the payload shape; they passed even while the wired path
+    400'd (tenant_id dropped) / 422'd (string context). This exercises the full
+    job_executor -> AgentTask validation -> dispatch -> require_tenant_id path.
+    """
+
+    def test_call_agent_payload_accepted_and_tenant_flows(self):
+        import asyncio
+        from unittest.mock import patch
+
+        import httpx
+        from fastapi import FastAPI
+
+        from cogniverse_agents.orchestrator_agent import OrchestratorOutput
+        from cogniverse_core.registries.agent_registry import (
+            AgentEndpoint,
+            AgentRegistry,
+        )
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        from cogniverse_runtime.agent_dispatcher import AgentDispatcher
+        from cogniverse_runtime.job_executor import _call_agent
+        from cogniverse_runtime.routers import agents
+
+        captured = []
+
+        async def _stub_process_impl(self, input_data):
+            captured.append(input_data)
+            return OrchestratorOutput(
+                query=input_data.query,
+                workflow_id="stub",
+                plan_steps=[],
+                plan_reasoning="stub",
+                agent_results={},
+                final_output={"answer": "done"},
+            )
+
+        cm = create_default_config_manager()
+        registry = AgentRegistry(tenant_id="acme:acme", config_manager=cm)
+        registry.register_agent(
+            AgentEndpoint(
+                name="orchestrator_agent",
+                url="http://localhost:8011",
+                capabilities=["orchestration"],
+                health_endpoint="/health",
+            )
+        )
+        agents._dispatcher = AgentDispatcher(
+            agent_registry=registry, config_manager=cm, schema_loader=None
+        )
+
+        async def _drive() -> str:
+            app = FastAPI()
+            app.include_router(agents.router, prefix="/agents")
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                return await _call_agent(
+                    client,
+                    "http://test",
+                    "acme:acme",
+                    "summarize this",
+                    context="previous result text",
+                )
+
+        try:
+            with (
+                patch(
+                    "cogniverse_agents.orchestrator_agent.OrchestratorAgent._process_impl",
+                    new=_stub_process_impl,
+                ),
+                patch(
+                    "cogniverse_runtime.agent_dispatcher.AgentDispatcher._init_agent_memory",
+                    new=lambda *a, **kw: None,
+                ),
+                patch(
+                    "cogniverse_agents.orchestrator_agent.OrchestratorAgent._load_artifact",
+                    new=lambda self: None,
+                ),
+            ):
+                result = asyncio.run(_drive())
+        finally:
+            agents._dispatcher = None
+
+        # Route accepted the payload (no 400/422) and actually dispatched.
+        assert captured, "orchestrator was never reached — route rejected payload"
+        dispatched = captured[-1]
+        # tenant_id reached the typed input via context (was dropped before).
+        assert dispatched.tenant_id == "acme:acme"
+        # prior-step result folded into the query so the agent sees it.
+        assert dispatched.query.startswith("summarize this")
+        assert "previous result text" in dispatched.query
+        assert isinstance(result, str) and result
 
 
 @pytest.mark.unit
