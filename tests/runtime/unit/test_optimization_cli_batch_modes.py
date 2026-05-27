@@ -878,3 +878,85 @@ class TestSyntheticGeneration:
         assert "results" in result
         assert "simba" in result["results"]
         assert result["results"]["simba"]["status"] in ("success", "failed", "no_data")
+
+
+class TestOptimizeAgentPersistence:
+    """_optimize_agent must construct ArtifactManager(provider, tenant_id) and
+    persist the compiled module via save_blob(kind="model", ...). The prior code
+    called ArtifactManager(telemetry_provider=...) (missing the required
+    tenant_id) and a non-existent store_artifact() — so every triggered
+    optimization failed. The fake ArtifactManager below enforces the real
+    interface, so the old code would raise (TypeError / AttributeError) here."""
+
+    @pytest.mark.asyncio
+    async def test_optimize_agent_persists_compiled_module(self):
+        from unittest.mock import MagicMock
+
+        from cogniverse_runtime.optimization_cli import _optimize_agent
+
+        captured: Dict[str, Any] = {}
+
+        class _FakeArtifactManager:
+            def __init__(self, telemetry_provider, tenant_id):  # both REQUIRED
+                captured["tenant_id"] = tenant_id
+
+            async def save_blob(self, kind, key, content):
+                captured["kind"] = kind
+                captured["key"] = key
+                return "artifact-xyz"
+
+        class _FakeOptimizer:
+            optimization_settings = {
+                "max_bootstrapped_demos": 1,
+                "max_labeled_demos": 1,
+                "max_rounds": 1,
+                "max_errors": 1,
+            }
+
+            def initialize_language_model(self, endpoint):
+                self.lm = MagicMock()  # consumed by dspy.context(lm=optimizer.lm)
+
+            def create_query_analysis_signature(self):
+                return object()
+
+        class _FakeCompiled:
+            def dump_state(self):
+                return {"demos": []}
+
+        class _FakeTeleprompter:
+            def __init__(self, *a, **k):
+                pass
+
+            def compile(self, module, trainset=None):
+                return _FakeCompiled()
+
+        high_df = pd.DataFrame([{"query": "find cats", "output": "{}", "score": 0.9}])
+
+        with (
+            patch(
+                "cogniverse_agents.optimizer.dspy_agent_optimizer.DSPyAgentPromptOptimizer",
+                _FakeOptimizer,
+            ),
+            patch("dspy.ChainOfThought", lambda sig: object()),
+            patch("dspy.teleprompt.BootstrapFewShot", _FakeTeleprompter),
+            patch(
+                "cogniverse_agents.optimizer.artifact_manager.ArtifactManager",
+                _FakeArtifactManager,
+            ),
+        ):
+            result = await _optimize_agent(
+                "search",
+                pd.DataFrame([]),
+                high_df,
+                "http://lm",
+                config_manager=MagicMock(),
+                telemetry_provider=MagicMock(),
+                tenant_id="acme:prod",
+            )
+
+        assert result["status"] == "success"
+        assert result["artifact_id"] == "artifact-xyz"
+        assert result["training_examples"] == 1
+        assert captured["kind"] == "model"
+        assert captured["key"] == "dspy_compiled_search"
+        assert captured["tenant_id"] == "acme:prod"

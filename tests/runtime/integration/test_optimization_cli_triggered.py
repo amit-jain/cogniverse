@@ -207,11 +207,17 @@ class TestTriggeredOptimization:
             phoenix_endpoint=phoenix_container["http_endpoint"],
         )
 
-        # Should not fail with "status: failed"
-        assert result.get("status") != "failed", (
-            f"Triggered optimization failed: {result.get('error', 'unknown')}"
+        # Per-agent result is keyed by agent name (NOT a top-level "status").
+        # The search agent must compile and persist its module successfully —
+        # asserting the real per-agent outcome, not a top-level key that never
+        # exists (the old `result.get("status") != "failed"` was a tautology
+        # that masked ArtifactManager construction + store_artifact failures).
+        assert "search" in result, f"no per-agent result for search: {result}"
+        assert result["search"]["status"] == "success", (
+            f"search optimization failed: {result['search']}"
         )
+        assert result["search"]["artifact_id"], "no artifact persisted"
 
-        # Strategy distillation should have run
+        # Strategy distillation should have run.
         assert "strategies_distilled" in result
         assert result["strategies_distilled"] >= 0

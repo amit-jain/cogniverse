@@ -318,21 +318,22 @@ async def _optimize_agent(
     module = dspy.ChainOfThought(signature)
 
     try:
-        compiled = teleprompter.compile(module, trainset=trainset)
+        # The compile must run with the LM configured — initialize_language_model
+        # only sets optimizer.lm, it does not configure DSPy's global LM (unlike
+        # the sibling modes which call dspy.configure). Scope it to the compile.
+        with dspy.context(lm=optimizer.lm):
+            compiled = teleprompter.compile(module, trainset=trainset)
 
-        # Store compiled module via ArtifactManager
+        # Store compiled module via ArtifactManager (same path the other modes use)
+        import json as _json
+
         from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
 
-        artifact_manager = ArtifactManager(telemetry_provider=telemetry_provider)
-        artifact_id = await artifact_manager.store_artifact(
-            artifact_type=f"dspy_compiled_{agent_name}",
-            data=compiled.dump_state(),
-            metadata={
-                "agent": agent_name,
-                "tenant_id": tenant_id,
-                "training_examples": len(trainset),
-                "timestamp": str(datetime.now()),
-            },
+        artifact_manager = ArtifactManager(telemetry_provider, tenant_id)
+        artifact_id = await artifact_manager.save_blob(
+            kind="model",
+            key=f"dspy_compiled_{agent_name}",
+            content=_json.dumps(compiled.dump_state(), default=str),
         )
 
         return {
