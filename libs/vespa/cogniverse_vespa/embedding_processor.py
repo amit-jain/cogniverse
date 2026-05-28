@@ -85,28 +85,27 @@ class VespaEmbeddingProcessor:
             return raw_embeddings
 
     def _convert_to_float_dict(self, embeddings: np.ndarray) -> Any:
-        """Convert numpy array to Vespa float format
+        """Convert numpy array to Vespa float format.
 
-        For single-vector schemas using tensor<float>, return raw float values as a list.
-        For patch-based schemas using tensor<bfloat16>, return hex-encoded bfloat16.
+        Schema name is the authority: ``_sv_`` / ``lvt`` schemas use a raw float
+        list; everything else (patch-based / multi-vector) uses hex-encoded
+        bfloat16 in a mapped ``{patch_idx: hex}`` dict. A row-count heuristic
+        wrongly fired single-vector format for a single-token multi-vector
+        schema, producing the wrong tensor shape.
         """
-        # Check if this is a single-vector schema (1D array or single row)
-        # Single-vector schemas: LVT models or schemas with "_sv_" in name
+        is_1d_input = embeddings.ndim == 1
+        if is_1d_input:
+            embeddings = embeddings.reshape(1, -1)
+
         is_single_vector = (
-            embeddings.ndim == 1  # 1D array (single vector)
-            or embeddings.shape[0] == 1  # Single row
-            or "_sv_" in self.schema_name  # Single-vector in name
-            or "lvt" in self.schema_name.lower()  # LVT models are single-vector
+            is_1d_input  # 1D is a single global vector by data shape
+            or "_sv_" in self.schema_name
+            or "lvt" in self.schema_name.lower()
         )
 
         if is_single_vector:
-            # Single-vector schemas use tensor<float>(v[dim]) which expects raw float values
-            if embeddings.ndim == 1:
-                return embeddings.tolist()
-            else:
-                return embeddings[0].tolist()
+            return embeddings[0].tolist()
 
-        # For patch-based schemas, use hex-encoded bfloat16 format
         embedding_dict = {}
         for patch_idx in range(len(embeddings)):
             hex_string = self._numpy_to_hex_bfloat16(embeddings[patch_idx])
@@ -119,18 +118,17 @@ class VespaEmbeddingProcessor:
         For single-vector schemas, return hex-encoded binary string.
         For patch-based schemas, return dict of hex-encoded binary.
         """
-        # Ensure 2D array
-        if embeddings.ndim == 1:
+        is_1d_input = embeddings.ndim == 1
+        if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
 
         # Binarize: positive values -> 1, negative/zero -> 0
         binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 
-        # Check if this is a single-vector schema
         is_single_vector = (
-            binarized.shape[0] == 1  # Single row
-            or "_sv_" in self.schema_name  # Single-vector in name
-            or "lvt" in self.schema_name.lower()  # LVT models are single-vector
+            is_1d_input
+            or "_sv_" in self.schema_name
+            or "lvt" in self.schema_name.lower()
         )
 
         if is_single_vector:

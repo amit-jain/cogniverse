@@ -143,3 +143,34 @@ def test_binary_conversion_zero_collapses_to_zero_bit(processor):
     out = processor._convert_to_binary_dict(vec)
     assert unhexlify(out["0"]) == b"\x00"
     assert unhexlify(out["1"]) == b"\xa0"
+
+
+@pytest.mark.unit
+class TestSchemaNameAuthority:
+    """A single-row (1, N) embedding fed to a ``_mv_`` schema must still be
+    encoded as a mapped {patch_idx: hex} dict — the previous row-count
+    heuristic produced a bare list / hex string which Vespa rejects as the
+    wrong tensor shape."""
+
+    def test_single_row_mv_float_returns_mapped_dict(self):
+        mv = VespaEmbeddingProcessor(schema_name="video_videoprism_base_mv_chunk_30s")
+        out = mv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
+        assert isinstance(out, dict)
+        assert list(out.keys()) == ["0"]
+        assert isinstance(out["0"], str)  # hex-encoded bfloat16
+
+    def test_single_row_mv_binary_returns_mapped_dict(self):
+        mv = VespaEmbeddingProcessor(schema_name="video_videoprism_base_mv_chunk_30s")
+        out = mv._convert_to_binary_dict(np.random.rand(1, 768).astype(np.float32))
+        assert isinstance(out, dict)
+        assert list(out.keys()) == ["0"]
+        assert isinstance(out["0"], str)  # hex-encoded int8
+
+    def test_sv_schema_returns_flat_list(self):
+        # Real sv schema names have ``_sv_`` (both underscores).
+        sv = VespaEmbeddingProcessor(
+            schema_name="video_videoprism_lvt_base_sv_chunk_6s"
+        )
+        out = sv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
+        assert isinstance(out, list)
+        assert len(out) == 768
