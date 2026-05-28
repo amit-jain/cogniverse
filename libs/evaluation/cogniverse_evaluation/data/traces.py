@@ -3,7 +3,7 @@ Trace management for batch evaluation.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -38,7 +38,7 @@ class TraceManager:
         Returns:
             DataFrame with trace data
         """
-        start_time = datetime.now() - timedelta(hours=hours_back)
+        start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
         logger.info(f"Fetching traces from last {hours_back} hours")
 
@@ -133,7 +133,7 @@ class TraceManager:
         Returns:
             DataFrame with trace data
         """
-        start_time = datetime.now() - timedelta(hours=hours_back)
+        start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
         # Build filter for specific experiment
         filter_condition = f"attributes.metadata.profile == '{profile}' AND attributes.metadata.strategy == '{strategy}'"

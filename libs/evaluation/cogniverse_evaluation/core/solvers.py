@@ -4,7 +4,7 @@ Solvers for evaluation modes.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
@@ -226,7 +226,7 @@ def create_batch_solver(
 
             logger.info(f"Loading traces from last {hours_back} hours (limit: {limit})")
 
-            start_time = datetime.now() - timedelta(hours=hours_back)
+            start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             df = await provider.telemetry.traces.get_spans(
                 project=config.get("project_name", "cogniverse-default"),
                 start_time=start_time,
@@ -328,7 +328,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
         logger.info(f"Starting live monitoring (interval: {poll_interval}s)")
 
         all_traces = []
-        last_check = datetime.now()
+        last_check = datetime.now(timezone.utc)
 
         for iteration in range(max_iterations):
             # Get new traces since last check
@@ -350,7 +350,7 @@ def create_live_solver(config: dict[str, Any] | None = None) -> Solver:
                     }
                     all_traces.append(trace_data)
 
-            last_check = datetime.now()
+            last_check = datetime.now(timezone.utc)
 
             # Wait before next poll
             if iteration < max_iterations - 1:

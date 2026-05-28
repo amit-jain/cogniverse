@@ -10,7 +10,7 @@ Multi-Modal Performance tab whose backing tracker
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.express as px
@@ -96,7 +96,7 @@ def render_profile_metrics_tab() -> None:
         st.error(f"Failed to initialise telemetry provider: {exc}")
         return
 
-    end = datetime.now()
+    end = datetime.now(timezone.utc)
     start = end - timedelta(hours=int(lookback_hours))
 
     with st.spinner(f"Querying Phoenix project `{project_name}`..."):

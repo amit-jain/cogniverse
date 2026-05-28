@@ -11,7 +11,7 @@ Displays routing-specific metrics from RoutingEvaluator including:
 
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -76,10 +76,11 @@ def render_routing_evaluation_tab():
         # Test provider connectivity by attempting to fetch spans
         async def check_provider():
             try:
+                _now = datetime.now(timezone.utc)
                 await provider.traces.get_spans(
                     project=project_name,
-                    start_time=datetime.now() - timedelta(minutes=1),
-                    end_time=datetime.now(),
+                    start_time=_now - timedelta(minutes=1),
+                    end_time=_now,
                     limit=1,
                 )
                 return True
@@ -95,8 +96,9 @@ def render_routing_evaluation_tab():
         st.info("Check your telemetry configuration and ensure the provider is running")
         return
 
-    # Time range for query
-    end_time = datetime.now()
+    # Time range for query — Phoenix stores spans in UTC, mirror that here so
+    # the window is correct on non-UTC hosts (the dashboard runs anywhere).
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     # Fetch and evaluate routing spans

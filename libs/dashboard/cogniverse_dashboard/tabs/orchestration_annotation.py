@@ -7,7 +7,7 @@ the human-in-the-loop side of the optimization feedback path.
 
 import json
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict
 
@@ -101,7 +101,7 @@ def render_orchestration_annotation_tab():
                 telemetry_manager = get_telemetry_manager()
                 provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-                end_time = datetime.now()
+                end_time = datetime.now(timezone.utc)
                 start_time = end_time - timedelta(hours=lookback_hours)
 
                 async def fetch_spans():

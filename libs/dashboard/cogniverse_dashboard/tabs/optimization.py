@@ -15,7 +15,7 @@ Comprehensive optimization framework including:
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict
 
 import pandas as pd
@@ -115,8 +115,14 @@ def _render_overview_tab():
         # Last optimization
         if opt_runs:
             last_run = opt_runs[-1]
-            last_time = last_run.get("timestamp", datetime.now())
-            time_ago = datetime.now() - last_time
+            # Normalise the stored timestamp to aware UTC so the subtraction
+            # cannot raise TypeError on a naive/aware mix when older runs were
+            # persisted before this dashboard ran tz-aware.
+            _now = datetime.now(timezone.utc)
+            last_time = last_run.get("timestamp", _now)
+            if isinstance(last_time, datetime) and last_time.tzinfo is None:
+                last_time = last_time.replace(tzinfo=timezone.utc)
+            time_ago = _now - last_time
             st.metric(
                 "Last Optimization",
                 f"{time_ago.seconds // 60}m ago"
@@ -208,7 +214,7 @@ def _render_search_annotation_tab():
 
                 phoenix_project = f"cogniverse-{tenant_id}"
 
-                end_time = datetime.now()
+                end_time = datetime.now(timezone.utc)
                 start_time = end_time - timedelta(hours=lookback_hours)
 
                 # Fetch spans using provider abstraction
@@ -501,7 +507,7 @@ async def _build_golden_dataset_from_phoenix(
     phoenix_project = f"cogniverse-{tenant_id}"
 
     # Query annotated spans
-    end_time = datetime.now()
+    end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=lookback_days)
 
     spans_df = await provider.traces.get_spans(
@@ -1220,9 +1226,10 @@ def _render_profile_selection_tab():
         async def check_provider():
             try:
                 # Try to fetch spans with small limit to test connectivity
+                _now = datetime.now(timezone.utc)
                 await provider.traces.get_spans(
-                    start_time=datetime.now() - timedelta(minutes=1),
-                    end_time=datetime.now(),
+                    start_time=_now - timedelta(minutes=1),
+                    end_time=_now,
                     project=f"cogniverse-{tenant_id}",
                     limit=1,
                 )
@@ -1251,7 +1258,7 @@ def _render_profile_selection_tab():
 
         # Time range
         lookback_days = st.slider("Lookback (days)", 1, 90, 30)
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(days=lookback_days)
 
         # Get search spans using provider abstraction
@@ -1553,9 +1560,10 @@ def _render_metrics_dashboard_tab():
         # Test provider connectivity
         async def check_provider():
             try:
+                _now = datetime.now(timezone.utc)
                 await provider.traces.get_spans(
-                    start_time=datetime.now() - timedelta(minutes=1),
-                    end_time=datetime.now(),
+                    start_time=_now - timedelta(minutes=1),
+                    end_time=_now,
                     project=f"cogniverse-{tenant_id}",
                     limit=1,
                 )
@@ -1600,7 +1608,7 @@ def _render_metrics_dashboard_tab():
         )
 
         # Calculate time range
-        end_time = datetime.now()
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(days=lookback_days)
 
         # Get spans from provider

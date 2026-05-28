@@ -9,7 +9,7 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 import json
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -360,19 +360,22 @@ with st.sidebar:
         index=2,  # Default to "Last 6 hours"
     )
 
+    # Phoenix stores span timestamps in UTC. Streamlit's date_input / time_input
+    # return naive Python objects — attach tzinfo=UTC so the window matches.
+    _now_utc = datetime.now(timezone.utc)
     if time_range == "Custom range":
         col1, col2 = st.columns(2)
         with col1:
-            start_date = st.date_input("Start date", datetime.now() - timedelta(days=1))
-            start_time = st.time_input("Start time", datetime.now().time())
+            start_date = st.date_input("Start date", _now_utc - timedelta(days=1))
+            start_time = st.time_input("Start time", _now_utc.time())
         with col2:
-            end_date = st.date_input("End date", datetime.now())
-            end_time = st.time_input("End time", datetime.now().time())
+            end_date = st.date_input("End date", _now_utc)
+            end_time = st.time_input("End time", _now_utc.time())
 
-        start_datetime = datetime.combine(start_date, start_time)
-        end_datetime = datetime.combine(end_date, end_time)
+        start_datetime = datetime.combine(start_date, start_time, tzinfo=timezone.utc)
+        end_datetime = datetime.combine(end_date, end_time, tzinfo=timezone.utc)
     else:
-        end_datetime = datetime.now()
+        end_datetime = _now_utc
         if time_range == "Last 15 minutes":
             start_datetime = end_datetime - timedelta(minutes=15)
         elif time_range == "Last hour":
@@ -2601,12 +2604,14 @@ with main_tabs[10]:
                 if not search_results:
                     st.error("❌ Agent returned success but no search results")
                 else:
-                    # Store search results in session state
+                    # Store search results in session state — stamp in UTC so
+                    # the latency widget at render time can subtract safely.
+                    _captured_at = datetime.now(timezone.utc)
                     st.session_state.current_search_results = {
                         "query": search_query,
                         "profile": selected_profile,
                         "results": search_results,
-                        "timestamp": datetime.now(),
+                        "timestamp": _captured_at,
                     }
 
                     # Add to conversation history for multi-turn tracking
@@ -2617,7 +2622,7 @@ with main_tabs[10]:
                         {
                             "query": search_query,
                             "profile": selected_profile,
-                            "timestamp": datetime.now(),
+                            "timestamp": _captured_at,
                             "result_count": total_results,
                             "results_summary": {
                                 s: len(search_results.get(s, []))
@@ -2651,7 +2656,11 @@ with main_tabs[10]:
             st.metric("Results", _total_count)
         with _m2:
             _ts = st.session_state.current_search_results.get("timestamp")
-            _lat_ms = (datetime.now() - _ts).total_seconds() * 1000 if _ts else 0
+            if _ts is not None and isinstance(_ts, datetime) and _ts.tzinfo is None:
+                _ts = _ts.replace(tzinfo=timezone.utc)
+            _lat_ms = (
+                (datetime.now(timezone.utc) - _ts).total_seconds() * 1000 if _ts else 0
+            )
             st.metric("Latency", f"{_lat_ms:.0f}ms")
         with _m3:
             st.metric(
