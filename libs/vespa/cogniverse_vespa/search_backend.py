@@ -470,56 +470,6 @@ class VespaSearchBackend(SearchBackend):
         """
         return self.get_metrics()
 
-    def _embeddings_to_vespa_format(
-        self, embeddings: np.ndarray, profile: str
-    ) -> Dict[str, Any]:
-        """Convert embeddings to Vespa query format."""
-        # For binary embeddings, handle differently
-        if "_binary" in profile:
-            # For binary tensors, values should be int8
-            if embeddings.ndim == 1:
-                # 1D binary embeddings (global models)
-                cells = [
-                    {"address": {"v": str(i)}, "value": int(val)}
-                    for i, val in enumerate(embeddings)
-                ]
-                return {"cells": cells}
-            else:
-                # 2D binary embeddings (patch-based models like ColPali)
-                cells = []
-                for patch_idx in range(embeddings.shape[0]):
-                    for v_idx in range(embeddings.shape[1]):
-                        cells.append(
-                            {
-                                "address": {
-                                    "querytoken": str(patch_idx),
-                                    "v": str(v_idx),
-                                },
-                                "value": int(embeddings[patch_idx, v_idx]),
-                            }
-                        )
-                return {"cells": cells}
-        # For single-vector profiles, embeddings are 1D
-        elif "_sv_" in profile.lower():
-            # Convert to tensor cells format for Vespa
-            cells = [
-                {"address": {"v": str(i)}, "value": float(val)}
-                for i, val in enumerate(embeddings)
-            ]
-            return {"cells": cells}
-        else:
-            # For patch-based models, embeddings are 2D
-            cells = []
-            for patch_idx in range(embeddings.shape[0]):
-                for v_idx in range(embeddings.shape[1]):
-                    cells.append(
-                        {
-                            "address": {"querytoken": str(patch_idx), "v": str(v_idx)},
-                            "value": float(embeddings[patch_idx, v_idx]),
-                        }
-                    )
-            return {"cells": cells}
-
     def _generate_binary_embeddings(self, embeddings: np.ndarray) -> np.ndarray:
         """Generate binary embeddings from float embeddings."""
         # Binarize embeddings (>0 becomes 1, <=0 becomes 0)

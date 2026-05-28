@@ -20,7 +20,6 @@ import dspy
 
 from .dspy_routing_signatures import (
     AdvancedRoutingSignature,
-    BasicQueryAnalysisSignature,
     QueryReformulationSignature,
     UnifiedExtractionReformulationSignature,
 )
@@ -251,15 +250,11 @@ class ComposableQueryAnalysisModule(dspy.Module):
 
 
 class DSPyBasicRoutingModule(dspy.Module):
-    """
-    DSPy 3.0 module for basic query analysis and routing using BasicQueryAnalysisSignature.
-
-    Provides fast routing decisions for simple queries without relationship analysis.
-    """
+    """Fast routing for simple queries via keyword + structure heuristics
+    (`_analyze_query_characteristics`); no LLM call is made on this path."""
 
     def __init__(self):
         super().__init__()
-        self.analyzer = dspy.ChainOfThought(BasicQueryAnalysisSignature)
 
     def forward(
         self,
