@@ -415,9 +415,12 @@ def _summarise(pipeline_result: dict) -> dict:
     Phoenix; the event stream is for progress UX, not data transfer."""
     if not isinstance(pipeline_result, dict):
         return {"raw_type": type(pipeline_result).__name__}
+    # ``schema_name``/``tenant_id`` are not in the pipeline envelope (callers
+    # merge them from the job context); ``duration`` is the actual key
+    # (the previous ``duration_seconds`` read was always missing).
     out = {
         k: pipeline_result.get(k)
-        for k in ("video_id", "schema_name", "tenant_id", "duration_seconds")
+        for k in ("video_id", "duration", "source_url")
         if k in pipeline_result
     }
     results = pipeline_result.get("results", {})
