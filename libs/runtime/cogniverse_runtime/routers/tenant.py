@@ -468,8 +468,13 @@ def _build_cron_workflow(
 
 
 async def _submit_cron_workflow(manifest: dict) -> None:
-    """Submit a CronWorkflow to Argo. Logs on failure; does not raise."""
+    """Submit a CronWorkflow to Argo. Raises ``HTTPException(503)`` on
+    network or non-2xx failure so callers can roll back the persisted
+    ConfigStore entry instead of returning ``status="created"`` with no
+    schedule ever firing on the cluster.
+    """
     namespace = manifest["metadata"]["namespace"]
+    name = manifest["metadata"]["name"]
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
@@ -477,21 +482,34 @@ async def _submit_cron_workflow(manifest: dict) -> None:
                 json=manifest,
                 headers=_argo_auth_headers(),
             )
-            if response.status_code in (200, 201):
-                name = manifest["metadata"]["name"]
-                logger.info("Submitted CronWorkflow: %s", name)
-            else:
-                logger.error(
-                    "Argo CronWorkflow submit failed (%s): %s",
-                    response.status_code,
-                    response.text[:500],
-                )
     except Exception as exc:
-        logger.error("Failed to submit CronWorkflow to Argo: %s", exc)
+        logger.error("Failed to submit CronWorkflow %s to Argo: %s", name, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Argo unreachable while scheduling job {name}: {exc}",
+        ) from exc
+
+    if response.status_code not in (200, 201):
+        logger.error(
+            "Argo CronWorkflow submit failed (%s): %s",
+            response.status_code,
+            response.text[:500],
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Argo rejected CronWorkflow {name}: "
+                f"HTTP {response.status_code} {response.text[:200]}"
+            ),
+        )
+
+    logger.info("Submitted CronWorkflow: %s", name)
 
 
 async def _delete_cron_workflow(name: str, namespace: str) -> None:
-    """Delete a CronWorkflow from Argo. Logs on failure; does not raise.
+    """Delete a CronWorkflow from Argo. Raises on failure so the caller
+    does NOT tombstone the ConfigStore entry while the schedule keeps
+    firing on the cluster.
 
     A 404 from Argo means the CronWorkflow is already gone, which is the
     desired end state, so it counts as success.
@@ -502,16 +520,28 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
                 f"{_argo_api_url}/api/v1/cronworkflows/{namespace}/{name}",
                 headers=_argo_auth_headers(),
             )
-            if response.status_code in (200, 404):
-                logger.info("Deleted CronWorkflow: %s", name)
-            else:
-                logger.error(
-                    "Argo CronWorkflow delete failed (%s): %s",
-                    response.status_code,
-                    response.text[:500],
-                )
     except Exception as exc:
-        logger.error("Failed to delete CronWorkflow from Argo: %s", exc)
+        logger.error("Failed to delete CronWorkflow %s from Argo: %s", name, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Argo unreachable while deleting job {name}: {exc}",
+        ) from exc
+
+    if response.status_code not in (200, 404):
+        logger.error(
+            "Argo CronWorkflow delete failed (%s): %s",
+            response.status_code,
+            response.text[:500],
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Argo rejected CronWorkflow delete for {name}: "
+                f"HTTP {response.status_code} {response.text[:200]}"
+            ),
+        )
+
+    logger.info("Deleted CronWorkflow: %s", name)
 
 
 # Modes accepted by POST /{tenant_id}/optimize. Matches the `--mode` choices
@@ -859,6 +889,16 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
         "post_actions": body.post_actions,
         "created_at": now,
     }
+    # Submit the CronWorkflow first when Argo is available — a failure here
+    # used to be swallowed, leaving the ConfigStore row visible but no
+    # schedule firing. Now we let _submit_cron_workflow propagate, and only
+    # persist the job once the cluster has accepted it.
+    if _argo_api_url:
+        manifest = _build_cron_workflow(
+            tenant_id, job_id, body.schedule, _argo_namespace
+        )
+        await _submit_cron_workflow(manifest)
+
     cm.set_config_value(
         tenant_id=tenant_id,
         scope=ConfigScope.SYSTEM,
@@ -869,12 +909,6 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
     logger.info(
         "Created job %s for tenant %s (schedule=%s)", job_id, tenant_id, body.schedule
     )
-
-    if _argo_api_url:
-        manifest = _build_cron_workflow(
-            tenant_id, job_id, body.schedule, _argo_namespace
-        )
-        await _submit_cron_workflow(manifest)
 
     return JobResponse(
         job_id=job_id,
