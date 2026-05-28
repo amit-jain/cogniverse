@@ -210,10 +210,6 @@ class ClaimExtractor:
         # surface text. The first multi-word capitalized name in
         # ``entity_hints`` is the heuristic antecedent (usually a Person).
         text_for_lm = _resolve_leading_pronoun(text, entity_hints)
-        # TODO(audit-2026-05): no dspy.context(lm=tenant_lm) wrap — every
-        # tenant's claim extraction runs against dspy.settings.lm bound at
-        # worker startup. Per-tenant LM config does not reach this layer.
-        # See docs/development/audit-2026-05-deferred-fixes.md#B.
         return module(
             text_segment=text_for_lm,
             entity_hints=entity_hints,

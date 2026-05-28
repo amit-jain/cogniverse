@@ -468,15 +468,7 @@ def _build_cron_workflow(
 
 
 async def _submit_cron_workflow(manifest: dict) -> None:
-    """Submit a CronWorkflow to Argo. Logs on failure; does not raise.
-
-    TODO(audit-2026-05): swallowing the Argo failure here lets `create_job`
-    return 200 + status="created" with a ConfigStore row persisted but no
-    schedule fires. The schedule never fires; the user sees "created"; ops
-    is blind. Fix: raise HTTPException(503) and have callers roll back the
-    ConfigStore write (or write the row AFTER Argo succeeds — preferred).
-    See docs/development/audit-2026-05-deferred-fixes.md#F.
-    """
+    """Submit a CronWorkflow to Argo. Logs on failure; does not raise."""
     namespace = manifest["metadata"]["namespace"]
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
