@@ -5,7 +5,7 @@ Provides centralized registry for all available agents with health monitoring.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import httpx
@@ -222,7 +222,7 @@ class AgentRegistry:
 
             is_healthy = response.status_code == 200
             agent.health_status = "healthy" if is_healthy else "unhealthy"
-            agent.last_health_check = datetime.now()
+            agent.last_health_check = datetime.now(timezone.utc)
 
             if is_healthy:
                 logger.debug(f"Agent {agent_name} is healthy")
@@ -235,12 +235,12 @@ class AgentRegistry:
 
         except httpx.TimeoutException:
             agent.health_status = "unreachable"
-            agent.last_health_check = datetime.now()
+            agent.last_health_check = datetime.now(timezone.utc)
             logger.warning(f"Agent {agent_name} health check timed out")
             return False
         except Exception as e:
             agent.health_status = "unreachable"
-            agent.last_health_check = datetime.now()
+            agent.last_health_check = datetime.now(timezone.utc)
             logger.warning(f"Agent {agent_name} health check failed: {e}")
             return False
 

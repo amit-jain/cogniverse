@@ -10,7 +10,7 @@ DSPy optimization inline.
 import logging
 import statistics
 from collections import defaultdict, deque
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -226,7 +226,7 @@ class WorkflowIntelligence:
 
         # Update template usage
         template.usage_count += 1
-        template.last_used = datetime.now()
+        template.last_used = datetime.now(timezone.utc)
 
         # Recalculate execution order
         templated_plan.execution_order = self._calculate_execution_order(template_tasks)

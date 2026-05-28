@@ -1074,7 +1074,7 @@ class OrchestratorAgent(
             # Record execution for workflow intelligence
             if self.workflow_intelligence:
                 try:
-                    from datetime import datetime, timedelta
+                    from datetime import datetime, timedelta, timezone
 
                     from cogniverse_agents.workflow_types import (
                         WorkflowPlan as WFPlan,
@@ -1084,6 +1084,7 @@ class OrchestratorAgent(
                         WorkflowTask,
                     )
 
+                    _now = datetime.now(timezone.utc)
                     wf_plan = WFPlan(
                         workflow_id=workflow_id,
                         original_query=query,
@@ -1096,8 +1097,8 @@ class OrchestratorAgent(
                             for i, step in enumerate(plan.steps)
                         ],
                         status=WorkflowStatus.COMPLETED,
-                        start_time=datetime.now() - timedelta(seconds=execution_time),
-                        end_time=datetime.now(),
+                        start_time=_now - timedelta(seconds=execution_time),
+                        end_time=_now,
                         metadata={"agent_results": {}},
                     )
                     await self.workflow_intelligence.record_workflow_execution(wf_plan)
@@ -2529,7 +2530,7 @@ class OrchestratorAgent(
                     ),
                 )
 
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             checkpoint = WorkflowCheckpoint(
                 checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
@@ -2543,7 +2544,7 @@ class OrchestratorAgent(
                 execution_order=[[f"step_{i}"] for i in range(len(plan.steps))],
                 metadata={"reasoning": plan.reasoning},
                 task_states=task_states,
-                checkpoint_time=datetime.now(),
+                checkpoint_time=datetime.now(timezone.utc),
                 checkpoint_status=status,
             )
 

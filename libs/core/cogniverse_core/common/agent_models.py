@@ -1,7 +1,7 @@
 """Shared agent data models"""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 
@@ -27,5 +27,10 @@ class AgentEndpoint:
         """Check if agent needs a health check"""
         if not self.last_health_check:
             return True
-        elapsed = (datetime.now() - self.last_health_check).total_seconds()
+        # Normalise stored stamp to aware UTC so a registry written before
+        # the tz-aware switch doesn't crash the subtraction.
+        stored = self.last_health_check
+        if stored.tzinfo is None:
+            stored = stored.replace(tzinfo=timezone.utc)
+        elapsed = (datetime.now(timezone.utc) - stored).total_seconds()
         return elapsed >= self.health_check_interval

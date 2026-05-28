@@ -34,6 +34,9 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         self._telemetry_provider: Optional[Any] = None
         self._project_name: str = "evaluation"
         self._framework = PhoenixEvaluatorFramework()
+        # Strong references to fire-and-forget annotation tasks so CPython
+        # does not GC the coroutine before it runs.
+        self._background_tasks: set[Any] = set()
 
     @property
     def framework(self) -> PhoenixEvaluatorFramework:
@@ -368,13 +371,14 @@ class PhoenixEvaluationProvider(EvaluationProvider):
 
                 # Run async operation
                 try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.create_task(add_annotation())
-                    else:
-                        loop.run_until_complete(add_annotation())
+                    loop = asyncio.get_running_loop()
                 except RuntimeError:
+                    # No running loop — caller is sync; spin up our own.
                     asyncio.run(add_annotation())
+                else:
+                    task = loop.create_task(add_annotation())
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
 
             logger.info(
                 f"Logged session evaluation for {session_id}: "

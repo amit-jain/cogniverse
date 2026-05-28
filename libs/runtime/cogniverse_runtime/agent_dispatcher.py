@@ -54,6 +54,11 @@ class AgentDispatcher:
         # When None, no canary routing — every request gets active artefacts.
         self._artifact_manager_factory = artifact_manager_factory
         self._query_rewriter = None
+        # Strong references to fire-and-forget tasks so CPython does not GC
+        # the coroutine before it runs. asyncio.create_task() with the result
+        # discarded is documented to allow that — keep the handles, discard
+        # them on completion via add_done_callback.
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def _resolve_gliner_url(self) -> Optional[str]:
         """Look up the deployed GLiNER sidecar URL from system config.
@@ -569,11 +574,13 @@ class AgentDispatcher:
 
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._maybe_auto_file_wiki(
                 query, result, entities, agent_name, tenant_id, turn_count
             )
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return result
 
     async def _maybe_auto_file_wiki(
@@ -604,7 +611,7 @@ class AgentDispatcher:
                 return
 
             response_text = str(response.get("answer", response))
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None,
                 lambda: wm.save_session(
                     query=query,
