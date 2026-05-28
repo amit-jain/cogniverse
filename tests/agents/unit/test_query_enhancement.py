@@ -1008,62 +1008,102 @@ class TestDSPyComponentsIntegration:
             with pytest.raises(ValueError, match="Test DSPy module failure"):
                 asyncio.run(agent.process(SimpleInput(query="test")))
 
-    def test_data_structure_consistency_across_phases(self):
-        """Test data structures remain consistent as they flow through phases"""
+    @pytest.mark.asyncio
+    async def test_extract_comprehensive_relationships_aggregates_inner_outputs(
+        self,
+    ):
+        """Drive the REAL ``extract_comprehensive_relationships`` end-to-end
+        against fake inner extractors and assert the aggregation pipeline
+        actually runs (dedup, relationship_types, semantic_connections).
 
-        # Standard test data that should work across all phases
-        test_entities = [
+        The prior test patched the outer method and asserted on the
+        literal dict the test had just written — no code path executed.
+        """
+        # Build a tool whose inner extractors are stubs returning controlled
+        # data. The OUTER method is the real one.
+        tool = RelationshipExtractorTool.__new__(RelationshipExtractorTool)
+        tool.gliner_extractor = Mock(spec=GLiNERRelationshipExtractor)
+        tool.spacy_analyzer = Mock(spec=SpaCyDependencyAnalyzer)
+
+        entities = [
             {"text": "autonomous vehicles", "label": "TECHNOLOGY", "confidence": 0.9},
             {"text": "urban environments", "label": "LOCATION", "confidence": 0.8},
         ]
-        test_relationships = [
+        tool.gliner_extractor.extract_entities = Mock(return_value=entities)
+
+        # Two entity relationships and one spaCy relationship; one duplicate
+        # across the two sources to exercise deduplication.
+        entity_rels = [
             {
                 "subject": "autonomous vehicles",
                 "relation": "navigating",
                 "object": "urban environments",
-            }
+                "confidence": 0.85,
+            },
+            {
+                "subject": "urban environments",
+                "relation": "contains",
+                "object": "intersections",
+                "confidence": 0.7,
+            },
+        ]
+        tool.gliner_extractor.infer_relationships_from_entities = Mock(
+            return_value=entity_rels
+        )
+
+        spacy_rels = [
+            # duplicate of the first entity_rel (same subject/relation/object)
+            {
+                "subject": "autonomous vehicles",
+                "relation": "navigating",
+                "object": "urban environments",
+                "confidence": 0.6,
+            },
+        ]
+        tool.spacy_analyzer.analyze_dependencies = Mock(
+            return_value={"dependency_tree": []}
+        )
+        tool.spacy_analyzer.extract_semantic_relationships = Mock(
+            return_value=spacy_rels
+        )
+
+        out = await tool.extract_comprehensive_relationships(
+            "autonomous vehicles navigating urban environments"
+        )
+
+        # Live aggregation: entities are surfaced as-is.
+        assert out["entities"] == entities
+        # Deduplication actually ran — the duplicate did NOT slip through.
+        relations = out.get("relationships") or out.get("entity_relationships")
+        assert relations is not None
+        assert len(relations) == 2, (
+            f"expected dedup to collapse 3→2 relationships; got {len(relations)}: "
+            f"{relations}"
+        )
+        triples = sorted(
+            (r["subject"], r["relation"], r["object"]) for r in relations
+        )
+        assert triples == [
+            ("autonomous vehicles", "navigating", "urban environments"),
+            ("urban environments", "contains", "intersections"),
+        ]
+        # Relationship-type aggregation ran — sorted unique relations.
+        assert sorted(out.get("relationship_types", [])) == [
+            "contains",
+            "navigating",
         ]
 
-        # Test Phase 1 → Phase 2 data compatibility
+    def test_composable_module_forward_signature(self):
+        """The downstream ``ComposableQueryAnalysisModule.forward`` signature
+        must keep accepting ``query`` and ``search_context`` for callers."""
+        import inspect
 
-        # Create a synchronous mock return value
-        mock_return_value = {
-            "entities": test_entities,
-            "relationships": test_relationships,
-            "confidence_scores": {"overall": 0.85},
-        }
-
-        with patch.object(
-            RelationshipExtractorTool,
-            "extract_comprehensive_relationships",
-            new_callable=AsyncMock,
-        ) as mock_extract:
-            mock_extract.return_value = mock_return_value
-
-            RelationshipExtractorTool()
-            # For sync test, we'll mock the return value directly
-            phase2_result = mock_return_value
-
-            # Phase 2 output should be compatible with Phase 3 input
-            assert "entities" in phase2_result
-            assert "relationships" in phase2_result
-            assert isinstance(phase2_result["entities"], list)
-            assert isinstance(phase2_result["relationships"], list)
-
-        # Test data compatibility with ComposableQueryAnalysisModule
-        # The module expects query + search_context and internally extracts entities
         module = ComposableQueryAnalysisModule(
             gliner_extractor=Mock(spec=GLiNERRelationshipExtractor),
             spacy_analyzer=Mock(spec=SpaCyDependencyAnalyzer),
         )
-
-        # Verify the module can be instantiated with the expected interface
         assert hasattr(module, "forward")
-        # The module's forward() signature expects (query, search_context)
-        import inspect
-
-        sig = inspect.signature(module.forward)
-        params = list(sig.parameters.keys())
+        params = list(inspect.signature(module.forward).parameters.keys())
         assert "query" in params
         assert "search_context" in params
 
