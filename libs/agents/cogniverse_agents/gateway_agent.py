@@ -160,7 +160,13 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
         Called by the dispatcher after telemetry_manager and _artifact_tenant_id
         are injected — not from __init__ (telemetry_manager is not yet available).
+        Records ``self.artifact_load_status`` ∈ {``no_telemetry``, ``no_artifact``,
+        ``loaded``, ``error``} so operators can distinguish "tenant has never
+        optimized" from "telemetry/load failed and we silently reverted to
+        defaults". On error, surfaces a WARNING log; the prior implementation
+        hid the failure at DEBUG level alongside the legitimate empty case.
         """
+        self.artifact_load_status = "no_telemetry"
         if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
             return
         try:
@@ -182,21 +188,32 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
 
             blob = run_coro_blocking(_load())
 
-            if blob:
-                config = json.loads(blob)
-                if "fast_path_confidence_threshold" in config:
-                    self.deps.fast_path_confidence_threshold = config[
-                        "fast_path_confidence_threshold"
-                    ]
-                if "gliner_threshold" in config:
-                    self.deps.gliner_threshold = config["gliner_threshold"]
+            if not blob:
+                self.artifact_load_status = "no_artifact"
                 logger.info(
-                    "GatewayAgent loaded optimized thresholds: "
-                    f"fast_path={self.deps.fast_path_confidence_threshold}, "
-                    f"gliner={self.deps.gliner_threshold}"
+                    "GatewayAgent: no persisted artifact for tenant %s; using defaults",
+                    tenant_id,
                 )
+                return
+
+            config = json.loads(blob)
+            if "fast_path_confidence_threshold" in config:
+                self.deps.fast_path_confidence_threshold = config[
+                    "fast_path_confidence_threshold"
+                ]
+            if "gliner_threshold" in config:
+                self.deps.gliner_threshold = config["gliner_threshold"]
+            self.artifact_load_status = "loaded"
+            logger.info(
+                "GatewayAgent loaded optimized thresholds: "
+                f"fast_path={self.deps.fast_path_confidence_threshold}, "
+                f"gliner={self.deps.gliner_threshold}"
+            )
         except Exception as e:
-            logger.debug("No gateway artifact to load (using defaults): %s", e)
+            self.artifact_load_status = "error"
+            # WARNING (not DEBUG) so a real telemetry outage isn't filed under
+            # "no artifact persisted yet" in the operator's mental model.
+            logger.warning("GatewayAgent artifact load failed; using defaults: %s", e)
 
     # ------------------------------------------------------------------
     # Model loading
