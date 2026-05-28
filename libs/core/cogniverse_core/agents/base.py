@@ -638,19 +638,20 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
         try:
             validated_input = self.validate_input(raw_input)
 
+            # Delegate to process() so the input + output rails apply uniformly;
+            # then add the output-type guarantee run() promises in its docstring.
             if stream:
-                return self._stream_with_progress(validated_input)
-            else:
-                with self._process_span(validated_input):
-                    output = await self._process_impl(validated_input)
+                return await self.process(validated_input, stream=True)
 
-                if not isinstance(output, self._output_type):
-                    raise TypeError(
-                        f"_process_impl() must return {self._output_type.__name__}, "
-                        f"got {type(output).__name__}"
-                    )
+            output = await self.process(validated_input)
 
-                return output
+            if not isinstance(output, self._output_type):
+                raise TypeError(
+                    f"_process_impl() must return {self._output_type.__name__}, "
+                    f"got {type(output).__name__}"
+                )
+
+            return output
 
         except Exception:
             self._error_count += 1

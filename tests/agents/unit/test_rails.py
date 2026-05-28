@@ -288,6 +288,32 @@ class TestAgentBaseRailsIntegration:
         assert result.result == "processed: anything"
 
     @pytest.mark.asyncio
+    async def test_run_applies_output_rails_via_process_delegation(self):
+        """run() previously skipped output rails that process() enforces, so a
+        CLI/test caller silently bypassed the gate. It now delegates to
+        process() so both paths share the same input + output rails."""
+        agent = _TestAgent(deps=_TestDeps())
+        output_chain = RailChain(
+            [OutputFormatRail(required_fields={"missing_field": "str"})]
+        )
+        agent.set_rails(output_rails=output_chain)
+
+        with pytest.raises(RailBlockedError, match="Missing required field"):
+            await agent.run({"query": "test"})
+
+    @pytest.mark.asyncio
+    async def test_run_applies_input_rails_via_process_delegation(self):
+        """Input rails fire on run() too (the CLI/test path must not bypass them)."""
+        agent = _TestAgent(deps=_TestDeps())
+        input_chain = RailChain(
+            [TopicBoundaryRail(allowed_topics=["video"], advisory=False)]
+        )
+        agent.set_rails(input_rails=input_chain)
+
+        with pytest.raises(RailBlockedError, match="topic_boundary"):
+            await agent.run({"query": "weather forecast"})
+
+    @pytest.mark.asyncio
     async def test_content_safety_rail_blocks_injection(self):
         agent = _TestAgent(deps=_TestDeps())
         input_chain = RailChain(

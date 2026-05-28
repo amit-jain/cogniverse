@@ -8,9 +8,10 @@ This registry provides:
 """
 
 import logging
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict
 
-from cogniverse_runtime.ingestion.strategy import Strategy, StrategyConfig
+if TYPE_CHECKING:
+    from cogniverse_runtime.ingestion.strategy import Strategy
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,13 @@ class StrategyRegistry:
 
     def __init__(self):
         if not self._initialized:
+            from cogniverse_runtime.ingestion.strategy import StrategyConfig
+
             self.strategy_config = StrategyConfig()
             self._initialized = True
             logger.info("StrategyRegistry initialized")
 
-    def get_strategy(self, profile_name: str) -> Strategy:
+    def get_strategy(self, profile_name: str) -> "Strategy":
         """
         Get complete strategy for a profile.
 
@@ -147,6 +150,8 @@ class StrategyRegistry:
 
     def reload(self):
         """Reload all configurations from disk."""
+        from cogniverse_runtime.ingestion.strategy import StrategyConfig
+
         self.strategy_config = StrategyConfig()
         logger.info("StrategyRegistry reloaded")
 
