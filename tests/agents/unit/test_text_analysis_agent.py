@@ -108,6 +108,48 @@ class TestTextAnalysisAgent:
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
     @patch("cogniverse_core.config.utils.get_config")
+    def test_analyze_text_uses_per_tenant_lm(
+        self,
+        mock_get_config,
+        mock_initialize_dspy,
+        mock_register_signature,
+        config_manager_memory,
+    ):
+        """The per-tenant ``_dspy_lm`` must actually drive the module call —
+        without ``dspy.context(lm=...)`` the call silently falls back to the
+        global LM (or none on standalone), ignoring the tenant config."""
+        import dspy
+
+        mock_get_config.return_value = {
+            "text_analysis_port": 8005,
+            "llm_model": "gpt-4",
+            "llm_base_url": "http://localhost:11434",
+        }
+        agent = TextAnalysisAgent(
+            tenant_id="test_tenant", config_manager=config_manager_memory
+        )
+        sentinel = MagicMock(name="tenant_lm")
+        agent._dspy_lm = sentinel
+
+        captured = {}
+
+        def fake_module(text, analysis_type):
+            captured["lm"] = dspy.settings.lm
+            result = MagicMock()
+            result.result = "ok"
+            result.confidence = "0.5"
+            return result
+
+        with patch.object(agent, "get_or_create_module", return_value=fake_module):
+            agent.analyze_text("hi", "summary")
+
+        assert captured["lm"] is sentinel
+
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
+    @patch("cogniverse_core.config.utils.get_config")
     def test_get_agent_factory(
         self,
         mock_get_config,

@@ -161,7 +161,15 @@ class TextAnalysisAgent(
         module = self.get_or_create_module("text_analysis")
 
         text = self.inject_context_into_prompt(text, text)
-        result = module(text=text, analysis_type=analysis_type)
+        # Use the per-tenant LM that DynamicDSPyMixin built; without this the
+        # module silently falls back to dspy.settings.lm (the global runtime LM
+        # or none at all on the standalone endpoint), ignoring the tenant config.
+        lm = getattr(self, "_dspy_lm", None)
+        if lm is not None:
+            with dspy.context(lm=lm):
+                result = module(text=text, analysis_type=analysis_type)
+        else:
+            result = module(text=text, analysis_type=analysis_type)
 
         return {
             "result": result.result,
@@ -256,9 +264,13 @@ async def analyze_text_endpoint(
     Returns:
         Analysis result
     """
+    import asyncio
+
     try:
         agent = get_agent(tenant_id)
-        result = agent.analyze_text(text, analysis_type)
+        # analyze_text runs a blocking DSPy LM call; off-load to a worker so the
+        # event loop stays responsive (matches the dispatcher path).
+        result = await asyncio.to_thread(agent.analyze_text, text, analysis_type)
         return {"status": "success", "analysis": result}
     except Exception as e:
         logger.error(f"Text analysis failed: {e}")
