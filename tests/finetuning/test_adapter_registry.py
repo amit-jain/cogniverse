@@ -192,6 +192,44 @@ class TestAdapterRegistry:
 
         assert adapter is None
 
+    def test_get_latest_version_uses_semver_not_lexical(self, registry, mock_store):
+        """1.10.0 must rank above 1.9.0 — lexical sort got 1.9.0 wrong."""
+
+        def _doc(version: str) -> dict:
+            return {
+                "fields": {
+                    "adapter_id": f"a-{version}",
+                    "tenant_id": "tenant1",
+                    "name": "routing_sft",
+                    "version": version,
+                    "base_model": "SmolLM-135M",
+                    "model_type": "llm",
+                    "agent_type": "routing",
+                    "training_method": "sft",
+                    "adapter_path": f"/path/{version}",
+                    "status": "inactive",
+                    "is_active": 0,
+                    "metrics": "{}",
+                    "training_config": "{}",
+                    "experiment_run_id": "",
+                    "created_at": datetime.utcnow().isoformat(),
+                    "updated_at": datetime.utcnow().isoformat(),
+                }
+            }
+
+        mock_store.list_adapters.return_value = [
+            _doc("1.2.0"),
+            _doc("1.9.0"),
+            _doc("1.10.0"),
+        ]
+
+        latest = registry.get_latest_version(
+            tenant_id="tenant1", name="routing_sft", agent_type="routing"
+        )
+
+        assert latest is not None
+        assert latest.version == "1.10.0"
+
     def test_list_adapters(self, registry, mock_store):
         """Test listing adapters."""
         mock_store.list_adapters.return_value = [

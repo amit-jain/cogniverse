@@ -449,6 +449,13 @@ class VespaBackend(Backend):
                 logger.error("No schema_name in config for update operation")
                 return False
 
+            if document.id != document_id:
+                raise ValueError(
+                    f"update_document(document_id={document_id!r}) does not match "
+                    f"document.id={document.id!r}; the partial update would land "
+                    f"on the wrong doc id."
+                )
+
             # Partial update (assign only present fields) so a metadata-only
             # update does not wipe the stored embedding tensors via a full PUT.
             results = self.ingest_documents(
@@ -1422,8 +1429,14 @@ class VespaBackend(Backend):
         try:
             vespa_client = make_vespa_app(url=self._url, port=self._port)
 
-            # Delete metadata document
-            vespa_client.delete_data(schema=schema, data_id=doc_id)
+            response = vespa_client.delete_data(schema=schema, data_id=doc_id)
+
+            if response.status_code != 200:
+                logger.error(
+                    f"Failed to delete metadata document {schema}/{doc_id}: "
+                    f"HTTP {response.status_code}"
+                )
+                return False
 
             logger.debug(f"Deleted metadata document: {schema}/{doc_id}")
             return True

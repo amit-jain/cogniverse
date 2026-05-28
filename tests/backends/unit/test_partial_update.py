@@ -64,11 +64,45 @@ class TestVespaPartialUpdate:
         backend = object.__new__(VespaBackend)
         backend.config = {"schema_name": "s"}
         backend.ingest_documents = MagicMock(return_value={"success_count": 1})
+        doc = MagicMock()
+        doc.id = "d1"
 
-        ok = backend.update_document("d1", MagicMock(), schema_name="s")
+        ok = backend.update_document("d1", doc, schema_name="s")
 
         assert ok is True
         assert backend.ingest_documents.call_args.kwargs["operation_type"] == "update"
+
+    def test_update_document_id_mismatch_returns_false(self):
+        """If the caller's document_id disagrees with document.id, the partial
+        update would land on the wrong doc id — must fail loudly, not silently."""
+        backend = object.__new__(VespaBackend)
+        backend.config = {"schema_name": "s"}
+        backend.ingest_documents = MagicMock(return_value={"success_count": 1})
+        doc = MagicMock()
+        doc.id = "actual-doc-id"
+
+        ok = backend.update_document("wrong-id", doc, schema_name="s")
+
+        assert ok is False
+        backend.ingest_documents.assert_not_called()
+
+    def test_delete_metadata_document_returns_false_on_non_200(self, monkeypatch):
+        """pyvespa.delete_data does not raise on 4xx/5xx; the backend must check
+        the status_code, not assume success on no-exception."""
+        from cogniverse_vespa import backend as vespa_backend_mod
+
+        backend = object.__new__(VespaBackend)
+        backend._url = "http://localhost"
+        backend._port = 8080
+
+        client = MagicMock()
+        client.delete_data = MagicMock(return_value=MagicMock(status_code=500))
+        monkeypatch.setattr(vespa_backend_mod, "make_vespa_app", lambda **_kw: client)
+
+        ok = backend.delete_metadata_document(schema="s", doc_id="d1")
+
+        assert ok is False
+        client.delete_data.assert_called_once()
 
 
 @pytest.mark.unit

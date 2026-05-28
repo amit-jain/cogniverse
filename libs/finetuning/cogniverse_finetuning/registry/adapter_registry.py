@@ -305,8 +305,15 @@ class AdapterRegistry:
         if not matching:
             return None
 
-        # Sort by version (assumes semantic versioning)
-        matching.sort(key=lambda a: a.version, reverse=True)
+        from packaging.version import InvalidVersion, Version
+
+        def _version_key(adapter):
+            try:
+                return Version(adapter.version)
+            except InvalidVersion:
+                return Version("0.0.0")
+
+        matching.sort(key=_version_key, reverse=True)
         return matching[0]
 
     def get_stats(self) -> Dict[str, Any]:
