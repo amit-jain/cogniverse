@@ -1400,6 +1400,20 @@ class VespaBackend(Backend):
             # Execute query
             results = vespa_client.query(**query_params)
 
+            # Vespa returns 4xx/5xx on bad YQL, missing schema, or server errors.
+            # pyvespa does NOT raise on non-2xx — the response object comes back
+            # with .status_code set and .json typically holding the error body.
+            # Without this check the function silently returned [] on every
+            # rejected query, indistinguishable from a clean empty result.
+            # Siblings (get_metadata_document, delete_metadata_document) both
+            # check status_code; this method was the odd one out.
+            if results.status_code != 200:
+                error_body = results.json if hasattr(results, "json") else None
+                raise RuntimeError(
+                    f"Vespa query returned HTTP {results.status_code} for schema "
+                    f"{schema}: {error_body!r}"
+                )
+
             # Extract documents from response
             documents = []
             for hit in results.json.get("root", {}).get("children", []):
