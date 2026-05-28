@@ -33,6 +33,19 @@ ON DEMAND (user request or periodic)
 - Renamed or removed config keys
 If ANY match, route through doc-verifier even if no docs/*.md files changed.
 
+### Out of scope for this protocol
+
+The routing tree above covers `libs/`, `docs/`, `configs/`, `tests/`, `scripts/`, `*.toml`. The following are explicitly **out of scope** — only `commit-enforcer` (commit message format) applies, no other agent runs:
+
+| Path | Reason |
+|---|---|
+| `.claude/rules/*.md` (this file, `audit.md`, etc.) | Operational protocols, not project documentation. `doc-verifier` checks `docs/` against `libs/` — `.claude/rules/` describes *process*, not code APIs, so the verifier has nothing to verify against. |
+| `.claude/agents/*.md` | Agent definitions; same reason as above. |
+| Root-level `CLAUDE.md`, `README.md`, `CHANGELOG.md`, `MEMORY.md` | Project-level meta-files, not module documentation. |
+| `~/.claude/projects/.../memory/*.md` | User memory, owned by the harness; never committed. |
+
+A change to any of the above passes through `commit-enforcer` only. **If you want a structural gate on operational rule consistency** (rule files don't contradict each other or CLAUDE.md; referenced paths resolve; hunt-list regexes still match what they claim to), write a new agent — `doc-verifier` is the wrong tool for it.
+
 ---
 
 ## Agent 1: lint-and-quality
