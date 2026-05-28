@@ -10,6 +10,17 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
+# Single-vector schemas have a ``_sv_`` or ``_lvt_`` token in the name. The
+# tokens are bracketed by underscores to avoid an unrelated schema whose
+# name merely embeds the substring (e.g. ``audio_alvtree_index``); both
+# halves of the check are lower-cased so an uppercase ``_SV_`` matches too.
+_SINGLE_VECTOR_TOKENS = ("_sv_", "_lvt_")
+
+
+def _is_single_vector_schema(schema_name: str) -> bool:
+    name = (schema_name or "").lower()
+    return any(token in name for token in _SINGLE_VECTOR_TOKENS)
+
 
 class VespaEmbeddingProcessor:
     """Processes embeddings for Vespa's specific format requirements"""
@@ -99,13 +110,7 @@ class VespaEmbeddingProcessor:
         if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
 
-        is_single_vector = (
-            is_1d_input  # 1D is a single global vector by data shape
-            or "_sv_" in self.schema_name
-            or "lvt" in self.schema_name.lower()
-        )
-
-        if is_single_vector:
+        if is_1d_input or _is_single_vector_schema(self.schema_name):
             return embeddings[0].tolist()
 
         embedding_dict = {}
@@ -127,13 +132,7 @@ class VespaEmbeddingProcessor:
         # Binarize: positive values -> 1, negative/zero -> 0
         binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 
-        is_single_vector = (
-            is_1d_input
-            or "_sv_" in self.schema_name
-            or "lvt" in self.schema_name.lower()
-        )
-
-        if is_single_vector:
+        if is_1d_input or _is_single_vector_schema(self.schema_name):
             # Single-vector schemas use hex string for binary embeddings
             return hexlify(binarized[0].tobytes()).decode("utf-8")
 
