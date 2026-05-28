@@ -11,6 +11,7 @@ Features:
 """
 
 import logging
+import math
 import threading
 import time
 import uuid
@@ -36,6 +37,28 @@ from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
+
+
+def _yql_scalar(value: object, field: str) -> str:
+    """Serialize a scalar filter value into a YQL-safe literal.
+
+    Used for both equality and range bounds. Numerics must be finite — NaN
+    and Inf produce malformed YQL (``field >= nan``) that Vespa rejects.
+    Strings are quoted via ``yql_quote`` so an ISO timestamp like
+    ``"2024-01-01"`` (a string that looks numeric) survives the parser.
+    """
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, (int, float)):
+        v = float(value)
+        if math.isnan(v) or math.isinf(v):
+            raise ValueError(
+                f"Non-finite numeric filter value {value!r} for field {field!r}"
+            )
+        return repr(value) if isinstance(value, float) else str(value)
+    if isinstance(value, str):
+        return yql_quote(value)
+    return yql_quote(str(value))
 
 # Module-level cache for ranking strategies extracted from schemas
 # This is populated once and shared across all VespaSearchBackend instances
@@ -823,18 +846,30 @@ class VespaSearchBackend(SearchBackend):
 
         conditions = []
         for field_name, value in filters.items():
+            if value is None:
+                # An explicit None as a filter value used to fall through to
+                # ``field contains "None"`` (literal string match on the word
+                # ``None``). Treat None as "drop this filter key" — the caller
+                # almost certainly meant "no filter on this field".
+                continue
             if isinstance(value, dict):
                 # Range filter, e.g. {"gte": 100, "lte": 200} ->
-                # 'field >= 100 AND field <= 200'. Used for numeric/epoch
-                # ranges such as creation_timestamp date filtering.
+                # 'field >= 100 AND field <= 200'. Numeric range values must
+                # be finite numbers; reject NaN/Inf to avoid malformed YQL
+                # (Vespa rejects ``field >= nan``). String range values are
+                # quoted so they survive the parser.
                 for key, sql_op in (
                     ("gte", ">="),
                     ("gt", ">"),
                     ("lte", "<="),
                     ("lt", "<"),
                 ):
-                    if key in value:
-                        conditions.append(f"{field_name} {sql_op} {value[key]}")
+                    if key not in value:
+                        continue
+                    bound = value[key]
+                    conditions.append(
+                        f"{field_name} {sql_op} {_yql_scalar(bound, field_name)}"
+                    )
             elif isinstance(value, bool):
                 # Boolean values (checked before int — bool is an int subclass)
                 conditions.append(f"{field_name} = {str(value).lower()}")
@@ -844,7 +879,9 @@ class VespaSearchBackend(SearchBackend):
                 conditions.append(f"{field_name} contains {yql_quote(value)}")
             elif isinstance(value, (int, float)):
                 # Numeric values use equality
-                conditions.append(f"{field_name} = {value}")
+                conditions.append(
+                    f"{field_name} = {_yql_scalar(value, field_name)}"
+                )
             else:
                 # For other types, convert to string and use contains
                 conditions.append(f"{field_name} contains {yql_quote(str(value))}")
