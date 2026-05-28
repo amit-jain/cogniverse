@@ -341,5 +341,12 @@ class ProvenanceStore:
 
 
 def _escape(value: str) -> str:
-    """Minimal YQL string escape (quotes only)."""
-    return str(value).replace('"', '\\"')
+    """YQL string-literal escape — both ``\\`` and ``"``.
+
+    Mirrors ``cogniverse_vespa._yql.yql_quote`` (sans the wrapping quotes,
+    since callers add those). A value ending in ``\\`` with only the quote
+    escaped corrupts the closing literal — the backslash escapes the close
+    quote, so the YQL parser reads past the end of the value. Both chars
+    must be escaped.
+    """
+    return str(value).replace("\\", "\\\\").replace('"', '\\"')

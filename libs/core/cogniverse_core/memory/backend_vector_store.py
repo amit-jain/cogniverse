@@ -40,6 +40,19 @@ _MEM0_RESERVED = frozenset(
 )
 
 
+def _yql_quote(value: object) -> str:
+    """Return a YQL-safe double-quoted string literal for ``value``.
+
+    Mirrors ``cogniverse_vespa._yql.yql_quote``; duplicated here to avoid
+    a core→implementation layer import (see ``manager.py`` for the same
+    pattern around ``config_utils``). Both ``"`` and ``\\`` must be
+    escaped or the YQL is malformed (HTTP 400) and the unescaped
+    interpolation is also a YQL-injection vector.
+    """
+    s = str(value)
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _extract_caller_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return caller-supplied metadata from a Mem0 payload.
 
@@ -373,7 +386,17 @@ class BackendVectorStore(VectorStoreBase):
                 if caller_metadata:
                     metadata["metadata_"] = json.dumps(caller_metadata)
                 if "created_at" in payload:
-                    metadata["created_at"] = payload["created_at"]
+                    raw_ca = payload["created_at"]
+                    if isinstance(raw_ca, str):
+                        try:
+                            from datetime import datetime
+
+                            dt = datetime.fromisoformat(raw_ca.replace("Z", "+00:00"))
+                            metadata["created_at"] = int(dt.timestamp())
+                        except ValueError:
+                            metadata["created_at"] = int(time.time())
+                    else:
+                        metadata["created_at"] = raw_ca
 
             doc = Document(
                 id=vector_id,
@@ -467,9 +490,13 @@ class BackendVectorStore(VectorStoreBase):
             yql_conditions = ["true"]  # Start with match-all
             if filters:
                 if "user_id" in filters:
-                    yql_conditions.append(f'user_id contains "{filters["user_id"]}"')
+                    yql_conditions.append(
+                        f"user_id contains {_yql_quote(filters['user_id'])}"
+                    )
                 if "agent_id" in filters:
-                    yql_conditions.append(f'agent_id contains "{filters["agent_id"]}"')
+                    yql_conditions.append(
+                        f"agent_id contains {_yql_quote(filters['agent_id'])}"
+                    )
 
             where_clause = " and ".join(yql_conditions)
             yql = f"select * from {self.collection_name} where {where_clause} limit {limit or 100}"
