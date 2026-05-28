@@ -99,6 +99,15 @@ class VespaEmbeddingProcessor:
         if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
 
+        # TODO(audit-2026-05): substring-vs-token matching is a footgun.
+        # Any future schema name containing "lvt" as a substring
+        # (e.g. "audio_alvtree_index", "multi_lvt_patch_index") silently
+        # collapses an (N, dim) multi-vector tensor to its first row.
+        # And "_sv_" is case-sensitive while "lvt" is case-insensitive —
+        # a schema named ..._SV_... takes the multi-vector path despite
+        # being intent-as-single-vector. Replace with a typed lookup
+        # against the deployed schema's tensor declaration.
+        # See docs/development/audit-2026-05-deferred-fixes.md#Q.
         is_single_vector = (
             is_1d_input  # 1D is a single global vector by data shape
             or "_sv_" in self.schema_name

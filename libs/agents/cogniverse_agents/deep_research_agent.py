@@ -287,6 +287,8 @@ class DeepResearchAgent(
         gaps = result.gaps
         if isinstance(gaps, str):
             gaps = [g.strip() for g in gaps.split("\n") if g.strip()]
+        # TODO(audit-2026-05): float() crashes on LM labels ("high"/"85%").
+        # See docs/development/audit-2026-05-deferred-fixes.md#A.
         confidence = float(result.confidence) if result.confidence else 0.5
 
         return sufficient, gaps, confidence

@@ -196,6 +196,13 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                     f"gliner={self.deps.gliner_threshold}"
                 )
         except Exception as e:
+            # TODO(audit-2026-05): this swallows BOTH "no artifact persisted yet"
+            # (legitimate) and "telemetry provider unreachable" (operational
+            # failure) into the same silent fallback. Operators can't tell on
+            # which path tenants reverted to defaults. Distinguish the two and
+            # surface span attr gateway.artifact_load_status={no_artifact|loaded
+            # |failed} plus a metric on the failure branch.
+            # See docs/development/audit-2026-05-deferred-fixes.md#G.
             logger.debug("No gateway artifact to load (using defaults): %s", e)
 
     # ------------------------------------------------------------------

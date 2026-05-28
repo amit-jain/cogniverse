@@ -180,6 +180,8 @@ class TextAnalysisAgent(
 
         return {
             "result": result.result,
+            # TODO(audit-2026-05): float() crashes on LM labels ("high"/"85%").
+            # See docs/development/audit-2026-05-deferred-fixes.md#A.
             "confidence": float(result.confidence) if result.confidence else 0.0,
             "module_type": self.config.module_config.module_type.value,
             "analysis_type": analysis_type,
