@@ -28,11 +28,11 @@ def evaluator(provider):
 
 @pytest.mark.unit
 class TestSpanEvaluator:
-    # Tests of `_create_mock_spans_df()` (a fabrication helper) were removed —
-    # they asserted the shape of fabricated mock spans, not any evaluation
-    # behavior. NOTE: production `get_recent_spans` falls back to that same
-    # fabricated data when Phoenix returns nothing, which would silently score
-    # evaluations on fake spans — flagged separately for review.
+    # `_create_mock_spans_df()` is a sample-data builder used by the
+    # evaluate_spans tests below. It is NOT used on the live path: production
+    # `get_recent_spans` returns an empty DataFrame (not fabricated spans) when
+    # Phoenix has no spans or errors, so the quality monitor never scores
+    # fiction — see TestGetRecentSpans.
     def test_tenant_id_stored(self, evaluator):
         assert evaluator.tenant_id == "test"
 
@@ -48,27 +48,29 @@ class TestSpanEvaluator:
 @pytest.mark.unit
 class TestGetRecentSpans:
     @pytest.mark.asyncio
-    async def test_returns_mock_when_provider_returns_none(self, evaluator):
+    async def test_returns_empty_when_provider_returns_none(self, evaluator):
+        # No fabrication on the live path — the quality monitor would persist
+        # whatever this returns, so it must be empty (not mock spans).
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=None)
         df = await evaluator.get_recent_spans(hours=1)
-        assert not df.empty
-        assert "span_id" in df.columns
+        assert df.empty
 
     @pytest.mark.asyncio
-    async def test_returns_mock_when_provider_returns_empty_df(self, evaluator):
+    async def test_returns_empty_when_provider_returns_empty_df(self, evaluator):
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(
             return_value=pd.DataFrame()
         )
         df = await evaluator.get_recent_spans(hours=1)
-        assert not df.empty
+        assert df.empty
 
     @pytest.mark.asyncio
-    async def test_returns_mock_on_provider_exception(self, evaluator):
+    async def test_returns_empty_on_provider_exception(self, evaluator):
+        # A Phoenix error surfaces as "no traffic", never scored fiction.
         evaluator.provider.telemetry.traces.get_spans = AsyncMock(
             side_effect=Exception("Phoenix down")
         )
         df = await evaluator.get_recent_spans(hours=1)
-        assert not df.empty
+        assert df.empty
 
     @pytest.mark.asyncio
     async def test_filters_embedding_dimension_spans(self, evaluator):
@@ -293,13 +295,17 @@ class TestRunEvaluationPipeline:
 
     @pytest.mark.asyncio
     async def test_pipeline_returns_summary_structure(self, evaluator):
-        evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=None)
-
-        result = await evaluator.run_evaluation_pipeline(
-            hours=1,
-            evaluator_names=["relevance"],
-            upload_evaluations=False,
-        )
+        # Inject sample spans explicitly — the live get_recent_spans returns
+        # empty (no fabrication), so the pipeline is fed via a patched fetch.
+        sample = evaluator._create_mock_spans_df()
+        with patch.object(
+            evaluator, "get_recent_spans", AsyncMock(return_value=sample)
+        ):
+            result = await evaluator.run_evaluation_pipeline(
+                hours=1,
+                evaluator_names=["relevance"],
+                upload_evaluations=False,
+            )
 
         assert "num_spans_retrieved" in result
         assert "num_skipped" in result
@@ -312,13 +318,15 @@ class TestRunEvaluationPipeline:
 
     @pytest.mark.asyncio
     async def test_pipeline_summary_contains_mean_score(self, evaluator):
-        evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=None)
-
-        result = await evaluator.run_evaluation_pipeline(
-            hours=1,
-            evaluator_names=["relevance"],
-            upload_evaluations=False,
-        )
+        sample = evaluator._create_mock_spans_df()
+        with patch.object(
+            evaluator, "get_recent_spans", AsyncMock(return_value=sample)
+        ):
+            result = await evaluator.run_evaluation_pipeline(
+                hours=1,
+                evaluator_names=["relevance"],
+                upload_evaluations=False,
+            )
 
         assert "relevance" in result["results"]
         rel = result["results"]["relevance"]
@@ -328,13 +336,16 @@ class TestRunEvaluationPipeline:
 
     @pytest.mark.asyncio
     async def test_upload_evaluations_called_when_requested(self, evaluator):
-        evaluator.provider.telemetry.traces.get_spans = AsyncMock(return_value=None)
         evaluator.provider.telemetry.annotations = MagicMock()
         evaluator.provider.telemetry.annotations.add_annotation = AsyncMock()
+        sample = evaluator._create_mock_spans_df()
 
-        with patch.object(
-            evaluator, "upload_evaluations", new_callable=AsyncMock
-        ) as mock_upload:
+        with (
+            patch.object(evaluator, "get_recent_spans", AsyncMock(return_value=sample)),
+            patch.object(
+                evaluator, "upload_evaluations", new_callable=AsyncMock
+            ) as mock_upload,
+        ):
             await evaluator.run_evaluation_pipeline(
                 hours=1,
                 evaluator_names=["relevance"],

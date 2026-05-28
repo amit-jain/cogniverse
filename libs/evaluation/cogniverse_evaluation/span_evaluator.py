@@ -96,8 +96,10 @@ class SpanEvaluator:
             )
 
             if spans_df is None or spans_df.empty:
-                logger.info("No spans found, using mock data")
-                return self._create_mock_spans_df()
+                # No traffic -> empty, never fabricated spans (QualityMonitor
+                # would persist them as live quality scores).
+                logger.info("No spans found for the window")
+                return pd.DataFrame()
 
             # Filter by operation name if specified
             if operation_name:
@@ -190,8 +192,7 @@ class SpanEvaluator:
 
         except Exception as e:
             logger.error(f"Error retrieving spans from Phoenix: {e}")
-            logger.info("Using mock span data for demonstration")
-            return self._create_mock_spans_df()
+            return pd.DataFrame()
 
     def _create_mock_spans_df(self) -> pd.DataFrame:
         """Create mock spans data for testing"""
