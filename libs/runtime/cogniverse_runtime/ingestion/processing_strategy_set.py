@@ -481,8 +481,11 @@ class ProcessingStrategySet:
         if "audio" in requirements:
             processor = processor_manager.get_processor("audio")
             if processor:
-                # Don't pass async cache to sync transcribe_audio — the cache
-                # methods are async coroutines and can't be called from sync code.
+                # TODO (multi-pod cache): the live path bypasses
+                # PipelineArtifactCache entirely. Wrap this call with an async
+                # cache check before and set after (Piece B in
+                # docs/development/pipeline-cache-multi-pod-todo.md), so sync
+                # extractors stay sync and the cache stays async.
                 result = await asyncio.to_thread(
                     processor.transcribe_audio,
                     video_path,
