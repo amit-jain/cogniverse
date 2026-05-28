@@ -422,3 +422,35 @@ def build_default_registry() -> KnowledgeRegistry:
         )
     )
     return registry
+
+
+SUMMARY_KIND = "knowledge_summary"
+
+
+def register_summary_kind(registry: "KnowledgeRegistry") -> None:
+    """Register the org-shared ``knowledge_summary`` kind on ``registry``.
+
+    This is the one kind eligible for org-trunk promotion: KnowledgeSummarizationAgent
+    produces it and the admin promote endpoint copies it into the trunk. Defined
+    once here so the producer and the promotion gate agree on its sensitivity.
+    """
+    if registry.is_registered(SUMMARY_KIND):
+        return
+    registry.register(
+        KnowledgeSchema(
+            kind=SUMMARY_KIND,
+            retention=Retention.PERMANENT,
+            sensitivity=Sensitivity.ORG_SHARED,
+            pinnable_by=Pinnable.TENANT_ADMIN,
+            provenance_required=True,
+            contradiction_policy=ContradictionPolicy.LATEST_WINS,
+            default_trust=0.7,
+        )
+    )
+
+
+def build_promotable_registry() -> KnowledgeRegistry:
+    """Default registry plus the org-shared kinds eligible for org-trunk promotion."""
+    registry = build_default_registry()
+    register_summary_kind(registry)
+    return registry

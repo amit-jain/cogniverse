@@ -38,17 +38,18 @@ from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.memory.federation import FederationService
 from cogniverse_core.memory.provenance import CitationRef
 from cogniverse_core.memory.schema import (
+    SUMMARY_KIND,
     KnowledgeRegistry,
     Pinnable,
     SchemaViolationError,
     build_default_registry,
+    register_summary_kind,
 )
 
 logger = logging.getLogger(__name__)
 
 
 _DEFAULT_PORT = 8026
-SUMMARY_KIND = "knowledge_summary"
 
 
 class KnowledgeSummarizationInput(AgentInput):
@@ -270,33 +271,13 @@ class KnowledgeSummarizationAgent(
         return {"text": "\n".join(lines)}
 
     def _ensure_summary_kind_registered(self) -> None:
-        """Register `knowledge_summary` when the registry doesn't already know it.
+        """Register the org-shared ``knowledge_summary`` kind if absent.
 
-        ``KnowledgeRegistry.get`` returns a safe-default schema for unknown
-        kinds (and that default is ``tenant_private`` — which would block
-        promotion). We must check ``is_registered`` and explicitly install
-        an ``org_shared`` schema for summaries.
+        The default registry marks every kind ``tenant_private``, which blocks
+        promotion; this installs the same org-shared schema the admin promote
+        endpoint expects (shared definition in ``schema.register_summary_kind``).
         """
-        if self._registry.is_registered(SUMMARY_KIND):
-            return
-        from cogniverse_core.memory.schema import (
-            ContradictionPolicy,
-            KnowledgeSchema,
-            Retention,
-            Sensitivity,
-        )
-
-        self._registry.register(
-            KnowledgeSchema(
-                kind=SUMMARY_KIND,
-                retention=Retention.PERMANENT,
-                sensitivity=Sensitivity.ORG_SHARED,
-                pinnable_by=Pinnable.TENANT_ADMIN,
-                provenance_required=True,
-                contradiction_policy=ContradictionPolicy.LATEST_WINS,
-                default_trust=0.7,
-            )
-        )
+        register_summary_kind(self._registry)
 
     def _kg_video_summaries(
         self, subject_keys: Optional[List[str]]

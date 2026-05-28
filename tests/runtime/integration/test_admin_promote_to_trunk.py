@@ -1,15 +1,12 @@
 """Admin promote-to-org-trunk endpoint.
 
-Federation was missing an admin endpoint: only the disabled-and-
-unreachable KnowledgeSummarizationAgent called
-FederationService.promote_to_org_trunk. Operators need to promote a
-tenant memory back to the trunk via a CLI or admin endpoint.
-
-This test exercises the new POST .../memories/{id}/promote_to_org_trunk
-endpoint end-to-end against real Vespa: tenant admin promotes a
-tenant_instruction memory; the org-trunk store gains a record carrying
-the promotion stamp; an org-shared kind succeeds while a tenant_private
-kind is rejected with 403.
+Exercises POST .../memories/{id}/promote_to_org_trunk end-to-end against real
+Vespa: a tenant admin promotes an org-shared ``knowledge_summary`` memory and
+the org-trunk store gains a record carrying the promotion stamp; a
+tenant_private kind is rejected with 403. The endpoint resolves promotable
+kinds through ``build_promotable_registry`` (which marks ``knowledge_summary``
+org-shared) — the default registry marks everything tenant_private, so a
+promote against it always 403s.
 """
 
 from __future__ import annotations
@@ -22,12 +19,13 @@ from fastapi.testclient import TestClient
 
 from cogniverse_core.memory.federation import org_trunk_tenant_id
 from cogniverse_core.memory.manager import Mem0MemoryManager
-from cogniverse_core.memory.schema import (
-    KnowledgeSchema,
-    Pinnable,
-    Sensitivity,
-    build_default_registry,
+from cogniverse_core.memory.provenance import (
+    CitationRef,
+    DerivationKind,
+    attach_to_metadata,
+    make_provenance,
 )
+from cogniverse_core.memory.schema import build_default_registry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
@@ -89,37 +87,10 @@ def trunk_setup(vespa_instance, shared_denseon, memory_manager):
 
 
 @pytest.fixture
-def promote_client(trunk_setup, vespa_instance, monkeypatch):
+def promote_client(trunk_setup, vespa_instance):
     tenant_mm, trunk_mm = trunk_setup
-    # Override the default registry's sensitivity for tenant_instruction
-    # so the promote endpoint's schema gate considers it org-shared.
-    # We do this by monkeypatching FederationService's lookup path —
-    # the runtime's build_default_registry returns a fresh registry per
-    # call; we patch the build to return a registry where the schema
-    # is mutated.
-
-    def _patched_registry():
-        reg = build_default_registry()
-        reg.register(
-            KnowledgeSchema(
-                kind="tenant_instruction",
-                sensitivity=Sensitivity.ORG_SHARED,
-                pinnable_by=Pinnable.TENANT_ADMIN,
-                provenance_required=False,
-                default_trust=0.95,
-            ),
-            replace=True,
-        )
-        return reg
-
-    monkeypatch.setattr(
-        "cogniverse_core.memory.schema.build_default_registry",
-        _patched_registry,
-    )
-    # Re-import the symbol the admin router uses lazily so the patch
-    # is in scope when the endpoint runs.
-    import cogniverse_runtime.routers.admin as _admin_mod  # noqa: F401
-
+    # No registry monkeypatch: the endpoint resolves promotable kinds through
+    # build_promotable_registry, where knowledge_summary is genuinely org-shared.
     app = FastAPI()
     app.include_router(admin.router, prefix="/admin")
     yield (
@@ -133,12 +104,22 @@ def promote_client(trunk_setup, vespa_instance, monkeypatch):
 class TestPromoteToOrgTrunk:
     def test_round_trip_promotion(self, promote_client):
         client, tenant_mm, trunk_mm, vespa_instance = promote_client
-        # Seed a tenant memory.
+        # Seed a tenant memory of the org-shared, promotable kind. knowledge_summary
+        # requires provenance, so attach a block (a real summary cites its sources).
+        meta = attach_to_metadata(
+            {"kind": "knowledge_summary"},
+            make_provenance(
+                written_by="agent:test",
+                derivation_kind=DerivationKind.SYNTHESIS,
+                confidence=0.9,
+                derived_from=[CitationRef.external("https://wiki/p21")],
+            ),
+        )
         mid = tenant_mm.add_memory(
             content="HOUSE_RULE_promote_me_h7",
             tenant_id=TENANT,
             agent_name="h7_promote",
-            metadata={"kind": "tenant_instruction"},
+            metadata=meta,
             infer=False,
         )
         assert mid
@@ -186,6 +167,26 @@ class TestPromoteToOrgTrunk:
         )
         assert meta.get("promoted_by") == "admin_alpha"
         assert meta.get("promoted_by_role") == "tenant_admin"
+
+    def test_tenant_private_kind_rejected_403(self, promote_client):
+        client, tenant_mm, _trunk_mm, _vi = promote_client
+        # tenant_instruction is tenant_private in build_promotable_registry, so
+        # the sensitivity gate must reject it (proves promotion isn't blanket-on).
+        mid = tenant_mm.add_memory(
+            content="HOUSE_RULE_private_h7",
+            tenant_id=TENANT,
+            agent_name="h7_promote",
+            metadata={"kind": "tenant_instruction"},
+            infer=False,
+        )
+        assert mid
+
+        resp = client.post(
+            f"/admin/tenants/{TENANT}/memories/{mid}/promote_to_org_trunk",
+            json={"actor_role": "tenant_admin", "actor_id": "admin_alpha"},
+        )
+        assert resp.status_code == 403, resp.text
+        assert "tenant_private" in resp.json()["detail"]
 
     def test_unknown_memory_returns_404(self, promote_client):
         client, _t, _tr, _vi = promote_client

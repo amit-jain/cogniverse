@@ -1260,7 +1260,7 @@ async def promote_to_org_trunk(
     )
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.memory.pinning import Pinnable
-    from cogniverse_core.memory.schema import build_default_registry
+    from cogniverse_core.memory.schema import build_promotable_registry
 
     if not body.actor_id.strip():
         raise HTTPException(400, "actor_id must be non-empty")
@@ -1291,7 +1291,7 @@ async def promote_to_org_trunk(
 
     svc = FederationService(
         memory_manager_factory=lambda tid: Mem0MemoryManager(tid),
-        registry=build_default_registry(),
+        registry=build_promotable_registry(),
     )
     try:
         result = svc.promote_to_org_trunk(
