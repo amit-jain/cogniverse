@@ -33,16 +33,26 @@ spec:
         command: ["/bin/bash", "-c"]
         args:
           - |
-            set -e
+            set -euo pipefail
             echo "Backing up Vespa data..."
 
             BACKUP_DATE=$(date +%Y%m%d)
             BACKUP_PATH="/backups/vespa-${BACKUP_DATE}.tar.gz"
 
-            # Create backup (requires Vespa backup tools)
-            echo "Creating Vespa backup..."
-            # Add actual Vespa backup command
-            # vespa-backup create --output $BACKUP_PATH
+            # In dev clusters VESPA_BACKUP_DESTINATION is unset and we
+            # short-circuit to a no-op so the CronWorkflow can run
+            # end-to-end without a real backup target. In production the
+            # env var points at the bucket / NFS mount and the visit
+            # snapshot streams into it via the Vespa HTTP API.
+            if [ -z "${VESPA_BACKUP_DESTINATION:-}" ]; then
+              echo "VESPA_BACKUP_DESTINATION unset; skipping snapshot."
+              exit 0
+            fi
+
+            VESPA_ENDPOINT="${VESPA_ENDPOINT:-http://vespa-svc:8080}"
+            curl -fsS -o "$BACKUP_PATH" \
+              "$VESPA_ENDPOINT/document/v1/?cluster=default&selection=true&continuation="
+            cp "$BACKUP_PATH" "$VESPA_BACKUP_DESTINATION/"
 
             echo "Vespa backup completed: $BACKUP_PATH"
         volumeMounts:
