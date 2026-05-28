@@ -629,8 +629,13 @@ class VespaSearchBackend(SearchBackend):
                 f"Profile '{profile_name}' cannot be used without tenant isolation."
             )
 
-        # Generate tenant-specific schema name (replace : with _ to match deployed schema names)
-        safe_tenant_id = tenant_id.replace(":", "_")
+        # Canonicalize tenant_id (e.g. "test_tenant" → "test_tenant:test_tenant") so the
+        # schema name matches the double-suffix form written by the ingestion/deploy path.
+        # Without this, "test_tenant" maps to "..._test_tenant" but the deployed schema
+        # is "..._test_tenant_test_tenant".
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        safe_tenant_id = canonical_tenant_id(tenant_id).replace(":", "_")
         schema_name = f"{base_schema_name}_{safe_tenant_id}"
         logger.info(
             f"[{correlation_id}] Applied tenant scoping: {base_schema_name} → {schema_name}"
