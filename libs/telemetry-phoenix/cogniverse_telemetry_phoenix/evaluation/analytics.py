@@ -7,7 +7,7 @@ including request statistics, response time analysis, and outlier detection.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -121,11 +121,22 @@ class PhoenixAnalytics:
                 status_code = span.get("status_code", "OK")
                 status = "success" if status_code in ["OK", "UNSET", None] else "error"
 
+                # Phoenix span start_time is UTC-aware when present. The dict
+                # ``.get(key, default)`` only fires the default when the key
+                # is MISSING — pandas stores nulls as ``NaT``, so a span row
+                # with a null start_time used to slip through as NaT and the
+                # downstream sort raised ``TypeError: can't compare offset-
+                # naive and offset-aware datetimes``. Handle both: missing
+                # key AND null value fall back to an aware UTC ``now()``.
+                start_ts = span.get("start_time")
+                if start_ts is None or pd.isna(start_ts):
+                    start_ts = datetime.now(timezone.utc)
+
                 metric = TraceMetrics(
                     trace_id=str(
                         span.get("trace_id", span.get("context.trace_id", ""))
                     ),
-                    timestamp=span.get("start_time", datetime.now()),
+                    timestamp=start_ts,
                     duration_ms=duration_ms,
                     operation=str(span.get("name", "unknown")),
                     status=status,
