@@ -56,8 +56,10 @@ class VespaEmbeddingProcessor:
                     "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
                 }
             elif raw_embeddings.ndim == 1:
-                # Global embeddings: (embedding_dim,) → treat as single patch
-                raw_embeddings = raw_embeddings.reshape(1, -1)
+                # Global embeddings: pass 1D array directly so _convert_to_float_dict
+                # sees ndim==1, sets is_1d_input=True, and returns a plain float list
+                # for single-vector schemas (e.g. agent_memories tensor<float>(d0[768])).
+                # Pre-reshaping to (1, N) here loses that signal and causes hex encoding.
                 return {
                     "embedding": self._convert_to_float_dict(raw_embeddings),
                     "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
