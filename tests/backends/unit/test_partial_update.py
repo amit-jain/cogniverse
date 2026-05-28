@@ -152,3 +152,33 @@ class TestVespaTimestampOnPartialUpdate:
             "fields"
         ]
         assert fields["created_at"] == 12345
+
+
+@pytest.mark.unit
+class TestYqlQuote:
+    """YQL ``contains "value"`` interpolations must escape ``\\`` and ``"`` or
+    a value with either character either breaks the query (HTTP 400) or opens
+    a YQL injection. ``yql_quote`` is the single shared escape used by the
+    search backend, adapter store, and config store."""
+
+    def test_plain_value_is_double_quoted(self):
+        from cogniverse_vespa._yql import yql_quote
+
+        assert yql_quote("plain") == '"plain"'
+
+    def test_double_quote_is_escaped(self):
+        from cogniverse_vespa._yql import yql_quote
+
+        # foo"bar -> "foo\"bar"
+        assert yql_quote('foo"bar') == '"foo\\"bar"'
+
+    def test_backslash_is_escaped(self):
+        from cogniverse_vespa._yql import yql_quote
+
+        # foo\bar -> "foo\\bar"
+        assert yql_quote("foo\\bar") == '"foo\\\\bar"'
+
+    def test_non_string_value_is_stringified(self):
+        from cogniverse_vespa._yql import yql_quote
+
+        assert yql_quote(42) == '"42"'

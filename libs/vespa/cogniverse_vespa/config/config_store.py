@@ -16,6 +16,7 @@ from cogniverse_sdk.interfaces.config_store import (
     ConfigStore,
 )
 from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ class VespaConfigStore(ConfigStore):
         # Use contains() for indexed string matching (avoids YQL colon parsing issues)
         yql = (
             f"select version from {self.schema_name} "
-            f'where config_id contains "{config_id}" '
+            f"where config_id contains {yql_quote(config_id)} "
             f"order by version desc limit 1"
         )
 
@@ -229,7 +230,7 @@ class VespaConfigStore(ConfigStore):
             return 0
         yql = (
             f"select version from {self.schema_name} "
-            f'where config_id contains "{config_id}" '
+            f"where config_id contains {yql_quote(config_id)} "
             f"order by version desc limit {keep + 100}"
         )
         try:
@@ -332,7 +333,7 @@ class VespaConfigStore(ConfigStore):
             # Get latest version
             yql = (
                 f"select * from {self.schema_name} "
-                f'where config_id contains "{config_id}" '
+                f"where config_id contains {yql_quote(config_id)} "
                 f"order by version desc limit 1"
             )
         else:
@@ -389,7 +390,7 @@ class VespaConfigStore(ConfigStore):
 
         yql = (
             f"select * from {self.schema_name} "
-            f'where config_id contains "{config_id}" '
+            f"where config_id contains {yql_quote(config_id)} "
             f"order by version desc limit {limit}"
         )
 
@@ -439,13 +440,13 @@ class VespaConfigStore(ConfigStore):
         """
         # Build YQL query with filters
         # Use contains() for indexed string matching (avoids YQL colon parsing issues)
-        conditions = [f'tenant_id contains "{tenant_id}"']
+        conditions = [f"tenant_id contains {yql_quote(tenant_id)}"]
 
         if scope is not None:
-            conditions.append(f'scope contains "{scope.value}"')
+            conditions.append(f"scope contains {yql_quote(scope.value)}")
 
         if service is not None:
-            conditions.append(f'service contains "{service}"')
+            conditions.append(f"service contains {yql_quote(service)}")
 
         where_clause = " and ".join(conditions)
 
@@ -640,7 +641,7 @@ class VespaConfigStore(ConfigStore):
         """
         if include_history:
             # Get all versions
-            yql = f'select * from {self.schema_name} where tenant_id contains "{tenant_id}" limit 400'
+            yql = f"select * from {self.schema_name} where tenant_id contains {yql_quote(tenant_id)} limit 400"
         else:
             # Get only latest versions
             configs = self.list_configs(tenant_id)

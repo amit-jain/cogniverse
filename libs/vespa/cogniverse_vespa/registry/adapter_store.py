@@ -12,6 +12,7 @@ from vespa.application import Vespa
 
 from cogniverse_sdk.interfaces.adapter_store import AdapterStore
 from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ class VespaAdapterStore(AdapterStore):
         Returns:
             Adapter metadata dict or None if not found
         """
-        yql = f'select * from {self.schema_name} where adapter_id contains "{adapter_id}" limit 1'
+        yql = f"select * from {self.schema_name} where adapter_id contains {yql_quote(adapter_id)} limit 1"
 
         try:
             response = self.vespa_app.query(yql=yql)
@@ -172,16 +173,16 @@ class VespaAdapterStore(AdapterStore):
         Returns:
             List of adapter metadata dicts
         """
-        conditions = [f'tenant_id contains "{tenant_id}"']
+        conditions = [f"tenant_id contains {yql_quote(tenant_id)}"]
 
         if agent_type:
-            conditions.append(f'agent_type contains "{agent_type}"')
+            conditions.append(f"agent_type contains {yql_quote(agent_type)}")
 
         if status:
-            conditions.append(f'status contains "{status}"')
+            conditions.append(f"status contains {yql_quote(status)}")
 
         if model_type:
-            conditions.append(f'model_type contains "{model_type}"')
+            conditions.append(f"model_type contains {yql_quote(model_type)}")
 
         where_clause = " and ".join(conditions)
         yql = f"select * from {self.schema_name} where {where_clause} limit {limit}"
@@ -214,8 +215,8 @@ class VespaAdapterStore(AdapterStore):
         """
         yql = (
             f"select * from {self.schema_name} "
-            f'where tenant_id contains "{tenant_id}" '
-            f'and agent_type contains "{agent_type}" '
+            f"where tenant_id contains {yql_quote(tenant_id)} "
+            f"and agent_type contains {yql_quote(agent_type)} "
             f"and is_active = 1 "
             f"limit 1"
         )

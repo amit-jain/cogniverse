@@ -33,6 +33,7 @@ from cogniverse_sdk.document import (
 )
 from cogniverse_sdk.interfaces.backend import SearchBackend
 from cogniverse_vespa._vespa_factory import make_vespa_app
+from cogniverse_vespa._yql import yql_quote
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +422,7 @@ class VespaSearchBackend(SearchBackend):
 
         # Uses Vespa's built-in document URI for matching (works across all schemas)
         doc_id_conditions = " OR ".join(
-            [f'id contains "{doc_id}"' for doc_id in document_ids]
+            [f"id contains {yql_quote(doc_id)}" for doc_id in document_ids]
         )
         yql = f"select * from {self.schema_name} where {doc_id_conditions}"
 
@@ -885,13 +886,13 @@ class VespaSearchBackend(SearchBackend):
             elif isinstance(value, str):
                 # String attributes use 'contains' for matching
                 # This works for string attributes in Vespa
-                conditions.append(f'{field_name} contains "{value}"')
+                conditions.append(f"{field_name} contains {yql_quote(value)}")
             elif isinstance(value, (int, float)):
                 # Numeric values use equality
                 conditions.append(f"{field_name} = {value}")
             else:
                 # For other types, convert to string and use contains
-                conditions.append(f'{field_name} contains "{str(value)}"')
+                conditions.append(f"{field_name} contains {yql_quote(str(value))}")
 
         return " AND ".join(conditions)
 
