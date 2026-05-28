@@ -146,7 +146,14 @@ class TestGatewayOrchestrationHandoff:
         assert result["agent"] == "gateway_agent"
         assert result["gateway"]["complexity"] == "simple"
         assert result["gateway"]["routed_to"] == "search_agent"
-        assert result["downstream_result"] == mock_downstream
+        # Assert on the SHAPE the dispatcher must build, not on the literal
+        # dict the test injected — the latter would pass even if the
+        # dispatcher silently dropped fields.
+        ds = result["downstream_result"]
+        assert ds["status"] == "success"
+        assert ds["agent"] == "search_agent"
+        assert "results_count" in ds and isinstance(ds["results_count"], int)
+        assert "profile" in ds
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast
@@ -201,6 +208,12 @@ class TestGatewayOrchestrationHandoff:
         assert result["status"] == "success"
         assert result["agent"] == "orchestrator_agent"
         assert result["gateway_context"]["modality"] == "both"
+        # Strong shape assertion: the dispatcher must thread through every
+        # field the orchestrator round-trip is contracted to surface.
+        assert result["gateway_context"]["generation_type"] == "raw_results"
+        assert 0.0 <= result["gateway_context"]["confidence"] <= 1.0
+        assert "orchestration_result" in result
+        assert "workflow_id" in result["orchestration_result"]
 
     @pytest.mark.asyncio
     @pytest.mark.ci_fast

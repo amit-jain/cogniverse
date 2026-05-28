@@ -133,9 +133,10 @@ class TestSummarizationFlow:
                 actor_id="alice",
             )
         )
-        # LM is stubbed in this fixture; assertion below verifies the
-        # non-LM branch (filter, count, citation assembly).
-        assert isinstance(out.summary, str)
+        # LM is stubbed in this fixture; assertions verify the non-LM branch
+        # (filter, count, citation assembly). Summary must be the stubbed LM
+        # output, not just "any string".
+        assert out.summary == "STUB_SUMMARY"
         assert out.source_count == 2
         assert {ref.ref_id for ref in out.citation_refs} == {"m1", "m2"}
 
@@ -213,9 +214,8 @@ class TestPromotion:
             )
         )
         # Promotion attempt was made but refused — summary still returned.
-        # LM is stubbed in this fixture; assertion below verifies the
-        # non-LM branch (filter, count, citation assembly).
-        assert isinstance(out.summary, str)
+        # Summary must be the stubbed LM output, not just "any string".
+        assert out.summary == "STUB_SUMMARY"
         assert out.promoted_to_org_trunk is False
         # Org trunk got nothing.
         assert promoted.get("acme:_org_trunk", []) == []
