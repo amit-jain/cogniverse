@@ -438,7 +438,19 @@ class KnowledgeSummarizationAgent(
 
     def _summarise_without_rlm(self, title: str, block: str) -> str:
         try:
-            result = self._dspy_module(title=title, memories=block)
+            # Bind the per-tenant LM the same way multi_document_synthesis does
+            # (see multi_document_synthesis_agent._synthesise_without_rlm). Without
+            # this wrap the call silently falls back to dspy.settings.lm — the
+            # global runtime LM or none at all on the standalone endpoint —
+            # ignoring the tenant's configured llm_config.
+            if self._llm_config is not None:
+                from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+                with dspy.context(lm=create_dspy_lm(self._llm_config)):
+                    result = self._dspy_module(title=title, memories=block)
+            else:
+                # No per-agent LM override — use ambient dspy.settings.lm.
+                result = self._dspy_module(title=title, memories=block)
             return getattr(result, "summary", "") or ""
         except Exception as exc:
             logger.warning("ksum: DSPy synth failed (%s); falling back to raw", exc)

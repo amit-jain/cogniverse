@@ -161,14 +161,21 @@ class TextAnalysisAgent(
         module = self.get_or_create_module("text_analysis")
 
         text = self.inject_context_into_prompt(text, text)
-        # Use the per-tenant LM that DynamicDSPyMixin built; without this the
-        # module silently falls back to dspy.settings.lm (the global runtime LM
-        # or none at all on the standalone endpoint), ignoring the tenant config.
+        # DynamicDSPyMixin.initialize_dynamic_dspy() always sets _dspy_lm; if
+        # this guard fires the agent was constructed without that init step
+        # (subclass error or partial test setup). Silently falling back to
+        # dspy.settings.lm would run against the global runtime LM (or none on
+        # a standalone endpoint), ignoring the tenant config — raise instead so
+        # the misconfiguration surfaces immediately.
         lm = getattr(self, "_dspy_lm", None)
-        if lm is not None:
-            with dspy.context(lm=lm):
-                result = module(text=text, analysis_type=analysis_type)
-        else:
+        if lm is None:
+            raise RuntimeError(
+                "TextAnalysisAgent._dspy_lm is not initialized; "
+                "call initialize_dynamic_dspy() before analyze_text(). "
+                "Silently falling back to dspy.settings.lm would ignore the "
+                "per-tenant LM configuration."
+            )
+        with dspy.context(lm=lm):
             result = module(text=text, analysis_type=analysis_type)
 
         return {

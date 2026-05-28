@@ -84,6 +84,13 @@ class TestTextAnalysisAgent:
         agent = TextAnalysisAgent(
             tenant_id="test_tenant", config_manager=config_manager_memory
         )
+        # DynamicDSPyMixin.initialize_dynamic_dspy is patched out above, so
+        # _dspy_lm would be unset and analyze_text would (correctly) raise.
+        # Production always has it set via DynamicDSPyMixin; attach a sentinel
+        # here so we exercise the analyze_text body. The per-tenant-lm contract
+        # itself is asserted in test_analyze_text_uses_per_tenant_lm and in
+        # tests/agents/unit/test_dspy_lm_context_binding.py.
+        agent._dspy_lm = MagicMock(name="stub_lm")
 
         # Mock the get_or_create_module method to return a mock module
         mock_module = MagicMock()
