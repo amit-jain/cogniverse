@@ -189,7 +189,7 @@ class VespaPyClient:
             self.logger.error(f"Failed to connect to Vespa: {e}")
             raise  # Re-raise for retry logic
 
-    def process(self, doc: Document) -> Dict[str, Any]:
+    def process(self, doc: Document, operation_type: str = "feed") -> Dict[str, Any]:
         """
         Convert universal Document to Vespa format.
 
@@ -205,7 +205,10 @@ class VespaPyClient:
 
         Args:
             doc: Universal Document with raw numpy embeddings
-            schema_name: Schema to use for this document (REQUIRED - no fallbacks)
+            operation_type: ``"feed"`` (full PUT — new document) or ``"update"``
+                (partial assign). On ``"update"`` an absent timestamp field is
+                omitted rather than stamped with now(), so a metadata-only
+                update does not overwrite the original creation time.
 
         Returns:
             Dict with Vespa document structure INCLUDING schema:
@@ -281,17 +284,20 @@ class VespaPyClient:
         # ``created_at`` to age memories synthetically, and any other
         # caller that wants a specific timestamp (re-ingest, migration,
         # backfill) shouldn't have it silently overwritten with now().
+        # On a partial update, an ABSENT timestamp must be omitted, not stamped:
+        # the partial-assign would otherwise overwrite the original creation
+        # time on every metadata-only update (e.g. mem0 memory updates).
         if "creation_timestamp" in self.schema_fields:
             ts = doc.metadata.get("creation_timestamp")
             if isinstance(ts, (int, float)):
                 fields["creation_timestamp"] = int(ts)
-            else:
+            elif operation_type == "feed":
                 fields["creation_timestamp"] = int(time.time() * 1000)
         elif "created_at" in self.schema_fields:
             ts = doc.metadata.get("created_at")
             if isinstance(ts, (int, float)):
                 fields["created_at"] = int(ts)
-            else:
+            elif operation_type == "feed":
                 fields["created_at"] = int(time.time())
 
         # Only add fields that exist in the schema definition

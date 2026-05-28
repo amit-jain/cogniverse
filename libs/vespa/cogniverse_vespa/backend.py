@@ -302,12 +302,15 @@ class VespaBackend(Backend):
         # Each client already knows its schema, no need to pass it
         prepared_docs = []
         for doc in documents:
-            prepared = client.process(doc)  # Client uses its own schema
+            # Pass operation_type so partial updates don't auto-stamp (and thus
+            # clobber) an absent timestamp field via the partial assign.
+            prepared = client.process(doc, operation_type=operation_type)
             prepared_docs.append(prepared)
 
         # Feed documents to Vespa
         success_count, failed_docs = client._feed_prepared_batch(
-            prepared_docs, operation_type=operation_type  # Client uses its own schema
+            prepared_docs,
+            operation_type=operation_type,  # Client uses its own schema
         )
 
         # Wait for documents to be visible in queries (handle Vespa's eventual consistency)

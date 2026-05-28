@@ -68,6 +68,53 @@ class TestVespaPartialUpdate:
         ok = backend.update_document("d1", MagicMock(), schema_name="s")
 
         assert ok is True
-        assert (
-            backend.ingest_documents.call_args.kwargs["operation_type"] == "update"
+        assert backend.ingest_documents.call_args.kwargs["operation_type"] == "update"
+
+
+@pytest.mark.unit
+class TestVespaTimestampOnPartialUpdate:
+    """process() stamped created_at unconditionally; on a partial update that
+    assign overwrote the original creation time on every metadata-only mem0
+    update. It must omit an absent timestamp on update, stamp it on a full
+    feed, and always honour a caller-supplied value.
+    """
+
+    def _memory_client(self):
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+
+        return VespaPyClient(
+            {
+                "schema_name": "agent_memories",
+                "url": "http://localhost",
+                "port": 8080,
+                "schema_loader": FilesystemSchemaLoader(Path("configs/schemas")),
+            }
         )
+
+    def _doc(self, **metadata):
+        from cogniverse_sdk.document import ContentType, Document
+
+        doc = Document(id="mem1", content_type=ContentType.TEXT, content_id="mem1")
+        for key, value in metadata.items():
+            doc.add_metadata(key, value)
+        return doc
+
+    def test_partial_update_omits_unset_created_at(self):
+        client = self._memory_client()
+        assert "created_at" in client.schema_fields  # guards the branch under test
+        fields = client.process(self._doc(), operation_type="update")["fields"]
+        # Omitted -> the partial assign leaves the stored created_at untouched.
+        assert "created_at" not in fields
+
+    def test_full_feed_stamps_created_at(self):
+        client = self._memory_client()
+        fields = client.process(self._doc(), operation_type="feed")["fields"]
+        assert isinstance(fields["created_at"], int)
+        assert fields["created_at"] > 0
+
+    def test_caller_supplied_created_at_honoured_on_update(self):
+        client = self._memory_client()
+        fields = client.process(self._doc(created_at=12345), operation_type="update")[
+            "fields"
+        ]
+        assert fields["created_at"] == 12345
