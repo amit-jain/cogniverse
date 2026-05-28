@@ -94,8 +94,15 @@ class VespaEmbeddingProcessor:
                     processed[key] = value
             return processed
         else:
-            # Unknown format - pass through
-            return raw_embeddings
+            # Pre-fix: silently returned ``raw_embeddings`` as-is. Downstream
+            # ``"embedding" in raw_embeddings`` then raised ``TypeError:
+            # argument of type 'int' is not iterable`` (or similar) far from
+            # the source. Reject up-front with the actual type so the bad
+            # caller is visible in the traceback.
+            raise TypeError(
+                f"Unsupported embedding payload type: {type(raw_embeddings).__name__}. "
+                "Expected numpy.ndarray, dict of arrays, or None."
+            )
 
     def _convert_to_float_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to Vespa float format.
@@ -128,6 +135,16 @@ class VespaEmbeddingProcessor:
         is_1d_input = embeddings.ndim == 1
         if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
+
+        # Reject NaN / Inf rather than silently binarizing them to 0. ``NaN >
+        # 0`` is False in numpy, so a corrupted upstream embedding used to be
+        # accepted into the index as an all-zero (or partly-zero) bitmap with
+        # no signal that anything went wrong.
+        if not np.all(np.isfinite(embeddings)):
+            raise ValueError(
+                "Embeddings contain non-finite values (NaN / Inf); "
+                "refusing to binarize. Check the upstream encoder output."
+            )
 
         # Binarize: positive values -> 1, negative/zero -> 0
         binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)

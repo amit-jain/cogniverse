@@ -12,6 +12,16 @@ from __future__ import annotations
 
 
 def yql_quote(value: object) -> str:
-    """Return a YQL-safe double-quoted string literal for ``value``."""
+    """Return a YQL-safe double-quoted string literal for ``value``.
+
+    Escapes ``\\``, ``"``, embedded newlines, carriage returns, and the
+    NUL byte. The first two are mandatory for the literal to round-trip
+    through Vespa's YQL parser; the others are defensive against
+    user-controlled inputs that could otherwise break the line-oriented
+    YQL framing or smuggle a NUL into the index.
+    """
     s = str(value)
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    s = s.replace("\\", "\\\\").replace('"', '\\"')
+    s = s.replace("\n", "\\n").replace("\r", "\\r")
+    s = s.replace("\x00", "\\0")
+    return '"' + s + '"'

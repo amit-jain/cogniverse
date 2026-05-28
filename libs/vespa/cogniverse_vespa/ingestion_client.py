@@ -25,6 +25,31 @@ from cogniverse_vespa._vespa_factory import make_vespa_app
 from .embedding_processor import VespaEmbeddingProcessor
 from .strategy_aware_processor import StrategyAwareProcessor
 
+# Unix-epoch ms / s magnitude bands for sanity-checking caller stamps.
+# Anything outside [1970-01-01, 2100-01-01] is almost certainly a unit
+# confusion (seconds passed as ms, or vice versa) — reject loudly rather
+# than write a 1970 document to the index.
+_MIN_MS_EPOCH = 0
+_MAX_MS_EPOCH = 4_102_444_800_000  # 2100-01-01 UTC in ms
+_MIN_S_EPOCH = 0
+_MAX_S_EPOCH = 4_102_444_800  # 2100-01-01 UTC in s
+
+
+def _validate_ms_timestamp(ts: float, field: str) -> None:
+    if ts < _MIN_MS_EPOCH or ts > _MAX_MS_EPOCH:
+        raise ValueError(
+            f"{field}={ts!r} is outside [0, year-2100] in milliseconds. "
+            "Did you pass seconds by mistake? Vespa stores this field in ms."
+        )
+
+
+def _validate_s_timestamp(ts: float, field: str) -> None:
+    if ts < _MIN_S_EPOCH or ts > _MAX_S_EPOCH:
+        raise ValueError(
+            f"{field}={ts!r} is outside [0, year-2100] in seconds. "
+            "Did you pass milliseconds by mistake? Vespa stores this field in s."
+        )
+
 
 class VespaPyClient:
     """
@@ -289,13 +314,15 @@ class VespaPyClient:
         # time on every metadata-only update (e.g. mem0 memory updates).
         if "creation_timestamp" in self.schema_fields:
             ts = doc.metadata.get("creation_timestamp")
-            if isinstance(ts, (int, float)):
+            if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+                _validate_ms_timestamp(ts, "creation_timestamp")
                 fields["creation_timestamp"] = int(ts)
             elif operation_type == "feed":
                 fields["creation_timestamp"] = int(time.time() * 1000)
         elif "created_at" in self.schema_fields:
             ts = doc.metadata.get("created_at")
-            if isinstance(ts, (int, float)):
+            if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+                _validate_s_timestamp(ts, "created_at")
                 fields["created_at"] = int(ts)
             elif operation_type == "feed":
                 fields["created_at"] = int(time.time())
