@@ -6,6 +6,7 @@ Human-in-the-loop approval interface for synthetic data generation
 and other AI outputs requiring human review.
 """
 
+import asyncio
 import logging
 from typing import Dict
 
@@ -214,8 +215,6 @@ def _persist_decision(decision: ReviewDecision, item) -> None:
     caller mutates session state so a persistence failure surfaces instead
     of silently dropping the decision.
     """
-    import asyncio
-
     storage = st.session_state.get("approval_storage")
     if storage is None:
         raise RuntimeError("approval storage not initialized")
@@ -390,10 +389,16 @@ def _render_statistics_tab():
 
 
 def _load_pending_items():
-    """Load pending items from approval storage"""
+    """Load pending items from the persisted approval store."""
     try:
-        # In production, this would query Phoenix storage
-        # For now, use mock data if available from synthetic generation
+        agent = st.session_state.get("approval_agent")
+        if agent is not None:
+            tenant_id = st.session_state.get("current_tenant")
+            context_filter = {"tenant_id": tenant_id} if tenant_id else None
+            items = asyncio.run(agent.get_pending_items(context_filter))
+            st.session_state.pending_items = items
+            st.success(f"Loaded {len(items)} pending items")
+            return
 
         if "last_generated_batch" in st.session_state:
             batch = st.session_state.last_generated_batch
