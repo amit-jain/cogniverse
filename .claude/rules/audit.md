@@ -94,6 +94,50 @@ grep -rn "vespa_client\..*_data\|self.app\..*_data" libs/ | head
 
 # Sort by version as plain string (5th audit — lexical 1.9.0 > 1.10.0)
 grep -rn "sort.*version\b\|sorted(.*\.version" libs/
+
+# Substring-vs-token schema/model name match (6th audit — "lvt" in name.lower()
+# collapses a multi-vector ndarray to its first row on any future schema whose
+# name contains the substring; pair with case-inconsistent siblings like
+# `"_sv_" in name` vs `"lvt" in name.lower()`)
+grep -rnP '"_sv_" in\b|"_mv_" in\b|"[a-z]{2,4}" in [^.]*\.lower\(\)' libs/
+
+# Document v1 selection-expression interpolation — same injection hazard as
+# YQL `contains "..."` but in the visit/selection path (6th audit)
+grep -rnP '\.tenant_id=="\{[^}]*\}"|\.user_id=="\{[^}]*\}"|=="\{self\._' libs/
+
+# Naive datetime explicitly passed to a query window kwarg (6th audit found
+# 14+ sites regressed; the bare `datetime.now()` regex above is noisy, this
+# narrower variant scopes to the call site)
+grep -rnP "start_time\s*=\s*datetime\.now\(\)|end_time\s*=\s*datetime\.now\(\)" libs/
+
+# Fire-and-forget asyncio.create_task — task reference dropped, CPython may
+# GC the coroutine before it runs (6th audit, agent_dispatcher + telemetry)
+grep -rnP "^\s*asyncio\.create_task\(" libs/
+
+# Streamlit naive date/time input combined into a datetime without tz attach
+# (6th audit — st.date_input/st.time_input return naive)
+grep -rn "st\.date_input\|st\.time_input\|datetime\.combine(" libs/dashboard/
+
+# float() coercion of an LM/predictor output field without try/except
+# (6th audit — `"high"` / `"85%"` returned by real LMs crashes the route)
+grep -rn "float(result\.\|float(prediction\.\|float(out\." libs/agents/
+
+# isinstance(_, (int, float)) used to gate a timestamp without magnitude check
+# (6th audit — seconds-vs-milliseconds confusion lands a document at 1970)
+grep -rn "isinstance(.*, (int, float))" libs/vespa/ libs/core/
+
+# Standalone-agent FastAPI app routes — `__main__`-launchable but bypassed by
+# the unified runtime dispatcher; HIGH risk of untested-surface (6th audit
+# Class B: search_agent / summarizer_agent / detailed_report_agent)
+grep -rnP "^@app\.(post|get|put|delete)" libs/agents/
+
+# Streamlit render-tab entry points (one per tabs/*.py) — confirm at least one
+# streamlit-testing-library test invokes each (6th audit found 12 untested)
+grep -rnP "^def render_.*_tab" libs/dashboard/
+
+# Local _escape helpers that handle only `"` and miss `\` — use yql_quote
+# from libs/vespa/cogniverse_vespa/_yql.py which handles both (6th audit)
+grep -rnP 'def _escape\(.*\).*->\s*str|\.replace\(.*\\"' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
