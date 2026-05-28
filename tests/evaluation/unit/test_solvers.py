@@ -198,89 +198,192 @@ class TestRetrievalSolver:
         assert result is not None
 
 
+def _populated_traces_df():
+    """A two-row spans DataFrame matching the columns the solver reads."""
+    import pandas as pd
+
+    return pd.DataFrame(
+        [
+            {
+                "trace_id": "trace-a",
+                "attributes.input.value": "what is a quark",
+                "attributes.output.value": ["v1", "v2"],
+                "attributes.metadata.profile": "frame_based_colpali",
+                "attributes.metadata.strategy": "binary_binary",
+                "attributes.metadata": {"profile": "frame_based_colpali"},
+                "timestamp": "2026-01-01T00:00:00Z",
+                "duration_ms": 1100,
+            },
+            {
+                "trace_id": "trace-b",
+                "attributes.input.value": "explain entanglement",
+                "attributes.output.value": ["v3"],
+                "attributes.metadata.profile": "videoprism_global",
+                "attributes.metadata.strategy": "float_float",
+                "attributes.metadata": {"profile": "videoprism_global"},
+                "timestamp": "2026-01-01T00:00:30Z",
+                "duration_ms": 900,
+            },
+        ]
+    )
+
+
+def _seed_solver_provider(monkeypatch, df):
+    """Patch the solver's provider + ground-truth + search-service so the
+    happy path executes against a populated DataFrame instead of the
+    autouse empty-DF mock from conftest."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_provider = MagicMock()
+    mock_provider.telemetry = MagicMock()
+    mock_provider.telemetry.traces = MagicMock()
+
+    async def _spans(**_kwargs):
+        return df
+
+    mock_provider.telemetry.traces.get_spans = AsyncMock(side_effect=_spans)
+
+    monkeypatch.setattr(
+        "cogniverse_evaluation.providers.get_evaluation_provider",
+        lambda: mock_provider,
+    )
+
+    fake_strategy = MagicMock()
+
+    async def _extract(trace_data, _backend):
+        return {
+            "expected_items": [f"gt-{trace_data['trace_id']}"],
+            "confidence": 0.9,
+            "source": "fixture",
+        }
+
+    fake_strategy.extract_ground_truth = AsyncMock(side_effect=_extract)
+    monkeypatch.setattr(
+        "cogniverse_evaluation.core.ground_truth.get_ground_truth_strategy",
+        lambda *_a, **_kw: fake_strategy,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "cogniverse_agents.search.service.SearchService",
+        lambda *_a, **_kw: MagicMock(backend=MagicMock()),
+        raising=False,
+    )
+    return mock_provider
+
+
 class TestBatchSolver:
-    """Test batch solver for Phoenix traces."""
+    """Batch solver loads + ground-truth-enriches traces from Phoenix."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_trace_loader_with_ids(self, mock_phoenix_client):
-        """Test loading specific trace IDs."""
-        solver = create_batch_solver(trace_ids=["trace1", "trace2"], config={})
+    async def test_trace_loader_with_ids_loads_exact_matches(self, monkeypatch):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_batch_solver(trace_ids=["trace-a"], config={})
 
         state = Mock()
         state.outputs = {}
         state.metadata = {}
-        generate = Mock()
+        result = await solver(state, Mock())
 
-        result = await solver(state, generate)
-
-        assert result is not None
+        assert [t["trace_id"] for t in result.metadata["loaded_traces"]] == ["trace-a"]
+        loaded = result.metadata["loaded_traces"][0]
+        for key in (
+            "trace_id",
+            "query",
+            "results",
+            "profile",
+            "strategy",
+            "timestamp",
+            "duration_ms",
+            "metadata",
+            "ground_truth",
+            "ground_truth_confidence",
+            "ground_truth_source",
+        ):
+            assert key in loaded
+        assert loaded["ground_truth"] == ["gt-trace-a"]
+        assert loaded["ground_truth_confidence"] == 0.9
+        assert loaded["ground_truth_source"] == "fixture"
+        stats = result.metadata["ground_truth_stats"]
+        assert stats["total_traces"] == 1
+        assert stats["traces_with_ground_truth"] == 1
+        assert stats["average_confidence"] == 0.9
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_trace_loader_recent_traces(self, mock_phoenix_client):
-        """Test loading recent traces."""
+    async def test_trace_loader_recent_traces_loads_full_set(self, monkeypatch):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
         solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
 
         state = Mock()
         state.outputs = {}
         state.metadata = {}
-        generate = Mock()
+        result = await solver(state, Mock())
 
-        result = await solver(state, generate)
-
-        assert result is not None
+        ids = sorted(t["trace_id"] for t in result.metadata["loaded_traces"])
+        assert ids == ["trace-a", "trace-b"]
+        stats = result.metadata["ground_truth_stats"]
+        assert stats["total_traces"] == 2
+        assert stats["traces_with_ground_truth"] == 2
+        assert stats["average_confidence"] == 0.9
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_trace_loader_empty_result(self, mock_phoenix_client):
-        """Test handling empty trace results."""
+    async def test_trace_loader_empty_result_short_circuits_with_no_data(
+        self, monkeypatch
+    ):
+        import pandas as pd
+
+        _seed_solver_provider(monkeypatch, pd.DataFrame())
         solver = create_batch_solver(trace_ids=None, config={"hours_back": 1})
 
         state = Mock()
         state.outputs = {}
         state.metadata = {}
-        generate = Mock()
+        result = await solver(state, Mock())
 
-        result = await solver(state, generate)
-
-        assert result is not None
-        assert len(result.outputs) == 0
+        assert result.output.completion == "No traces found"
+        assert "loaded_traces" not in result.metadata
 
 
 class TestLiveSolver:
-    """Test live solver for real-time traces."""
+    """Live solver collects bounded iterations."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_live_trace_solver_continuous(self, mock_phoenix_client):
-        """Test continuous polling for new traces."""
-        with patch("asyncio.sleep") as mock_sleep:
-            mock_sleep.side_effect = [None, KeyboardInterrupt()]
-
-            solver = create_live_solver(config={"poll_interval": 1, "continuous": True})
-
-            state = Mock()
-            state.outputs = {}
-            state.metadata = {}
-            generate = Mock()
-
-            try:
-                await solver(state, generate)
-            except KeyboardInterrupt:
-                pass
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_live_trace_solver_single_poll(self, mock_phoenix_client):
-        """Test single poll mode."""
-        solver = create_live_solver(config={"continuous": False})
+    async def test_single_poll_collects_documented_trace_data_shape(
+        self, monkeypatch
+    ):
+        _seed_solver_provider(monkeypatch, _populated_traces_df())
+        solver = create_live_solver(
+            config={"continuous": False, "max_iterations": 1, "poll_interval": 0}
+        )
 
         state = Mock()
         state.outputs = {}
         state.metadata = {}
-        generate = Mock()
+        result = await solver(state, Mock())
 
-        result = await solver(state, generate)
+        traces = result.metadata["live_traces"]
+        assert [t["trace_id"] for t in traces] == ["trace-a", "trace-b"]
+        for t in traces:
+            assert set(t.keys()) >= {"trace_id", "query", "results", "timestamp"}
+        assert "2" in result.output.completion
 
-        assert result is not None
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_bounded_iteration_count_does_not_hang_on_empty_polls(
+        self, monkeypatch
+    ):
+        import pandas as pd
+
+        _seed_solver_provider(monkeypatch, pd.DataFrame())
+        solver = create_live_solver(
+            config={"continuous": False, "max_iterations": 3, "poll_interval": 0}
+        )
+
+        state = Mock()
+        state.outputs = {}
+        state.metadata = {}
+        result = await solver(state, Mock())
+        assert result.metadata["live_traces"] == []
