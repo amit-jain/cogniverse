@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -287,7 +288,7 @@ class DeepResearchAgent(
         gaps = result.gaps
         if isinstance(gaps, str):
             gaps = [g.strip() for g in gaps.split("\n") if g.strip()]
-        confidence = float(result.confidence) if result.confidence else 0.5
+        confidence = parse_confidence(result.confidence, default=0.5)
 
         return sufficient, gaps, confidence
 

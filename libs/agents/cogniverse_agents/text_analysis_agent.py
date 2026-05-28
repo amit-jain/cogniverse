@@ -10,6 +10,7 @@ import dspy
 import uvicorn
 from fastapi import FastAPI
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_mixin import A2AEndpointsMixin
 from cogniverse_core.agents.tenant_aware_mixin import TenantAwareAgentMixin
@@ -180,7 +181,7 @@ class TextAnalysisAgent(
 
         return {
             "result": result.result,
-            "confidence": float(result.confidence) if result.confidence else 0.0,
+            "confidence": parse_confidence(result.confidence, default=0.0),
             "module_type": self.config.module_config.module_type.value,
             "analysis_type": analysis_type,
         }
