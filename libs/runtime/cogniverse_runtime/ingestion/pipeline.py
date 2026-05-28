@@ -680,6 +680,9 @@ class VideoIngestionPipeline:
         if "document_files" in results:
             video_data["document_files"] = results["document_files"]
             return video_data
+        elif "code_files" in results:
+            video_data["code_files"] = results["code_files"]
+            return video_data
         elif "audio_files" in results:
             video_data["audio_files"] = results["audio_files"]
             if "transcript" in results:

@@ -1333,3 +1333,138 @@ class TestModelLoaderFactoryModelLoader:
             ModelLoaderFactory.create_loader(
                 "some-model", {"model_loader": "bogus"}, None
             )
+
+
+class _StubColbert:
+    """Minimal ColBERT stand-in: returns a multi-vector (T, 128) per text."""
+
+    def encode(self, texts, is_query=False):
+        return [np.random.rand(6, 128).astype(np.float32) for _ in texts]
+
+
+class _CapturingBackend:
+    """Records the Documents fed so they can be run through the prod mapping."""
+
+    def __init__(self):
+        self.docs = []
+        self.schema_name = None
+
+    def ingest_documents(self, docs, schema_name):
+        self.docs.extend(docs)
+        self.schema_name = schema_name
+        return {"success_count": len(docs)}
+
+
+@pytest.mark.integration
+class TestCodeSegmentIngestion:
+    """Code ingestion (`cogniverse index --type code`, schema code_lateon_mv).
+
+    Guards the CRIT that crashed pipeline construction (code_file unhandled)
+    and the cross-layer drop that yielded zero documents: code chunks must
+    flow dispatch -> _extract_segments -> _process_code_segments -> Documents
+    whose fields map onto the real code schema (validated via the production
+    VespaPyClient.process mapping — a field-name mismatch would 400 on Vespa).
+    """
+
+    CODE_SCHEMA = "code_lateon_mv"
+
+    def _make_generator(self, backend):
+        config = {
+            "schema_name": self.CODE_SCHEMA,
+            "embedding_model": "lightonai/LateOn-Code-edge",
+            "model_loader": "colpali",  # lazy — skip model load at init
+            "storage_mode": "multi_doc",
+        }
+        gen = EmbeddingGeneratorImpl(config, Mock(), backend)
+        gen.colbert_model = _StubColbert()
+        return gen
+
+    def test_extract_segments_returns_code_files(self):
+        gen = self._make_generator(_CapturingBackend())
+        segs = [{"document_id": "m_foo_1", "extracted_text": "def foo(): pass"}]
+        assert gen._extract_segments({"code_files": segs}) == segs
+
+    def test_dispatch_maps_code_chunks_onto_code_schema(self, tmp_path):
+        backend = _CapturingBackend()
+        gen = self._make_generator(backend)
+        segments = [
+            {
+                "document_id": "mymodule_foo_1",
+                "file_index": 0,
+                "path": "/x/mymodule.py",
+                "filename": "mymodule.py",
+                "document_type": "py",
+                "extracted_text": "def foo():\n    return 1",
+                "text_length": 22,
+                "chunk_type": "function",
+                "chunk_name": "foo",
+                "signature": "def foo()",
+                "line_start": 1,
+                "line_end": 2,
+                "language": "python",
+            },
+            {
+                "document_id": "mymodule_Bar_5",
+                "file_index": 0,
+                "path": "/x/mymodule.py",
+                "filename": "mymodule.py",
+                "document_type": "py",
+                "extracted_text": "class Bar:\n    pass",
+                "text_length": 18,
+                "chunk_type": "class",
+                "chunk_name": "Bar",
+                "signature": "class Bar",
+                "line_start": 5,
+                "line_end": 6,
+                "language": "python",
+            },
+        ]
+        video_data = {
+            "video_id": "mymodule",
+            "video_path": "/x/mymodule.py",
+            "code_files": segments,
+        }
+
+        result = gen.generate_embeddings(video_data, tmp_path)
+
+        # Dispatch reached _process_code_segments and fed every chunk.
+        assert result.documents_processed == 2
+        assert result.documents_fed == 2
+        assert result.errors == []
+        assert backend.schema_name == self.CODE_SCHEMA
+        assert len(backend.docs) == 2
+
+        # Validate each Document through the production field mapping against
+        # the REAL code schema (no Vespa server needed; mismatch -> 400 in prod).
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_vespa.ingestion_client import VespaPyClient
+
+        schemas_dir = Path(__file__).resolve().parents[3] / "configs" / "schemas"
+        client = VespaPyClient(
+            {
+                "schema_name": self.CODE_SCHEMA,
+                "url": "http://localhost",
+                "port": 8080,
+                "schema_loader": FilesystemSchemaLoader(schemas_dir),
+            }
+        )
+        by_name = {}
+        for doc in backend.docs:
+            fields = client.process(doc)["fields"]
+            by_name[fields["chunk_name"]] = fields
+
+        foo = by_name["foo"]
+        assert foo["code_id"] == "mymodule_foo_1"
+        assert foo["file_path"] == "/x/mymodule.py"
+        assert foo["chunk_type"] == "function"
+        assert foo["language"] == "python"
+        assert foo["signature"] == "def foo()"
+        assert foo["source_code"] == "def foo():\n    return 1"
+        assert foo["line_start"] == 1
+        assert foo["line_end"] == 2
+        assert "embedding" in foo
+
+        bar = by_name["Bar"]
+        assert bar["code_id"] == "mymodule_Bar_5"
+        assert bar["chunk_type"] == "class"
+        assert bar["source_code"] == "class Bar:\n    pass"

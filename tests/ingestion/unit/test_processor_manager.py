@@ -265,6 +265,19 @@ class TestProcessorManager:
         assert keyframe_proc.param_a == "custom_value"
         assert audio_proc.param_b == 30
 
+    def test_code_file_is_strategy_handled_not_unknown(self, manager):
+        """Regression: code_file is handled directly by ProcessingStrategySet
+        (no processor plugin), so it must be in _STRATEGY_HANDLED_TYPES. Before
+        the fix, building any code profile (e.g. code_lateon_mv) raised
+        'Unknown processor type: code_file' at pipeline construction."""
+        assert "code_file" in manager._STRATEGY_HANDLED_TYPES
+        # Must skip gracefully rather than raise ValueError.
+        manager._init_from_requirements(
+            {"code_file": {"languages": ["python"], "max_files": 10}}
+        )
+        # No code_file processor plugin exists — the strategy handles it.
+        assert not manager.has_processor("code_file")
+
 
 class TestProcessorManagerIntegration:
     """Integration tests for ProcessorManager."""

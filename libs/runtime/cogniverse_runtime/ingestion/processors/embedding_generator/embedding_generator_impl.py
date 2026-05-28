@@ -148,6 +148,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         if "document_files" in video_data:
             result = self._process_document_segments(video_data, segments)
+        elif "code_files" in video_data:
+            result = self._process_code_segments(video_data, segments)
         elif "audio_files" in video_data:
             result = self._process_audio_segments(video_data, segments)
         else:
@@ -177,9 +179,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         - 'chunks' (chunk-based)
         - 'video_chunks' (chunk-based alternative)
         - 'document_files' (document content)
+        - 'code_files' (source-code chunks)
         - 'audio_files' (audio content)
         """
-        for key in ["document_files", "audio_files"]:
+        for key in ["document_files", "code_files", "audio_files"]:
             if key in video_data:
                 return video_data[key]
 
@@ -418,6 +421,87 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             except Exception as e:
                 self.logger.error(f"Error processing document {idx}: {e}")
                 errors.append(f"Document {idx}: {str(e)}")
+
+        return EmbeddingResult(
+            video_id=content_id,
+            total_documents=len(segments),
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={"num_documents": len(segments)},
+        )
+
+    def _process_code_segments(
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process source-code chunks: encode the chunk text with ColBERT, build
+        Documents whose metadata matches the code schema fields, feed to backend.
+
+        Each ``segment`` is an AST chunk from CodeSegmentationStrategy carrying
+        ``extracted_text`` (the chunk source) plus ``chunk_name``/``chunk_type``/
+        ``signature``/``line_start``/``line_end``/``language`` — mapped onto the
+        ``code_*`` schema fields (code_id, file_path, chunk_name, chunk_type,
+        language, signature, line_start, line_end, source_code).
+        """
+        content_id = video_data.get("video_id", "unknown")
+
+        if not self.colbert_model:
+            self._load_model()
+        if not self.colbert_model:
+            raise RuntimeError(
+                f"ColBERT model not loaded for code embedding. "
+                f"Expected embedding_model containing 'colbert', got: {self.model_name!r}"
+            )
+
+        documents_processed = 0
+        documents_fed = 0
+        errors = []
+
+        for idx, seg in enumerate(segments):
+            try:
+                text = seg.get("extracted_text", "")
+                if not text.strip():
+                    raise ValueError(
+                        f"Code chunk {seg.get('document_id', idx)!r} has no source text."
+                    )
+
+                token_embeddings = self.colbert_model.encode(
+                    [text[:8192]], is_query=False
+                )[0]
+                embeddings_np = np.array(token_embeddings, dtype=np.float32)
+
+                self.logger.info(
+                    f"  💻 Code chunk {seg.get('chunk_name', idx)}: "
+                    f"embeddings shape={embeddings_np.shape}"
+                )
+
+                doc = Document(
+                    id=f"{content_id}_{seg.get('document_id', idx)}",
+                    content_type=ContentType.TEXT,
+                    content_id=content_id,
+                    status=ProcessingStatus.COMPLETED,
+                )
+                doc.add_embedding(
+                    "embedding", embeddings_np, {"type": "float", "raw": True}
+                )
+                doc.add_metadata("code_id", seg.get("document_id", ""))
+                doc.add_metadata("file_path", seg.get("path", ""))
+                doc.add_metadata("chunk_name", seg.get("chunk_name", ""))
+                doc.add_metadata("chunk_type", seg.get("chunk_type", ""))
+                doc.add_metadata("language", seg.get("language", ""))
+                doc.add_metadata("signature", seg.get("signature", ""))
+                doc.add_metadata("line_start", int(seg.get("line_start", 0)))
+                doc.add_metadata("line_end", int(seg.get("line_end", 0)))
+                doc.add_metadata("source_code", text)
+
+                documents_processed += 1
+                if self._feed_document(doc):
+                    documents_fed += 1
+
+            except Exception as e:
+                self.logger.error(f"Error processing code chunk {idx}: {e}")
+                errors.append(f"Code chunk {idx}: {str(e)}")
 
         return EmbeddingResult(
             video_id=content_id,
