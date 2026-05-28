@@ -57,40 +57,23 @@ ingestion_jobs: Dict[str, IngestionStatus] = {}
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
 def get_config_manager_dependency():
+    """FastAPI dependency for ConfigManager.
+
+    Overridden in main.py via ``app.dependency_overrides``. A missing
+    override means the runtime is mid-startup or partially wired; surface
+    a 503 so clients can retry rather than the default 500.
     """
-    FastAPI dependency for ConfigManager.
-
-    This function should be overridden in main.py using app.dependency_overrides.
-    If not overridden, it raises an error to fail fast.
-
-    Returns:
-        ConfigManager instance
-
-    Raises:
-        RuntimeError: If not overridden via app.dependency_overrides
-    """
-    raise RuntimeError(
-        "ConfigManager dependency not configured. "
-        "Override this dependency in main.py using app.dependency_overrides."
+    raise HTTPException(
+        status_code=503,
+        detail="ConfigManager dependency not configured; service initialising",
     )
 
 
 def get_schema_loader_dependency() -> SchemaLoader:
-    """
-    FastAPI dependency for SchemaLoader.
-
-    This function should be overridden in main.py using app.dependency_overrides.
-    If not overridden, it raises an error to fail fast.
-
-    Returns:
-        SchemaLoader instance
-
-    Raises:
-        RuntimeError: If not overridden via app.dependency_overrides
-    """
-    raise RuntimeError(
-        "SchemaLoader dependency not configured. "
-        "Override this dependency in main.py using app.dependency_overrides."
+    """FastAPI dependency for SchemaLoader. Same semantics as above."""
+    raise HTTPException(
+        status_code=503,
+        detail="SchemaLoader dependency not configured; service initialising",
     )
 
 

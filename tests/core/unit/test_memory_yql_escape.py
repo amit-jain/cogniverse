@@ -5,9 +5,8 @@ escape ``\\`` AND ``"`` — a value ending in ``\\`` with only the quote
 escaped corrupts the closing literal (the backslash escapes the close
 quote, Vespa returns 400, the surrounding ``try`` swallows it to ``[]``).
 
-The shape mirrors ``cogniverse_vespa._yql.yql_quote``; these tests assert
-the exact byte output for each character so a future regression cannot
-quietly drop the backslash branch again.
+The shape mirrors ``cogniverse_vespa._yql.yql_quote``; assertions are on
+the exact byte output for each character.
 """
 
 from __future__ import annotations

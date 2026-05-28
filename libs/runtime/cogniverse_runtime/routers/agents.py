@@ -112,13 +112,19 @@ def _build_artifact_manager_factory():
 
 
 def _ensure_dispatcher() -> AgentDispatcher:
-    """Lazily create the dispatcher once registry + deps are wired."""
+    """Lazily create the dispatcher once registry + deps are wired.
+
+    A partial-startup call (lifespan hasn't finished wiring the registry
+    or config_manager yet) surfaces as a 503, not the default 500 from a
+    naked ``RuntimeError``.
+    """
     global _dispatcher
     if _dispatcher is not None:
         return _dispatcher
     if _agent_registry is None or _config_manager is None or _schema_loader is None:
-        raise RuntimeError(
-            "Agent dependencies not configured. Runtime not fully initialized."
+        raise HTTPException(
+            status_code=503,
+            detail="Agent dependencies not configured; runtime initialising",
         )
     _dispatcher = AgentDispatcher(
         agent_registry=_agent_registry,

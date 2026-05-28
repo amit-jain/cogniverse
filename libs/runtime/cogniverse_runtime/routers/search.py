@@ -25,28 +25,27 @@ router = APIRouter()
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
 def get_config_manager_dependency() -> ConfigManager:
-    """
-    FastAPI dependency for ConfigManager.
+    """FastAPI dependency for ConfigManager.
 
-    This function should be overridden in main.py using app.dependency_overrides.
-    If not overridden, it raises an error to fail fast.
+    Overridden in main.py via ``app.dependency_overrides``. If the override
+    is missing the runtime is mid-startup or partially wired; surface a 503
+    so clients retry rather than a 500 (uncaught ``RuntimeError`` would
+    bubble to FastAPI's default 500 handler).
     """
-    raise RuntimeError(
-        "ConfigManager dependency not configured. "
-        "Override this dependency in main.py using app.dependency_overrides."
+    raise HTTPException(
+        status_code=503,
+        detail="ConfigManager dependency not configured; service initialising",
     )
 
 
 def get_schema_loader_dependency() -> SchemaLoader:
-    """
-    FastAPI dependency for SchemaLoader.
+    """FastAPI dependency for SchemaLoader.
 
-    This function should be overridden in main.py using app.dependency_overrides.
-    If not overridden, it raises an error to fail fast.
+    Same partial-startup semantics as ``get_config_manager_dependency``.
     """
-    raise RuntimeError(
-        "SchemaLoader dependency not configured. "
-        "Override this dependency in main.py using app.dependency_overrides."
+    raise HTTPException(
+        status_code=503,
+        detail="SchemaLoader dependency not configured; service initialising",
     )
 
 

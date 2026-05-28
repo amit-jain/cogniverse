@@ -18,9 +18,7 @@ try/except, so the outer log line now includes the HTTP status and the
 response body — actionable signal for operators.
 
 These tests mock pyvespa's response object directly (the CONTRACT side
-of the boundary, not the SUT side). A future real-Vespa integration
-test that sends intentionally bad YQL would be the strongest version
-of this check.
+of the boundary, not the SUT side).
 """
 
 from __future__ import annotations
