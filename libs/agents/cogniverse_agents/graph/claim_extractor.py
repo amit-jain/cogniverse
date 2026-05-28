@@ -159,11 +159,16 @@ class ClaimExtractor:
         self,
         artifact_manager: Optional[Any] = None,
         rlm_promotion_chars: int = RLM_PROMOTION_TOKENS,
+        llm_config: Optional[Any] = None,
     ) -> None:
         self._artifact_manager = artifact_manager
         self._rlm_promotion_chars = rlm_promotion_chars
         self._cot_module: Optional[dspy.ChainOfThought] = None
         self._rlm_module: Optional[dspy.RLM] = None
+        # When set, every module invocation runs inside ``dspy.context(lm=...)``
+        # bound from this config. None means the call falls through to the
+        # ambient ``dspy.settings.lm`` (the worker-startup default).
+        self._llm_config = llm_config
 
     def extract(
         self,
@@ -210,6 +215,15 @@ class ClaimExtractor:
         # surface text. The first multi-word capitalized name in
         # ``entity_hints`` is the heuristic antecedent (usually a Person).
         text_for_lm = _resolve_leading_pronoun(text, entity_hints)
+        if self._llm_config is not None:
+            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+            with dspy.context(lm=create_dspy_lm(self._llm_config)):
+                return module(
+                    text_segment=text_for_lm,
+                    entity_hints=entity_hints,
+                    modality_hint=modality_hint,
+                )
         return module(
             text_segment=text_for_lm,
             entity_hints=entity_hints,

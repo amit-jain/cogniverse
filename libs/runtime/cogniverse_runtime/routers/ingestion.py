@@ -580,7 +580,8 @@ async def _extract_graph_per_segment_inner(
     mgr = graph_router._graph_manager_factory(tenant_id)
 
     claim_extractor = ClaimExtractor(
-        artifact_manager=_lookup_artifact_manager(tenant_id, config_manager)
+        artifact_manager=_lookup_artifact_manager(tenant_id, config_manager),
+        llm_config=_resolve_tenant_llm_config(tenant_id, config_manager),
     )
     doc_ext = DocExtractor(claim_extractor=claim_extractor)
 
@@ -708,6 +709,27 @@ async def _extract_graph_per_segment_inner(
         "edges_upserted": counts.get("edges_upserted", 0),
         "backrefs_by_segment": backrefs_by_segment,
     }
+
+
+def _resolve_tenant_llm_config(tenant_id: str, config_manager: ConfigManager):
+    """Resolve the per-tenant LLM endpoint config for DSPy module dispatch.
+
+    ``ClaimExtractor`` runs ``dspy.context(lm=create_dspy_lm(llm_config))``
+    when a config is supplied; otherwise it falls through to the
+    worker-startup ``dspy.settings.lm``. Resolution mirrors the pattern
+    used by ``knowledge.py::_runtime_primary_llm_config`` but consults
+    the tenant's own ``llm_config.primary`` first, then falls back to
+    the system primary, then to ``None``.
+    """
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.config.utils import get_config
+
+    for tid in (tenant_id, "__system__"):
+        cfg = get_config(tenant_id=tid, config_manager=config_manager)
+        endpoint = cfg.get("llm_config", {}).get("primary")
+        if endpoint:
+            return LLMEndpointConfig(**endpoint)
+    return None
 
 
 def _lookup_artifact_manager(tenant_id: str, config_manager: ConfigManager):
