@@ -1,27 +1,26 @@
 """Regression test for VespaBackend.query_metadata_documents
 status_code handling.
 
-Audit finding #4: pyvespa does NOT raise on a non-2xx response — it
-returns a response object with ``.status_code`` set and ``.json``
-holding the error body. The pre-fix code path read
-``results.json.get("root", {}).get("children", [])`` directly, which
-evaluates to ``[]`` on a 4xx error body, so the function silently
-returned an empty list. Callers (``BackendVectorStore.list``,
-``ProvenanceStore.fetch``, the admin tenant routes) cannot distinguish
-"no matches" from "Vespa rejected the query."
+pyvespa does NOT raise on a non-2xx response — it returns a response
+object with ``.status_code`` set and ``.json`` holding the error body.
+The pre-fix code path read ``results.json.get("root", {}).get("children",
+[])`` directly, which evaluates to ``[]`` on a 4xx error body, so the
+function silently returned an empty list. Callers (``BackendVectorStore.
+list``, ``ProvenanceStore.fetch``, the admin tenant routes) cannot
+distinguish "no matches" from "Vespa rejected the query."
 
 Siblings ``get_metadata_document`` (returns ``None``) and
 ``delete_metadata_document`` (returns ``False``) both check
 ``status_code``; ``query_metadata_documents`` was the odd one out.
 
-The fix raises ``RuntimeError`` on non-2xx inside the method's
-existing try/except, so the outer log line now includes the HTTP
-status and the response body — actionable signal for operators.
+The fix raises ``RuntimeError`` on non-2xx inside the method's existing
+try/except, so the outer log line now includes the HTTP status and the
+response body — actionable signal for operators.
 
-These tests mock pyvespa's response object directly (the CONTRACT
-side of the boundary, not the SUT side). A future real-Vespa
-integration test that sends intentionally bad YQL would be the
-strongest version of this check.
+These tests mock pyvespa's response object directly (the CONTRACT side
+of the boundary, not the SUT side). A future real-Vespa integration
+test that sends intentionally bad YQL would be the strongest version
+of this check.
 """
 
 from __future__ import annotations

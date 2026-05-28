@@ -1,14 +1,12 @@
 """Regression test for PhoenixAnalytics.get_traces timestamp default.
 
-Audit finding #11: `analytics.py:128` defaulted to `datetime.now()`
-(NAIVE) when a span lacked `start_time`. Phoenix's own span timestamps
-are UTC-aware, so any subsequent sort/compare across the resulting
-TraceMetrics list raised
-``TypeError: can't compare offset-naive and offset-aware datetimes``.
-
-The fix uses ``datetime.now(timezone.utc)`` so every TraceMetrics in
-the returned list has a timezone-aware ``timestamp`` regardless of
-which spans the upstream Phoenix call returned.
+``analytics.get_traces`` defaulted to ``datetime.now()`` (NAIVE) when a
+span lacked ``start_time``. Phoenix's own span timestamps are UTC-aware,
+so any subsequent sort/compare across the resulting TraceMetrics list
+raised ``TypeError: can't compare offset-naive and offset-aware
+datetimes``. The fix uses ``datetime.now(timezone.utc)`` so every
+TraceMetrics in the returned list has a timezone-aware ``timestamp``
+regardless of which spans the upstream Phoenix call returned.
 """
 
 from __future__ import annotations

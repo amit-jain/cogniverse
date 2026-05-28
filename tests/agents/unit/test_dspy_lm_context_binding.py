@@ -1,14 +1,14 @@
 """Regression tests for per-tenant DSPy LM context binding.
 
-Audit findings #5 and #6: two sites invoked a DSPy module without an
-enclosing ``dspy.context(lm=...)`` wrap, so the call silently fell
-back to ``dspy.settings.lm`` (the global runtime LM or none on a
-standalone endpoint), ignoring the tenant's configured LM:
+Two sites invoked a DSPy module without an enclosing
+``dspy.context(lm=...)`` wrap, so the call silently fell back to
+``dspy.settings.lm`` (the global runtime LM or none on a standalone
+endpoint), ignoring the tenant's configured LM:
 
   * ``knowledge_summarization_agent._summarise_without_rlm`` — built
     ``_llm_config`` in ``__init__`` then dropped it on the non-RLM
-    happy path. The sibling ``multi_document_synthesis_agent``
-    wraps correctly; that's the reference shape.
+    happy path. The sibling ``multi_document_synthesis_agent`` wraps
+    correctly; that's the reference shape.
 
   * ``text_analysis_agent.analyze_text`` — when ``_dspy_lm`` is
     ``None``, the ``else`` branch invoked the module without context.
@@ -16,10 +16,10 @@ standalone endpoint), ignoring the tenant's configured LM:
     constructed agent surfaces immediately instead of running against
     the wrong global LM.
 
-The tests below verify the wrap happens (knowledge_summarization)
-and that the misconfig is surfaced (text_analysis) by stubbing the
-DSPy module + create_dspy_lm boundary. The contract being asserted
-is the LM-binding code path, not the LM's own behavior.
+Tests verify the wrap happens (knowledge_summarization) and that the
+misconfig is surfaced (text_analysis) by stubbing the DSPy module +
+``create_dspy_lm`` boundary. The contract being asserted is the
+LM-binding code path, not the LM's own behavior.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ class TestTextAnalysisAgentLMGuard:
         return agent
 
     def test_missing_dspy_lm_raises_runtime_error(self) -> None:
-        """The else-branch fallback was the audit's #6 — fix is to raise."""
+        """Missing ``_dspy_lm`` must raise, not silently use the global LM."""
         agent = self._make_agent_without_dspy_lm()
         # Patch the surrounding helpers so we reach the LM guard cleanly.
         with patch.object(
