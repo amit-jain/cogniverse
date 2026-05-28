@@ -194,8 +194,12 @@ class MultiDocumentSynthesisAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
+        from cogniverse_agents._llm_resolution import resolve_llm_config
+
         self._config_manager = config_manager
-        self._llm_config = llm_config
+        # Fall back to the system primary LM via config_manager when no
+        # explicit llm_config was passed.
+        self._llm_config = resolve_llm_config(llm_config, config_manager)
         self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
 
     def synthesize(self, query: str) -> Dict[str, List[Dict[str, Any]]]:

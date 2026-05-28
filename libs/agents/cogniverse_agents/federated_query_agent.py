@@ -165,10 +165,15 @@ class FederatedQueryAgent(
         super().__init__(deps=deps, config=config)
         from cogniverse_agents._mm_factory import make_mm_factory
 
+        from cogniverse_agents._llm_resolution import resolve_llm_config
+
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()
         self._mm_factory = make_mm_factory(memory_manager_factory)
-        self._llm_config = llm_config
+        # Fall back to the system primary LM via config_manager when no
+        # explicit llm_config was passed; gives the constructor param a real
+        # consumer instead of being a dead injection point.
+        self._llm_config = resolve_llm_config(llm_config, config_manager)
         self._graph_managers: Dict[str, "GraphManager"] = {}
 
     def set_graph_managers(self, graph_managers: Dict[str, "GraphManager"]) -> None:
