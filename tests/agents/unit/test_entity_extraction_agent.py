@@ -177,6 +177,15 @@ class TestEntityExtractionAgent:
         assert entities[0].confidence == 0.7  # Default confidence
         assert entities[1].confidence == 0.7
 
+    def test_parse_entities_label_and_percent_confidence(self, entity_agent):
+        """LM may emit confidence as a label or percent string. parse_confidence
+        maps "high"->0.9 and "85%"->0.85 instead of defaulting to 0.7."""
+        entities_str = "Obama|PERSON|high\nChicago|PLACE|85%"
+        entities = entity_agent._parse_entities(entities_str, "Obama in Chicago")
+
+        assert entities[0].confidence == 0.9
+        assert entities[1].confidence == 0.85
+
     def test_parse_entities_empty(self, entity_agent):
         """Test parsing empty entity string"""
         entities = entity_agent._parse_entities("", "test query")

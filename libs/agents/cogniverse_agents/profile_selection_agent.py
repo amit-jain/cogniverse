@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import BaseModel, Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -305,10 +306,7 @@ class ProfileSelectionAgent(
         # Parse confidence. DSPy can return None for any output field when the
         # LM response fails to parse — substitute safe defaults so the response
         # schema holds.
-        try:
-            confidence = float(result.confidence)
-        except (ValueError, AttributeError, TypeError):
-            confidence = 0.5
+        confidence = parse_confidence(getattr(result, "confidence", None), default=0.5)
 
         selected_profile = result.selected_profile or (
             profiles[0] if isinstance(profiles, list) and profiles else "default"

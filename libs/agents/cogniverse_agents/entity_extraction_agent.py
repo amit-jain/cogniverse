@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import dspy
 from pydantic import BaseModel, Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -439,13 +440,8 @@ class EntityExtractionAgent(
                     # Handle "(text)" format
                     if "(" in confidence_str:
                         confidence_str = confidence_str.split("(")[0].strip()
-                    # Try to parse as float
-                    try:
-                        confidence = float(confidence_str)
-                        # Clamp to [0, 1] range
-                        confidence = max(0.0, min(1.0, confidence))
-                    except (ValueError, AttributeError):
-                        confidence = 0.7  # Fallback
+                    # Handles floats, "85%", and label words; clamps to [0, 1]
+                    confidence = parse_confidence(confidence_str, default=0.7)
 
                 # Extract context (5 words before/after)
                 context = self._extract_context(text, query)

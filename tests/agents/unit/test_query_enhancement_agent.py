@@ -138,6 +138,27 @@ class TestQueryEnhancementAgent:
         assert result.confidence == 0.85
 
     @pytest.mark.asyncio
+    async def test_process_label_confidence_maps_to_band(self, query_agent):
+        """Label confidence ("high") from a real LM maps to the 0.9 band via
+        parse_confidence, not the 0.7 crash-default of the old float() path."""
+        query_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                enhanced_query="machine learning tutorials",
+                expansion_terms="deep learning",
+                synonyms="ML",
+                context="beginner",
+                confidence="high",
+                reasoning="Expanded",
+            )
+        )
+
+        result = await query_agent._process_impl(
+            QueryEnhancementInput(query="ML tutorials", tenant_id=TEST_TENANT_ID)
+        )
+
+        assert result.confidence == 0.9
+
+    @pytest.mark.asyncio
     async def test_process_empty_query(self, query_agent):
         """Test processing empty query"""
         result = await query_agent._process_impl(

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
@@ -238,7 +239,7 @@ class AnnotationAgent:
         if not chosen_agent or confidence is None or not query:
             return None
 
-        confidence = float(confidence)
+        confidence = parse_confidence(confidence)
         span_id = span_row.get("context.span_id", "")
         timestamp = span_row.get("start_time")
         if isinstance(timestamp, str):

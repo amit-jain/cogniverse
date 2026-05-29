@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import dspy
 from pydantic import Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -322,10 +323,7 @@ class QueryEnhancementAgent(
         ]
 
         # Parse confidence
-        try:
-            confidence = float(result.confidence)
-        except (ValueError, AttributeError, TypeError):
-            confidence = 0.7
+        confidence = parse_confidence(getattr(result, "confidence", None), default=0.7)
 
         # DSPy may return None for any output field when the LM response is
         # unparseable — substitute safe fallbacks so the response schema holds.

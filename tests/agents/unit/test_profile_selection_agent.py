@@ -158,6 +158,27 @@ class TestProfileSelectionAgent:
         assert result.complexity == "medium"
 
     @pytest.mark.asyncio
+    async def test_process_label_confidence_maps_to_band(self, profile_agent):
+        """A real LM may emit confidence as a label ("high"). It must map to
+        the 0.9 band via parse_confidence, not crash and default to 0.5."""
+        profile_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                selected_profile="video_colpali_base",
+                confidence="high",
+                reasoning="Best match",
+                query_intent="video_search",
+                modality="video",
+                complexity="medium",
+            )
+        )
+
+        result = await profile_agent._process_impl(
+            ProfileSelectionInput(query="Show me videos")
+        )
+
+        assert result.confidence == 0.9
+
+    @pytest.mark.asyncio
     async def test_process_empty_query(self, profile_agent):
         """Test processing empty query"""
         result = await profile_agent._process_impl(ProfileSelectionInput(query=""))
