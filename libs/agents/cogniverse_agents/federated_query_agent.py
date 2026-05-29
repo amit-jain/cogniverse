@@ -163,9 +163,8 @@ class FederatedQueryAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
-        from cogniverse_agents._mm_factory import make_mm_factory
-
         from cogniverse_agents._llm_resolution import resolve_llm_config
+        from cogniverse_agents._mm_factory import make_mm_factory
 
         self._config_manager = config_manager
         self._registry = registry or build_default_registry()

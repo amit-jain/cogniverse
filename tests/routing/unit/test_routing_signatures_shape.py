@@ -27,7 +27,6 @@ from cogniverse_agents.routing.dspy_routing_signatures import (
     UnifiedExtractionReformulationSignature,
 )
 
-
 pytestmark = pytest.mark.unit
 
 

@@ -11,8 +11,8 @@ the instance and logs the error path at WARNING.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from cogniverse_agents.gateway_agent import GatewayAgent

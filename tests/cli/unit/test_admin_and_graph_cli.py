@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import io
 
+import cogniverse_cli.admin as admin_cli
+import cogniverse_cli.graph as graph_cli
 import httpx
 import pytest
 from rich.console import Console
-
-import cogniverse_cli.admin as admin_cli
-import cogniverse_cli.graph as graph_cli
 
 
 @pytest.fixture(autouse=True)
