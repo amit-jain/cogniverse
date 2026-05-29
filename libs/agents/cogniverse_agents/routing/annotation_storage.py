@@ -7,7 +7,7 @@ Reuses common evaluation patterns from cogniverse_evaluation.span_evaluator.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from cogniverse_agents.routing.llm_auto_annotator import AnnotationLabel, AutoAnnotation
@@ -286,10 +286,11 @@ class RoutingAnnotationStorage:
             Dictionary with annotation statistics
         """
         try:
-            # Query recent annotations (last 30 days)
+            # Query recent annotations (last 30 days). UTC-aware so the Phoenix
+            # window is not shifted by the host's local offset.
             from datetime import timedelta
 
-            end_time = datetime.now()
+            end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(days=30)
 
             annotated_spans = await self.query_annotated_spans(
