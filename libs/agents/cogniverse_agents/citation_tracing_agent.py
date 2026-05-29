@@ -146,9 +146,7 @@ class CitationTracingAgent(
 ):
     """Read-only A2A agent that surfaces citation chains via ProvenanceWalker."""
 
-    def __init__(
-        self, deps: CitationTracingDeps, config_manager=None, port: int = 8019
-    ):
+    def __init__(self, deps: CitationTracingDeps, port: int = 8019):
         config = A2AAgentConfig(
             agent_name="citation_tracing_agent",
             agent_description=(
@@ -163,7 +161,6 @@ class CitationTracingAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
-        self._config_manager = config_manager
 
     def trace(self, claim_id: str) -> Dict[str, Any]:
         """Walk an Edge (claim) back to its grounding Mention(s).

@@ -173,7 +173,6 @@ class ContradictionReconciliationAgent(
         self,
         deps: ContradictionReconciliationDeps,
         registry: Optional[KnowledgeRegistry] = None,
-        config_manager=None,
         port: int = 8020,
     ):
         config = A2AAgentConfig(
@@ -190,7 +189,6 @@ class ContradictionReconciliationAgent(
             port=port,
         )
         super().__init__(deps=deps, config=config)
-        self._config_manager = config_manager
         self._registry = registry or build_default_registry()
 
     def detect(self, node_name: str, predicate: str) -> Dict[str, Dict[str, Any]]:
