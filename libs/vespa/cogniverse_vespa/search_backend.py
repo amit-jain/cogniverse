@@ -317,7 +317,6 @@ class VespaSearchBackend(SearchBackend):
             config_manager: ConfigManager for dependency injection
             schema_loader: SchemaLoader for dependency injection
         """
-        self._config_manager = config_manager
         self._schema_loader = schema_loader
 
         # Lock guards runtime mutation of self.profiles / self.default_profiles
@@ -379,7 +378,6 @@ class VespaSearchBackend(SearchBackend):
         self.schema_name = config.get("schema_name")
         self.profile = config.get("profile")
         self.query_encoder = None
-        self._config_manager = config.get("config_manager")
 
         # Populate profiles/default_profiles from config. Earlier versions
         # of initialize() dropped these on the floor, so any caller that

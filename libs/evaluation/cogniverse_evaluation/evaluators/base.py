@@ -59,19 +59,12 @@ def create_evaluation_result(
     )
 
 
-# For backward compatibility, provide a class that inherits from provider's evaluator
 class Evaluator:
     """
     Generic evaluator base class that delegates to provider's evaluator.
 
     Subclasses should implement the evaluate method.
     """
-
-    def __init__(self):
-        from cogniverse_evaluation.providers import get_evaluation_provider
-
-        provider = get_evaluation_provider()
-        self._provider_evaluator_class = provider.framework.get_evaluator_base_class()
 
     def __init_subclass__(cls, **kwargs):
         """

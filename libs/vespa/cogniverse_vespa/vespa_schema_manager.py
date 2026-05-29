@@ -31,8 +31,9 @@ class VespaSchemaManager:
         Args:
             backend_endpoint: Backend endpoint URL (REQUIRED)
             backend_port: Backend port number (REQUIRED)
-            schema_loader: SchemaLoader instance (optional, needed for tenant schema operations)
-            schema_registry: SchemaRegistry instance (optional, needed for tenant schema operations)
+            schema_loader: Accepted for call-site compatibility but unused;
+                schema operations resolve through schema_registry.
+            schema_registry: SchemaRegistry instance (needed for tenant schema operations)
 
         Raises:
             ValueError: If required parameters are None
@@ -44,7 +45,6 @@ class VespaSchemaManager:
 
         self.backend_endpoint = backend_endpoint
         self.backend_port = backend_port
-        self._schema_loader = schema_loader
         self._schema_registry = schema_registry
         self._logger = logging.getLogger(self.__class__.__name__)
 

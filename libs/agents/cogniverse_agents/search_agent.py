@@ -540,7 +540,6 @@ class SearchAgent(
 
         # Store dependencies for use in initialization
         self.schema_loader = schema_loader
-        self._config_manager = config_manager
 
         # Note: MemoryAwareMixin is initialized via cooperative inheritance
         # in super().__init__() call later. Memory will be initialized after
