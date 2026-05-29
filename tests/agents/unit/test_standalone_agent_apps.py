@@ -14,7 +14,6 @@ initialised happy path (a mocked agent singleton).
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -37,11 +36,6 @@ def detailed_report_client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(dr_module, "detailed_report_agent", None)
     yield TestClient(dr_module.app)
     monkeypatch.setattr(dr_module, "detailed_report_agent", None)
-
-
-# ---------------------------------------------------------------------------
-# summarizer_agent app
-# ---------------------------------------------------------------------------
 
 
 def test_summarizer_health_initializing_when_no_singleton(
@@ -108,11 +102,6 @@ def test_summarizer_process_happy_path_returns_envelope(
     assert body["thinking_process"]["reasoning"] == "because"
 
 
-# ---------------------------------------------------------------------------
-# detailed_report_agent app
-# ---------------------------------------------------------------------------
-
-
 def test_detailed_report_health_initializing_when_no_singleton(
     detailed_report_client: TestClient,
 ) -> None:
@@ -158,11 +147,6 @@ def test_detailed_report_agent_card_skills_empty_when_no_singleton(
     # When the singleton is missing the card returns an empty skills list
     # rather than 500ing.
     assert body["skills"] == []
-
-
-# ---------------------------------------------------------------------------
-# search_agent app
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
