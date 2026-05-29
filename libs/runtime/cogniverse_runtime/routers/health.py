@@ -17,26 +17,44 @@ router = APIRouter()
 
 
 @router.get("/health")
-async def health_check() -> Dict[str, Any]:
-    """Health check endpoint with system status."""
-    config_manager = create_default_config_manager()
-    backend_registry = BackendRegistry.get_instance()
-    # Health probe is cluster-wide (no per-tenant filtering) — use
-    # SYSTEM_TENANT_ID for the registry lookup.
-    agent_registry = AgentRegistry(
-        tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-    )
+async def health_check() -> Any:
+    """Health check endpoint with system status.
+
+    Returns 503 (not 500) when the service cannot assemble its health view —
+    e.g. a missing BACKEND_URL makes create_default_config_manager raise. A
+    monitoring probe should read this as unhealthy, not as a server crash.
+    """
+    try:
+        config_manager = create_default_config_manager()
+        backend_registry = BackendRegistry.get_instance()
+        # Health probe is cluster-wide (no per-tenant filtering) — use
+        # SYSTEM_TENANT_ID for the registry lookup.
+        agent_registry = AgentRegistry(
+            tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
+        )
+        backends = backend_registry.list_backends()
+        agents = agent_registry.list_agents()
+    except Exception as exc:
+        logger.warning("Health check could not assemble system status: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "service": "cogniverse-runtime",
+                "reason": str(exc),
+            },
+        )
 
     return {
         "status": "healthy",
         "service": "cogniverse-runtime",
         "backends": {
-            "registered": len(backend_registry.list_backends()),
-            "backends": backend_registry.list_backends(),
+            "registered": len(backends),
+            "backends": backends,
         },
         "agents": {
-            "registered": len(agent_registry.list_agents()),
-            "agents": agent_registry.list_agents(),
+            "registered": len(agents),
+            "agents": agents,
         },
     }
 

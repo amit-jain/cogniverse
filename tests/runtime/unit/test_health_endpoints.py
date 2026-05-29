@@ -130,3 +130,20 @@ class TestHealthCheckFull:
         assert "backends" in data["backends"]
         assert "registered" in data["agents"]
         assert "agents" in data["agents"]
+
+    @patch("cogniverse_runtime.routers.health.create_default_config_manager")
+    def test_health_returns_503_not_500_on_config_error(
+        self, mock_create_cm, health_client
+    ):
+        """A config failure (e.g. unset BACKEND_URL) must surface as 503
+        unhealthy, not a 500 server crash a probe reads as an outage bug."""
+        mock_create_cm.side_effect = ValueError(
+            "BACKEND_URL environment variable is required"
+        )
+
+        resp = health_client.get("/health")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["status"] == "unhealthy"
+        assert data["service"] == "cogniverse-runtime"
+        assert "BACKEND_URL" in data["reason"]
