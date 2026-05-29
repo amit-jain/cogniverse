@@ -257,6 +257,40 @@ def get_agent(tenant_id: str) -> TextAnalysisAgent:
     return _agent_instances.get_or_set(tenant_id, _build)
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    return {
+        "status": "healthy" if _config_manager is not None else "initializing",
+        "agent": "text_analysis_agent",
+        "capabilities": [
+            "text_analysis",
+            "sentiment",
+            "summarization",
+            "entity_extraction",
+        ],
+    }
+
+
+@app.get("/agent.json")
+async def get_agent_card():
+    """Agent card with capabilities."""
+    return {
+        "name": "TextAnalysisAgent",
+        "description": "Text analysis with runtime-configurable DSPy modules",
+        "url": "/analyze",
+        "version": "1.0.0",
+        "protocol": "a2a",
+        "protocol_version": "0.2.1",
+        "capabilities": [
+            "text_analysis",
+            "sentiment",
+            "summarization",
+            "entity_extraction",
+        ],
+    }
+
+
 @app.post("/analyze")
 async def analyze_text_endpoint(
     text: str, tenant_id: str, analysis_type: str = "summary"

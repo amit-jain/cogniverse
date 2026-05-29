@@ -215,3 +215,130 @@ def test_search_agent_card(search_client: TestClient) -> None:
     assert body["name"] == "SearchAgent"
     assert body["protocol"] == "a2a"
     assert "multi_modal_search" in body["capabilities"]
+
+
+def test_summarizer_summarize_happy_path_envelope(
+    summarizer_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    fake.summarize = AsyncMock(
+        return_value=MagicMock(
+            summary="condensed",
+            key_points=["p1"],
+            visual_insights=["v1"],
+            confidence_score=0.7,
+            metadata={"k": "v"},
+        )
+    )
+    monkeypatch.setattr(sm_module, "summarizer_agent", fake)
+    r = summarizer_client.post(
+        "/summarize",
+        params={"query": "what happened?"},
+        json=[{"id": "r1"}],
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body == {
+        "summary": "condensed",
+        "key_points": ["p1"],
+        "visual_insights": ["v1"],
+        "confidence_score": 0.7,
+        "metadata": {"k": "v"},
+    }
+
+
+def test_detailed_report_generate_happy_path_envelope(
+    detailed_report_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    fake.generate_report = AsyncMock(
+        return_value=MagicMock(
+            executive_summary="exec",
+            detailed_findings="findings",
+            visual_analysis="visual",
+            technical_details="tech",
+            recommendations=["do x"],
+            confidence_assessment="high",
+            metadata={"m": 1},
+        )
+    )
+    monkeypatch.setattr(dr_module, "detailed_report_agent", fake)
+    r = detailed_report_client.post(
+        "/generate_report",
+        params={"query": "analyze"},
+        json=[{"id": "r1"}],
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["executive_summary"] == "exec"
+    assert body["recommendations"] == ["do x"]
+    assert body["confidence_assessment"] == "high"
+    assert set(body.keys()) == {
+        "executive_summary",
+        "detailed_findings",
+        "visual_analysis",
+        "technical_details",
+        "recommendations",
+        "confidence_assessment",
+        "metadata",
+    }
+
+
+def test_search_upload_video_happy_path_envelope(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    fake._search_by_video = MagicMock(return_value=[{"id": "v1"}, {"id": "v2"}])
+    monkeypatch.setattr(sa_module, "search_agent", fake)
+    r = search_client.post(
+        "/upload/video",
+        params={"tenant_id": "acme", "top_k": 5},
+        files={"file": ("clip.mp4", b"\x00\x01", "video/mp4")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "completed"
+    assert body["search_type"] == "video"
+    assert body["filename"] == "clip.mp4"
+    assert body["total_results"] == 2
+    assert body["results"] == [{"id": "v1"}, {"id": "v2"}]
+
+
+def test_search_upload_image_happy_path_envelope(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    fake._search_by_image = MagicMock(return_value=[{"id": "i1"}])
+    monkeypatch.setattr(sa_module, "search_agent", fake)
+    r = search_client.post(
+        "/upload/image",
+        params={"tenant_id": "acme"},
+        files={"file": ("pic.png", b"\x00", "image/png")},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "completed"
+    assert body["search_type"] == "image"
+    assert body["filename"] == "pic.png"
+    assert body["total_results"] == 1
+
+
+def test_search_enhanced_happy_path_returns_backend_result(
+    search_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = MagicMock()
+    fake.search_with_relationship_context = MagicMock(
+        return_value={"hits": [{"id": "h1"}], "total": 1}
+    )
+    monkeypatch.setattr(sa_module, "search_agent", fake)
+    r = search_client.post(
+        "/search/enhanced",
+        json={"query": "graphs of revenue", "tenant_id": "acme"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"hits": [{"id": "h1"}], "total": 1}
+    # the route must pass the resolved original_query (falls back to query)
+    _, kwargs = fake.search_with_relationship_context.call_args
+    assert kwargs["tenant_id"] == "acme"
+    ctx = fake.search_with_relationship_context.call_args[0][0]
+    assert ctx.original_query == "graphs of revenue"

@@ -321,3 +321,29 @@ class TestTextAnalysisEndpoints:
 
             # Should return 500 error
             assert response.status_code == 500
+
+    def test_health_endpoint(self):
+        """GET /health reports agent status and capabilities (A2A probe)."""
+        client = TestClient(app)
+        resp = client.get("/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent"] == "text_analysis_agent"
+        assert data["status"] in {"healthy", "initializing"}
+        assert "summarization" in data["capabilities"]
+
+    def test_agent_card_endpoint(self):
+        """GET /agent.json returns the A2A discovery card."""
+        client = TestClient(app)
+        resp = client.get("/agent.json")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "TextAnalysisAgent"
+        assert data["protocol"] == "a2a"
+        assert data["url"] == "/analyze"
+        assert set(data["capabilities"]) == {
+            "text_analysis",
+            "sentiment",
+            "summarization",
+            "entity_extraction",
+        }
