@@ -76,7 +76,9 @@ def _build_manifest() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_submit_cron_workflow_raises_on_4xx(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_submit_cron_workflow_raises_on_4xx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _set_argo_endpoint(monkeypatch)
     _patch_httpx(monkeypatch, _FakeAsyncClient(post_status=422))
     manifest = _build_manifest()

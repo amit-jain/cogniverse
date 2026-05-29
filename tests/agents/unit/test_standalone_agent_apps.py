@@ -75,9 +75,7 @@ def test_summarizer_process_503_when_not_initialised(
 def test_summarizer_summarize_503_when_not_initialised(
     summarizer_client: TestClient,
 ) -> None:
-    r = summarizer_client.post(
-        "/summarize", params={"query": "hi"}, json=[]
-    )
+    r = summarizer_client.post("/summarize", params={"query": "hi"}, json=[])
     assert r.status_code == 503
 
 
@@ -145,9 +143,7 @@ def test_detailed_report_process_503_when_not_initialised(
 def test_detailed_report_generate_endpoint_503_when_not_initialised(
     detailed_report_client: TestClient,
 ) -> None:
-    r = detailed_report_client.post(
-        "/generate_report", params={"query": "x"}, json=[]
-    )
+    r = detailed_report_client.post("/generate_report", params={"query": "x"}, json=[])
     assert r.status_code == 503
 
 

@@ -51,9 +51,7 @@ def test_cancel_ingestion_happy_path(client: TestClient) -> None:
     import asyncio
 
     asyncio.run(_seed_queue("ing-456"))
-    r = client.post(
-        "/events/ingestion/ing-456/cancel", json={"reason": "disk full"}
-    )
+    r = client.post("/events/ingestion/ing-456/cancel", json={"reason": "disk full"})
     assert r.status_code == 200
     body = r.json()
     assert body["task_id"] == "ing-456"

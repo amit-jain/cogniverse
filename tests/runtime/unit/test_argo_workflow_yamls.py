@@ -78,9 +78,7 @@ def test_cronworkflow_carries_valid_schedule(manifest_path: Path) -> None:
             continue
         spec = doc.get("spec", {})
         schedule = spec.get("schedule")
-        assert schedule, (
-            f"{manifest_path.name} CronWorkflow missing spec.schedule"
-        )
+        assert schedule, f"{manifest_path.name} CronWorkflow missing spec.schedule"
         assert CRON_FIELD_RE.match(schedule), (
             f"{manifest_path.name} schedule={schedule!r} is not a 5-field cron"
         )

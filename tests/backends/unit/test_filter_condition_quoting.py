@@ -43,9 +43,10 @@ def test_none_value_drops_filter_instead_of_matching_literal_none(
 def test_none_alongside_real_filter_drops_only_the_none(
     backend: VespaSearchBackend,
 ) -> None:
-    assert backend._build_filter_conditions(
-        {"user_id": None, "agent_id": "bot"}
-    ) == 'agent_id contains "bot"'
+    assert (
+        backend._build_filter_conditions({"user_id": None, "agent_id": "bot"})
+        == 'agent_id contains "bot"'
+    )
 
 
 def test_int_equality_is_unquoted_number(backend: VespaSearchBackend) -> None:
@@ -80,9 +81,7 @@ def test_non_finite_range_bound_raises(backend: VespaSearchBackend) -> None:
 
 
 def test_multiple_filters_joined_with_and(backend: VespaSearchBackend) -> None:
-    out = backend._build_filter_conditions(
-        {"user_id": "alice", "agent_id": "bot"}
-    )
+    out = backend._build_filter_conditions({"user_id": "alice", "agent_id": "bot"})
     assert out == 'user_id contains "alice" AND agent_id contains "bot"'
 
 

@@ -114,9 +114,7 @@ def test_stream_replay_starts_from_offset(client: TestClient) -> None:
 
     asyncio.run(setup_and_publish())
 
-    with client.stream(
-        "GET", "/events/workflows/wf-replay?from_offset=1"
-    ) as resp:
+    with client.stream("GET", "/events/workflows/wf-replay?from_offset=1") as resp:
         body = "".join(resp.iter_text())
     events = _parse_sse(body)
 

@@ -119,6 +119,5 @@ def test_render_tab_runs_without_uncaught_exception(
     # AppTest collects exceptions in .exception. An empty list means every
     # widget rendered cleanly.
     assert at.exception == [], (
-        f"{fn_name} raised on render: "
-        f"{[str(e.value) for e in at.exception]}"
+        f"{fn_name} raised on render: {[str(e.value) for e in at.exception]}"
     )

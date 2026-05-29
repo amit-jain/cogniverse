@@ -293,7 +293,11 @@ class TestSummarizerAgentCoreFunctionality:
         # Derived deterministically from the 3 fixture results (2 video + 1 text,
         # relevance 0.9/0.8/0.7) — assert exact values, not just non-emptiness.
         assert thinking_phase.relevance_scores == {"1": 0.9, "2": 0.8, "3": 0.7}
-        assert set(thinking_phase.content_categories) == {"video", "text", "medium_form"}
+        assert set(thinking_phase.content_categories) == {
+            "video",
+            "text",
+            "medium_form",
+        }
         assert set(thinking_phase.key_themes) == {
             "video_content",
             "text_content",

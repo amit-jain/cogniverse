@@ -45,9 +45,7 @@ def test_entity_info_round_trip() -> None:
 
 
 def test_entity_info_accepts_positions() -> None:
-    e = EntityInfo(
-        text="Paris", label="LOC", confidence=0.8, start_pos=10, end_pos=15
-    )
+    e = EntityInfo(text="Paris", label="LOC", confidence=0.8, start_pos=10, end_pos=15)
     assert e.start_pos == 10
     assert e.end_pos == 15
 

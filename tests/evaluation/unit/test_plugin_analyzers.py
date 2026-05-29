@@ -375,9 +375,7 @@ class TestPluginRegistrationWiring:
         auto_register_plugins({"evaluation": {"plugins": ["document", "image"]}})
 
         assert isinstance(
-            get_schema_analyzer(
-                "doc_index", {"content_fields": ["abstract", "body"]}
-            ),
+            get_schema_analyzer("doc_index", {"content_fields": ["abstract", "body"]}),
             DocumentSchemaAnalyzer,
         )
         assert isinstance(

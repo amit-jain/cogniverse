@@ -85,7 +85,9 @@ def test_to_rsr_parses_creation_timestamp_for_temporal_reranking():
     assert rsr.timestamp.tzinfo == timezone.utc
 
     # Top-level creation_timestamp is honored too.
-    assert _to_rsr({"id": "d2", "creation_timestamp": 1704067200000}).timestamp is not None
+    assert (
+        _to_rsr({"id": "d2", "creation_timestamp": 1704067200000}).timestamp is not None
+    )
 
     # No timestamp data → None (temporal scoring falls back to neutral, by design).
     assert _to_rsr({"id": "d3"}).timestamp is None

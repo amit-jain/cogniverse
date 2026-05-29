@@ -1882,9 +1882,7 @@ class TestDateFilter:
     def test_both_bounds_to_epoch_ms_range(self):
         # 2024-01-01T00:00:00Z = 1704067200000 ms; 2024-01-31 = 1706659200000 ms
         f = SearchAgent._build_date_filter("2024-01-01", "2024-01-31")
-        assert f == {
-            "creation_timestamp": {"gte": 1704067200000, "lte": 1706659200000}
-        }
+        assert f == {"creation_timestamp": {"gte": 1704067200000, "lte": 1706659200000}}
 
     def test_only_start(self):
         assert SearchAgent._build_date_filter("2024-01-01", None) == {

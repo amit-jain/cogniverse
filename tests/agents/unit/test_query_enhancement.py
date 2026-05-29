@@ -1080,9 +1080,7 @@ class TestDSPyComponentsIntegration:
             f"expected dedup to collapse 3→2 relationships; got {len(relations)}: "
             f"{relations}"
         )
-        triples = sorted(
-            (r["subject"], r["relation"], r["object"]) for r in relations
-        )
+        triples = sorted((r["subject"], r["relation"], r["object"]) for r in relations)
         assert triples == [
             ("autonomous vehicles", "navigating", "urban environments"),
             ("urban environments", "contains", "intersections"),

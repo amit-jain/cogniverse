@@ -60,6 +60,7 @@ def _yql_scalar(value: object, field: str) -> str:
         return yql_quote(value)
     return yql_quote(str(value))
 
+
 # Module-level cache for ranking strategies extracted from schemas
 # This is populated once and shared across all VespaSearchBackend instances
 _RANKING_STRATEGIES_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
@@ -879,9 +880,7 @@ class VespaSearchBackend(SearchBackend):
                 conditions.append(f"{field_name} contains {yql_quote(value)}")
             elif isinstance(value, (int, float)):
                 # Numeric values use equality
-                conditions.append(
-                    f"{field_name} = {_yql_scalar(value, field_name)}"
-                )
+                conditions.append(f"{field_name} = {_yql_scalar(value, field_name)}")
             else:
                 # For other types, convert to string and use contains
                 conditions.append(f"{field_name} contains {yql_quote(str(value))}")

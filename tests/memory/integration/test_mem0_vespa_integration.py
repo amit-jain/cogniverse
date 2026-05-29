@@ -184,8 +184,12 @@ class TestMem0VespaIntegration:
         has_tenant1_content = "cat" in tenant1_text or "rescue" in tenant1_text
         has_tenant2_content = "dog" in tenant2_text or "therapy" in tenant2_text
 
-        assert has_tenant1_content, f"Tenant 1 lost its own content: {tenant1_text[:100]}"
-        assert has_tenant2_content, f"Tenant 2 lost its own content: {tenant2_text[:100]}"
+        assert has_tenant1_content, (
+            f"Tenant 1 lost its own content: {tenant1_text[:100]}"
+        )
+        assert has_tenant2_content, (
+            f"Tenant 2 lost its own content: {tenant2_text[:100]}"
+        )
 
         # Isolation: neither tenant sees the other's content.
         assert "therapy" not in tenant1_text and "hospital" not in tenant1_text, (

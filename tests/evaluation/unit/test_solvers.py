@@ -351,9 +351,7 @@ class TestLiveSolver:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_single_poll_collects_documented_trace_data_shape(
-        self, monkeypatch
-    ):
+    async def test_single_poll_collects_documented_trace_data_shape(self, monkeypatch):
         _seed_solver_provider(monkeypatch, _populated_traces_df())
         solver = create_live_solver(
             config={"continuous": False, "max_iterations": 1, "poll_interval": 0}

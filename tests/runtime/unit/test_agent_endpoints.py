@@ -463,7 +463,9 @@ class TestModalitySearchDispatchSerialization:
             "cogniverse_agents.document_agent.DocumentAgent", lambda *a, **k: stub
         )
 
-        result = await dispatcher._execute_document_search_task("report", "acme:prod", 5)
+        result = await dispatcher._execute_document_search_task(
+            "report", "acme:prod", 5
+        )
 
         assert result["status"] == "success"
         assert result["results_count"] == 1
@@ -483,20 +485,48 @@ class TestStreamingAgentConstruction:
     @pytest.mark.parametrize(
         "agent_name,capability,agent_type,input_type",
         [
-            ("image_search_agent", "image_search", "ImageSearchAgent",
-             "ImageSearchInput"),
-            ("audio_analysis_agent", "audio_analysis", "AudioAnalysisAgent",
-             "AudioSearchInput"),
-            ("document_agent", "document_analysis", "DocumentAgent",
-             "DocumentSearchInput"),
-            ("entity_extraction_agent", "entity_extraction",
-             "EntityExtractionAgent", "EntityExtractionInput"),
-            ("query_enhancement_agent", "query_enhancement",
-             "QueryEnhancementAgent", "QueryEnhancementInput"),
-            ("profile_selection_agent", "profile_selection",
-             "ProfileSelectionAgent", "ProfileSelectionInput"),
-            ("orchestrator_agent", "orchestration", "OrchestratorAgent",
-             "OrchestratorInput"),
+            (
+                "image_search_agent",
+                "image_search",
+                "ImageSearchAgent",
+                "ImageSearchInput",
+            ),
+            (
+                "audio_analysis_agent",
+                "audio_analysis",
+                "AudioAnalysisAgent",
+                "AudioSearchInput",
+            ),
+            (
+                "document_agent",
+                "document_analysis",
+                "DocumentAgent",
+                "DocumentSearchInput",
+            ),
+            (
+                "entity_extraction_agent",
+                "entity_extraction",
+                "EntityExtractionAgent",
+                "EntityExtractionInput",
+            ),
+            (
+                "query_enhancement_agent",
+                "query_enhancement",
+                "QueryEnhancementAgent",
+                "QueryEnhancementInput",
+            ),
+            (
+                "profile_selection_agent",
+                "profile_selection",
+                "ProfileSelectionAgent",
+                "ProfileSelectionInput",
+            ),
+            (
+                "orchestrator_agent",
+                "orchestration",
+                "OrchestratorAgent",
+                "OrchestratorInput",
+            ),
         ],
     )
     def test_create_streaming_agent_builds_each_capability(

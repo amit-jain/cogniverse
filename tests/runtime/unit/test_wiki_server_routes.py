@@ -90,9 +90,7 @@ def test_delete_topic_colon_in_tenant_id_is_sanitised(
     assert r.json()["doc_id"] == "wiki_topic_acme_east_foo"
 
 
-def test_delete_topic_runtime_error_becomes_500(
-    client: TestClient, fake_wm
-) -> None:
+def test_delete_topic_runtime_error_becomes_500(client: TestClient, fake_wm) -> None:
     fake_wm.delete_page.side_effect = RuntimeError("vespa down")
     r = client.delete("/wiki/topic/foo?tenant_id=acme")
     assert r.status_code == 500
