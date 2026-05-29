@@ -5,6 +5,7 @@ Unit tests for ground truth extraction.
 import json
 from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
+import pandas as pd
 import pytest
 
 from cogniverse_evaluation.core.ground_truth import (
@@ -264,20 +265,20 @@ class TestDatasetGroundTruthStrategy:
         ) as mock_get_provider:
             mock_provider = MagicMock()
 
-            # Create dataset data with matching query
-            dataset_data = {
-                "examples": [
+            # get_dataset returns a Phoenix to_dataframe() result: rows with a
+            # nested ``input`` dict column and an ``output`` dict column.
+            dataset_df = pd.DataFrame(
+                [
                     {
-                        "id": "ex1",
                         "input": {"query": "test query"},
                         "output": {"expected_items": ["item1", "item2", "item3"]},
                     }
                 ]
-            }
+            )
 
             # Mock async get_dataset method
             mock_provider.telemetry.datasets.get_dataset = AsyncMock(
-                return_value=dataset_data
+                return_value=dataset_df
             )
             mock_get_provider.return_value = mock_provider
 
@@ -722,20 +723,19 @@ class TestDatasetGroundTruthStrategyExtended:
         ) as mock_get_provider:
             mock_provider = MagicMock()
 
-            # Create dataset data with alternative field names
-            dataset_data = {
-                "examples": [
+            # Alternative field name (expected_videos) inside the output dict.
+            dataset_df = pd.DataFrame(
+                [
                     {
-                        "id": "ex1",
                         "input": {"query": "test query"},
                         "output": {"expected_videos": ["video1", "video2"]},
                     }
                 ]
-            }
+            )
 
             # Mock async get_dataset method
             mock_provider.telemetry.datasets.get_dataset = AsyncMock(
-                return_value=dataset_data
+                return_value=dataset_df
             )
             mock_get_provider.return_value = mock_provider
 
@@ -747,6 +747,37 @@ class TestDatasetGroundTruthStrategyExtended:
             result = await strategy.extract_ground_truth(trace_data)
 
             assert result["expected_items"] == ["video1", "video2"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_extract_comma_separated_videos_in_input(self, strategy):
+        """Golden datasets carry expected_videos as a comma-joined string in
+        the ``input`` dict with no ``output`` column (input_keys upload)."""
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider"
+        ) as mock_get_provider:
+            mock_provider = MagicMock()
+            dataset_df = pd.DataFrame(
+                [
+                    {
+                        "input": {
+                            "query": "test query",
+                            "expected_videos": "video1, video2 ,video3",
+                        }
+                    }
+                ]
+            )
+            mock_provider.telemetry.datasets.get_dataset = AsyncMock(
+                return_value=dataset_df
+            )
+            mock_get_provider.return_value = mock_provider
+
+            result = await strategy.extract_ground_truth(
+                {"query": "test query", "metadata": {"dataset": "golden_eval_v1"}}
+            )
+
+            assert result["expected_items"] == ["video1", "video2", "video3"]
+            assert result["source"] == "dataset"
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -15,6 +15,26 @@ from cogniverse_evaluation.core.schema_analyzer import get_schema_analyzer
 logger = logging.getLogger(__name__)
 
 
+def _resolve_expected_items(*records: dict[str, Any]) -> list:
+    """Pull the ground-truth item list out of Phoenix dataset records.
+
+    Searches each record (output dict first, then input dict) for
+    ``expected_items`` / ``expected_videos`` / ``ground_truth``. Comma-joined
+    strings are split the same way ``core.task`` parses ``expected_videos``.
+    """
+    for record in records:
+        for key in ("expected_items", "expected_videos", "ground_truth"):
+            value = record.get(key)
+            if not value:
+                continue
+            if isinstance(value, str):
+                return [v.strip() for v in value.split(",") if v.strip()]
+            if isinstance(value, list):
+                return value
+            return [str(value)]
+    return []
+
+
 class GroundTruthError(Exception):
     """Base exception for ground truth extraction errors."""
 
@@ -584,31 +604,42 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
                         provider.telemetry.datasets.get_dataset(dataset_name)
                     )
 
-                # dataset_data is a dict, extract examples
-                examples = dataset_data.get("examples", [])
+                # provider.telemetry.datasets.get_dataset returns a DataFrame
+                # (Phoenix to_dataframe). Rows carry a nested ``input`` dict
+                # column and optionally an ``output`` dict column — same shape
+                # core.task consumes.
+                import pandas as pd
 
-                # Find matching query in dataset
-                for example in examples:
-                    if example.get("input", {}).get("query") == query:
-                        # Found matching query
-                        output = example.get("output", {})
-                        expected_items = output.get("expected_items", [])
+                if not isinstance(dataset_data, pd.DataFrame):
+                    raise GroundTruthError(
+                        f"get_dataset returned {type(dataset_data).__name__}, "
+                        "expected a DataFrame"
+                    )
 
-                        # Try multiple field names for compatibility
-                        if not expected_items:
-                            expected_items = output.get("expected_videos", [])
-                        if not expected_items:
-                            expected_items = output.get("ground_truth", [])
+                for _, row in dataset_data.iterrows():
+                    if "input" in row.index and isinstance(row["input"], dict):
+                        input_record = row["input"]
+                    else:
+                        input_record = row.to_dict()
+                    if input_record.get("query") != query:
+                        continue
 
-                        return {
-                            "expected_items": expected_items,
-                            "confidence": 0.95,  # High confidence for labeled data
-                            "source": "dataset",
-                            "metadata": {
-                                "dataset": dataset_name,
-                                "matched_query": query,
-                            },
-                        }
+                    if "output" in row.index and isinstance(row["output"], dict):
+                        output_record = row["output"]
+                    else:
+                        output_record = {}
+
+                    return {
+                        "expected_items": _resolve_expected_items(
+                            output_record, input_record
+                        ),
+                        "confidence": 0.95,  # High confidence for labeled data
+                        "source": "dataset",
+                        "metadata": {
+                            "dataset": dataset_name,
+                            "matched_query": query,
+                        },
+                    }
 
                 # Query not found in dataset
                 return {
