@@ -36,6 +36,7 @@ from cogniverse_agents.graph.graph_schema import (
     normalize_name,
 )
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+from cogniverse_vespa._yql import yql_quote
 from cogniverse_vespa.embedding_processor import VespaEmbeddingProcessor
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ class GraphManager:
 
         yql = (
             f"select * from sources {self._schema_name} "
-            f'where tenant_id contains "{self._tenant_id}" '
+            f"where tenant_id contains {yql_quote(self._tenant_id)} "
             f'and doc_type contains "node" '
             f"and userQuery() limit {top_k}"
         )
@@ -405,8 +406,8 @@ class GraphManager:
         params = {
             "wantedDocumentCount": str(top_k),
             "selection": (
-                f'{self._schema_name}.doc_type=="{doc_type}" and '
-                f'{self._schema_name}.tenant_id=="{self._tenant_id}"'
+                f"{self._schema_name}.doc_type=={yql_quote(doc_type)} and "
+                f"{self._schema_name}.tenant_id=={yql_quote(self._tenant_id)}"
             ),
         }
         try:
@@ -430,15 +431,15 @@ class GraphManager:
         visit_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid"
         selection_parts = [
             f'{self._schema_name}.doc_type=="edge"',
-            f'{self._schema_name}.tenant_id=="{self._tenant_id}"',
+            f"{self._schema_name}.tenant_id=={yql_quote(self._tenant_id)}",
         ]
         if source_node_id:
             selection_parts.append(
-                f'{self._schema_name}.source_node_id=="{source_node_id}"'
+                f"{self._schema_name}.source_node_id=={yql_quote(source_node_id)}"
             )
         if target_node_id:
             selection_parts.append(
-                f'{self._schema_name}.target_node_id=="{target_node_id}"'
+                f"{self._schema_name}.target_node_id=={yql_quote(target_node_id)}"
             )
         params = {
             "wantedDocumentCount": "100",

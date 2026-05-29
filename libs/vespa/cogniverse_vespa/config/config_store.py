@@ -517,9 +517,13 @@ class VespaConfigStore(ConfigStore):
         path = f"{url}{namespace}/{self.schema_name}/docid/"
         selection_parts = []
         if scope is not None:
-            selection_parts.append(f'{self.schema_name}.scope == "{scope.value}"')
+            selection_parts.append(
+                f"{self.schema_name}.scope == {yql_quote(scope.value)}"
+            )
         if service is not None:
-            selection_parts.append(f'{self.schema_name}.service == "{service}"')
+            selection_parts.append(
+                f"{self.schema_name}.service == {yql_quote(service)}"
+            )
         params: Dict[str, Any] = {"wantedDocumentCount": 400}
         if selection_parts:
             params["selection"] = " and ".join(selection_parts)
