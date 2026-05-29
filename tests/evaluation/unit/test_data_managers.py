@@ -2,7 +2,7 @@
 Unit tests for dataset and trace managers.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, mock_open, patch
 
 import pandas as pd
@@ -260,9 +260,12 @@ class TestTraceManager:
         call_kwargs = manager.storage.get_traces_for_evaluation.call_args[1]
         assert "start_time" in call_kwargs
 
-        # Check time is roughly 2 hours ago
+        # Check time is roughly 2 hours ago. TraceManager now emits UTC-aware
+        # start_time (post-audit naive-datetime sweep); compare against an
+        # aware reference so the subtraction does not raise.
         start_time = call_kwargs["start_time"]
-        time_diff = datetime.now() - start_time
+        assert start_time.tzinfo is not None
+        time_diff = datetime.now(timezone.utc) - start_time
         assert (
             timedelta(hours=1, minutes=30) < time_diff < timedelta(hours=2, minutes=30)
         )
