@@ -61,11 +61,12 @@ def test_multi_vector_schema_with_substring_collision_preserves_all_patches() ->
 
 
 def test_single_vector_token_schema_returns_flat_list() -> None:
-    """A real ``_sv_`` schema collapses to one list of floats."""
+    """A real ``_sv_`` schema formats its single vector as a flat float list
+    (not a per-patch hex dict)."""
     processor = VespaEmbeddingProcessor(
         schema_name="video_videoprism_lvt_base_sv_chunk_6s"
     )
-    embeddings = np.arange(4 * 16, dtype=np.float32).reshape(4, 16)
+    embeddings = np.arange(16, dtype=np.float32)
     result = processor.process_embeddings(embeddings)
     assert isinstance(result["embedding"], list)
     assert len(result["embedding"]) == 16
@@ -74,7 +75,7 @@ def test_single_vector_token_schema_returns_flat_list() -> None:
 def test_uppercase_sv_token_returns_flat_list() -> None:
     """Case-inconsistency fix: uppercase ``_SV_`` was treated as multi-vec."""
     processor = VespaEmbeddingProcessor(schema_name="video_VIDEOPRISM_SV_global")
-    embeddings = np.arange(2 * 8, dtype=np.float32).reshape(2, 8)
+    embeddings = np.arange(8, dtype=np.float32)
     result = processor.process_embeddings(embeddings)
     assert isinstance(result["embedding"], list)
     assert len(result["embedding"]) == 8

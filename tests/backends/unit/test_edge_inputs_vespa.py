@@ -113,3 +113,18 @@ def test_yql_quote_escapes_nul_byte() -> None:
 
 def test_yql_quote_escapes_combinations() -> None:
     assert yql_quote('a"\nb\\c\x00d') == '"a\\"\\nb\\\\c\\0d"'
+
+
+def test_multirow_array_to_single_vector_schema_raises() -> None:
+    """A single-vector schema given (3, dim) used to keep only row 0 and
+    silently discard rows 1-2. It must raise instead."""
+    p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_768")
+    with pytest.raises(ValueError, match="silently drop rows"):
+        p.process_embeddings(np.ones((3, 8), dtype=np.float32))
+
+
+def test_single_row_array_to_single_vector_schema_ok() -> None:
+    """(1, dim) is exactly one vector — accepted, returned as a flat list."""
+    p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_768")
+    out = p.process_embeddings(np.ones((1, 8), dtype=np.float32))
+    assert out["embedding"] == [1.0] * 8

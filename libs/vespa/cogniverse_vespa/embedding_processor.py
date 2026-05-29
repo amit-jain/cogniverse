@@ -104,6 +104,23 @@ class VespaEmbeddingProcessor:
                 "Expected numpy.ndarray, dict of arrays, or None."
             )
 
+    def _reject_multirow_for_single_vector(
+        self, embeddings: np.ndarray, is_1d_input: bool
+    ) -> None:
+        """Fail loudly instead of silently keeping only ``embeddings[0]``.
+
+        A single-vector schema can hold exactly one vector. A genuine 2D
+        ``(N, dim)`` array with ``N > 1`` previously had rows 1..N-1 dropped
+        with no warning — silent data loss. A reshaped 1D input (N==1) is fine.
+        """
+        if not is_1d_input and len(embeddings) > 1:
+            raise ValueError(
+                f"Single-vector schema '{self.schema_name}' received "
+                f"{len(embeddings)} vectors but holds exactly one. Refusing to "
+                "silently drop rows — pass a single vector or use a "
+                "multi-vector schema."
+            )
+
     def _convert_to_float_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to Vespa float format.
 
@@ -118,6 +135,7 @@ class VespaEmbeddingProcessor:
             embeddings = embeddings.reshape(1, -1)
 
         if is_1d_input or _is_single_vector_schema(self.schema_name):
+            self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return embeddings[0].tolist()
 
         embedding_dict = {}
@@ -151,6 +169,7 @@ class VespaEmbeddingProcessor:
 
         if is_1d_input or _is_single_vector_schema(self.schema_name):
             # Single-vector schemas use hex string for binary embeddings
+            self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return hexlify(binarized[0].tobytes()).decode("utf-8")
 
         # For patch-based schemas, use dict of hex-encoded values
