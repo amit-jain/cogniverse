@@ -201,6 +201,7 @@ class TestNoOsGetenvInAgentModules:
             "cogniverse_agents.search_agent",
             "cogniverse_agents.summarizer_agent",
             "cogniverse_agents.detailed_report_agent",
+            "cogniverse_agents.text_analysis_agent",
         ],
     )
     def test_no_os_getenv_in_module(self, module_path):

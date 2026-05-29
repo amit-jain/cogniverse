@@ -194,23 +194,17 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Per-tenant agent instances cache (LRU-bounded).
-# Each instance holds a compiled DSPy module + LM config, which is
-# non-trivial in memory across many tenants.
-import os
-
+# Per-tenant agent instances cache (LRU-bounded). Each instance holds a
+# compiled DSPy module + LM config, non-trivial in memory across many
+# tenants. Capacity defaults to DEFAULT_TENANT_CACHE_CAPACITY; the standalone
+# __main__ launch may override it from COGNIVERSE_TENANT_CACHE_CAPACITY (env
+# reads stay confined to that startup boundary).
 from cogniverse_foundation.caching import TenantLRUCache
 
-
-def _tenant_cache_capacity() -> int:
-    try:
-        return max(1, int(os.environ.get("COGNIVERSE_TENANT_CACHE_CAPACITY", 16)))
-    except (TypeError, ValueError):
-        return 16
-
+DEFAULT_TENANT_CACHE_CAPACITY = 16
 
 _agent_instances: TenantLRUCache[TextAnalysisAgent] = TenantLRUCache(
-    capacity=_tenant_cache_capacity(),
+    capacity=DEFAULT_TENANT_CACHE_CAPACITY,
 )
 _config_manager: ConfigManager = None
 
@@ -320,7 +314,22 @@ async def analyze_text_endpoint(
 
 
 if __name__ == "__main__":
+    import os
+
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
+    try:
+        _capacity = max(
+            1,
+            int(
+                os.environ.get(
+                    "COGNIVERSE_TENANT_CACHE_CAPACITY", DEFAULT_TENANT_CACHE_CAPACITY
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        _capacity = DEFAULT_TENANT_CACHE_CAPACITY
+    _agent_instances = TenantLRUCache(capacity=_capacity)
 
     config = get_config(
         tenant_id=SYSTEM_TENANT_ID, config_manager=create_default_config_manager()
