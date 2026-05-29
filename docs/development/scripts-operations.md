@@ -149,24 +149,20 @@ flowchart TB
 flowchart TB
     Start["<span style='color:#000'>optimization_cli module<br/>Per-Agent Optimization CLI</span>"]
 
-    Step1["<span style='color:#000'>Step 1: Run Agent Optimization<br/>• Execute per-agent optimizer<br/>• Generate prompt artifacts<br/>• Modes: simba/gateway-thresholds/entity-extraction/etc.</span>"]
+    Step1["<span style='color:#000'>Step 1: Run Agent Optimization<br/>• Execute per-agent optimizer<br/>• Modes: simba/gateway-thresholds/entity-extraction/etc.</span>"]
 
-    Step2["<span style='color:#000'>Step 2: Upload to Modal<br/>• Upload artifacts to Modal volume<br/>• Path: /artifacts/*.json</span>"]
+    Step2["<span style='color:#000'>Step 2: Persist Artifact<br/>• ArtifactManager.save_blob (per tenant)<br/>• Returns artifact_id</span>"]
 
-    Step3["<span style='color:#000'>Step 3: Deploy Production API<br/>• Deploy to Modal<br/>• Setup HuggingFace secret<br/>• Return API URL</span>"]
-
-    Step4["<span style='color:#000'>Step 4: Test Production API<br/>• Run test cases<br/>• Verify modality routing<br/>• Check generation types</span>"]
+    Step3["<span style='color:#000'>Step 3: Agents Load at Startup<br/>• Runtime agents read latest tenant artifact<br/>• No redeploy step</span>"]
 
     Start --> Step1
     Step1 --> Step2
     Step2 --> Step3
-    Step3 --> Step4
 
     style Start fill:#90caf9,stroke:#1565c0,color:#000
     style Step1 fill:#ffcc80,stroke:#ef6c00,color:#000
     style Step2 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Step3 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Step4 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Step3 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
 ### 3. Experiment Workflow Architecture
@@ -1059,29 +1055,17 @@ User Command
     │       │   • Mode: simba | gateway-thresholds | entity-extraction | workflow | profile
     │       │   • Collects Phoenix spans for the agent
     │       │   • Selects DSPy optimizer based on training data size
-    │       │   • Output: artifacts saved to optimization output directory
     │       │
-    │       ├─> Step 2: Upload Artifacts to Modal
-    │       │       • modal volume put optimization-artifacts
-    │       │       • Target: /artifacts/unified_router_prompt_artifact.json
-    │       │       • Timeout: 5 minutes
+    │       ├─> Step 2: Persist Artifact (ArtifactManager.save_blob)
+    │       │       • Stores the optimized module / threshold config per tenant
+    │       │       • Returns an artifact_id
     │       │
-    │       ├─> Step 3: Deploy Production API
-    │       │       ├─> Check HuggingFace Secret
-    │       │       │   • modal secret list
-    │       │       │   IF not exists:
-    │       │       │       • Get HF_TOKEN from environment
-    │       │       │       • modal secret create huggingface-token HF_TOKEN=...
-    │       │       │
-    │       │       └─> Deploy to Modal
-    │       │           • modal deploy src/inference/modal_inference_service.py
-    │       │           • Timeout: 10 minutes
-    │       │           • Return: API URL
+    │       ├─> Step 3: Agents Load at Startup
+    │       │       • No redeploy: the runtime agents read the latest
+    │       │         tenant artifact via ArtifactManager on startup
     │       │
     │       └─> Print Summary
-    │           • Total time
-    │           • Artifacts path
-    │           • API URL
+    │           • Mode, tenant, artifact_id, status
     │
     └─> Exit with Status Code
 ```

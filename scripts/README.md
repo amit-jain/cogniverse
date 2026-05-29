@@ -518,29 +518,6 @@ uv run python scripts/manage_golden_datasets.py export \
 
 ## Deployment Scripts
 
-#### `deploy_production.py` - Production API Deployment
-**Deploy production API to Modal (after optimization)**
-
-```bash
-# Deploy production API (uses existing artifacts)
-uv run python scripts/deploy_production.py
-
-# With custom Modal config
-uv run python scripts/deploy_production.py \
-  --modal-workspace acme_corp \
-  --environment production
-```
-
-**Features:**
-- Deploys optimized models to Modal
-- Health check validation
-- API usage examples
-- Artifact verification
-
----
-
----
-
 #### Schema deployment — use the runtime, not a bulk script
 
 Schema deployment is per-tenant and flows through the runtime:
@@ -783,8 +760,7 @@ uv run python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id
 # 2. Review optimization results
 cat results/optimization_*.json | jq '.summary'
 
-# 3. Deploy to production
-uv run python scripts/deploy_production.py
+# 3. Agents pick up the new artifacts at startup (no redeploy step)
 
 # 4. Monitor performance
 uv run streamlit run scripts/phoenix_dashboard.py
@@ -945,7 +921,7 @@ bash scripts/start_phoenix.sh
 | **Ingestion** | 5 | `run_ingestion.py`, `ingest_documents.py`, `ingest_audio.py`, `ingest_images.py` |
 | **Evaluation** | 6 | `bootstrap_dataset_from_traces.py`, `run_experiments_with_visualization.py`, `evaluate_comprehensive_test_spans.py` |
 | **Dataset Management** | 5 | `manage_datasets.py`, `manage_golden_datasets.py`, `create_golden_dataset_from_traces.py` |
-| **Deployment** | 2 | `deploy_production.py` (schema deployment flows through runtime `POST /admin/profiles/{profile}/deploy`) |
+| **Deployment** | 1 | Schema deployment flows through runtime `POST /admin/profiles/{profile}/deploy` |
 | **Monitoring** | 5 | `analyze_traces.py`, `phoenix_dashboard.py`, `export_backend_embeddings.py`, `embedding_atlas_tab.py` |
 | **Setup** | 5 | `setup_system.py`, `start_phoenix.py`, `run_servers.sh`, `setup_evaluation.sh` |
 | **Total** | **36+** | Core operational scripts |

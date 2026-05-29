@@ -187,8 +187,9 @@ build-backend = "hatchling.build"
 # UV package manager
 pip install uv
 
-# Python dependencies for versioning
-pip install tomli tomli-w
+# Python dependency for versioning (reads use the stdlib tomllib).
+# Already provided by the dev dependency group: `uv sync --group dev`.
+pip install tomli-w
 
 # Twine for PyPI uploads (optional - installed by scripts)
 pip install twine

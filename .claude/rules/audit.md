@@ -138,6 +138,14 @@ grep -rnP "^def render_.*_tab" libs/dashboard/
 # Local _escape helpers that handle only `"` and miss `\` — use yql_quote
 # from libs/vespa/cogniverse_vespa/_yql.py which handles both (6th audit)
 grep -rnP 'def _escape\(.*\).*->\s*str|\.replace\(.*\\"' libs/ --include="*.py"
+
+# YQL/selection value interpolated RAW where a sibling escapes the same field
+# — convention-divergence injection (7th audit: graph_manager interpolated
+# self._tenant_id raw into both `contains "{...}"` and the Document-v1
+# `==="{...}"` selection while provenance_store/config_store wrapped the same
+# value in yql_quote). The plain `contains "{` regex buries the unescaped
+# offender among escaped siblings; the negative-lookahead isolates the raw ones.
+grep -rnP 'contains "\{(?!.*(_escape|yql_quote))[^}]*\}"|=="\{(?!.*(_escape|yql_quote))[^}]*\}"' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
