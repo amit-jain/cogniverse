@@ -10,15 +10,15 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib  # stdlib (Python 3.11+); reads pyproject.toml
 from pathlib import Path
 from typing import List, Tuple
 
 try:
-    import tomli
     import tomli_w
 except ImportError:
-    print("Error: tomli and tomli_w are required")
-    print("Install with: pip install tomli tomli-w")
+    print("Error: tomli-w is required for writing pyproject.toml")
+    print("Install with: uv sync --group dev  (or: pip install tomli-w)")
     sys.exit(1)
 
 
@@ -163,7 +163,7 @@ def get_package_version(package: str) -> str:
         sys.exit(1)
 
     with open(pyproject_path, "rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     return data["project"]["version"]
 
@@ -178,7 +178,7 @@ def set_package_version(package: str, new_version: str, dry_run: bool = False):
 
     # Read current pyproject.toml
     with open(pyproject_path, "rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     old_version = data["project"]["version"]
 
@@ -201,7 +201,7 @@ def get_package_name(package: str) -> str:
     pyproject_path = get_pyproject_path(package)
 
     with open(pyproject_path, "rb") as f:
-        data = tomli.load(f)
+        data = tomllib.load(f)
 
     return data["project"]["name"]
 

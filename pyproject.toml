@@ -324,6 +324,7 @@ dev = [
     "ruff>=0.12.9",
     "cogniverse-cli",
     "pytest-playwright>=0.7.2",
+    "tomli-w>=1.0.0",
 ]
 docs = [
     "mkdocs==1.6.1",
