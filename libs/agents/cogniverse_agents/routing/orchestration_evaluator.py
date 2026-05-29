@@ -58,7 +58,8 @@ class OrchestrationEvaluator:
 
         # Track processed spans to avoid duplicates
         self._processed_span_ids = set()
-        self._last_evaluation_time = datetime.now()
+        # Resume point for incremental evaluation; None until the first run.
+        self._last_evaluation_time = None
 
         logger.info(
             f"🔧 Initialized OrchestrationEvaluator for tenant '{tenant_id}' "
@@ -83,10 +84,16 @@ class OrchestrationEvaluator:
             f"(project: {self.project_name})"
         )
 
-        # Query cogniverse.orchestration spans
-        # Use UTC timezone-aware datetime to avoid timezone confusion
+        # Query cogniverse.orchestration spans.
+        # Incremental: resume from where the previous run finished so each
+        # call only scans spans newer than the last batch. The first run
+        # (no prior evaluation) falls back to the lookback_hours window.
+        # UTC timezone-aware throughout to avoid timezone confusion.
         end_time = datetime.now(timezone.utc)
-        start_time = end_time - timedelta(hours=lookback_hours)
+        if self._last_evaluation_time is not None:
+            start_time = min(self._last_evaluation_time, end_time)
+        else:
+            start_time = end_time - timedelta(hours=lookback_hours)
 
         try:
             spans_df = await self.provider.traces.get_spans(
@@ -97,11 +104,17 @@ class OrchestrationEvaluator:
             )
         except Exception as e:
             logger.error(f"❌ Error querying telemetry spans: {e}")
+            # Do NOT advance the resume point on failure — the next run must
+            # re-scan this window so no spans are skipped.
             return {
                 "spans_processed": 0,
                 "workflows_extracted": 0,
                 "errors": [str(e)],
             }
+
+        # Query succeeded: advance the incremental resume point even when the
+        # batch is empty, so the window doesn't grow unbounded across runs.
+        self._last_evaluation_time = end_time
 
         if spans_df.empty:
             logger.info("📭 No orchestration spans found in time range")
@@ -140,8 +153,6 @@ class OrchestrationEvaluator:
             except Exception as e:
                 logger.error(f"❌ Error processing span {span_id}: {e}")
                 errors.append(str(e))
-
-        self._last_evaluation_time = end_time
 
         result = {
             "spans_processed": len(orchestration_spans),
