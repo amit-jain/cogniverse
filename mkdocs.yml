@@ -220,7 +220,6 @@ nav:
     - Dashboard: modules/dashboard.md
     - Common: modules/common.md
     - Utils: modules/utils.md
-    - Tools: modules/tools.md
 
   - Operations:
     - Setup & Installation: operations/setup-installation.md
