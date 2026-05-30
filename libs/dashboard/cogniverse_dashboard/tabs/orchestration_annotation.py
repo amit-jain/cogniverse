@@ -14,6 +14,22 @@ from typing import Any, Dict
 import streamlit as st
 
 
+def _format_seconds(value: Any) -> str:
+    """Format a possibly string/None/NaN Phoenix attribute as ``N.NNs``.
+
+    Phoenix span attributes frequently surface as strings; applying ``:.2f``
+    directly (the previous code) raised ValueError on a string value and
+    crashed the entire tab render. Coerce defensively, falling back to 'N/A'.
+    """
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return "N/A"
+    if num != num:  # NaN
+        return "N/A"
+    return f"{num:.2f}s"
+
+
 def _extract_orchestration_attrs(span_row: Any) -> Dict[str, Any]:
     """Extract orchestration attributes from a span DataFrame row.
 
@@ -161,7 +177,8 @@ def render_orchestration_annotation_tab():
             st.metric("Pattern", attrs.get("orchestration.pattern", "N/A"))
         with col2:
             st.metric(
-                "Execution Time", f"{attrs.get('orchestration.execution_time', 0):.2f}s"
+                "Execution Time",
+                _format_seconds(attrs.get("orchestration.execution_time")),
             )
         with col3:
             st.metric("Tasks Completed", attrs.get("orchestration.tasks_completed", 0))
