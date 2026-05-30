@@ -15,11 +15,11 @@ import math
 import threading
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 import numpy as np
 import requests
@@ -78,6 +78,11 @@ class ConnectionPoolConfig:
     health_check_interval: float = 60.0
 
 
+# Sliding window size for the p95 latency percentile (bounds memory on a
+# process-lifetime-cached backend).
+_LATENCY_WINDOW = 1000
+
+
 @dataclass
 class SearchMetrics:
     """Comprehensive search metrics"""
@@ -86,7 +91,13 @@ class SearchMetrics:
     successful_searches: int = 0
     failed_searches: int = 0
     total_latency_ms: float = 0
-    search_latencies: List[float] = field(default_factory=list)
+    # Bounded window for the p95 percentile. VespaSearchBackend instances are
+    # cached for the process lifetime, so an unbounded list leaked one float
+    # per query forever. The lifetime average uses total_latency_ms /
+    # total_searches (below), not this window.
+    search_latencies: Deque[float] = field(
+        default_factory=lambda: deque(maxlen=_LATENCY_WINDOW)
+    )
     strategy_usage: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
     error_types: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
@@ -120,10 +131,10 @@ class SearchMetrics:
 
     @property
     def avg_latency_ms(self) -> float:
-        """Calculate average latency"""
-        if not self.search_latencies:
+        """Lifetime average latency (from running totals, not the p95 window)."""
+        if self.total_searches == 0:
             return 0.0
-        return sum(self.search_latencies) / len(self.search_latencies)
+        return self.total_latency_ms / self.total_searches
 
     @property
     def p95_latency_ms(self) -> float:
