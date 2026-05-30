@@ -1468,3 +1468,57 @@ class TestCodeSegmentIngestion:
         assert bar["code_id"] == "mymodule_Bar_5"
         assert bar["chunk_type"] == "class"
         assert bar["source_code"] == "class Bar:\n    pass"
+
+
+class TestVlmDescriptionMapping:
+    """VLM frame descriptions must reach the right keyframe documents.
+
+    Regression (H28): video_data["descriptions"] is the VLM wrapper
+    {"video_id", "descriptions": {<frame_ref>: text}, ...}; the old code read
+    it at the top level and keyed by the segment ENUMERATION index, so every
+    keyframe document got description="". The per-frame text lives one level
+    down, keyed by the keyframe's frame_number/frame_id.
+    """
+
+    def test_frame_description_map_unwraps_vlm_wrapper(self):
+        wrapper = {
+            "video_id": "v1",
+            "descriptions": {"0": "a sunrise", "30": "a city street"},
+            "total_descriptions": 2,
+        }
+        assert EmbeddingGeneratorImpl._frame_description_map(wrapper) == {
+            "0": "a sunrise",
+            "30": "a city street",
+        }
+
+    def test_frame_description_map_handles_empty_and_flat(self):
+        assert EmbeddingGeneratorImpl._frame_description_map({}) == {}
+        assert EmbeddingGeneratorImpl._frame_description_map(None) == {}
+        # Legacy flat {frame_ref: text} map passes through unchanged.
+        assert EmbeddingGeneratorImpl._frame_description_map({"0": "x"}) == {"0": "x"}
+
+    def test_segment_frame_ref_prefers_frame_id_then_number(self):
+        assert EmbeddingGeneratorImpl._segment_frame_ref({"frame_id": 7}) == "7"
+        assert EmbeddingGeneratorImpl._segment_frame_ref({"frame_number": 30}) == "30"
+        assert EmbeddingGeneratorImpl._segment_frame_ref({}) is None
+
+    def test_sparse_frames_align_text_to_correct_keyframe(self):
+        """Sparse frame_numbers (0, 30, 90) must align each description to its
+        own keyframe; an undescribed frame gets ''. The old idx-on-wrapper
+        lookup returned '' for every frame."""
+        wrapper = {
+            "video_id": "v1",
+            "descriptions": {"0": "sunrise", "30": "city street"},
+            "total_descriptions": 2,
+        }
+        frame_map = EmbeddingGeneratorImpl._frame_description_map(wrapper)
+        segments = [
+            {"frame_number": 0},
+            {"frame_number": 30},
+            {"frame_number": 90},  # no VLM description for this frame
+        ]
+        resolved = [
+            frame_map.get(EmbeddingGeneratorImpl._segment_frame_ref(s), "")
+            for s in segments
+        ]
+        assert resolved == ["sunrise", "city street", ""]
