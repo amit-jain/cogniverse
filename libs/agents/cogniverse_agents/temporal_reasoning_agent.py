@@ -18,6 +18,7 @@ when the per-window content set is large.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -422,7 +423,8 @@ class TemporalReasoningAgent(
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
         rlm = build_rlm_from_options(self._llm_config, rlm_options)
-        result = rlm.process(
+        result = await asyncio.to_thread(
+            rlm.process,
             query=(
                 f"How has the knowledge about {subject_key} evolved across "
                 "the time windows below? Highlight what changed and when."

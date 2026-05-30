@@ -16,6 +16,7 @@ context is large.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -325,5 +326,5 @@ class FederatedQueryAgent(
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
         rlm = build_rlm_from_options(self._llm_config, rlm_options)
-        result = rlm.process(query=query, context=block)
+        result = await asyncio.to_thread(rlm.process, query=query, context=block)
         return result.answer

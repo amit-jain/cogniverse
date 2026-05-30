@@ -19,6 +19,7 @@ on demand and passes the joined context to the LLM. RLM-compatible
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -313,7 +314,12 @@ class MultiDocumentSynthesisAgent(
             )
             used_rlm = True
         else:
-            answer = self._synthesise_without_rlm(input.query, documents_block)
+            # Offload the blocking DSPy LM call (and its dspy.context, set
+            # inside the sync method so it lands on the worker thread) so the
+            # event loop isn't stalled for the whole synthesis round-trip.
+            answer = await asyncio.to_thread(
+                self._synthesise_without_rlm, input.query, documents_block
+            )
 
         citation_refs = [
             CitationRef.memory(ref.memory_id, label=ref.label)
@@ -397,7 +403,8 @@ class MultiDocumentSynthesisAgent(
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
         rlm = build_rlm_from_options(self._llm_config, rlm_options)
-        result = rlm.process(
+        result = await asyncio.to_thread(
+            rlm.process,
             query=query,
             context=documents_block,
             include_trajectory=rlm_options.include_trajectory,
