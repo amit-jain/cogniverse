@@ -9,7 +9,7 @@ import json
 import logging
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 
 import numpy as np
 import pandas as pd
@@ -126,20 +126,57 @@ class TripletExtractor:
 
         return triplets
 
+    @staticmethod
+    def _row_attributes(row: pd.Series) -> Dict[str, Any]:
+        """Reconstruct an attributes dict from Phoenix's flattened columns.
+
+        Phoenix's get_spans dataframe has NO bare ``attributes`` column — span
+        attributes live in dotted ``attributes.<...>`` columns (some leaf
+        values, some nested dicts, e.g. ``attributes.routing``). Strip the
+        prefix and drop NaNs so callers can read keys like ``input.value`` /
+        ``output.value`` / ``input.modality`` uniformly. Nested-dict columns are
+        also expanded to ``<col>.<k>`` keys for the same uniform access.
+        """
+        attrs: Dict[str, Any] = {}
+        prefix = "attributes."
+        for col, val in row.items():
+            if not isinstance(col, str) or not col.startswith(prefix):
+                continue
+            try:
+                if pd.isna(val):
+                    continue
+            except (TypeError, ValueError):
+                pass  # dicts / lists / arrays are not NaN
+            key = col[len(prefix) :]
+            if isinstance(val, dict):
+                for k, v in val.items():
+                    attrs[f"{key}.{k}"] = v
+            attrs[key] = val
+        return attrs
+
+    @staticmethod
+    def _first(attrs: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+        """Return the first present, non-empty attribute among ``keys``."""
+        for k in keys:
+            v = attrs.get(k)
+            if v is not None and v != "":
+                return v
+        return default
+
     def _filter_search_spans(
         self, spans_df: pd.DataFrame, modality: str
     ) -> pd.DataFrame:
         """Filter spans for search operations with specific modality."""
+        if spans_df.empty:
+            return spans_df.copy()
         # Search spans have name containing "search"
         search_mask = spans_df["name"].str.lower().str.contains("search", na=False)
 
-        # Modality filter (check span attributes)
-        modality_mask = spans_df["attributes"].apply(
-            lambda attrs: (
-                self._check_modality(attrs, modality)
-                if isinstance(attrs, dict)
-                else False
-            )
+        # Modality filter — reconstruct attributes from the flattened columns
+        # (there is no bare ``attributes`` column on a real Phoenix dataframe).
+        modality_mask = spans_df.apply(
+            lambda row: self._check_modality(self._row_attributes(row), modality),
+            axis=1,
         )
 
         return spans_df[search_mask & modality_mask].copy()
@@ -166,18 +203,20 @@ class TripletExtractor:
     ) -> List[Triplet]:
         """Extract triplets from a single search span."""
         try:
-            # Get query (anchor)
-            attributes = span.get("attributes", {})
-            if isinstance(attributes, str):
-                attributes = json.loads(attributes)
+            # Reconstruct attributes from the flattened Phoenix columns.
+            attributes = self._row_attributes(span)
 
-            query = attributes.get("input.query", attributes.get("query", ""))
+            # Query (anchor) — search spans log it under input.query or the
+            # OpenInference input.value convention.
+            query = self._first(
+                attributes, "input.query", "input.value", "query", default=""
+            )
             if not query:
                 return []
 
-            # Get search results
-            results_str = attributes.get(
-                "output.results", attributes.get("results", "[]")
+            # Search results — output.results or the output.value convention.
+            results_str = self._first(
+                attributes, "output.results", "output.value", "results", default="[]"
             )
             if isinstance(results_str, str):
                 results = json.loads(results_str)
@@ -258,6 +297,20 @@ class TripletExtractor:
 
         return clicked
 
+    @staticmethod
+    def _result_id(result: Dict) -> Optional[str]:
+        """Result identifier, tolerant of the backend's id key.
+
+        Search results carry the id under ``document_id`` / ``video_id`` /
+        ``source_id`` (the same set the span filter recognises), not a bare
+        ``id`` — matching only ``id`` produced zero triplets on real data.
+        """
+        for key in ("document_id", "video_id", "source_id", "id"):
+            val = result.get(key)
+            if val is not None:
+                return val
+        return None
+
     def _mine_hard_negatives(
         self,
         results: List[Dict],
@@ -273,7 +326,7 @@ class TripletExtractor:
         3. random_sampling: Random non-clicked results (easier negatives)
         """
         # Filter non-clicked results
-        non_clicked = [r for r in results if r.get("id") not in clicked_ids]
+        non_clicked = [r for r in results if self._result_id(r) not in clicked_ids]
 
         if not non_clicked:
             return []
@@ -281,7 +334,7 @@ class TripletExtractor:
         if strategy == "top_k":
             # Top 5 non-clicked results (hardest negatives)
             # These are high-scoring results that user didn't click
-            return [r["id"] for r in non_clicked[:5]]
+            return [self._result_id(r) for r in non_clicked[:5]]
 
         elif strategy == "above_threshold":
             # Non-clicked results with score > median
@@ -290,13 +343,17 @@ class TripletExtractor:
                 return []
 
             threshold = np.median(scores)
-            return [r["id"] for r in non_clicked if r.get("score", 0.0) > threshold]
+            return [
+                self._result_id(r)
+                for r in non_clicked
+                if r.get("score", 0.0) > threshold
+            ]
 
         elif strategy == "random_sampling":
             # Random sample for easier training
             k = min(5, len(non_clicked))
             sampled = random.sample(non_clicked, k=k)
-            return [r["id"] for r in sampled]
+            return [self._result_id(r) for r in sampled]
 
         else:
             raise ValueError(f"Unknown strategy: {strategy}")
@@ -304,7 +361,7 @@ class TripletExtractor:
     def _get_result_content(self, results: List[Dict], result_id: str) -> Optional[str]:
         """Extract content from result by ID."""
         for result in results:
-            if result.get("id") == result_id:
+            if self._result_id(result) == result_id:
                 # Try different content fields
                 content_fields = ["content", "text", "description", "title"]
                 for field in content_fields:
