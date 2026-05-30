@@ -197,6 +197,30 @@ class TestTextAnalysisAgent:
         with pytest.raises(ValueError, match="tenant_id is required"):
             get_agent("")
 
+    def test_lifespan_wires_config_manager(self, config_manager_memory, monkeypatch):
+        """Standalone app startup must wire the ConfigManager so /analyze works.
+
+        Before the fix the app had no lifespan and __main__ never called
+        set_config_manager, so _config_manager stayed None: /health reported
+        'initializing' and every /analyze raised RuntimeError -> HTTP 500. This
+        drives the REAL lifespan via the TestClient context manager.
+        """
+        import cogniverse_agents.text_analysis_agent as ta_module
+
+        monkeypatch.setattr(
+            ta_module, "create_default_config_manager", lambda: config_manager_memory
+        )
+        monkeypatch.setattr(ta_module, "_config_manager", None)
+
+        # Lifespan runs on context entry and wires the manager.
+        with TestClient(app) as client:
+            assert ta_module._config_manager is config_manager_memory
+            health = client.get("/health")
+            assert health.status_code == 200
+            assert health.json()["status"] == "healthy"
+
+        monkeypatch.setattr(ta_module, "_config_manager", None)
+
         with pytest.raises(ValueError, match="tenant_id is required"):
             get_agent(None)
 

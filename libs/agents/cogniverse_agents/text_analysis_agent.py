@@ -4,6 +4,7 @@ Simple agent demonstrating dynamic DSPy configuration and optimization.
 """
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 import dspy
@@ -187,11 +188,22 @@ class TextAnalysisAgent(
         }
 
 
+@asynccontextmanager
+async def lifespan(application):
+    """Wire the ConfigManager at startup so /analyze works under both the
+    standalone launch and programmatic (TestClient) launches. Without this the
+    module-level _config_manager stayed None and every /analyze raised
+    RuntimeError -> HTTP 500."""
+    set_config_manager(create_default_config_manager())
+    yield
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Text Analysis Agent",
     description="Text analysis with runtime-configurable DSPy modules",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Per-tenant agent instances cache (LRU-bounded). Each instance holds a
