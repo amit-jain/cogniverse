@@ -794,6 +794,13 @@ class ArtifactManager:
         Returns ``{"prompts": ..., "served_from": "active|canary|default",
         "version": int | None, "variant_id": str}``. Stable per request_seed.
 
+        TODO(audit-cycle-6, HIGH/PERF): this runs 2-3 uncached Phoenix dataset
+        reads on EVERY dispatch. Add a short-TTL per-(tenant, agent, variant)
+        cache, invalidated on promote_to_canary / promote_canary_to_active /
+        retire_canary (a stale cache would serve the WRONG canary/variant
+        prompts). Plan + real-Phoenix test contract:
+        docs/development/async-perf-hotpath-todo.md
+
         When ``variant_id`` is non-default, the dataset names
         consulted are the variant-qualified ones
         (``dspy-prompts-{tenant}-{agent}::variant={vid}-vN``). Two variants
