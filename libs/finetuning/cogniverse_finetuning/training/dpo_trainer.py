@@ -203,7 +203,9 @@ class DPOFinetuner:
             logging_steps=config.get("logging_steps", 100),
             save_steps=config.get("save_steps", 500),
             eval_steps=config.get("eval_steps", 500) if val_dataset else None,
-            evaluation_strategy="steps" if val_dataset else "no",
+            # transformers renamed evaluation_strategy -> eval_strategy; the old
+            # name raises TypeError on the installed transformers (>=4.x).
+            eval_strategy="steps" if val_dataset else "no",
             save_total_limit=3,
             load_best_model_at_end=True if val_dataset else False,
             metric_for_best_model="eval_loss" if val_dataset else None,

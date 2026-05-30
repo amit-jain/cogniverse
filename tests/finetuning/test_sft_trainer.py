@@ -79,7 +79,7 @@ class TestValidationSplit:
         with (
             patch("transformers.AutoModelForCausalLM") as mock_model_cls,
             patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
-            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("datasets.Dataset.from_list") as mock_from_list,
             patch("peft.LoraConfig"),
             patch("peft.get_peft_model", return_value=mock_model),
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
@@ -87,22 +87,21 @@ class TestValidationSplit:
         ):
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.return_value = mock_dataset
+            mock_from_list.return_value = mock_dataset
 
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify Dataset.from_list was called ONCE (no validation split)
-            assert mock_dataset_cls.from_list.call_count == 1
-            mock_dataset_cls.from_list.assert_called_once_with(dataset)
+            assert mock_from_list.call_count == 1
+            mock_from_list.assert_called_once_with(dataset)
 
-            # Verify SFTTrainer was called with eval_dataset=None if trainer was created
-            if mock_sft_trainer.called:
-                trainer_call_kwargs = mock_sft_trainer.call_args[1]
-                assert trainer_call_kwargs.get("eval_dataset") is None
+            # SFTTrainer must have been constructed with eval_dataset=None.
+            assert mock_sft_trainer.called
+            trainer_call_kwargs = mock_sft_trainer.call_args[1]
+            assert trainer_call_kwargs.get("eval_dataset") is None
 
     @pytest.mark.asyncio
     async def test_validation_split_for_large_dataset(self):
@@ -135,7 +134,7 @@ class TestValidationSplit:
         with (
             patch("transformers.AutoModelForCausalLM") as mock_model_cls,
             patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
-            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("datasets.Dataset.from_list") as mock_from_list,
             patch("peft.LoraConfig"),
             patch("peft.get_peft_model", return_value=mock_model),
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
@@ -143,32 +142,31 @@ class TestValidationSplit:
         ):
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.side_effect = [
+            mock_from_list.side_effect = [
                 mock_train_dataset,
                 mock_val_dataset,
             ]
 
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify Dataset.from_list was called TWICE (train + val split)
-            assert mock_dataset_cls.from_list.call_count == 2
+            assert mock_from_list.call_count == 2
 
             # Verify the split: 90% train (135), 10% val (15)
             split_idx = int(150 * 0.9)  # 135
-            train_call_args = mock_dataset_cls.from_list.call_args_list[0][0][0]
-            val_call_args = mock_dataset_cls.from_list.call_args_list[1][0][0]
+            train_call_args = mock_from_list.call_args_list[0][0][0]
+            val_call_args = mock_from_list.call_args_list[1][0][0]
 
             assert len(train_call_args) == split_idx  # 135
             assert len(val_call_args) == 150 - split_idx  # 15
 
-            # Verify SFTTrainer was called with eval_dataset (not None)
-            if mock_sft_trainer.called:
-                trainer_call_kwargs = mock_sft_trainer.call_args[1]
-                assert trainer_call_kwargs.get("eval_dataset") is not None
+            # SFTTrainer must have been constructed with a real eval_dataset.
+            assert mock_sft_trainer.called
+            trainer_call_kwargs = mock_sft_trainer.call_args[1]
+            assert trainer_call_kwargs.get("eval_dataset") is not None
 
 
 @pytest.mark.unit
@@ -203,7 +201,7 @@ class TestLoRAFallback:
         with (
             patch("transformers.AutoModelForCausalLM") as mock_model_cls,
             patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
-            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("datasets.Dataset.from_list") as mock_from_list,
             patch(
                 "peft.LoraConfig", return_value=mock_lora_config
             ) as mock_lora_config_cls,
@@ -215,13 +213,12 @@ class TestLoRAFallback:
         ):
             mock_model_cls.from_pretrained.return_value = mock_base_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.return_value = mock_dataset
+            mock_from_list.return_value = mock_dataset
 
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify LoraConfig was created
             mock_lora_config_cls.assert_called_once()
@@ -259,7 +256,7 @@ class TestLoRAFallback:
         with (
             patch("transformers.AutoModelForCausalLM") as mock_model_cls,
             patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
-            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("datasets.Dataset.from_list") as mock_from_list,
             patch("peft.LoraConfig"),
             patch(
                 "peft.get_peft_model", side_effect=Exception("LoRA not supported")
@@ -270,13 +267,12 @@ class TestLoRAFallback:
         ):
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.return_value = mock_dataset
+            mock_from_list.return_value = mock_dataset
 
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify get_peft_model was called (and raised exception)
             mock_get_peft_model_func.assert_called_once()
@@ -290,11 +286,11 @@ class TestLoRAFallback:
                 for record in caplog.records
             )
 
-            # Verify SFTTrainer was still called (training continued with base model)
-            if mock_sft_trainer.called:
-                trainer_call_kwargs = mock_sft_trainer.call_args[1]
-                # Model should be the base model (not PEFT model) since LoRA failed
-                assert trainer_call_kwargs.get("model") == mock_model
+            # SFTTrainer must have been constructed with the base model (LoRA
+            # failed, so training continues without the PEFT wrapper).
+            assert mock_sft_trainer.called
+            trainer_call_kwargs = mock_sft_trainer.call_args[1]
+            assert trainer_call_kwargs.get("model") == mock_model
 
     @pytest.mark.asyncio
     async def test_lora_disabled_via_config(self):
@@ -321,7 +317,7 @@ class TestLoRAFallback:
         with (
             patch("transformers.AutoModelForCausalLM") as mock_model_cls,
             patch("transformers.AutoTokenizer") as mock_tokenizer_cls,
-            patch("datasets.Dataset") as mock_dataset_cls,
+            patch("datasets.Dataset.from_list") as mock_from_list,
             patch("peft.LoraConfig") as mock_lora_config_cls,
             patch("peft.get_peft_model") as mock_get_peft_model_func,
             patch("trl.SFTTrainer", return_value=mock_trainer) as mock_sft_trainer,
@@ -329,13 +325,12 @@ class TestLoRAFallback:
         ):
             mock_model_cls.from_pretrained.return_value = mock_model
             mock_tokenizer_cls.from_pretrained.return_value = mock_tokenizer
-            mock_dataset_cls.from_list.return_value = mock_dataset
+            mock_from_list.return_value = mock_dataset
 
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify LoraConfig was NOT called
             mock_lora_config_cls.assert_not_called()
@@ -343,7 +338,7 @@ class TestLoRAFallback:
             # Verify get_peft_model was NOT called
             mock_get_peft_model_func.assert_not_called()
 
-            # Verify SFTTrainer was called with base model (not PEFT model)
-            if mock_sft_trainer.called:
-                trainer_call_kwargs = mock_sft_trainer.call_args[1]
-                assert trainer_call_kwargs.get("model") == mock_model
+            # SFTTrainer must have been constructed with the base model.
+            assert mock_sft_trainer.called
+            trainer_call_kwargs = mock_sft_trainer.call_args[1]
+            assert trainer_call_kwargs.get("model") == mock_model

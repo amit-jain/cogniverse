@@ -97,20 +97,19 @@ class TestValidationSplit:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify Dataset.from_list was called ONCE (no validation split)
             assert mock_dataset_from_list.call_count == 1
             mock_dataset_from_list.assert_called_once_with(dataset)
 
-            # Verify DPOTrainer was called with eval_dataset=None if trainer was created
-            if mock_dpo_trainer.called:
-                trainer_call_kwargs = mock_dpo_trainer.call_args[1]
-                assert trainer_call_kwargs.get("eval_dataset") is None
+            # DPOTrainer must have been constructed with eval_dataset=None.
+            assert mock_dpo_trainer.called
+            trainer_call_kwargs = mock_dpo_trainer.call_args[1]
+            assert trainer_call_kwargs.get("eval_dataset") is None
 
     @pytest.mark.asyncio
     async def test_validation_split_for_large_dataset(self):
@@ -165,11 +164,10 @@ class TestValidationSplit:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify Dataset.from_list was called TWICE (train + val split)
             assert mock_dataset_from_list.call_count == 2
@@ -182,10 +180,10 @@ class TestValidationSplit:
             assert len(train_call_args) == split_idx  # 135
             assert len(val_call_args) == 150 - split_idx  # 15
 
-            # Verify DPOTrainer was called with eval_dataset (not None)
-            if mock_dpo_trainer.called:
-                trainer_call_kwargs = mock_dpo_trainer.call_args[1]
-                assert trainer_call_kwargs.get("eval_dataset") is not None
+            # DPOTrainer must have been constructed with a real eval_dataset.
+            assert mock_dpo_trainer.called
+            trainer_call_kwargs = mock_dpo_trainer.call_args[1]
+            assert trainer_call_kwargs.get("eval_dataset") is not None
 
 
 @pytest.mark.unit
@@ -241,11 +239,10 @@ class TestLoRAFallback:
             patch("trl.DPOTrainer", return_value=mock_trainer),
             patch("pathlib.Path.mkdir"),
         ):
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify LoraConfig was created
             mock_lora_config_cls.assert_called_once()
@@ -304,11 +301,10 @@ class TestLoRAFallback:
             patch("pathlib.Path.mkdir"),
             caplog.at_level("WARNING"),
         ):
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify get_peft_model was called (and raised exception)
             mock_get_peft_model_func.assert_called_once()
@@ -322,13 +318,12 @@ class TestLoRAFallback:
                 for record in caplog.records
             )
 
-            # Verify DPOTrainer was still called (training continued with base model)
-            if mock_dpo_trainer.called:
-                trainer_call_kwargs = mock_dpo_trainer.call_args[1]
-                # Model should be the base model (not PEFT model) since LoRA failed
-                assert trainer_call_kwargs.get("model") == mock_model
-                # Reference model should still be mock_model_ref
-                assert trainer_call_kwargs.get("ref_model") == mock_model_ref
+            # DPOTrainer must have been constructed with the base model (LoRA
+            # failed) and the reference model intact.
+            assert mock_dpo_trainer.called
+            trainer_call_kwargs = mock_dpo_trainer.call_args[1]
+            assert trainer_call_kwargs.get("model") == mock_model
+            assert trainer_call_kwargs.get("ref_model") == mock_model_ref
 
     @pytest.mark.asyncio
     async def test_lora_disabled_via_config(self):
@@ -372,11 +367,10 @@ class TestLoRAFallback:
             patch("trl.DPOTrainer", return_value=mock_trainer) as mock_dpo_trainer,
             patch("pathlib.Path.mkdir"),
         ):
-            try:
-                await finetuner._train_local(dataset, config)
-            except Exception:
-                # Some mocking may be incomplete, but we can still verify the calls
-                pass
+            # No try/except: _train_local must run to completion against these
+            # mocks. A swallowed exception here hid the evaluation_strategy
+            # TypeError (transformers renamed it) for the whole local-train path.
+            await finetuner._train_local(dataset, config)
 
             # Verify LoraConfig was NOT called
             mock_lora_config_cls.assert_not_called()
@@ -384,8 +378,8 @@ class TestLoRAFallback:
             # Verify get_peft_model was NOT called
             mock_get_peft_model_func.assert_not_called()
 
-            # Verify DPOTrainer was called with base model (not PEFT model)
-            if mock_dpo_trainer.called:
-                trainer_call_kwargs = mock_dpo_trainer.call_args[1]
-                assert trainer_call_kwargs.get("model") == mock_model
-                assert trainer_call_kwargs.get("ref_model") == mock_model_ref
+            # DPOTrainer must have been constructed with the base + reference model.
+            assert mock_dpo_trainer.called
+            trainer_call_kwargs = mock_dpo_trainer.call_args[1]
+            assert trainer_call_kwargs.get("model") == mock_model
+            assert trainer_call_kwargs.get("ref_model") == mock_model_ref
