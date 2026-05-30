@@ -128,11 +128,22 @@ class UserTenantMapper:
         }
 
         try:
+            # Store the mapping in the SYSTEM partition, NOT the user's own
+            # tenant: get_tenant_id() runs before the tenant is known (that is
+            # what it resolves), and Mem0 hard-partitions on user_id. Writing
+            # under tenant_id here put the mapping in a partition the lookup
+            # never searches, so every registered user looked unregistered.
+            # The real tenant is preserved in the content text and metadata.
             self.memory_manager.add_memory(
                 content=content,
-                tenant_id=tenant_id,
+                tenant_id=SYSTEM_TENANT_ID,
                 agent_name=GATEWAY_AGENT_NAME,
                 metadata=metadata,
+                # Store verbatim: get_tenant_id parses "mapped to tenant <id>"
+                # out of the content by substring, so the LLM extraction pass
+                # (infer=True) must not be allowed to reword it — and a curated
+                # mapping needs no extraction.
+                infer=False,
             )
             logger.info(f"Registered {platform} user {external_user_id} → {tenant_id}")
             return True

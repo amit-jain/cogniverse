@@ -5,6 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 from cogniverse_messaging.auth import InviteTokenManager, UserTenantMapper
 
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+
 
 class TestInviteTokenManager:
     @pytest.fixture
@@ -102,9 +104,19 @@ class TestUserTenantMapper:
         call_kwargs = memory_manager.add_memory.call_args.kwargs
         assert "12345" in call_kwargs["content"]
         assert "telegram" in call_kwargs["content"]
-        assert call_kwargs["tenant_id"] == "acme:alice"
+        # C6: the mapping must be written to the SYSTEM partition (what
+        # get_tenant_id reads), NOT the user's own tenant — the lookup runs
+        # before the tenant is known. The real tenant is preserved in the
+        # content text and metadata. Stored verbatim (infer=False) so the
+        # substring parse in get_tenant_id is reliable.
+        assert call_kwargs["tenant_id"] == SYSTEM_TENANT_ID
+        assert call_kwargs["infer"] is False
+        assert "acme:alice" in call_kwargs["content"]
+        assert call_kwargs["metadata"]["tenant_id"] == "acme:alice"
 
-    def test_get_tenant_id_found(self, memory_manager):
+    def test_get_tenant_id_reads_system_partition(self, memory_manager):
+        """get_tenant_id must search the SYSTEM partition (where register_user
+        writes), not some other tenant — the read/write partitions must match."""
         memory_manager.search_memory.return_value = [
             {"memory": "User 12345 on telegram is mapped to tenant acme:alice"}
         ]
@@ -112,6 +124,37 @@ class TestUserTenantMapper:
         mapper = UserTenantMapper(memory_manager)
         result = mapper.get_tenant_id("telegram", "12345")
         assert result == "acme:alice"
+        assert memory_manager.search_memory.call_args.kwargs["tenant_id"] == (
+            SYSTEM_TENANT_ID
+        )
+
+    def test_register_then_lookup_round_trip(self):
+        """C6 regression: with a partition-faithful Mem0 model (search only
+        returns memories written to the SAME (tenant_id, agent_name) partition,
+        as the real Mem0 hard-partitions), register_user → get_tenant_id must
+        resolve the tenant. On the old code the write went to 'acme:alice' and
+        the read to the SYSTEM partition, so the lookup returned nothing."""
+
+        class _PartitionedMemory:
+            def __init__(self):
+                self.store = {}
+
+            def add_memory(
+                self, content, tenant_id, agent_name, metadata=None, infer=True
+            ):
+                self.store.setdefault((tenant_id, agent_name), []).append(
+                    {"memory": content}
+                )
+                return "mem_1"
+
+            def search_memory(self, query, tenant_id, agent_name, top_k=5):
+                return self.store.get((tenant_id, agent_name), [])[:top_k]
+
+        mapper = UserTenantMapper(_PartitionedMemory())
+        assert mapper.register_user("telegram", "12345", "acme:alice") is True
+        assert mapper.get_tenant_id("telegram", "12345") == "acme:alice"
+        # A different, unregistered user resolves to None.
+        assert mapper.get_tenant_id("telegram", "99999") is None
 
     def test_get_tenant_id_not_found(self, memory_manager):
         memory_manager.search_memory.return_value = []
