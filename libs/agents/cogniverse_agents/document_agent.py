@@ -8,6 +8,7 @@ Implements two parallel approaches for document search:
 Enables comparison and auto-strategy selection based on query type.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -411,9 +412,14 @@ class DocumentAgent(
             "input.query(qt)": str(query_embedding_flat),
         }
 
-        # Execute search
-        response = requests.post(
-            f"{self._vespa_endpoint}/search/", json=params, timeout=10
+        # Execute search — offload the blocking HTTP call so it doesn't stall
+        # the event loop (and every other coroutine on the worker) for the
+        # whole Vespa round-trip.
+        response = await asyncio.to_thread(
+            requests.post,
+            f"{self._vespa_endpoint}/search/",
+            json=params,
+            timeout=10,
         )
 
         if response.status_code != 200:
@@ -475,9 +481,12 @@ class DocumentAgent(
             "input.query(q)": query_embedding.tolist(),
         }
 
-        # Execute search
-        response = requests.post(
-            f"{self._vespa_endpoint}/search/", json=params, timeout=10
+        # Execute search — offload the blocking HTTP call off the event loop.
+        response = await asyncio.to_thread(
+            requests.post,
+            f"{self._vespa_endpoint}/search/",
+            json=params,
+            timeout=10,
         )
 
         if response.status_code != 200:
@@ -515,9 +524,12 @@ class DocumentAgent(
         """
         logger.info("🔀 Using hybrid strategy (visual + text fusion)")
 
-        # Execute both searches in parallel
-        visual_results = await self._search_visual(query, limit)
-        text_results = await self._search_text(query, limit)
+        # Execute both searches concurrently (each offloads its blocking HTTP
+        # call), so hybrid latency is max(visual, text), not their sum.
+        visual_results, text_results = await asyncio.gather(
+            self._search_visual(query, limit),
+            self._search_text(query, limit),
+        )
 
         # Apply Reciprocal Rank Fusion
         fused_results = self._fuse_results(visual_results, text_results, limit)
