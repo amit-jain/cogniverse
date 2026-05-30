@@ -221,10 +221,45 @@ class TestResolveHelperBehavior:
 
     def test_admin_dict_entry_returns_chosen_variant(self):
         admin._reset_admin_overrides_for_tests()
-        admin._signature_variant_overrides["acme"] = {
+        # Overrides are keyed by the canonical tenant id.
+        admin._signature_variant_overrides["acme:acme"] = {
             "search_agent": "with_jurisdiction"
         }
         try:
+            assert (
+                AgentDispatcher._resolve_signature_variant("acme", "search_agent")
+                == "with_jurisdiction"
+            )
+        finally:
+            admin._reset_admin_overrides_for_tests()
+
+    def test_put_and_resolve_agree_across_tenant_forms(self):
+        """A variant set via the admin PUT must resolve in dispatch regardless
+        of whether the tenant arrives as simple ('acme') or canonical
+        ('acme:acme') form. Pre-fix the PUT stored under the raw path key and
+        the resolver looked up a differently-normalised key, so a tenant
+        arriving in a different form than the PUT used got the default variant.
+        """
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        admin._reset_admin_overrides_for_tests()
+        app = FastAPI()
+        app.include_router(admin.router, prefix="/admin")
+        client = TestClient(app)
+        try:
+            # Admin selects the variant for the SIMPLE-form tenant.
+            r = client.put(
+                "/admin/tenants/acme/signature_variants/search_agent",
+                json={"variant_id": "with_jurisdiction"},
+            )
+            assert r.status_code == 200
+            # Dispatch resolves for the same tenant in COLON form.
+            assert (
+                AgentDispatcher._resolve_signature_variant("acme:acme", "search_agent")
+                == "with_jurisdiction"
+            )
+            # ...and in simple form.
             assert (
                 AgentDispatcher._resolve_signature_variant("acme", "search_agent")
                 == "with_jurisdiction"

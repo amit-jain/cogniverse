@@ -16,7 +16,10 @@ import logging
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.tenant_utils import (
+    canonical_tenant_id,
+    require_tenant_id,
+)
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 if TYPE_CHECKING:
@@ -485,7 +488,11 @@ class AgentDispatcher:
         except Exception:
             return DEFAULT_VARIANT_ID
 
-        per_tenant = _admin_overrides.get(tenant_id) or {}
+        # Canonicalize the key so a variant set via admin PUT resolves here
+        # regardless of whether the tenant arrived as simple ('acme') or
+        # colon ('acme:acme') form — the admin endpoints (which canonicalize
+        # their sibling routes) store under the canonical key too.
+        per_tenant = _admin_overrides.get(canonical_tenant_id(tenant_id)) or {}
         return per_tenant.get(agent_name) or DEFAULT_VARIANT_ID
 
     async def dispatch(

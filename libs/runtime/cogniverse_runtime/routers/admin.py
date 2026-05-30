@@ -1463,7 +1463,9 @@ async def get_signature_variants(tenant_id: str) -> SignatureVariantResponse:
     """list per-agent variant selections for a tenant."""
     return SignatureVariantResponse(
         tenant_id=tenant_id,
-        selections=dict(_signature_variant_overrides.get(tenant_id, {})),
+        selections=dict(
+            _signature_variant_overrides.get(canonical_tenant_id(tenant_id), {})
+        ),
     )
 
 
@@ -1479,9 +1481,12 @@ async def set_signature_variant(
     """pick the variant id this tenant uses for an agent."""
     if not body.variant_id.strip():
         raise HTTPException(400, "variant_id must be non-empty")
-    selections = dict(_signature_variant_overrides.get(tenant_id, {}))
+    # Store under the canonical key so the dispatcher's _resolve_signature_variant
+    # finds it whether the tenant arrives as simple or colon form.
+    key = canonical_tenant_id(tenant_id)
+    selections = dict(_signature_variant_overrides.get(key, {}))
     selections[agent_type] = body.variant_id
-    _signature_variant_overrides[tenant_id] = selections
+    _signature_variant_overrides[key] = selections
     logger.info(
         "Tenant=%s now using variant=%r for agent=%s",
         tenant_id,
