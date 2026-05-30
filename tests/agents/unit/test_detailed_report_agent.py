@@ -304,28 +304,32 @@ class TestDetailedReportAgent:
 class TestDetailedReportAgentEdgeCases:
     """Test edge cases and error conditions"""
 
-    @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.detailed_report_agent.VLMInterface")
-    def test_generate_report_empty_results(self, mock_vlm_class, mock_get_config):
-        """Test report generation with empty search results"""
-        mock_get_config.return_value = {
-            "llm": {
-                "model_name": "test-model",
-                "base_url": "http://localhost:11434",
-            }
-        }
+    @pytest.mark.asyncio
+    async def test_generate_report_empty_results(self, mock_vlm_class):
+        """_generate_report must return a well-formed ReportResult for empty
+        search results. The old test only inspected the ReportRequest it built
+        and never called the agent at all."""
         mock_vlm_class.return_value = Mock()
+        with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
+            agent = DetailedReportAgent(deps=DetailedReportDeps(), config_manager=Mock())
+            agent._dspy_lm = Mock()
 
         request = ReportRequest(
             query="test query",
             search_results=[],  # Empty results
             report_type="comprehensive",
+            include_visual_analysis=False,
         )
 
-        # This test verifies that the agent handles empty results gracefully
-        # In a real scenario, generate_report would return appropriate empty structures
-        assert request.query == "test query"
-        assert len(request.search_results) == 0
+        result = await agent._generate_report(request)
+
+        # Empty input still produces a structured report.
+        assert result.thinking_phase.content_analysis["total_results"] == 0
+        assert isinstance(result.executive_summary, str) and result.executive_summary
+        assert isinstance(result.detailed_findings, list)
+        assert isinstance(result.recommendations, list)
+        assert isinstance(result.confidence_assessment, dict)
 
 
 @pytest.mark.unit
