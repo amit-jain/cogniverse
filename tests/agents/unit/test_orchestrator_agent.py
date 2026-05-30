@@ -1026,19 +1026,83 @@ class TestOrchestratorIntelligence:
         result = orchestrator_agent.cancel_workflow("wf_nonexistent")
         assert result is False
 
-    @pytest.mark.asyncio
-    async def test_orchestration_span_emitted(self, orchestrator_agent):
-        """Test that telemetry span is emitted after orchestration"""
-        # This should not raise even without a real TelemetryManager
+    def test_orchestration_span_emitted(self, orchestrator_agent):
+        """The cogniverse.orchestration span carries the exact attributes
+        (query truncated to 200 chars, agent_sequence comma-joined)."""
+
+        class _NullCtx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class _RecordingTelemetry:
+            def __init__(self):
+                self.spans = []
+
+            def span(self, *, name, tenant_id, attributes):
+                self.spans.append(
+                    {
+                        "name": name,
+                        "tenant_id": tenant_id,
+                        "attributes": dict(attributes),
+                    }
+                )
+                return _NullCtx()
+
+        recorder = _RecordingTelemetry()
+        orchestrator_agent.telemetry_manager = recorder
+        orchestrator_agent._current_tenant_id = "acme:prod"
+
         orchestrator_agent._emit_orchestration_span(
             workflow_id="wf_test",
-            query="test query",
-            agent_sequence=["search_agent"],
+            query="q" * 300,
+            agent_sequence=["search_agent", "summarizer_agent"],
             execution_time=1.5,
+            success=True,
+            tasks_completed=2,
+        )
+
+        assert len(recorder.spans) == 1
+        span = recorder.spans[0]
+        assert span["name"] == "cogniverse.orchestration"
+        assert span["tenant_id"] == "acme:prod"
+        assert span["attributes"] == {
+            "orchestration.workflow_id": "wf_test",
+            "orchestration.query": "q" * 200,  # truncated to 200 chars
+            "orchestration.agent_sequence": "search_agent,summarizer_agent",
+            "orchestration.execution_time": 1.5,
+            "orchestration.success": True,
+            "orchestration.tasks_completed": 2,
+        }
+
+    def test_orchestration_span_noop_without_telemetry(self, orchestrator_agent):
+        """No telemetry_manager -> silent no-op (back-compat, must not raise)."""
+        orchestrator_agent.telemetry_manager = None
+        orchestrator_agent._emit_orchestration_span(
+            workflow_id="w",
+            query="q",
+            agent_sequence=["a"],
+            execution_time=0.1,
             success=True,
             tasks_completed=1,
         )
-        # No exception means success
+
+    def test_orchestration_span_requires_tenant(self, orchestrator_agent):
+        """Telemetry set but no _current_tenant_id -> raise (guards callers that
+        emit before _process_impl set the tenant)."""
+        orchestrator_agent.telemetry_manager = object()  # truthy; span never reached
+        orchestrator_agent._current_tenant_id = None
+        with pytest.raises(RuntimeError, match="_current_tenant_id"):
+            orchestrator_agent._emit_orchestration_span(
+                workflow_id="w",
+                query="q",
+                agent_sequence=["a"],
+                execution_time=0.1,
+                success=True,
+                tasks_completed=1,
+            )
 
     def test_dynamic_agent_discovery(self, orchestrator_agent):
         """Test that agents come from registry, not hardcoded enum"""
