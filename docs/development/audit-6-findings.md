@@ -31,7 +31,15 @@ Single-pass audit per `.claude/rules/audit.md` (89 agents, 5 bug classes A–E +
 - C5 — `dataclasses.replace` preserves unedited global-config fields (`test_system_config_save.py`: real ConfigManager round-trip).
 - C6 — write user→tenant map to SYSTEM partition + `infer=False` (`test_auth.py` partition-faithful + `test_user_tenant_mapping_real_mem0.py` real Vespa-Mem0).
 
-**Tier 2 — HIGH: in progress.** Order: Phoenix-flatten cluster → tenant-format cluster → standalone-apps cluster → async-blocking cluster → remaining → hollow tests.
+**Tier 2 — HIGH: in progress.**
+
+✅ **Standalone-apps cluster DONE** (commits `Add get_agent_skills accessor…`, `Wire config manager via lifespan…`):
+- `A2AAgent.get_agent_skills()` public accessor added → the 3 `/agent.json` routes (search/summarizer/detailed_report) no longer 500 on a real agent.
+- summarizer + detailed_report lifespans now build `create_default_config_manager()` → standalone apps start instead of crashing on the required-config_manager raise.
+- text_analysis app gained a `lifespan` that calls `set_config_manager` → `/analyze` no longer 500s with "ConfigManager not initialized".
+- Hollow `test_standalone_agent_apps.py` upgraded: real-lifespan tests (TestClient context manager) construct the real agent and assert `/agent.json` serves real skills + `/health` healthy.
+
+Remaining HIGH order: Phoenix-flatten cluster (`annotation_agent`, `finetuning/embedding_extractor`, dashboard `:.2f`) → tenant-format cluster (`schema_registry` regex, `tenant.py` cron name, `agent_dispatcher` signature-variant, `node_id` split) → async-blocking cluster (`document_agent` sync POST, sync DSPy on loop, one-doc-per-segment feed, leaked httpx client, unbounded `search_latencies`) → request-bleed (shared cached agent overlay) → VLM-descriptions-dropped → remaining → 10 hollow tests.
 
 
 ## CRIT tier (6)
