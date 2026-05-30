@@ -430,6 +430,11 @@ class QualityMonitor:
                     hours=int(self.live_eval_interval / 3600) or 4,
                     operation_name=span_name,
                     limit=200,
+                    # Summary/report/gateway outputs are strings / routing
+                    # dicts, not search-result lists; keep them rather than
+                    # dropping every non-search span (which scored 0 samples
+                    # for 3 of the 4 agent types).
+                    require_search_shape=False,
                 )
 
                 if spans_df.empty:
@@ -461,19 +466,23 @@ class QualityMonitor:
             outputs = span.get("outputs", {})
             query = attributes.get("query", "")
 
+            # get_recent_spans(require_search_shape=False) exposes the raw span
+            # output under "value": a results list (search), a string
+            # (summary/report), or a routing dict (gateway).
+            value = outputs.get("value")
             if agent_type == AgentType.SEARCH:
                 results = outputs.get("results", [])
                 prompt = self._build_search_judge_prompt(query, results)
             elif agent_type == AgentType.SUMMARY:
-                summary = outputs.get("summary", "")
+                summary = value if isinstance(value, str) else str(value or "")
                 prompt = self._build_summary_judge_prompt(query, summary)
             elif agent_type == AgentType.REPORT:
-                report = outputs.get("report", "")
+                report = value if isinstance(value, str) else str(value or "")
                 prompt = self._build_report_judge_prompt(query, report)
             elif agent_type == AgentType.GATEWAY:
                 # Routing already has its own feedback loop via OptimizationOrchestrator.
                 # Still score here for unified visibility.
-                routing = outputs.get("routing_decision", {})
+                routing = value if isinstance(value, dict) else {}
                 prompt = self._build_routing_judge_prompt(query, routing)
             else:
                 continue

@@ -141,3 +141,82 @@ async def test_incremental_run_skips_already_annotated_spans(
     assert s3["num_spans_retrieved"] == 2
     assert s3["num_skipped"] == 0
     assert s3["results"]["relevance"]["num_evaluated"] == 2
+
+
+async def _wait_for_named_span(
+    provider, project_name: str, span_name: str, timeout_s: float = 60.0
+) -> bool:
+    """Poll the raw span store until a span with ``span_name`` is indexed."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=1)
+        df = await provider.telemetry.traces.get_spans(
+            project=project_name,
+            start_time=start_time,
+            end_time=end_time,
+            limit=1000,
+        )
+        if df is not None and not df.empty and "name" in df.columns:
+            if int((df["name"] == span_name).sum()) >= 1:
+                return True
+        await asyncio.sleep(2.0)
+    return False
+
+
+@pytest.mark.integration
+@pytest.mark.ci_fast
+@pytest.mark.asyncio
+async def test_get_recent_spans_keeps_non_search_agent_outputs(
+    search_evaluator_provider,
+):
+    """C4: a SummarizerAgent.process span (string output) must survive
+    ``get_recent_spans(require_search_shape=False)`` with its raw output under
+    ``outputs["value"]`` — on the old code every non-search span was dropped, so
+    live quality eval scored 0 samples for SUMMARY/REPORT/GATEWAY. The default
+    (search-shape) path must still drop it, proving search behaviour is intact.
+    """
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tenant_id = f"c4-eval-{uuid.uuid4().hex[:8]}"
+    project_name = f"cogniverse-{tenant_id}"
+    span_name = "SummarizerAgent.process"
+    summary_text = "The video shows a sunrise timelapse over a coastal city."
+    manager = get_telemetry_manager()
+
+    with manager.span(
+        name=span_name,
+        tenant_id=tenant_id,
+        attributes={
+            "input.value": "summarize the coastal city video",
+            "output.value": summary_text,
+        },
+    ) as span:
+        assert span is not None
+    manager.force_flush(timeout_millis=10000)
+
+    provider = search_evaluator_provider
+    evaluator = SpanEvaluator(
+        tenant_id=tenant_id, provider=provider, project_name=project_name
+    )
+
+    assert await _wait_for_named_span(provider, project_name, span_name), (
+        f"summary span {span_name!r} was not indexed in Phoenix"
+    )
+
+    # Live per-agent path: the summary span survives with its raw string output.
+    kept = await evaluator.get_recent_spans(
+        hours=1, operation_name=span_name, require_search_shape=False
+    )
+    assert len(kept) == 1
+    row = kept.iloc[0]
+    assert row["operation_name"] == span_name
+    assert row["outputs"]["value"] == summary_text
+    assert row["outputs"]["results"] == []
+    assert row["attributes"]["query"] == "summarize the coastal city video"
+
+    # Search-shape path (default) still drops the non-search span.
+    dropped = await evaluator.get_recent_spans(
+        hours=1, operation_name=span_name, require_search_shape=True
+    )
+    assert dropped.empty

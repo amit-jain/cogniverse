@@ -61,11 +61,62 @@ class SpanEvaluator:
             create_low_scoring_golden_dataset()
         )
 
+    @staticmethod
+    def _extract_span_outputs(
+        output_value: Any, require_search_shape: bool
+    ) -> Optional[dict]:
+        """Parse a span's ``output.value`` into an ``outputs`` dict.
+
+        Returns ``None`` to skip the span. With ``require_search_shape`` (the
+        search / golden consumers) only search-result lists survive — preserving
+        the original behaviour. Without it (live per-agent judging) the raw
+        parsed output is kept under ``value`` so summary/report strings and
+        gateway routing-decision dicts are scored too, not just search lists.
+        """
+        import ast
+        import json
+
+        # Embedding-dimension spans like "(19, 128)" are encoder internals,
+        # never an agent output — always skip.
+        if (
+            isinstance(output_value, str)
+            and output_value.startswith("(")
+            and output_value.endswith(")")
+        ):
+            return None
+
+        parsed: Any = output_value
+        if isinstance(output_value, str):
+            parsed = None
+            for loader in (json.loads, ast.literal_eval):
+                try:
+                    parsed = loader(output_value)
+                    break
+                except Exception:
+                    parsed = None
+
+        if require_search_shape:
+            results = parsed if isinstance(parsed, list) else None
+            if isinstance(results, list) and len(results) > 0:
+                if not isinstance(results[0], dict) or not any(
+                    k in results[0] for k in ("document_id", "video_id", "source_id")
+                ):
+                    return None
+            elif not isinstance(results, list):
+                return None
+            return {"results": results}
+
+        return {
+            "results": parsed if isinstance(parsed, list) else [],
+            "value": parsed if parsed is not None else output_value,
+        }
+
     async def get_recent_spans(
         self,
         hours: int = 6,
         operation_name: str | None = "search_service.search",
         limit: int = 1000,
+        require_search_shape: bool = True,
     ) -> pd.DataFrame:
         """
         Retrieve recent spans from telemetry provider
@@ -74,6 +125,12 @@ class SpanEvaluator:
             hours: Number of hours to look back
             operation_name: Filter by operation name
             limit: Maximum number of spans to retrieve
+            require_search_shape: When True (default) only spans whose output is
+                a list of search-result dicts survive — what the golden/search
+                evaluators consume. Set False for live per-agent evaluation so
+                summary/report/gateway spans (string / routing-dict outputs) are
+                returned with their raw output under ``outputs["value"]`` instead
+                of being silently dropped.
 
         Returns:
             DataFrame with span information
@@ -129,53 +186,14 @@ class SpanEvaluator:
                 if query:
                     attributes["query"] = query
 
-                # Parse output value - it might be a string representation
-                output_value = span.get("attributes.output.value", "")
-                results = []
-
-                # Check if it's a string representation of a tuple (e.g., "(19, 128)")
-                if (
-                    isinstance(output_value, str)
-                    and output_value.startswith("(")
-                    and output_value.endswith(")")
-                ):
-                    # This looks like embedding dimensions, not search results
-                    # Skip this span as it's not a search result
-                    continue
-                elif isinstance(output_value, list):
-                    results = output_value
-                elif isinstance(output_value, str):
-                    # Try to parse as JSON if it's a string
-                    try:
-                        import json
-
-                        results = json.loads(output_value)
-                    except Exception:
-                        # Try to evaluate as Python literal (for string representations of lists)
-                        try:
-                            import ast
-
-                            results = ast.literal_eval(output_value)
-                            if not isinstance(results, list):
-                                continue
-                        except Exception:
-                            # If not parseable, skip this span
-                            continue
-
-                # Only include spans that look like search results
-                # Search results should have dictionaries with document_id/video_id
+                # Skip spans with no query input — every agent judge prompt
+                # needs the query, and a search span without one is unusable.
                 if not query:
                     continue
 
-                # Check if results look like search results
-                if isinstance(results, list) and len(results) > 0:
-                    # Check if first result has expected structure
-                    if not isinstance(results[0], dict) or not any(
-                        k in results[0]
-                        for k in ["document_id", "video_id", "source_id"]
-                    ):
-                        continue
-                elif not isinstance(results, list):
+                output_value = span.get("attributes.output.value", "")
+                outputs = self._extract_span_outputs(output_value, require_search_shape)
+                if outputs is None:
                     continue
 
                 formatted_span = {
@@ -183,7 +201,7 @@ class SpanEvaluator:
                     "trace_id": span.get("context.trace_id", ""),
                     "operation_name": span.get("name", ""),
                     "attributes": attributes,
-                    "outputs": {"results": results},
+                    "outputs": outputs,
                 }
 
                 formatted_spans.append(formatted_span)
