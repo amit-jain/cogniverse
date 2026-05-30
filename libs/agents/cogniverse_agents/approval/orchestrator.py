@@ -139,6 +139,23 @@ class DecisionOrchestrator:
             description="Workflow completed without approval",
         )
 
+        # Running -> Approved (approval step with nothing left to review:
+        # every item auto-approved, an empty result, or a non-list result).
+        # Without this the step never leaves RUNNING and re-executes forever,
+        # because the human gate (AWAITING_APPROVAL) needs pending>0 and
+        # apply_approvals() is never reached. APPROVED then routes to the next
+        # step or to COMPLETED via is_last_step, exactly like the human path.
+        self.state_machine.register_transition(
+            from_state=WorkflowState.RUNNING,
+            to_state=WorkflowState.APPROVED,
+            condition=lambda ctx: (
+                ctx.get("current_step_requires_approval", False)
+                and ctx.get("pending_review_count", 0) == 0
+                and ctx.get("rejection_count", 0) == 0
+            ),
+            description="Approval step auto-approved with no pending items",
+        )
+
         # Awaiting Approval -> Rejected (if any rejections)
         self.state_machine.register_transition(
             from_state=WorkflowState.AWAITING_APPROVAL,
@@ -274,6 +291,7 @@ class DecisionOrchestrator:
                 self.state_machine.context["pending_review_count"] = len(
                     batch.pending_review
                 )
+                self.state_machine.context["rejection_count"] = len(batch.rejected)
                 logger.info(
                     f"Step '{step['name']}' generated {len(batch.items)} items: "
                     f"{len(batch.auto_approved)} auto-approved, "
@@ -281,9 +299,16 @@ class DecisionOrchestrator:
                 )
             else:
                 self.state_machine.context["pending_review_count"] = 0
+                self.state_machine.context["rejection_count"] = 0
 
-            # Move to next step if no approval needed
-            if not step["requires_approval"]:
+            # Advance when no human gate remains: a non-approval step, or an
+            # approval step whose items were all auto-approved (no pending).
+            # Approval steps with pending items wait for apply_approvals() to
+            # advance the index after the human decides.
+            if (
+                not step["requires_approval"]
+                or self.state_machine.context.get("pending_review_count", 0) == 0
+            ):
                 self.current_step_index += 1
 
         except Exception as e:
