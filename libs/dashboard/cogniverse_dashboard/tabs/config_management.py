@@ -5,6 +5,7 @@ Provides full CRUD interface for system configuration via ConfigManager.
 Supports multi-tenant configs, versioning, history, and export/import.
 """
 
+import dataclasses
 import json
 from datetime import datetime
 
@@ -100,6 +101,22 @@ def render_config_management_tab():
         render_import_export_ui(manager, tenant_id)
 
 
+def save_system_config_edits(manager, current: SystemConfig, **edits) -> SystemConfig:
+    """Persist System Config form edits onto the loaded GLOBAL config.
+
+    SystemConfig is a single deployment-wide config persisted wholesale via
+    to_dict(). Applying the form's edits with dataclasses.replace preserves
+    every field the form does not expose (inference_service_urls, redis_url,
+    minio_endpoint, agent_registry_url, ingestion_api_url, agents,
+    video_processing_profiles, ...) — building a fresh SystemConfig() here reset
+    them all to dataclass defaults, silently breaking ingestion, messaging,
+    inference and agent discovery for the whole deployment.
+    """
+    updated = dataclasses.replace(current, **edits)
+    manager.set_system_config(updated)
+    return updated
+
+
 def render_system_config_ui(manager, tenant_id: str):
     """Render system configuration UI"""
     st.subheader("System Configuration")
@@ -193,23 +210,22 @@ def render_system_config_ui(manager, tenant_id: str):
         submitted = st.form_submit_button("💾 Save System Configuration")
 
         if submitted:
-            # Create updated config
-            updated_config = SystemConfig(
-                video_agent_url=video_agent_url,
-                summarizer_agent_url=summarizer_agent_url,
-                search_backend=search_backend,
-                backend_url=backend_url,
-                backend_port=backend_port,
-                llm_model=llm_model,
-                base_url=base_url,
-                llm_api_key=llm_api_key if llm_api_key else None,
-                telemetry_url=telemetry_url,
-                telemetry_collector_endpoint=telemetry_collector_endpoint,
-                environment=environment,
-            )
-
             try:
-                manager.set_system_config(updated_config)
+                save_system_config_edits(
+                    manager,
+                    system_config,
+                    video_agent_url=video_agent_url,
+                    summarizer_agent_url=summarizer_agent_url,
+                    search_backend=search_backend,
+                    backend_url=backend_url,
+                    backend_port=backend_port,
+                    llm_model=llm_model,
+                    base_url=base_url,
+                    llm_api_key=llm_api_key if llm_api_key else None,
+                    telemetry_url=telemetry_url,
+                    telemetry_collector_endpoint=telemetry_collector_endpoint,
+                    environment=environment,
+                )
                 st.success("✅ System configuration saved successfully!")
                 st.rerun()
             except Exception as e:
