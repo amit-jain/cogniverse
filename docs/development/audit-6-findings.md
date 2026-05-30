@@ -39,7 +39,12 @@ Single-pass audit per `.claude/rules/audit.md` (89 agents, 5 bug classes A–E +
 - text_analysis app gained a `lifespan` that calls `set_config_manager` → `/analyze` no longer 500s with "ConfigManager not initialized".
 - Hollow `test_standalone_agent_apps.py` upgraded: real-lifespan tests (TestClient context manager) construct the real agent and assert `/agent.json` serves real skills + `/health` healthy.
 
-Remaining HIGH order: Phoenix-flatten cluster (`annotation_agent`, `finetuning/embedding_extractor`, dashboard `:.2f`) → tenant-format cluster (`schema_registry` regex, `tenant.py` cron name, `agent_dispatcher` signature-variant, `node_id` split) → async-blocking cluster (`document_agent` sync POST, sync DSPy on loop, one-doc-per-segment feed, leaked httpx client, unbounded `search_latencies`) → request-bleed (shared cached agent overlay) → VLM-descriptions-dropped → remaining → 10 hollow tests.
+✅ **Phoenix-flatten cluster DONE** (commits `Read flattened Phoenix span columns…`, `Coerce orchestration execution time…`):
+- `finetuning/embedding_extractor` — read flattened `attributes.*` columns (no bare `attributes` column on a real Phoenix df) + tolerate `document_id`/`video_id`/`source_id` result ids (matching only `id` produced zero triplets). The whole embedding-finetuning triplet path was dead; now extracts. Unit test feeds the **probe-verified** flattened shape.
+- dashboard `orchestration_annotation` — `_format_seconds()` coerces a possibly-string Phoenix attribute before `:.2f` (a string crashed the tab). Unit-tested.
+- ⚠️ **`annotation_agent.py:230` reading `attributes.routing` = FALSE POSITIVE** — a live-Phoenix probe + the passing `test_identify_enqueue_assign_complete` confirm the provider returns `attributes.routing` as a **nested dict** (namespaced multi-key attrs are grouped into a dict column; only leaf conventions like `input.value`/`output.value` stay flat). `orchestration_evaluator` reads the same dict → also correct. The audit agent reasoned from the raw phoenix-client source; the review gate (run the live test) refuted it. **Do not "fix" — it would break working code.**
+
+Remaining HIGH order: tenant-format cluster (`schema_registry` regex, `tenant.py` cron name, `agent_dispatcher` signature-variant, `node_id` split) → async-blocking cluster (`document_agent` sync POST, sync DSPy on loop, one-doc-per-segment feed, leaked httpx client, unbounded `search_latencies`) → request-bleed (shared cached agent overlay) → VLM-descriptions-dropped → remaining → 10 hollow tests.
 
 
 ## CRIT tier (6)
