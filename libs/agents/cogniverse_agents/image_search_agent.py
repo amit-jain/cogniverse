@@ -278,6 +278,15 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         """
         Search Vespa with ColPali embeddings
 
+        TODO(audit-cycle-6, HIGH): this hand-rolled query is out of sync with
+        the deployed image schema on four counts (source name `image_content`
+        vs `image_colpali_mv`; rank profiles `colpali_similarity`/`hybrid_image`
+        don't exist; input `query(q)` vs `query(qt)`; stringified flat list vs
+        the dict-of-vectors mapped tensor) — every image search currently
+        returns nothing, hidden by the broad except below. Rewire through
+        VespaSearchBackend (which derives all four from the schema). Plan +
+        real-Vespa test contract: docs/development/image-search-agent-rewire-todo.md
+
         Args:
             query_embedding: ColPali query embedding [1024, 128]
             query_text: Original text query
