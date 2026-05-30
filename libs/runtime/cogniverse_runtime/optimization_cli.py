@@ -2240,7 +2240,13 @@ async def run_rollback(
     return summary
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build the optimization CLI argument parser.
+
+    Exposed separately from ``main`` so tests assert against the REAL parser
+    (its modes, defaults, required flags) instead of a hand-built copy that
+    can silently drift from production.
+    """
     parser = argparse.ArgumentParser(description="Cogniverse Optimization CLI")
     parser.add_argument(
         "--mode",
@@ -2401,6 +2407,11 @@ def main():
         "= 6 minutes) so e2e tests can scope to the current fixture "
         "window without picking up spans from earlier runs.",
     )
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
 
     logging.basicConfig(

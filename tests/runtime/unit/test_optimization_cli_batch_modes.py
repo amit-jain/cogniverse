@@ -6,12 +6,13 @@ Tests:
 3. Each function produces expected artifact types when given mock span data
 """
 
-import argparse
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
+
+from cogniverse_runtime.optimization_cli import build_parser
 
 # Patch targets: these are imported locally inside each function,
 # so we patch at the source module.
@@ -118,71 +119,61 @@ def _patch_infra(fake_mgr):
 # ---------------------------------------------------------------------------
 
 
+_REAL_MODES = [
+    "cleanup",
+    "triggered",
+    "simba",
+    "workflow",
+    "gateway-thresholds",
+    "online-routing-eval",
+    "profile",
+    "entity-extraction",
+    "synthetic",
+    "rollback",
+    "ab-compare",
+    "egress-netpol",
+    "monthly-reports",
+]
+
+
 class TestCliArgumentParser:
-    """Verify the argparse config accepts all new modes."""
+    """Drive the REAL CLI parser (build_parser) so the test can't drift from
+    production the way the old hand-built parser had (it listed a phantom
+    'routing' mode, omitted 5 real modes, and used a wrong tenant default)."""
 
     @pytest.fixture
     def parser(self):
-        """Build the parser matching the real CLI choices."""
-        parser = argparse.ArgumentParser(description="Test")
-        parser.add_argument(
-            "--mode",
-            choices=[
-                "cleanup",
-                "triggered",
-                "simba",
-                "workflow",
-                "gateway-thresholds",
-                "profile",
-                "entity-extraction",
-                "routing",
-                "synthetic",
-            ],
-            required=True,
+        return build_parser()
+
+    @pytest.mark.parametrize("mode", _REAL_MODES)
+    def test_real_mode_accepted(self, parser, mode):
+        assert parser.parse_args(["--mode", mode]).mode == mode
+
+    def test_online_routing_eval_is_a_mode(self, parser):
+        assert (
+            parser.parse_args(["--mode", "online-routing-eval"]).mode
+            == "online-routing-eval"
         )
-        parser.add_argument("--tenant-id", default="default")
-        parser.add_argument("--lookback-hours", type=int, default=24)
-        parser.add_argument("--agents")
-        parser.add_argument("--trigger-dataset")
-        return parser
 
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            "simba",
-            "workflow",
-            "gateway-thresholds",
-            "profile",
-            "entity-extraction",
-            "routing",
-            "synthetic",
-        ],
-    )
-    def test_new_mode_accepted(self, parser, mode):
-        args = parser.parse_args(["--mode", mode])
-        assert args.mode == mode
-        assert args.tenant_id == "default"
-        assert args.lookback_hours == 24
+    def test_routing_is_not_a_mode(self, parser):
+        # 'routing' is the router family, NOT an optimization CLI mode.
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--mode", "routing"])
 
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            "simba",
-            "workflow",
-            "gateway-thresholds",
-            "profile",
-            "entity-extraction",
-            "routing",
-            "synthetic",
-        ],
-    )
-    def test_new_mode_with_tenant_and_lookback(self, parser, mode):
+    def test_cleanup_tenant_defaults_to_none(self, parser):
+        # cleanup + monthly-reports run globally; tenant_id default is None so
+        # the no-tenant CronWorkflows don't exit 2 on argparse.
+        assert parser.parse_args(["--mode", "cleanup"]).tenant_id is None
+
+    def test_tenant_and_lookback_hours(self, parser):
         args = parser.parse_args(
-            ["--mode", mode, "--tenant-id", "acme", "--lookback-hours", "48"]
+            ["--mode", "simba", "--tenant-id", "acme:prod", "--lookback-hours", "48"]
         )
-        assert args.mode == mode
-        assert args.tenant_id == "acme"
-        assert args.lookback_hours == 48
+        assert args.tenant_id == "acme:prod"
+        assert args.lookback_hours == 48.0
+
+    def test_lookback_hours_default(self, parser):
+        assert parser.parse_args(["--mode", "simba"]).lookback_hours == 24.0
 
     def test_invalid_mode_rejected(self, parser):
         with pytest.raises(SystemExit):
