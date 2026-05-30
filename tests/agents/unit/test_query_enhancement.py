@@ -1345,17 +1345,22 @@ class TestVideoSearchAgent:
                 {"subject": "robots", "relation": "playing", "object": "soccer"}
             ]
 
-            # Mock the method since it might not exist in the actual implementation
-            agent._calculate_relationship_relevance = Mock(return_value=0.85)
-
-            # Calculate relationship relevance
+            # Real scoring: +0.3 per entity found in the result text, +0.5 per
+            # relationship with >=2 of subject/relation/object matched, capped 1.0.
             relevance = agent._calculate_relationship_relevance(
                 result, entities, relationships
             )
+            # robots+soccer (0.6) + relationship all three matched (0.5) = 1.1 -> 1.0
+            assert relevance == 1.0
 
-            # Should boost score due to entity and relationship matches
-            assert relevance > 0.0
-            assert relevance <= 1.0
+            # Non-saturating case pins the exact formula, not just the cap:
+            # one entity (0.3) + one relationship with a single match (0.2) = 0.5.
+            partial = agent._calculate_relationship_relevance(
+                {"title": "robots in the lab"},
+                [{"text": "robots"}],
+                [{"subject": "robots", "relation": "playing", "object": "soccer"}],
+            )
+            assert partial == 0.5
 
     @patch("cogniverse_core.config.utils.get_config")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
@@ -1391,107 +1396,20 @@ class TestVideoSearchAgent:
             deps = SearchAgentDeps()
             agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
 
-            # Mock the method since it might not exist in the actual implementation
-            agent._find_matching_entities = Mock(
-                return_value=[
-                    {"text": "robots", "label": "ENTITY", "confidence": 0.9},
-                    {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-                ]
-            )
-
-            # Test entity matching
-            result_text = "autonomous robots learning to play soccer"
+            # Real method matches entities whose text appears in the result's
+            # title/description/content (case-insensitive). Signature takes a
+            # result DICT, not a raw string.
+            result = {"title": "autonomous robots learning to play soccer"}
             entities = [
                 {"text": "robots", "label": "ENTITY", "confidence": 0.9},
                 {"text": "soccer", "label": "ACTIVITY", "confidence": 0.8},
-                {
-                    "text": "basketball",
-                    "label": "ACTIVITY",
-                    "confidence": 0.7,
-                },  # Not in text
+                {"text": "basketball", "label": "ACTIVITY", "confidence": 0.7},
             ]
 
-            matched_entities = agent._find_matching_entities(result_text, entities)
+            matched_entities = agent._find_matching_entities(result, entities)
 
-            # Should match "robots" and "soccer" but not "basketball"
-            assert len(matched_entities) == 2
-            matched_texts = [e["text"] for e in matched_entities]
-            assert "robots" in matched_texts
-            assert "soccer" in matched_texts
-
-    @patch("cogniverse_core.config.utils.get_config")
-    @patch("cogniverse_agents.search_agent.get_backend_registry")
-    def test_search_result_enhancement(self, mock_registry, mock_encoder_config):
-        """Test search result enhancement with relationships"""
-        from cogniverse_agents.search_agent import SearchAgentDeps
-
-        # Mock encoder config
-        mock_encoder_config.return_value = {
-            "video_processing_profiles": {
-                "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
-                    "embedding_type": "multi_vector",
-                }
-            }
-        }
-
-        with patch(
-            "cogniverse_agents.search_agent.QueryEncoderFactory"
-        ) as mock_encoder_factory:
-            # Mock backend registry
-            mock_search_backend = Mock()
-            mock_registry.return_value.get_search_backend.return_value = (
-                mock_search_backend
-            )
-
-            # Mock encoder factory
-            mock_encoder_factory.create_encoder.return_value = Mock()
-
-            # Mock schema_loader
-            mock_schema_loader = Mock()
-
-            deps = SearchAgentDeps()
-            agent = SearchAgent(deps=deps, schema_loader=mock_schema_loader)
-
-            # Mock the method since it might not exist in the actual implementation
-            enhanced_results = [
-                {
-                    "id": 1,
-                    "title": "Robots playing soccer",
-                    "score": 0.7,
-                    "enhanced_score": 0.85,
-                    "entity_matches": 2,
-                    "relationship_matches": 1,
-                },
-                {
-                    "id": 2,
-                    "title": "Basketball game highlights",
-                    "score": 0.6,
-                    "enhanced_score": 0.6,
-                    "entity_matches": 0,
-                    "relationship_matches": 0,
-                },
-            ]
-            agent._enhance_results_with_context = Mock(return_value=enhanced_results)
-
-            # Test enhancement
-            original_results = [
-                {"id": 1, "title": "Robots playing soccer", "score": 0.7},
-                {"id": 2, "title": "Basketball game highlights", "score": 0.6},
-            ]
-
-            entities = [{"text": "robots", "label": "ENTITY", "confidence": 0.9}]
-            relationships = [
-                {"subject": "robots", "relation": "playing", "object": "soccer"}
-            ]
-
-            enhanced_results = agent._enhance_results_with_context(
-                original_results, entities, relationships
-            )
-
-            # First result should have higher score due to entity match
-            assert enhanced_results[0]["enhanced_score"] > enhanced_results[0]["score"]
-            assert enhanced_results[0]["entity_matches"] > 0
+            # basketball is absent from the text; robots + soccer present, in order.
+            assert [e["text"] for e in matched_entities] == ["robots", "soccer"]
 
 
 # ---------------------------------------------------------------------------
