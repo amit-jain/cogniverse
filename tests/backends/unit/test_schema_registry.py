@@ -61,6 +61,24 @@ class TestSchemaRegistryValidation:
         schema_registry._validate_tenant_id("tenant_123")
         schema_registry._validate_tenant_id("org:tenant")
         schema_registry._validate_tenant_id("UPPERCASE")
+        # Hyphens are allowed — tenant creation accepts them (see below).
+        schema_registry._validate_tenant_id("my-team")
+        schema_registry._validate_tenant_id("my-org:cell-a")
+
+    def test_validate_tenant_id_accepts_every_created_tenant(self, schema_registry):
+        """Any id the tenant-creation contract admits must deploy a schema.
+
+        Regression: validate_tenant_name allowed hyphens but _validate_tenant_id
+        rejected them, so a validly-created tenant like 'my-team' could never
+        deploy a schema (ValueError at deploy time).
+        """
+        from cogniverse_runtime.admin.tenant_manager import validate_tenant_name
+
+        for name in ["acme", "my-team", "tenant_123", "acme-corp"]:
+            validate_tenant_name(name)  # accepted by creation
+            schema_registry._validate_tenant_id(name)  # must also validate here
+            # canonical org:tenant form of the same names must validate too
+            schema_registry._validate_tenant_id(f"{name}:{name}")
 
     def test_validate_tenant_id_empty_rejected(self, schema_registry):
         """Test empty tenant_id is rejected"""
@@ -68,21 +86,10 @@ class TestSchemaRegistryValidation:
             schema_registry._validate_tenant_id("")
 
     def test_validate_tenant_id_invalid_chars_rejected(self, schema_registry):
-        """Test tenant_id with invalid characters is rejected"""
-        with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and colon allowed"
-        ):
-            schema_registry._validate_tenant_id("tenant-with-dash")
-
-        with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and colon allowed"
-        ):
-            schema_registry._validate_tenant_id("tenant with space")
-
-        with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and colon allowed"
-        ):
-            schema_registry._validate_tenant_id("tenant.with.dot")
+        """Test tenant_id with truly-illegal characters is rejected"""
+        for bad in ["tenant with space", "tenant.with.dot", "tenant/slash"]:
+            with pytest.raises(ValueError, match="only alphanumeric"):
+                schema_registry._validate_tenant_id(bad)
 
     def test_validate_tenant_id_wrong_type_rejected(self, schema_registry):
         """Test non-string tenant_id is rejected"""
@@ -198,9 +205,9 @@ class TestSchemaRegistryDeployment:
 
     def test_deploy_schema_validates_inputs(self, schema_registry):
         """Test that deploy_schema validates inputs"""
-        # Invalid tenant_id
+        # Invalid tenant_id (space is illegal; hyphens are allowed now)
         with pytest.raises(ValueError, match="only alphanumeric"):
-            schema_registry.deploy_schema("tenant-invalid", "schema")
+            schema_registry.deploy_schema("tenant invalid", "schema")
 
         # Empty schema_name
         with pytest.raises(ValueError, match="schema_name is required"):

@@ -253,12 +253,17 @@ class SchemaRegistry:
         if not isinstance(tenant_id, str):
             raise TypeError(f"tenant_id must be string, got {type(tenant_id)}")
 
-        # Validate character set (alphanumeric, underscore, colon only)
+        # Validate character set. Must accept every id the tenant-creation
+        # contract (admin.tenant_manager.validate_tenant_name) admits — that
+        # allows hyphens, so a tenant like 'my-team' (or 'my-org:cell-a') was
+        # created successfully but then rejected here at deploy time. Allow
+        # hyphen too; the ':' separates the org:tenant canonical form.
         import re
 
-        if not re.match(r"^[a-zA-Z0-9_:]+$", tenant_id):
+        if not re.match(r"^[a-zA-Z0-9_:-]+$", tenant_id):
             raise ValueError(
-                f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
+                f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, "
+                "hyphen, and colon allowed"
             )
 
     def _validate_schema_name(self, schema_name: str) -> None:
