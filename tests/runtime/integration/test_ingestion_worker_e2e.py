@@ -140,6 +140,20 @@ async def _failing_processor(job: IngestJob) -> dict:
     raise RuntimeError(f"intentional failure for {job.ingest_id}")
 
 
+async def _failed_envelope_processor(job: IngestJob) -> dict:
+    """The REAL failure shape: ``process_video_async`` catches its own errors
+    and RETURNS ``status='failed'`` rather than raising. The worker must treat
+    this as a failure, not success."""
+    await asyncio.sleep(0.05)
+    return {
+        "video_id": job.ingest_id,
+        "status": "failed",
+        "error": "embedding model OOM",
+        "error_type": "ContentProcessingError",
+        "results": {},
+    }
+
+
 async def _spawn_worker(
     redis_url: str, processor
 ) -> tuple[asyncio.Task, asyncio.Event]:
@@ -266,6 +280,56 @@ class TestEnqueueAndWorker:
             # Failed jobs do NOT mark done — re-submit (without force)
             # should re-enqueue, not return existing.
             assert await env_redis.get(f"ingest:done:{result.sha}") is None
+        finally:
+            stop.set()
+            await asyncio.wait_for(worker_task, timeout=2)
+
+    @pytest.mark.asyncio
+    async def test_failed_envelope_publishes_failed_and_skips_mark_done(
+        self, env_redis, redis_container
+    ):
+        """C3: a returned ``status='failed'`` envelope (what the pipeline
+        actually emits) must publish ``state='failed'`` and must NOT write the
+        idempotency done-record, so a resubmit re-enqueues instead of returning
+        the failed run as complete. On the old code the worker treated any
+        return as success — published ``complete`` and marked done."""
+        worker_task, stop = await _spawn_worker(
+            redis_container, _failed_envelope_processor
+        )
+        try:
+            result = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/oom.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+            )
+            final = await _wait_for_state(env_redis, result.ingest_id, "failed")
+            assert final["state"] == "failed"
+            assert "embedding model OOM" in final["error"]
+            assert final["error_type"] == "IngestPipelineError"
+
+            # No success terminal event was ever published for this run.
+            events = [
+                ev
+                for _, ev in await queue.read_status_since(env_redis, result.ingest_id)
+            ]
+            assert not any(ev.get("state") == "complete" for ev in events)
+
+            # Failed run is NOT marked done, and inflight is cleared + acked.
+            assert await env_redis.get(f"ingest:done:{result.sha}") is None
+            assert await env_redis.get(f"ingest:by_sha:{result.sha}") is None
+            assert await queue.get_active(env_redis, "acme") == 0
+            pending = await env_redis.xpending(queue.QUEUE_STREAM, "ingestors")
+            assert pending["pending"] == 0
+
+            # Resubmit (no force) must re-enqueue, not dedupe to the failed run.
+            second = await enqueue_ingestion(
+                env_redis,
+                source_url="s3://bucket/oom.mp4",
+                profile="video_colpali_smol500_mv_frame",
+                tenant_id="acme",
+            )
+            assert second.existing is False
         finally:
             stop.set()
             await asyncio.wait_for(worker_task, timeout=2)
