@@ -19,6 +19,28 @@ from cogniverse_agents.orchestrator_agent import (
 from cogniverse_foundation.config.unified_config import SystemConfig
 
 
+def _plan_executes_to_completion(plan) -> bool:
+    """Mirror _execute_plan's dependency-readiness loop without any I/O.
+
+    Returns True iff every step eventually becomes ready (the topological
+    order is satisfiable). Catches the C1 failure modes: a self-referential
+    depends_on stalls the loop ("No steps ready" -> False), and an
+    out-of-range depends_on raises IndexError on executed[dep_idx].
+    """
+    executed = [False] * len(plan.steps)
+    while not all(executed):
+        ready = [
+            i
+            for i, step in enumerate(plan.steps)
+            if not executed[i] and all(executed[d] for d in step.depends_on)
+        ]
+        if not ready:
+            return False
+        for i in ready:
+            executed[i] = True
+    return True
+
+
 def _make_mock_config_manager() -> Mock:
     """Mock ConfigManager whose ``get_system_config()`` returns a real
     SystemConfig dataclass. The orchestrator reads
@@ -248,6 +270,62 @@ class TestOrchestratorAgent:
         assert "nonexistent_agent" not in agent_names
         assert "query_enhancement_agent" in agent_names
         assert "search_agent" in agent_names
+
+        # Regression (C1): depends_on must index the SURVIVING step list, not the
+        # raw agent_sequence. With the mid-sequence agent filtered out, the two
+        # surviving steps are [query_enhancement(0), search_agent(1)]; search must
+        # depend on query_enhancement (step 0), NOT on itself (the old code passed
+        # the unfiltered enumerate index, yielding depends_on=[1] -> deadlock).
+        assert len(plan.steps) == 2
+        assert plan.steps[0].agent_name == "query_enhancement_agent"
+        assert plan.steps[0].depends_on == []
+        assert plan.steps[1].agent_name == "search_agent"
+        assert plan.steps[1].depends_on == [0]
+        # No step may depend on itself or on an out-of-range index.
+        for idx, step in enumerate(plan.steps):
+            assert idx not in step.depends_on
+            assert all(0 <= d < len(plan.steps) for d in step.depends_on)
+        # The readiness loop in _execute_plan must terminate (no deadlock).
+        assert _plan_executes_to_completion(plan)
+
+    @pytest.mark.asyncio
+    async def test_create_plan_filtered_agent_remaps_parallel_groups(
+        self, orchestrator_agent
+    ):
+        """C1: a filtered mid-sequence agent must remap parallel_steps indices.
+
+        Raw sequence indices 0,1,2,3 with agent 1 (nonexistent) filtered: the
+        parallel group "0,2" (enhance + extract) must remap to surviving-step
+        positions [0,1], and the trailing search step must depend on that group.
+        """
+        orchestrator_agent.dspy_module.forward = Mock(
+            return_value=dspy.Prediction(
+                agent_sequence=(
+                    "query_enhancement_agent,nonexistent_agent,"
+                    "entity_extraction_agent,search_agent"
+                ),
+                parallel_steps="0,2",
+                reasoning="Enhance + extract in parallel after dropping the bogus agent",
+            )
+        )
+
+        plan = await orchestrator_agent._create_plan("Test query")
+
+        agent_names = [step.agent_name for step in plan.steps]
+        assert agent_names == [
+            "query_enhancement_agent",
+            "entity_extraction_agent",
+            "search_agent",
+        ]
+        # Raw group [0,2] remaps to surviving-step positions [0,1].
+        assert plan.parallel_groups == [[0, 1]]
+        assert plan.steps[0].depends_on == []
+        assert plan.steps[1].depends_on == []
+        assert set(plan.steps[2].depends_on) == {0, 1}
+        for idx, step in enumerate(plan.steps):
+            assert idx not in step.depends_on
+            assert all(0 <= d < len(plan.steps) for d in step.depends_on)
+        assert _plan_executes_to_completion(plan)
 
     @pytest.mark.asyncio
     async def test_create_plan_with_parallel_groups(self, orchestrator_agent):

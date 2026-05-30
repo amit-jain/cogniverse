@@ -1198,7 +1198,6 @@ class OrchestratorAgent(
                 if indices:
                     parallel_groups.append(indices)
 
-        steps = []
         unavailable_agents = []
         # Build lookup for agent name normalization (LLM may add/omit _agent suffix)
         _agent_lookup = {name: name for name in registered_agents}
@@ -1207,10 +1206,12 @@ class OrchestratorAgent(
             if name.endswith("_agent"):
                 _agent_lookup[name[: -len("_agent")]] = name
 
+        # Pass 1: filter to registered agents, keeping the raw sequence index so
+        # parallel-group / dependency indices can be remapped to the surviving
+        # step positions below (identity when nothing is filtered).
+        surviving = []  # (raw_sequence_index, agent_name)
         for i, agent_name in enumerate(agent_sequence):
-            # Normalize: match with or without _agent suffix
             agent_name = _agent_lookup.get(agent_name, agent_name)
-            # Validate against registry (skip unknown agents)
             if agent_name not in registered_agents:
                 logger.warning(
                     f"LLM proposed unknown agent '{agent_name}', "
@@ -1218,13 +1219,30 @@ class OrchestratorAgent(
                 )
                 unavailable_agents.append(agent_name)
                 continue
-            step = AgentStep(
+            surviving.append((i, agent_name))
+
+        raw_to_step = {raw: pos for pos, (raw, _) in enumerate(surviving)}
+
+        # parallel_steps and the dependency calculation index into the raw
+        # sequence; remap them to surviving-step positions (which is what
+        # _execute_plan's executed[] / depends_on space expects), dropping any
+        # index pointing at a filtered agent and any group emptied by filtering.
+        parallel_groups = [
+            [raw_to_step[idx] for idx in group if idx in raw_to_step]
+            for group in parallel_groups
+        ]
+        parallel_groups = [g for g in parallel_groups if g]
+
+        # Pass 2: build steps with dependencies in the surviving-step index space.
+        steps = [
+            AgentStep(
                 agent_name=agent_name,
                 input_data={"query": query},
-                depends_on=self._calculate_dependencies(i, parallel_groups),
-                reasoning=f"Step {i + 1}: {agent_name} processing",
+                depends_on=self._calculate_dependencies(step_index, parallel_groups),
+                reasoning=f"Step {step_index + 1}: {agent_name} processing",
             )
-            steps.append(step)
+            for step_index, (_, agent_name) in enumerate(surviving)
+        ]
 
         # Terminal fallback: when the planner proposed only unknown agents
         # (or proposed nothing), the executor would otherwise stall with
