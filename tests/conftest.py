@@ -1385,3 +1385,21 @@ def shared_vespa():
 
     finally:
         subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+
+
+@pytest.fixture(autouse=True)
+def _reset_request_contextvars():
+    """Reset MemoryAwareMixin's per-request ContextVars around every test.
+
+    The artefact overlay + session id moved to module-level ContextVars (so a
+    dispatcher-shared agent doesn't bleed state across concurrent requests). In
+    sync tests that share the main-thread context, one test's set() would
+    otherwise leak into the next; this guarantees a clean baseline per test.
+    """
+    from cogniverse_agents import memory_aware_mixin as _m
+
+    _m._DISPATCHED_ARTEFACT.set(None)
+    _m._MEMORY_SESSION_ID.set(None)
+    yield
+    _m._DISPATCHED_ARTEFACT.set(None)
+    _m._MEMORY_SESSION_ID.set(None)

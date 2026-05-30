@@ -89,7 +89,7 @@ class TestScopedSessionStampsThenClears:
             "session_id": session_id,
         }
         # Cleared on exit so the next write doesn't inherit the id.
-        assert agent._memory_session_id is None
+        assert agent.get_session_id() is None
 
     def test_writes_outside_scope_have_no_session_id(self):
         mgr = _StubMemoryManager()
@@ -128,7 +128,7 @@ class TestScopedSessionStampsThenClears:
             )
 
         assert "session_id" not in (mgr.calls[0]["metadata"] or {})
-        assert agent._memory_session_id is None
+        assert agent.get_session_id() is None
 
     def test_non_mixin_agent_silently_no_ops(self):
         agent = _NonMemoryAgent()
@@ -149,7 +149,7 @@ class TestScopedSessionStampsThenClears:
             with AgentDispatcher._scoped_session(agent, "s_will_clear"):
                 raise _Boom("agent crashed mid-request")
 
-        assert agent._memory_session_id is None, (
+        assert agent.get_session_id() is None, (
             "session_id must be cleared even when the agent raises — "
             "otherwise long-lived instances bleed sessions across requests"
         )

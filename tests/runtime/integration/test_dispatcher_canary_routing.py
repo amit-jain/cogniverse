@@ -332,6 +332,6 @@ class TestStreamingCanaryRealPhoenix:
 
         # The streaming agent received the canary overlay resolved from real
         # Phoenix — proving streaming traffic now honours canary routing.
-        assert agent._dispatched_artefact["served_from"] == "canary"
-        assert agent._dispatched_artefact["version"] == 1
+        assert agent.get_dispatched_artefact()["served_from"] == "canary"
+        assert agent.get_dispatched_artefact()["version"] == 1
         assert agent.get_dispatched_prompts() == {"system": "CANARY_STREAM_V1"}

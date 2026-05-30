@@ -44,7 +44,7 @@ class TestSetDispatchedArtefact:
             "prompts": {"system": "VARIANT_PROMPT"},
         }
         agent.set_dispatched_artefact(overlay)
-        assert agent._dispatched_artefact == overlay
+        assert agent.get_dispatched_artefact() == overlay
 
     def test_get_dispatched_prompts_returns_overlay_prompts(self):
         agent = _Agent()
@@ -77,19 +77,19 @@ class TestDispatcherInjection:
             }
         }
         AgentDispatcher._apply_artefact_overlay(agent, context)
-        assert agent._dispatched_artefact["served_from"] == "canary"
+        assert agent.get_dispatched_artefact()["served_from"] == "canary"
         assert agent.get_dispatched_prompts() == {"system": "FROM_OVERLAY"}
 
     def test_no_overlay_in_context_is_no_op(self):
         agent = _Agent()
         AgentDispatcher._apply_artefact_overlay(agent, {})
         # Hook never called → attribute never set.
-        assert getattr(agent, "_dispatched_artefact", None) is None
+        assert agent.get_dispatched_artefact() is None
 
     def test_no_context_at_all_is_no_op(self):
         agent = _Agent()
         AgentDispatcher._apply_artefact_overlay(agent, None)
-        assert getattr(agent, "_dispatched_artefact", None) is None
+        assert agent.get_dispatched_artefact() is None
 
     def test_non_memory_agent_silently_skipped(self):
         # Plain object without the mixin must not crash the dispatcher.
@@ -167,9 +167,9 @@ class TestEndToEndWire:
         context: Dict[str, Any] = {"_artefact_overlay": overlay}
         AgentDispatcher._apply_artefact_overlay(agent, context)
 
-        assert agent._dispatched_artefact["served_from"] == "canary"
-        assert agent._dispatched_artefact["version"] == 7
-        assert agent._dispatched_artefact["variant_id"] == DEFAULT_VARIANT_ID
+        assert agent.get_dispatched_artefact()["served_from"] == "canary"
+        assert agent.get_dispatched_artefact()["version"] == 7
+        assert agent.get_dispatched_artefact()["variant_id"] == DEFAULT_VARIANT_ID
         assert agent.get_dispatched_prompts() == {"system": "FROM_RESOLVED_CANARY"}
 
 

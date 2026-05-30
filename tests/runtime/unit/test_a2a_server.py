@@ -636,7 +636,7 @@ class TestStreamingCanaryOverlay:
         mock_dispatcher.resolve_artefact_for_request.assert_awaited_once_with(
             "summarizer_agent", "test:unit", request_seed="ctx-canary"
         )
-        assert agent._dispatched_artefact == canary
+        assert agent.get_dispatched_artefact() == canary
         assert agent.get_dispatched_prompts() == {"system": "CANARY_PROMPT"}
 
     async def test_streaming_no_overlay_when_resolve_returns_none(
@@ -653,7 +653,7 @@ class TestStreamingCanaryOverlay:
         )
 
         # No factory / no canary -> overlay not applied (back-compat, no regression).
-        assert getattr(agent, "_dispatched_artefact", None) is None
+        assert agent.get_dispatched_artefact() is None
 
 
 @pytest.mark.asyncio

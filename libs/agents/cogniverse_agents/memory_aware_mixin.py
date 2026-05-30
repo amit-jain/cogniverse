@@ -6,11 +6,25 @@ Handles context retrieval, memory updates, and lifecycle management.
 """
 
 import logging
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
 
 logger = logging.getLogger(__name__)
+
+# Per-request state lives in ContextVars, NOT instance attributes: the dispatcher
+# caches and SHARES one agent instance across requests (e.g. _get_search_agent,
+# _gateway_agent), so storing the per-request artefact overlay / session id on
+# the instance let concurrent requests overwrite each other (request bleed).
+# ContextVars are isolated per asyncio task (and copied into asyncio.to_thread),
+# so each in-flight request sees only its own value on the shared agent.
+_DISPATCHED_ARTEFACT: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "cogniverse_dispatched_artefact", default=None
+)
+_MEMORY_SESSION_ID: ContextVar[Optional[str]] = ContextVar(
+    "cogniverse_memory_session_id", default=None
+)
 
 
 class MemoryAwareMixin:
@@ -53,13 +67,11 @@ class MemoryAwareMixin:
         # pulls from both tenant and the org trunk and dedups by
         # subject_key. Off by default to keep legacy agents unchanged.
         self._memory_federation_enabled: bool = False
-        # Per-request session id stamped onto every write that does not
-        # already carry one. The dispatcher sets this via
-        # ``set_session_id`` for the duration of the request, then clears
-        # it. EPHEMERAL_SESSION-kind writes need this to pass schema
-        # validation; non-session kinds can ignore it (the manager only
-        # reads ``metadata.session_id`` when the kind's schema requires it).
-        self._memory_session_id: Optional[str] = None
+        # Per-request session id + dispatched artefact overlay live in
+        # module-level ContextVars (see top of file), not instance attrs, so a
+        # dispatcher-shared agent instance doesn't bleed one request's state
+        # into another. The dispatcher sets them per request via
+        # ``set_session_id`` / ``set_dispatched_artefact``.
 
     def set_tenant_for_context(self, tenant_id: str) -> None:
         """Set tenant_id for instruction injection without full memory init."""
@@ -76,7 +88,11 @@ class MemoryAwareMixin:
             not isinstance(session_id, str) or not session_id.strip()
         ):
             raise ValueError("session_id must be a non-empty string or None")
-        self._memory_session_id = session_id
+        _MEMORY_SESSION_ID.set(session_id)
+
+    def get_session_id(self) -> Optional[str]:
+        """Return the current request's session id (or None)."""
+        return _MEMORY_SESSION_ID.get()
 
     def enable_org_trunk_federation(self, enabled: bool = True) -> None:
         """Toggle the federated read path on this agent.
@@ -207,13 +223,15 @@ class MemoryAwareMixin:
         read it — the canary state machine and the variant-selection
         admin endpoint were both write-only black holes.
 
-        Storing it on ``self._dispatched_artefact`` makes it observable
-        by the agent's downstream load paths (the agent can now choose
-        ``overlay["prompts"]`` over its default-loaded prompts when the
-        overlay is set). Each agent migrates to consuming it at its own
-        pace; this base method just makes the data available.
+        Stored in a per-request ContextVar (not an instance attr) so a
+        dispatcher-shared agent doesn't leak one request's overlay to another;
+        ``get_dispatched_artefact`` / ``get_dispatched_prompts`` read it back.
         """
-        self._dispatched_artefact = overlay
+        _DISPATCHED_ARTEFACT.set(overlay)
+
+    def get_dispatched_artefact(self) -> Optional[Dict[str, Any]]:
+        """Return this request's full dispatched artefact overlay, if any."""
+        return _DISPATCHED_ARTEFACT.get()
 
     def get_dispatched_prompts(self) -> Optional[Dict[str, str]]:
         """Return the dispatcher-supplied prompts for this request, if any.
@@ -222,7 +240,7 @@ class MemoryAwareMixin:
         that want to honor canary / variant selection call this before
         their own ``_load_artifact()`` and prefer the overlay when set.
         """
-        overlay = getattr(self, "_dispatched_artefact", None)
+        overlay = _DISPATCHED_ARTEFACT.get()
         if isinstance(overlay, dict):
             prompts = overlay.get("prompts")
             if isinstance(prompts, dict):
@@ -464,9 +482,10 @@ class MemoryAwareMixin:
         # Auto-stamp the per-request session id onto metadata when set,
         # so EPHEMERAL_SESSION-kind writes don't have to pass session_id
         # explicitly and the schema's session-membership check passes.
-        if self._memory_session_id is not None:
+        session_id = _MEMORY_SESSION_ID.get()
+        if session_id is not None:
             metadata = dict(metadata or {})
-            metadata.setdefault("session_id", self._memory_session_id)
+            metadata.setdefault("session_id", session_id)
 
         try:
             memory_id = self.memory_manager.add_memory(
