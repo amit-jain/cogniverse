@@ -119,6 +119,26 @@ def format_video_result(
         return f'<span style="color: red;">✗ {video_id}</span>'
 
 
+def _aggregate_experiment_metrics(experiment_data: Dict[str, Any]) -> None:
+    """Compute mean MRR / recall@1 / recall@5 per profile/strategy from the
+    collected per-query metrics. Mutates ``experiment_data`` in place. Run once
+    after all experiments are loaded — recomputing it inside the per-experiment
+    loop was O(experiments^2) and redundant."""
+    for prof in experiment_data:
+        for strat in experiment_data[prof]:
+            queries = experiment_data[prof][strat]["queries"]
+            if not queries:
+                continue
+            mrr_values = [q["metrics"]["mrr"] for q in queries]
+            recall1_values = [q["metrics"]["recall@1"] for q in queries]
+            recall5_values = [q["metrics"]["recall@5"] for q in queries]
+            experiment_data[prof][strat]["aggregate_metrics"] = {
+                "mrr": {"mean": sum(mrr_values) / len(mrr_values)},
+                "recall@1": {"mean": sum(recall1_values) / len(recall1_values)},
+                "recall@5": {"mean": sum(recall5_values) / len(recall5_values)},
+            }
+
+
 def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
     """
     Get all experiment data for a dataset by querying Phoenix.
@@ -132,7 +152,8 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
     try:
         # Use the correct API endpoint: /v1/datasets/{dataset_id}/experiments
         response = requests.get(
-            f"{_phoenix_base_url()}/v1/datasets/{dataset_id}/experiments"
+            f"{_phoenix_base_url()}/v1/datasets/{dataset_id}/experiments",
+            timeout=30,
         )
         if response.status_code == 200:
             experiments_response = response.json()
@@ -158,14 +179,16 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
         try:
             # Use the /json endpoint which has the actual run data
             response = requests.get(
-                f"{_phoenix_base_url()}/v1/experiments/{exp_id}/json"
+                f"{_phoenix_base_url()}/v1/experiments/{exp_id}/json",
+                timeout=30,
             )
             if response.status_code == 200:
                 runs = response.json()
 
                 # Get experiment metadata
                 meta_response = requests.get(
-                    f"{_phoenix_base_url()}/v1/experiments/{exp_id}"
+                    f"{_phoenix_base_url()}/v1/experiments/{exp_id}",
+                    timeout=30,
                 )
                 exp_metadata = {}
                 if meta_response.status_code == 200:
@@ -248,26 +271,12 @@ def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
                             }
                         )
 
-                # After processing all runs, calculate aggregate metrics for all profile/strategy combinations
-                for prof in experiment_data:
-                    for strat in experiment_data[prof]:
-                        queries = experiment_data[prof][strat]["queries"]
-                        if queries:
-                            mrr_values = [q["metrics"]["mrr"] for q in queries]
-                            recall1_values = [q["metrics"]["recall@1"] for q in queries]
-                            recall5_values = [q["metrics"]["recall@5"] for q in queries]
-
-                            experiment_data[prof][strat]["aggregate_metrics"] = {
-                                "mrr": {"mean": sum(mrr_values) / len(mrr_values)},
-                                "recall@1": {
-                                    "mean": sum(recall1_values) / len(recall1_values)
-                                },
-                                "recall@5": {
-                                    "mean": sum(recall5_values) / len(recall5_values)
-                                },
-                            }
         except Exception:
             continue
+
+    # Aggregate ONCE, after every experiment is loaded — not inside the
+    # per-experiment loop (that recomputed the full aggregate E times).
+    _aggregate_experiment_metrics(experiment_data)
 
     # If still no data, use mock data to show the UI structure
     if not experiment_data:
