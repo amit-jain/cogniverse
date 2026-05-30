@@ -21,6 +21,19 @@ Single-pass audit per `.claude/rules/audit.md` (89 agents, 5 bug classes A–E +
 - Defer to a written TODO only what genuinely needs live infra unavailable locally; mark `NEEDS_LIVE_BOUNDARY` items and verify against real Vespa/Phoenix when reachable.
 
 
+## Progress log
+
+**Tier 1 — CRIT: ✅ DONE (6/6).** All fixed locally on `main`, each with a real-boundary regression test that fails on the pre-fix code:
+- C1 — remap plan dependency/parallel-group indices to surviving-step space (`test_orchestrator_agent.py`: strengthened skip-unknown test + parallel-remap + readiness-simulation).
+- C2 — add `RUNNING→APPROVED` transition + advance index on auto-approved step (`test_decision_orchestrator.py`: real state-machine, `wait_for` fail-fast).
+- C3 — raise on `status=failed/cancelled` pipeline envelope (`test_ingestion_worker_e2e.py`: real Redis, failed-envelope → no `mark_done`).
+- C4 — `require_search_shape=False` keeps non-search agent spans + read raw `value` (`test_incremental_span_eval.py`: real Phoenix round-trip).
+- C5 — `dataclasses.replace` preserves unedited global-config fields (`test_system_config_save.py`: real ConfigManager round-trip).
+- C6 — write user→tenant map to SYSTEM partition + `infer=False` (`test_auth.py` partition-faithful + `test_user_tenant_mapping_real_mem0.py` real Vespa-Mem0).
+
+**Tier 2 — HIGH: in progress.** Order: Phoenix-flatten cluster → tenant-format cluster → standalone-apps cluster → async-blocking cluster → remaining → hollow tests.
+
+
 ## CRIT tier (6)
 
 ### [C1] `libs/agents/cogniverse_agents/orchestrator_agent.py:1210-1226 (_create_plan) and :1224 (_calculate_dependencies call)`
