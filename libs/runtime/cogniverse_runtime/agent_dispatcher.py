@@ -1304,63 +1304,74 @@ class AgentDispatcher:
                     exc,
                 )
 
-        agent = OrchestratorAgent(
-            deps=deps,
-            registry=self._registry,
-            config_manager=self._config_manager,
-            workflow_intelligence=workflow_intelligence,
-            http_client=orch_http_client,
-        )
-        await asyncio.to_thread(
-            self._init_agent_memory, agent, "orchestrator_agent", tenant_id
-        )
-        agent.telemetry_manager = tm
-        agent._artifact_tenant_id = tenant_id
-        agent._load_artifact()
-        # Apply per-request artefact overlay so OrchestratorAgent's
-        # planner DSPy module honors the canary/variant decision.
-        self._apply_artefact_overlay(agent, context)
-
-        gateway_ctx = gateway_context or {}
-        # Propagate the synthesis_depth opt-in from the caller's context.
-        # Three precedence levels, gateway-trust > admin override > none:
-        #   1. function-arg gateway_context (set by the dispatcher's own
-        #      gateway → orchestration handoff)
-        #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
-        #      that want to mimic the gateway-classified shape)
-        #   3. context["synthesis_depth"] (plain admin / direct callers)
-        nested_gateway = context.get("gateway_context") or {}
-        synthesis_depth = (
-            gateway_ctx.get("synthesis_depth")
-            or (
-                nested_gateway.get("synthesis_depth")
-                if isinstance(nested_gateway, dict)
-                else None
+        try:
+            agent = OrchestratorAgent(
+                deps=deps,
+                registry=self._registry,
+                config_manager=self._config_manager,
+                workflow_intelligence=workflow_intelligence,
+                http_client=orch_http_client,
             )
-            or context.get("synthesis_depth")
-        )
-        input_data = OrchestratorInput(
-            query=query,
-            tenant_id=tenant_id,
-            session_id=context.get("session_id"),
-            conversation_history=context.get("conversation_history"),
-            modality=gateway_ctx.get("modality"),
-            generation_type=gateway_ctx.get("generation_type"),
-            synthesis_depth=synthesis_depth,
-        )
+            await asyncio.to_thread(
+                self._init_agent_memory, agent, "orchestrator_agent", tenant_id
+            )
+            agent.telemetry_manager = tm
+            agent._artifact_tenant_id = tenant_id
+            agent._load_artifact()
+            # Apply per-request artefact overlay so OrchestratorAgent's
+            # planner DSPy module honors the canary/variant decision.
+            self._apply_artefact_overlay(agent, context)
 
-        with self._scoped_session(agent, context.get("session_id")):
-            result = await agent._process_impl(input_data)
+            gateway_ctx = gateway_context or {}
+            # Propagate the synthesis_depth opt-in from the caller's context.
+            # Three precedence levels, gateway-trust > admin override > none:
+            #   1. function-arg gateway_context (set by the dispatcher's own
+            #      gateway → orchestration handoff)
+            #   2. context["gateway_context"]["synthesis_depth"] (HTTP callers
+            #      that want to mimic the gateway-classified shape)
+            #   3. context["synthesis_depth"] (plain admin / direct callers)
+            nested_gateway = context.get("gateway_context") or {}
+            synthesis_depth = (
+                gateway_ctx.get("synthesis_depth")
+                or (
+                    nested_gateway.get("synthesis_depth")
+                    if isinstance(nested_gateway, dict)
+                    else None
+                )
+                or context.get("synthesis_depth")
+            )
+            input_data = OrchestratorInput(
+                query=query,
+                tenant_id=tenant_id,
+                session_id=context.get("session_id"),
+                conversation_history=context.get("conversation_history"),
+                modality=gateway_ctx.get("modality"),
+                generation_type=gateway_ctx.get("generation_type"),
+                synthesis_depth=synthesis_depth,
+            )
 
-        return {
-            "status": "success",
-            "agent": "orchestrator_agent",
-            "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
-            "orchestration_result": (
-                result.model_dump() if hasattr(result, "model_dump") else vars(result)
-            ),
-            "gateway_context": gateway_context,
-        }
+            with self._scoped_session(agent, context.get("session_id")):
+                result = await agent._process_impl(input_data)
+
+            return {
+                "status": "success",
+                "agent": "orchestrator_agent",
+                "message": f"Orchestrated '{query[:50]}' via A2A pipeline",
+                "orchestration_result": (
+                    result.model_dump()
+                    if hasattr(result, "model_dump")
+                    else vars(result)
+                ),
+                "gateway_context": gateway_context,
+            }
+        finally:
+            # Per-request policy-enforcing client owns its own connection pool;
+            # close it so orchestration requests don't leak sockets/transports.
+            if orch_http_client is not None:
+                try:
+                    await orch_http_client.aclose()
+                except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+                    logger.debug("orchestrator http client close failed: %s", exc)
 
     async def _execute_downstream_agent(
         self,
