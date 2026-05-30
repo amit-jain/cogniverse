@@ -173,8 +173,11 @@ class TestArgoWiringRoundTrip:
         ) as mock_delete:
             resp = tenant_client.delete(f"/admin/tenant/test_argo_del/jobs/{job_id}")
             assert resp.status_code == 200, resp.text
+            # Delete must target the SAME sanitized name create derived
+            # (underscores/colons are illegal in an RFC-1123 resource name).
             mock_delete.assert_awaited_once_with(
-                f"tenant-job-test_argo_del-{job_id}", tenant._argo_namespace
+                tenant._cron_workflow_name("test_argo_del", job_id),
+                tenant._argo_namespace,
             )
 
         # Repeat delete must 404 (already tombstoned).

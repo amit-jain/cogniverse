@@ -4,6 +4,7 @@ All external dependencies (ConfigManager, Mem0MemoryManager) are mocked
 so the tests run without live Vespa or LM instances.
 """
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1654,3 +1655,46 @@ class TestSetArgoConfig:
             assert tenant._argo_namespace == "ns2"
         finally:
             tenant.set_argo_config(api_url=None, namespace="cogniverse")
+
+
+_RFC1123_NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+
+class TestCronWorkflowName:
+    """CronWorkflow metadata.name must be a valid RFC-1123 resource name.
+
+    Regression: the name was f'tenant-job-{tenant_id}-{job_id}' with the raw
+    tenant_id, so a colon-form tenant ('acme:production') produced an
+    Argo-illegal name and CronWorkflow creation 4xx'd — scheduled jobs never
+    ran. delete used the same raw form, so it could never match either.
+    """
+
+    def test_colon_form_tenant_yields_valid_name(self):
+        name = tenant._cron_workflow_name("acme:production", "abc123")
+        assert ":" not in name
+        assert _RFC1123_NAME.match(name), name
+        assert name == "tenant-job-acme-production-abc123"
+
+    def test_uppercase_and_underscore_sanitized(self):
+        name = tenant._cron_workflow_name("My_Org:Cell_A", "J9")
+        assert _RFC1123_NAME.match(name), name
+
+    def test_build_manifest_uses_valid_name_and_label(self):
+        manifest = tenant._build_cron_workflow(
+            "acme:production", "abc123", "*/5 * * * *", "argo"
+        )
+        meta = manifest["metadata"]
+        assert _RFC1123_NAME.match(meta["name"]), meta["name"]
+        assert meta["name"] == tenant._cron_workflow_name("acme:production", "abc123")
+        # The tenant label must also be sanitized (no colon).
+        assert ":" not in meta["labels"]["tenant"]
+        # The raw tenant_id is still threaded to the job via the CLI arg.
+        args = manifest["spec"]["workflowSpec"]["templates"][0]["container"]["args"]
+        assert "acme:production" in args
+
+    def test_create_and_delete_derive_identical_name(self):
+        # Both paths go through the same helper, so a created CronWorkflow can
+        # always be located for deletion.
+        assert tenant._cron_workflow_name(
+            "acme:production", "abc123"
+        ) == tenant._cron_workflow_name("acme:production", "abc123")

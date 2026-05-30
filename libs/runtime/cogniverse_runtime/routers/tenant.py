@@ -428,11 +428,11 @@ def _build_cron_workflow(
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "CronWorkflow",
         "metadata": {
-            "name": f"tenant-job-{tenant_id}-{job_id}",
+            "name": _cron_workflow_name(tenant_id, job_id),
             "namespace": namespace,
             "labels": {
                 "app": "cogniverse",
-                "tenant": tenant_id,
+                "tenant": _sanitize_label_value(tenant_id),
                 "job-id": job_id,
             },
         },
@@ -568,6 +568,30 @@ def _sanitize_label_value(value: str) -> str:
     sanitized label is for grouping/filtering only."""
     cleaned = _LABEL_SAFE_RE.sub("-", value).strip("-_.")[:63]
     return cleaned or "unknown"
+
+
+_NAME_SAFE_RE = re.compile(r"[^a-z0-9-]")
+
+
+def _sanitize_resource_name(value: str) -> str:
+    """K8s/Argo ``metadata.name`` must be an RFC-1123 segment: lowercase
+    alphanumeric and '-' only, ≤63 chars, edge-trimmed. Tenant ids like
+    ``org:env`` contain colons (and may be uppercased) that Argo rejects, so
+    lowercase and replace unsupported chars with '-'."""
+    cleaned = _NAME_SAFE_RE.sub("-", value.lower()).strip("-")[:63].strip("-")
+    return cleaned or "x"
+
+
+def _cron_workflow_name(tenant_id: str, job_id: str) -> str:
+    """Argo CronWorkflow name for a scheduled job. Both segments are sanitized
+    to a valid RFC-1123 name so a colon-form tenant ('acme:prod') — or any
+    upper/underscore job id — produces a valid, stable name. create and delete
+    MUST derive it the same way. The raw tenant_id still flows through the
+    ``--tenant-id`` CLI arg."""
+    return (
+        f"tenant-job-{_sanitize_resource_name(tenant_id)}-"
+        f"{_sanitize_resource_name(job_id)}"
+    )
 
 
 _OPTIMIZATION_WORKFLOW_TEMPLATE_NAME = "cogniverse-optimization-runner"
@@ -972,7 +996,9 @@ async def delete_job(tenant_id: str, job_id: str):
     # Stop the schedule on the cluster before tombstoning the config — a
     # config-only delete leaves the CronWorkflow firing indefinitely.
     if _argo_api_url:
-        await _delete_cron_workflow(f"tenant-job-{tenant_id}-{job_id}", _argo_namespace)
+        await _delete_cron_workflow(
+            _cron_workflow_name(tenant_id, job_id), _argo_namespace
+        )
 
     cm.set_config_value(
         tenant_id=tenant_id,
