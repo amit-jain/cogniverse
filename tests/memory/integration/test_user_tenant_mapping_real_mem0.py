@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from cogniverse_messaging.auth import GATEWAY_AGENT_NAME, UserTenantMapper
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.memory.manager import Mem0MemoryManager
@@ -20,7 +21,6 @@ from cogniverse_core.registries.backend_registry import BackendRegistry
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_messaging.auth import GATEWAY_AGENT_NAME, UserTenantMapper
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
