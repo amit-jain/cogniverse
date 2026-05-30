@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents.graph.graph_schema import node_id_from_doc_id
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -44,8 +45,9 @@ def _node_ids_for(manager: "GraphManager") -> set:
     ids: set = set()
     for node_fields in manager._visit(doc_type="node", top_k=500):
         doc_id = str(node_fields.get("doc_id") or "")
-        if doc_id.startswith("kg_node_"):
-            ids.add(doc_id.split("_", 3)[-1])
+        node_id = node_id_from_doc_id(doc_id, manager._tenant_id)
+        if node_id:
+            ids.add(node_id)
     return ids
 
 

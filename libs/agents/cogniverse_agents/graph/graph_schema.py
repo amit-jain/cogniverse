@@ -17,6 +17,19 @@ def _safe_tenant(tenant_id: str) -> str:
     return tenant_id.replace(":", "_")
 
 
+def node_id_from_doc_id(doc_id: str, tenant_id: str) -> str:
+    """Inverse of the ``kg_node_{safe_tenant}_{node_id}`` doc_id format.
+
+    Strips the exact ``kg_node_{safe_tenant}_`` prefix rather than splitting on
+    ``_`` positionally: both safe_tenant (every ``org:tenant`` becomes
+    ``org_tenant``) and node_ids contain underscores, so ``split('_', 3)[-1]``
+    glued the tenant's trailing segment onto the node_id. Returns "" when the
+    doc_id doesn't match this tenant's node prefix.
+    """
+    prefix = f"kg_node_{_safe_tenant(tenant_id)}_"
+    return doc_id[len(prefix) :] if doc_id.startswith(prefix) else ""
+
+
 def normalize_name(name: str) -> str:
     """Stable node identifier from a name string.
 

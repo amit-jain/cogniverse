@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from pydantic import Field
 
+from cogniverse_agents.graph.graph_schema import node_id_from_doc_id
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
@@ -208,11 +209,10 @@ class FederatedQueryAgent(
                 if needle and needle not in node_name.lower():
                     continue
                 doc_id = str(node_fields.get("doc_id") or "")
-                # doc_id format: ``kg_node_{tenant}_{node_id}``; the trailing
-                # node_id is the normalised name. Recover it from the suffix.
-                node_id = (
-                    doc_id.split("_", 3)[-1] if doc_id.startswith("kg_node_") else ""
-                )
+                # Strip the exact kg_node_{safe_tenant}_ prefix; positional
+                # split glued the tenant's trailing segment onto colon-form
+                # tenants' node_ids.
+                node_id = node_id_from_doc_id(doc_id, mgr._tenant_id)
                 if not node_id:
                     continue
                 entry = accum.setdefault(
