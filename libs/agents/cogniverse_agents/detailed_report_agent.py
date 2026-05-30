@@ -899,7 +899,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
             rlm_telemetry=rlm_telemetry,
         )
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    # Skill descriptors come from A2AAgent.get_agent_skills() (-> _get_skills()).
 
 
 # --- FastAPI Server ---
@@ -914,8 +914,15 @@ async def lifespan(application):
     global detailed_report_agent
 
     try:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
         deps = DetailedReportDeps()
-        detailed_report_agent = DetailedReportAgent(deps=deps)
+        # __init__ requires a config_manager (no silent fallback); build the
+        # default one at the startup boundary. Without this the standalone app
+        # crashed on launch and never served a request.
+        detailed_report_agent = DetailedReportAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
         logger.info("Detailed report agent initialized (tenant-agnostic)")
     except Exception as e:
         logger.error(f"Failed to initialize detailed report agent: {e}")

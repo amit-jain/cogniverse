@@ -1960,7 +1960,7 @@ class SearchAgent(
             rlm_telemetry=rlm_telemetry,
         )
 
-    # Note: _dspy_to_a2a_output and _get_agent_skills handled by A2AAgent base class
+    # Skill descriptors come from A2AAgent.get_agent_skills() (-> _get_skills()).
 
 
 # Global agent instance

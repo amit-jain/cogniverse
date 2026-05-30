@@ -342,3 +342,127 @@ def test_search_enhanced_happy_path_returns_backend_result(
     assert kwargs["tenant_id"] == "acme"
     ctx = fake.search_with_relationship_context.call_args[0][0]
     assert ctx.original_query == "graphs of revenue"
+
+
+# --- Real-lifespan / real-agent coverage (the MagicMock fixtures above never
+# run the real startup, so they hid: the lifespan crash from a missing
+# config_manager, and the AttributeError from the undefined get_agent_skills()
+# on /agent.json). These drive the actual lifespan with an in-memory (but real)
+# ConfigManager and assert /agent.json serves real skill descriptors. ---
+
+
+def _in_memory_config_manager():
+    """Real ConfigManager over an in-memory store, seeded with a default
+    SystemConfig — enough for the agents' __init__ (DSPy LM is lazy, no
+    network) without depending on BACKEND_URL / a live config store."""
+    from datetime import datetime, timezone
+
+    from cogniverse_foundation.config.manager import ConfigManager
+    from cogniverse_foundation.config.unified_config import SystemConfig
+    from cogniverse_sdk.interfaces.config_store import ConfigEntry, ConfigStore
+
+    class _Store(ConfigStore):
+        def __init__(self):
+            self._d = {}
+
+        def _k(self, t, s, svc, k):
+            return f"{t}:{s.value}:{svc}:{k}"
+
+        def initialize(self):
+            pass
+
+        def set_config(self, tenant_id, scope, service, config_key, config_value):
+            now = datetime.now(timezone.utc)
+            e = ConfigEntry(
+                tenant_id=tenant_id,
+                scope=scope,
+                service=service,
+                config_key=config_key,
+                config_value=config_value,
+                version=1,
+                created_at=now,
+                updated_at=now,
+            )
+            self._d[self._k(tenant_id, scope, service, config_key)] = e
+            return e
+
+        def get_config(self, tenant_id, scope, service, config_key, version=None):
+            return self._d.get(self._k(tenant_id, scope, service, config_key))
+
+        def get_config_history(self, tenant_id, scope, service, config_key, limit=10):
+            e = self.get_config(tenant_id, scope, service, config_key)
+            return [e] if e else []
+
+        def list_configs(self, tenant_id, scope=None, service=None):
+            return [
+                e
+                for e in self._d.values()
+                if e.tenant_id == tenant_id
+                and (scope is None or e.scope == scope)
+                and (service is None or e.service == service)
+            ]
+
+        def list_all_configs(self):
+            return list(self._d.values())
+
+        def delete_config(self, tenant_id, scope, service, config_key):
+            return (
+                self._d.pop(self._k(tenant_id, scope, service, config_key), None)
+                is not None
+            )
+
+        def export_configs(self, tenant_id, include_history=False):
+            return {"configs": []}
+
+        def import_configs(self, tenant_id, configs):
+            return 0
+
+        def get_stats(self):
+            return {"total": len(self._d)}
+
+        def health_check(self):
+            return True
+
+    cm = ConfigManager(store=_Store())
+    cm.set_system_config(SystemConfig())
+    return cm
+
+
+def test_summarizer_lifespan_starts_and_agent_card_lists_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        _in_memory_config_manager,
+    )
+    monkeypatch.setattr(sm_module, "summarizer_agent", None)
+    # TestClient as a context manager runs the REAL lifespan (startup must not
+    # crash on the missing config_manager).
+    with TestClient(sm_module.app) as client:
+        assert sm_module.summarizer_agent is not None  # lifespan built it
+        card = client.get("/agent.json")
+        assert card.status_code == 200
+        skills = card.json()["skills"]
+        assert [s["name"] for s in skills] == ["process"]
+        assert "input_schema" in skills[0] and "output_schema" in skills[0]
+        health = client.get("/health")
+        assert health.json()["status"] == "healthy"
+    monkeypatch.setattr(sm_module, "summarizer_agent", None)
+
+
+def test_detailed_report_lifespan_starts_and_agent_card_lists_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cogniverse_foundation.config.utils.create_default_config_manager",
+        _in_memory_config_manager,
+    )
+    monkeypatch.setattr(dr_module, "detailed_report_agent", None)
+    with TestClient(dr_module.app) as client:
+        assert dr_module.detailed_report_agent is not None
+        card = client.get("/agent.json")
+        assert card.status_code == 200
+        skills = card.json()["skills"]
+        assert [s["name"] for s in skills] == ["process"]
+        assert "input_schema" in skills[0] and "output_schema" in skills[0]
+    monkeypatch.setattr(dr_module, "detailed_report_agent", None)

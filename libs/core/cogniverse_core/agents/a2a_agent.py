@@ -109,3 +109,11 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT], Generic[InputT, OutputT, DepsT
                 "output_schema": self.get_output_schema(),
             }
         ]
+
+    def get_agent_skills(self) -> List[Dict[str, Any]]:
+        """Public accessor for this agent's A2A skill descriptors.
+
+        The standalone ``GET /agent.json`` routes call this; it delegates to
+        :meth:`_get_skills` so the card-building logic has a single source.
+        """
+        return self._get_skills()

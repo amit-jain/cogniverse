@@ -861,8 +861,15 @@ async def lifespan(application):
     global summarizer_agent
 
     try:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+
         deps = SummarizerDeps()
-        summarizer_agent = SummarizerAgent(deps=deps)
+        # __init__ requires a config_manager (no silent fallback); build the
+        # default one at the startup boundary. Without this the standalone app
+        # crashed on launch and never served a request.
+        summarizer_agent = SummarizerAgent(
+            deps=deps, config_manager=create_default_config_manager()
+        )
         logger.info("Summarizer agent initialized (tenant-agnostic)")
     except Exception as e:
         logger.error(f"Failed to initialize summarizer agent: {e}")
