@@ -13,6 +13,21 @@ from cogniverse_agents.approval.interfaces import ConfidenceExtractor
 logger = logging.getLogger(__name__)
 
 
+def _read_generation_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the ``_generation_metadata`` dict whether it sits at the top
+    level or nested under the schema's ``metadata`` field (RoutingGenerator
+    stores it as ``metadata={"_generation_metadata": {...}}``)."""
+    top = data.get("_generation_metadata")
+    if isinstance(top, dict):
+        return top
+    nested = data.get("metadata")
+    if isinstance(nested, dict) and isinstance(
+        nested.get("_generation_metadata"), dict
+    ):
+        return nested["_generation_metadata"]
+    return {}
+
+
 class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
     """
     Extract confidence from DSPy synthetic data generation
@@ -77,7 +92,7 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
         confidence = 1.0  # Start with perfect confidence
 
         # Signal 1: Retry count (most important)
-        metadata = data.get("_generation_metadata", {})
+        metadata = _read_generation_metadata(data)
         retry_count = metadata.get("retry_count", 0)
 
         if retry_count > 0:
@@ -153,7 +168,7 @@ class SyntheticDataConfidenceExtractor(ConfidenceExtractor):
         Returns:
             Dictionary with confidence factors
         """
-        metadata = data.get("_generation_metadata", {})
+        metadata = _read_generation_metadata(data)
         query = data.get("query", "")
         entities = data.get("entities", [])
         reasoning = data.get("reasoning", "")

@@ -153,6 +153,37 @@ class TestConfidenceExtractor:
         assert breakdown["retry_count"] == 1
         assert breakdown["has_entity"] is True
 
+    def test_nested_generation_metadata_applies_retry_penalty(self):
+        """RoutingGenerator stores _generation_metadata nested under the
+        schema's ``metadata`` field. The retry penalty must apply there too —
+        otherwise a 3-retry fallback scores high and is wrongly auto-approved."""
+        extractor = SyntheticDataConfidenceExtractor()
+        nested = {
+            "query": "find TensorFlow tutorial",
+            "entities": ["TensorFlow"],
+            "metadata": {"_generation_metadata": {"retry_count": 3, "max_retries": 3}},
+        }
+        top_level = {
+            "query": "find TensorFlow tutorial",
+            "entities": ["TensorFlow"],
+            "_generation_metadata": {"retry_count": 3, "max_retries": 3},
+        }
+
+        # Both shapes read the same retry_count, so they score identically and
+        # land below the 0.7 auto-approve threshold.
+        assert extractor.extract(nested) == 0.58
+        assert extractor.extract(nested) == extractor.extract(top_level)
+        assert extractor.extract(nested) < 0.7
+
+    def test_nested_generation_metadata_breakdown_reads_retry_count(self):
+        extractor = SyntheticDataConfidenceExtractor()
+        data = {
+            "query": "find TensorFlow tutorial",
+            "entities": ["TensorFlow"],
+            "metadata": {"_generation_metadata": {"retry_count": 3, "max_retries": 3}},
+        }
+        assert extractor.get_confidence_breakdown(data)["retry_count"] == 3
+
 
 class TestHumanApprovalAgent:
     """Test HumanApprovalAgent"""
