@@ -523,6 +523,77 @@ class TestEvaluateAgentSpans:
         assert result.score == 0.8
         assert result.sample_count == 1
 
+    @pytest.mark.asyncio
+    async def test_unscored_judge_response_is_skipped_not_averaged(self, monitor):
+        """A judge reply with no parseable score (LM failure) is skipped, not
+        folded into the live quality average as a neutral 0.5."""
+        import pandas as pd
+
+        from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
+
+        spans = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "attributes": {"query": "q1"},
+                    "outputs": {"results": [{"video_id": "v1", "score": 0.9}]},
+                },
+                {
+                    "span_id": "s2",
+                    "attributes": {"query": "q2"},
+                    "outputs": {"results": [{"video_id": "v2", "score": 0.9}]},
+                },
+            ]
+        )
+
+        judge = LLMJudgeCore(model_name="x", base_url="http://unused")
+        responses = iter(["Score: 8/10. Good.", "Evaluation failed: refused"])
+
+        async def fake_call_llm(prompt, system_prompt=None, images=None):
+            return next(responses)
+
+        judge._call_llm = fake_call_llm
+        monitor._llm_judge = judge
+
+        with patch.object(
+            monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
+        ):
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+
+        # Only the scored span counts; averaging the failed one would give 0.65.
+        assert result.sample_count == 1
+        assert result.score == 0.8
+
+    @pytest.mark.asyncio
+    async def test_all_judge_failures_yield_no_samples(self, monitor):
+        """Every judgement failing leaves zero samples, not a 0.5 average."""
+        import pandas as pd
+
+        from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
+
+        spans = pd.DataFrame(
+            [
+                {"span_id": "s1", "attributes": {"query": "q1"}, "outputs": {}},
+                {"span_id": "s2", "attributes": {"query": "q2"}, "outputs": {}},
+            ]
+        )
+
+        judge = LLMJudgeCore(model_name="x", base_url="http://unused")
+
+        async def fake_call_llm(prompt, system_prompt=None, images=None):
+            return "Evaluation failed: boom"
+
+        judge._call_llm = fake_call_llm
+        monitor._llm_judge = judge
+
+        with patch.object(
+            monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
+        ):
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+
+        assert result.sample_count == 0
+        assert result.score == 0.0
+
 
 class TestGetAgentBaseline:
     @pytest.mark.asyncio

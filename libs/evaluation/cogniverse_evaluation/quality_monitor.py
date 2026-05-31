@@ -505,6 +505,15 @@ class QualityMonitor:
                     ),
                 )
                 score, explanation = judge._extract_score_from_response(response)
+                if score is None:
+                    # LM failure or a reply with no parseable score — skip
+                    # rather than fold a fabricated neutral 0.5 into the
+                    # persisted live quality average.
+                    logger.warning(
+                        "Skipping %s span with no parseable judge score",
+                        agent_type.value,
+                    )
+                    continue
 
                 example = {
                     "query": query,

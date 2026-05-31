@@ -184,7 +184,7 @@ class LLMJudgeCore:
             logger.error(f"LLM call failed: {e}")
             return f"Evaluation failed: {str(e)}"
 
-    def _extract_score_from_response(self, response: str) -> tuple[float, str]:
+    def _extract_score_from_response(self, response: str) -> tuple[float | None, str]:
         """
         Extract numerical score and explanation from LLM response
 
@@ -192,7 +192,10 @@ class LLMJudgeCore:
             response: LLM response text
 
         Returns:
-            Tuple of (score, explanation)
+            Tuple of (score, explanation). ``score`` is ``None`` when the
+            response carries no parseable score (an LM transport failure or a
+            reply with no rating) — distinct from a real ``0.5`` so callers can
+            skip a non-judgement instead of treating it as neutral.
         """
         import re
 
@@ -204,7 +207,7 @@ class LLMJudgeCore:
             r"([0-9.]+)\s+out of\s+10",
         ]
 
-        score = 0.5  # Default score
+        score: float | None = None
         for pattern in score_patterns:
             match = re.search(pattern, response.lower())
             if match:
@@ -371,6 +374,8 @@ Explanation: Your visual assessment"""
 
         # Parse response
         score, explanation = self._extract_score_from_response(response)
+        if score is None:
+            score = 0.5
 
         # Determine label
         if score >= 0.8:
@@ -583,6 +588,8 @@ Format: Score: X/10"""
 
         # Parse response
         score, explanation = self._extract_score_from_response(response)
+        if score is None:
+            score = 0.5
 
         # Calculate simple precision/recall metrics
         retrieved_ids = []
