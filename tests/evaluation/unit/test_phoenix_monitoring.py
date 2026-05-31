@@ -154,7 +154,8 @@ class TestRetrievalMonitor:
         assert monitor.error_windows == {}
         assert monitor.mrr_windows == {}
         assert monitor.active_alerts == {}
-        assert monitor.metrics_buffer == []
+        assert list(monitor.metrics_buffer) == []
+        assert monitor.metrics_buffer.maxlen == 10000
         assert monitor.monitoring_thread is None
 
     @pytest.mark.unit
@@ -199,26 +200,67 @@ class TestRetrievalMonitor:
     @pytest.mark.unit
     def test_log_retrieval_event(self):
         """Test logging retrieval events."""
-        with patch("cogniverse_telemetry_phoenix.evaluation.monitoring.px"):
-            monitor = RetrievalMonitor()
+        monitor = RetrievalMonitor()
 
-            # Log an event
-            event = {
-                "profile": "test_profile",
-                "strategy": "test_strategy",
-                "latency_ms": 100.0,
-                "mrr": 0.8,
-                "error": False,
-                "query": "test query",
-                "num_results": 10,
-            }
-            monitor.log_retrieval_event(event)
+        event = {
+            "profile": "test_profile",
+            "strategy": "test_strategy",
+            "latency_ms": 100.0,
+            "mrr": 0.8,
+            "error": False,
+            "query": "test query",
+            "num_results": 10,
+        }
+        monitor.log_retrieval_event(event)
 
-            # Check metrics were buffered
-            assert len(monitor.metrics_buffer) == 1
-            assert monitor.metrics_buffer[0]["profile"] == "test_profile"
-            assert monitor.metrics_buffer[0]["latency_ms"] == 100.0
-            assert monitor.metrics_buffer[0]["mrr"] == 0.8
+        # Check metrics were buffered
+        assert len(monitor.metrics_buffer) == 1
+        assert monitor.metrics_buffer[0]["profile"] == "test_profile"
+        assert monitor.metrics_buffer[0]["latency_ms"] == 100.0
+        assert monitor.metrics_buffer[0]["mrr"] == 0.8
+
+    @pytest.mark.unit
+    def test_log_retrieval_event_emits_span(self):
+        """The event is emitted as a real OpenTelemetry span, captured here
+        via an in-memory exporter."""
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+            InMemorySpanExporter,
+        )
+
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        tracer = provider.get_tracer("test")
+
+        with patch(
+            "cogniverse_telemetry_phoenix.evaluation.monitoring._otel_trace.get_tracer",
+            return_value=tracer,
+        ):
+            RetrievalMonitor().log_retrieval_event(
+                {
+                    "profile": "video_colpali",
+                    "strategy": "binary_binary",
+                    "latency_ms": 123.0,
+                    "mrr": 0.75,
+                    "num_results": 8,
+                    "error": False,
+                    "query": "robots playing soccer",
+                }
+            )
+
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 1
+        span = spans[0]
+        assert span.name == "retrieval"
+        assert span.attributes["profile"] == "video_colpali"
+        assert span.attributes["strategy"] == "binary_binary"
+        assert span.attributes["query"] == "robots playing soccer"
+        assert span.attributes["latency_ms"] == 123.0
+        assert span.attributes["mrr"] == 0.75
+        assert span.attributes["num_results"] == 8
+        assert span.attributes["error"] is False
 
     @pytest.mark.unit
     def test_check_alerts_latency(self):

@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any
 
 import phoenix as px
+from opentelemetry import trace as _otel_trace
 from phoenix.client import Client as _PhoenixSyncClient
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,9 @@ class RetrievalMonitor:
         self.active_alerts: dict[str, dict[str, Any]] = {}
         self.alert_lock = threading.Lock()
 
-        # Metrics buffer for batch logging
-        self.metrics_buffer = []
+        # Metrics buffer for batch logging (bounded so a process that never
+        # starts the drain loop can't grow it without limit).
+        self.metrics_buffer: deque = deque(maxlen=10000)
         self.buffer_lock = threading.Lock()
 
         self.monitoring_thread = None
@@ -159,21 +161,21 @@ class RetrievalMonitor:
                 }
             )
 
-        # Log to Phoenix trace
+        # Emit the event as an OpenTelemetry span. When the runtime has
+        # configured the Phoenix OTLP tracer provider this exports to Phoenix;
+        # otherwise it resolves to a no-op span.
         try:
-            px.log_trace(
-                name="retrieval",
-                inputs={"query": event.get("query", "")},
-                outputs={"results": event.get("results", [])},
-                metadata={
-                    "profile": profile,
-                    "strategy": strategy,
-                    "latency_ms": event.get("latency_ms", 0),
-                    "mrr": event.get("mrr", 0),
-                },
-            )
+            tracer = _otel_trace.get_tracer(__name__)
+            with tracer.start_as_current_span("retrieval") as span:
+                span.set_attribute("profile", profile)
+                span.set_attribute("strategy", strategy)
+                span.set_attribute("query", str(event.get("query", "")))
+                span.set_attribute("latency_ms", float(event.get("latency_ms", 0) or 0))
+                span.set_attribute("mrr", float(event.get("mrr", 0) or 0))
+                span.set_attribute("num_results", int(event.get("num_results", 0) or 0))
+                span.set_attribute("error", bool(event.get("error", False)))
         except Exception as e:
-            logger.warning(f"Failed to log to Phoenix: {e}")
+            logger.warning(f"Failed to emit retrieval span: {e}")
 
     def _process_metrics_buffer(self):
         """Process buffered metrics"""
