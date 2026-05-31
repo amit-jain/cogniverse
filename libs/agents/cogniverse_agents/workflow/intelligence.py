@@ -300,8 +300,6 @@ class WorkflowIntelligence:
                     success_rate * 0.4 + time_factor * 0.3 + confidence_factor * 0.3
                 )
 
-                # Could use this score for agent selection optimization
-                task.metadata = task.metadata or {}
                 task.metadata["performance_score"] = composite_score
 
         plan.metadata["performance_optimized"] = True

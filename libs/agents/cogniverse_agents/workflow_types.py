@@ -50,6 +50,7 @@ class WorkflowTask:
     timeout_seconds: int = 300  # 5 minutes default
     retry_count: int = 0
     max_retries: int = 2
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -76,7 +77,7 @@ class WorkflowPlan:
 
         ready_tasks = []
         for task in self.tasks:
-            if task.status == TaskStatus.PENDING and all(
+            if task.status == TaskStatus.WAITING and all(
                 dep_id in completed_task_ids for dep_id in task.dependencies
             ):
                 ready_tasks.append(task)

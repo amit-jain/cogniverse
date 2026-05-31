@@ -10,8 +10,13 @@ from cogniverse_agents.workflow.intelligence import (
     OptimizationStrategy,
     WorkflowIntelligence,
 )
-from cogniverse_agents.workflow_types import WorkflowPlan, WorkflowStatus, WorkflowTask
-from cogniverse_sdk.interfaces.workflow_store import WorkflowTemplate
+from cogniverse_agents.workflow_types import (
+    TaskStatus,
+    WorkflowPlan,
+    WorkflowStatus,
+    WorkflowTask,
+)
+from cogniverse_sdk.interfaces.workflow_store import AgentPerformance, WorkflowTemplate
 
 
 def _make_intelligence(**kwargs) -> WorkflowIntelligence:
@@ -305,6 +310,58 @@ class TestExecutionOrder:
     def test_empty_tasks(self):
         wi = _make_intelligence()
         assert wi._calculate_execution_order([]) == []
+
+
+@pytest.mark.unit
+class TestGetReadyTasks:
+    """get_ready_tasks returns WAITING tasks whose dependencies are complete."""
+
+    def test_returns_waiting_tasks_with_met_dependencies(self):
+        t1 = WorkflowTask(task_id="t1", agent_name="a", query="q")
+        t2 = WorkflowTask(task_id="t2", agent_name="a", query="q", dependencies={"t1"})
+        plan = WorkflowPlan(workflow_id="wf", original_query="q", tasks=[t1, t2])
+
+        assert [t.task_id for t in plan.get_ready_tasks()] == ["t1"]
+
+        t1.status = TaskStatus.COMPLETED
+        assert [t.task_id for t in plan.get_ready_tasks()] == ["t2"]
+
+    def test_completed_task_is_not_ready(self):
+        t1 = WorkflowTask(task_id="t1", agent_name="a", query="q")
+        t1.status = TaskStatus.COMPLETED
+        plan = WorkflowPlan(workflow_id="wf", original_query="q", tasks=[t1])
+        assert plan.get_ready_tasks() == []
+
+
+@pytest.mark.unit
+class TestPerformanceOptimization:
+    """PERFORMANCE_BASED strategy writes a composite score into task metadata."""
+
+    @pytest.mark.asyncio
+    async def test_performance_score_written_to_task_metadata(self):
+        intelligence = _make_intelligence(
+            optimization_strategy=OptimizationStrategy.PERFORMANCE_BASED
+        )
+        intelligence.agent_performance["agent1"] = AgentPerformance(
+            agent_name="agent1",
+            total_executions=10,
+            successful_executions=8,
+            average_execution_time=1.0,
+            average_confidence=0.6,
+        )
+        plan = WorkflowPlan(
+            workflow_id="wf",
+            original_query="unmatched query",
+            tasks=[
+                WorkflowTask(task_id="t1", agent_name="agent1", query="unmatched query")
+            ],
+        )
+
+        result = await intelligence.optimize_workflow_plan("unmatched query", plan)
+
+        # success_rate 0.8*0.4 + time_factor 0.5*0.3 + confidence 0.6*0.3
+        assert result.tasks[0].metadata["performance_score"] == pytest.approx(0.65)
+        assert result.metadata["performance_optimized"] is True
 
 
 if __name__ == "__main__":
