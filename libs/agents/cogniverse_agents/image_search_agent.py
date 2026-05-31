@@ -118,6 +118,7 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         self._vespa_endpoint = deps.vespa_endpoint
         self._colpali_model_name = deps.colpali_model
+        self._tenant_id = deps.tenant_id
 
         # Lazy load models
         self._colpali_model = None
@@ -305,22 +306,33 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             if filter_parts:
                 where_clause = " AND ".join(filter_parts)
 
-        yql = f"select * from image_content where {where_clause}"
+        # The image profile (configs/config.json "image_colpali_mv") deploys
+        # per tenant as <base>_<canonical_tenant>, matching how the search
+        # backend scopes schemas.
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
-        # Choose rank profile
-        rank_profile = (
-            "colpali_similarity" if search_mode == "semantic" else "hybrid_image"
-        )
+        safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
+        schema = f"image_colpali_mv_{safe_tenant}"
+        yql = f"select * from {schema} where {where_clause}"
 
-        # Flatten embedding for Vespa query
-        query_embedding_flat = query_embedding.flatten().tolist()
+        # Rank profiles defined in the image schema: float_float = pure ColPali
+        # similarity, hybrid_float_bm25 = ColPali + BM25. Both take the float
+        # multi-vector query input query(qt).
+        rank_profile = "float_float" if search_mode == "semantic" else "hybrid_float_bm25"
 
-        # Build Vespa request
+        # ColPali query is a 2-D multi-vector [tokens, 128]; the querytoken{}
+        # mapped tensor expects a dict {token_index: vector}, NOT a stringified
+        # flat list (the previous shape Vespa silently rejected).
+        if query_embedding.ndim == 2:
+            qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        else:
+            qt_value = query_embedding.tolist()
+
         params = {
             "yql": yql,
             "hits": limit,
             "ranking.profile": rank_profile,
-            "input.query(q)": str(query_embedding_flat),
+            "input.query(qt)": qt_value,
         }
 
         if search_mode == "hybrid" and query_text:

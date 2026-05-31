@@ -120,10 +120,21 @@ class TestImageSearchAgent:
         assert results[0].description == "A red car"
         assert results[0].relevance_score == 0.95
 
-        # Verify Vespa was called correctly
+        # Verify the query matches the deployed image schema's contract.
         mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert "colpali_similarity" in str(call_args)
+        params = mock_post.call_args.kwargs["json"]
+        # Tenant-scoped deployed schema, not the non-existent image_content.
+        assert "image_colpali_mv_test_tenant_test_tenant" in params["yql"]
+        assert "image_content" not in params["yql"]
+        # Real semantic rank profile + the float multi-vector query input.
+        assert params["ranking.profile"] == "float_float"
+        assert "input.query(qt)" in params
+        assert "input.query(q)" not in params
+        # Dict-of-vectors mapped tensor (querytoken{}), not a stringified list.
+        qt = params["input.query(qt)"]
+        assert isinstance(qt, dict)
+        assert len(qt) == 1024  # one entry per ColPali patch token
+        assert len(qt["0"]) == 128
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "query_encoder", new_callable=PropertyMock)
@@ -147,9 +158,12 @@ class TestImageSearchAgent:
             query="sports car", search_mode="hybrid", limit=10
         )
 
-        # Verify Vespa was called with hybrid profile
-        call_args = mock_post.call_args
-        assert "hybrid_image" in str(call_args)
+        # Hybrid uses the real hybrid rank profile, the float query input, and
+        # passes the text query through for the BM25 component.
+        params = mock_post.call_args.kwargs["json"]
+        assert params["ranking.profile"] == "hybrid_float_bm25"
+        assert "input.query(qt)" in params
+        assert params["query"] == "sports car"
 
     @pytest.mark.asyncio
     @patch.object(ImageSearchAgent, "colpali_model", new_callable=PropertyMock)
