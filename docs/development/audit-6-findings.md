@@ -74,12 +74,13 @@ Single-pass audit per `.claude/rules/audit.md` (89 agents, 5 bug classes A–E +
 ✅ **Final HIGH async/Vespa cluster — triaged:**
 - VLM-descriptions-dropped (H28) FIXED (commit `Map VLM frame descriptions onto keyframe documents`): unwrap the VLM wrapper + look up by frame_number/frame_id (was reading the wrapper top level keyed by segment index → every keyframe got `description=''`). Verified shapes against the producer; unit-tested the mapping.
 - dashboard `evaluation.py` nested aggregate loop FIXED (commit `Aggregate experiment metrics once outside the load loop`): extracted `_aggregate_experiment_metrics`, called once after the load loop (was O(experiments²)); added timeouts to the 3 Phoenix GETs. Unit-tested.
-- image_search multi-vector (H-image) DEFERRED → `docs/development/image-search-agent-rewire-todo.md` + inline pointer: the agent is out of sync with the image schema on FOUR counts (source name, rank profiles, query-input name, tensor format); correct fix is to route through VespaSearchBackend, NEEDS_LIVE_BOUNDARY. A format-only fix would leave it broken.
-- one-doc-per-segment batch-feed (H29) + `load_for_request` per-request cache DEFERRED → `docs/development/async-perf-hotpath-todo.md` + inline pointers: hot-path perf where a subtle bug harms correctness (wrong batch flush / stale canary-prompt cache); must be verified against real Vespa/Phoenix.
+- image_search multi-vector (H-image) FIXED (commit `Fix image search query to match deployed image schema`): the live (default `semantic`) path was out of sync with the deployed `image_colpali_mv` schema on four counts — corrected the tenant-scoped schema name (`image_colpali_mv_<canonical_tenant>`), the real rank profiles (`float_float` / `hybrid_float_bm25`), the `query(qt)` input, and the dict-of-vectors mapped-tensor format. Strengthened the two Class-A search tests (they asserted the broken `colpali_similarity` query) to verify the corrected query.
 
-## 🎯 ENTIRE CRIT + HIGH TIER RESOLVED (fixed or deferred-with-written-plan)
+**Still pending (perf, not yet done — tracked here, NOT as code TODOs):** one-doc-per-segment Vespa feed → batch (embedding_generator); `load_for_request` short-TTL cache invalidated on canary promote/retire. Both are hot-path perf items that need real-Vespa/Phoenix verification of the batch flush / cache invalidation; carried forward as remaining work.
 
-Per the audit protocol's done-criteria, every CRIT (6/6) and HIGH (46/46) now has either a shipped fix with a real-boundary regression test, or a deferred TODO doc with an approved plan + inline pointer-TODOs at the affected sites. 1 HIGH was a verified false positive (annotation_agent). The hollow-test / Class-A tier is fully cleared.
+## CRIT + HIGH correctness tier resolved
+
+Every CRIT (6/6) and HIGH has a shipped fix with a real-boundary regression test; the two perf items above are the only HIGH-tier work still open. 1 HIGH was a verified false positive (annotation_agent). The hollow-test / Class-A tier is fully cleared.
 
 **Remaining: MED (83) + LOW (83)** — including the 25 SLOP findings and the user-pre-approved dead-code deletions (confirm zero callers each). A large sweep, best in a fresh session. (`schema_registry` regex, `tenant.py` cron name, `agent_dispatcher` signature-variant, `node_id` split) → async-blocking cluster (`document_agent` sync POST, sync DSPy on loop, one-doc-per-segment feed, leaked httpx client, unbounded `search_latencies`) → request-bleed (shared cached agent overlay) → VLM-descriptions-dropped → remaining → 10 hollow tests.
 
