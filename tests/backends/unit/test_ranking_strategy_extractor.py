@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import json
 
-from cogniverse_vespa.ranking_strategy_extractor import RankingStrategyExtractor
+from cogniverse_vespa.ranking_strategy_extractor import (
+    RankingStrategyExtractor,
+    extract_all_ranking_strategies,
+)
 
 _FLOAT_PROFILE = {
     "name": "float_float",
@@ -75,3 +78,20 @@ def test_sv_schema_still_enables_nearest_neighbor(tmp_path):
     strategy = RankingStrategyExtractor().extract_from_schema(path)["float_float"]
 
     assert strategy.use_nearestneighbor is True
+
+
+def test_extract_all_strips_only_trailing_schema_suffix(tmp_path):
+    (tmp_path / "code_schema_index_schema.json").write_text(
+        json.dumps(
+            {
+                "schema": "code_schema_index",
+                "document": {"fields": [{"name": "embedding", "type": "tensor"}]},
+                "rank-profiles": [_FLOAT_PROFILE],
+            }
+        )
+    )
+
+    all_strategies = extract_all_ranking_strategies(tmp_path)
+
+    assert "code_schema_index" in all_strategies
+    assert "code_index" not in all_strategies

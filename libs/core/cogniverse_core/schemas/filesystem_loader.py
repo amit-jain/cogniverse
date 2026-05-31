@@ -97,7 +97,7 @@ class FilesystemSchemaLoader(SchemaLoader):
         """
         try:
             schema_files = self.base_path.glob("*_schema.json")
-            return [f.stem.replace("_schema", "") for f in schema_files if f.is_file()]
+            return [f.stem.removesuffix("_schema") for f in schema_files if f.is_file()]
         except Exception as e:
             raise SchemaLoadError(f"Failed to list schemas: {e}") from e
 

@@ -309,7 +309,7 @@ def extract_all_ranking_strategies(
             continue
 
         try:
-            schema_name = schema_file.stem.replace("_schema", "")
+            schema_name = schema_file.stem.removesuffix("_schema")
             strategies = extractor.extract_from_schema(schema_file)
             all_strategies[schema_name] = strategies
             logger.info(f"Extracted {len(strategies)} strategies from {schema_name}")
