@@ -68,6 +68,12 @@ def _active_key(session_id: str) -> str:
     return f"session:{session_id}:tenant"
 
 
+def _session_id_from_active_key(key: str) -> str:
+    """Inverse of ``_active_key`` — strips the fixed prefix/suffix so a
+    session_id containing a colon round-trips intact."""
+    return key[len("session:") : -len(":tenant")]
+
+
 def _serialize(msg: InboundMessage) -> str:
     """JSON encode an InboundMessage. ``tags`` is a tuple — JSON does
     not preserve tuple vs list, so deserialize coerces back."""
@@ -104,11 +110,13 @@ class RedisInboundQueue:
         tenant_id: str,
         redis: aioredis.Redis,
         created_at: Optional[datetime] = None,
+        active_ttl_seconds: int = _DEFAULT_ACTIVE_TTL_SECONDS,
     ) -> None:
         self._session_id = session_id
         self._tenant_id = tenant_id
         self._redis = redis
         self._created_at = created_at or datetime.now(timezone.utc)
+        self._active_ttl = active_ttl_seconds
 
     @property
     def session_id(self) -> str:
@@ -144,9 +152,13 @@ class RedisInboundQueue:
         with the same shape as the in-pod version.
         """
         await self._check_open()
-        await self._redis.lpush(
-            _list_key(self._tenant_id, self._session_id), _serialize(msg)
-        )
+        # Bound the list lifetime to the active-marker TTL so an abandoned
+        # session (never explicitly closed) self-expires instead of leaking.
+        list_key = _list_key(self._tenant_id, self._session_id)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.lpush(list_key, _serialize(msg))
+            pipe.expire(list_key, self._active_ttl)
+            await pipe.execute()
 
     async def drain(self) -> List[InboundMessage]:
         """Atomically return all currently-buffered messages AND
@@ -212,6 +224,7 @@ class RedisInboundQueueRegistry:
             session_id=session_id,
             tenant_id=tenant_id,
             redis=self._redis,
+            active_ttl_seconds=self._active_ttl,
         )
 
     async def get_queue(self, session_id: str) -> Optional[RedisInboundQueue]:
@@ -227,6 +240,7 @@ class RedisInboundQueueRegistry:
             session_id=session_id,
             tenant_id=existing,
             redis=self._redis,
+            active_ttl_seconds=self._active_ttl,
         )
 
     async def close_queue(self, session_id: str) -> bool:
@@ -261,7 +275,9 @@ class RedisInboundQueueRegistry:
             value = await self._redis.get(key)
             if value is None:
                 continue
-            session_id = key.split(":", 2)[1] if isinstance(key, str) else key
+            session_id = (
+                _session_id_from_active_key(key) if isinstance(key, str) else key
+            )
             if tenant_id is None or value == tenant_id:
                 out.append(
                     {
