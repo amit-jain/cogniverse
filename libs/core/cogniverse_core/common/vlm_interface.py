@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 
 import dspy
 
+from cogniverse_foundation.confidence import parse_confidence
 from cogniverse_foundation.config.utils import get_config
 
 if TYPE_CHECKING:
@@ -84,7 +85,5 @@ class VLMInterface:
                 "themes": _split_or_empty(result.themes),
                 "key_objects": _split_or_empty(result.key_objects),
                 "insights": _split_or_empty(result.insights),
-                "relevance_score": float(result.relevance_score)
-                if result.relevance_score
-                else 0.0,
+                "relevance_score": parse_confidence(result.relevance_score),
             }
