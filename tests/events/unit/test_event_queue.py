@@ -251,6 +251,59 @@ class TestInMemoryEventQueue:
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
+    async def test_slow_subscriber_not_skipped_after_overflow(self):
+        """A subscriber that is mid-stream when backpressure pops the front
+        must still receive every retained event in order — offsets are
+        absolute, so a pop must not shift a consumed cursor onto a newer
+        event."""
+        q = InMemoryEventQueue(task_id="t", tenant_id="t", max_buffer_size=3)
+        received: list[int] = []
+
+        async def consume():
+            async for evt in q.subscribe():
+                received.append(evt.current)
+                if len(received) >= 6:
+                    break
+
+        for i in range(3):
+            await q.enqueue(
+                create_progress_event(task_id="t", tenant_id="t", current=i, total=6)
+            )
+
+        task = asyncio.create_task(consume())
+        # Wait until the first three are consumed — the subscriber is now
+        # parked waiting, with the buffer full.
+        for _ in range(200):
+            if len(received) >= 3:
+                break
+            await asyncio.sleep(0.01)
+        assert received == [0, 1, 2]
+
+        # Each of these pops the (already-consumed) front off the buffer.
+        for i in range(3, 6):
+            await q.enqueue(
+                create_progress_event(task_id="t", tenant_id="t", current=i, total=6)
+            )
+
+        # On the buggy code the cursor (3) was >= len(events) (3) after the
+        # pops, so 3/4/5 were never yielded and this would time out.
+        await asyncio.wait_for(task, timeout=3.0)
+        assert received == [0, 1, 2, 3, 4, 5]
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_get_latest_offset_includes_dropped(self):
+        """Absolute offset advances past dropped events."""
+        q = InMemoryEventQueue(task_id="t", tenant_id="t", max_buffer_size=2)
+        for i in range(5):
+            await q.enqueue(
+                create_progress_event(task_id="t", tenant_id="t", current=i, total=5)
+            )
+        # 5 enqueued, buffer holds 2, so 3 dropped — absolute offset is 5.
+        assert await q.get_latest_offset() == 5
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
     async def test_cancellation(self, queue):
         """Test cancellation token"""
         assert not queue.cancellation_token.is_cancelled
@@ -359,9 +412,10 @@ class TestInMemoryEventQueue:
             )
             await queue.enqueue(event)
 
-        # Buffer should only have last 5
-        offset = await queue.get_latest_offset()
-        assert offset == 5  # 5 events in buffer
+        # Buffer holds only the last 5, but the absolute offset counts all
+        # 10 ever enqueued (5 dropped + 5 retained).
+        assert queue.get_stats()["event_count"] == 5
+        assert await queue.get_latest_offset() == 10
 
     @pytest.mark.ci_fast
     def test_queue_stats(self, queue):

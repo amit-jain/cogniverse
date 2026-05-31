@@ -38,6 +38,10 @@ class InMemoryEventQueue(BaseEventQueue):
     ):
         super().__init__(task_id, tenant_id, ttl_minutes)
         self._events: List[TaskEvent] = []
+        # Number of events dropped off the front by backpressure. Offsets are
+        # absolute (across the queue's whole lifetime); the physical index of
+        # an absolute offset is ``offset - self._dropped_count``.
+        self._dropped_count = 0
         self._condition = asyncio.Condition()
         self._subscriber_count = 0
         self._max_buffer_size = max_buffer_size
@@ -57,6 +61,7 @@ class InMemoryEventQueue(BaseEventQueue):
             # Handle backpressure - drop oldest events if buffer full
             if len(self._events) >= self._max_buffer_size:
                 dropped = self._events.pop(0)
+                self._dropped_count += 1
                 logger.warning(
                     f"Queue {self._task_id} buffer full, dropped oldest event: "
                     f"{dropped.event_id}"
@@ -67,7 +72,7 @@ class InMemoryEventQueue(BaseEventQueue):
 
             logger.debug(
                 f"Queue {self._task_id}: enqueued {event.event_type} "
-                f"(offset {len(self._events) - 1})"
+                f"(offset {self._dropped_count + len(self._events) - 1})"
             )
 
             # Notify all waiting subscribers
@@ -92,9 +97,14 @@ class InMemoryEventQueue(BaseEventQueue):
         try:
             while not self._closed:
                 async with self._condition:
-                    # Yield all available events
-                    while current_offset < len(self._events):
-                        event = self._events[current_offset]
+                    # A subscriber that fell behind the retained window resumes
+                    # at the oldest retained event rather than reading a shifted
+                    # index. Offsets are absolute; physical index subtracts the
+                    # dropped count.
+                    if current_offset < self._dropped_count:
+                        current_offset = self._dropped_count
+                    while current_offset - self._dropped_count < len(self._events):
+                        event = self._events[current_offset - self._dropped_count]
                         current_offset += 1
                         yield event
 
@@ -116,8 +126,10 @@ class InMemoryEventQueue(BaseEventQueue):
             # Without this, events enqueued just before close() are lost
             # because the outer `while not self._closed` exits immediately.
             async with self._condition:
-                while current_offset < len(self._events):
-                    event = self._events[current_offset]
+                if current_offset < self._dropped_count:
+                    current_offset = self._dropped_count
+                while current_offset - self._dropped_count < len(self._events):
+                    event = self._events[current_offset - self._dropped_count]
                     current_offset += 1
                     yield event
 
@@ -129,9 +141,9 @@ class InMemoryEventQueue(BaseEventQueue):
             )
 
     async def get_latest_offset(self) -> int:
-        """Get current event count"""
+        """Absolute offset just past the newest event (includes dropped)."""
         async with self._condition:
-            return len(self._events)
+            return self._dropped_count + len(self._events)
 
     async def close(self) -> None:
         """Close queue and notify all subscribers"""
