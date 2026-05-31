@@ -78,6 +78,9 @@ class GoldenEvalResult:
     per_query_scores: List[Dict[str, Any]] = field(default_factory=list)
     low_scoring_queries: List[Dict[str, Any]] = field(default_factory=list)
     high_scoring_queries: List[Dict[str, Any]] = field(default_factory=list)
+    # Prior baseline MRR captured before this result is stored, so a drop is
+    # measured current-vs-previous, not against the value this run just wrote.
+    baseline_mrr: Optional[float] = None
 
 
 @dataclass
@@ -394,6 +397,10 @@ class QualityMonitor:
             per_query_scores
         )
 
+        # Read the prior baseline BEFORE storing this run, so the drop check
+        # compares against the previous baseline, not the value stored below.
+        prior_baseline = self._last_golden_baseline_mrr
+
         result = GoldenEvalResult(
             timestamp=datetime.utcnow(),
             tenant_id=self.tenant_id,
@@ -404,6 +411,7 @@ class QualityMonitor:
             per_query_scores=per_query_scores,
             low_scoring_queries=low_scoring,
             high_scoring_queries=high_scoring,
+            baseline_mrr=prior_baseline,
         )
 
         await self._store_golden_eval_result(result)
@@ -594,7 +602,9 @@ class QualityMonitor:
         # Golden set only covers search agent
         if golden:
             search_verdict = Verdict.SKIP
-            baseline_mrr = self._last_golden_baseline_mrr
+            # The baseline captured before this result was stored — comparing
+            # against a fresh read would compare the run against itself.
+            baseline_mrr = golden.baseline_mrr
             if baseline_mrr and baseline_mrr > 0:
                 drop = (baseline_mrr - golden.mean_mrr) / baseline_mrr
                 if drop >= self.thresholds.golden_mrr_drop_pct:

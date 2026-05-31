@@ -83,6 +83,7 @@ class TestGoldenDatasetLoading:
 
 class TestThresholdChecking:
     def test_golden_mrr_drop_triggers_optimize(self, monitor):
+        # Prior baseline 0.6 carried on the result — drop is 33% > 10%.
         golden = GoldenEvalResult(
             timestamp=datetime.utcnow(),
             tenant_id="test_tenant",
@@ -90,17 +91,13 @@ class TestThresholdChecking:
             mean_ndcg=0.5,
             mean_precision_at_5=0.3,
             query_count=10,
+            baseline_mrr=0.6,
         )
-        # Simulate baseline of 0.6 — drop is 33% > 10% threshold
-        with patch.object(
-            type(monitor),
-            "_last_golden_baseline_mrr",
-            new_callable=lambda: property(lambda self: 0.6),
-        ):
-            verdicts = monitor.check_thresholds(golden, None)
+        verdicts = monitor.check_thresholds(golden, None)
         assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE
 
     def test_golden_no_drop_skips(self, monitor):
+        # Baseline 0.6 carried on the result — drop is 3% < 10%.
         golden = GoldenEvalResult(
             timestamp=datetime.utcnow(),
             tenant_id="test_tenant",
@@ -108,14 +105,9 @@ class TestThresholdChecking:
             mean_ndcg=0.6,
             mean_precision_at_5=0.5,
             query_count=10,
+            baseline_mrr=0.6,
         )
-        # Baseline 0.6, drop is 3% < 10% threshold
-        with patch.object(
-            type(monitor),
-            "_last_golden_baseline_mrr",
-            new_callable=lambda: property(lambda self: 0.6),
-        ):
-            verdicts = monitor.check_thresholds(golden, None)
+        verdicts = monitor.check_thresholds(golden, None)
         assert verdicts[AgentType.SEARCH] == Verdict.SKIP
 
     def test_live_score_below_floor_triggers(self, monitor):

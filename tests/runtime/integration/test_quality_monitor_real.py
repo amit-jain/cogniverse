@@ -343,14 +343,15 @@ class TestGoldenEvalRealVespa:
     async def test_degradation_detection_with_real_baseline(
         self, monitor_with_real_search, seeded_vespa
     ):
-        """Store high baseline, verify current eval detects degradation."""
-        # Run real eval to get actual MRR
-        result = await monitor_with_real_search.evaluate_golden_set()
-        real_mrr = result.mean_mrr
+        """A prior baseline higher than the current eval yields OPTIMIZE.
 
-        # Now store an inflated baseline AFTER the eval
-        # (evaluate_golden_set stores the real result as baseline,
-        # we overwrite it with the inflated one)
+        The drop must be measured against the baseline captured BEFORE the
+        run stored its own result — so the inflated baseline is seeded first,
+        then a fresh eval captures it as its prior.
+        """
+        result1 = await monitor_with_real_search.evaluate_golden_set()
+        real_mrr = result1.mean_mrr
+
         inflated_mrr = min(real_mrr + 0.30, 1.0)
         await monitor_with_real_search._store_golden_eval_result(
             GoldenEvalResult(
@@ -363,18 +364,15 @@ class TestGoldenEvalRealVespa:
             )
         )
 
-        # Verify the inflated baseline is now stored
-        stored = monitor_with_real_search._last_golden_baseline_mrr
-        assert stored == pytest.approx(inflated_mrr, abs=0.01), (
-            f"Baseline should be {inflated_mrr}, got {stored}"
-        )
+        # Fresh eval captures the inflated value as its prior baseline.
+        result2 = await monitor_with_real_search.evaluate_golden_set()
+        assert result2.baseline_mrr == pytest.approx(inflated_mrr, abs=0.01)
 
-        # check_thresholds compares the real result against stored baseline
-        verdicts = monitor_with_real_search.check_thresholds(result, None)
+        verdicts = monitor_with_real_search.check_thresholds(result2, None)
         assert verdicts[AgentType.SEARCH] == Verdict.OPTIMIZE, (
-            f"Expected OPTIMIZE: real MRR={real_mrr:.3f}, "
+            f"Expected OPTIMIZE: current MRR={result2.mean_mrr:.3f}, "
             f"baseline={inflated_mrr:.3f}, "
-            f"drop={((inflated_mrr - real_mrr) / inflated_mrr):.1%}"
+            f"drop={((inflated_mrr - result2.mean_mrr) / inflated_mrr):.1%}"
         )
 
 
