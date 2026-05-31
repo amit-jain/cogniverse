@@ -10,6 +10,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from cogniverse_vespa.embedding_processor import _is_single_vector_schema
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,7 +57,7 @@ class RankingStrategyExtractor:
             schema_json = json.load(f)
 
         schema_name = schema_json.get("schema", schema_json.get("name", ""))
-        is_single_vector = "_sv_" in schema_name.lower()
+        is_single_vector = _is_single_vector_schema(schema_name)
 
         fields = {f["name"]: f for f in schema_json["document"]["fields"]}
 
@@ -65,7 +67,7 @@ class RankingStrategyExtractor:
             "rank-profiles", schema_json.get("rank_profiles", [])
         ):
             strategy_info = self._parse_ranking_profile(
-                profile, fields, is_single_vector, schema_json
+                profile, fields, is_single_vector, schema_name
             )
             strategies[strategy_info.name] = strategy_info
 
@@ -76,7 +78,7 @@ class RankingStrategyExtractor:
         profile: Dict[str, Any],
         fields: Dict[str, Dict],
         is_single_vector: bool,
-        schema_json: Dict[str, Any],
+        schema_name: str,
     ) -> RankingStrategyInfo:
         """Parse a single ranking profile"""
 
@@ -117,13 +119,11 @@ class RankingStrategyExtractor:
         else:
             strategy_type = SearchStrategyType.HYBRID
 
-        # Single-vector schemas (_sv_ in name) use nearestNeighbor for ANN search;
-        # multi-vector patch-based schemas use MaxSim over all patches instead.
+        # Single-vector schemas use nearestNeighbor for ANN search; multi-vector
+        # patch-based schemas use MaxSim over all patches instead.
         use_nearestneighbor = False
         nearestneighbor_field = None
         nearestneighbor_tensor = None
-
-        schema_name = schema_json.get("schema", "")
 
         if is_single_vector and strategy_type in [
             SearchStrategyType.PURE_VISUAL,
