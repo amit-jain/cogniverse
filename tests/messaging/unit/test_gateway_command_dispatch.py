@@ -1,4 +1,4 @@
-"""Unit tests for the gateway dispatch arms (audit fix #4).
+"""Unit tests for the gateway dispatch arms.
 
 Verifies that ``MessagingGateway._handle_message`` actually dispatches the
 four custom command families (/wiki, /instructions, /memories, /jobs)

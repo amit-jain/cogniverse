@@ -1,6 +1,6 @@
 """Unit tests for the cogniverse Helm chart's QualityMonitor sidecar wiring.
 
-Audit fix #1 — the QualityMonitor sidecar previously crash-looped because
+the QualityMonitor sidecar previously crash-looped because
 ``data/testset/`` was never mounted into the container. The CLI was passing
 a relative path to a file that didn't exist inside the pod. These tests
 render the chart with ``helm template`` and assert that:

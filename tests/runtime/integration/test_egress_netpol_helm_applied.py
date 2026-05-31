@@ -1,7 +1,7 @@
 """helm chart applies a runtime-egress NetworkPolicy that selects
 the actual runtime pod.
 
-Audit caught: the previous emit-mode generated 5 per-agent
+the previous emit-mode generated 5 per-agent
 NetworkPolicies selecting on ``cogniverse-agent: <name>``, but the
 unified-runtime Deployment carries no such label. Enabling
 ``agentEgress.enabled=true`` produced 5 NetworkPolicies that targeted
@@ -157,9 +157,9 @@ class TestHelmRendersChartCorrectly:
 
 
 class TestNetpolActuallySelectsAPod:
-    """The audit-blocking gap: the previous YAMLs targeted pod labels
-    that no Deployment carried. This test asserts a Deployment in the
-    chart carries every label the NetworkPolicy selects on, so the
+    """The previous YAMLs targeted pod labels that no Deployment carried.
+    This test asserts a Deployment in the chart carries every label the
+    NetworkPolicy selects on, so the
     NetworkPolicy actually selects pods at runtime.
     """
 

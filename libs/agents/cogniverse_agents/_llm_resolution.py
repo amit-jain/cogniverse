@@ -3,7 +3,7 @@
 
 The knowledge-family agents (multi-doc synthesis, federated query, KG
 traversal) accept both an explicit ``llm_config`` and a ``config_manager``.
-The audit flagged ``_config_manager`` as a dead injection point — set
+``_config_manager`` was a dead injection point — set
 but never read. This helper gives the param a real consumer: it's the
 fallback source for the per-tenant LM endpoint when the explicit one
 is omitted.

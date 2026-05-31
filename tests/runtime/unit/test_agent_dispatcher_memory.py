@@ -1,4 +1,4 @@
-"""Unit tests for AgentDispatcher memory auto-initialization (audit fix #14).
+"""Unit tests for AgentDispatcher memory auto-initialization.
 
 Verifies that the dispatcher's ``_init_agent_memory`` helper:
 1. Calls ``initialize_memory()`` for any agent inheriting MemoryAwareMixin

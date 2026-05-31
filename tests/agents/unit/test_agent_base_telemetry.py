@@ -1,4 +1,4 @@
-"""Unit tests for AgentBase telemetry span wrapping (Audit fix #10).
+"""Unit tests for AgentBase telemetry span wrapping.
 
 Verifies that AgentBase wraps every ``_process_impl`` invocation in a
 ``telemetry_manager.span(...)`` context manager when a manager is attached,

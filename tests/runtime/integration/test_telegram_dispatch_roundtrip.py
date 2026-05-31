@@ -4,11 +4,10 @@ Verifies the full chain: command_router.parse_message → gateway dispatch
 arm → runtime_client method → real wiki/tenant router endpoint → real
 WikiManager / ConfigStore → real Vespa.
 
-Audit fixes #4 + #5 — before this fix, four command families (/wiki,
-/instructions, /memories, /jobs) were parsed correctly into ParsedCommand
-flags but the gateway never read those flags, and runtime_client had no
-methods to call the corresponding endpoints. The pre-fix tests stopped
-at parsing or used mocks that hid the missing methods.
+Four command families (/wiki, /instructions, /memories, /jobs) must be
+parsed into ParsedCommand flags, read by the gateway, and routed through
+runtime_client to the corresponding endpoints — exercised end-to-end
+without mocks that would hide a missing method.
 
 This test exercises the chain through real services.
 """

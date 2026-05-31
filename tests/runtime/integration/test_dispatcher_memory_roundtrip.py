@@ -4,7 +4,7 @@ Verifies the full chain: AgentDispatcher._init_agent_memory → real
 MemoryAwareMixin.initialize_memory → real Mem0 → real Vespa. The agent
 should end up able to write a memory and read it back.
 
-Audit fix #14 — before this fix, the dispatcher passed tenant_id through
+Before this fix the dispatcher passed tenant_id through
 every execution path but never called initialize_memory(), so agents had
 memory capability but it was dormant in production. This test exercises
 the production code path through real services.

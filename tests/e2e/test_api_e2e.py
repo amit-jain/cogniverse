@@ -628,7 +628,7 @@ class TestAgentOperations:
         assert isinstance(data["agents"], list)
 
     def test_agent_upload_endpoint_removed(self):
-        """POST /agents/{name}/upload was deleted (audit fix #13).
+        """POST /agents/{name}/upload was deleted.
 
         The endpoint was a 501 stub with no implementation path. File
         uploads have a real home at POST /ingestion/upload, so the stub

@@ -1,11 +1,10 @@
 """Round-trip integration test for AgentBase telemetry spans + SPAN_NAME_BY_AGENT.
 
-Audit fixes #2 + #10 — before #10, 5 of 6 main agents emitted ZERO spans
-during processing because AgentBase.process() never wrapped _process_impl
-in a telemetry span. Before #2, the QualityMonitor's lookup table had
-hardcoded names (search_service.search, summarizer_agent.process, etc.)
-that didn't match what agents actually emitted, so live-traffic eval
-queried Phoenix for span names that didn't exist.
+All six main agents must emit a processing span: AgentBase.process()
+wraps _process_impl in a telemetry span, and QualityMonitor's
+SPAN_NAME_BY_AGENT lookup must match the names agents actually emit (a
+mismatch makes live-traffic eval query Phoenix for span names that don't
+exist).
 
 This test exercises the full chain end-to-end against real Phoenix:
 1. Construct an agent inheriting AgentBase
@@ -148,7 +147,7 @@ class TestAgentTelemetrySpansRealPhoenix:
         assert span is not None, (
             f"SearchAgent.process span not found in Phoenix project "
             f"{project_name}. Either AgentBase isn't wrapping _process_impl "
-            f"in a span (audit fix #10 regressed) or the span export pipeline "
+            f"in a span ( regressed) or the span export pipeline "
             f"is broken."
         )
 
@@ -159,7 +158,7 @@ class TestAgentTelemetrySpansRealPhoenix:
         """For every AgentType in SPAN_NAME_BY_AGENT, instantiate the
         matching agent class, emit a span, and verify Phoenix returns
         a match for the lookup table's name. This is the integration
-        test that would have caught audit fix #2 (wrong span names)
+        test that would have caught (wrong span names)
         AND fix #10 (no spans emitted) at the same time."""
         agent_classes = {
             AgentType.SEARCH: SearchAgent,

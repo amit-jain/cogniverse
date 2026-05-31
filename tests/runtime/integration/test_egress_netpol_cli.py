@@ -1,6 +1,6 @@
 """`cogniverse-optim --mode egress-netpol` emits k8s NetworkPolicy.
 
-Closes the audit's per-agent egress enforcement gap by translating the
+Translates the
 agent policy YAMLs (the source of truth declaring per-agent egress
 allow-lists) into k8s NetworkPolicy CRDs, which the cluster's CNI plugin
 enforces in the kernel — process-bypass-proof, library-agnostic.

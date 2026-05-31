@@ -211,20 +211,14 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
     @staticmethod
     def _frame_description_map(descriptions: Any) -> dict[str, str]:
-        """Unwrap the VLM descriptor output to the per-frame text map.
-
-        The pipeline stores the VLM wrapper
-        ``{"video_id", "descriptions": {<frame_ref>: text}, ...}`` under
-        ``video_data["descriptions"]``; the per-frame text lives ONE LEVEL DOWN,
-        keyed by the keyframe's frame_number/frame_id. Reading the wrapper top
-        level (the old code did ``descriptions.get(str(idx))``) always missed.
-        """
+        """Per-frame text map from the VLM wrapper
+        ``{"video_id", "descriptions": {<frame_ref>: text}, ...}``, keyed by
+        frame_number/frame_id."""
         if not isinstance(descriptions, dict):
             return {}
         inner = descriptions.get("descriptions")
         if isinstance(inner, dict):
             return inner
-        # Already a flat {frame_ref: text} map (legacy / direct shape).
         return descriptions
 
     @staticmethod
@@ -250,8 +244,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         # Get additional data
         transcript_data = video_data.get("transcript", {})
-        # video_data["descriptions"] is the VLM wrapper; the per-frame text is
-        # one level down, keyed by frame_number/frame_id (not the seg index).
         frame_descriptions = self._frame_description_map(
             video_data.get("descriptions", {})
         )
@@ -279,7 +271,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         f"    ✅ Generated embeddings shape: {embeddings.shape}"
                     )
 
-                # Look up this keyframe's VLM description by its frame ref.
                 frame_ref = self._segment_frame_ref(segment)
                 description = (
                     frame_descriptions.get(frame_ref, "")

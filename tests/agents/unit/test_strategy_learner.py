@@ -334,7 +334,7 @@ class TestStrategyRetrieval:
 
     def test_results_without_metadata_pass_filter(self, mock_memory_manager):
         """Backward compat: items stored without metadata.agent (e.g. legacy
-        rows from before audit fix #6) should still flow through. The filter
+        rows from before) should still flow through. The filter
         treats missing ``agent`` as a wildcard so existing data isn't lost."""
         mock_memory_manager.search_memory.side_effect = [
             [
@@ -364,7 +364,7 @@ class TestStrategyRetrieval:
         assert len(strategies) == 3
 
     def test_filters_strategies_by_agent_metadata(self, mock_memory_manager):
-        """Audit fix #6 — strategies tagged for one agent must NOT leak to
+        """strategies tagged for one agent must NOT leak to
         another agent's queries. Isolation is enforced by using agent-specific
         Mem0 namespaces (_strategy_store_{agent_name}) so the vector store
         itself separates strategies at query time — not post-fetch Python.

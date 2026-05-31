@@ -1,6 +1,6 @@
 """synthesis_depth field reaches OrchestratorInput end-to-end.
 
-Audit found synthesis_depth unreachable: ``synthesis_depth`` was a field on
+synthesis_depth unreachable: ``synthesis_depth`` was a field on
 OrchestratorInput but no upstream caller (gateway, A2A,
 ``_execute_orchestration_task``) ever copied it into the input. Deep
 synthesis was reachable only by direct in-process construction.

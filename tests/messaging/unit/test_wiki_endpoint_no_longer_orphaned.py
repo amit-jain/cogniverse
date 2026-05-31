@@ -1,13 +1,12 @@
-"""Pin test for audit fixes #17 and #18 — wiki endpoints no longer orphaned.
+"""Pin test — wiki endpoints stay reachable, not orphaned.
 
-The audit found two orphan endpoints:
-- ``GET /wiki/lint`` — exposed but no UI/CLI/test caller
-- ``DELETE /wiki/topic/{slug}`` — exposed but no UI/CLI/test caller
+Two endpoints have no UI/CLI caller of their own:
+- ``GET /wiki/lint``
+- ``DELETE /wiki/topic/{slug}``
 
-Wave 3 (audit fixes #4 + #5) wired the full Telegram chain so these
-endpoints are now reachable via ``/wiki lint`` and ``/wiki delete <slug>``
-slash commands. This module pins the chain end-to-end so a regression
-that breaks any link surfaces immediately.
+The Telegram chain reaches them via ``/wiki lint`` and ``/wiki delete
+<slug>`` slash commands. This module pins the chain end-to-end so a
+regression that breaks any link surfaces immediately.
 
 The chain is:
     Telegram message → command_router.parse_message → gateway dispatch arm

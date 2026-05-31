@@ -1,6 +1,6 @@
 """Knowledge agents are reachable through the orchestrator's planner.
 
-Audit caught: the 9 knowledge agents were registered in ``AGENT_CLASSES``
+the 9 knowledge agents were registered in ``AGENT_CLASSES``
 and appeared in ``configs/config.json`` but every one was
 ``enabled: false``, so ``ConfigLoader.load_agents`` skipped all of them.
 The orchestrator's planner queries ``registry.list_agents()`` for its

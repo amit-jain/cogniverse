@@ -1,6 +1,6 @@
 """Verify all agent classes inherit the EXTENDED MemoryAwareMixin.
 
-Audit fix #16 — there were two MemoryAwareMixin classes: a BASE one in
+There were two MemoryAwareMixin classes: a BASE one in
 ``cogniverse_core.agents.memory_aware_mixin`` (no ``get_strategies``) and
 an EXTENDED one in ``cogniverse_agents.memory_aware_mixin`` (with
 ``get_strategies`` and the strategies-aware ``inject_context_into_prompt``).
@@ -111,7 +111,7 @@ class TestAgentRegistryMixinCoverage:
     def test_main_agents_have_extended_mixin(self):
         """Pin the specific agents that should definitely inherit the
         extended mixin. If any of these stops inheriting from it, the
-        audit fix has regressed."""
+        wiring has regressed."""
         from cogniverse_agents.coding_agent import CodingAgent
         from cogniverse_agents.detailed_report_agent import DetailedReportAgent
         from cogniverse_agents.search_agent import SearchAgent

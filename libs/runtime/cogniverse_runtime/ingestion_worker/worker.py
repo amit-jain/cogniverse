@@ -40,25 +40,17 @@ logger = logging.getLogger(__name__)
 
 
 class IngestPipelineError(RuntimeError):
-    """Raised when the pipeline envelope reports a non-completed status.
+    """A pipeline envelope reported ``status='failed'`` / ``'cancelled'``.
 
-    ``VideoIngestionPipeline.process_video_async`` catches its own internal
-    errors and RETURNS ``{"status": "failed", "error": ...}`` instead of
-    raising. The worker would otherwise treat any return as success — writing
-    the idempotency done-record and publishing ``state="complete"``. Surfacing
-    the failure as an exception routes it through the worker's failure path so
-    the terminal event is ``state="failed"`` and ``mark_done`` is skipped (a
-    resubmit then retries instead of returning the failed run as complete).
+    ``process_video_async`` returns a failed-status dict rather than raising;
+    raising routes it through the worker's failure path (``state='failed'``,
+    no ``mark_done``).
     """
 
 
 def _raise_if_pipeline_failed(result: object) -> None:
-    """Inspect a processor return value and raise on a non-completed status.
-
-    Statusless dicts (the injectable test processors) are treated as success,
-    preserving that contract — only an explicit ``failed``/``cancelled``
-    status is a failure.
-    """
+    """Raise on a ``failed``/``cancelled`` status envelope. Statusless dicts
+    (injectable test processors) are treated as success."""
     if isinstance(result, dict):
         status = result.get("status")
         if status in ("failed", "cancelled"):

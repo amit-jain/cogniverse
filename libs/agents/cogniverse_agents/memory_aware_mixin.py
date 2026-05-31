@@ -367,7 +367,7 @@ class MemoryAwareMixin:
             logger.debug("Federation: org-trunk get_all failed: %s", exc)
             return tenant_results
 
-        # Tag origin so downstream consumers (and the audit chain) can
+        # Tag origin so downstream consumers can
         # see which side a hit came from.
         for r in tenant_results:
             r.setdefault("_federation_origin", "tenant")

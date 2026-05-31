@@ -781,7 +781,7 @@ class OrchestratorAgent(
             The previous version of this dispatcher returned a STUB
             string ("stub dispatch to ...") regardless of registration —
             the deep-synthesis loop ran but synthesised against placeholder
-            content, never real sub-agent output. Audit caught it.
+            content, never real sub-agent output.
             """
             try:
                 ep = self.registry.get_agent(sub_agent_name)

@@ -266,7 +266,7 @@ class TestConfigAPIMixin:
         # registered + consumed by any agent: predict / chain_of_thought
         # / react. multi_chain_comparison and program_of_thought used
         # to be in the enum but had zero consumers in any commit —
-        # removed in the audit cleanup along with the matching
+        # removed along with the matching
         # dspy.MultiChainComparison / dspy.ProgramOfThought entries
         # on DSPyModuleRegistry.
         modules = data["available_modules"]

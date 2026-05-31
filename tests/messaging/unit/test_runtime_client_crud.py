@@ -1,6 +1,6 @@
 """Unit tests for RuntimeClient wiki/instructions/memories/jobs CRUD methods.
 
-Audit fix #5 — runtime_client previously had no methods for /wiki/*,
+runtime_client previously had no methods for /wiki/*,
 /admin/tenant/*/instructions, /admin/tenant/*/memories, or
 /admin/tenant/*/jobs, so even if the gateway dispatched these commands
 correctly there was no way to call them. These tests verify each method

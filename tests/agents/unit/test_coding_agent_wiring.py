@@ -1,4 +1,4 @@
-"""Unit tests for CodingAgent memory/context wiring (audit fix #9).
+"""Unit tests for CodingAgent memory/context wiring.
 
 CodingAgent must inherit MemoryAwareMixin (the extended one with strategies)
 and its ``_process_impl`` must enrich the task via inject_context_into_prompt

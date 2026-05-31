@@ -1,6 +1,6 @@
 """admin endorse endpoint records a trust delta on a memory.
 
-Audit found apply_endorsement was a public API with no caller. The
+apply_endorsement was a public API with no caller. The
 audit/explanation agent reads endorsement counts off TrustRecords but
 nothing in the runtime ever incremented them.
 

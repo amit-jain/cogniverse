@@ -5,7 +5,7 @@ actually populates the tenant router's globals from env vars, and that
 ``POST /admin/tenant/{tenant}/jobs`` then results in a real Argo
 CronWorkflow submission.
 
-Audit fix #3 — before this fix, ``set_argo_config()`` was defined but
+Before this fix ``set_argo_config()`` was defined but
 never called from main.py's lifespan, so ``_argo_api_url`` stayed
 ``None`` and POST /jobs silently dropped the CronWorkflow submission.
 The pre-fix tests bypassed the bug by directly mutating
@@ -85,7 +85,7 @@ class TestArgoWiringRoundTrip:
         (``_submit_cron_workflow``) is mocked — this verifies the
         env→endpoint→manifest wiring, not that a live Argo server accepts it.
 
-        This is the test that would have caught the audit bug — the
+        This exercises the real delete path — the
         previous test directly mutated ``tenant._argo_api_url`` and
         bypassed the helper entirely."""
         monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")

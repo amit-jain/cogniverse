@@ -1,6 +1,6 @@
 """admin pin/unpin/list endpoints.
 
-Audit caught: PinService was reachable only via direct Python API. The
+PinService was reachable only via direct Python API. The
 runtime exposed pin-quota CRUD but no way to actually pin a memory.
 This test exercises the new HTTP endpoints end-to-end against real
 Vespa, then confirms the pinned memory survives a lifecycle tick (i.e.

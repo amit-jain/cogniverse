@@ -306,23 +306,17 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
             if filter_parts:
                 where_clause = " AND ".join(filter_parts)
 
-        # The image profile (configs/config.json "image_colpali_mv") deploys
-        # per tenant as <base>_<canonical_tenant>, matching how the search
-        # backend scopes schemas.
         from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
         schema = f"image_colpali_mv_{safe_tenant}"
         yql = f"select * from {schema} where {where_clause}"
 
-        # Rank profiles defined in the image schema: float_float = pure ColPali
-        # similarity, hybrid_float_bm25 = ColPali + BM25. Both take the float
-        # multi-vector query input query(qt).
-        rank_profile = "float_float" if search_mode == "semantic" else "hybrid_float_bm25"
+        rank_profile = (
+            "float_float" if search_mode == "semantic" else "hybrid_float_bm25"
+        )
 
-        # ColPali query is a 2-D multi-vector [tokens, 128]; the querytoken{}
-        # mapped tensor expects a dict {token_index: vector}, NOT a stringified
-        # flat list (the previous shape Vespa silently rejected).
+        # querytoken{} mapped tensor takes {token_index: vector}.
         if query_embedding.ndim == 2:
             qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
         else:

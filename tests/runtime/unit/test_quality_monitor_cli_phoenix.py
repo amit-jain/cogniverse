@@ -1,4 +1,4 @@
-"""Unit tests for quality_monitor_cli's PhoenixProvider injection (audit fix #15).
+"""Unit tests for quality_monitor_cli's PhoenixProvider injection.
 
 Verifies that ``_build_phoenix_provider``:
 1. Builds a real PhoenixProvider with HTTP and gRPC endpoints derived from

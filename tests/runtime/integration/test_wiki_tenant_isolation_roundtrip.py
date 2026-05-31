@@ -3,7 +3,7 @@
 Verifies that two tenants writing wiki pages end up in DIFFERENT real
 Vespa schemas (`wiki_pages_<tenant>`), not the shared default schema.
 
-Audit fix #12 — before this fix the wiki router bound a singleton
+Before this fix the wiki router bound a singleton
 ``WikiManager(tenant_id="test:unit")`` at startup and ignored
 ``WikiSaveRequest.tenant_id``. Every tenant's writes ended up in the
 default wiki. This test would have caught the bug because it asserts

@@ -1,7 +1,7 @@
 """admin PUT /pin_quotas actually changes the effective PinQuotas.
 
 The previous fix-up shipped the admin endpoint that wrote into
-``_pin_quota_overrides`` (a process-local module dict). The audit
+``_pin_quota_overrides`` (a process-local module dict). The
 caught that **PinService never reads that dict** — the writes were
 black-holed. This test verifies the consumer wire:
 

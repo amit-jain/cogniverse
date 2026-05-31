@@ -1,6 +1,6 @@
 """DeepSynthesisWorkflow's sub-agent dispatcher makes real HTTP calls.
 
-Audit caught: the dispatcher in ``OrchestratorAgent._build_deep_synthesis_workflow``
+the dispatcher in ``OrchestratorAgent._build_deep_synthesis_workflow``
 returned the stub string ``f"(stub dispatch to {sub_agent_name}: …)"``
 regardless of agent registration. The deep-synthesis loop ran end-to-end
 but every round synthesised against placeholder content — no real

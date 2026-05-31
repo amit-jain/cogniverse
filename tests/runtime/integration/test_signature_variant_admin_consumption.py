@@ -1,8 +1,7 @@
 """Admin PUT /signature_variants actually changes which prompts load.
 
-Audit caught that the admin endpoint wrote to ``_signature_variant_overrides``
-but ``load_for_request`` never read it — variant selections were
-black-holed. The consumer wire closes the loop end-to-end:
+The admin endpoint writes to ``_signature_variant_overrides`` and
+``load_for_request`` reads it, closing the loop end-to-end:
 
   * ``ArtifactManager.load_for_request`` accepts ``variant_id``
     and qualifies all dataset names through it (so two variants get
@@ -137,7 +136,7 @@ class TestVariantSelectionRoundTrip:
         assert out["prompts"] == {"system": "VARIANT_JURISDICTION_PROMPT"}, (
             "load_for_request must qualify the dataset name with "
             "variant_id so the variant-specific prompts come back, not "
-            "the default ones — the audit's wire-is-dead complaint."
+            "the default ones."
         )
 
     async def test_other_tenants_unaffected_by_one_tenants_selection(

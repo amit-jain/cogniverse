@@ -12,7 +12,7 @@ Contract:
     artefact set). The original exception propagates.
   * If ``save_experiment`` raises AFTER artefact saves succeeded, both
     artefact halves are persisted. The exception propagates so the
-    operator sees the audit gap; this is preferable to silent loss.
+    operator sees the failure; this is preferable to silent loss.
   * On the rejection path, any save_experiment failure also propagates
     (rejection runs are valuable audit data; we do not swallow that loss).
 """

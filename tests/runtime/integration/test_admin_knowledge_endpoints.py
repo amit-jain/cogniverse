@@ -1,6 +1,6 @@
 """Admin knowledge-agent endpoints reach the read-only agents end-to-end.
 
-Audit found 8 of 9 knowledge agents were orchestrator-unreachable: even
+8 of 9 knowledge agents were orchestrator-unreachable: even
 with opt-in registration, the dispatcher's ``_execute_generic_agent``
 only fills 5 input fields and every knowledge agent has additional
 required fields, so the first dispatched call Pydantic-errors.

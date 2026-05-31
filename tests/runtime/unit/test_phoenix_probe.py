@@ -1,4 +1,4 @@
-"""Unit tests for the Phoenix reachability probe (audit fix #11).
+"""Unit tests for the Phoenix reachability probe.
 
 Verifies that ``_probe_phoenix_reachability``:
 1. Logs success when the global TelemetryManager can emit a span.

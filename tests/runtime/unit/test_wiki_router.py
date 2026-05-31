@@ -1,4 +1,4 @@
-"""Unit tests for the wiki router's tenant-aware factory wiring (audit fix #12).
+"""Unit tests for the wiki router's tenant-aware factory wiring.
 
 Verifies that:
 1. Each request resolves a tenant-specific WikiManager via the factory.

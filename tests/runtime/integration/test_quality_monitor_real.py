@@ -400,7 +400,7 @@ def _testclient_transport(test_client, request):
 
 @pytest.mark.integration
 class TestForceOptimizationCycle:
-    """Audit fix #7 — QualityMonitor.force_optimization_cycle() runs a full
+    """QualityMonitor.force_optimization_cycle() runs a full
     eval+trigger+store cycle without a threshold check, used by CronWorkflows.
     Before fix #7 there was no --once CLI path, so scheduled distillation was
     impossible when quality was stable."""
@@ -499,7 +499,7 @@ class TestForceOptimizationCycle:
 
 @pytest.mark.integration
 class TestPhoenixReachabilityProbe:
-    """Audit fix #11 — _probe_phoenix_reachability() surfaces silent NoOpSpan
+    """_probe_phoenix_reachability() surfaces silent NoOpSpan
     fallbacks at startup. Before fix #11 Phoenix being unreachable was invisible."""
 
     def test_probe_passes_with_real_phoenix(self, real_telemetry):
@@ -575,7 +575,7 @@ class TestPhoenixReachabilityProbe:
         )
 
         class _BrokenManager:
-            config = _broken_cfg  # noqa: assigned in enclosing scope above
+            config = _broken_cfg  # assigned in enclosing scope above
 
             def span(self, *args, **kwargs):
                 raise ConnectionRefusedError("Phoenix not reachable")
@@ -598,7 +598,7 @@ class TestPhoenixReachabilityProbe:
 
 @pytest.mark.integration
 class TestXGBoostGateViaPhoenixProvider:
-    """Audit fix #15 — QualityMonitor._apply_training_decision_model is dead
+    """QualityMonitor._apply_training_decision_model is dead
     code when telemetry_provider=None (which was always the case before fix #15).
     Now quality_monitor_cli._build_phoenix_provider() injects a real provider
     so the XGBoost gate is actually reachable."""

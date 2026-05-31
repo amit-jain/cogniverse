@@ -639,7 +639,7 @@ class TestAgentTypeEnum:
 
 
 class TestForceOptimizationCycle:
-    """Audit fix #7 — verify ``force_optimization_cycle`` runs the full
+    """verify ``force_optimization_cycle`` runs the full
     eval+trigger+submit chain regardless of thresholds. This is the API
     used by the scheduled distillation Argo CronWorkflow."""
 
@@ -767,10 +767,10 @@ class TestForceOptimizationCycle:
 class TestSpanNameByAgent:
     """Pin the SPAN_NAME_BY_AGENT convention.
 
-    Audit fix #2 — the previous lookup table had values like
+    the previous lookup table had values like
     ``"search_service.search"`` and ``"summarizer_agent.process"`` that did
     NOT match what agents actually emit, so live-traffic eval queried zero
-    spans. After audit fix #10, AgentBase emits ``f"{ClassName}.process"``
+    spans. After, AgentBase emits ``f"{ClassName}.process"``
     for every agent. These tests pin that contract so future renames trip
     a CI failure instead of silently breaking the monitoring loop.
     """

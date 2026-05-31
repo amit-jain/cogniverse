@@ -2,7 +2,7 @@
 
 Without these endpoints, operators had no way to reach pin quotas,
 signature variants, or canary promote/retire without writing custom
-Python. The audit flagged this gap directly.
+Python.
 
 This test mounts the real `admin` router on a FastAPI TestClient and
 hits each endpoint. The canary endpoints round-trip through real

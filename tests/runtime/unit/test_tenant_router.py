@@ -895,7 +895,7 @@ class TestJobExecutorRoundTrip:
 @pytest.mark.unit
 @pytest.mark.ci_fast
 class TestArgoEnvironmentWiring:
-    """Audit fix #3 — verify the runtime startup actually wires Argo.
+    """verify the runtime startup actually wires Argo.
 
     Before this fix ``set_argo_config()`` was defined but never called from
     ``main.py``, so ``tenant._argo_api_url`` stayed ``None`` and POST /jobs

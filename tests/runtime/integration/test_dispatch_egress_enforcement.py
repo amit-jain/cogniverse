@@ -1,6 +1,6 @@
 """dispatch-time egress policy enforcement for shared agents.
 
-Audit found search/summarizer/routing only logged the egress policy at
+search/summarizer/routing only logged the egress policy at
 dispatch; nothing actually verified that the destinations the agent
 would reach are on the allowlist. The plan's verification was: "(b) a
 non-allow-listed outbound is denied at the sandbox boundary."
@@ -141,7 +141,7 @@ class TestEndpointValidation:
         )
 
     def test_no_policy_means_no_violations(self):
-        # Agent has no policy at all → validate is a no-op (the audit
+        # Agent has no policy at all → validate is a no-op (the
         # path is opt-in per agent; absence of policy isn't itself a
         # violation).
         dispatcher = _build_dispatcher(policies={})

@@ -969,8 +969,6 @@ async def admin_close_session(session_id: str):
 # ---------------------------------------------------------------------------
 # Operability admin endpoints (pin quota / variant select / canary)
 #
-# These three groups of endpoints close the audit's "operator can't reach
-# this" gap for pinning quotas, signature variants, and canary promotion.
 # Pin quotas + variant selections live in a process-local override dict
 # (good enough for the admin loop until a TenantConfig persistence layer
 # for these specific keys exists). Canary actions go straight to
