@@ -187,7 +187,11 @@ def ColQwenQueryEncoder(  # noqa: N802 — preserve legacy class-style name
 class VideoPrismQueryEncoder(QueryEncoder):
     """Query encoder for VideoPrism models"""
 
-    def __init__(self, model_name: str = "videoprism_public_v1_base_hf"):
+    def __init__(
+        self,
+        model_name: str = "videoprism_public_v1_base_hf",
+        inference_service_url: Optional[str] = None,
+    ):
         self.model_name = model_name
 
         # VideoPrism dimensions
@@ -206,6 +210,8 @@ class VideoPrismQueryEncoder(QueryEncoder):
             "embedding_type": "single_vector",
             "model_loader": "videoprism",
         }
+        if inference_service_url:
+            config["remote_inference_url"] = inference_service_url
         logger.info(f"Creating VideoPrism loader for model: {model_name}")
         self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
         logger.info(f"Got loader type: {type(self.videoprism_loader).__name__}")
@@ -403,7 +409,9 @@ class QueryEncoderFactory:
         if model_loader == "colqwen":
             return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
         if model_loader == "videoprism":
-            return VideoPrismQueryEncoder(model_name)
+            return VideoPrismQueryEncoder(
+                model_name, inference_service_url=inference_url
+            )
 
         name = model_name.lower()
         if "colpali" in name or "colsmol" in name:
@@ -411,7 +419,9 @@ class QueryEncoderFactory:
         if "colqwen" in name:
             return ColQwenQueryEncoder(model_name, inference_service_url=inference_url)
         if "videoprism" in name:
-            return VideoPrismQueryEncoder(model_name)
+            return VideoPrismQueryEncoder(
+                model_name, inference_service_url=inference_url
+            )
         if "colbert" in name or "lateon" in name:
             return _build_colbert_encoder(
                 model_name, profile, profile_config, system_config
@@ -423,7 +433,9 @@ class QueryEncoderFactory:
         if "colqwen" in profile_lower:
             return ColQwenQueryEncoder(model_name)
         if "videoprism" in profile_lower:
-            return VideoPrismQueryEncoder(model_name)
+            return VideoPrismQueryEncoder(
+                model_name, inference_service_url=inference_url
+            )
         if "colbert" in profile_lower or "document" in profile_lower:
             return _build_colbert_encoder(
                 model_name, profile, profile_config, system_config

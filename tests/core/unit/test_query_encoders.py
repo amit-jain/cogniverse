@@ -143,6 +143,29 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
+def test_factory_wires_remote_url_for_videoprism(mock_get_model):
+    """VideoPrism profiles must forward inference_services.embedding to the
+    loader as remote_inference_url, like the ColPali/ColBERT branches."""
+    mock_get_model.return_value = (MagicMock(), None)
+    profile_body = {
+        "embedding_model": "videoprism_public_v1_base_hf",
+        "model_loader": "videoprism",
+        "inference_services": {"embedding": "videoprism_jax"},
+        "schema_config": {"embedding_dim": 768},
+    }
+    config = _build_system_config(
+        "videoprism_base",
+        profile_body,
+        inference_service_urls={"videoprism_jax": "REMOTE_URL_SENTINEL"},
+    )
+
+    QueryEncoderFactory.create_encoder(profile="videoprism_base", config=config)
+
+    passed_config = mock_get_model.call_args[0][1]
+    assert passed_config["remote_inference_url"] == "REMOTE_URL_SENTINEL"
+
+
+@patch("cogniverse_core.query.encoders.get_or_load_model")
 def test_factory_routes_code_profile_to_code_service(mock_get_model):
     """Code profile's inference_services.embedding=code must hit the code service URL."""
     mock_get_model.return_value = (MagicMock(), None)
