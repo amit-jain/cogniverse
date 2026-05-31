@@ -15,6 +15,7 @@ filter by score/timestamp/baseline.
 
 import json
 import logging
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,8 @@ from cogniverse_agents.optimizer.signature_variants import (
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+_CACHE_MISS = object()
 
 
 @dataclass(frozen=True)
@@ -183,6 +186,32 @@ class ArtifactManager:
 
         self._provider = telemetry_provider
         self._tenant_id = canonical_tenant_id(tenant_id)
+        # Short-TTL per-request cache for the hot load_for_request path
+        # (artefact state + resolved prompts). State changes only on
+        # promote/retire, which invalidate via _save_artefact_state.
+        self._request_cache: Dict[str, tuple[float, Any]] = {}
+
+    _REQUEST_CACHE_TTL_SECONDS = 5.0
+
+    def _request_cache_get(self, key: str) -> Any:
+        entry = self._request_cache.get(key)
+        if entry is None:
+            return _CACHE_MISS
+        expiry, value = entry
+        if time.monotonic() >= expiry:
+            self._request_cache.pop(key, None)
+            return _CACHE_MISS
+        return value
+
+    def _request_cache_put(self, key: str, value: Any) -> None:
+        self._request_cache[key] = (
+            time.monotonic() + self._REQUEST_CACHE_TTL_SECONDS,
+            value,
+        )
+
+    def _invalidate_request_cache(self, agent_type: str) -> None:
+        for key in [k for k in self._request_cache if agent_type in k]:
+            self._request_cache.pop(key, None)
 
     @staticmethod
     def qualified_agent_key(
@@ -666,6 +695,7 @@ class ArtifactManager:
             self._state_blob_key(agent_type),
             json.dumps(state, default=str),
         )
+        self._invalidate_request_cache(agent_type)
 
     async def promote_to_canary(
         self,
@@ -803,7 +833,7 @@ class ArtifactManager:
         """
         # Apply variant qualification once; downstream lookups use this key.
         agent_key = self.qualified_agent_key(agent_type, variant_id)
-        state = await self.get_artefact_state(agent_key)
+        state = await self._request_state(agent_key)
         canary = state.get("canary")
         active = state.get("active")
 
@@ -811,13 +841,13 @@ class ArtifactManager:
             request_seed, int(canary.get("traffic_pct", 10))
         ):
             try:
-                df = await self._provider.datasets.get_dataset(
-                    name=self._versioned_dataset_name(
+                prompts = await self._request_prompts(
+                    self._versioned_dataset_name(
                         "prompts", agent_key, int(canary["version"])
                     )
                 )
                 return {
-                    "prompts": self._extract_prompts_from_dataframe(df),
+                    "prompts": prompts,
                     "served_from": "canary",
                     "version": int(canary["version"]),
                     "variant_id": variant_id,
@@ -833,13 +863,13 @@ class ArtifactManager:
 
         if active is not None:
             try:
-                df = await self._provider.datasets.get_dataset(
-                    name=self._versioned_dataset_name(
+                prompts = await self._request_prompts(
+                    self._versioned_dataset_name(
                         "prompts", agent_key, int(active["version"])
                     )
                 )
                 return {
-                    "prompts": self._extract_prompts_from_dataframe(df),
+                    "prompts": prompts,
                     "served_from": "active",
                     "version": int(active["version"]),
                     "variant_id": variant_id,
@@ -848,11 +878,42 @@ class ArtifactManager:
                 pass
 
         return {
-            "prompts": await self.load_prompts(agent_key),
+            "prompts": await self._request_default_prompts(agent_key),
             "served_from": "default",
             "version": None,
             "variant_id": variant_id,
         }
+
+    async def _request_state(self, agent_key: str) -> Dict[str, Any]:
+        """Cached artefact-state read for the hot request path."""
+        cached = self._request_cache_get(f"state::{agent_key}")
+        if cached is not _CACHE_MISS:
+            return cached
+        state = await self.get_artefact_state(agent_key)
+        self._request_cache_put(f"state::{agent_key}", state)
+        return state
+
+    async def _request_prompts(self, dataset_name: str) -> Dict[str, str]:
+        """Cached versioned-prompts read; raises on a missing dataset so the
+        caller's fallback logic still runs."""
+        cached = self._request_cache_get(f"prompts::{dataset_name}")
+        if cached is not _CACHE_MISS:
+            return cached
+        df = await self._provider.datasets.get_dataset(name=dataset_name)
+        prompts = self._extract_prompts_from_dataframe(df)
+        self._request_cache_put(f"prompts::{dataset_name}", prompts)
+        return prompts
+
+    async def _request_default_prompts(
+        self, agent_key: str
+    ) -> Optional[Dict[str, str]]:
+        """Cached default (un-versioned) prompts read."""
+        cached = self._request_cache_get(f"defaultprompts::{agent_key}")
+        if cached is not _CACHE_MISS:
+            return cached
+        prompts = await self.load_prompts(agent_key)
+        self._request_cache_put(f"defaultprompts::{agent_key}", prompts)
+        return prompts
 
     async def snapshot_active(self, agent_type: str) -> Optional[Dict[str, Any]]:
         """Snapshot the current active prompts + demos as a versioned pair.
