@@ -242,6 +242,17 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         documents_fed = 0
         errors = []
 
+        # Accumulate documents and feed in batches: one feed per ~50 segments
+        # instead of one Vespa round-trip (+ index-wait) per segment.
+        _FEED_BATCH_SIZE = 50
+        batch: list[Document] = []
+
+        def _flush_batch() -> None:
+            nonlocal documents_fed
+            if batch:
+                documents_fed += self._feed_documents(batch)
+                batch.clear()
+
         # Get additional data
         transcript_data = video_data.get("transcript", {})
         frame_descriptions = self._frame_description_map(
@@ -292,25 +303,29 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
                 documents_processed += 1
 
-                # Feed to backend
-                if self._feed_document(doc):
-                    documents_fed += 1
+                # Queue for the next batch feed; flush at the batch boundary so
+                # at most _FEED_BATCH_SIZE documents are held at once.
+                batch.append(doc)
 
-                # Drop the per-segment embedding + document now so they don't
-                # pile up across the full segment loop — ColPali multi-vector
-                # output is ~370 KB/frame and the Document wraps it, easily a
-                # few hundred MB in aggregate on a long video.
-                del embeddings, doc
+                # Drop the per-segment embedding now — the document keeps the
+                # copy it needs; ColPali multi-vector output is ~370 KB/frame.
+                del embeddings
 
-                # Every 20 segments, force a cycle collection so generational
-                # GC reclaims any PyTorch wrapper objects and the CPU
-                # allocator can return unused slabs.
-                if (idx + 1) % 20 == 0:
+                if len(batch) >= _FEED_BATCH_SIZE:
+                    _flush_batch()
+                    gc.collect()
+                elif (idx + 1) % 20 == 0:
+                    # Force a cycle collection so generational GC reclaims any
+                    # PyTorch wrapper objects and the CPU allocator can return
+                    # unused slabs.
                     gc.collect()
 
             except Exception as e:
                 self.logger.error(f"Error processing segment {idx}: {e}")
                 errors.append(f"Segment {idx}: {str(e)}")
+
+        # Flush any remaining documents from the final partial batch.
+        _flush_batch()
 
         return EmbeddingResult(
             video_id=video_id,
@@ -1107,3 +1122,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             result = self.backend_client.ingest_documents([document], self.schema_name)
             return result.get("success_count", 0) > 0
         return False
+
+    def _feed_documents(self, documents: list[Document]) -> int:
+        """Feed a batch of documents in one backend call; return fed count."""
+        if self.backend_client and documents:
+            result = self.backend_client.ingest_documents(documents, self.schema_name)
+            return int(result.get("success_count", 0))
+        return 0

@@ -387,7 +387,9 @@ class TestEmbeddingGeneratorImpl:
                 generator, "_generate_segment_embeddings", return_value=mock_embeddings
             ),
             patch.object(generator, "_create_segment_document", return_value=mock_doc),
-            patch.object(generator, "_feed_document", return_value=True),
+            patch.object(
+                generator, "_feed_documents", side_effect=lambda docs: len(docs)
+            ),
         ):
             result = generator._process_multi_documents(video_data, segments)
 
@@ -1522,3 +1524,57 @@ class TestVlmDescriptionMapping:
             for s in segments
         ]
         assert resolved == ["sunrise", "city street", ""]
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    def test_multi_document_feed_is_batched(self, mock_get_model):
+        """Segments are fed in batches (one backend call per ~50), not one
+        Vespa round-trip per segment."""
+        mock_get_model.return_value = (Mock(), None)
+        frame_based_config = {
+            "schema_name": "test_schema",
+            "embedding_model": "test_model",
+            "storage_mode": "multi_doc",
+            "embedding_type": "multi_vector",
+            "model_loader": "colpali",
+        }
+        mock_logger = Mock()
+        backend = Mock()
+        calls: list[list] = []
+
+        def _ingest(docs, schema):
+            calls.append(list(docs))
+            return {"success_count": len(docs)}
+
+        backend.ingest_documents = Mock(side_effect=_ingest)
+
+        gen = EmbeddingGeneratorImpl(frame_based_config, mock_logger, backend)
+
+        segments = [
+            {"start_time": i, "end_time": i + 1, "frame_id": i} for i in range(120)
+        ]
+        with (
+            patch.object(
+                gen,
+                "_generate_segment_embeddings",
+                return_value=np.zeros((4, 128), dtype=np.float32),
+            ),
+            patch.object(
+                gen, "_create_segment_document", side_effect=lambda **kw: Mock()
+            ),
+        ):
+            result = gen._process_multi_documents(
+                {
+                    "video_id": "v",
+                    "video_path": "",
+                    "transcript": {},
+                    "descriptions": {},
+                    "source_url": "",
+                },
+                segments,
+            )
+
+        # 120 segments -> 50 + 50 + 20 = 3 batched feeds, not 120.
+        assert backend.ingest_documents.call_count == 3
+        assert sum(len(c) for c in calls) == 120
+        assert result.documents_processed == 120
+        assert result.documents_fed == 120
