@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import dspy
 
 from cogniverse_agents.graph.claim_extractor import ClaimExtractor
+from cogniverse_agents.graph.graph_schema import Mention
 
 
 class _CapturingModule:
@@ -60,3 +61,94 @@ def test_no_llm_config_falls_through_to_ambient() -> None:
         )
 
     assert extractor._cot_module.captured_lm is ambient
+
+
+class _ClaimsModule:
+    """Returns a fixed claims list, mimicking a real LM's loose output."""
+
+    def __init__(self, claims: list[dict]) -> None:
+        self._claims = claims
+
+    def __call__(self, **_):
+        return dspy.Prediction(claims=self._claims)
+
+
+def _anchor() -> Mention:
+    return Mention(
+        source_doc_id="doc1",
+        segment_id="seg1",
+        ts_start=0.0,
+        ts_end=1.0,
+        modality="text",
+        evidence_span="Marie Curie was born in Warsaw",
+    )
+
+
+def test_non_numeric_confidence_maps_to_band_instead_of_crashing() -> None:
+    """A real LM returns confidence as ``"high"`` / ``"85%"``. A bare
+    ``float()`` would raise ValueError and lose the entire segment's KG.
+    parse_confidence must map them to 0.9 and 0.85."""
+    text = "Marie Curie was born in Warsaw, Poland."
+    extractor = ClaimExtractor(llm_config=None)
+    extractor._cot_module = _ClaimsModule(
+        [
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": "Warsaw",
+                "confidence": "high",
+                "evidence_span": "Marie Curie was born in Warsaw",
+            },
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": "Poland",
+                "confidence": "85%",
+                "evidence_span": "born in Warsaw, Poland",
+            },
+        ]
+    )
+
+    edges = extractor.extract(
+        text=text,
+        entity_hints=["Marie Curie"],
+        modality_hint="text",
+        segment_anchor=_anchor(),
+        tenant_id="acme:acme",
+        source_doc_id="doc1",
+    )
+
+    assert [e.confidence for e in edges] == [0.9, 0.85]
+    assert [e.target for e in edges] == ["Warsaw", "Poland"]
+
+
+def test_out_of_range_and_missing_confidence_are_clamped() -> None:
+    """Numeric > 1 saturates at 1.0; a missing field falls back to 1.0."""
+    text = "Marie Curie discovered radium."
+    extractor = ClaimExtractor(llm_config=None)
+    extractor._cot_module = _ClaimsModule(
+        [
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": "Warsaw",
+                "confidence": 1.5,
+            },
+            {
+                "subject": "Marie Curie",
+                "predicate": "born_in",
+                "object": "Paris",
+            },
+        ]
+    )
+
+    edges = extractor.extract(
+        text=text,
+        entity_hints=["Marie Curie"],
+        modality_hint="text",
+        segment_anchor=_anchor(),
+        tenant_id="acme:acme",
+        source_doc_id="doc1",
+    )
+
+    assert [e.confidence for e in edges] == [1.0, 1.0]

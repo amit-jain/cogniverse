@@ -16,6 +16,7 @@ from typing import Any, List, Optional
 
 import dspy
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.graph.dspy_signatures import ClaimExtractionSignature
 from cogniverse_agents.graph.graph_schema import Edge, Mention
 from cogniverse_core.common.utils.async_bridge import run_coro_blocking
@@ -309,7 +310,7 @@ class ClaimExtractor:
                 evidence = full_text[:_MAX_EVIDENCE_CHARS]
             evidence = evidence[:_MAX_EVIDENCE_CHARS]
 
-            confidence = float(claim.get("confidence", 1.0))
+            confidence = parse_confidence(claim.get("confidence"), default=1.0)
             edges.append(
                 Edge(
                     tenant_id=tenant_id,
