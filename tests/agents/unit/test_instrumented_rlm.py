@@ -350,3 +350,34 @@ class TestEventTypes:
         assert event.percentage == 30.0
         assert event.step == "iteration_4"
         assert event.details == {"iteration": 4}
+
+
+class TestEmitSyncRetainsTask:
+    """_emit_sync must retain the fire-and-forget enqueue task so it is not
+    GC'd before it runs, and drop it once complete."""
+
+    @pytest.mark.asyncio
+    async def test_event_is_delivered_and_task_tracked_then_released(self):
+        delivered = []
+
+        class _RecordingQueue:
+            async def enqueue(self, event):
+                delivered.append(event)
+
+        rlm = InstrumentedRLM(
+            "context, query -> answer",
+            event_queue=_RecordingQueue(),
+            task_id="task_123",
+            tenant_id="tenant_1",
+        )
+
+        rlm._emit_sync({"e": 1})
+
+        # Retained while in flight.
+        assert len(rlm._background_tasks) == 1
+
+        await asyncio.gather(*rlm._background_tasks)
+
+        assert delivered == [{"e": 1}]
+        # done_callback cleared the reference.
+        assert rlm._background_tasks == set()

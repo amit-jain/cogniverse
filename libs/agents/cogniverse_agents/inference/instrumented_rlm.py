@@ -112,6 +112,9 @@ class InstrumentedRLM(dspy.RLM):
                 "RLM events must be tenant-scoped"
             )
         self._tenant_id = tenant_id
+        # Retain references to fire-and-forget enqueue tasks; without a live
+        # reference CPython may GC the task and drop the event before it runs.
+        self._background_tasks: set[asyncio.Task] = set()
 
     def _emit_sync(self, event) -> None:
         """Emit event synchronously (fire-and-forget in background).
@@ -124,7 +127,9 @@ class InstrumentedRLM(dspy.RLM):
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._event_queue.enqueue(event))
+            task = loop.create_task(self._event_queue.enqueue(event))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
         except RuntimeError:
             # No running event loop - skip event emission
             # This can happen in sync contexts
