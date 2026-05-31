@@ -129,17 +129,13 @@ def test_factory_wires_remote_url_from_inference_service(mock_get_model):
     config = _build_system_config(
         "lateon_mv",
         profile_body,
-        inference_service_urls={
-            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
-        },
+        inference_service_urls={"colbert_pylate": "COLBERT_REMOTE_URL"},
     )
 
     QueryEncoderFactory.create_encoder(profile="lateon_mv", config=config)
 
     passed_config = mock_get_model.call_args[0][1]
-    assert (
-        passed_config["remote_inference_url"] == "http://cogniverse-colbert-pylate:8000"
-    )
+    assert passed_config["remote_inference_url"] == "COLBERT_REMOTE_URL"
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
@@ -179,18 +175,15 @@ def test_factory_routes_code_profile_to_code_service(mock_get_model):
         "code_lateon_mv",
         profile_body,
         inference_service_urls={
-            "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
-            "code_colbert_pylate": "http://cogniverse-code-colbert-pylate:8000",
+            "colbert_pylate": "COLBERT_REMOTE_URL",
+            "code_colbert_pylate": "CODE_COLBERT_REMOTE_URL",
         },
     )
 
     QueryEncoderFactory.create_encoder(profile="code_lateon_mv", config=config)
 
     passed_config = mock_get_model.call_args[0][1]
-    assert (
-        passed_config["remote_inference_url"]
-        == "http://cogniverse-code-colbert-pylate:8000"
-    )
+    assert passed_config["remote_inference_url"] == "CODE_COLBERT_REMOTE_URL"
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
@@ -206,9 +199,7 @@ def test_factory_raises_when_inference_service_not_deployed(mock_get_model):
     config = _build_system_config(
         "code_lateon_mv",
         profile_body,
-        inference_service_urls={
-            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
-        },
+        inference_service_urls={"colbert_pylate": "COLBERT_REMOTE_URL"},
     )
 
     with pytest.raises(
@@ -229,9 +220,7 @@ def test_factory_leaves_remote_url_unset_when_inference_service_absent(mock_get_
     config = _build_system_config(
         "document_text_semantic",
         profile_body,
-        inference_service_urls={
-            "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
-        },
+        inference_service_urls={"colbert_pylate": "COLBERT_REMOTE_URL"},
     )
 
     QueryEncoderFactory.create_encoder(profile="document_text_semantic", config=config)
@@ -262,9 +251,7 @@ def test_cache_key_separates_profiles_with_same_model_different_routing(mock_get
             },
         }
     }
-    sys_config.inference_service_urls = {
-        "colbert_pylate": "http://cogniverse-colbert-pylate:8000"
-    }
+    sys_config.inference_service_urls = {"colbert_pylate": "COLBERT_REMOTE_URL"}
 
     encoder_a = QueryEncoderFactory.create_encoder(
         profile="profile_128", config=sys_config
