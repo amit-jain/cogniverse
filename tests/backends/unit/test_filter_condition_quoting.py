@@ -10,6 +10,9 @@ input shape Vespa expects. Three bugs in one site:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 
 from cogniverse_vespa.search_backend import VespaSearchBackend, _yql_scalar
@@ -90,3 +93,54 @@ def test_yql_scalar_helper_round_trips() -> None:
     assert _yql_scalar(5.0, "x") == "5.0"
     assert _yql_scalar(True, "x") == "true"
     assert _yql_scalar("hello", "x") == '"hello"'
+
+
+@pytest.fixture
+def export_backend() -> VespaSearchBackend:
+    b = object.__new__(VespaSearchBackend)
+    b.backend_url = "http://vespa"
+    b.backend_port = 8080
+    b.schema_name = "video_frame"
+    return b
+
+
+def _capture_get():
+    """Patched requests.get that records params and returns an empty page."""
+    calls: list[dict] = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append({"url": url, "params": params})
+        return SimpleNamespace(
+            status_code=200, json=lambda: {"documents": [], "continuation": None}
+        )
+
+    return calls, fake_get
+
+
+def test_export_embeddings_escapes_filter_values_in_selection(
+    export_backend: VespaSearchBackend,
+) -> None:
+    """The visit ``selection`` must filter (not drop the filter and export
+    everything) and escape an embedded quote instead of interpolating raw."""
+    calls, fake_get = _capture_get()
+    with patch("cogniverse_vespa.search_backend.requests.get", fake_get):
+        export_backend.export_embeddings(
+            schema="code_lateon_mv",
+            filters={"video_id": 'a"b', "count": 5},
+            include_embeddings=False,
+        )
+
+    assert calls, "export must issue a visit request"
+    assert calls[0]["params"]["selection"] == (
+        'code_lateon_mv.video_id == "a\\"b" and code_lateon_mv.count == 5'
+    )
+
+
+def test_export_embeddings_no_filters_selects_true(
+    export_backend: VespaSearchBackend,
+) -> None:
+    calls, fake_get = _capture_get()
+    with patch("cogniverse_vespa.search_backend.requests.get", fake_get):
+        export_backend.export_embeddings(schema="video_frame", include_embeddings=False)
+
+    assert calls[0]["params"]["selection"] == "true"

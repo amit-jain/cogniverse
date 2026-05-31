@@ -1251,35 +1251,27 @@ class VespaSearchBackend(SearchBackend):
         """
         documents = []
 
-        # Build YQL query
-        yql = f"select * from {schema or self.schema_name} where true"
-
-        # Add filters if provided
-        if filters:
-            conditions = []
-            for key, value in filters.items():
-                if isinstance(value, str):
-                    conditions.append(f"{key} contains '{value}'")
-                else:
-                    conditions.append(f"{key} = {value}")
-            if conditions:
-                yql = f"select * from {schema or self.schema_name} where {' and '.join(conditions)}"
-
-        # Add limit
-        if max_documents:
-            yql += f" limit {max_documents}"
-
         # Use visit API for bulk export
         namespace = "content"
-        visit_url = f"{self.backend_url}:{self.backend_port}/document/v1/{namespace}/{schema or self.schema_name}/docid"
+        target_schema = schema or self.schema_name
+        visit_url = f"{self.backend_url}:{self.backend_port}/document/v1/{namespace}/{target_schema}/docid"
+
+        # Document v1 visit selection. Each value is escaped via _yql_scalar
+        # (yql_quote for strings, finite-checked literal for numbers) so a
+        # value with an embedded quote can't break the expression or inject.
+        if filters:
+            selection = " and ".join(
+                f"{target_schema}.{key} == {_yql_scalar(value, key)}"
+                for key, value in filters.items()
+            )
+        else:
+            selection = "true"
 
         try:
-            import requests
-
             response = requests.get(
                 visit_url,
                 params={
-                    "selection": "true" if not filters else None,
+                    "selection": selection,
                     "continuation": None,
                     "wantedDocumentCount": max_documents or 1000,
                 },
@@ -1313,6 +1305,7 @@ class VespaSearchBackend(SearchBackend):
                     response = requests.get(
                         visit_url,
                         params={
+                            "selection": selection,
                             "continuation": continuation,
                             "wantedDocumentCount": min(
                                 1000, (max_documents or 1000) - len(documents)
