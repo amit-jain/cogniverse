@@ -150,7 +150,7 @@ curl -X POST http://localhost:8000/admin/profiles \
 
 - `profile_name`: Must be unique within tenant, alphanumeric + underscore + hyphen
 - `tenant_id`: Required, non-empty — identifies the tenant owning the profile
-- `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "text", "document"
+- `type`: Optional (defaults to "video"), must be one of: "video", "image", "audio", "document", "code"
 - `schema_name`: Must exist in schema directory
 - `embedding_model`: Format `org/model` or `model-name`
 - `embedding_type`: Must be `multi_vector`, `multi_vector`, `multi_vector`, `single_vector`, `multi_vector`, or `multi_vector`

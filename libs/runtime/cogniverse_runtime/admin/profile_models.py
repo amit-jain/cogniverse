@@ -27,7 +27,7 @@ class ProfileCreateRequest(BaseModel):
     )
     type: str = Field(
         default="video",
-        description="Profile type (video, image, audio, text)",
+        description="Profile type (video, image, audio, document, code)",
     )
     description: str = Field(
         default="", description="Human-readable profile description"

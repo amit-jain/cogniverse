@@ -147,16 +147,22 @@ class TestProfileTypeValidation:
     """Test profile type validation."""
 
     def test_valid_profile_types(self, validator: ProfileValidator):
-        """Valid profile types should pass validation."""
-        valid_types = ["video", "image", "audio", "text", "document"]
+        """Every type used by a real profile in config must validate."""
+        valid_types = ["video", "image", "audio", "document", "code"]
 
         for profile_type in valid_types:
             errors = validator._validate_profile_type(profile_type)
             assert not errors, f"Profile type '{profile_type}' should be valid"
 
+    def test_code_profile_type_is_valid(self, validator: ProfileValidator):
+        """The live ``code_lateon_mv`` profile is type 'code'; it must not
+        be rejected (was, before 'code' was added to the allowlist)."""
+        assert validator._validate_profile_type("code") == []
+
     def test_invalid_profile_types(self, validator: ProfileValidator):
-        """Invalid profile types should fail validation."""
-        invalid_types = ["", "pdf", "unknown", "spreadsheet"]
+        """Invalid profile types should fail validation. 'text' is rejected
+        now — no real profile uses it and it has no schema template."""
+        invalid_types = ["", "pdf", "unknown", "spreadsheet", "text"]
 
         for profile_type in invalid_types:
             errors = validator._validate_profile_type(profile_type)

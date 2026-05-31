@@ -1024,7 +1024,7 @@ Pydantic models for backend profile CRUD operations:
 class ProfileCreateRequest(BaseModel):
     profile_name: str          # Unique identifier
     tenant_id: str              # Required: tenant identifier for isolation
-    type: str = "video"        # video, image, audio, text
+    type: str = "video"        # video, image, audio, document, code
     description: str = ""
     schema_name: str           # Base schema (must have template)
     embedding_model: str       # e.g., "vidore/colpali-v1.3-hf"

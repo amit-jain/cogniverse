@@ -29,8 +29,9 @@ class ProfileValidator:
         "single_vector",
     ]
 
-    # Valid profile types
-    VALID_PROFILE_TYPES = ["video", "image", "audio", "text", "document"]
+    # Valid profile types — must match the types used by real profiles in
+    # configs/config.json (backend.profiles).
+    VALID_PROFILE_TYPES = ["video", "image", "audio", "document", "code"]
 
     def __init__(
         self,
