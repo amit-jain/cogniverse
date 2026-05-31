@@ -142,3 +142,4 @@ workflow_intelligence.db
 
 # Local-only test config — see tests/evaluation/integration/resources/test_llm.example.json
 tests/evaluation/integration/resources/test_llm.json
+docs/development/audit-6-findings.md
