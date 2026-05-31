@@ -857,10 +857,8 @@ class VespaSearchBackend(SearchBackend):
         conditions = []
         for field_name, value in filters.items():
             if value is None:
-                # An explicit None as a filter value used to fall through to
-                # ``field contains "None"`` (literal string match on the word
-                # ``None``). Treat None as "drop this filter key" — the caller
-                # almost certainly meant "no filter on this field".
+                # None means "no filter on this field", not a match on the
+                # literal string "None".
                 continue
             if isinstance(value, dict):
                 # Range filter, e.g. {"gte": 100, "lte": 200} ->

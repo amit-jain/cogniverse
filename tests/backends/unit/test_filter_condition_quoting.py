@@ -67,7 +67,7 @@ def test_range_numeric_bounds_unquoted(backend: VespaSearchBackend) -> None:
 
 
 def test_range_string_bound_is_quoted(backend: VespaSearchBackend) -> None:
-    """ISO timestamps as strings used to land in the YQL unquoted."""
+    """ISO timestamp strings must be quoted in the YQL."""
     out = backend._build_filter_conditions({"ts": {"gte": "2024-01-01"}})
     assert out == 'ts >= "2024-01-01"'
 
@@ -120,8 +120,7 @@ def _capture_get():
 def test_export_embeddings_escapes_filter_values_in_selection(
     export_backend: VespaSearchBackend,
 ) -> None:
-    """The visit ``selection`` must filter (not drop the filter and export
-    everything) and escape an embedded quote instead of interpolating raw."""
+    """The visit ``selection`` carries the filter and escapes quotes in values."""
     calls, fake_get = _capture_get()
     with patch("cogniverse_vespa.search_backend.requests.get", fake_get):
         export_backend.export_embeddings(

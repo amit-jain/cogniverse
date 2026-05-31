@@ -85,9 +85,7 @@ def _anchor() -> Mention:
 
 
 def test_non_numeric_confidence_maps_to_band_instead_of_crashing() -> None:
-    """A real LM returns confidence as ``"high"`` / ``"85%"``. A bare
-    ``float()`` would raise ValueError and lose the entire segment's KG.
-    parse_confidence must map them to 0.9 and 0.85."""
+    """Non-numeric LM confidence maps to a band: "high"->0.9, "85%"->0.85."""
     text = "Marie Curie was born in Warsaw, Poland."
     extractor = ClaimExtractor(llm_config=None)
     extractor._cot_module = _ClaimsModule(
