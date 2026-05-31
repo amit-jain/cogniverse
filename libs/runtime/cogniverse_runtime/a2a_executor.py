@@ -14,7 +14,7 @@ it through the dispatcher so agents can reason over prior turns.
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
@@ -121,7 +121,13 @@ class CogniverseAgentExecutor(AgentExecutor):
 
         if use_streaming:
             await self._execute_streaming(
-                agent_name, query, tenant_id, task_id, context_id, event_queue
+                agent_name,
+                query,
+                tenant_id,
+                task_id,
+                context_id,
+                event_queue,
+                task_context,
             )
         else:
             await self._execute_non_streaming(
@@ -173,6 +179,7 @@ class CogniverseAgentExecutor(AgentExecutor):
         task_id: str,
         context_id: str,
         event_queue: EventQueue,
+        task_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Stream agent results as intermediate A2A events.
 
@@ -183,12 +190,26 @@ class CogniverseAgentExecutor(AgentExecutor):
             import asyncio
             import contextlib
 
+            # Mirror the non-streaming dispatch enrichment.
+            conversation_history = (task_context or {}).get(
+                "conversation_history"
+            ) or []
+            if conversation_history:
+                query = await self._dispatcher._rewrite_query_with_history(
+                    query, conversation_history
+                )
+
             agent, typed_input = await asyncio.to_thread(
                 self._dispatcher.create_streaming_agent,
                 agent_name,
                 query,
                 tenant_id,
             )
+
+            await asyncio.to_thread(
+                self._dispatcher._init_agent_memory, agent, agent_name, tenant_id
+            )
+            self._dispatcher._bind_graph_manager(agent, tenant_id)
 
             # Streaming bypasses dispatch(), so resolve + inject the canary /
             # variant artefact overlay here too — otherwise streaming traffic

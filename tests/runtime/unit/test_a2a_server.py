@@ -591,6 +591,48 @@ class TestTerminalEventFinalFlag:
         assert queue.events[1].status.state == TaskState.input_required
         assert sum(1 for e in queue.events if e.final) == 1
 
+    async def test_streaming_threads_history_and_enrichment(self, mock_dispatcher):
+        """The streaming path must rewrite the query over conversation history
+        and bind memory + the graph, like the non-streaming dispatch path —
+        otherwise streamed answers are history-blind and mem0/KG-blind."""
+        agent = _FakeStreamAgent([{"type": "final", "data": {"summary": "done"}}])
+        captured: dict = {}
+
+        def _fake_create(agent_name, query, tenant_id):
+            captured["query"] = query
+            return (agent, None)
+
+        async def _fake_rewrite(query, history):
+            captured["history"] = history
+            return f"REWRITTEN: {query}"
+
+        mem_calls: list = []
+        graph_calls: list = []
+        mock_dispatcher.create_streaming_agent = MagicMock(side_effect=_fake_create)
+        mock_dispatcher._rewrite_query_with_history = _fake_rewrite
+        mock_dispatcher._init_agent_memory = lambda a, n, t: mem_calls.append((a, n, t))
+        mock_dispatcher._bind_graph_manager = lambda a, t: graph_calls.append((a, t))
+
+        executor = CogniverseAgentExecutor(dispatcher=mock_dispatcher)
+        queue = _CapturingQueue()
+        history = [{"role": "user", "content": "Tell me about Curie"}]
+
+        await executor._execute_streaming(
+            "summarizer_agent",
+            "who is she",
+            "test:unit",
+            "task-1",
+            "ctx-1",
+            queue,
+            {"conversation_history": history},
+        )
+
+        assert captured["query"] == "REWRITTEN: who is she"
+        assert captured["history"] == history
+        assert mem_calls == [(agent, "summarizer_agent", "test:unit")]
+        assert graph_calls == [(agent, "test:unit")]
+        assert any(e.final for e in queue.events)
+
 
 class _MemoryStreamAgent(MemoryAwareMixin):
     """Memory-aware streaming agent stub — exposes set/get_dispatched_artefact
