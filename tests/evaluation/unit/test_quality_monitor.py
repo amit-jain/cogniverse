@@ -565,6 +565,36 @@ class TestEvaluateAgentSpans:
         assert result.score == 0.8
 
     @pytest.mark.asyncio
+    async def test_unreachable_lm_endpoint_skips_span(self, monitor):
+        """A real LM transport failure (unreachable endpoint) skips the span
+        instead of scoring a fabricated 0.5 — exercises the real _call_llm
+        httpx error path, not a stub."""
+        import pandas as pd
+
+        from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
+
+        spans = pd.DataFrame(
+            [
+                {
+                    "span_id": "s1",
+                    "attributes": {"query": "q1"},
+                    "outputs": {"results": [{"video_id": "v1", "score": 0.9}]},
+                }
+            ]
+        )
+        # Port 1 refuses immediately -> _call_llm catches httpx error and
+        # returns its failure sentinel string.
+        monitor._llm_judge = LLMJudgeCore(model_name="x", base_url="http://127.0.0.1:1")
+
+        with patch.object(
+            monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
+        ):
+            result = await monitor._evaluate_agent_spans(AgentType.SEARCH, spans)
+
+        assert result.sample_count == 0
+        assert result.score == 0.0
+
+    @pytest.mark.asyncio
     async def test_all_judge_failures_yield_no_samples(self, monitor):
         """Every judgement failing leaves zero samples, not a 0.5 average."""
         import pandas as pd
