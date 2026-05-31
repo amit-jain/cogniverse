@@ -5,7 +5,7 @@ Defines schema classes for all optimizer types in the system.
 Each schema corresponds to the training data format expected by an optimizer.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -94,7 +94,8 @@ class RoutingExperienceSchema(BaseModel):
     )
     reward: Optional[float] = Field(default=None, description="Computed reward signal")
     timestamp: datetime = Field(
-        default_factory=datetime.now, description="When this routing occurred"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When this routing occurred",
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"
@@ -154,7 +155,8 @@ class WorkflowExecutionSchema(BaseModel):
         default=None, description="Error details if failed"
     )
     timestamp: datetime = Field(
-        default_factory=datetime.now, description="When workflow executed"
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="When workflow executed",
     )
     metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Additional metadata"

@@ -17,7 +17,7 @@ Endpoints:
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -95,7 +95,7 @@ async def _event_stream(
                 "type": "connected",
                 "task_id": task_id,
                 "offset": from_offset,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
         yield f"data: {connect_data}\n\n"
