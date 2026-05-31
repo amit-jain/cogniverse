@@ -48,6 +48,7 @@ The dashboard communicates with the **unified Runtime** (`http://localhost:8000`
 libs/dashboard/cogniverse_dashboard/
   __init__.py
   app.py                        # Main Streamlit entry point
+  search_summary.py             # Streaming summarization control for search results
   tabs/
     __init__.py
     approval_queue.py

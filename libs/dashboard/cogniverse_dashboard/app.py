@@ -17,6 +17,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from cogniverse_dashboard.search_summary import render_search_summary
+
 # Import config and memory management tabs
 from cogniverse_dashboard.tabs.config_management import (
     render_config_management_tab,
@@ -2793,31 +2795,7 @@ with main_tabs[10]:
         )
 
     # Streaming summarization of search results
-    st.markdown("---")
-    if st.button("📝 Summarize Results (Streaming)"):
-        results_data = st.session_state.current_search_results
-        result_descriptions = []
-        for strategy, items in results_data.get("results", {}).items():
-            for item in items[:5]:
-                result_descriptions.append(
-                    f"{item.get('video_id', 'unknown')}: {item.get('description', 'no description')}"
-                )
-
-        summary_query = (
-            f"Summarize the search results for '{results_data['query']}': "
-            + "; ".join(result_descriptions[:10])
-        )
-
-        st.subheader("📄 Summary")
-        final = display_streaming_result(
-            agent_name="summarizer_agent",
-            query=summary_query,
-            tenant_id=st.session_state["current_tenant"],
-        )
-        if final and "summary" in final:
-            st.markdown("### Key Points")
-            for point in final.get("key_points", []):
-                st.markdown(f"- {point}")
+    render_search_summary()
 
     if not (
         hasattr(st.session_state, "current_search_results")
