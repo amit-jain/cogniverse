@@ -26,6 +26,7 @@ import dspy
 import httpx
 from pydantic import BaseModel, Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.orchestrator.checkpoint_types import (
     CheckpointConfig,
@@ -2340,10 +2341,11 @@ class OrchestratorAgent(
             else:
                 result_data = result
 
-            confidence = (
-                result_data.get("confidence", 0.5)
+            confidence = parse_confidence(
+                result_data.get("confidence")
                 if isinstance(result_data, dict)
-                else 0.5
+                else None,
+                default=0.5,
             )
 
             task_results[agent_name] = {

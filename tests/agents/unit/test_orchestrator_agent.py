@@ -847,6 +847,25 @@ class TestOrchestratorFusion:
         assert "fusion_quality" in output
         assert output["fusion_quality"]["modality_count"] == 2
 
+    def test_fusion_handles_label_confidence(self, orchestrator_agent):
+        """A real LM can return confidence as 'high'/'85%'; aggregation must
+        parse it rather than feed a string into the fusion math."""
+        agent_results = {
+            "video_search_agent": {
+                "status": "success",
+                "results": ["v1"],
+                "confidence": "high",
+            },
+            "image_search_agent": {
+                "status": "success",
+                "results": ["i1"],
+                "confidence": "85%",
+            },
+        }
+
+        output = orchestrator_agent._aggregate_results("find dogs", agent_results)
+        assert output["status"] == "success"
+
     def test_fusion_strategy_selection_simple(self, orchestrator_agent):
         """Test simple strategy for single modality"""
         strategy = orchestrator_agent._select_fusion_strategy(

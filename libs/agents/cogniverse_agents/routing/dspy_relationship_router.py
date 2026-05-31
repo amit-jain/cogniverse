@@ -225,15 +225,10 @@ class ComposableQueryAnalysisModule(dspy.Module):
         return default
 
     def _parse_confidence(self, value: Any) -> float:
-        """Parse confidence from string or float."""
-        if isinstance(value, (int, float)):
-            return float(min(1.0, max(0.0, value)))
-        if isinstance(value, str):
-            try:
-                return float(min(1.0, max(0.0, float(value))))
-            except (ValueError, TypeError):
-                return 0.5
-        return 0.5
+        """Parse confidence from a float, percent, or label string."""
+        from cogniverse_agents._confidence import parse_confidence
+
+        return parse_confidence(value, default=0.5)
 
     def _fallback_prediction(self, query: str) -> dspy.Prediction:
         """Return safe fallback prediction when all paths fail."""
