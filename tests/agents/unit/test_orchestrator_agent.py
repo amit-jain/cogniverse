@@ -23,7 +23,7 @@ def _plan_executes_to_completion(plan) -> bool:
     """Mirror _execute_plan's dependency-readiness loop without any I/O.
 
     Returns True iff every step eventually becomes ready (the topological
-    order is satisfiable). Catches the C1 failure modes: a self-referential
+    order is satisfiable). Catches the failure modes: a self-referential
     depends_on stalls the loop ("No steps ready" -> False), and an
     out-of-range depends_on raises IndexError on executed[dep_idx].
     """
@@ -271,7 +271,7 @@ class TestOrchestratorAgent:
         assert "query_enhancement_agent" in agent_names
         assert "search_agent" in agent_names
 
-        # Regression (C1): depends_on must index the SURVIVING step list, not the
+        # depends_on must index the SURVIVING step list, not the
         # raw agent_sequence. With the mid-sequence agent filtered out, the two
         # surviving steps are [query_enhancement(0), search_agent(1)]; search must
         # depend on query_enhancement (step 0), NOT on itself (the old code passed
@@ -292,7 +292,7 @@ class TestOrchestratorAgent:
     async def test_create_plan_filtered_agent_remaps_parallel_groups(
         self, orchestrator_agent
     ):
-        """C1: a filtered mid-sequence agent must remap parallel_steps indices.
+        """A filtered mid-sequence agent must remap parallel_steps indices.
 
         Raw sequence indices 0,1,2,3 with agent 1 (nonexistent) filtered: the
         parallel group "0,2" (enhance + extract) must remap to surviving-step

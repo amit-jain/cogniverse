@@ -288,7 +288,7 @@ class TestEnqueueAndWorker:
     async def test_failed_envelope_publishes_failed_and_skips_mark_done(
         self, env_redis, redis_container
     ):
-        """C3: a returned ``status='failed'`` envelope (what the pipeline
+        """A returned ``status='failed'`` envelope (what the pipeline
         actually emits) must publish ``state='failed'`` and must NOT write the
         idempotency done-record, so a resubmit re-enqueues instead of returning
         the failed run as complete. On the old code the worker treated any

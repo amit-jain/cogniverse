@@ -170,7 +170,7 @@ async def _wait_for_named_span(
 async def test_get_recent_spans_keeps_non_search_agent_outputs(
     search_evaluator_provider,
 ):
-    """C4: a SummarizerAgent.process span (string output) must survive
+    """A SummarizerAgent.process span (string output) must survive
     ``get_recent_spans(require_search_shape=False)`` with its raw output under
     ``outputs["value"]`` — on the old code every non-search span was dropped, so
     live quality eval scored 0 samples for SUMMARY/REPORT/GATEWAY. The default

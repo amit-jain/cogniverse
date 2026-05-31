@@ -3,9 +3,9 @@
 These drive the real DecisionOrchestrator + real WorkflowStateMachine + real
 HumanApprovalAgent (with a real confidence extractor injected — the intended
 DI, not a boundary mock). Each execute() is bounded by asyncio.wait_for so the
-C2 infinite-loop regression fails fast instead of hanging the suite.
+infinite-loop regression fails fast instead of hanging the suite.
 
-Regression target (C2): an approval step that yields zero pending items (every
+Regression: an approval step that yields zero pending items (every
 item auto-approved, an empty result, or a non-list result) used to spin forever
 because no RUNNING transition matched and the step index never advanced.
 """

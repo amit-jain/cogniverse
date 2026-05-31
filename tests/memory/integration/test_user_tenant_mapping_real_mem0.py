@@ -1,6 +1,6 @@
 """Real Mem0 (Vespa-backed) round-trip for the messaging UserTenantMapper.
 
-Catches C6: register_user wrote the user→tenant mapping under the user's own
+Regression: register_user wrote the user→tenant mapping under the user's own
 tenant partition, while get_tenant_id read from the SYSTEM partition. Mem0 hard
 partitions on user_id, so the lookup never saw the write and every registered
 Telegram user looked unregistered. This exercises the real Mem0 store, not a

@@ -1,6 +1,6 @@
 """node_id_from_doc_id must invert the real Node.doc_id format.
 
-Regression (tenant-format cluster): cross_tenant / federated agents recovered a
+Regression: cross_tenant / federated agents recovered a
 node_id with ``doc_id.split('_', 3)[-1]``. The doc_id is
 ``kg_node_{safe_tenant}_{node_id}`` where safe_tenant = tenant_id.replace(':','_')
 — so for a canonical ``org:tenant`` (and node_ids that contain underscores)

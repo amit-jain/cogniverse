@@ -1111,14 +1111,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         return ""
 
     def _feed_document(self, document: Document) -> bool:
-        """Feed document to backend.
-
-        TODO(audit-cycle-6, HIGH/PERF): the multi-document loops call this once
-        per segment → N separate Vespa feeds (+ N visibility probes when
-        wait_for_indexing). Batch the segment loop into one
-        ingest_documents(batch, schema) per ~50-100 docs. Plan + real-Vespa
-        test contract: docs/development/async-perf-hotpath-todo.md
-        """
+        """Feed document to backend."""
         if self.backend_client:
             result = self.backend_client.ingest_documents([document], self.schema_name)
             return result.get("success_count", 0) > 0

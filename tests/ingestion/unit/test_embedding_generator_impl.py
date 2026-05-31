@@ -1473,7 +1473,7 @@ class TestCodeSegmentIngestion:
 class TestVlmDescriptionMapping:
     """VLM frame descriptions must reach the right keyframe documents.
 
-    Regression (H28): video_data["descriptions"] is the VLM wrapper
+    Regression: video_data["descriptions"] is the VLM wrapper
     {"video_id", "descriptions": {<frame_ref>: text}, ...}; the old code read
     it at the top level and keyed by the segment ENUMERATION index, so every
     keyframe document got description="". The per-frame text lives one level

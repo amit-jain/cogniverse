@@ -1,6 +1,6 @@
 """Aggregate-metric computation for the evaluation tab.
 
-Regression (HIGH/PERF): the per-profile/strategy aggregate was recomputed
+Regression: the per-profile/strategy aggregate was recomputed
 INSIDE the per-experiment loop (O(experiments^2) over all accumulated queries).
 It is now a single pure pass (`_aggregate_experiment_metrics`) run once after
 all experiments load. These pin its correctness + empty-query safety.

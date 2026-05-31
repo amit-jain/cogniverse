@@ -1,6 +1,6 @@
 """Round-trip test for the dashboard System Config save path.
 
-C5: the Save handler rebuilt SystemConfig() from only the ~11 form fields, and
+The Save handler rebuilt SystemConfig() from only the ~11 form fields, and
 set_system_config persists to_dict() wholesale, so every omitted field
 (inference_service_urls, redis_url, minio_endpoint, agent_registry_url, ...) was
 reset to its dataclass default — silently breaking ingestion / messaging /

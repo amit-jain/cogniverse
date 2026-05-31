@@ -104,7 +104,7 @@ class TestUserTenantMapper:
         call_kwargs = memory_manager.add_memory.call_args.kwargs
         assert "12345" in call_kwargs["content"]
         assert "telegram" in call_kwargs["content"]
-        # C6: the mapping must be written to the SYSTEM partition (what
+        # The mapping must be written to the SYSTEM partition (what
         # get_tenant_id reads), NOT the user's own tenant — the lookup runs
         # before the tenant is known. The real tenant is preserved in the
         # content text and metadata. Stored verbatim (infer=False) so the
@@ -129,7 +129,7 @@ class TestUserTenantMapper:
         )
 
     def test_register_then_lookup_round_trip(self):
-        """C6 regression: with a partition-faithful Mem0 model (search only
+        """Regression: with a partition-faithful Mem0 model (search only
         returns memories written to the SAME (tenant_id, agent_name) partition,
         as the real Mem0 hard-partitions), register_user → get_tenant_id must
         resolve the tenant. On the old code the write went to 'acme:alice' and
