@@ -21,6 +21,7 @@ import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from cogniverse_foundation.confidence import parse_confidence
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
@@ -253,12 +254,16 @@ class AdapterEvaluator:
                     correct_prediction = pred_json.get(
                         "recommended_agent"
                     ) == expected_json.get("recommended_agent")
-                    confidence = pred_json.get("confidence", 0.5)
+                    confidence = parse_confidence(
+                        pred_json.get("confidence"), default=0.5
+                    )
                 elif self.agent_type == "profile_selection":
                     correct_prediction = pred_json.get(
                         "selected_profiles"
                     ) == expected_json.get("selected_profiles")
-                    confidence = pred_json.get("confidence", 0.5)
+                    confidence = parse_confidence(
+                        pred_json.get("confidence"), default=0.5
+                    )
                 elif self.agent_type == "entity_extraction":
                     correct_prediction, confidence = self._check_entity_prediction(
                         pred_json, expected_json

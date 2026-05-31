@@ -54,7 +54,11 @@ def _format_results(results: List[Dict[str, Any]]) -> str:
 
         line = f"{i}. {title}"
         if score is not None:
-            line += f" ({float(score):.0%})"
+            try:
+                line += f" ({float(score):.0%})"
+            except (TypeError, ValueError):
+                # A malformed score must not drop the whole result list.
+                pass
         if description:
             desc_short = (
                 description[:100] + "..." if len(description) > 100 else description

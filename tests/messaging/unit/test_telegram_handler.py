@@ -1,6 +1,7 @@
 """Unit tests for Telegram message formatting and chunking."""
 
 from cogniverse_messaging.telegram_handler import (
+    _format_results,
     chunk_message,
     format_agent_response,
     format_help,
@@ -103,3 +104,17 @@ class TestFormattingHelpers:
     def test_invalid_token(self):
         text = format_invalid_token()
         assert "Invalid" in text or "expired" in text
+
+
+class TestFormatResults:
+    def test_malformed_score_does_not_drop_result(self):
+        out = _format_results(
+            [{"title": "Safety Clip", "score": "high", "description": "hard hats"}]
+        )
+        assert "1. Safety Clip" in out
+        assert "hard hats" in out
+        assert "%" not in out
+
+    def test_numeric_score_renders_as_percent(self):
+        out = _format_results([{"title": "Clip", "score": 0.85}])
+        assert "1. Clip (85%)" in out

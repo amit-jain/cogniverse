@@ -17,6 +17,7 @@ from cogniverse_evaluation.evaluators.routing_evaluator import (
     RoutingEvaluator,
     RoutingOutcome,
 )
+from cogniverse_foundation.confidence import parse_confidence
 
 if TYPE_CHECKING:
     from cogniverse_agents.routing.config import OnlineEvaluationConfig
@@ -170,7 +171,7 @@ class OnlineEvaluator:
         if not routing_attrs or not isinstance(routing_attrs, dict):
             routing_attrs = {}
 
-        confidence = float(routing_attrs.get("confidence", 0.5))
+        confidence = parse_confidence(routing_attrs.get("confidence"), default=0.5)
 
         status = span_data.get("status_code", span_data.get("status", ""))
         actual_success = status == "OK" if status else True

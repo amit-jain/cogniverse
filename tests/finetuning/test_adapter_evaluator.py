@@ -11,6 +11,31 @@ import pytest
 from cogniverse_finetuning.evaluation.adapter_evaluator import AdapterEvaluator
 
 
+class _FakeEncoding:
+    def to(self, device):
+        return {}
+
+
+class _FakeTokenizer:
+    pad_token_id = 0
+
+    def __call__(self, text, **kwargs):
+        return _FakeEncoding()
+
+    def decode(self, ids, skip_special_tokens=True):
+        return ids
+
+
+class _FakeModel:
+    device = "cpu"
+
+    def __init__(self, prediction: str):
+        self._prediction = prediction
+
+    def generate(self, **kwargs):
+        return [self._prediction]
+
+
 class TestCheckEntityPrediction:
     """Tests for the entity extraction F1 evaluation logic."""
 
@@ -209,3 +234,27 @@ class TestAdapterEvaluatorAgentTypes:
             agent_type="entity_extraction",
         )
         assert evaluator.agent_type == "entity_extraction"
+
+
+class TestEvaluateModelConfidenceCoercion:
+    """A label-shaped model confidence must not crash the eval loop."""
+
+    @pytest.mark.asyncio
+    async def test_label_confidence_is_coerced(self):
+        evaluator = object.__new__(AdapterEvaluator)
+        evaluator.agent_type = "routing"
+        prediction = '{"recommended_agent": "search_agent", "confidence": "high"}'
+
+        metrics = await evaluator._evaluate_model(
+            _FakeModel(prediction),
+            _FakeTokenizer(),
+            [
+                {
+                    "input": "route this",
+                    "expected_output": '{"recommended_agent": "search_agent"}',
+                }
+            ],
+        )
+
+        assert metrics.accuracy == pytest.approx(1.0)
+        assert metrics.avg_confidence == pytest.approx(0.9)

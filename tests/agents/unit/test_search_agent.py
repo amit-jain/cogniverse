@@ -1906,3 +1906,55 @@ class TestDateFilter:
     def test_unparseable_date_raises_rather_than_dropping(self):
         with pytest.raises(ValueError):
             SearchAgent._build_date_filter("not-a-date", None)
+
+
+@pytest.mark.unit
+class TestDspyConfidenceGate:
+    """The DSPy query-rewrite gate must coerce a label confidence so a real
+    LM returning "high" still applies the enhanced query."""
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_label_confidence_applies_enhanced_query(
+        self, mock_get_config, mock_registry, mock_encoder_factory
+    ):
+        import types
+
+        mock_config = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_type": "multi_vector",
+                }
+            },
+        }
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_get_config.return_value = mock_config
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(
+            deps=SearchAgentDeps(backend_url="http://localhost", backend_port=8080),
+            schema_loader=mock_schema_loader,
+        )
+
+        agent.call_dspy = AsyncMock(
+            return_value=types.SimpleNamespace(
+                enhanced_query="enhanced cats", confidence="high"
+            )
+        )
+        captured = {}
+
+        def _capture(query, **kwargs):
+            captured["query"] = query
+            return []
+
+        agent._search_by_text = Mock(side_effect=_capture)
+
+        await agent._process_impl(
+            SearchInput(query="find cats", tenant_id="test_tenant", modality="video")
+        )
+
+        assert captured["query"] == "enhanced cats"

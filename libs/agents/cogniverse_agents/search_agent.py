@@ -28,6 +28,7 @@ import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -1892,7 +1893,7 @@ class SearchAgent(
                     if hasattr(dspy_result, "enhanced_query") and hasattr(
                         dspy_result, "confidence"
                     ):
-                        if dspy_result.confidence > 0.7:
+                        if parse_confidence(dspy_result.confidence) > 0.7:
                             search_query = dspy_result.enhanced_query
                             enhanced_query = search_query
                             logger.info(f"Using DSPy-enhanced query: {search_query}")
