@@ -117,29 +117,25 @@ class BackendQuerier:
         # Build YQL query based on strategy
         yql = self._build_yql(schema_name, sample_size, strategy)
 
-        # Query Vespa
-        query_params = {
-            "yql": yql,
-            "hits": sample_size,
-        }
-
-        # Add strategy-specific parameters
+        # Strategy ranking params only; yql and hits are passed explicitly.
+        extra_params: Dict[str, Any] = {}
         if strategy == "diverse":
-            query_params["ranking"] = "random"
+            extra_params["ranking"] = "random"
         elif strategy == "temporal_recent":
-            query_params["ranking.sorting"] = "+creation_timestamp"
+            extra_params["ranking.sorting"] = "+creation_timestamp"
 
         logger.debug(f"Querying {schema_name} with strategy '{strategy}'")
 
         try:
-            # Use Backend interface query_metadata_documents()
             results = self.backend.query_metadata_documents(
-                schema=schema_name, yql=yql, hits=sample_size, **query_params
+                schema=schema_name, yql=yql, hits=sample_size, **extra_params
             )
             samples = self._extract_fields_from_results(results, profile_config)
             logger.info(f"Retrieved {len(samples)} samples from {schema_name}")
             return samples
 
+        except TypeError:
+            raise
         except Exception as e:
             logger.error(f"Query failed for {schema_name}: {e}")
             return []
