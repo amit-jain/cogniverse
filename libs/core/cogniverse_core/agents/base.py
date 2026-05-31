@@ -601,10 +601,19 @@ class AgentBase(ABC, Generic[InputT, OutputT, DepsT]):
                     "message": str(error_holder[0]),
                 }
             elif result_holder:
-                yield {
-                    "type": "final",
-                    "data": result_holder[0].model_dump(),
-                }
+                payload = result_holder[0].model_dump()
+                rail_error = None
+                if self._output_rails:
+                    from cogniverse_core.agents.rails import RailBlockedError
+
+                    try:
+                        self._output_rails.check(payload)
+                    except RailBlockedError as exc:
+                        rail_error = exc
+                if rail_error is not None:
+                    yield {"type": "error", "message": str(rail_error)}
+                else:
+                    yield {"type": "final", "data": payload}
         finally:
             self._progress_queue = None
             if not task.done():
