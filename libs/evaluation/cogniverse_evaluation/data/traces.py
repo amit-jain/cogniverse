@@ -135,8 +135,13 @@ class TraceManager:
         """
         start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
-        # Build filter for specific experiment
-        filter_condition = f"attributes.metadata.profile == '{profile}' AND attributes.metadata.strategy == '{strategy}'"
+        # Build filter for specific experiment. Phoenix evaluates the filter
+        # as a Python expression, so repr() yields a correctly-quoted/escaped
+        # string literal — a raw value with a quote would break the filter.
+        filter_condition = (
+            f"attributes.metadata.profile == {profile!r} AND "
+            f"attributes.metadata.strategy == {strategy!r}"
+        )
 
         df = self.storage.get_traces_for_evaluation(
             start_time=start_time, filter_condition=filter_condition, limit=1000
