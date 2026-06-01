@@ -139,13 +139,7 @@ class StrategyFactory:
         strategy_class = cls._resolve_strategy_class(class_name)
         if strategy_class is None:
             return None
-        try:
-            return strategy_class(**params)
-        except TypeError as exc:
-            logger.error(
-                "Failed to instantiate strategy %s with params %s: %s",
-                class_name,
-                params,
-                exc,
-            )
-            return None
+        # A param typo (e.g. "models" for "model") raises TypeError here; let
+        # it propagate so the misconfiguration is loud, not a silently dropped
+        # strategy — as the docstrings above promise.
+        return strategy_class(**params)

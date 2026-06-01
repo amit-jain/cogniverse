@@ -13,6 +13,8 @@ type isn't keyed in the map come through with no injection.
 
 from __future__ import annotations
 
+import pytest
+
 from cogniverse_runtime.ingestion.strategies import AudioTranscriptionStrategy
 from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 
@@ -126,10 +128,8 @@ class TestInferenceServicesInjection:
         )
 
     def test_unknown_param_in_profile_surfaces_as_typeerror(self):
-        """A typo in profile params raises during construction so the
-        misconfiguration is observable. Pre-refactor the factory's whole-
-        signature filter silently dropped unknown kwargs, masking typos.
-        """
+        """A typo in profile params raises TypeError at construction so the
+        misconfiguration is loud, not a silently dropped strategy."""
         profile_config = {
             "strategies": {
                 "transcription": {
@@ -138,11 +138,5 @@ class TestInferenceServicesInjection:
                 }
             },
         }
-        # Factory currently logs and returns None on TypeError instead of
-        # raising. Either behaviour proves the typo is no longer silently
-        # accepted; assert the strategy didn't get built with the typo.
-        strategy_set = StrategyFactory.create_from_profile_config(profile_config)
-        assert strategy_set.transcription is None, (
-            "factory must not silently swallow unknown kwargs and build "
-            "the strategy anyway; the typo should produce no strategy"
-        )
+        with pytest.raises(TypeError):
+            StrategyFactory.create_from_profile_config(profile_config)
