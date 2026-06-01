@@ -720,8 +720,13 @@ class VespaSchemaManager:
                 f"Protected schemas: {sorted(self._PROTECTED_SCHEMAS)}"
             )
 
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         target = self.get_tenant_schema_name(tenant_id, base_schema_name)
-        tenant_suffix = "_" + tenant_id.replace(":", "_")
+        # Check against the CANONICAL suffix that target was built from; the
+        # raw tenant_id's suffix is only a substring of it (e.g. "_acme" vs
+        # "_acme_acme") and would wrongly accept a cross-tenant target.
+        tenant_suffix = "_" + canonical_tenant_id(tenant_id).replace(":", "_")
         if not target.endswith(tenant_suffix):
             raise ValueError(
                 f"Computed target '{target}' does not carry the expected "
