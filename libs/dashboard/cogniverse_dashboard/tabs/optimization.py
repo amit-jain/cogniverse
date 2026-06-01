@@ -28,6 +28,13 @@ logger = logging.getLogger(__name__)
 from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 
 
+def _filter_search_spans(spans_df: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose span name contains 'search'. ``na=False`` so a null name
+    (Phoenix can return one) yields False rather than NaN, which would raise
+    when used as a boolean mask."""
+    return spans_df[spans_df["name"].str.contains("search", case=False, na=False)]
+
+
 def render_enhanced_optimization_tab():
     """Render the enhanced optimization tab with all optimization workflows"""
     st.header("🔧 Optimization Framework")
@@ -228,9 +235,7 @@ def _render_search_annotation_tab():
                 spans_df = run_async_in_streamlit(fetch_spans())
 
                 # Filter for search spans
-                search_spans = spans_df[
-                    spans_df["name"].str.contains("search", case=False)
-                ]
+                search_spans = _filter_search_spans(spans_df)
 
                 st.session_state["search_spans"] = search_spans
                 st.success(f"✅ Fetched {len(search_spans)} search results")
@@ -515,7 +520,7 @@ async def _build_golden_dataset_from_phoenix(
     )
 
     # Filter for search spans with annotations
-    search_spans = spans_df[spans_df["name"].str.contains("search", case=False)]
+    search_spans = _filter_search_spans(spans_df)
 
     golden_dataset = {}
 
