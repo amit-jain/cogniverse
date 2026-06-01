@@ -84,6 +84,11 @@ class VespaBackend(Backend):
         self._url: str = backend_config.url
         self._port: int = backend_config.port
         self._tenant_id: str = backend_config.tenant_id
+        # Cached pyvespa app for metadata ops, rebuilt only if url/port change
+        # (e.g. after a deploy-time override) so probes don't churn a new
+        # connection pool per call.
+        self._metadata_app = None
+        self._metadata_app_key = None
 
         # SchemaRegistry will be injected later (no circular dependency)
         self.schema_registry = None
@@ -1281,6 +1286,15 @@ class VespaBackend(Backend):
     # Metadata Document Operations (Backend interface implementation)
     # ============================================================================
 
+    def _metadata_vespa_app(self):
+        """Cached pyvespa app for metadata ops; rebuilt only when url/port
+        change so repeated metadata calls reuse one connection pool."""
+        key = (self._url, self._port)
+        if self._metadata_app is None or self._metadata_app_key != key:
+            self._metadata_app = make_vespa_app(url=self._url, port=self._port)
+            self._metadata_app_key = key
+        return self._metadata_app
+
     def create_metadata_document(
         self, schema: str, doc_id: str, fields: Dict[str, Any]
     ) -> bool:
@@ -1299,7 +1313,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            vespa_client = make_vespa_app(url=self._url, port=self._port)
+            vespa_client = self._metadata_vespa_app()
 
             # Feed metadata document
             response = vespa_client.feed_data_point(
@@ -1337,7 +1351,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            vespa_client = make_vespa_app(url=self._url, port=self._port)
+            vespa_client = self._metadata_vespa_app()
 
             # Get metadata document
             response = vespa_client.get_data(schema=schema, data_id=doc_id)
@@ -1374,7 +1388,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            vespa_client = make_vespa_app(url=self._url, port=self._port)
+            vespa_client = self._metadata_vespa_app()
 
             # Build query parameters
             query_params = {
@@ -1441,7 +1455,7 @@ class VespaBackend(Backend):
             raise RuntimeError("Backend not initialized. Call initialize() first.")
 
         try:
-            vespa_client = make_vespa_app(url=self._url, port=self._port)
+            vespa_client = self._metadata_vespa_app()
 
             response = vespa_client.delete_data(schema=schema, data_id=doc_id)
 
