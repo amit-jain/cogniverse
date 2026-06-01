@@ -339,7 +339,10 @@ class VespaConfigStore(ConfigStore):
         else:
             # Get specific version
             doc_id = f"{self.schema_name}::{config_id}::{version}"
-            yql = f'select * from {self.schema_name} where documentid = "{doc_id}"'
+            yql = (
+                f"select * from {self.schema_name} "
+                f"where documentid = {yql_quote(doc_id)}"
+            )
 
         try:
             response = self.vespa_app.query(yql=yql)
