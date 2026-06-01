@@ -1,6 +1,7 @@
 """Health check endpoints for runtime monitoring."""
 
 import logging
+from functools import lru_cache
 from typing import Any, Dict
 
 from fastapi import APIRouter
@@ -16,6 +17,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@lru_cache(maxsize=1)
+def _get_agent_registry() -> AgentRegistry:
+    """Build the system AgentRegistry once and reuse it across probes.
+
+    A k8s probe loop hits /health every few seconds; rebuilding the config
+    stack (re-parsing config.json) and a fresh AgentRegistry (which opens an
+    httpx.AsyncClient) per probe wastes work and leaks a client each time.
+    lru_cache does not cache exceptions, so a failed build still retries (and
+    surfaces as 503) on the next probe.
+    """
+    config_manager = create_default_config_manager()
+    return AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+
+
 @router.get("/health")
 async def health_check() -> Any:
     """Health check endpoint with system status.
@@ -25,13 +40,9 @@ async def health_check() -> Any:
     monitoring probe should read this as unhealthy, not as a server crash.
     """
     try:
-        config_manager = create_default_config_manager()
+        # Reused across probes; backends/agents are still queried live below.
+        agent_registry = _get_agent_registry()
         backend_registry = BackendRegistry.get_instance()
-        # Health probe is cluster-wide (no per-tenant filtering) — use
-        # SYSTEM_TENANT_ID for the registry lookup.
-        agent_registry = AgentRegistry(
-            tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager
-        )
         backends = backend_registry.list_backends()
         agents = agent_registry.list_agents()
     except Exception as exc:

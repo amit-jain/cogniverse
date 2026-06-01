@@ -14,6 +14,15 @@ from fastapi.testclient import TestClient
 from cogniverse_runtime.routers import health
 
 
+@pytest.fixture(autouse=True)
+def _clear_health_cache():
+    """The AgentRegistry is cached process-wide; reset between tests so each
+    test's patched dependencies are actually re-read."""
+    health._get_agent_registry.cache_clear()
+    yield
+    health._get_agent_registry.cache_clear()
+
+
 @pytest.fixture
 def health_client():
     """TestClient with health router mounted."""
@@ -130,6 +139,25 @@ class TestHealthCheckFull:
         assert "backends" in data["backends"]
         assert "registered" in data["agents"]
         assert "agents" in data["agents"]
+
+    @patch("cogniverse_runtime.routers.health.AgentRegistry")
+    @patch("cogniverse_runtime.routers.health.BackendRegistry")
+    @patch("cogniverse_runtime.routers.health.create_default_config_manager")
+    def test_config_stack_built_once_across_probes(
+        self, mock_create_cm, mock_backend_cls, mock_agent_cls, health_client
+    ):
+        """Repeated probes must reuse one config build + AgentRegistry (one
+        httpx client), not rebuild the stack and leak a client per hit."""
+        mock_backend_cls.get_instance.return_value.list_backends.return_value = [
+            "vespa"
+        ]
+        mock_agent_cls.return_value.list_agents.return_value = []
+
+        for _ in range(3):
+            assert health_client.get("/health").status_code == 200
+
+        assert mock_create_cm.call_count == 1
+        assert mock_agent_cls.call_count == 1
 
     @patch("cogniverse_runtime.routers.health.create_default_config_manager")
     def test_health_returns_503_not_500_on_config_error(
