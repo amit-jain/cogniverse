@@ -393,3 +393,24 @@ class TestApprovalConfig:
         assert config_dict["enabled"] is True
         assert config_dict["confidence_threshold"] == 0.92
         assert config_dict["reviewer_email"] == "test@example.com"
+
+
+class TestApprovalStorageContract:
+    """The ApprovalStorage ABC must declare the contract its callers use.
+
+    human_approval_agent calls update_item(item, batch_id=...); the ABC
+    previously declared update_item(item) only, so a faithful subclass would
+    break those call sites.
+    """
+
+    def test_update_item_abc_declares_batch_id(self):
+        import inspect
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+        from cogniverse_agents.approval.interfaces import ApprovalStorage
+
+        abc_params = inspect.signature(ApprovalStorage.update_item).parameters
+        impl_params = inspect.signature(ApprovalStorageImpl.update_item).parameters
+
+        assert "batch_id" in abc_params
+        assert "batch_id" in impl_params

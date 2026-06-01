@@ -205,12 +205,15 @@ class ApprovalStorage(ABC):
         pass
 
     @abstractmethod
-    async def update_item(self, item: ReviewItem) -> None:
+    async def update_item(
+        self, item: ReviewItem, batch_id: Optional[str] = None
+    ) -> None:
         """
         Update a review item's status
 
         Args:
             item: Item with updated status
+            batch_id: Optional batch ID to help locate the item
         """
         pass
 
