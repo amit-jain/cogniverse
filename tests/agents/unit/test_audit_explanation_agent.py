@@ -369,3 +369,53 @@ def test_agent_capabilities_advertised():
     assert agent.agent_name == "audit_explanation_agent"
     assert "audit_explanation" in agent.capabilities
     assert agent.port == 8027
+
+
+async def _fetch_counts(*, include_contradictions: bool):
+    import collections
+
+    rows = {
+        "answer": _row("answer", "X synthesised", derived_from=["src_a", "src_b"]),
+        "src_a": _row("src_a", "doc A says X"),
+        "src_b": _row("src_b", "doc B says not X"),
+    }
+    calls: collections.Counter = collections.Counter()
+
+    def factory(tenant_id: str):
+        mm = MagicMock()
+        mm.memory = MagicMock()
+
+        def _get(memory_id: str):
+            calls[memory_id] += 1
+            return rows.get(memory_id)
+
+        mm.memory.get = _get
+        mm.provenance_store = _StubProvenanceStore(rows)
+        return mm
+
+    agent = AuditExplanationAgent(
+        deps=AuditExplanationDeps(tenant_id="acme"),
+        memory_manager_factory=factory,
+    )
+    await agent._process_impl(
+        AuditExplanationInput(
+            tenant_id="acme",
+            answer_memory_id="answer",
+            include_trust=True,
+            include_contradictions=include_contradictions,
+        )
+    )
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_contradiction_pass_adds_no_extra_memory_fetches():
+    """Enabling contradiction detection must reuse the already-fetched source
+    memories, not issue a second backend fetch per source."""
+    without = await _fetch_counts(include_contradictions=False)
+    with_contra = await _fetch_counts(include_contradictions=True)
+
+    # The contradiction pass adds zero fetches — counts are identical.
+    assert with_contra == without
+    assert with_contra["src_a"] == without["src_a"]
+    assert with_contra["src_b"] == without["src_b"]

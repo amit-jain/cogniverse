@@ -209,8 +209,11 @@ class AuditExplanationAgent(
         graph = walker.walk(input.answer_memory_id, tenant_id)
 
         sources: List[SourceExplanationOut] = []
+        # Reused by the contradiction pass below so each memory is fetched once.
+        fetched_memories: Dict[str, Optional[Dict[str, Any]]] = {}
         for node in graph.nodes:
             mem = self._fetch_memory(mm, tenant_id, node.memory_id)
+            fetched_memories[node.memory_id] = mem
             trust_score: Optional[float] = None
             trust_endorsements: Optional[int] = None
             if input.include_trust and mem is not None:
@@ -250,7 +253,7 @@ class AuditExplanationAgent(
         if input.include_contradictions and sources:
             candidates: List[Dict[str, Any]] = []
             for src in sources:
-                m = self._fetch_memory(mm, tenant_id, src.memory_id)
+                m = fetched_memories.get(src.memory_id)
                 if m is not None:
                     candidates.append(m)
             detector = ContradictionDetector()
