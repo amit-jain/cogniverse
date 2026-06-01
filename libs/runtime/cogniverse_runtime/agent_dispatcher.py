@@ -581,14 +581,20 @@ class AgentDispatcher:
 
         entities = result.get("entities", [])
         turn_count = len(conversation_history or []) // 2 + 1
-        task = asyncio.create_task(
+        self._spawn_background(
             self._maybe_auto_file_wiki(
                 query, result, entities, agent_name, tenant_id, turn_count
             )
         )
+        return result
+
+    def _spawn_background(self, coro) -> asyncio.Task:
+        """Schedule a fire-and-forget coroutine while keeping a strong
+        reference, so CPython does not GC the task before it runs."""
+        task = asyncio.create_task(coro)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
-        return result
+        return task
 
     async def _maybe_auto_file_wiki(
         self,

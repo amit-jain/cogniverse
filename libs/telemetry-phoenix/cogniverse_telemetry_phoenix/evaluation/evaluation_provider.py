@@ -38,6 +38,16 @@ class PhoenixEvaluationProvider(EvaluationProvider):
         # does not GC the coroutine before it runs.
         self._background_tasks: set[Any] = set()
 
+    def _spawn_background(self, coro) -> Any:
+        """Schedule a fire-and-forget coroutine while keeping a strong
+        reference, so CPython does not GC the task before it runs."""
+        import asyncio
+
+        task = asyncio.get_running_loop().create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
     @property
     def framework(self) -> PhoenixEvaluatorFramework:
         """Return the Phoenix evaluator framework."""
@@ -371,14 +381,12 @@ class PhoenixEvaluationProvider(EvaluationProvider):
 
                 # Run async operation
                 try:
-                    loop = asyncio.get_running_loop()
+                    asyncio.get_running_loop()
                 except RuntimeError:
                     # No running loop — caller is sync; spin up our own.
                     asyncio.run(add_annotation())
                 else:
-                    task = loop.create_task(add_annotation())
-                    self._background_tasks.add(task)
-                    task.add_done_callback(self._background_tasks.discard)
+                    self._spawn_background(add_annotation())
 
             logger.info(
                 f"Logged session evaluation for {session_id}: "

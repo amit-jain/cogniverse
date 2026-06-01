@@ -25,19 +25,18 @@ def _bare_dispatcher() -> AgentDispatcher:
 
 
 @pytest.mark.asyncio
-async def test_background_task_is_strong_referenced() -> None:
-    """The set must hold the task until it completes."""
+async def test_spawn_background_strong_references_until_complete() -> None:
+    """The real AgentDispatcher._spawn_background must hold the task until it
+    completes, then release it via the done callback."""
     d = _bare_dispatcher()
 
     async def long_work():
         await asyncio.sleep(0.05)
         return "done"
 
-    task = asyncio.create_task(long_work())
-    d._background_tasks.add(task)
-    task.add_done_callback(d._background_tasks.discard)
+    task = d._spawn_background(long_work())
 
-    # While running, the set holds the task.
+    # While running, the dispatcher holds a strong reference.
     assert task in d._background_tasks
     await task
     # After completion the discard callback runs.
@@ -47,36 +46,29 @@ async def test_background_task_is_strong_referenced() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_does_not_drop_auto_file_wiki_task() -> None:
-    """Drive ``_maybe_auto_file_wiki`` via create_task as the dispatcher
-    does, and verify the set tracks it until completion."""
+async def test_spawn_background_survives_gc_pressure() -> None:
+    """A task whose only reference is the dispatcher's set must still run to
+    completion under GC pressure."""
     d = _bare_dispatcher()
-
     called = asyncio.Event()
 
     async def fake_wiki_work():
         called.set()
 
-    task = asyncio.create_task(fake_wiki_work())
-    d._background_tasks.add(task)
-    task.add_done_callback(d._background_tasks.discard)
-
-    # The set must hold a reference before await — even under GC pressure.
+    d._spawn_background(fake_wiki_work())
+    # Drop our local handle entirely; only the dispatcher's set holds it.
     import gc
 
     gc.collect()
-    await called.wait()
-    await task
-    # And clean up after completion.
+
+    await asyncio.wait_for(called.wait(), timeout=1.0)
     await asyncio.sleep(0)
     assert d._background_tasks == set()
 
 
 @pytest.mark.asyncio
-async def test_phoenix_provider_tracks_background_annotation_tasks(
-    monkeypatch,
-) -> None:
-    """Same pattern, applied to PhoenixEvaluationProvider's annotation queue."""
+async def test_phoenix_provider_spawn_background_tracks_and_releases() -> None:
+    """PhoenixEvaluationProvider._spawn_background tracks then releases."""
     from cogniverse_telemetry_phoenix.evaluation.evaluation_provider import (
         PhoenixEvaluationProvider,
     )
@@ -87,11 +79,8 @@ async def test_phoenix_provider_tracks_background_annotation_tasks(
     async def fake_annotate():
         await asyncio.sleep(0.01)
 
-    loop = asyncio.get_running_loop()
-    task = loop.create_task(fake_annotate())
-    provider._background_tasks.add(task)
-    task.add_done_callback(provider._background_tasks.discard)
-
+    task = provider._spawn_background(fake_annotate())
+    assert task in provider._background_tasks
     await task
     await asyncio.sleep(0)
     assert provider._background_tasks == set()
