@@ -480,5 +480,14 @@ class SingleVectorVideoProcessor(BaseProcessor):
     def process(
         self, video_path: Path, output_dir: Path = None, **kwargs
     ) -> dict[str, Any]:
-        """Process video using single vector approach."""
-        return self.process_video(video_path, output_dir)
+        """Process video using single vector approach.
+
+        ``output_dir`` is accepted for BaseProcessor signature compatibility
+        but unused; transcript_data/metadata are forwarded by keyword so they
+        reach ``process_video`` instead of being dropped.
+        """
+        return self.process_video(
+            video_path,
+            transcript_data=kwargs.get("transcript_data"),
+            metadata=kwargs.get("metadata"),
+        )
