@@ -120,7 +120,10 @@ class SchemaRegistry:
                 service="schema_registry",
             )
 
-            schema_count = 0
+            # Rebuild into a fresh dict so a peer's deletions are reflected on
+            # reload; swap in only after a successful load so a failure falls
+            # back to the existing cache rather than wiping it.
+            loaded: Dict[tuple, SchemaInfo] = {}
             for entry in all_schema_data:
                 schema_data = entry.config_value
                 # Skip deleted schemas
@@ -131,7 +134,7 @@ class SchemaRegistry:
                 base_schema_name = schema_data["base_schema_name"]
                 key = (tenant_id, base_schema_name)
 
-                self._schemas[key] = SchemaInfo(
+                loaded[key] = SchemaInfo(
                     tenant_id=tenant_id,
                     base_schema_name=base_schema_name,
                     full_schema_name=schema_data["full_schema_name"],
@@ -139,9 +142,9 @@ class SchemaRegistry:
                     config=schema_data.get("config", {}),
                     deployment_time=schema_data["deployment_time"],
                 )
-                schema_count += 1
 
-            logger.info(f"Loaded {schema_count} schemas from storage")
+            self._schemas = loaded
+            logger.info(f"Loaded {len(loaded)} schemas from storage")
 
         except Exception as e:
             if self.strict_mode:

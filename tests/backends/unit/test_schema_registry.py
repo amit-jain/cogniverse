@@ -9,16 +9,53 @@ from unittest.mock import MagicMock
 import pytest
 
 from cogniverse_core.registries.schema_registry import SchemaRegistry
+from cogniverse_sdk.interfaces.config_store import ConfigScope
+
+
+class _StoredEntry:
+    def __init__(self, config_value):
+        self.config_value = config_value
 
 
 @pytest.fixture
 def mock_config_manager():
-    """Mock ConfigManager for testing"""
+    """ConfigManager whose store actually persists — set_config writes to a
+    backing dict that list_all_configs/get_config read back, so the
+    register/deploy → reload round-trip behaves like the real store."""
+    backing: dict = {}
+
+    def _set(*, tenant_id, scope, service, config_key, config_value):
+        backing[(tenant_id, scope, service, config_key)] = config_value
+
+    def _list(*, scope, service):
+        return [
+            _StoredEntry(v)
+            for (_t, sc, sv, _k), v in backing.items()
+            if sc == scope and sv == service
+        ]
+
+    def _get(*, tenant_id, scope, service, config_key):
+        v = backing.get((tenant_id, scope, service, config_key))
+        return _StoredEntry(v) if v is not None else None
+
+    store = MagicMock()
+    store.set_config.side_effect = _set
+    store.list_all_configs.side_effect = _list
+    store.get_config.side_effect = _get
+
     config_manager = MagicMock()
-    # Mock store methods used by SchemaRegistry
-    config_manager.store = MagicMock()
-    config_manager.store.list_all_configs.return_value = []
-    config_manager.store.set_config = MagicMock()
+    config_manager.store = store
+
+    def _seed_schema(config_value):
+        _set(
+            tenant_id=config_value["tenant_id"],
+            scope=ConfigScope.SCHEMA,
+            service="schema_registry",
+            config_key=f"schema_{config_value['base_schema_name']}",
+            config_value=config_value,
+        )
+
+    config_manager.seed_schema = _seed_schema
     return config_manager
 
 
@@ -143,17 +180,16 @@ class TestSchemaRegistryDeployment:
         self, mock_config_manager, mock_backend, mock_schema_loader
     ):
         """Test that deployment includes all existing schemas"""
-        # Mock existing schema in store format (ConfigEntry with config_value)
-        existing_entry = MagicMock()
-        existing_entry.config_value = {
-            "tenant_id": "existing_tenant",
-            "base_schema_name": "existing_schema",
-            "full_schema_name": "existing_schema_existing_tenant",
-            "schema_definition": '{"name": "existing_schema_existing_tenant"}',
-            "deployment_time": "2024-01-01T00:00:00",
-            "config": {},
-        }
-        mock_config_manager.store.list_all_configs.return_value = [existing_entry]
+        mock_config_manager.seed_schema(
+            {
+                "tenant_id": "existing_tenant",
+                "base_schema_name": "existing_schema",
+                "full_schema_name": "existing_schema_existing_tenant",
+                "schema_definition": '{"name": "existing_schema_existing_tenant"}',
+                "deployment_time": "2024-01-01T00:00:00",
+                "config": {},
+            }
+        )
 
         registry = SchemaRegistry(
             config_manager=mock_config_manager,
@@ -380,28 +416,28 @@ class TestSchemaRegistryInitialization:
         self, mock_config_manager, mock_backend, mock_schema_loader
     ):
         """Test that existing schemas are loaded from ConfigManager on init"""
-        # Mock schema entries in store format (ConfigEntry with config_value)
         # Tenant_id stored in canonical org:tenant form — matches what
         # register_schema's canonical-id normalization produces today.
-        entry1 = MagicMock()
-        entry1.config_value = {
-            "tenant_id": "acme:acme",
-            "base_schema_name": "schema1",
-            "full_schema_name": "schema1_acme_acme",
-            "schema_definition": '{"name": "schema1_acme_acme"}',
-            "deployment_time": "2024-01-01T00:00:00",
-            "config": {},
-        }
-        entry2 = MagicMock()
-        entry2.config_value = {
-            "tenant_id": "startup:startup",
-            "base_schema_name": "schema2",
-            "full_schema_name": "schema2_startup_startup",
-            "schema_definition": '{"name": "schema2_startup_startup"}',
-            "deployment_time": "2024-01-01T00:00:00",
-            "config": {},
-        }
-        mock_config_manager.store.list_all_configs.return_value = [entry1, entry2]
+        mock_config_manager.seed_schema(
+            {
+                "tenant_id": "acme:acme",
+                "base_schema_name": "schema1",
+                "full_schema_name": "schema1_acme_acme",
+                "schema_definition": '{"name": "schema1_acme_acme"}',
+                "deployment_time": "2024-01-01T00:00:00",
+                "config": {},
+            }
+        )
+        mock_config_manager.seed_schema(
+            {
+                "tenant_id": "startup:startup",
+                "base_schema_name": "schema2",
+                "full_schema_name": "schema2_startup_startup",
+                "schema_definition": '{"name": "schema2_startup_startup"}',
+                "deployment_time": "2024-01-01T00:00:00",
+                "config": {},
+            }
+        )
 
         registry = SchemaRegistry(
             config_manager=mock_config_manager,
@@ -413,3 +449,51 @@ class TestSchemaRegistryInitialization:
         # the lookup tenant so the bare-form arg resolves the same.
         assert registry.schema_exists("acme", "schema1") is True
         assert registry.schema_exists("startup", "schema2") is True
+
+
+class TestReloadReflectsDeletions:
+    """A storage refresh must reflect peer deletions, not just additions.
+
+    _load_schemas_from_storage rebuilt the dict additively, so a schema
+    deleted from storage by a peer instance lingered in memory after reload
+    and was even re-collected by _get_all_schemas for redeploy.
+    """
+
+    @staticmethod
+    def _entry(tenant_id, base):
+        class _E:
+            config_value = {
+                "tenant_id": tenant_id,
+                "base_schema_name": base,
+                "full_schema_name": f"{base}_{tenant_id}",
+                "schema_definition": {"name": base},
+                "deployment_time": "2026-01-01T00:00:00",
+            }
+
+        return _E()
+
+    def test_reload_drops_schema_deleted_from_storage(
+        self, mock_backend, mock_schema_loader
+    ):
+        store = MagicMock()
+        store.list_all_configs.return_value = [
+            self._entry("acme", "video"),
+            self._entry("acme", "audio"),
+        ]
+        config_manager = MagicMock()
+        config_manager.store = store
+
+        registry = SchemaRegistry(
+            config_manager=config_manager,
+            backend=mock_backend,
+            schema_loader=mock_schema_loader,
+        )
+        assert {s.base_schema_name for s in registry._get_all_schemas()} == {
+            "video",
+            "audio",
+        }
+
+        # Peer deletes "audio" from storage.
+        store.list_all_configs.return_value = [self._entry("acme", "video")]
+
+        assert {s.base_schema_name for s in registry._get_all_schemas()} == {"video"}
