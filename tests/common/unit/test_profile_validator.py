@@ -345,7 +345,7 @@ class TestUpdateFieldValidation:
         """Mutable fields should be allowed in updates."""
         valid_updates = {
             "pipeline_config": {"keyframe_fps": 60.0},
-            "strategies": {"segmentation": {"class": "NewStrategy"}},
+            "strategies": {"segmentation": {"class": "FrameSegmentationStrategy"}},
             "description": "Updated description",
             "model_specific": {"param": "value"},
         }
@@ -512,3 +512,18 @@ class TestStrategyClassExists:
 
             result = validator._strategy_class_exists("invalid.module.Class")
             assert not result
+
+
+class TestUpdateValidatesStrategyValues:
+    """validate_update_fields must reject a malformed strategies block, not
+    only immutable-field changes."""
+
+    def test_malformed_strategy_value_rejected_on_update(self, validator):
+        errors = validator.validate_update_fields(
+            {"strategies": {"transcription": "not-a-dict"}}
+        )
+        assert any("must be dict" in e for e in errors)
+
+    def test_valid_strategy_update_passes(self, validator):
+        errors = validator.validate_update_fields({"description": "new description"})
+        assert errors == []

@@ -348,4 +348,10 @@ class ProfileValidator:
                     "Create a new profile instead for schema changes."
                 )
 
+        # Validate the VALUES of mutable fields too — otherwise an update can
+        # write a malformed strategies block that create-time validation would
+        # have rejected.
+        if "strategies" in update_fields:
+            errors.extend(self._validate_strategies(update_fields["strategies"]))
+
         return errors
