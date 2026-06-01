@@ -231,8 +231,14 @@ class FederationService:
             metadata=new_metadata,
             infer=False,
         )
+        if promoted_id is None:
+            raise RuntimeError(
+                f"promote_to_org_trunk: storage returned no memory_id for "
+                f"source={source_memory.get('id')} (deduplicated or dropped); "
+                "promotion not persisted"
+            )
         return PromotionResult(
             source_memory_id=str(source_memory.get("id") or ""),
-            promoted_memory_id=str(promoted_id or ""),
+            promoted_memory_id=promoted_id,
             org_trunk_tenant_id=target_tenant,
         )

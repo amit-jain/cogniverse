@@ -251,6 +251,12 @@ class PinService:
             metadata=metadata,
             infer=False,
         )
+        if memory_id is None:
+            raise RuntimeError(
+                f"pin: storage returned no memory_id for "
+                f"target_memory_id={target_memory_id} (deduplicated or dropped); "
+                "pin record not persisted"
+            )
         return PinRecord(
             memory_id=memory_id,
             target_memory_id=target_memory_id,

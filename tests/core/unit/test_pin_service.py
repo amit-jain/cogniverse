@@ -408,3 +408,41 @@ class TestPinRecordIsolation:
         pin_rows = manager.get_all_memories(tenant_id="t1", agent_name=PIN_AGENT_NAME)
         assert len(pin_rows) == 1
         assert pin_rows[0]["metadata"]["kind"] == PIN_RECORD_KIND
+
+
+class TestPinStorageFailure:
+    """A pin whose record write returns no id must fail loudly, not produce a
+    PinRecord with memory_id=None."""
+
+    def test_pin_raises_when_storage_returns_no_id(self, registry):
+        class NoPersistOnPin(FakeManager):
+            def add_memory(
+                self, *, content, tenant_id, agent_name, metadata=None, infer=False
+            ):
+                if agent_name == PIN_AGENT_NAME:
+                    return None  # storage deduplicated / dropped the pin record
+                return super().add_memory(
+                    content=content,
+                    tenant_id=tenant_id,
+                    agent_name=agent_name,
+                    metadata=metadata,
+                    infer=infer,
+                )
+
+        manager = NoPersistOnPin()
+        service = PinService(manager, registry)
+        target_id = manager.add_memory(
+            content="seed",
+            tenant_id="t1",
+            agent_name="x",
+            metadata={"kind": "tenant_instruction"},
+        )
+
+        with pytest.raises(RuntimeError, match="not persisted"):
+            service.pin(
+                target_memory_id=target_id,
+                target_kind="tenant_instruction",
+                pinned_by=Pinnable.TENANT_ADMIN,
+                actor_id="alice",
+                tenant_id="t1",
+            )

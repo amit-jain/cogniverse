@@ -269,3 +269,37 @@ class TestPromotionRoundsTrip:
         assert "m_promoted" in ids
         promoted = next(r for r in rows if r["id"] == "m_promoted")
         assert promoted["_federation_origin"] == "org_trunk"
+
+
+class TestPromotionStorageFailure:
+    """A promotion whose org-trunk write returns no id must fail loudly, not
+    return a PromotionResult with an empty promoted_memory_id."""
+
+    def test_promote_raises_when_storage_returns_no_id(self):
+        registry = KnowledgeRegistry()
+        registry.register(
+            KnowledgeSchema(
+                kind="external_doc",
+                sensitivity=Sensitivity.ORG_SHARED,
+                pinnable_by=Pinnable.TENANT_ADMIN,
+                provenance_required=False,
+            ),
+            replace=True,
+        )
+
+        def factory(tenant_id):
+            mm = MagicMock()
+            mm.memory = MagicMock()
+            mm.add_memory = lambda **kwargs: None  # deduplicated / dropped
+            return mm
+
+        svc = FederationService(factory, registry)
+        source = _row("m_c", "shareable doc", kind="external_doc")
+
+        with pytest.raises(RuntimeError, match="not persisted"):
+            svc.promote_to_org_trunk(
+                source_tenant_id="acme:production",
+                source_memory=source,
+                actor_role=Pinnable.TENANT_ADMIN,
+                actor_id="admin_alpha",
+            )
