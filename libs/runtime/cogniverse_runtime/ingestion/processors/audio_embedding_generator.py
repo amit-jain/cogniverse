@@ -156,9 +156,11 @@ class AudioEmbeddingGenerator:
             return embedding
 
         except Exception as e:
+            # Don't return a zero vector — that silently indexes a meaningless
+            # embedding. Raise so the per-segment ingestion handler skips and
+            # records the failure instead.
             logger.error(f"Failed to generate acoustic embedding: {e}")
-            # Return zero vector on failure
-            return np.zeros(512, dtype=np.float32)
+            raise
 
     def generate_semantic_embedding(self, text: str) -> np.ndarray:
         """
