@@ -259,11 +259,22 @@ class DeepResearchAgent(
         import asyncio
 
         async def search_one(q: str) -> Dict[str, Any]:
-            results = await self._search_fn(query=q, tenant_id=tenant_id)
-            return {"question": q, "results": results, "source": "search"}
+            try:
+                results = await self._search_fn(query=q, tenant_id=tenant_id)
+                return {"question": q, "results": results, "source": "search"}
+            except Exception as exc:
+                # One failed sub-question must not abort the whole research;
+                # record it as empty evidence so the rest still proceeds.
+                logger.warning("Sub-question search failed for %r: %s", q, exc)
+                return {
+                    "question": q,
+                    "results": [],
+                    "source": "search",
+                    "error": str(exc),
+                }
 
         tasks = [search_one(q) for q in questions]
-        return list(await asyncio.gather(*tasks, return_exceptions=False))
+        return list(await asyncio.gather(*tasks))
 
     async def _evaluate_evidence(
         self,
@@ -273,7 +284,7 @@ class DeepResearchAgent(
     ) -> tuple[bool, List[str], float]:
         """Evaluate if evidence is sufficient."""
         evidence_summary = "\n".join(
-            f"Q: {e['question']} → {len(e.get('results', []))} results"
+            f"Q: {e['question']} → {self._result_count(e.get('results'))} results"
             for e in evidence
         )
         result = await self.call_dspy(
@@ -334,6 +345,14 @@ class DeepResearchAgent(
             evidence=evidence_text,
         )
         return str(result.summary)
+
+    @staticmethod
+    def _result_count(results: Any) -> int:
+        """Count results for the evidence summary regardless of shape — a list
+        reports its length; any other non-empty payload counts as one."""
+        if isinstance(results, list):
+            return len(results)
+        return 1 if results else 0
 
     @staticmethod
     def _extract_citations(evidence: List[Dict[str, Any]]) -> List[Dict[str, str]]:
