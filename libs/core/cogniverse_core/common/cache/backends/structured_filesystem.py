@@ -227,6 +227,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def get(self, key: str) -> Optional[Any]:
         """Retrieve value from cache"""
+        await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
 
         if not file_path.exists():
@@ -264,6 +265,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
         """Store value in cache"""
+        await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
 
         try:
@@ -308,6 +310,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def delete(self, key: str) -> bool:
         """Delete value from cache"""
+        await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
         meta_path = self._get_metadata_path(file_path)
 
@@ -342,6 +345,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def exists(self, key: str) -> bool:
         """Check if key exists in cache and is not expired"""
+        await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
 
         if not file_path.exists():
@@ -358,6 +362,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def clear(self, pattern: Optional[str] = None) -> int:
         """Clear cache entries matching pattern"""
+        await self._run_startup_cleanup_if_needed()
         cleared = 0
 
         if pattern and pattern.endswith("*"):
@@ -392,6 +397,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics"""
+        await self._run_startup_cleanup_if_needed()
         self._update_stats()
         return self._stats.copy()
 
@@ -445,6 +451,18 @@ class StructuredFilesystemBackend(CacheBackend):
         except Exception as e:
             logger.error(f"Error writing metadata {meta_path}: {e}")
 
+    async def _run_startup_cleanup_if_needed(self) -> None:
+        """Run the one-time startup cleanup on the first async operation.
+
+        ``__init__`` is sync and cannot await, so when ``cleanup_on_startup``
+        is enabled it sets a flag that this guard consumes once an event loop
+        is running. The flag is cleared before awaiting so concurrent first
+        calls don't each trigger a sweep.
+        """
+        if self._needs_cleanup:
+            self._needs_cleanup = False
+            await self._cleanup_expired()
+
     async def _cleanup_expired(self):
         """Clean up expired cache entries"""
         """This runs on startup and can be called manually"""
@@ -492,6 +510,7 @@ class StructuredFilesystemBackend(CacheBackend):
 
     async def get_metadata(self, key: str) -> Optional[Dict[str, Any]]:
         """Get metadata for a cache key (useful for debugging/inspection)"""
+        await self._run_startup_cleanup_if_needed()
         file_path = self._key_to_path(key)
         return await self._read_metadata(file_path)
 
@@ -500,6 +519,7 @@ class StructuredFilesystemBackend(CacheBackend):
     ) -> List[Tuple[str, Optional[Dict[str, Any]]]]:
         """List all keys in cache with optional pattern matching"""
         """Useful for debugging and cache inspection"""
+        await self._run_startup_cleanup_if_needed()
         keys = []
 
         # This is approximate reconstruction of keys from paths
