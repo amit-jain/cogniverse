@@ -78,7 +78,8 @@ class TestLearnedReranker:
             assert reranker.model == "jina/jina-reranker-v2-base"
 
     def test_reranker_raises_on_heuristic_model(self, mock_config_manager):
-        """Test reranker raises error if model is heuristic"""
+        """A config'd model of 'heuristic' must be rejected — LearnedReranker
+        requires a real learned model."""
         with patch(
             "cogniverse_agents.search.learned_reranker.get_config_value"
         ) as mock_config:
@@ -87,11 +88,13 @@ class TestLearnedReranker:
                 "supported_models": {},
             }
 
-            with pytest.raises(ValueError, match="config_manager is required"):
-                LearnedReranker()
+            with pytest.raises(ValueError, match="requires a learned model"):
+                LearnedReranker(
+                    tenant_id="test_tenant", config_manager=mock_config_manager
+                )
 
     def test_reranker_raises_on_unknown_model(self, mock_config_manager):
-        """Test reranker raises error for unknown model key"""
+        """An unknown model key not in supported_models must be rejected."""
         with patch(
             "cogniverse_agents.search.learned_reranker.get_config_value"
         ) as mock_config:
@@ -100,8 +103,10 @@ class TestLearnedReranker:
                 "supported_models": {"cohere": "cohere/rerank-english-v3.0"},
             }
 
-            with pytest.raises(ValueError, match="config_manager is required"):
-                LearnedReranker()
+            with pytest.raises(ValueError, match="not found in supported_models"):
+                LearnedReranker(
+                    tenant_id="test_tenant", config_manager=mock_config_manager
+                )
 
     @pytest.mark.asyncio
     async def test_rerank_empty_results(self, sample_results, mock_config_manager):
