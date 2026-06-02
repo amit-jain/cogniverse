@@ -71,31 +71,45 @@ class TestMultiModalReranker:
             assert "reranking_score" in result.metadata
             assert "score_components" in result.metadata
 
-    @pytest.mark.asyncio
-    async def test_temporal_reranking(self, reranker, sample_results):
-        """Test temporal alignment in reranking"""
-        query = "machine learning"
-        modalities = [QueryModality.VIDEO]
+    def test_temporal_score_rewards_in_range_and_centered(self, reranker):
+        """_calculate_temporal_score: in-range > edge > out-of-range, with a
+        perfectly centered result scoring 1.0."""
+        now = datetime.now()
+        ctx = {"temporal": {"time_range": (now - timedelta(days=10), now)}}
 
-        # Create temporal context (prefer recent results)
-        context = {
-            "temporal": {
-                "time_range": (
-                    datetime.now() - timedelta(days=7),
-                    datetime.now(),
-                ),
-                "requires_temporal_search": True,
-            }
-        }
+        def _at(ts):
+            return RerankerSearchResult(
+                id="x",
+                title="t",
+                content="c",
+                modality="video",
+                score=1.0,
+                metadata={},
+                timestamp=ts,
+            )
 
-        reranked = await reranker.rerank_results(
-            sample_results, query, modalities, context
+        centered = reranker._calculate_temporal_score(_at(now - timedelta(days=5)), ctx)
+        edge = reranker._calculate_temporal_score(_at(now - timedelta(days=10)), ctx)
+        outside = reranker._calculate_temporal_score(
+            _at(now - timedelta(days=100)), ctx
         )
 
-        # More recent results should rank higher with temporal context
-        # doc_1 is most recent (2 days ago), should benefit
-        scores = [r.metadata["reranking_score"] for r in reranked]
-        assert len(scores) == 3
+        assert centered == pytest.approx(1.0)
+        assert edge == pytest.approx(0.7)
+        assert centered > edge > outside
+
+    def test_temporal_score_neutral_without_context(self, reranker):
+        now = datetime.now()
+        r = RerankerSearchResult(
+            id="x",
+            title="t",
+            content="c",
+            modality="video",
+            score=1.0,
+            metadata={},
+            timestamp=now,
+        )
+        assert reranker._calculate_temporal_score(r, {}) == 0.5
 
     def test_cross_modal_score(self, reranker):
         """Test cross-modal relevance scoring"""
