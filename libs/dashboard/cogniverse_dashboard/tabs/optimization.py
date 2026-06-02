@@ -892,8 +892,10 @@ def _render_routing_optimization_tab():
             }
             """
 
+            from cogniverse_dashboard.tabs.evaluation import _phoenix_base_url
+
             response = requests.post(
-                "http://localhost:6006/graphql",
+                f"{_phoenix_base_url()}/graphql",
                 json={"query": query},
                 headers={"Content-Type": "application/json"},
                 timeout=5,
