@@ -5,6 +5,7 @@ Tests agent card discovery, message/send JSON-RPC round-trip,
 and multi-turn conversation history plumbing via contextId.
 """
 
+import json
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
@@ -278,9 +279,13 @@ class TestA2AMessageSend:
 
         body = response.json()
         assert "result" in body
-        # The error should be in the response text
-        result = body["result"]
-        assert result is not None
+        # The dispatch error must be surfaced verbatim in the response message,
+        # not swallowed into a generic/empty success.
+        text = body["result"]["status"]["message"]["parts"][0]["text"]
+        error_payload = json.loads(text)
+        assert error_payload["status"] == "error"
+        assert error_payload["agent"] == "bad_agent"
+        assert "not found in registry" in error_payload["error"]
 
     @pytest.mark.ci_fast
     def test_context_id_passed_to_dispatcher(self, client, mock_dispatcher):
