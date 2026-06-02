@@ -29,20 +29,26 @@ from cogniverse_finetuning.orchestrator import validate_sft_dataset
 class TestPropertyAccess:
     """Test that converter uses public properties instead of private attributes"""
 
-    def test_uses_public_traces_property(self):
-        """Test that converter accesses provider.traces instead of provider._trace_store"""
-        # Setup mock provider
+    @pytest.mark.asyncio
+    async def test_convert_queries_via_public_traces_property(self):
+        """convert() must fetch spans through provider.traces.get_spans (the
+        public property), not a private _trace_store."""
         mock_provider = Mock()
-        mock_provider.traces = Mock()
-        mock_provider.annotations = Mock()
-        mock_provider.traces.get_spans = Mock(return_value=pd.DataFrame())
-        mock_provider.annotations.get_annotations = Mock(return_value=pd.DataFrame())
+        mock_provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        mock_provider.annotations.get_annotations = AsyncMock(
+            return_value=pd.DataFrame()
+        )
 
         converter = TraceToInstructionConverter(provider=mock_provider)
 
-        # This call should use provider.traces, not provider._trace_store
-        # The fact that it doesn't raise an AttributeError confirms correct access
-        assert converter.provider.traces is not None
+        # Empty spans → "insufficient annotated traces"; the point is that the
+        # public traces property was queried on the way there.
+        with pytest.raises(Exception):
+            await converter.convert(
+                project="cogniverse-t", agent_type="routing", min_annotations=1
+            )
+
+        mock_provider.traces.get_spans.assert_awaited_once()
 
 
 @pytest.mark.unit
