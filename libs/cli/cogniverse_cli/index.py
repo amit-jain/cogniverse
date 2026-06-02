@@ -1,6 +1,7 @@
 """Codebase indexing command — uploads files to runtime for Vespa indexing.
 
-``cogniverse index <path> --type code|docs`` does two things in parallel:
+``cogniverse index <path> --type code|docs`` does two things per file
+(files are processed sequentially):
 
 1. **Content indexing** — uploads each file to ``/ingestion/upload`` with
    the appropriate profile so it becomes searchable via the normal

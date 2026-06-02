@@ -8,7 +8,6 @@ This module provides RLMOptions for query-level RLM configuration, enabling
 A/B testing between RLM and standard inference.
 
 References:
-    - Paper: https://arxiv.org/abs/2512.24601
     - DSPy: https://github.com/stanfordnlp/dspy (RLM module in 3.1.0+)
 """
 
