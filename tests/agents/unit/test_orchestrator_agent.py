@@ -1184,13 +1184,20 @@ class TestOrchestratorArtifactLoading:
         mock_wi.load_historical_data.assert_called_once()
 
     def test_no_workflow_intelligence_skips(self, orchestrator_agent):
-        """_load_artifact is a no-op when workflow_intelligence is None."""
+        """_load_artifact returns without touching telemetry when there is no
+        workflow_intelligence."""
         assert orchestrator_agent.workflow_intelligence is None
-        orchestrator_agent._load_artifact()  # Should not raise
+        recording_tm = Mock()
+        orchestrator_agent.telemetry_manager = recording_tm
+
+        assert orchestrator_agent._load_artifact() is None
+        # Returned before reaching telemetry — the wi guard short-circuits.
+        recording_tm.span.assert_not_called()
 
     def test_no_telemetry_skips(self, mock_agent_registry):
-        """_load_artifact is a no-op when telemetry_manager is not set."""
+        """_load_artifact does not attempt a load when telemetry is unset."""
         mock_wi = Mock()
+        mock_wi.load_historical_data = AsyncMock()
 
         with patch("dspy.ChainOfThought"):
             agent = OrchestratorAgent(
@@ -1203,9 +1210,11 @@ class TestOrchestratorArtifactLoading:
         agent.telemetry_manager = None
         agent._load_artifact()
 
+        mock_wi.load_historical_data.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_artifact_load_failure_uses_defaults(self, mock_agent_registry):
-        """_load_artifact falls back to defaults when load fails."""
+        """A load failure is attempted then swallowed (defaults retained)."""
         mock_wi = Mock()
         mock_wi.load_historical_data = AsyncMock(
             side_effect=RuntimeError("connection refused")
@@ -1221,4 +1230,8 @@ class TestOrchestratorArtifactLoading:
 
         mock_tm = Mock()
         agent.telemetry_manager = mock_tm
-        agent._load_artifact()  # Should not raise
+        agent._load_artifact()
+
+        # The load was attempted (failure path exercised), and the raise was
+        # swallowed rather than propagating.
+        mock_wi.load_historical_data.assert_awaited_once()
