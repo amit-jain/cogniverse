@@ -206,8 +206,9 @@ class RoutingGenerator(BaseGenerator):
         """
         Generate query mentioning entities using validated DSPy module.
 
-        The ValidatedEntityQueryGenerator ensures entities appear in the query
-        through retry logic, eliminating the need for arbitrary fallbacks.
+        ValidatedEntityQueryGenerator uses retry logic to get the entities into
+        the query. A fallback query is still used when there are no entities or
+        generation fails (both flag ``fallback_used`` in the metadata).
 
         Returns:
             Tuple of (query, metadata) where metadata includes generation details

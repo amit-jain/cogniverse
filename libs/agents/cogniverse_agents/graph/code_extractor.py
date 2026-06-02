@@ -1,9 +1,10 @@
 """Code file extractor — tree-sitter AST walk to find functions, classes, imports.
 
 Produces Node/Edge objects with EXTRACTED provenance (structural facts,
-not LLM guesses). Supports the languages with tree-sitter grammars that
-are already installed for the `code_lateon_mv` profile: Python, TypeScript,
-JavaScript, Go, Rust, Java, C, C++, Ruby.
+not LLM guesses). Coverage is whatever the ``_DEFINITION_TYPES`` /
+``_IMPORT_TYPES`` / ``_CALL_TYPES`` node-type sets below match — primarily
+Python, JavaScript/TypeScript, Go, Rust, and Java — and depends on which
+tree-sitter grammars are installed.
 """
 
 import logging
