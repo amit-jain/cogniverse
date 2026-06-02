@@ -42,3 +42,12 @@ def test_without_current_tenant_shows_manual_input(tmp_path: Path) -> None:
 
     labels = [ti.label for ti in at.text_input]
     assert "Tenant id" in labels
+
+
+def test_fmt_delta_shows_zero_not_dash():
+    from cogniverse_dashboard.tabs.rlm_ab_compare import _fmt_delta
+
+    assert _fmt_delta(0.0) == "0.0"  # a real zero delta, not missing
+    assert _fmt_delta(1.5) == "1.5"
+    assert _fmt_delta(-2.0) == "-2.0"
+    assert _fmt_delta(None) == "—"

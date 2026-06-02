@@ -38,6 +38,11 @@ class ABCompareAggregate:
     per_dataset: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
+def _fmt_delta(value: Optional[float]) -> str:
+    """Format a delta metric; a real 0.0 must show as '0.0', not '—'."""
+    return f"{value:.1f}" if value is not None else "—"
+
+
 def _attribute_to_dict(spans_df: pd.DataFrame) -> pd.DataFrame:
     """Lift each ``openinference.*`` attribute into a typed value.
 
@@ -295,14 +300,8 @@ def render_rlm_ab_compare_tab():
 
         cols = st.columns(4)
         cols[0].metric("Comparisons", agg.rows)
-        cols[1].metric(
-            "Δ latency (ms)",
-            f"{agg.avg_latency_delta_ms:.1f}" if agg.avg_latency_delta_ms else "—",
-        )
-        cols[2].metric(
-            "Δ tokens",
-            f"{agg.avg_tokens_delta:.1f}" if agg.avg_tokens_delta else "—",
-        )
+        cols[1].metric("Δ latency (ms)", _fmt_delta(agg.avg_latency_delta_ms))
+        cols[2].metric("Δ tokens", _fmt_delta(agg.avg_tokens_delta))
         cols[3].metric(
             "Δ judge",
             f"{agg.avg_judge_delta:.3f}" if agg.avg_judge_delta is not None else "—",
