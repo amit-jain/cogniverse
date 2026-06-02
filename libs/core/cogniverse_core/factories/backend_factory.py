@@ -70,7 +70,6 @@ class BackendFactory:
 
         logger.debug(f"Creating backend {backend_class.__name__} with factory")
 
-        # Phase 1: Create backend instance
         # Backend is created without schema_registry to break circular dependency
         backend_instance = backend_class(
             backend_config=backend_config,
@@ -91,15 +90,12 @@ class BackendFactory:
                 strict_mode=True,
             )
 
-        # Phase 3: Inject schema_registry into backend
         # Backend can now use schema_registry for schema operations
         backend_instance.schema_registry = schema_registry
 
-        # Phase 4: Initialize backend with configuration
         # This may create internal components that also need schema_registry
         backend_instance.initialize(backend_init_config)
 
-        # Phase 5: Inject schema_registry into backend's internal schema manager
         # Some backends have an internal schema manager that also needs registry access
         # This is backend-specific but safe to attempt on any backend
         if (

@@ -384,15 +384,10 @@ class VespaPyClient:
 
         return {"put": doc_id_string, "fields": fields}
 
-    # Removed _feed_prepared - using only batch method
-
     def _convert_embeddings_for_vespa(self, fields: Dict[str, Any]) -> Dict[str, Any]:
-        """Verify embeddings are already in correct format (processed by VespaEmbeddingProcessor)"""
-        # Embeddings should already be converted by VespaEmbeddingProcessor in process()
-        # This method now just passes through the already-converted fields
+        """Embeddings are already converted by VespaEmbeddingProcessor in
+        process(); this is a pass-through."""
         return fields
-
-    # Removed duplicate conversion methods - VespaEmbeddingProcessor handles all conversions
 
     def _feed_prepared_batch(
         self,
