@@ -112,7 +112,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         except Exception as e:
             self.logger.error(f"Failed to load model: {e}")
             raise
-            raise
 
     def generate_embeddings(
         self, video_data: dict[str, Any], output_dir: Path
