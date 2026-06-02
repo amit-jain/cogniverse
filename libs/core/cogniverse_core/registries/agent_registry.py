@@ -47,12 +47,21 @@ class AgentRegistry:
         )
         self.agents: Dict[str, AgentEndpoint] = {}
         self.capabilities: Dict[str, List[str]] = {}  # capability -> agent names
-        self.http_client = httpx.AsyncClient(timeout=10.0)
+        # Constructed lazily on first use — a registry used only for local
+        # agent lookup never opens (or has to close) an httpx client.
+        self._http_client: Optional[httpx.AsyncClient] = None
 
         # Initialize with system config agents
         self._initialize_from_config()
 
         logger.info(f"AgentRegistry initialized for tenant: {tenant_id}")
+
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Lazily-created async client for remote agent health/dispatch calls."""
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=10.0)
+        return self._http_client
 
     def _initialize_from_config(self):
         """Initialize registry from system configuration
@@ -427,5 +436,7 @@ class AgentRegistry:
             return False
 
     async def close(self):
-        """Close HTTP client"""
-        await self.http_client.aclose()
+        """Close the HTTP client if one was ever created."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
