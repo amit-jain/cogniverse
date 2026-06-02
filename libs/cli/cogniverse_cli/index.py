@@ -24,9 +24,10 @@ import httpx
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
+from cogniverse_cli.constants import RUNTIME_URL
+
 console = Console()
 
-from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
 
 CODE_EXTENSIONS = {
     ".py",

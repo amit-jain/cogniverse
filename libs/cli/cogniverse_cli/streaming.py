@@ -9,9 +9,9 @@ import httpx
 from rich.console import Console
 from rich.markdown import Markdown
 
-console = Console()
+from cogniverse_cli.constants import RUNTIME_URL
 
-from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
+console = Console()
 
 
 @dataclass

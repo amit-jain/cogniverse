@@ -7,6 +7,7 @@ import httpx
 from rich.console import Console
 from rich.syntax import Syntax
 
+from cogniverse_cli.constants import RUNTIME_URL
 from cogniverse_cli.streaming import (
     CodingResult,
     render_coding_result,
@@ -14,8 +15,6 @@ from cogniverse_cli.streaming import (
 )
 
 console = Console()
-
-from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
 
 
 class CodingSession:

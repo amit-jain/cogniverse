@@ -12,9 +12,9 @@ import httpx
 from rich.console import Console
 from rich.table import Table
 
-console = Console()
+from cogniverse_cli.constants import RUNTIME_URL
 
-from cogniverse_cli.constants import RUNTIME_URL  # noqa: F401
+console = Console()
 
 
 def _client(runtime_url: str) -> httpx.Client:
