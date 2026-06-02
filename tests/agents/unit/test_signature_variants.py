@@ -141,3 +141,32 @@ class TestVariantDataclass:
         v = SignatureVariant(agent_type="x", variant_id="y", description="d")
         with pytest.raises(Exception):  # FrozenInstanceError
             v.variant_id = "changed"  # type: ignore[misc]
+
+
+class TestSelectedForTenantWarning:
+    """Only an EXPLICIT unregistered variant warns; the default path is silent."""
+
+    class _Cfg:
+        def __init__(self, meta):
+            self.metadata = meta
+
+    def test_no_override_returns_default_without_warning(self, caplog):
+        import logging
+
+        reg = SignatureVariantRegistry()
+        with caplog.at_level(logging.WARNING):
+            result = reg.selected_for_tenant(self._Cfg({}), "search_agent")
+
+        assert result == DEFAULT_VARIANT_ID
+        assert not any("not registered" in r.message for r in caplog.records)
+
+    def test_explicit_unregistered_variant_warns(self, caplog):
+        import logging
+
+        reg = SignatureVariantRegistry()
+        cfg = self._Cfg({"signature_variants": {"search_agent": "typo_v2"}})
+        with caplog.at_level(logging.WARNING):
+            result = reg.selected_for_tenant(cfg, "search_agent")
+
+        assert result == DEFAULT_VARIANT_ID
+        assert any("not registered" in r.message for r in caplog.records)

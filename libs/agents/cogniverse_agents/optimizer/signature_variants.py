@@ -127,17 +127,22 @@ class SignatureVariantRegistry:
         per_agent = meta.get("signature_variants") or {}
         if not isinstance(per_agent, dict):
             return DEFAULT_VARIANT_ID
-        chosen = per_agent.get(agent_type) or DEFAULT_VARIANT_ID
-        if not self.is_registered(agent_type, chosen):
+        explicit = per_agent.get(agent_type)
+        # No override (or the default itself) → the baseline default, silently.
+        # Only an EXPLICIT non-default variant that isn't registered is an
+        # operator typo worth warning about.
+        if not explicit or explicit == DEFAULT_VARIANT_ID:
+            return DEFAULT_VARIANT_ID
+        if not self.is_registered(agent_type, explicit):
             logger.warning(
                 "Tenant selected variant %r for agent %r but it is not "
                 "registered; falling back to %r",
-                chosen,
+                explicit,
                 agent_type,
                 DEFAULT_VARIANT_ID,
             )
             return DEFAULT_VARIANT_ID
-        return chosen
+        return explicit
 
 
 def variant_qualified_agent_key(agent_type: str, variant_id: str) -> str:
