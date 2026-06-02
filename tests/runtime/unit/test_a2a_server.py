@@ -317,7 +317,8 @@ class TestA2AMessageSend:
 
         call_kwargs = mock_dispatcher.dispatch.call_args
         ctx = call_kwargs.kwargs["context"]
-        assert ctx["context_id"] is not None  # SDK assigns or uses provided
+        # The provided message contextId must be threaded through verbatim.
+        assert ctx["context_id"] == "conv-abc"
 
     @pytest.mark.ci_fast
     def test_first_turn_has_empty_history(self, client, mock_dispatcher):
