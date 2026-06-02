@@ -358,18 +358,19 @@ class TestSummarizerAgentCoreFunctionality:
             assert 0 <= score <= 1
 
     @pytest.mark.ci_fast
-    def test_identify_visual_elements_functionality(
-        self, agent_with_mocks, sample_summary_request
-    ):
-        """Test visual element identification"""
+    def test_identify_visual_elements_functionality(self, agent_with_mocks):
+        """Visual elements are derived from the frame/thumbnail/image fields."""
         agent = agent_with_mocks
 
-        visual_elements = agent._identify_visual_elements(
-            sample_summary_request.search_results
-        )
+        results = [
+            {"frame_id": "f1", "thumbnail": "t.jpg"},
+            {"image_path": "/x.png"},
+            {"video_id": "v9"},  # no visual field → contributes nothing
+        ]
 
-        assert isinstance(visual_elements, list)
-        # Should identify visual content from video results
+        visual_elements = set(agent._identify_visual_elements(results))
+
+        assert visual_elements == {"video_frames", "thumbnails", "images"}
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
