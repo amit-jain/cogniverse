@@ -251,35 +251,33 @@ class TestTextAnalysisEndpoints:
         }
         mock_get_config.return_value = mock_config
 
-        client = TestClient(app)
-
-        # Mock the agent's analyze_text method
-        with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
-            mock_analyze.return_value = {
-                "result": "Test analysis result",
-                "confidence": 0.95,
-                "module_type": "predict",
-                "analysis_type": "summary",
-            }
-
-            # Test endpoint
-            response = client.post(
-                "/analyze",
-                params={
-                    "text": "Test text to analyze",
-                    "tenant_id": "test_tenant",
+        # `with` runs the lifespan that sets the module config_manager.
+        with TestClient(app) as client:
+            # Mock the agent's analyze_text method
+            with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
+                mock_analyze.return_value = {
+                    "result": "Test analysis result",
+                    "confidence": 0.95,
+                    "module_type": "predict",
                     "analysis_type": "summary",
-                },
-            )
+                }
 
-            assert response.status_code == 200
-            data = response.json()
-            assert data["status"] == "success"
-            assert data["analysis"]["result"] == "Test analysis result"
-            assert data["analysis"]["confidence"] == 0.95
+                # Params go in the JSON body, not the query string.
+                response = client.post(
+                    "/analyze",
+                    json={
+                        "text": "Test text to analyze",
+                        "tenant_id": "test_tenant",
+                        "analysis_type": "summary",
+                    },
+                )
 
-            # Verify analyze_text was called
-            mock_analyze.assert_called_once_with("Test text to analyze", "summary")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["status"] == "success"
+                assert data["analysis"]["result"] == "Test analysis result"
+                assert data["analysis"]["confidence"] == 0.95
+                mock_analyze.assert_called_once_with("Test text to analyze", "summary")
 
     @patch("cogniverse_core.config.utils.get_config")
     def test_analyze_endpoint_without_tenant_id_fails(self, mock_get_config):
@@ -293,10 +291,10 @@ class TestTextAnalysisEndpoints:
 
         client = TestClient(app)
 
-        # Test without tenant_id - should fail with 422 (missing required parameter)
+        # Test without tenant_id - should fail with 422 (missing required field)
         response = client.post(
             "/analyze",
-            params={
+            json={
                 "text": "Test text to analyze",
                 "analysis_type": "summary",
             },
@@ -304,7 +302,7 @@ class TestTextAnalysisEndpoints:
 
         assert response.status_code == 422  # FastAPI validation error
         error_detail = response.json()["detail"]
-        assert any(error["loc"] == ["query", "tenant_id"] for error in error_detail), (
+        assert any(error["loc"] == ["body", "tenant_id"] for error in error_detail), (
             "Should have validation error for missing tenant_id"
         )
 
@@ -327,24 +325,24 @@ class TestTextAnalysisEndpoints:
         }
         mock_get_config.return_value = mock_config
 
-        # Configure TestClient to not re-raise server exceptions
-        client = TestClient(app, raise_server_exceptions=False)
+        # Configure TestClient to not re-raise server exceptions; `with` runs
+        # the lifespan that sets the module config_manager.
+        with TestClient(app, raise_server_exceptions=False) as client:
+            # Mock analyze_text to raise exception
+            with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
+                mock_analyze.side_effect = RuntimeError("Analysis failed")
 
-        # Mock analyze_text to raise exception
-        with patch.object(TextAnalysisAgent, "analyze_text") as mock_analyze:
-            mock_analyze.side_effect = RuntimeError("Analysis failed")
+                response = client.post(
+                    "/analyze",
+                    json={
+                        "text": "Test text",
+                        "tenant_id": "test_tenant",
+                        "analysis_type": "summary",
+                    },
+                )
 
-            response = client.post(
-                "/analyze",
-                params={
-                    "text": "Test text",
-                    "tenant_id": "test_tenant",
-                    "analysis_type": "summary",
-                },
-            )
-
-            # Should return 500 error
-            assert response.status_code == 500
+                # Should return 500 error
+                assert response.status_code == 500
 
     def test_health_endpoint(self):
         """GET /health reports agent status and capabilities (A2A probe)."""

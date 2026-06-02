@@ -10,6 +10,7 @@ from typing import Any, Dict
 import dspy
 import uvicorn
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 from cogniverse_agents._confidence import parse_confidence
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -297,17 +298,18 @@ async def get_agent_card():
     }
 
 
+class AnalyzeRequest(BaseModel):
+    """Request body for POST /analyze."""
+
+    text: str
+    tenant_id: str
+    analysis_type: str = "summary"
+
+
 @app.post("/analyze")
-async def analyze_text_endpoint(
-    text: str, tenant_id: str, analysis_type: str = "summary"
-):
+async def analyze_text_endpoint(request: AnalyzeRequest):
     """
     Analyze text using current DSPy configuration.
-
-    Args:
-        text: Text content to analyze
-        tenant_id: Tenant identifier (REQUIRED)
-        analysis_type: Type of analysis
 
     Returns:
         Analysis result
@@ -315,10 +317,12 @@ async def analyze_text_endpoint(
     import asyncio
 
     try:
-        agent = get_agent(tenant_id)
+        agent = get_agent(request.tenant_id)
         # analyze_text runs a blocking DSPy LM call; off-load to a worker so the
         # event loop stays responsive (matches the dispatcher path).
-        result = await asyncio.to_thread(agent.analyze_text, text, analysis_type)
+        result = await asyncio.to_thread(
+            agent.analyze_text, request.text, request.analysis_type
+        )
         return {"status": "success", "analysis": result}
     except Exception as e:
         logger.error(f"Text analysis failed: {e}")
