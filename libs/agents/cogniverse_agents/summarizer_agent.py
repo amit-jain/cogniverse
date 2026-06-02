@@ -3,8 +3,8 @@ Summarizer Agent with full A2A support, VLM integration, and "think phase" for c
 Provides intelligent summarization of search results with visual content analysis.
 """
 
-import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -268,6 +268,7 @@ class SummarizerAgent(
         """
         logger.info(f"Starting summarization for query: '{request.query}'")
         logger.info(f"Analyzing {len(request.search_results)} search results")
+        _summarize_start = time.monotonic()
 
         with dspy.context(lm=self._dspy_lm):
             try:
@@ -319,7 +320,7 @@ class SummarizerAgent(
                         "results_analyzed": len(request.search_results),
                         "summary_type": request.summary_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
-                        "processing_time": asyncio.get_event_loop().time(),
+                        "processing_time": time.monotonic() - _summarize_start,
                     },
                 )
 

@@ -203,14 +203,29 @@ class TestSummarizerAgent:
             include_visual_analysis=False,  # Skip visual analysis for speed
         )
 
-        with patch("cogniverse_agents.summarizer_agent.dspy.context"):
+        # First monotonic() call is the start stamp; later calls (incl. the
+        # processing_time computation) read 100.25 → elapsed 0.25.
+        _start = iter([100.0])
+
+        def _fake_monotonic():
+            return next(_start, 100.25)
+
+        with (
+            patch("cogniverse_agents.summarizer_agent.dspy.context"),
+            patch(
+                "cogniverse_agents.summarizer_agent.time.monotonic",
+                side_effect=_fake_monotonic,
+            ),
+        ):
             result = await agent._summarize(request)
 
         assert result.summary is not None
         assert len(result.summary) > 0
         assert isinstance(result.key_points, list)
-        assert result.confidence_score >= 0.0
-        assert result.confidence_score <= 1.0
+        assert 0.0 <= result.confidence_score <= 1.0
+        # processing_time is an elapsed duration (100.25 - 100.0), not the
+        # absolute event-loop clock.
+        assert result.metadata["processing_time"] == pytest.approx(0.25)
 
 
 @pytest.mark.unit
