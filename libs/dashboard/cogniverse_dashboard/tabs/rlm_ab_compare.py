@@ -261,7 +261,9 @@ def render_rlm_ab_compare_tab():
         "with both arms (RLM-on / RLM-off) tied by a shared `ab_id`."
     )
 
-    tenant_id = st.session_state.get("tenant_id") or st.text_input(
+    # The app shell stores the gate-selected tenant under "current_tenant";
+    # "tenant_id" was never set, so the tab always fell back to the text input.
+    tenant_id = st.session_state.get("current_tenant") or st.text_input(
         "Tenant id", value="default"
     )
     phoenix_url = st.session_state.get("phoenix_url") or st.text_input(
