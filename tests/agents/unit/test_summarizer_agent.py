@@ -306,21 +306,27 @@ class TestSummarizerAgentCoreFunctionality:
         assert thinking_phase.reasoning.strip()
 
     @pytest.mark.ci_fast
-    def test_extract_themes_functionality(
-        self, agent_with_mocks, sample_summary_request
-    ):
-        """Test theme extraction from search results"""
+    def test_extract_themes_functionality(self, agent_with_mocks):
+        """Theme extraction maps result fields to a deterministic theme set."""
         agent = agent_with_mocks
 
-        themes = agent._extract_themes(sample_summary_request.search_results)
+        results = [
+            {
+                "video_id": "v1",
+                "description": "a great tutorial on python",
+                "content_type": "video",
+            },
+            {"description": "breaking news report", "content_type": "text"},
+        ]
 
-        assert isinstance(themes, list)
-        assert len(themes) > 0
-        # Should extract themes from titles and descriptions
-        themes_lower = [theme.lower() for theme in themes]
-        print(f"Extracted themes: {themes}")  # Debug output
-        # The method might extract more generic themes, so let's be more flexible
-        assert any("content" in theme_lower for theme_lower in themes_lower)
+        themes = set(agent._extract_themes(results))
+
+        assert themes == {
+            "video_content",  # video_id + content_type video
+            "educational_content",  # "tutorial" in description
+            "news_content",  # "news"/"report" in description
+            "text_content",  # content_type text
+        }
 
     @pytest.mark.ci_fast
     def test_categorize_content_functionality(
