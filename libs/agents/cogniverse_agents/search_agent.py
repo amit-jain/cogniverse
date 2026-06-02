@@ -164,10 +164,13 @@ def _format_public_result(result: Dict[str, Any]) -> Dict[str, Any]:
     The gateway-visible contract separates identity, ranking, payload,
     and temporal info so clients don't depend on Vespa field names.
 
-    If the result already carries a ``metadata`` key (e.g. a different
-    code path pre-shaped it), it's passed through untouched.
+    If the result is already public-shaped (carries the public
+    ``document_id`` field alongside ``metadata``), it's passed through
+    untouched. A raw backend result may also carry a ``metadata`` key (from
+    flattening ``sr.document.metadata``), so presence of ``metadata`` alone is
+    not enough to skip reshaping.
     """
-    if "metadata" in result:
+    if "document_id" in result and "metadata" in result:
         return result
 
     start = result.get("start_time")
