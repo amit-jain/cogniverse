@@ -171,3 +171,28 @@ class TestMultiModalReranker:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRankingDiversity:
+    """analyze_ranking_quality diversity is normalized Shannon entropy."""
+
+    @staticmethod
+    def _r(modality: str) -> RerankerSearchResult:
+        return RerankerSearchResult(
+            id="x",
+            title="t",
+            content="c",
+            modality=modality,
+            score=1.0,
+            metadata={"reranking_score": 1.0},
+        )
+
+    def test_two_equal_modalities_max_diversity(self):
+        rr = object.__new__(MultiModalReranker)
+        q = rr.analyze_ranking_quality([self._r("video"), self._r("text")])
+        assert q["diversity"] == pytest.approx(1.0)
+
+    def test_single_modality_zero_diversity(self):
+        rr = object.__new__(MultiModalReranker)
+        q = rr.analyze_ranking_quality([self._r("video"), self._r("video")])
+        assert q["diversity"] == 0.0

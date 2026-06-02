@@ -6,6 +6,7 @@ Improves result quality by analyzing complementarity, temporal alignment, and
 modality-query alignment.
 """
 
+import math
 from typing import Any, Dict, List, Optional
 
 from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
@@ -346,9 +347,9 @@ class MultiModalReranker:
         for count in distribution.values():
             p = count / total
             if p > 0:
-                entropy += -p * (p if p == 0 else __import__("math").log2(p))
+                entropy += -p * math.log2(p)
 
-        max_entropy = __import__("math").log2(len(distribution)) if distribution else 1
+        max_entropy = math.log2(len(distribution)) if distribution else 1
         diversity = entropy / max_entropy if max_entropy > 0 else 0.0
 
         # Calculate average reranking score
