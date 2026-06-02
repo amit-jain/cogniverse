@@ -157,6 +157,7 @@ class VideoIngestionPipelineBuilder:
             schema_loader=self._schema_loader,
             schema_name=self._schema_name,
             debug_mode=self._debug_mode,
+            max_concurrent=self._max_concurrent,
         )
 
         return pipeline

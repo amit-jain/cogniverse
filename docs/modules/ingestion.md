@@ -814,9 +814,12 @@ result = await pipeline.process_video_async(Path("video.mp4"))
 # }
 ```
 
-#### `async process_videos_concurrent(video_files: list[Path], max_concurrent: int = 3) -> dict[str, Any]`
+#### `async process_videos_concurrent(video_files: list[Path], max_concurrent: int | None = None) -> dict[str, Any]`
 
-Process multiple videos concurrently with resource control.
+Process multiple videos concurrently with resource control. When
+`max_concurrent` is omitted it falls back to the pipeline's configured value
+(set via `VideoIngestionPipelineBuilder.with_concurrency(...)`, default 3); a
+per-call value still overrides it.
 
 ```python
 video_files = [Path("v1.mp4"), Path("v2.mp4"), Path("v3.mp4")]

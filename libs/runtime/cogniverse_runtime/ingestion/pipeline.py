@@ -174,6 +174,7 @@ class VideoIngestionPipeline:
         schema_name: str | None = None,
         debug_mode: bool = False,
         event_queue: Optional[EventQueue] = None,
+        max_concurrent: int = 3,
     ):
         """
         Initialize the video ingestion pipeline with async support
@@ -198,6 +199,7 @@ class VideoIngestionPipeline:
         self.config_manager = config_manager
         self.schema_loader = schema_loader
         self.event_queue = event_queue
+        self.max_concurrent = max_concurrent
         self.job_id: Optional[str] = None  # Set when processing starts
 
         if config is None:
@@ -1029,7 +1031,7 @@ class VideoIngestionPipeline:
     async def process_videos_concurrent(
         self,
         video_files: list[Path] | list[str] | list[Path | str],
-        max_concurrent: int = 3,
+        max_concurrent: int | None = None,
     ) -> dict[str, Any]:
         """
         Process multiple videos concurrently with resource control
@@ -1059,6 +1061,11 @@ class VideoIngestionPipeline:
                 message=f"Starting ingestion of {len(video_files)} videos",
             )
         )
+
+        # Fall back to the pipeline-configured concurrency (set via the
+        # builder's with_concurrency) when no per-call override is given.
+        if max_concurrent is None:
+            max_concurrent = self.max_concurrent
 
         # Create semaphore to limit concurrent processing
         semaphore = asyncio.Semaphore(max_concurrent)
