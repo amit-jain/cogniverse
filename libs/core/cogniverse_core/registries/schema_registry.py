@@ -448,14 +448,14 @@ class SchemaRegistry:
                 )
         except Exception as e:
             # Backend deployment failed - no rollback needed (nothing changed)
-            logger.error(f"🔍 Backend deployment FAILED: {e}")
+            logger.error(f"Backend deployment failed: {e}")
             raise BackendDeploymentError(
                 f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
             )
 
         # TRANSACTION PHASE 2: Register in ConfigStore (critical section)
         try:
-            logger.warning(f"🔍 REGISTERING schema {tenant_schema_name} in database")
+            logger.info(f"Registering schema {tenant_schema_name} in database")
             self.register_schema(
                 tenant_id=tenant_id,
                 base_schema_name=base_schema_name,

@@ -214,12 +214,11 @@ class VideoPrismQueryEncoder(QueryEncoder):
             config["remote_inference_url"] = inference_service_url
         logger.info(f"Creating VideoPrism loader for model: {model_name}")
         self.videoprism_loader, _ = get_or_load_model(model_name, config, logger)
-        logger.info(f"Got loader type: {type(self.videoprism_loader).__name__}")
-        logger.info(
-            f"Loader has encode_text: {hasattr(self.videoprism_loader, 'encode_text')}"
-        )
-        logger.info(
-            f"Loader has text_tokenizer: {hasattr(self.videoprism_loader, 'text_tokenizer')}"
+        logger.debug(
+            "VideoPrism loader %s: encode_text=%s text_tokenizer=%s",
+            type(self.videoprism_loader).__name__,
+            hasattr(self.videoprism_loader, "encode_text"),
+            hasattr(self.videoprism_loader, "text_tokenizer"),
         )
 
         # Get text encoding components from the loader
@@ -230,7 +229,7 @@ class VideoPrismQueryEncoder(QueryEncoder):
                 if hasattr(self.videoprism_loader, "text_forward_fn")
                 else None
             )
-            logger.info(f"Loaded VideoPrism query encoder: {model_name}")
+            logger.debug(f"Loaded VideoPrism query encoder: {model_name}")
         else:
             logger.warning("VideoPrism loader doesn't have text encoder support")
             self.text_tokenizer = None
