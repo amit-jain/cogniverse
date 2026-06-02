@@ -292,16 +292,18 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         import requests
 
         # Build YQL query
+        from cogniverse_vespa._yql import yql_quote
+
         where_clause = "true"
         if filters:
             filter_parts = []
             if "detected_objects" in filters:
                 filter_parts.append(
-                    f"contains(detected_objects, '{filters['detected_objects']}')"
+                    f"contains(detected_objects, {yql_quote(filters['detected_objects'])})"
                 )
             if "detected_scenes" in filters:
                 filter_parts.append(
-                    f"contains(detected_scenes, '{filters['detected_scenes']}')"
+                    f"contains(detected_scenes, {yql_quote(filters['detected_scenes'])})"
                 )
             if filter_parts:
                 where_clause = " AND ".join(filter_parts)

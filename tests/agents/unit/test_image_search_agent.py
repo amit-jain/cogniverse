@@ -276,3 +276,40 @@ class TestImageSearchAgent:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestImageSearchFilterEscaping:
+    """Filter values must be YQL-escaped, not raw single-quote interpolated."""
+
+    @pytest.mark.asyncio
+    async def test_filter_value_with_quote_is_escaped(self, monkeypatch):
+        from cogniverse_vespa._yql import yql_quote
+
+        agent = object.__new__(ImageSearchAgent)
+        agent._tenant_id = "acme:acme"
+        agent._vespa_endpoint = "http://vespa:8080"
+
+        captured = {}
+
+        class _Resp:
+            status_code = 500
+            text = ""
+
+        def fake_post(url, json=None, timeout=None):
+            captured["yql"] = json["yql"]
+            return _Resp()
+
+        monkeypatch.setattr("requests.post", fake_post)
+
+        val = "cat's toy"
+        await agent._search_vespa(
+            np.zeros((2, 128), dtype=np.float32),
+            "",
+            "semantic",
+            5,
+            {"detected_objects": val},
+        )
+
+        expected = "contains(detected_objects, " + yql_quote(val) + ")"
+        assert expected in captured["yql"]
+        assert "'cat's toy'" not in captured["yql"]
