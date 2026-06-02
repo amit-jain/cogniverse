@@ -187,13 +187,13 @@ class TestErrorMessage:
         inner = _RecordingTransport()
         transport = PolicyEnforcingTransport(SEARCH_AGENT_POLICY, inner=inner)
         async with httpx.AsyncClient(transport=transport) as client:
-            try:
+            with pytest.raises(EgressDeniedError) as excinfo:
                 await client.get("http://denied.example:1/")
-            except EgressDeniedError as exc:
-                msg = str(exc)
-                assert "denied.example" in msg
-                assert "localhost:8080" in msg  # listed allowed endpoints
-                assert "localhost:11434" in msg
+
+        msg = str(excinfo.value)
+        assert "denied.example" in msg
+        assert "localhost:8080" in msg  # listed allowed endpoints
+        assert "localhost:11434" in msg
 
 
 @pytest.mark.asyncio
