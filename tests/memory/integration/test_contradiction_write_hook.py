@@ -225,35 +225,32 @@ class TestRecursionAndScopeGuards:
     def test_no_subject_key_skips_hook(self, manager_with_registry):
         mm = manager_with_registry
         # Two memories, no subject_key → detector has nothing to group on.
-        mm.add_memory(
+        mid_a = mm.add_memory(
             content="loose claim A",
             tenant_id=TENANT,
             agent_name=AGENT,
             metadata={"kind": "tenant_instruction"},
             infer=False,
         )
-        mm.add_memory(
+        mid_b = mm.add_memory(
             content="loose claim B",
             tenant_id=TENANT,
             agent_name=AGENT,
             metadata={"kind": "tenant_instruction"},
             infer=False,
         )
-        # No conflict_set memory should have been persisted under any
-        # subject for these — get_all_memories at sentinel agent shows
-        # only those with explicit subject_key.
-        all_conflicts = mm.get_all_memories(
-            tenant_id=TENANT, agent_name=CONFLICT_AGENT_NAME
-        )
-        # We can't assert zero (other tests in this module may have
-        # produced conflicts), but no record should reference these
-        # specific memories — they had no subject.
-        for r in all_conflicts:
-            members = (r.get("metadata") or {}).get("conflicting_memory_ids") or []
-            for m in members:
-                # No member should be a memory we just wrote without a
-                # subject_key (we'd have to look them up; sufficient to
-                # assert by content prefix isn't easy here, so just
-                # confirm the hook didn't error or produce something
-                # unbounded).
-                assert isinstance(m, str)
+        assert mid_a and mid_b
+
+        # The two subject-less writes must not appear in ANY conflict_set —
+        # the hook skipped them, so neither id is groupable. Other tests in
+        # the module produce conflicts, so assert by id membership (bounded)
+        # rather than a global count.
+        referenced = {
+            member
+            for r in mm.get_all_memories(
+                tenant_id=TENANT, agent_name=CONFLICT_AGENT_NAME
+            )
+            for member in (r.get("metadata") or {}).get("conflicting_memory_ids") or []
+        }
+        assert mid_a not in referenced
+        assert mid_b not in referenced
