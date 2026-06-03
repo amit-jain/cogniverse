@@ -78,17 +78,19 @@ def test_summarizer_process_happy_path_returns_envelope(
 ) -> None:
     fake = MagicMock()
     fake.summarize = AsyncMock(
-        return_value=MagicMock(
+        return_value=sm_module.SummaryResult(
             summary="the answer",
             key_points=["a", "b"],
             visual_insights=[],
             confidence_score=0.8,
-            metadata={"x": 1},
-            thinking_phase=MagicMock(
+            thinking_phase=sm_module.ThinkingPhase(
                 key_themes=["t1"],
                 content_categories=["c1"],
+                relevance_scores={"r1": 0.5},
+                visual_elements=[],
                 reasoning="because",
             ),
+            metadata={"x": 1},
         )
     )
     monkeypatch.setattr(sm_module, "summarizer_agent", fake)
@@ -98,8 +100,14 @@ def test_summarizer_process_happy_path_returns_envelope(
     assert body["status"] == "completed"
     assert body["summary"] == "the answer"
     assert body["key_points"] == ["a", "b"]
+    assert body["visual_insights"] == []
     assert body["confidence_score"] == 0.8
-    assert body["thinking_process"]["reasoning"] == "because"
+    assert body["metadata"] == {"x": 1}
+    assert body["thinking_process"] == {
+        "themes": ["t1"],
+        "categories": ["c1"],
+        "reasoning": "because",
+    }
 
 
 def test_detailed_report_health_initializing_when_no_singleton(
@@ -222,11 +230,18 @@ def test_summarizer_summarize_happy_path_envelope(
 ) -> None:
     fake = MagicMock()
     fake.summarize = AsyncMock(
-        return_value=MagicMock(
+        return_value=sm_module.SummaryResult(
             summary="condensed",
             key_points=["p1"],
             visual_insights=["v1"],
             confidence_score=0.7,
+            thinking_phase=sm_module.ThinkingPhase(
+                key_themes=[],
+                content_categories=[],
+                relevance_scores={},
+                visual_elements=[],
+                reasoning="r",
+            ),
             metadata={"k": "v"},
         )
     )
@@ -252,13 +267,21 @@ def test_detailed_report_generate_happy_path_envelope(
 ) -> None:
     fake = MagicMock()
     fake.generate_report = AsyncMock(
-        return_value=MagicMock(
+        return_value=dr_module.ReportResult(
             executive_summary="exec",
-            detailed_findings="findings",
-            visual_analysis="visual",
-            technical_details="tech",
+            detailed_findings=[{"finding": "f1"}],
+            visual_analysis=[{"visual": "v1"}],
+            technical_details=[{"tech": "t1"}],
             recommendations=["do x"],
-            confidence_assessment="high",
+            confidence_assessment={"overall": 0.9},
+            thinking_phase=dr_module.ThinkingPhase(
+                content_analysis={},
+                visual_assessment={},
+                technical_findings=[],
+                patterns_identified=[],
+                gaps_and_limitations=[],
+                reasoning="r",
+            ),
             metadata={"m": 1},
         )
     )
@@ -271,8 +294,9 @@ def test_detailed_report_generate_happy_path_envelope(
     assert r.status_code == 200
     body = r.json()
     assert body["executive_summary"] == "exec"
+    assert body["detailed_findings"] == [{"finding": "f1"}]
     assert body["recommendations"] == ["do x"]
-    assert body["confidence_assessment"] == "high"
+    assert body["confidence_assessment"] == {"overall": 0.9}
     assert set(body.keys()) == {
         "executive_summary",
         "detailed_findings",
