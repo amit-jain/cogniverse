@@ -8,38 +8,20 @@ contains substantive content tied to the input.
 import logging
 
 import dspy
-import httpx
 import pytest
 
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+from tests.agents.integration.conftest import is_llm_available
 
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.integration]
 
 
-def _llm_available() -> bool:
-    try:
-        import json
-        from pathlib import Path
-
-        config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        api_base = (
-            config.get("llm_config", {})
-            .get("primary", {})
-            .get("api_base", "http://localhost:11434")
-        )
-        return httpx.get(f"{api_base}/api/tags", timeout=5).status_code == 200
-    except Exception:
-        return False
-
-
 skip_if_no_lm = pytest.mark.skipif(
-    not _llm_available(), reason="LLM endpoint not available"
+    not is_llm_available(), reason="Configured LLM endpoint not reachable"
 )
 
 

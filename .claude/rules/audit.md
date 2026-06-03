@@ -156,6 +156,16 @@ grep -rnP 'contains "\{(?!.*(_escape|yql_quote))[^}]*\}"|=="\{(?!.*(_escape|yql_
 # misfires on a hypothetical name embedding the 3 letters — robustness, not a
 # firing bug.
 grep -rnP '"lvt" in [^.]*\.lower\(\)|"global" in [^.]*\.lower\(\)' libs/ --include="*.py"
+
+# LM-availability skip gate that probes ONLY Ollama's /api/tags (7th audit:
+# tests/runtime/integration/conftest.py + test_detailed_report_real.py +
+# test_query_enhancement_real.py + tests/e2e/conftest.py). When the configured
+# llm_config.primary.api_base ends in /v1 (vLLM/OAI-compat), /api/tags 404s and
+# the gate FALSELY SKIPS the whole suite even though the LM is up — an infra
+# skip = a bug. The canonical fix probes BOTH /api/tags and /v1/models after
+# stripping a trailing /v1 (see tests/agents/integration/conftest.py:is_llm_available
+# and tests/fixtures/llm.py). The negative-lookahead finds single-probe gates.
+grep -rnP '/api/tags(?!.*v1/models)' tests/ --include="*.py" | grep -iE 'available|skip|reachable'
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
