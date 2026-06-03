@@ -742,6 +742,7 @@ class TestPhoenixLoggingUsesTelemetryManager:
             analysis=None,
             approved_batch=None,
             formatted_dataset=[],
+            run_id="run_test",
         )
 
     def test_log_evaluation_does_not_touch_provider_tracer(self):
@@ -752,6 +753,54 @@ class TestPhoenixLoggingUsesTelemetryManager:
             adapter_path="/tmp/adapter",
             evaluation_result=MagicMock(),
         )
+
+    def test_experiment_span_uses_passed_run_id(self):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        result = OrchestrationResult(
+            model_type="llm",
+            training_method="sft",
+            adapter_path="/tmp/adapter",
+            metrics={"train_loss": 0.1, "epoch": 3},
+            base_model="m",
+            lora_config={},
+            used_synthetic=False,
+            synthetic_approval_count=0,
+        )
+
+        recorded = {}
+
+        class _RecordingSpan:
+            def set_status(self, status):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        class _RecordingManager:
+            def span(self, name, *, tenant_id=None, project_name=None, attributes=None):
+                recorded["attributes"] = attributes or {}
+                return _RecordingSpan()
+
+        with patch(
+            "cogniverse_finetuning.orchestrator.get_telemetry_manager",
+            return_value=_RecordingManager(),
+        ):
+            orch._log_experiment_to_phoenix(
+                config=self._config(),
+                result=result,
+                analysis=None,
+                approved_batch=None,
+                formatted_dataset=[],
+                run_id="run_SHARED_123",
+            )
+
+        # The span's run_id must equal the SHARED run_id (the same value
+        # _register_adapter stores as experiment_run_id) — not a fresh
+        # timestamp generated inside the method.
+        assert recorded["attributes"]["experiment.run_id"] == "run_SHARED_123"
 
 
 @pytest.mark.unit

@@ -11,7 +11,7 @@ Combines all components into a high-level API:
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
@@ -361,6 +361,7 @@ class FinetuningOrchestrator:
         analysis: any,
         approved_batch: any,
         formatted_dataset: List[Dict],
+        run_id: str,
     ) -> None:
         """
         Log experiment to Phoenix as EXPERIMENT span.
@@ -371,8 +372,11 @@ class FinetuningOrchestrator:
             analysis: DataAnalysis from method selector
             approved_batch: Approval batch (if synthetic was used)
             formatted_dataset: Formatted training dataset
+            run_id: Shared experiment run id — the SAME id passed to
+                ``_register_adapter`` so the Phoenix experiment span joins
+                to the registered adapter (was self-generated here, which
+                produced a different timestamp than the registry's).
         """
-        run_id = f"run_{datetime.utcnow().isoformat()}"
 
         experiment_span_attributes = {
             "openinference.span.kind": "EXPERIMENT",
@@ -590,7 +594,7 @@ class FinetuningOrchestrator:
             logger.info(f"Dataset validation passed: {len(formatted_dataset)} pairs")
 
             # Train with backend (add timestamp to avoid conflicts)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
             training_config = {
                 "use_lora": config.use_lora,
@@ -653,13 +657,14 @@ class FinetuningOrchestrator:
                     # Continue without evaluation
 
             # Log experiment to Phoenix
-            run_id = f"run_{datetime.utcnow().isoformat()}"
+            run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
             self._log_experiment_to_phoenix(
                 config=config,
                 result=orchestration_result,
                 analysis=analysis,
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
+                run_id=run_id,
             )
 
             # Register adapter in registry
@@ -684,7 +689,7 @@ class FinetuningOrchestrator:
             logger.info(f"Dataset validation passed: {len(formatted_dataset)} examples")
 
             # Train with backend (add timestamp to avoid conflicts)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             output_dir = f"{config.output_dir}/sft_{config.agent_type}_{timestamp}"
             training_config = {
                 "use_lora": config.use_lora,
@@ -748,13 +753,14 @@ class FinetuningOrchestrator:
                     # Continue without evaluation
 
             # Log experiment to Phoenix
-            run_id = f"run_{datetime.utcnow().isoformat()}"
+            run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
             self._log_experiment_to_phoenix(
                 config=config,
                 result=orchestration_result,
                 analysis=analysis,
                 approved_batch=approved_batch,
                 formatted_dataset=formatted_dataset,
+                run_id=run_id,
             )
 
             # Register adapter in registry
@@ -819,7 +825,7 @@ class FinetuningOrchestrator:
         logger.info("Step 3: Training with SFT backend...")
         backend = self._create_backend(config)
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         output_dir = (
             f"{config.output_dir}/sft_multi_turn_{config.agent_type}_{timestamp}"
         )
@@ -881,13 +887,14 @@ class FinetuningOrchestrator:
                 logger.error(f"Evaluation failed: {e}", exc_info=True)
 
         # 6. Log experiment to Phoenix
-        run_id = f"run_{datetime.utcnow().isoformat()}"
+        run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
         self._log_experiment_to_phoenix(
             config=config,
             result=orchestration_result,
             analysis=None,
             approved_batch=None,
             formatted_dataset=formatted_dataset,
+            run_id=run_id,
         )
 
         # 7. Register adapter in registry
@@ -940,7 +947,7 @@ class FinetuningOrchestrator:
         backend = self._create_backend(config)
 
         # Add timestamp to avoid conflicts
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         output_dir = f"{config.output_dir}/embedding_{config.modality}_{timestamp}"
         training_config = {
             "use_lora": config.use_lora,
@@ -967,13 +974,14 @@ class FinetuningOrchestrator:
         )
 
         # Log experiment to Phoenix
-        run_id = f"run_{datetime.utcnow().isoformat()}"
+        run_id = f"run_{datetime.now(timezone.utc).isoformat()}"
         self._log_experiment_to_phoenix(
             config=config,
             result=orchestration_result,
             analysis=None,  # No analysis for embedding yet
             approved_batch=None,
             formatted_dataset=formatted_dataset,
+            run_id=run_id,
         )
 
         # Register adapter in registry
