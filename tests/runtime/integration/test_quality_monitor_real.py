@@ -22,8 +22,11 @@ from PIL import Image
 from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
 from cogniverse_core.query.encoders import QueryEncoderFactory
 from cogniverse_evaluation.quality_monitor import (
+    AgentEvalResult,
     AgentType,
     GoldenEvalResult,
+    LiveEvalResult,
+    OptimizationTrigger,
     QualityMonitor,
     Verdict,
 )
@@ -673,3 +676,148 @@ class TestXGBoostGateViaPhoenixProvider:
         result = monitor._apply_training_decision_model(verdicts, None, None)
 
         assert result == verdicts
+
+
+def _roundtrip_value(df, col):
+    """Pull a scalar from a Phoenix get_dataset() dataframe, tolerating both
+    the flat-column layout and the nested input/output-dict layout
+    to_dataframe() may produce depending on the input/output key split."""
+    if col in df.columns:
+        return df[col].iloc[-1]
+    for c in df.columns:
+        cell = df[c].iloc[-1]
+        if isinstance(cell, dict) and col in cell:
+            return cell[col]
+    raise KeyError(f"{col!r} not in {list(df.columns)} nor any nested dict cell")
+
+
+@pytest.mark.integration
+class TestStoreOperationsRealPhoenix:
+    """_store_* methods persist their payloads into a real Phoenix dataset.
+
+    The unit-tier equivalents mocked _dataset_store and asserted only that
+    create_dataset was called — they never proved the metrics, agent rows, or
+    training examples actually reached Phoenix in the right shape. These store
+    against real Phoenix and read the dataset back to assert the persisted
+    values exactly.
+    """
+
+    @pytest.fixture
+    def phoenix_monitor(self, phoenix_container, tmp_path):
+        golden_path = tmp_path / "golden.json"
+        golden_path.write_text(json.dumps([{"query": "q", "expected_videos": ["v"]}]))
+        m = QualityMonitor(
+            tenant_id="qm_store_rt",
+            runtime_url="http://testserver",
+            phoenix_http_endpoint=phoenix_container["http_endpoint"],
+            llm_base_url=get_llm_base_url(),
+            llm_model=get_llm_model(),
+            golden_dataset_path=str(golden_path),
+        )
+        yield m
+
+    @pytest.mark.asyncio
+    async def test_store_golden_persists_metrics(self, phoenix_monitor):
+        m = phoenix_monitor
+        result = GoldenEvalResult(
+            timestamp=datetime.utcnow(),
+            tenant_id=m.tenant_id,
+            mean_mrr=0.75,
+            mean_ndcg=0.70,
+            mean_precision_at_5=0.50,
+            query_count=10,
+        )
+        await m._store_golden_eval_result(result)
+
+        store = m._get_dataset_store()
+        df = await store.get_dataset(f"quality-baseline-{m.tenant_id}")
+        assert not df.empty
+        assert float(_roundtrip_value(df, "mean_mrr")) == pytest.approx(0.75, abs=1e-6)
+        assert float(_roundtrip_value(df, "mean_ndcg")) == pytest.approx(0.70, abs=1e-6)
+        assert float(_roundtrip_value(df, "mean_precision_at_5")) == pytest.approx(
+            0.50, abs=1e-6
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_live_persists_agent_rows(self, phoenix_monitor):
+        m = phoenix_monitor
+        ts = datetime.utcnow()
+        result = LiveEvalResult(
+            timestamp=ts,
+            tenant_id=m.tenant_id,
+            agent_results={
+                AgentType.SEARCH: AgentEvalResult(
+                    agent=AgentType.SEARCH,
+                    score=0.80,
+                    baseline_score=0.85,
+                    degradation_pct=0.06,
+                    sample_count=20,
+                ),
+                AgentType.SUMMARY: AgentEvalResult(
+                    agent=AgentType.SUMMARY,
+                    score=0.30,
+                    baseline_score=0.70,
+                    degradation_pct=0.57,
+                    sample_count=15,
+                ),
+            },
+        )
+        await m._store_live_eval_result(result)
+
+        name = f"quality-live-{m.tenant_id}-{ts.strftime('%Y%m%d_%H%M%S')}"
+        store = m._get_dataset_store()
+        df = await store.get_dataset(name)
+
+        agents = {str(_roundtrip_value(df.iloc[[i]], "agent")) for i in range(len(df))}
+        assert agents == {"search", "summary"}
+
+        by_agent = {}
+        for i in range(len(df)):
+            row = df.iloc[[i]]
+            by_agent[str(_roundtrip_value(row, "agent"))] = row
+        assert float(_roundtrip_value(by_agent["search"], "score")) == pytest.approx(
+            0.80, abs=1e-6
+        )
+        assert float(
+            _roundtrip_value(by_agent["summary"], "degradation_pct")
+        ) == pytest.approx(0.57, abs=1e-6)
+
+    @pytest.mark.asyncio
+    async def test_store_trigger_persists_examples(self, phoenix_monitor):
+        m = phoenix_monitor
+        ts = datetime.utcnow()
+        trigger = OptimizationTrigger(
+            timestamp=ts,
+            tenant_id=m.tenant_id,
+            agents_to_optimize=[AgentType.SEARCH],
+            golden_eval=None,
+            live_eval=None,
+            low_scoring_examples={
+                AgentType.SEARCH: [
+                    {"query": "weak query", "score": 0.10, "output": {"hits": 0}}
+                ],
+            },
+            high_scoring_examples={
+                AgentType.SEARCH: [
+                    {"query": "strong query", "score": 0.95, "output": {"hits": 5}}
+                ],
+            },
+            misrouted_queries=[],
+        )
+        await m._store_trigger_dataset(trigger)
+
+        name = f"optimization-trigger-{m.tenant_id}-{ts.strftime('%Y%m%d_%H%M%S')}"
+        store = m._get_dataset_store()
+        df = await store.get_dataset(name)
+        assert len(df) == 2
+
+        rows = {}
+        for i in range(len(df)):
+            row = df.iloc[[i]]
+            rows[str(_roundtrip_value(row, "category"))] = row
+        assert set(rows) == {"low_scoring", "high_scoring"}
+        assert str(_roundtrip_value(rows["low_scoring"], "query")) == "weak query"
+        assert float(_roundtrip_value(rows["low_scoring"], "score")) == pytest.approx(
+            0.10, abs=1e-6
+        )
+        assert str(_roundtrip_value(rows["high_scoring"], "query")) == "strong query"
