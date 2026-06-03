@@ -107,23 +107,20 @@ class TestPhoenixProviderSessionContext:
         assert callable(phoenix_provider.session_context)
 
     def test_session_context_uses_openinference(self, phoenix_provider):
-        """Verify session_context uses openinference.using_session."""
-        with patch("openinference.instrumentation.using_session") as mock_using_session:
-            # Setup mock context manager
-            mock_cm = MagicMock()
-            mock_cm.__enter__ = MagicMock(return_value=None)
-            mock_cm.__exit__ = MagicMock(return_value=False)
-            mock_using_session.return_value = mock_cm
+        """session_context attaches session.id to the OTel context — the value
+        OpenInference instrumentations read to stamp session.id on spans."""
+        from openinference.instrumentation import get_attributes_from_context
 
-            session_id = "test-session-123"
+        session_id = "test-session-123"
 
-            with phoenix_provider.session_context(session_id):
-                pass
+        # Sanity: nothing set before entering.
+        assert "session.id" not in dict(get_attributes_from_context())
 
-            # Verify using_session was called with correct session_id
-            mock_using_session.assert_called_once_with(session_id)
-            mock_cm.__enter__.assert_called_once()
-            mock_cm.__exit__.assert_called_once()
+        with phoenix_provider.session_context(session_id):
+            assert dict(get_attributes_from_context()).get("session.id") == session_id
+
+        # Context is detached on exit, so it does not leak into later traces.
+        assert "session.id" not in dict(get_attributes_from_context())
 
     def test_session_context_is_context_manager(self, phoenix_provider):
         """Verify session_context is a context manager."""
@@ -318,12 +315,15 @@ class TestSessionTrackingWithPhoenix:
         manager.force_flush(timeout_millis=5000)
 
     def test_multiple_requests_grouped_by_session(self, phoenix_config):
-        """Test that multiple requests with same session_id are grouped."""
+        """Multiple session_span requests with the same session_id each
+        propagate that session.id into the OTel context — the grouping key
+        OpenInference stamps onto every span, so the traces correlate."""
+        from openinference.instrumentation import get_attributes_from_context
+
         manager = TelemetryManager(phoenix_config)
         session_id = "multi-request-session"
 
-        # Simulate multiple requests
-        spans_created = 0
+        seen = []
         for i in range(3):
             with manager.session_span(
                 name=f"request_{i}",
@@ -331,11 +331,11 @@ class TestSessionTrackingWithPhoenix:
                 session_id=session_id,
                 attributes={"request_number": i},
             ) as span:
-                if not isinstance(span, NoOpSpan):
-                    spans_created += 1
+                assert not isinstance(span, NoOpSpan)
+                seen.append(dict(get_attributes_from_context()).get("session.id"))
 
-        if spans_created == 0:
-            pytest.skip("Phoenix server not running")
+        # Every request carried the same session.id; none leaked after exit.
+        assert seen == [session_id, session_id, session_id]
+        assert "session.id" not in dict(get_attributes_from_context())
 
-        # Force flush
         manager.force_flush(timeout_millis=5000)
