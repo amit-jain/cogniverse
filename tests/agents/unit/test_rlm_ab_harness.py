@@ -189,3 +189,44 @@ class TestFallbackPropagation:
         assert result.comparison.rlm_was_fallback is True
         assert result.with_rlm.was_fallback is True
         assert result.without_rlm.was_fallback is False
+
+
+class TestRlmArmEventRouting:
+    """The RLM arm must route its events to the queue's own task_id."""
+
+    def test_rlm_inference_gets_queue_task_id(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cogniverse_agents.inference import ab_harness
+        from cogniverse_agents.inference.ab_harness import RLMABRunner
+
+        captured = {}
+
+        class _FakeRLM:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def process(self, **kwargs):
+                return SimpleNamespace(
+                    answer="a",
+                    latency_ms=1.0,
+                    tokens_used=0,
+                    was_fallback=False,
+                    metadata={},
+                )
+
+        monkeypatch.setattr(ab_harness, "RLMInference", _FakeRLM)
+
+        runner = object.__new__(RLMABRunner)
+        runner._llm_config = object()
+        runner._rlm_max_iterations = 10
+        runner._rlm_max_llm_calls = 30
+        runner._timeout_seconds = 300
+        runner._event_queue = SimpleNamespace(task_id="task-xyz")
+        runner._tenant_id = "acme:acme"
+        runner._judge = None
+
+        runner._run_with_rlm("q", "c", None)
+
+        assert captured["task_id"] == "task-xyz"
+        assert captured["tenant_id"] == "acme:acme"

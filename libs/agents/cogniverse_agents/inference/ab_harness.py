@@ -224,6 +224,11 @@ class RLMABRunner:
             max_llm_calls=self._rlm_max_llm_calls,
             timeout_seconds=self._timeout_seconds,
             event_queue=self._event_queue,
+            # Route RLM progress events to the queue's own task so they reach
+            # the same SSE stream; without task_id they emit as task-less.
+            task_id=self._event_queue.task_id
+            if self._event_queue is not None
+            else None,
             tenant_id=self._tenant_id,
         )
         result: RLMResult = rlm.process(
