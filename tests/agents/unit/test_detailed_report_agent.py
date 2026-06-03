@@ -256,6 +256,13 @@ class TestDetailedReportAgent:
             )
             agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
 
+        # Pin the only LLM-dependent step so the assertion proves the DSPy
+        # output is carried verbatim into the result (was unstubbed, so the
+        # old test silently exercised the fallback path).
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="report for test query")
+        )
+
         # Create report request
         request = ReportRequest(
             query="test query",
@@ -266,9 +273,12 @@ class TestDetailedReportAgent:
 
         result = await agent._generate_report(request)
 
-        assert result.executive_summary is not None
-        assert len(result.executive_summary) > 0
-        assert isinstance(result.detailed_findings, list)
+        assert result.executive_summary == "report for test query"
+        # Thinking phase is derived deterministically from the single result.
+        ca = result.thinking_phase.content_analysis
+        assert ca["total_results"] == 1
+        assert ca["avg_relevance"] == pytest.approx(0.8)
+        assert isinstance(result.detailed_findings, list) and result.detailed_findings
         assert isinstance(result.recommendations, list)
         assert isinstance(result.confidence_assessment, dict)
 
@@ -312,7 +322,9 @@ class TestDetailedReportAgentEdgeCases:
         and never called the agent at all."""
         mock_vlm_class.return_value = Mock()
         with patch.object(DetailedReportAgent, "_initialize_vlm_client"):
-            agent = DetailedReportAgent(deps=DetailedReportDeps(), config_manager=Mock())
+            agent = DetailedReportAgent(
+                deps=DetailedReportDeps(), config_manager=Mock()
+            )
             agent._dspy_lm = Mock()
 
         request = ReportRequest(
@@ -622,30 +634,43 @@ class TestDetailedReportAgentCoreFunctionality:
 
         from cogniverse_agents.detailed_report_agent import DetailedReportInput
 
-        with patch("dspy.ChainOfThought") as mock_cot:
-            mock_prediction = Mock()
-            mock_prediction.relationship_analysis = {"entity_connections": 2}
-            mock_prediction.contextual_insights = ["AI technology focus"]
-            mock_prediction.enhanced_recommendations = ["explore related topics"]
-            mock_prediction.reasoning = "enhanced analysis complete"
-            mock_cot_instance = Mock()
-            mock_cot_instance.forward = Mock(return_value=mock_prediction)
-            mock_cot.return_value = mock_cot_instance
+        # Capture the ReportRequest the agent assembles so we can prove the
+        # enrichment fields were actually folded in (not merely accepted).
+        captured = {}
+        real_generate_report = agent._generate_report
 
-            input_data = DetailedReportInput(
-                tenant_id="test_tenant",
-                query="test query",
-                search_results=[{"title": "AI video", "content_type": "video"}],
-                enhanced_query="test query enhanced",
-                entities=[{"text": "AI", "type": "topic"}],
-                relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
-                include_visual_analysis=False,
-                report_type="comprehensive",
-            )
+        async def _spy_generate_report(request):
+            captured["request"] = request
+            return await real_generate_report(request)
 
-            result = await agent._process_impl(input_data)
+        agent._generate_report = _spy_generate_report
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="enriched report for AI")
+        )
 
-            assert result.executive_summary
+        input_data = DetailedReportInput(
+            tenant_id="test_tenant",
+            query="test query",
+            search_results=[{"title": "AI video", "content_type": "video"}],
+            enhanced_query="test query enhanced",
+            entities=[{"text": "AI", "type": "topic"}],
+            relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
+            include_visual_analysis=False,
+            report_type="comprehensive",
+        )
+
+        result = await agent._process_impl(input_data)
+
+        # enhanced_query overrides the raw query on the downstream request.
+        req = captured["request"]
+        assert req.query == "test query enhanced"
+        # entities + relationships are merged into the request context verbatim.
+        assert req.context["entities"] == [{"text": "AI", "type": "topic"}]
+        assert req.context["relationships"] == [
+            {"type": "semantic", "entities": ["AI", "technology"]}
+        ]
+        # The DSPy executive summary flows through to the output.
+        assert result.executive_summary == "enriched report for AI"
 
 
 if __name__ == "__main__":
