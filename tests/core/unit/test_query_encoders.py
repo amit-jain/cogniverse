@@ -9,7 +9,31 @@ import pytest
 from cogniverse_core.query.encoders import (
     ColBERTQueryEncoder,
     QueryEncoderFactory,
+    _videoprism_is_global,
 )
+
+
+@pytest.mark.parametrize(
+    "model_name, expected",
+    [
+        # Real LVT (global / single-vector) model names — token-bracketed _lvt_.
+        ("videoprism_lvt_public_v1_base", True),
+        ("videoprism_lvt_public_v1_large", True),
+        ("video_videoprism_lvt_base_sv_chunk_", True),
+        ("VIDEOPRISM_LVT_PUBLIC_V1_BASE", True),
+        # Explicit global marker.
+        ("direct_video_global", True),
+        # Real patch (multi-vector) model names — no _lvt_ token.
+        ("videoprism_public_v1_base_hf", False),
+        ("videoprism_base_mv_chunk_30s", False),
+        ("videoprism_large_mv_chunk_30s", False),
+        # Footgun: a bare "lvt" substring must NOT classify as global. Old code
+        # (`"lvt" in name.lower()`) misfired True here.
+        ("videoprism_solvt_base", False),
+    ],
+)
+def test_videoprism_is_global_token_match(model_name, expected):
+    assert _videoprism_is_global(model_name) is expected
 
 
 @pytest.fixture(autouse=True)

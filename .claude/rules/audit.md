@@ -146,6 +146,16 @@ grep -rnP 'def _escape\(.*\).*->\s*str|\.replace\(.*\\"' libs/ --include="*.py"
 # value in yql_quote). The plain `contains "{` regex buries the unescaped
 # offender among escaped siblings; the negative-lookahead isolates the raw ones.
 grep -rnP 'contains "\{(?!.*(_escape|yql_quote))[^}]*\}"|=="\{(?!.*(_escape|yql_quote))[^}]*\}"' libs/ --include="*.py"
+
+# Model-name single-vector/global classification by BARE `"lvt" in name.lower()`
+# substring instead of the token-bracketed `_lvt_` (7th audit: encoders.py
+# VideoPrismQueryEncoder.is_global — fixed via _videoprism_is_global helper;
+# SIBLING sites still bare-substring: model_loaders.py:788 and
+# videoprism_text_encoder.py:304 [the latter is a model-name remap elif chain,
+# not is_global]). All real lvt model names carry `_lvt_`, so today it only
+# misfires on a hypothetical name embedding the 3 letters — robustness, not a
+# firing bug.
+grep -rnP '"lvt" in [^.]*\.lower\(\)|"global" in [^.]*\.lower\(\)' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.

@@ -184,6 +184,18 @@ def ColQwenQueryEncoder(  # noqa: N802 — preserve legacy class-style name
     )
 
 
+def _videoprism_is_global(model_name: str) -> bool:
+    """True for global (single-vector) VideoPrism models.
+
+    Matches the token-bracketed ``_lvt_`` marker (consistent with the
+    authoritative ``_SINGLE_VECTOR_TOKENS`` classifier) or the explicit
+    ``global`` marker — not a bare ``lvt`` substring, which would also fire
+    on an unrelated name that merely embeds those three letters.
+    """
+    name = model_name.lower()
+    return "_lvt_" in name or "global" in name
+
+
 class VideoPrismQueryEncoder(QueryEncoder):
     """Query encoder for VideoPrism models"""
 
@@ -195,7 +207,7 @@ class VideoPrismQueryEncoder(QueryEncoder):
         self.model_name = model_name
 
         # VideoPrism dimensions
-        self.is_global = "lvt" in model_name.lower() or "global" in model_name.lower()
+        self.is_global = _videoprism_is_global(model_name)
         if "large" in model_name:
             self.embedding_dim = 1024
             self.num_patches = 2048  # For patch-based models
