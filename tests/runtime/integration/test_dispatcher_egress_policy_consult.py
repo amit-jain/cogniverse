@@ -108,12 +108,14 @@ class TestConsultHelper:
 
 
 class TestExecutionPathInvocation:
-    """Each of the 3 execute_* methods must call consult_egress_policy.
+    """Each of the 3 execute_* methods must consult the egress policy through
+    the real SandboxManager boundary before constructing the agent.
 
-    We patch the helper to a recorder, fire the dispatch path's pre-flight
-    setup (the helper is called BEFORE the agent is constructed so we can
-    short-circuit by having the registry not contain the agent — the
-    consult call still fires).
+    Rather than patch the dispatcher's own consult helper (which would only
+    prove the dispatcher calls its own method), this wraps the real
+    SandboxManager.get_policy collaborator so the assertion observes the
+    dispatch path reaching the actual policy store AND surfacing the real
+    YAML for the shipped agents.
     """
 
     @pytest.mark.parametrize(
@@ -126,22 +128,26 @@ class TestExecutionPathInvocation:
     )
     @pytest.mark.asyncio
     async def test_dispatch_method_consults_policy(
-        self, dispatcher_with_sandbox, method_name: str, agent_name: str
+        self,
+        dispatcher_with_sandbox,
+        sandbox_manager_with_real_policies,
+        method_name: str,
+        agent_name: str,
     ):
-        seen: list = []
-        original = dispatcher_with_sandbox.consult_egress_policy
+        seen: list[tuple[str, object]] = []
+        real_get_policy = sandbox_manager_with_real_policies.get_policy
 
-        def _spy(name: str):
-            seen.append(name)
-            return original(name)
+        def _recording_get_policy(name: str):
+            policy = real_get_policy(name)
+            seen.append((name, policy))
+            return policy
 
-        dispatcher_with_sandbox.consult_egress_policy = _spy  # type: ignore[method-assign]
+        sandbox_manager_with_real_policies.get_policy = _recording_get_policy  # type: ignore[method-assign]
 
         method = getattr(dispatcher_with_sandbox, method_name)
-        # Best-effort call; the downstream agent execution will likely fail
-        # because we haven't set up Vespa/LLM/etc., but the policy consult
-        # happens in the very first line of each method — before the failure
-        # point.
+        # The downstream agent execution fails (no Vespa/LLM wired here), but
+        # the policy consult is the first line of each method, so it reaches
+        # the SandboxManager before the failure point.
         try:
             if method_name == "_execute_search_task":
                 await method("q", "p3_tenant", 1)
@@ -150,9 +156,22 @@ class TestExecutionPathInvocation:
             else:  # _execute_summarization_task
                 await method("q", "p3_tenant")
         except Exception:
-            pass  # downstream failures are expected; the wire ran first
+            pass
 
-        assert agent_name in seen, (
-            f"{method_name} did not consult the {agent_name} egress policy "
-            f"before agent construction. Calls observed: {seen}"
+        consulted = {name: policy for name, policy in seen}
+        assert agent_name in consulted, (
+            f"{method_name} did not reach SandboxManager.get_policy for "
+            f"{agent_name} before agent construction. Calls observed: "
+            f"{list(consulted)}"
         )
+        if (Path("configs/agent_policies") / f"{agent_name}.yaml").exists():
+            policy = consulted[agent_name]
+            assert isinstance(policy, dict), (
+                f"{agent_name} ships a policy YAML but the dispatch-time "
+                f"consult surfaced {policy!r} instead of the parsed policy dict"
+            )
+            egress = policy.get("network_policies", {}).get("egress")
+            assert isinstance(egress, list) and egress, (
+                f"{agent_name} policy surfaced no network_policies.egress "
+                f"allow-list: {policy!r}"
+            )
