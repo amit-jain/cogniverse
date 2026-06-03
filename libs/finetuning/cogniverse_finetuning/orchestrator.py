@@ -270,7 +270,9 @@ class FinetuningOrchestrator:
             destination_uri = f"{base_uri}/{adapter_name}"
 
             logger.info(f"Uploading adapter to storage: {destination_uri}")
-            final_uri = upload_adapter(result.adapter_path, destination_uri)
+            final_uri = upload_adapter(
+                result.adapter_path, destination_uri, token=config.hf_token
+            )
             logger.info(f"Adapter uploaded successfully: {final_uri}")
 
             return final_uri

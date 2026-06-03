@@ -300,7 +300,9 @@ def get_storage_backend(uri: str, **kwargs) -> AdapterStorage:
         raise ValueError(f"Unsupported storage scheme: {scheme}")
 
 
-def upload_adapter(local_path: str, destination_uri: str) -> str:
+def upload_adapter(
+    local_path: str, destination_uri: str, token: Optional[str] = None
+) -> str:
     """
     Upload adapter to storage.
 
@@ -309,6 +311,8 @@ def upload_adapter(local_path: str, destination_uri: str) -> str:
     Args:
         local_path: Local path to adapter directory
         destination_uri: Target URI
+        token: Storage token (e.g. HuggingFace token for hf:// URIs). When
+            None the backend falls back to env var / cached login.
 
     Returns:
         Final URI where adapter was stored
@@ -321,7 +325,7 @@ def upload_adapter(local_path: str, destination_uri: str) -> str:
         >>> print(uri)
         file:///data/adapters/routing_sft_v1
     """
-    storage = get_storage_backend(destination_uri)
+    storage = get_storage_backend(destination_uri, token=token)
     return storage.upload(local_path, destination_uri)
 
 

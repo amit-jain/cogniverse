@@ -651,6 +651,35 @@ class TestGetStorageBackend:
         with pytest.raises(ValueError, match="Unsupported storage scheme"):
             get_storage_backend("unknown://bucket/path")
 
+    def test_get_hf_storage_forwards_token(self):
+        from cogniverse_finetuning.registry.storage import get_storage_backend
+
+        storage = get_storage_backend("hf://myorg/my-repo", token="hf_secret_abc")
+
+        assert storage.token == "hf_secret_abc"
+
+    def test_upload_adapter_forwards_token_to_backend(self, monkeypatch):
+        from cogniverse_finetuning.registry import storage as storage_mod
+
+        captured = {}
+
+        class _SpyStorage:
+            def upload(self, local_path, destination_uri):
+                return destination_uri
+
+        def _spy_backend(uri, **kwargs):
+            captured["token"] = kwargs.get("token")
+            return _SpyStorage()
+
+        monkeypatch.setattr(storage_mod, "get_storage_backend", _spy_backend)
+
+        result = storage_mod.upload_adapter(
+            "/tmp/adapter", "hf://myorg/my-repo", token="hf_secret_abc"
+        )
+
+        assert result == "hf://myorg/my-repo"
+        assert captured["token"] == "hf_secret_abc"
+
 
 class TestInferenceHelpers:
     """Tests for inference helper functions."""

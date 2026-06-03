@@ -752,3 +752,36 @@ class TestPhoenixLoggingUsesTelemetryManager:
             adapter_path="/tmp/adapter",
             evaluation_result=MagicMock(),
         )
+
+
+@pytest.mark.unit
+class TestAdapterStorageUpload:
+    """``config.hf_token`` must reach the storage backend on hf:// uploads."""
+
+    def test_hf_token_forwarded_to_upload_adapter(self):
+        orch = FinetuningOrchestrator(telemetry_provider=_NoTracerProvider())
+        config = OrchestrationConfig(
+            tenant_id="acme",
+            project="proj",
+            model_type="llm",
+            agent_type="routing",
+            adapter_version="2.1.0",
+            adapter_storage_uri="hf://myorg/adapters",
+            hf_token="hf_secret_abc",
+        )
+        result = MagicMock(adapter_path="/tmp/adapter", training_method="sft")
+
+        captured = {}
+
+        def _fake_upload(local_path, destination_uri, token=None):
+            captured["local_path"] = local_path
+            captured["destination_uri"] = destination_uri
+            captured["token"] = token
+            return destination_uri
+
+        with patch("cogniverse_finetuning.registry.upload_adapter", _fake_upload):
+            final_uri = orch._upload_adapter_to_storage(config, result)
+
+        assert captured["token"] == "hf_secret_abc"
+        assert captured["destination_uri"] == "hf://myorg/adapters/sft_routing_v2.1.0"
+        assert final_uri == "hf://myorg/adapters/sft_routing_v2.1.0"
