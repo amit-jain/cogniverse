@@ -10,6 +10,8 @@ Tests validate:
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from cogniverse_evaluation.evaluators.llm_judge import (
     LLMJudgeCore,
     SyncLLMHybridEvaluator,
@@ -223,11 +225,26 @@ class TestHybridMultiTurn:
         output_data = {"results": [{"video_id": "v1", "score": 0.9}]}
         expected = ["v1"]
 
-        _ = evaluator.evaluate(input=input_data, output=output_data, expected=expected)
+        result = evaluator.evaluate(
+            input=input_data, output=output_data, expected=expected
+        )
 
-        # Both evaluators should have been called with conversation format
+        # Both evaluators were invoked.
         assert mock_free_llm.called
         assert mock_ref_llm.called
+
+        # Reference-based blends LLM(7/10=0.7)*0.6 + F1(1.0)*0.4 = 0.82, since the
+        # only retrieved video (v1) is exactly the expected set -> precision=recall=1.
+        # Hybrid then blends relevance(8/10=0.8)*0.5 + reference(0.82)*0.5 = 0.81,
+        # which lands in the "excellent" band (>= 0.8).
+        assert result.score == pytest.approx(0.81)
+        assert result.label == "excellent"
+        assert result.metadata["relevance_score"] == pytest.approx(0.8)
+        assert result.metadata["reference_score"] == pytest.approx(0.82)
+        assert result.metadata["relevance_weight"] == pytest.approx(0.5)
+        assert result.metadata["reference_weight"] == pytest.approx(0.5)
+        assert result.metadata["ref_llm_score"] == pytest.approx(0.7)
+        assert result.metadata["ref_recall"] == pytest.approx(1.0)
 
 
 class TestEdgeCases:
