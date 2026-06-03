@@ -442,6 +442,10 @@ def _is_llm_available() -> bool:
 
     Reads api_base from configs/config.json directly (no ConfigManager
     needed — avoids BACKEND_URL env var requirement at import time).
+    Probes both ``/api/tags`` (Ollama native) and ``/v1/models`` (OAI-compat
+    / vLLM) after stripping a trailing ``/v1``; either 200 means up. A vLLM
+    endpoint whose api_base ends in ``/v1`` 404s on ``/api/tags``, so probing
+    only that path falsely skips the whole suite.
     """
     try:
         import json as _json
@@ -454,9 +458,16 @@ def _is_llm_available() -> bool:
             config.get("llm_config", {})
             .get("primary", {})
             .get("api_base", "http://localhost:11434")
-        )
-        response = httpx.get(f"{api_base}/api/tags", timeout=5.0)
-        return response.status_code == 200
+        ).rstrip("/")
+        if api_base.endswith("/v1"):
+            api_base = api_base[: -len("/v1")]
+        for path in ("/api/tags", "/v1/models"):
+            try:
+                if httpx.get(f"{api_base}{path}", timeout=5.0).status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                continue
+        return False
     except Exception:
         return False
 
@@ -467,9 +478,14 @@ skip_if_no_lm = pytest.mark.skipif(
 )
 
 
-@pytest.fixture(scope="module")
-def _dspy_lm_instance():
-    """Module-scoped: create the LM once per module (expensive)."""
+def _build_dspy_lm(max_tokens: int):
+    """Build a DSPy LM from configs/config.json's primary endpoint.
+
+    ``max_tokens`` is per-test: the small default (200) keeps the
+    single-output agent tests fast, while planning agents (orchestrator
+    ChainOfThought) need a larger budget or the structured output is
+    truncated and fails to parse.
+    """
     from cogniverse_foundation.config.utils import (
         create_default_config_manager as _cdcm,
     )
@@ -489,10 +505,28 @@ def _dspy_lm_instance():
         model=model,
         api_base=llm_cfg.get("api_base"),
         temperature=0.1,
-        max_tokens=200,
+        max_tokens=max_tokens,
         extra_body=extra_body,
     )
     return create_dspy_lm(endpoint)
+
+
+@pytest.fixture(scope="module")
+def _dspy_lm_instance():
+    """Module-scoped: create the LM once per module (expensive)."""
+    return _build_dspy_lm(max_tokens=200)
+
+
+@pytest.fixture(scope="module")
+def _dspy_lm_planning_instance():
+    """Module-scoped LM with a planning-sized token budget.
+
+    The orchestrator's ChainOfThought planner emits reasoning plus the
+    agent_sequence / parallel_steps structured fields; 200 tokens truncates
+    that mid-output, so streamify can't parse it and the workflow aborts
+    before the execution phase. 1024 tokens fits a real plan.
+    """
+    return _build_dspy_lm(max_tokens=1024)
 
 
 @pytest.fixture
@@ -504,6 +538,16 @@ def dspy_lm(_dspy_lm_instance):
     """
     dspy.configure(lm=_dspy_lm_instance)
     return _dspy_lm_instance
+
+
+@pytest.fixture
+def dspy_lm_planning(_dspy_lm_planning_instance):
+    """Function-scoped planning LM (1024 tokens) for orchestrator planning.
+
+    Same re-configure-per-test contract as ``dspy_lm``.
+    """
+    dspy.configure(lm=_dspy_lm_planning_instance)
+    return _dspy_lm_planning_instance
 
 
 @pytest.fixture(scope="module")

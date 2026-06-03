@@ -81,13 +81,43 @@ def _extract_response_text(body: dict) -> str:
     return ""
 
 
+@pytest.fixture
+def dispatch_history_spy(dispatcher, monkeypatch):
+    """Record the ``conversation_history`` each ``dispatch()`` call receives.
+
+    Wraps the real ``AgentDispatcher.dispatch`` on the same module-scoped
+    instance the ``a2a_client`` drives, so a test can assert what history the
+    dispatcher actually saw on each turn — the contract the docstrings claim —
+    rather than only that a response came back. Returns the list of captured
+    histories (one entry per dispatch, in call order). monkeypatch restores
+    the original method after the test so the shared instance is left intact.
+    """
+    captured: list[dict] = []
+    original = dispatcher.dispatch
+
+    async def _recording_dispatch(*args, **kwargs):
+        context = kwargs.get("context")
+        if context is None and len(args) >= 3:
+            context = args[2]
+        captured.append(
+            {
+                "query": kwargs.get("query") or (args[1] if len(args) >= 2 else None),
+                "history": list((context or {}).get("conversation_history", [])),
+            }
+        )
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(dispatcher, "dispatch", _recording_dispatch)
+    return captured
+
+
 @pytest.mark.integration
 @skip_if_no_lm
 class TestA2AMultiTurnHistoryAccumulation:
     """Test multi-turn conversation history via A2A contextId."""
 
     def test_multiturn_history_accumulates_three_turns(
-        self, a2a_client, dspy_lm, vespa_instance
+        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
     ):
         """3 A2A calls with same contextId -> turn 3 carries history from turns 1+2."""
         context_id = f"test-accumulate-{uuid.uuid4()}"
@@ -120,7 +150,32 @@ class TestA2AMultiTurnHistoryAccumulation:
         text3 = _extract_response_text(resp3)
         assert text3, "Turn 3 should produce a response"
 
-    def test_context_id_isolation(self, a2a_client, dspy_lm, vespa_instance):
+        # Contract: the dispatcher must SEE accumulating history, not just
+        # return a response. One dispatch per turn, in order.
+        assert len(dispatch_history_spy) == 3
+        turn1_hist = dispatch_history_spy[0]["history"]
+        turn2_hist = dispatch_history_spy[1]["history"]
+        turn3_hist = dispatch_history_spy[2]["history"]
+
+        # Turn 1 has no prior conversation.
+        assert turn1_hist == []
+
+        # Turn 2 carries turn 1: the user's "cat videos" query AND the agent's
+        # turn-1 response (role=agent), proving both directions are persisted.
+        turn2_contents = [t["content"] for t in turn2_hist]
+        assert any("cat videos" in c for c in turn2_contents), turn2_contents
+        assert any(t["role"] == "agent" for t in turn2_hist), turn2_hist
+        assert not any("dog videos" in c for c in turn2_contents), turn2_contents
+
+        # Turn 3 carries BOTH prior user turns (1 and 2), proving accumulation
+        # across more than the immediately-preceding turn.
+        turn3_contents = [t["content"] for t in turn3_hist]
+        assert any("cat videos" in c for c in turn3_contents), turn3_contents
+        assert any("dog videos" in c for c in turn3_contents), turn3_contents
+
+    def test_context_id_isolation(
+        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+    ):
         """Messages to different contextIds don't cross-contaminate history."""
         ctx_a = f"test-iso-a-{uuid.uuid4()}"
         ctx_b = f"test-iso-b-{uuid.uuid4()}"
@@ -146,6 +201,16 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
         text_a2 = _extract_response_text(resp_a2)
         assert text_a2, "Context A turn 2 should produce a response"
+
+        # Contract: context A turn 2's dispatch must carry context A's history
+        # ("cat videos") and must NOT contain anything from context B ("dog
+        # videos"). Identify it by its query rather than call order.
+        a2_dispatch = next(
+            d for d in dispatch_history_spy if d["query"] == "show me more of those"
+        )
+        a2_contents = [t["content"] for t in a2_dispatch["history"]]
+        assert any("cat videos" in c for c in a2_contents), a2_contents
+        assert not any("dog videos" in c for c in a2_contents), a2_contents
 
     def test_task_stays_alive_input_required(self, a2a_client, dspy_lm, vespa_instance):
         """TaskState.input_required keeps task non-terminal for subsequent turns."""
@@ -173,7 +238,9 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
         assert "result" in resp2, "Turn 2 should succeed on alive task"
 
-    def test_agent_response_in_history(self, a2a_client, dspy_lm, vespa_instance):
+    def test_agent_response_in_history(
+        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
+    ):
         """Turn 1 agent response appears in turn 2's conversation context."""
         context_id = f"test-agent-hist-{uuid.uuid4()}"
 
@@ -183,10 +250,6 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
         task_id = _extract_task_id(resp1)
 
-        # The agent's response from turn 1 should be persisted in the task store.
-        # Turn 2 will have it in history. We can't directly inspect the dispatcher's
-        # received history here, but we verify the round-trip works — the turn 2
-        # response should succeed, meaning the executor correctly extracted history.
         resp2 = _send_message(
             a2a_client,
             "show me more like those",
@@ -196,6 +259,18 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
         text2 = _extract_response_text(resp2)
         assert text2, "Turn 2 should produce a response with history from turn 1"
+
+        # Contract: turn 2's dispatch history must include turn 1's USER query
+        # AND the AGENT response (role=agent) — i.e. both halves of turn 1 are
+        # extracted from Task.history and threaded into turn 2's context.
+        t2_dispatch = next(
+            d for d in dispatch_history_spy if d["query"] == "show me more like those"
+        )
+        roles = [t["role"] for t in t2_dispatch["history"]]
+        contents = [t["content"] for t in t2_dispatch["history"]]
+        assert "user" in roles, roles
+        assert "agent" in roles, roles
+        assert any("cat videos" in c for c in contents), contents
 
     def test_first_turn_no_rewrite(self, a2a_client, dspy_lm, vespa_instance):
         """Single turn with no history -> no query rewrite in response."""
@@ -216,7 +291,7 @@ class TestA2AMultiTurnHistoryAccumulation:
         )
 
     def test_multiturn_query_rewrite_end_to_end(
-        self, a2a_client, dspy_lm, vespa_instance
+        self, a2a_client, dspy_lm, vespa_instance, dispatch_history_spy
     ):
         """Turn 1: 'cat videos' -> Turn 2: 'show me longer ones' -> rewritten query."""
         context_id = f"test-rewrite-e2e-{uuid.uuid4()}"
@@ -238,15 +313,21 @@ class TestA2AMultiTurnHistoryAccumulation:
         text2 = _extract_response_text(resp2)
         assert text2, "Turn 2 should produce a response"
 
-        # Parse the dispatch result — turn 2 should have rewritten_query
-        # (if history was correctly accumulated and rewrite triggered)
-        try:
-            result_data = json.loads(text2)
-            if "rewritten_query" in result_data:
-                rewritten = result_data["rewritten_query"].lower()
-                # Rewritten query should reference the topic from turn 1
-                assert any(word in rewritten for word in ["cat", "video", "long"]), (
-                    f"Rewritten query '{result_data['rewritten_query']}' should resolve references"
-                )
-        except json.JSONDecodeError:
-            pass  # Non-JSON response is acceptable
+        # Turn 2's dispatch must have received non-empty history — that's what
+        # makes the dispatcher run the rewrite path.
+        t2_dispatch = next(
+            d for d in dispatch_history_spy if d["query"] == "show me longer ones"
+        )
+        assert t2_dispatch["history"], "Turn 2 should dispatch with prior history"
+
+        # Contract (agent_dispatcher.dispatch): when history is present the
+        # response carries BOTH original_query and rewritten_query — no
+        # conditional, no swallowed JSON error. original is the raw turn-2
+        # query; rewritten is a non-empty resolved string.
+        result_data = json.loads(text2)
+        assert result_data["original_query"] == "show me longer ones"
+        assert "rewritten_query" in result_data, result_data
+        assert (
+            isinstance(result_data["rewritten_query"], str)
+            and result_data["rewritten_query"].strip()
+        ), result_data["rewritten_query"]

@@ -332,7 +332,7 @@ class TestOrchestratorAgentStreaming:
     """
 
     def test_stream_phases_and_plan_output(
-        self, config_manager, streaming_registry, dspy_lm
+        self, config_manager, streaming_registry, dspy_lm_planning
     ):
         from cogniverse_agents.orchestrator_agent import (
             OrchestratorAgent,
