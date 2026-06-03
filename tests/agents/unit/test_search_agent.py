@@ -227,8 +227,23 @@ class TestSearchAgent:
             "find cats", tenant_id="test_tenant", top_k=5, ranking="binary_binary"
         )
 
+        # Each result is the real flatten-and-merge of a backend SearchResult:
+        # {"id": sr.document.id, "score": sr.score, **sr.document.metadata}.
+        # id + score come from attributes OUTSIDE metadata, so asserting them
+        # proves the transformation rather than echoing the mock's metadata.
         assert len(results) == 2
-        assert results[0]["video_id"] == "video1"
+        assert results[0] == {
+            "id": "video1",
+            "score": 0.95,
+            "video_id": "video1",
+            "frame_id": "frame1",
+        }
+        assert results[1] == {
+            "id": "video2",
+            "score": 0.87,
+            "video_id": "video2",
+            "frame_id": "frame2",
+        }
         mock_query_encoder.encode.assert_called_once_with("find cats")
         mock_search_backend.search.assert_called_once()
 
@@ -276,7 +291,18 @@ class TestSearchAgent:
         )
 
         assert len(results) == 2
-        assert results[0]["video_id"] == "video1"
+        assert results[0] == {
+            "id": "video1",
+            "score": 0.95,
+            "video_id": "video1",
+            "frame_id": "frame1",
+        }
+        assert results[1] == {
+            "id": "video2",
+            "score": 0.87,
+            "video_id": "video2",
+            "frame_id": "frame2",
+        }
         agent.content_processor.process_video_file.assert_called_once_with(
             video_data, "test.mp4"
         )
@@ -325,7 +351,18 @@ class TestSearchAgent:
         )
 
         assert len(results) == 2
-        assert results[0]["video_id"] == "video1"
+        assert results[0] == {
+            "id": "video1",
+            "score": 0.95,
+            "video_id": "video1",
+            "frame_id": "frame1",
+        }
+        assert results[1] == {
+            "id": "video2",
+            "score": 0.87,
+            "video_id": "video2",
+            "frame_id": "frame2",
+        }
         agent.content_processor.process_image_file.assert_called_once_with(
             image_data, "test.jpg"
         )
