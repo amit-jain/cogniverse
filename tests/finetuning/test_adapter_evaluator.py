@@ -258,3 +258,62 @@ class TestEvaluateModelConfidenceCoercion:
 
         assert metrics.accuracy == pytest.approx(1.0)
         assert metrics.avg_confidence == pytest.approx(0.9)
+
+
+class TestSignificanceTest:
+    """The base-vs-adapter comparison must emit a REAL p-value from a
+    two-proportion z-test, not the former hardcoded 0.01/0.5 placeholder."""
+
+    def test_p_value_helper_identical_rates_is_one(self):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import (
+            _two_proportion_p_value,
+        )
+
+        # z == 0 for equal proportions -> two-tailed p == 1.0 exactly.
+        assert _two_proportion_p_value(0.5, 100, 0.5, 100) == pytest.approx(1.0)
+
+    def test_p_value_helper_large_difference_is_significant(self):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import (
+            _two_proportion_p_value,
+        )
+
+        # 0.40 vs 0.70 over n=100 each: z ~= -4.26, two-tailed p ~= 2e-5.
+        p = _two_proportion_p_value(0.40, 100, 0.70, 100)
+        assert p < 1e-3
+
+    def test_p_value_helper_empty_sample_is_one(self):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import (
+            _two_proportion_p_value,
+        )
+
+        assert _two_proportion_p_value(0.9, 0, 0.5, 100) == 1.0
+
+    def test_compare_metrics_uses_real_p_value(self):
+        from cogniverse_finetuning.evaluation.adapter_evaluator import (
+            EvaluationMetrics,
+        )
+
+        evaluator = object.__new__(AdapterEvaluator)
+
+        def _metrics(acc: float, n: int) -> EvaluationMetrics:
+            return EvaluationMetrics(
+                accuracy=acc,
+                top_k_accuracy=acc,
+                avg_confidence=0.8,
+                confidence_calibration=0.0,
+                error_rate=1.0 - acc,
+                hallucination_rate=0.0,
+                avg_latency_ms=10.0,
+                sample_count=n,
+            )
+
+        # No real difference -> p == 1.0, not significant, not the old 0.5.
+        same = evaluator._compare_metrics(_metrics(0.7, 100), _metrics(0.7, 100))
+        assert same.p_value == pytest.approx(1.0)
+        assert same.improvement_significant is False
+
+        # Large accuracy gain -> significant with a small real p-value, not 0.01.
+        improved = evaluator._compare_metrics(_metrics(0.40, 100), _metrics(0.70, 100))
+        assert improved.p_value < 0.05
+        assert improved.improvement_significant is True
+        assert improved.accuracy_improvement == pytest.approx(0.30)

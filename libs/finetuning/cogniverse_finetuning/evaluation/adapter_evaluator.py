@@ -11,6 +11,7 @@ Measures improvement on held-out test set:
 
 import json
 import logging
+import math
 import random
 import time
 from dataclasses import dataclass
@@ -25,6 +26,23 @@ from cogniverse_foundation.confidence import parse_confidence
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _two_proportion_p_value(p1: float, n1: int, p2: float, n2: int) -> float:
+    """Two-tailed p-value for the difference between two success rates.
+
+    Uses the pooled-variance two-proportion z-test with the standard-normal
+    survival function (via ``math.erf``). Returns 1.0 when either sample is
+    empty or the pooled variance is degenerate (no evidence of a difference).
+    """
+    if n1 <= 0 or n2 <= 0:
+        return 1.0
+    p_pool = (p1 * n1 + p2 * n2) / (n1 + n2)
+    se = math.sqrt(p_pool * (1.0 - p_pool) * (1.0 / n1 + 1.0 / n2))
+    if se == 0.0:
+        return 1.0
+    z = (p1 - p2) / se
+    return 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(z) / math.sqrt(2.0))))
 
 
 @dataclass
@@ -45,6 +63,10 @@ class EvaluationMetrics:
 
     # Latency
     avg_latency_ms: float
+
+    # Number of test examples the metrics were computed over — required to
+    # run a real significance test when comparing two metric sets.
+    sample_count: int = 0
 
 
 @dataclass
@@ -300,6 +322,7 @@ class AdapterEvaluator:
             error_rate=error_rate,
             hallucination_rate=hallucination_rate,
             avg_latency_ms=avg_latency_ms,
+            sample_count=len(test_set),
         )
 
     @staticmethod
@@ -360,9 +383,18 @@ class AdapterEvaluator:
         error_reduction = base_metrics.error_rate - adapter_metrics.error_rate
         latency_overhead = adapter_metrics.avg_latency_ms - base_metrics.avg_latency_ms
 
-        # Statistical significance (simplified)
-        improvement_significant = abs(accuracy_improvement) > 0.05
-        p_value = 0.01 if improvement_significant else 0.5
+        # Two-tailed two-proportion z-test on the base vs adapter accuracy.
+        # Unpaired approximation (base/adapter share the test set, so a paired
+        # McNemar test would be tighter, but that needs per-example outcomes
+        # this aggregate path does not retain). p_value here is a real test
+        # statistic, not the former hardcoded 0.01/0.5 placeholder.
+        p_value = _two_proportion_p_value(
+            base_metrics.accuracy,
+            base_metrics.sample_count,
+            adapter_metrics.accuracy,
+            adapter_metrics.sample_count,
+        )
+        improvement_significant = p_value < 0.05
 
         return ComparisonResult(
             base_metrics=base_metrics,
