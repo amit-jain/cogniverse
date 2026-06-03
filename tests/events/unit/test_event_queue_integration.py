@@ -94,6 +94,18 @@ class TestEventQueueWithIngestionPipeline:
                     assert pipeline.event_queue is queue
                     assert pipeline.tenant_id == "test_tenant"
 
+                    # The accepted queue must be wired for emission, not just
+                    # stored — an event emitted by the pipeline lands in it.
+                    pipeline.job_id = "test_job_123"
+                    await pipeline._emit_event(
+                        create_status_event(
+                            task_id="test_job_123",
+                            tenant_id="test_tenant",
+                            state=TaskState.WORKING,
+                        )
+                    )
+                    assert await queue.get_latest_offset() == 1
+
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
     async def test_pipeline_emit_event_helper(self, mock_config_manager, tmp_path):
