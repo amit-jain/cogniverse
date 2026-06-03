@@ -210,3 +210,37 @@ class TestSpanEmission:
         assert mgr._available is False
         assert mgr.exec_in_sandbox("x", ["echo"]) is None
         assert len(captured_spans.get_finished_spans()) == 0
+
+
+class TestExecUnderSpan:
+    """The helper shared by the pooled and non-pooled exec paths stamps the
+    exit code + classification on both spans (wall time on the exec span only)
+    and returns the stdout/stderr/exit_code dict."""
+
+    def test_stamps_both_spans_and_returns_result(self, captured_spans):
+        from cogniverse_runtime.sandbox_manager import _exec_under_span
+
+        tracer = trace.get_tracer("test")
+        session = _FakeSession(exit_code=0, stderr="", stdout="hello")
+
+        with tracer.start_as_current_span("parent", attributes={}) as parent_span:
+            result = _exec_under_span(
+                session, ["echo", "hi"], 30, {"k": "v"}, parent_span, tracer
+            )
+
+        assert result == {"stdout": "hello", "stderr": "", "exit_code": 0}
+        assert session.exec_calls == [(("echo", "hi"), 30)]
+
+        spans = captured_spans.get_finished_spans()
+        exec_attrs = dict(next(s for s in spans if s.name == "sandbox.exec").attributes)
+        assert exec_attrs["openshell.exit_code"] == 0
+        assert exec_attrs["openshell.oom"] is False
+        assert exec_attrs["openshell.policy_denied"] is False
+        assert "openshell.wall_ms" in exec_attrs
+
+        parent_attrs = dict(next(s for s in spans if s.name == "parent").attributes)
+        assert parent_attrs["openshell.exit_code"] == 0
+        assert parent_attrs["openshell.oom"] is False
+        assert parent_attrs["openshell.policy_denied"] is False
+        # Wall time is an exec-span-only attribute, never copied to the parent.
+        assert "openshell.wall_ms" not in parent_attrs

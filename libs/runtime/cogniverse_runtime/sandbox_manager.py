@@ -74,6 +74,41 @@ def _classify_exec_failure(exit_code: int, stderr: str) -> Dict[str, bool]:
     return {"openshell.oom": oom, "openshell.policy_denied": denied}
 
 
+def _exec_under_span(
+    session, command, timeout_seconds, common_attrs, parent_span, tracer
+) -> Dict[str, Any]:
+    """Run ``session.exec`` under a ``sandbox.exec`` span and return the result.
+
+    Stamps the exit code + failure classification on both the exec span and
+    the parent span (wall time only on the exec span), then returns the
+    stdout/stderr/exit_code dict. Shared by the pooled and non-pooled exec
+    paths so the span-emission contract lives in one place.
+    """
+    with tracer.start_as_current_span(
+        "sandbox.exec", attributes=common_attrs
+    ) as exec_span:
+        start = time.monotonic()
+        result = session.exec(command, timeout_seconds=timeout_seconds)
+        wall_ms = (time.monotonic() - start) * 1000.0
+
+        classification = _classify_exec_failure(
+            int(getattr(result, "exit_code", -1)),
+            getattr(result, "stderr", "") or "",
+        )
+        exit_code = int(result.exit_code)
+        for span in (exec_span, parent_span):
+            span.set_attribute("openshell.exit_code", exit_code)
+            for k, v in classification.items():
+                span.set_attribute(k, v)
+        exec_span.set_attribute("openshell.wall_ms", wall_ms)
+
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+        }
+
+
 _DEFAULT_POLICY_DIR = Path("configs/agent_policies")
 _LEGACY_POLICY_DIR = Path("configs/openshell")
 
@@ -401,37 +436,14 @@ class SandboxManager:
                         timeout_seconds=120,
                     )
 
-                with tracer.start_as_current_span(
-                    "sandbox.exec", attributes=common_attrs
-                ) as exec_span:
-                    start = time.monotonic()
-                    result = session.exec(
-                        command,
-                        timeout_seconds=timeout_seconds,
-                    )
-                    wall_ms = (time.monotonic() - start) * 1000.0
-
-                    classification = _classify_exec_failure(
-                        int(getattr(result, "exit_code", -1)),
-                        getattr(result, "stderr", "") or "",
-                    )
-                    exec_span.set_attribute(
-                        "openshell.exit_code", int(result.exit_code)
-                    )
-                    exec_span.set_attribute("openshell.wall_ms", wall_ms)
-                    for k, v in classification.items():
-                        exec_span.set_attribute(k, v)
-                    parent_span.set_attribute(
-                        "openshell.exit_code", int(result.exit_code)
-                    )
-                    for k, v in classification.items():
-                        parent_span.set_attribute(k, v)
-
-                return {
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
-                    "exit_code": result.exit_code,
-                }
+                return _exec_under_span(
+                    session,
+                    command,
+                    timeout_seconds,
+                    common_attrs,
+                    parent_span,
+                    tracer,
+                )
             except Exception as e:
                 logger.warning(f"Sandbox exec failed for {agent_type}: {e}")
                 parent_span.set_attribute("openshell.error", type(e).__name__)
@@ -532,31 +544,14 @@ class SandboxManager:
                     getattr(getattr(session, "sandbox", None), "name", "")
                     or getattr(session, "id", ""),
                 )
-                with tracer.start_as_current_span(
-                    "sandbox.exec", attributes=common_attrs
-                ) as exec_span:
-                    start = time.monotonic()
-                    result = session.exec(command, timeout_seconds=timeout_seconds)
-                    wall_ms = (time.monotonic() - start) * 1000.0
-                    classification = _classify_exec_failure(
-                        int(getattr(result, "exit_code", -1)),
-                        getattr(result, "stderr", "") or "",
-                    )
-                    exec_span.set_attribute(
-                        "openshell.exit_code", int(result.exit_code)
-                    )
-                    exec_span.set_attribute("openshell.wall_ms", wall_ms)
-                    for k, v in classification.items():
-                        exec_span.set_attribute(k, v)
-                        parent_span.set_attribute(k, v)
-                    parent_span.set_attribute(
-                        "openshell.exit_code", int(result.exit_code)
-                    )
-                    return {
-                        "stdout": result.stdout,
-                        "stderr": result.stderr,
-                        "exit_code": result.exit_code,
-                    }
+                return _exec_under_span(
+                    session,
+                    command,
+                    timeout_seconds,
+                    common_attrs,
+                    parent_span,
+                    tracer,
+                )
 
             try:
                 return pool.with_session(agent_type, _run)
