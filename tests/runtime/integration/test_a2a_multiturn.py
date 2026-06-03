@@ -210,14 +210,10 @@ class TestA2AMultiTurnHistoryAccumulation:
         text = _extract_response_text(resp)
         assert text, "First turn should produce a response"
 
-        # Parse the dispatch result — first turn should NOT have rewritten_query
-        try:
-            result_data = json.loads(text)
-            assert "rewritten_query" not in result_data, (
-                "First turn with no history should not have rewritten_query"
-            )
-        except json.JSONDecodeError:
-            pass  # Non-JSON response is acceptable
+        result_data = json.loads(text)
+        assert "rewritten_query" not in result_data, (
+            "First turn with no history should not have rewritten_query"
+        )
 
     def test_multiturn_query_rewrite_end_to_end(
         self, a2a_client, dspy_lm, vespa_instance

@@ -117,7 +117,7 @@ class TestRESTMultiTurn:
         # If routing path, check downstream; if orchestrator, check orchestration_result
         if "downstream_result" in data:
             ds = data["downstream_result"]
-            assert ds.get("agent") or ds.get("results") is not None
+            assert ds.get("agent") is not None or ds.get("results") is not None
         elif "orchestration_result" in data:
             orch = data["orchestration_result"]
             assert len(orch.get("plan_steps", [])) > 0, (
