@@ -21,7 +21,9 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import requests
 
@@ -225,3 +227,89 @@ class TestAudioAgentSourceUrl:
 
         local = audio_agent._get_audio_path(f"file://{clip}")
         assert local == str(clip)
+
+
+# A query vector aligned with the "match" doc and orthogonal to the "other".
+_MATCH_VEC = [1.0] + [0.0] * 511
+_OTHER_VEC = [0.0] * 511 + [1.0]
+
+
+@pytest.fixture
+def seeded_acoustic_docs(audio_vespa):
+    """Feed two audio docs carrying known 512-d acoustic embeddings."""
+    http_port = audio_vespa["http_port"]
+    docs = {
+        "audio_match": {
+            "audio_id": "audio_match",
+            "audio_title": "matching clip",
+            "source_url": "s3://corpus/audio/match.mp3",
+            "audio_transcript": "a person describing the matching clip in detail",
+            "acoustic_embedding": {"values": _MATCH_VEC},
+        },
+        "audio_other": {
+            "audio_id": "audio_other",
+            "audio_title": "other noise",
+            "source_url": "s3://corpus/audio/other.mp3",
+            "audio_transcript": "completely unrelated background sounds here",
+            "acoustic_embedding": {"values": _OTHER_VEC},
+        },
+    }
+    fed: list[str] = []
+    for doc_id, fields in docs.items():
+        r = requests.post(
+            f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
+            json={"fields": fields},
+            timeout=15,
+        )
+        assert r.status_code in (200, 201), r.text[:300]
+        fed.append(doc_id)
+
+    time.sleep(2)
+    yield docs
+
+    for doc_id in fed:
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/audio/{AUDIO_SCHEMA}/docid/{doc_id}",
+                timeout=5,
+            )
+        except requests.RequestException:
+            pass
+
+
+@pytest.mark.requires_docker
+@pytest.mark.integration
+class TestAudioAcousticHybridSearch:
+    """_search_acoustic / _search_hybrid must bind their query vector to the
+    real acoustic_similarity / hybrid_acoustic_bm25 rank profiles."""
+
+    @staticmethod
+    def _stub_embedding(agent, vec):
+        agent._embedding_generator = SimpleNamespace(
+            generate_semantic_embedding=lambda q: np.array(vec, dtype=np.float32)
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_acoustic_retrieves_nearest_by_embedding(
+        self, audio_agent, seeded_acoustic_docs
+    ):
+        self._stub_embedding(audio_agent, _MATCH_VEC)
+
+        results = await audio_agent._search_acoustic("any spoken query", limit=5)
+
+        assert results, "acoustic search returned no results"
+        assert results[0].audio_id == "audio_match", [r.audio_id for r in results]
+        assert results[0].relevance_score > 0
+
+    @pytest.mark.asyncio
+    async def test_search_hybrid_retrieves_with_acoustic_and_text(
+        self, audio_agent, seeded_acoustic_docs
+    ):
+        self._stub_embedding(audio_agent, _MATCH_VEC)
+
+        results = await audio_agent._search_hybrid("matching clip", limit=5)
+
+        assert results, "hybrid search returned no results"
+        ids = [r.audio_id for r in results]
+        assert "audio_match" in ids
+        assert results[0].audio_id == "audio_match", ids

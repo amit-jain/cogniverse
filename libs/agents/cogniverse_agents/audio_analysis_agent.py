@@ -398,14 +398,19 @@ class AudioAnalysisAgent(
             padding = np.zeros(512 - len(query_embedding))
             query_embedding = np.concatenate([query_embedding, padding])
 
-        # Build Vespa query for acoustic similarity
-        yql = "select * from audio_content where true"
+        # acoustic_similarity ranks via closeness(field, acoustic_embedding),
+        # which binds to a nearestNeighbor operator over the HNSW field; the
+        # query tensor is the profile input query(acoustic_query).
+        yql = (
+            "select * from audio_content where "
+            f"{{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)"
+        )
 
         params = {
             "yql": yql,
             "hits": limit,
             "ranking.profile": "acoustic_similarity",
-            "input.query(q)": query_embedding.tolist(),
+            "input.query(acoustic_query)": query_embedding.tolist(),
         }
 
         try:
@@ -456,15 +461,28 @@ class AudioAnalysisAgent(
         logger.info("Generating query embedding for hybrid search...")
         query_embedding = self.embedding_generator.generate_semantic_embedding(query)
 
-        # Build YQL query for hybrid search
-        yql = "select * from audio_content where userQuery()"
+        # acoustic_query is tensor<float>(v[512]); pad/truncate to match.
+        if len(query_embedding) > 512:
+            query_embedding = query_embedding[:512]
+        else:
+            padding = np.zeros(512 - len(query_embedding))
+            query_embedding = np.concatenate([query_embedding, padding])
+
+        # hybrid_acoustic_bm25 = 0.5*closeness(acoustic) + 0.5*bm25(text); the
+        # acoustic half needs the nearestNeighbor operator, OR-ed with the text
+        # match so either signal can surface a document.
+        yql = (
+            "select * from audio_content where "
+            f"({{targetHits:{limit}}}nearestNeighbor(acoustic_embedding, acoustic_query)) "
+            "or userQuery()"
+        )
 
         params = {
             "yql": yql,
             "query": query,
             "hits": limit,
-            "ranking.profile": "hybrid_audio",
-            "input.query(q)": query_embedding.tolist(),
+            "ranking.profile": "hybrid_acoustic_bm25",
+            "input.query(acoustic_query)": query_embedding.tolist(),
         }
 
         try:
