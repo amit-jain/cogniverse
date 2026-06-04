@@ -313,6 +313,18 @@ class PreferencePairExtractor:
             if key in attributes and attributes[key]:
                 return str(attributes[key])
 
+        # Phoenix groups namespaced attributes into a nested dict column:
+        # input.query -> attributes.input == {"query": ...}. Read those too.
+        for ns_col, subkeys in (
+            ("attributes.input", ("query", "text", "request", "value")),
+            ("attributes.query", ("value",)),
+        ):
+            ns = attributes.get(ns_col)
+            if isinstance(ns, dict):
+                for sub in subkeys:
+                    if ns.get(sub):
+                        return str(ns[sub])
+
         return ""
 
     def _extract_response_from_annotation(
@@ -329,7 +341,19 @@ class PreferencePairExtractor:
             Response text
         """
         # First try to get response from annotation metadata
-        # (if human edited the response)
+        # (if human edited the response). Phoenix returns metadata as a nested
+        # dict in a single ``metadata`` column; some sources flatten it to
+        # ``metadata.<key>`` columns. Handle both.
+        meta = annotation_row.get("metadata")
+        if isinstance(meta, dict):
+            for key, value in meta.items():
+                if ("response" in key.lower() or "output" in key.lower()) and value:
+                    if isinstance(value, (dict, list)):
+                        import json
+
+                        return json.dumps(value)
+                    return str(value)
+
         metadata_cols = [
             col for col in annotation_row.index if col.startswith("metadata.")
         ]
@@ -362,5 +386,18 @@ class PreferencePairExtractor:
 
                     return json.dumps(value)
                 return str(value)
+
+        # Phoenix groups namespaced attributes into a nested dict column:
+        # output.response -> attributes.output == {"response": ...}.
+        ns = attributes.get("attributes.output")
+        if isinstance(ns, dict):
+            for sub in ("response", "result", "decision", "value"):
+                if ns.get(sub):
+                    value = ns[sub]
+                    if isinstance(value, (dict, list)):
+                        import json
+
+                        return json.dumps(value)
+                    return str(value)
 
         return ""

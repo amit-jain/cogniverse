@@ -471,3 +471,42 @@ class TestExtractPromptAndResponse:
         response = extractor._extract_response_from_annotation(annotation_row, span_row)
 
         assert response == "span response"
+
+    def test_extract_prompt_from_nested_input_dict(self, extractor):
+        """Phoenix groups input.query into a nested attributes.input dict."""
+        span_row = pd.Series(
+            {
+                "attributes.input": {"query": "find sunset videos"},
+                "context.span_id": "span1",
+            }
+        )
+
+        assert extractor._extract_prompt(span_row, "routing") == "find sunset videos"
+
+    def test_extract_response_from_nested_metadata_dict(self, extractor):
+        """Phoenix returns annotation metadata as a nested dict column."""
+        annotation_row = pd.Series(
+            {
+                "result.label": "approved",
+                "metadata": {"response": "good route"},
+            }
+        )
+        span_row = pd.Series({"context.span_id": "span1"})
+
+        response = extractor._extract_response_from_annotation(annotation_row, span_row)
+
+        assert response == "good route"
+
+    def test_extract_response_from_nested_span_output_dict(self, extractor):
+        """Span output falls back to the nested attributes.output dict."""
+        annotation_row = pd.Series({"result.label": "approved"})
+        span_row = pd.Series(
+            {
+                "context.span_id": "span1",
+                "attributes.output": {"response": "span route"},
+            }
+        )
+
+        response = extractor._extract_response_from_annotation(annotation_row, span_row)
+
+        assert response == "span route"
