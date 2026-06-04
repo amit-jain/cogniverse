@@ -190,17 +190,19 @@ class TestPropertyAccess:
         return provider
 
     @pytest.mark.asyncio
-    async def test_uses_public_traces_property(self, mock_provider):
-        """Test that extractor accesses .traces (not ._trace_store)"""
-        # Setup mock responses
+    async def test_extract_pairs_via_public_stores(self, mock_provider):
+        """extract() drives the full span→filter→annotation→pair path through
+        the provider's public .traces/.annotations stores and returns a
+        PreferenceDataset whose pairs and metadata reflect the source data.
+        """
         mock_provider.traces.get_spans = AsyncMock(
             return_value=pd.DataFrame(
                 [
                     {
                         "context.span_id": "span1",
-                        "name": "gateway_agent",
-                        "attributes.input.query": "test",
-                        "attributes.output.response": "response",
+                        "name": "routing_agent",
+                        "attributes.input.query": "find sunset videos",
+                        "attributes.output.response": "default route",
                         "start_time": datetime.utcnow(),
                     }
                 ]
@@ -214,11 +216,13 @@ class TestPropertyAccess:
                         "span_id": "span1",
                         "result.label": "approved",
                         "result.score": 1.0,
+                        "metadata.response": "good route",
                     },
                     {
                         "span_id": "span1",
                         "result.label": "rejected",
                         "result.score": 0.0,
+                        "metadata.response": "bad route",
                     },
                 ]
             )
@@ -226,31 +230,88 @@ class TestPropertyAccess:
 
         extractor = PreferencePairExtractor(provider=mock_provider)
 
-        try:
+        dataset = await extractor.extract(
+            project="test-project",
+            agent_type="routing",
+            min_pairs=1,
+        )
+
+        # The public stores carried the call, with the documented query kwargs.
+        mock_provider.traces.get_spans.assert_called_once_with(
+            project="test-project",
+            start_time=None,
+            end_time=None,
+            limit=10000,
+        )
+        assert (
+            mock_provider.annotations.get_annotations.call_args.kwargs["project"]
+            == "test-project"
+        )
+        mock_provider._trace_store.get_spans.assert_not_called()
+        mock_provider._annotation_store.get_annotations.assert_not_called()
+
+        # The returned dataset reflects the source span + its two annotations.
+        assert len(dataset.pairs) == 1
+        pair = dataset.pairs[0]
+        assert pair.prompt == "find sunset videos"
+        assert pair.chosen == "good route"
+        assert pair.rejected == "bad route"
+        assert pair.metadata["span_id"] == "span1"
+        assert pair.metadata["agent_type"] == "routing"
+        assert pair.metadata["chosen_score"] == 1.0
+        assert pair.metadata["rejected_score"] == 0.0
+
+        assert dataset.metadata["project"] == "test-project"
+        assert dataset.metadata["agent_type"] == "routing"
+        assert dataset.metadata["total_spans"] == 1
+        assert dataset.metadata["agent_spans"] == 1
+        assert dataset.metadata["total_annotations"] == 2
+        assert dataset.metadata["preference_pairs"] == 1
+
+    @pytest.mark.asyncio
+    async def test_extract_raises_below_min_pairs(self, mock_provider):
+        """When fewer pairs than min_pairs are found, extract() raises rather
+        than returning a short dataset."""
+        mock_provider.traces.get_spans = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "context.span_id": "span1",
+                        "name": "routing_agent",
+                        "attributes.input.query": "find sunset videos",
+                        "attributes.output.response": "default route",
+                        "start_time": datetime.utcnow(),
+                    }
+                ]
+            )
+        )
+        mock_provider.annotations.get_annotations = AsyncMock(
+            return_value=pd.DataFrame(
+                [
+                    {
+                        "span_id": "span1",
+                        "result.label": "approved",
+                        "result.score": 1.0,
+                        "metadata.response": "good route",
+                    },
+                    {
+                        "span_id": "span1",
+                        "result.label": "rejected",
+                        "result.score": 0.0,
+                        "metadata.response": "bad route",
+                    },
+                ]
+            )
+        )
+
+        extractor = PreferencePairExtractor(provider=mock_provider)
+
+        with pytest.raises(ValueError, match="Insufficient preference pairs"):
             await extractor.extract(
                 project="test-project",
                 agent_type="routing",
-                min_pairs=1,
+                min_pairs=5,
             )
-        except Exception:
-            # May fail due to incomplete mocking, but we check the calls
-            pass
-
-        # Verify public properties were called
-        mock_provider.traces.get_spans.assert_called()
-        mock_provider.annotations.get_annotations.assert_called()
-
-        # Verify private attributes were NOT called
-        assert (
-            not mock_provider._trace_store.get_spans.called
-            if hasattr(mock_provider._trace_store, "get_spans")
-            else True
-        )
-        assert (
-            not mock_provider._annotation_store.get_annotations.called
-            if hasattr(mock_provider._annotation_store, "get_annotations")
-            else True
-        )
 
 
 @pytest.mark.unit
