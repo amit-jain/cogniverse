@@ -5,6 +5,7 @@ Stores approval data as telemetry spans with annotations using pluggable provide
 Enables approval workflow tracing and analysis.
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -240,8 +241,6 @@ class ApprovalStorageImpl(ApprovalStorage):
             ApprovalBatch if found, None otherwise
         """
         try:
-            import time
-
             # Retry with exponential backoff for telemetry backend indexing lag
             # Phoenix SDK can take significant time to index spans
             max_retries = 5
@@ -282,7 +281,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                     logger.debug(
                         f"Batch {batch_id} not found yet, retrying in {delay}s"
                     )
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
 
             if project_spans is None or project_spans.empty:
                 logger.warning(
@@ -539,9 +538,7 @@ class ApprovalStorageImpl(ApprovalStorage):
             List of batches with pending items
         """
         try:
-            import time
-
-            time.sleep(0.5)  # Give telemetry backend time to process spans
+            await asyncio.sleep(0.5)  # Give telemetry backend time to process spans
 
             # Query spans using telemetry provider
             spans_df = await self.provider.traces.get_spans(
@@ -659,8 +656,6 @@ class ApprovalStorageImpl(ApprovalStorage):
             Span ID if found, None otherwise
         """
         try:
-            import time
-
             # Retry with exponential backoff
             max_retries = 3
             retry_delays = [0.5, 1, 2]  # seconds
@@ -696,7 +691,7 @@ class ApprovalStorageImpl(ApprovalStorage):
                     logger.debug(
                         f"Span for item {item_id} not found, retrying in {delay}s"
                     )
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
 
             logger.warning(
                 f"No span found for item {item_id} after {max_retries} retries"

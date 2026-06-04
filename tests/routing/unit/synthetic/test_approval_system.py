@@ -414,3 +414,48 @@ class TestApprovalStorageContract:
 
         assert "batch_id" in abc_params
         assert "batch_id" in impl_params
+
+
+class TestApprovalStorageEventLoop:
+    """Telemetry-indexing delays must not block the event loop.
+
+    get_batch / get_pending_batches / get_item_span_id paused with a blocking
+    time.sleep inside async methods, freezing every other coroutine on the
+    worker for the full indexing-lag window. They must await asyncio.sleep.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_pending_batches_yields_during_indexing_delay(self):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.tenant_id = "acme:acme"
+        storage.project_name = "synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_spans=AsyncMock(return_value=pd.DataFrame()))
+        )
+
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                ticks += 1
+
+        task = asyncio.create_task(ticker())
+        # Awaits the 0.5s indexing delay, then returns [] on the empty frame.
+        result = await storage.get_pending_batches()
+        task.cancel()
+
+        assert result == []
+        # A blocking time.sleep(0.5) would freeze the loop so the ticker could
+        # not advance; awaiting asyncio.sleep lets it tick many times.
+        assert ticks >= 5
