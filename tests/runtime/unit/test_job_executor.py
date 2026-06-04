@@ -6,9 +6,11 @@ via ``httpx.ASGITransport`` and exercises the pure-helper classifiers.
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 import cogniverse_runtime.job_executor as je
 from cogniverse_runtime.job_executor import (
@@ -167,3 +169,99 @@ async def test_agent_only_action_delivers_nowhere(monkeypatch):
     assert result.startswith("PROCESSED:")
     assert calls["wiki"] == []
     assert calls["telegram"] == []
+
+
+# ---- delivery error ladder against a real ASGI app -----------------------
+
+
+async def _deliver_telegram_against(status_code, seen):
+    app = FastAPI()
+
+    @app.post("/messaging/send")
+    async def _msg(body: dict):
+        seen.append(body)
+        if status_code != 200:
+            raise HTTPException(status_code=status_code)
+        return {"status": "sent"}
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await je._deliver_to_telegram(client, "http://test", "acme:acme", "hello world")
+
+
+async def test_deliver_to_telegram_success_posts_payload(caplog):
+    seen = []
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        await _deliver_telegram_against(200, seen)
+
+    assert seen == [{"tenant_id": "acme:acme", "message": "hello world"}]
+    assert "Delivered to Telegram" in caplog.text
+
+
+async def test_deliver_to_telegram_404_is_skipped_not_raised(caplog):
+    seen = []
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        # Must return cleanly — a missing messaging endpoint is a skip,
+        # not a failure.
+        await _deliver_telegram_against(404, seen)
+
+    assert seen == [{"tenant_id": "acme:acme", "message": "hello world"}]
+    assert "Messaging endpoint not available" in caplog.text
+    assert "Telegram delivery failed" not in caplog.text
+
+
+async def test_deliver_to_telegram_server_error_is_swallowed(caplog):
+    seen = []
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        # A 500 is swallowed (logged, not raised) so one failed delivery
+        # never aborts the surrounding job.
+        await _deliver_telegram_against(500, seen)
+
+    assert seen == [{"tenant_id": "acme:acme", "message": "hello world"}]
+    assert "Telegram delivery failed" in caplog.text
+    assert "Messaging endpoint not available" not in caplog.text
+
+
+async def test_deliver_to_wiki_success_posts_answer_payload(caplog):
+    app = FastAPI()
+    seen = []
+
+    @app.post("/wiki/save")
+    async def _wiki(body: dict):
+        seen.append(body)
+        return {"slug": "weekly-1"}
+
+    transport = httpx.ASGITransport(app=app)
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            await je._deliver_to_wiki(
+                client, "http://test", "acme:acme", "weekly news", "FINAL RESULT"
+            )
+
+    assert len(seen) == 1
+    assert seen[0]["query"] == "weekly news"
+    assert seen[0]["response"]["answer"] == "FINAL RESULT"
+    assert seen[0]["tenant_id"] == "acme:acme"
+    assert "Delivered to wiki: slug=weekly-1" in caplog.text
+
+
+async def test_deliver_to_wiki_server_error_is_swallowed(caplog):
+    app = FastAPI()
+
+    @app.post("/wiki/save")
+    async def _wiki(body: dict):
+        raise HTTPException(status_code=500)
+
+    transport = httpx.ASGITransport(app=app)
+    with caplog.at_level(logging.INFO, logger="cogniverse_runtime.job_executor"):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
+            # Swallowed — no raise.
+            await je._deliver_to_wiki(
+                client, "http://test", "acme:acme", "weekly news", "FINAL RESULT"
+            )
+
+    assert "Wiki delivery failed" in caplog.text
