@@ -5,6 +5,7 @@ Uses ColPali multi-vector embeddings for image similarity search,
 same approach as video frames. Connects to Vespa for real search.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -334,9 +335,9 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
         if search_mode == "hybrid" and query_text:
             params["query"] = query_text
 
-        # Execute search
-        response = requests.post(
-            f"{self._vespa_endpoint}/search/", json=params, timeout=10
+        # Execute search off the event loop — requests.post is blocking.
+        response = await asyncio.to_thread(
+            requests.post, f"{self._vespa_endpoint}/search/", json=params, timeout=10
         )
 
         if response.status_code != 200:

@@ -4,6 +4,8 @@ Unit tests for Audio Analysis Agent
 Tests audio transcription with Whisper, audio search, and Vespa integration.
 """
 
+import asyncio
+import threading
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -351,6 +353,89 @@ class TestAudioAnalysisAgent:
         assert "detect_audio_events" not in skill_names
         assert "identify_speakers" not in skill_names
         assert "classify_music" not in skill_names
+
+
+class TestAudioSearchEventLoop:
+    """Audio search/transcription must not block the event loop on HTTP."""
+
+    def _bare_agent(self, **attrs):
+        agent = object.__new__(AudioAnalysisAgent)
+        agent._tenant_id = "acme:acme"
+        agent._vespa_endpoint = "http://vespa:8080"
+        for k, v in attrs.items():
+            setattr(agent, k, v)
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_search_transcript_offloads_blocking_post(self, monkeypatch):
+        """Representative of the three async search methods, which share the
+        same offload wrapper. If the post ran on the loop the releaser could
+        never run and the gather would deadlock."""
+        release = threading.Event()
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"root": {"children": []}}
+
+        def blocking_post(url, json=None, timeout=None):
+            assert release.wait(timeout=5), "event loop was blocked by requests.post"
+            return _Resp()
+
+        monkeypatch.setattr("requests.post", blocking_post)
+        agent = self._bare_agent()
+
+        async def releaser():
+            await asyncio.sleep(0.05)
+            release.set()
+
+        results, _ = await asyncio.wait_for(
+            asyncio.gather(agent._search_transcript("q", 5), releaser()),
+            timeout=5,
+        )
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_transcribe_via_sidecar_offloaded(self, monkeypatch, tmp_path):
+        """transcribe_audio offloads the synchronous _transcribe_via_sidecar
+        helper (blocking file read + POST) off the event loop."""
+        audio = tmp_path / "clip.wav"
+        audio.write_bytes(b"RIFFfake-wav-bytes")
+        release = threading.Event()
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "text": "hello world",
+                    "language": "en",
+                    "segments": [],
+                    "duration": 1.0,
+                }
+
+        def blocking_post(url, **kwargs):
+            assert release.wait(timeout=5), "event loop was blocked by requests.post"
+            return _Resp()
+
+        monkeypatch.setattr("requests.post", blocking_post)
+        agent = self._bare_agent(
+            _whisper_endpoint="http://asr:8000", _whisper_model="whisper-1"
+        )
+        monkeypatch.setattr(agent, "_get_audio_path", lambda url: str(audio))
+
+        async def releaser():
+            await asyncio.sleep(0.05)
+            release.set()
+
+        result, _ = await asyncio.wait_for(
+            asyncio.gather(agent.transcribe_audio(str(audio)), releaser()),
+            timeout=5,
+        )
+        assert result.text == "hello world"
+        assert result.language == "en"
 
 
 if __name__ == "__main__":

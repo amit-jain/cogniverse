@@ -5,6 +5,7 @@ Uses existing AudioTranscriber for transcription and connects to Vespa
 for real audio search. Supports both transcript-based and acoustic similarity search.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -263,7 +264,11 @@ class AudioAnalysisAgent(
         audio_path = self._get_audio_path(audio_url)
 
         if self._whisper_endpoint:
-            result = self._transcribe_via_sidecar(Path(audio_path), language)
+            # _transcribe_via_sidecar is sync (blocking file read + POST) —
+            # offload the whole helper off the event loop.
+            result = await asyncio.to_thread(
+                self._transcribe_via_sidecar, Path(audio_path), language
+            )
         else:
             result = self.audio_transcriber.transcribe_audio(
                 video_path=Path(audio_path), output_dir=None
@@ -338,8 +343,11 @@ class AudioAnalysisAgent(
         }
 
         try:
-            response = requests.post(
-                f"{self._vespa_endpoint}/search/", json=params, timeout=10
+            response = await asyncio.to_thread(
+                requests.post,
+                f"{self._vespa_endpoint}/search/",
+                json=params,
+                timeout=10,
             )
 
             if response.status_code != 200:
@@ -401,8 +409,11 @@ class AudioAnalysisAgent(
         }
 
         try:
-            response = requests.post(
-                f"{self._vespa_endpoint}/search/", json=params, timeout=10
+            response = await asyncio.to_thread(
+                requests.post,
+                f"{self._vespa_endpoint}/search/",
+                json=params,
+                timeout=10,
             )
 
             if response.status_code != 200:
@@ -457,8 +468,11 @@ class AudioAnalysisAgent(
         }
 
         try:
-            response = requests.post(
-                f"{self._vespa_endpoint}/search/", json=params, timeout=10
+            response = await asyncio.to_thread(
+                requests.post,
+                f"{self._vespa_endpoint}/search/",
+                json=params,
+                timeout=10,
             )
 
             if response.status_code != 200:

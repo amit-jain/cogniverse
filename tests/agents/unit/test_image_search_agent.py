@@ -4,6 +4,8 @@ Unit tests for Image Search Agent
 Tests ColPali-based image search with Vespa integration.
 """
 
+import asyncio
+import threading
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
@@ -313,3 +315,46 @@ class TestImageSearchFilterEscaping:
         expected = "contains(detected_objects, " + yql_quote(val) + ")"
         assert expected in captured["yql"]
         assert "'cat's toy'" not in captured["yql"]
+
+
+class TestImageSearchEventLoop:
+    """_search_vespa must not block the event loop on the Vespa round-trip."""
+
+    @pytest.mark.asyncio
+    async def test_search_vespa_offloads_blocking_post(self, monkeypatch):
+        """The blocking requests.post runs in a worker thread: a coroutine
+        scheduled alongside it must get to run and release it while it is
+        in-flight. If the post ran on the loop, the releaser could never run
+        and this would deadlock (then TimeoutError)."""
+        release = threading.Event()
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"root": {"children": []}}
+
+        def blocking_post(url, json=None, timeout=None):
+            assert release.wait(timeout=5), "event loop was blocked by requests.post"
+            return _Resp()
+
+        monkeypatch.setattr("requests.post", blocking_post)
+
+        agent = object.__new__(ImageSearchAgent)
+        agent._tenant_id = "acme:acme"
+        agent._vespa_endpoint = "http://vespa:8080"
+
+        async def releaser():
+            await asyncio.sleep(0.05)
+            release.set()
+
+        results, _ = await asyncio.wait_for(
+            asyncio.gather(
+                agent._search_vespa(
+                    np.zeros((2, 128), dtype=np.float32), "q", "semantic", 5, None
+                ),
+                releaser(),
+            ),
+            timeout=5,
+        )
+        assert results == []
