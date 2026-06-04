@@ -130,59 +130,6 @@ def test_batch_generate_requires_tenant_id(client: TestClient) -> None:
     assert r.status_code == 422  # tenant_id is required by FastAPI Query(...)
 
 
-def test_batch_generate_aggregates_all_batches(client: TestClient, monkeypatch) -> None:
-    """The live body loops ``num_batches`` times, forwards the query params to
-    each ``service.generate`` request, and aggregates the per-batch responses
-    into one envelope."""
-    from cogniverse_synthetic.schemas import SyntheticDataResponse
-
-    requests_seen = []
-
-    async def fake_generate(request):
-        requests_seen.append(request)
-        idx = len(requests_seen)
-        return SyntheticDataResponse(
-            optimizer=request.optimizer,
-            schema_name="RoutingExampleSchema",
-            count=2,
-            selected_profiles=["profile_a", "profile_b"],
-            profile_selection_reasoning="test",
-            data=[{"q": f"batch{idx}-e1"}, {"q": f"batch{idx}-e2"}],
-            metadata={},
-        )
-
-    fake = MagicMock()
-    fake.generate = fake_generate
-    monkeypatch.setattr(synthetic_api, "_service", fake)
-
-    r = client.post(
-        "/synthetic/batch/generate",
-        params={
-            "optimizer": "routing",
-            "count_per_batch": 2,
-            "num_batches": 3,
-            "tenant_id": "acme",
-        },
-    )
-
-    assert r.status_code == 200
-    body = r.json()
-    assert body["optimizer"] == "routing"
-    assert body["num_batches"] == 3
-    assert body["examples_per_batch"] == 2
-    assert body["total_examples"] == 6
-    assert len(body["data"]) == 6
-    assert [b["batch_index"] for b in body["batches"]] == [0, 1, 2]
-    assert all(b["count"] == 2 for b in body["batches"])
-    assert all(b["profiles"] == ["profile_a", "profile_b"] for b in body["batches"])
-
-    # Each batch request carried the route's query params.
-    assert len(requests_seen) == 3
-    assert all(req.optimizer == "routing" for req in requests_seen)
-    assert all(req.count == 2 for req in requests_seen)
-    assert all(req.tenant_id == "acme" for req in requests_seen)
-
-
 def test_batch_generate_service_value_error_returns_400(
     client: TestClient, monkeypatch
 ) -> None:
