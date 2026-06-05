@@ -2554,7 +2554,7 @@ class CitationTracingAgent(
 ):
     def trace(self, claim_id: str) -> Dict[str, Any]:
         graph_manager = self._require_graph_manager("trace")
-        edges = graph_manager._visit(doc_type="edge", top_k=2000)
+        edge_fields = graph_manager.get_edge_by_id(claim_id)
         ...
 ```
 

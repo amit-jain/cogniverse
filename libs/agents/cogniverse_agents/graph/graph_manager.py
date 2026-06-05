@@ -34,6 +34,7 @@ from cogniverse_agents.graph.graph_schema import (
     Edge,
     ExtractionResult,
     Node,
+    _safe_tenant,
     normalize_name,
 )
 from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
@@ -465,6 +466,27 @@ class GraphManager:
             return [d.get("fields", d) for d in data.get("documents", [])]
         except Exception:
             return []
+
+    def get_edge_by_id(self, edge_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch a single edge's fields by its deterministic ``edge_id``.
+
+        The edge doc_id is ``kg_edge_{safe_tenant}_{edge_id}`` (see
+        ``Edge.doc_id``), so a direct Document v1 GET resolves it without
+        visiting and filtering the whole edge set. Returns ``None`` when the
+        edge does not exist or the GET fails.
+        """
+        doc_id = f"kg_edge_{_safe_tenant(self._tenant_id)}_{edge_id}"
+        url = f"{self._backend._url}:{self._backend._port}"
+        get_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid/{doc_id}"
+        try:
+            resp = requests.get(get_url, timeout=15)
+            if resp.status_code == 404 or not resp.ok:
+                return None
+            data = resp.json()
+            return data.get("fields", data)
+        except Exception:
+            logger.exception("Edge GET failed for edge_id=%s", edge_id)
+            return None
 
     def _extract_hits(self, response) -> List[Dict[str, Any]]:
         """Extract hit fields from a search backend response."""

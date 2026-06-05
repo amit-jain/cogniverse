@@ -174,16 +174,9 @@ class CitationTracingAgent(
         in the test fixtures.
         """
         graph_manager = self._require_graph_manager("trace")
-        edges = graph_manager._visit(doc_type="edge", top_k=2000)
+        edge_fields = graph_manager.get_edge_by_id(claim_id)
         chain: List[Dict[str, Any]] = []
-        for edge_fields in edges:
-            doc_id = str(edge_fields.get("doc_id") or "")
-            # doc_id format: ``kg_edge_{tenant}_{edge_id}``; match suffix.
-            if (
-                not doc_id.endswith(f"_{claim_id}")
-                and doc_id.split("_")[-1] != claim_id
-            ):
-                continue
+        if edge_fields:
             chain.append(
                 {
                     "source_doc_id": str(edge_fields.get("source_doc_id") or ""),

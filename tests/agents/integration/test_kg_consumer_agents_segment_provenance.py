@@ -543,6 +543,34 @@ class TestKGConsumerAgentsSegmentProvenance:
         result = agent.trace(claim_id=edge_id)
         assert_golden_json(result, "citation_chain_discovered.json")
 
+    def test_trace_fetches_edge_directly_not_full_visit(
+        self, ingested_curie_graph, monkeypatch
+    ):
+        """trace resolves the claim via a single edge GET, never a full
+        edge visit. A bogus claim_id resolves to no edge and an empty chain."""
+        extraction = _build_curie_extraction()
+        edge_id = _edge_id_of(extraction, "Marie Curie", "discovered", "radium")
+        agent = CitationTracingAgent(deps=CitationTracingDeps())
+        agent.set_graph_manager(ingested_curie_graph)
+
+        visited_doc_types: List[str] = []
+        real_visit = ingested_curie_graph._visit
+
+        def spy_visit(doc_type, *args, **kwargs):
+            visited_doc_types.append(doc_type)
+            return real_visit(doc_type, *args, **kwargs)
+
+        monkeypatch.setattr(ingested_curie_graph, "_visit", spy_visit)
+
+        result = agent.trace(claim_id=edge_id)
+        assert len(result["chain"]) == 1
+        assert result["chain"][0]["predicate"] == "discovered"
+        assert "edge" not in visited_doc_types
+
+        missing = agent.trace(claim_id="deadbeefdeadbeef")
+        assert missing == {"chain": []}
+        assert "edge" not in visited_doc_types
+
     @pytest.mark.asyncio
     async def test_citation_dispatch_surfaces_kg_grounding(self, ingested_curie_graph):
         """The dispatch path (_process_impl) must surface the bound KG's
