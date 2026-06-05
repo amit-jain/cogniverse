@@ -32,6 +32,13 @@ Root facts established by investigation:
 
 ## Phases
 
+> Phase 1 ☑ done (e220d480). Phase 2 ☑ done (921a7183 — chosen approach:
+> backend falls back to the schema's `default` profile when no strategy is
+> requested and none configured; agent drops the 7 `binary_binary` hardcodes →
+> passes the caller's ranking or None. Verified by a real-Vespa auto-select
+> test + an agent unit test. Incidental: fixed 2 stale `_metadata_app`
+> bare-construct backend tests, bd82db13.) Phases 3–4 remain.
+
 ### Phase 1 — `_search_text` matches the real ColBERT producer
 - Use `ColBERTQueryEncoder` (LateOn) for the query; send mapped
   `{str(i): vec.tolist()}` as `input.query(qt)`; profile `hybrid_float_bm25`;
