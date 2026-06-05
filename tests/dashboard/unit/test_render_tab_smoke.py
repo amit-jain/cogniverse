@@ -121,3 +121,88 @@ def test_render_tab_runs_without_uncaught_exception(
     assert at.exception == [], (
         f"{fn_name} raised on render: {[str(e.value) for e in at.exception]}"
     )
+
+
+def test_routing_evaluation_tab_fetches_spans_once(tmp_path, monkeypatch):
+    """The routing-evaluation tab pulls the span window once and reuses it for
+    summary/confidence/temporal — it must not re-query the provider per panel.
+
+    Also exercises the annotation-stats panel, whose async
+    ``get_annotation_statistics`` must be awaited (a bare call leaves a
+    coroutine that ``stats.get(...)`` cannot index).
+    """
+    from unittest.mock import AsyncMock
+
+    import pandas as pd
+
+    from cogniverse_agents.routing.annotation_storage import RoutingAnnotationStorage
+
+    monkeypatch.setattr(
+        RoutingAnnotationStorage,
+        "get_annotation_statistics",
+        AsyncMock(return_value={"total": 3, "pending_review": 1}),
+    )
+
+    get_spans_calls = {"n": 0}
+    spans_df = pd.DataFrame(
+        [
+            {
+                "name": "cogniverse.routing",
+                "attributes.routing": {
+                    "chosen_agent": "video_search",
+                    "confidence": 0.9,
+                    "processing_time": 12.0,
+                },
+                "attributes": {},
+                "status": "OK",
+                "status_code": "OK",
+                "parent_id": "p1",
+                "start_time": "2026-06-05T00:00:00+00:00",
+            },
+            {
+                "name": "cogniverse.routing",
+                "attributes.routing": {
+                    "chosen_agent": "text_search",
+                    "confidence": 0.4,
+                    "processing_time": 30.0,
+                },
+                "attributes": {},
+                "status": "OK",
+                "status_code": "OK",
+                "parent_id": "p2",
+                "start_time": "2026-06-05T00:01:00+00:00",
+            },
+        ]
+    )
+
+    class _Traces:
+        async def get_spans(self, **kwargs):
+            get_spans_calls["n"] += 1
+            return spans_df
+
+    class _Provider:
+        traces = _Traces()
+
+    class _Manager:
+        def get_provider(self, tenant_id=None):
+            return _Provider()
+
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: _Manager(),
+    )
+
+    script_path = _build_app_script(
+        tmp_path,
+        "routing_evaluation",
+        "render_routing_evaluation_tab",
+        {"current_tenant": "acme"},
+    )
+    at = AppTest.from_file(script_path, default_timeout=30)
+    at.run()
+
+    assert at.exception == [], f"render raised: {[str(e.value) for e in at.exception]}"
+    # Summary, confidence and temporal panels all reuse the single fetch.
+    assert get_spans_calls["n"] == 1, (
+        f"expected exactly one span fetch, got {get_spans_calls['n']}"
+    )

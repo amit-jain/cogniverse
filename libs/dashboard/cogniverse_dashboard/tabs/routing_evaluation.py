@@ -71,61 +71,35 @@ def render_routing_evaluation_tab():
         st.error(f"❌ Failed to initialize RoutingEvaluator: {e}")
         return
 
-    # Check telemetry provider connectivity
-    try:
-        # Test provider connectivity by attempting to fetch spans
-        async def check_provider():
-            try:
-                _now = datetime.now(timezone.utc)
-                await provider.traces.get_spans(
-                    project=project_name,
-                    start_time=_now - timedelta(minutes=1),
-                    end_time=_now,
-                    limit=1,
-                )
-                return True
-            except Exception:
-                return False
-
-        provider_available = run_async_in_streamlit(check_provider())
-    except Exception:
-        provider_available = False
-
-    if not provider_available:
-        st.warning("⚠️ Telemetry provider is not available")
-        st.info("Check your telemetry configuration and ensure the provider is running")
-        return
-
     # Time range for query — Phoenix stores spans in UTC, mirror that here so
     # the window is correct on non-UTC hosts (the dashboard runs anywhere).
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
-    # Fetch and evaluate routing spans
+    # Fetch routing spans ONCE for the window; summary/confidence/temporal all
+    # reuse this single pull (a failed fetch means the provider is unavailable).
     with st.spinner("Fetching routing spans from telemetry..."):
         try:
-            # Query routing spans from telemetry (async method)
             routing_spans = run_async_in_streamlit(
                 evaluator.query_routing_spans(
                     start_time=start_time, end_time=end_time, limit=1000
                 )
             )
-
-            # Calculate metrics from spans
-            if not routing_spans:
-                st.warning(
-                    f"📭 No routing decisions found in the last {lookback_hours} hours. "
-                    "Make sure the routing agent has been processing requests and telemetry is capturing traces."
-                )
-                return
-
-            metrics = evaluator.calculate_metrics(routing_spans)
-        except Exception as e:
-            st.error(f"❌ Failed to evaluate routing decisions: {e}")
-            st.exception(e)
+        except Exception:
+            st.warning("⚠️ Telemetry provider is not available")
+            st.info(
+                "Check your telemetry configuration and ensure the provider is running"
+            )
             return
 
-    # Check if we have data
+    if not routing_spans:
+        st.warning(
+            f"📭 No routing decisions found in the last {lookback_hours} hours. "
+            "Make sure the routing agent has been processing requests and telemetry is capturing traces."
+        )
+        return
+
+    metrics = evaluator.calculate_metrics(routing_spans)
     if metrics.total_decisions == 0:
         st.warning(
             f"📭 No routing decisions found in the last {lookback_hours} hours. "
@@ -133,11 +107,13 @@ def render_routing_evaluation_tab():
         )
         return
 
+    routing_spans_df = pd.DataFrame(routing_spans)
+
     # Display metrics
     _render_summary_metrics(metrics)
     _render_per_agent_metrics(metrics)
-    _render_confidence_analysis(evaluator, start_time, end_time)
-    _render_temporal_analysis(evaluator, start_time, end_time)
+    _render_confidence_analysis(routing_spans_df)
+    _render_temporal_analysis(routing_spans_df)
 
     # Annotation section
     st.divider()
@@ -241,29 +217,15 @@ def _render_per_agent_metrics(metrics):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def _render_confidence_analysis(evaluator, start_time, end_time):
-    """Render confidence distribution and calibration analysis"""
+def _render_confidence_analysis(routing_spans):
+    """Render confidence distribution and calibration analysis.
+
+    ``routing_spans`` is the DataFrame already fetched by the caller — no
+    additional telemetry query is issued here.
+    """
     st.subheader("📈 Confidence Analysis")
 
-    # Get detailed span data for confidence analysis
     try:
-        # Fetch spans using provider abstraction (async call)
-        async def fetch_spans():
-            return await evaluator.provider.traces.get_spans(
-                project=evaluator.project_name, start_time=start_time, end_time=end_time
-            )
-
-        spans_df = run_async_in_streamlit(fetch_spans())
-
-        if spans_df.empty:
-            st.info("No span data available for confidence analysis.")
-            return
-
-        # Filter for routing spans
-        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-
-        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
-
         if routing_spans.empty:
             st.info("No routing spans found for confidence analysis.")
             return
@@ -357,28 +319,15 @@ def _render_confidence_analysis(evaluator, start_time, end_time):
         logger.exception("Confidence analysis error")
 
 
-def _render_temporal_analysis(evaluator, start_time, end_time):
-    """Render temporal analysis of routing decisions"""
+def _render_temporal_analysis(routing_spans):
+    """Render temporal analysis of routing decisions.
+
+    ``routing_spans`` is the DataFrame already fetched by the caller — no
+    additional telemetry query is issued here.
+    """
     st.subheader("📅 Temporal Analysis")
 
     try:
-        # Fetch spans using provider abstraction (async call)
-        async def fetch_spans():
-            return await evaluator.provider.traces.get_spans(
-                project=evaluator.project_name, start_time=start_time, end_time=end_time
-            )
-
-        spans_df = run_async_in_streamlit(fetch_spans())
-
-        if spans_df.empty:
-            st.info("No span data available for temporal analysis.")
-            return
-
-        # Filter for routing spans
-        from cogniverse_foundation.telemetry.config import SPAN_NAME_ROUTING
-
-        routing_spans = spans_df[spans_df["name"] == SPAN_NAME_ROUTING]
-
         if routing_spans.empty:
             st.info("No routing spans found for temporal analysis.")
             return
@@ -419,7 +368,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
         with col1:
             # Decisions over time by agent
             decisions_over_time = (
-                df.groupby([pd.Grouper(key="timestamp", freq="1H"), "agent"])
+                df.groupby([pd.Grouper(key="timestamp", freq="1h"), "agent"])
                 .size()
                 .reset_index(name="count")
             )
@@ -438,7 +387,7 @@ def _render_temporal_analysis(evaluator, start_time, end_time):
         with col2:
             # Success rate over time
             success_over_time = (
-                df.groupby(pd.Grouper(key="timestamp", freq="1H"))["success"]
+                df.groupby(pd.Grouper(key="timestamp", freq="1h"))["success"]
                 .mean()
                 .reset_index()
             )
@@ -548,7 +497,7 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                         st.error(f"❌ Error generating annotations: {e}")
 
     with col3:
-        stats = annotation_storage.get_annotation_statistics()
+        stats = run_async_in_streamlit(annotation_storage.get_annotation_statistics())
         st.metric(
             label="Total Annotations",
             value=stats.get("total", 0),
