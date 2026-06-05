@@ -586,7 +586,7 @@ and structure summary based on identified themes and content categories.
         elif request.summary_type == "bullet_points":
             return self._generate_bullet_summary(request, top_results, thinking_phase)
         else:  # comprehensive
-            return self._generate_comprehensive_summary(
+            return await self._generate_comprehensive_summary(
                 request, top_results, thinking_phase, visual_insights
             )
 
@@ -639,59 +639,42 @@ and structure summary based on identified themes and content categories.
 
         return "\n".join(points)
 
-    def _generate_comprehensive_summary(
+    async def _generate_comprehensive_summary(
         self,
         request: SummaryRequest,
         results: List[Dict[str, Any]],
         thinking_phase: ThinkingPhase,
         visual_insights: List[str],
     ) -> str:
-        """Generate comprehensive summary"""
-        summary_parts = []
+        """Generate comprehensive summary using DSPy.
 
-        # Introduction
-        summary_parts.append(
-            f"Search results for '{request.query}' yielded {len(results)} relevant items "
-            f"spanning {', '.join(thinking_phase.key_themes[:3])}."
-        )
+        Builds a content block from the top results (title/type/relevance plus
+        any description), the analysed themes, and visual insights, then hands
+        it to the DSPy summarization module with ``summary_type='comprehensive'``.
+        """
+        if not results:
+            return f"No relevant results found for '{request.query}'."
 
-        # Content analysis
-        if thinking_phase.content_categories:
-            summary_parts.append(
-                f"The content includes {', '.join(thinking_phase.content_categories)} "
-                f"with varying levels of relevance to the search query."
-            )
+        content_parts = []
+        for result in results:
+            title = result.get("title", result.get("video_id", "Unknown"))
+            content_type = result.get("content_type", "video")
+            score = result.get("relevance", result.get("score", 0))
+            description = result.get("description", result.get("text_content", ""))
+            line = f"- {title} ({content_type}, relevance {score:.2f})"
+            if description:
+                line += f": {description}"
+            content_parts.append(line)
 
-        # Top results
-        if results:
-            top_result = results[0]
-            title = top_result.get("title", top_result.get("video_id", "Top result"))
-            score = top_result.get("relevance", top_result.get("score", 0))
-            summary_parts.append(
-                f"The most relevant result is '{title}' with a relevance score of {score:.2f}."
-            )
-
-        # Visual insights
+        if thinking_phase.key_themes:
+            content_parts.append(f"Key themes: {', '.join(thinking_phase.key_themes)}")
         if visual_insights:
-            summary_parts.append(
-                f"Visual analysis reveals: {'. '.join(visual_insights[:2])}."
-            )
+            content_parts.append(f"Visual insights: {'; '.join(visual_insights)}")
 
-        # Conclusion
-        avg_relevance = (
-            sum(thinking_phase.relevance_scores.values())
-            / len(thinking_phase.relevance_scores)
-            if thinking_phase.relevance_scores
-            else 0
+        content_text = "\n".join(content_parts)
+        return await self._run_summarization(
+            content_text, request.query, "comprehensive"
         )
-
-        summary_parts.append(
-            f"Overall, the search results show an average relevance of {avg_relevance:.2f}, "
-            f"indicating {'strong' if avg_relevance > 0.7 else 'moderate' if avg_relevance > 0.4 else 'weak'} "
-            f"alignment with the search query."
-        )
-
-        return " ".join(summary_parts)
 
     def _extract_key_points(
         self, request: SummaryRequest, thinking_phase: ThinkingPhase, summary: str

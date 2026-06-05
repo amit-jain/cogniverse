@@ -440,6 +440,59 @@ class TestSummarizerAgentCoreFunctionality:
         )
 
     @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_generate_comprehensive_summary_uses_llm(
+        self, agent_with_mocks, sample_summary_request
+    ):
+        """The default 'comprehensive' path routes through the DSPy module (not
+        a deterministic template): it hands DSPy a results+themes+visual content
+        block with summary_type='comprehensive' and returns the summary verbatim.
+        """
+        agent = agent_with_mocks
+
+        thinking_phase = ThinkingPhase(
+            key_themes=["AI", "technology", "machine learning"],
+            content_categories=["video", "text"],
+            relevance_scores={"1": 0.9, "2": 0.8, "3": 0.7},
+            visual_elements=["video1", "video2"],
+            reasoning="Analysis of AI technology content",
+        )
+
+        captured = {}
+
+        async def _fake_call_dspy(
+            module, *, output_field, content, query, summary_type
+        ):
+            captured.update(
+                output_field=output_field,
+                content=content,
+                query=query,
+                summary_type=summary_type,
+            )
+            return Mock(summary="A comprehensive LLM-written synthesis of the results.")
+
+        agent.call_dspy = _fake_call_dspy
+
+        summary = await agent._generate_comprehensive_summary(
+            sample_summary_request,
+            sample_summary_request.search_results,
+            thinking_phase,
+            ["Technical demo"],
+        )
+
+        assert summary == "A comprehensive LLM-written synthesis of the results."
+        assert captured["output_field"] == "summary"
+        assert captured["summary_type"] == "comprehensive"
+        assert captured["query"] == "AI technology overview"
+        assert captured["content"] == (
+            "- AI Technology Demo (video, relevance 0.90): Comprehensive AI demo\n"
+            "- Machine Learning Tutorial (video, relevance 0.80): ML tutorial content\n"
+            "- AI Research Paper (text, relevance 0.70): Academic research on AI\n"
+            "Key themes: AI, technology, machine learning\n"
+            "Visual insights: Technical demo"
+        )
+
+    @pytest.mark.ci_fast
     def test_extract_key_points_logic(self, agent_with_mocks, sample_summary_request):
         """Test key points extraction"""
         agent = agent_with_mocks
@@ -491,26 +544,27 @@ class TestSummarizerAgentCoreFunctionality:
         """Test the main summarize method workflow"""
         agent = agent_with_mocks
 
-        with patch("dspy.ChainOfThought") as mock_cot:
-            # Mock the DSPy prediction
-            mock_prediction = Mock()
-            mock_prediction.summary = "This is a comprehensive summary of AI technology content including demos and tutorials."
-            mock_prediction.key_insights = (
-                "AI advancement, Technical education, Research findings"
-            )
+        comprehensive_summary = (
+            "This is a comprehensive summary of AI technology content "
+            "including demos and tutorials."
+        )
 
-            mock_cot_instance = Mock()
-            mock_cot_instance.forward = Mock(return_value=mock_prediction)
-            mock_cot.return_value = mock_cot_instance
+        async def _fake_call_dspy(
+            module, *, output_field, content, query, summary_type
+        ):
+            assert summary_type == "comprehensive"
+            return Mock(summary=comprehensive_summary)
 
-            result = await agent._summarize(sample_summary_request)
+        agent.call_dspy = _fake_call_dspy
 
-            assert isinstance(result, SummaryResult)
-            assert result.summary is not None
-            assert len(result.summary) > 0
-            assert isinstance(result.key_points, list)
-            assert isinstance(result.thinking_phase, ThinkingPhase)
-            assert 0.0 <= result.confidence_score <= 1.0
+        result = await agent._summarize(sample_summary_request)
+
+        assert isinstance(result, SummaryResult)
+        # The default comprehensive path returns the DSPy summary verbatim.
+        assert result.summary == comprehensive_summary
+        assert isinstance(result.key_points, list)
+        assert isinstance(result.thinking_phase, ThinkingPhase)
+        assert 0.0 <= result.confidence_score <= 1.0
 
     @pytest.mark.ci_fast
     @pytest.mark.asyncio
@@ -532,20 +586,19 @@ class TestSummarizerAgentCoreFunctionality:
             relationships=[{"type": "semantic", "entities": ["AI", "technology"]}],
         )
 
-        with patch("dspy.ChainOfThought") as mock_cot:
-            mock_prediction = Mock()
-            mock_prediction.summary = "Enhanced summary with routing context"
-            mock_prediction.key_insights = "AI technology, Enhanced context"
-            mock_cot_instance = Mock()
-            mock_cot_instance.forward = Mock(return_value=mock_prediction)
-            mock_cot.return_value = mock_cot_instance
+        async def _fake_call_dspy(
+            module, *, output_field, content, query, summary_type
+        ):
+            return Mock(summary="Enhanced summary with routing context")
 
-            result = await agent._process_impl(input_data)
+        agent.call_dspy = _fake_call_dspy
 
-            assert result.summary
-            assert result.metadata.get("enhanced_query") == input_data.enhanced_query
-            assert result.metadata.get("entities_found") == 1
-            assert result.metadata.get("relationships_found") == 1
+        result = await agent._process_impl(input_data)
+
+        assert result.summary == "Enhanced summary with routing context"
+        assert result.metadata.get("enhanced_query") == input_data.enhanced_query
+        assert result.metadata.get("entities_found") == 1
+        assert result.metadata.get("relationships_found") == 1
 
 
 @pytest.mark.unit
@@ -604,6 +657,9 @@ class TestEmitProgressStreaming:
         mock_prediction = Mock()
         mock_prediction.summary = "Test summary."
         agent.summarization_module.forward = Mock(return_value=mock_prediction)
+        # The comprehensive path routes the summary through the DSPy LLM seam;
+        # mock it so streaming completes without a live model.
+        agent.call_dspy = AsyncMock(return_value=mock_prediction)
 
         typed_input = SummarizerInput(
             query="test query",
