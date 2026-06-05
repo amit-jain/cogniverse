@@ -186,12 +186,14 @@ class DocumentAgent(
 
         self._vespa_endpoint = deps.vespa_endpoint
         self._colpali_model_name = deps.colpali_model
+        self._tenant_id = deps.tenant_id
 
         # Lazy load models
         self._colpali_model = None
         self._colpali_processor = None
         self._query_encoder = None
         self._text_embedding_model = None
+        self._text_query_encoder = None
 
         logger.info(
             f"Initialized DocumentAgent for tenant: {deps.tenant_id}, "
@@ -229,6 +231,20 @@ class DocumentAgent(
                 model_name=self._colpali_model_name
             )
         return self._query_encoder
+
+    @property
+    def text_query_encoder(self):
+        """ColBERT query encoder for the text strategy.
+
+        document_text stores ColBERT per-token embeddings (LateOn, 128-d via
+        DocumentTextEmbeddingStrategy); the query must be encoded with the same
+        model to match the deployed schema's token{},v[128] tensor.
+        """
+        if self._text_query_encoder is None:
+            from cogniverse_core.query.encoders import ColBERTQueryEncoder
+
+            self._text_query_encoder = ColBERTQueryEncoder(embedding_dim=128)
+        return self._text_query_encoder
 
     @property
     def text_embedding_model(self):
@@ -461,24 +477,24 @@ class DocumentAgent(
         """
         import requests
 
-        logger.info("📝 Using text strategy (extraction + semantic)")
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
-        # Generate text embedding for query
-        query_embedding = self.text_embedding_model.encode(
-            query,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
+        logger.info("📝 Using text strategy (ColBERT tokens + bm25)")
 
-        # Build Vespa query for document_text schema
-        yql = "select * from document_text where userQuery()"
+        # ColBERT per-token query embedding (matches document_text ingestion).
+        query_embedding = self.text_query_encoder.encode(query)
+        qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+
+        safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
+        schema = f"document_text_{safe_tenant}"
+        yql = f"select * from {schema} where userQuery()"
 
         params = {
             "yql": yql,
             "query": query,
             "hits": limit,
-            "ranking.profile": "hybrid_bm25_semantic",
-            "input.query(q)": query_embedding.tolist(),
+            "ranking.profile": "hybrid_float_bm25",
+            "input.query(qt)": qt_value,
         }
 
         # Execute search — offload the blocking HTTP call off the event loop.
@@ -504,7 +520,7 @@ class DocumentAgent(
             results.append(
                 DocumentResult(
                     document_id=fields.get("document_id", ""),
-                    document_url=fields.get("source_url", ""),
+                    document_url=fields.get("document_path", ""),
                     title=fields.get("document_title", ""),
                     page_count=fields.get("page_count"),
                     document_type=fields.get("document_type", "pdf"),

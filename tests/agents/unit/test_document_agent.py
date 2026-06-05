@@ -156,15 +156,20 @@ class TestDocumentAgent:
         assert "colpali" in str(call_args)
 
     @pytest.mark.asyncio
-    @patch.object(DocumentAgent, "text_embedding_model", new_callable=PropertyMock)
+    @patch.object(DocumentAgent, "text_query_encoder", new_callable=PropertyMock)
     @patch("requests.post")
-    async def test_search_text(self, mock_post, mock_text_model):
-        """Test text search strategy"""
-        # Mock text embedding model
-        mock_model = MagicMock()
-        mock_embedding = np.random.randn(768)
-        mock_model.encode.return_value = mock_embedding
-        mock_text_model.return_value = mock_model
+    async def test_search_text(self, mock_post, mock_encoder):
+        """Test text search strategy.
+
+        End-to-end retrieval against real Vespa is covered by
+        test_document_agent_text_search_vespa.py; this unit guards the query
+        contract the document_text schema declares (profile, input name,
+        tenant-scoped schema) and the document_path parse.
+        """
+        # ColBERT query encoder → 2 per-token 128-d vectors.
+        enc = MagicMock()
+        enc.encode.return_value = np.zeros((2, 128), dtype=np.float32)
+        mock_encoder.return_value = enc
 
         # Mock Vespa response
         mock_response = MagicMock()
@@ -176,7 +181,7 @@ class TestDocumentAgent:
                         "relevance": 0.88,
                         "fields": {
                             "document_id": "doc_002",
-                            "source_url": "http://example.com/doc2.pdf",
+                            "document_path": "s3://example/doc2.pdf",
                             "document_title": "Deep Learning Theory",
                             "page_count": 25,
                             "document_type": "pdf",
@@ -194,14 +199,21 @@ class TestDocumentAgent:
         # Verify results
         assert len(results) == 1
         assert results[0].document_id == "doc_002"
+        assert results[0].document_url == "s3://example/doc2.pdf"
         assert results[0].title == "Deep Learning Theory"
         assert results[0].strategy_used == "text"
         assert results[0].relevance_score == 0.88
         assert "Deep learning" in results[0].content_preview
 
-        # Verify Vespa was called with hybrid_bm25_semantic profile
-        call_args = mock_post.call_args
-        assert "hybrid_bm25_semantic" in str(call_args)
+        # The query must match the document_text schema's declared contract:
+        # the hybrid_float_bm25 profile, the query(qt) mapped tensor input, and
+        # the tenant-scoped schema name.
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["ranking.profile"] == "hybrid_float_bm25"
+        assert "input.query(qt)" in sent
+        assert isinstance(sent["input.query(qt)"], dict)
+        assert "document_text_" in sent["yql"]
+        assert "hybrid_bm25_semantic" not in str(mock_post.call_args)
 
     @pytest.mark.asyncio
     async def test_search_hybrid(self):
