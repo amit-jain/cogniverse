@@ -30,10 +30,11 @@ def _bare_agent() -> DocumentAgent:
     """Construct without the heavy __init__; set only what _search_* read."""
     agent = DocumentAgent.__new__(DocumentAgent)
     agent._vespa_endpoint = "http://fake-vespa:8080"
-    # query_encoder / text_embedding_model are lazy properties; set the backing
+    agent._tenant_id = "test:test"
+    # query_encoder / text_query_encoder are lazy properties; set the backing
     # attrs so the real (heavy) encoders are never constructed.
     agent._query_encoder = SimpleNamespace(encode=lambda q: np.zeros((2, 3)))
-    agent._text_embedding_model = SimpleNamespace(encode=lambda q, **kw: np.zeros(4))
+    agent._text_query_encoder = SimpleNamespace(encode=lambda q: np.zeros((2, 3)))
     return agent
 
 

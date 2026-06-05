@@ -33,7 +33,6 @@ class TestDocumentAgent:
         """Test agent initialization"""
         assert self.agent is not None
         assert self.agent._colpali_model is None  # Lazy loaded
-        assert self.agent._text_embedding_model is None  # Lazy loaded
         assert self.agent._vespa_endpoint == "http://localhost:8080"
 
     @patch("cogniverse_agents.document_agent.get_or_load_model")
@@ -49,32 +48,6 @@ class TestDocumentAgent:
         # Verify model was loaded
         assert model is not None
         assert mock_get_model.called
-
-    @patch("sentence_transformers.SentenceTransformer")
-    def test_text_embedding_model_lazy_loading(self, mock_sentence_transformer):
-        """Test text embedding model is lazy loaded.
-
-        The semantic_embedder module caches embedders in a process-wide
-        dict keyed on model name. A prior test that already loaded the
-        same model would return the cached instance here and the mock
-        would never fire — clearing the cache isolates this test from
-        ordering effects.
-        """
-        from cogniverse_core.common.models import semantic_embedder
-
-        semantic_embedder._cache.clear()
-
-        mock_model = MagicMock()
-        mock_sentence_transformer.return_value = mock_model
-
-        # Access text_embedding_model property
-        model = self.agent.text_embedding_model
-
-        # Verify model was loaded
-        assert model is not None
-        mock_sentence_transformer.assert_called_once_with(
-            "sentence-transformers/all-mpnet-base-v2"
-        )
 
     def test_select_strategy_visual(self):
         """Test strategy selection for visual queries"""

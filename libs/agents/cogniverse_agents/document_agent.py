@@ -192,7 +192,6 @@ class DocumentAgent(
         self._colpali_model = None
         self._colpali_processor = None
         self._query_encoder = None
-        self._text_embedding_model = None
         self._text_query_encoder = None
 
         logger.info(
@@ -245,25 +244,6 @@ class DocumentAgent(
 
             self._text_query_encoder = ColBERTQueryEncoder(embedding_dim=128)
         return self._text_query_encoder
-
-    @property
-    def text_embedding_model(self):
-        """Lazy-resolve the shared semantic embedder.
-
-        Delegates to the module-level factory so document and audio
-        agents share a single embedder — the remote LM provider when
-        ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
-        in-process ``all-mpnet-base-v2``.
-        """
-        if self._text_embedding_model is None:
-            logger.info("Resolving text embedding model...")
-            from cogniverse_core.common.models.semantic_embedder import (
-                get_semantic_embedder,
-            )
-
-            self._text_embedding_model = get_semantic_embedder()
-            logger.info("✅ Text embedder ready")
-        return self._text_embedding_model
 
     async def search_documents(
         self,
