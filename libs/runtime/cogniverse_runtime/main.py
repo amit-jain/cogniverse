@@ -151,13 +151,51 @@ def _wire_argo_from_environment() -> None:
         )
 
 
+async def _wait_for_backend_ready(
+    vespa_base: str,
+    *,
+    max_attempts: int = 60,
+    retry_interval: float = 5.0,
+    timeout: float = 5.0,
+) -> bool:
+    """Poll Vespa container + feed readiness without blocking the event loop.
+
+    Vespa's two-port architecture means the container node (GET
+    ``/ApplicationStatus``) converges before the content/distributor nodes
+    that serve PUT/feed, so we additionally probe a document GET (404 =
+    schema exists and feed works; 200 = doc exists). Returns True once feed
+    is ready, False after ``max_attempts`` retries.
+    """
+    import httpx
+
+    vespa_feed_probe = (
+        f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
+    )
+    async with httpx.AsyncClient() as client:
+        for attempt in range(max_attempts):
+            try:
+                resp = await client.get(
+                    f"{vespa_base}/ApplicationStatus", timeout=timeout
+                )
+                if resp.status_code != 200:
+                    raise ConnectionError("Container node not ready")
+                resp = await client.get(vespa_feed_probe, timeout=timeout)
+                if resp.status_code in (200, 404):
+                    return True
+            except (httpx.HTTPError, OSError, ConnectionError):
+                pass
+            logger.info(
+                f"Backend not ready, retrying ({attempt + 1}/{max_attempts})..."
+            )
+            await asyncio.sleep(retry_interval)
+    return False
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Lifecycle manager for FastAPI app - handles startup and shutdown."""
 
     # Startup
-    import time as _time
-
     # Bound the default asyncio executor — every ``asyncio.to_thread`` /
     # ``run_in_executor(None, ...)`` in the codebase shares this pool.
     # Without a cap, bursts of sync work (agent instantiation, Mem0 HTTP,
@@ -180,33 +218,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from cogniverse_foundation.config.bootstrap import BootstrapConfig
 
     bootstrap = BootstrapConfig.from_environment()
-    import httpx
 
     vespa_base = f"{bootstrap.backend_url}:{bootstrap.backend_port}"
-    # Vespa two-port architecture: container node (GET) converges before
-    # content/distributor nodes (PUT/feed). We need feed readiness, so
-    # probe with a document GET that exercises the content node path.
-    vespa_feed_probe = (
-        f"{vespa_base}/document/v1/config_metadata/config_metadata/docid/probe"
-    )
     logger.info(f"Waiting for backend feed readiness at {vespa_base}...")
 
-    for attempt in range(60):
-        try:
-            # First check container node is up
-            resp = httpx.get(f"{vespa_base}/ApplicationStatus", timeout=5)
-            if resp.status_code != 200:
-                raise ConnectionError("Container node not ready")
-            # Then check feed path is ready (404 = schema exists, feed works;
-            # 200 = doc exists; both mean feed is ready)
-            resp = httpx.get(vespa_feed_probe, timeout=5)
-            if resp.status_code in (200, 404):
-                logger.info("Backend feed endpoint is ready")
-                break
-        except (httpx.HTTPError, OSError, ConnectionError):
-            pass
-        logger.info(f"Backend not ready, retrying ({attempt + 1}/60)...")
-        _time.sleep(5)
+    if await _wait_for_backend_ready(vespa_base):
+        logger.info("Backend feed endpoint is ready")
     else:
         logger.warning("Backend not ready after 5 minutes, proceeding anyway")
 
