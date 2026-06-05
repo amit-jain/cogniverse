@@ -419,3 +419,42 @@ def test_facemention_shape_locked():
     d = asdict(m)
     assert d["vec"][0] == 0.1
     assert d["bbox"] == (0, 0, 10, 10)
+
+
+# --------------------------------------------------------------------- #
+# F8 — Keyframes are POSTed concurrently, not serially                   #
+# --------------------------------------------------------------------- #
+
+
+def test_keyframes_posted_concurrently():
+    """A threading.Barrier of N only releases once all N keyframe POSTs are
+    in flight at the same time. Serial POSTs (the pre-fix behaviour) leave the
+    barrier one party short forever and time out."""
+    import threading
+
+    n = 4
+    barrier = threading.Barrier(n, timeout=5)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        barrier.wait()
+        return httpx.Response(200, json={"faces": []})
+
+    items = [
+        {
+            "segment_id": f"frame_{i}_0",
+            "ts_start": float(i),
+            "image_b64": _solid_b64(_EMPTY_COLOR),
+        }
+        for i in range(n)
+    ]
+
+    transport = httpx.MockTransport(handler)
+    with httpx.Client(transport=transport) as client:
+        records = extract_faces_per_keyframe(
+            {"keyframes": {"items": items}},
+            "debate_30s",
+            "http://sidecar.invalid",
+            client=client,
+        )
+
+    assert records == []

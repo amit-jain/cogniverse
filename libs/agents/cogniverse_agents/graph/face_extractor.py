@@ -15,6 +15,7 @@ ordering for golden-file replay.
 from __future__ import annotations
 
 import dataclasses
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 import httpx
@@ -105,8 +106,24 @@ def extract_faces_per_keyframe(
         client = httpx.Client()
     records: List[FaceMention] = []
     try:
-        for segment_id, ts_start, payload in _iter_keyframes(processing_results):
-            response = _post_one(client, face_embed_url, segment_id, payload)
+        keyframes = list(_iter_keyframes(processing_results))
+        # POST keyframes concurrently — the sidecar calls are independent and
+        # httpx.Client is thread-safe, so face extraction no longer scales
+        # linearly in keyframe count. Output stays deterministic (sorted below);
+        # executor.map surfaces a sidecar failure as the first-by-order error,
+        # matching the serial contract.
+        if keyframes:
+            with ThreadPoolExecutor(max_workers=min(8, len(keyframes))) as executor:
+                responses = list(
+                    executor.map(
+                        lambda kf: _post_one(client, face_embed_url, kf[0], kf[2]),
+                        keyframes,
+                    )
+                )
+        else:
+            responses = []
+
+        for (segment_id, ts_start, _payload), response in zip(keyframes, responses):
             for face in response.get("faces", []):
                 records.append(
                     FaceMention(
