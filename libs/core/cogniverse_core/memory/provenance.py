@@ -273,7 +273,7 @@ class ProvenanceWalker:
         already tenant-scoped.
         """
         del tenant_id  # tenant scoping lives on the store
-        ordered, primary_sources, truncated = self._store.walk(
+        ordered, primary_sources, truncated, records_by_id = self._store.walk(
             root_memory_id,
             max_depth=self._max_depth,
             max_nodes=self._max_nodes,
@@ -288,7 +288,7 @@ class ProvenanceWalker:
                 content = memory.get("memory") or memory.get("content") or ""
                 content_excerpt = str(content)[:200]
 
-            rec = self._store.get(memory_id)
+            rec = records_by_id.get(memory_id)
             prov = rec.to_provenance() if rec is not None else None
 
             nodes.append(

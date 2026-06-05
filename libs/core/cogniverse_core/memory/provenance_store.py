@@ -219,7 +219,12 @@ class ProvenanceStore:
         root_memory_id: str,
         max_depth: int = 10,
         max_nodes: int = 100,
-    ) -> Tuple[List[Tuple[str, int]], List[CitationRef], bool]:
+    ) -> Tuple[
+        List[Tuple[str, int]],
+        List[CitationRef],
+        bool,
+        Dict[str, ProvenanceRecord],
+    ]:
         """BFS-walk the citation chain from ``root_memory_id``.
 
         Each BFS level batches into ONE Vespa query (the whole frontier
@@ -228,17 +233,21 @@ class ProvenanceStore:
         the previous N×fanout per-memory fetches.
 
         Returns:
-            Tuple of ``(visited_with_depth, primary_sources, truncated)``.
-            ``visited_with_depth`` is the BFS-ordered list of
+            Tuple of ``(visited_with_depth, primary_sources, truncated,
+            records)``. ``visited_with_depth`` is the BFS-ordered list of
             ``(memory_id, depth)`` for every node reached;
             ``primary_sources`` is the deduplicated list of leaf citation
-            refs (terminal memory nodes + every non-memory ref).
+            refs (terminal memory nodes + every non-memory ref);
+            ``records`` maps every visited memory_id to the
+            ``ProvenanceRecord`` already fetched during the BFS, so callers
+            reuse them instead of re-fetching one query per node.
         """
         if max_depth < 1 or max_nodes < 1:
             raise ValueError("max_depth and max_nodes must be >= 1")
         visited: Set[str] = set()
         ordered: List[Tuple[str, int]] = []
         primary_sources: List[CitationRef] = []
+        records_by_id: Dict[str, ProvenanceRecord] = {}
         truncated = False
 
         frontier: List[Tuple[str, int]] = [(root_memory_id, 0)]
@@ -263,6 +272,7 @@ class ProvenanceStore:
                 continue
 
             records = self.fetch(level_ids)
+            records_by_id.update(records)
 
             for mid, depth in level_pairs:
                 if mid in visited:
@@ -308,7 +318,7 @@ class ProvenanceStore:
             seen.add(key)
             deduped.append(ref)
 
-        return ordered, deduped, truncated
+        return ordered, deduped, truncated, records_by_id
 
     def _row_id(self, memory_id: str) -> str:
         # Stable per-(tenant, memory_id) document id so re-attach upserts.

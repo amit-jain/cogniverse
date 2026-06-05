@@ -219,3 +219,58 @@ def test_walker_recovers_chain_from_real_vespa(memory_env):
     assert ("url", "https://wiki/root-extra") in primary_keys
     assert ("url", "https://wiki/leaf-source") in primary_keys
     assert graph.truncated_at_max_depth is False
+
+
+def test_walker_reuses_bfs_records_without_per_node_get(memory_env, monkeypatch):
+    """The walker populates each node's provenance from the records already
+    fetched during the BFS — it issues no per-node ``store.get``."""
+    mm = memory_env
+
+    leaf_prov = make_provenance(
+        written_by="agent:ingest",
+        derivation_kind=DerivationKind.DIRECT_INGEST,
+        confidence=0.95,
+        derived_from=[CitationRef.external("https://wiki/reuse-leaf")],
+    )
+    leaf_id = _add_with_provenance(
+        mm, "Reuse test leaf fact.", leaf_prov, kind="external_doc"
+    )
+    mid_prov = make_provenance(
+        written_by="agent:summarizer",
+        derivation_kind=DerivationKind.SUMMARIZATION,
+        confidence=0.85,
+        derived_from=[CitationRef.memory(leaf_id)],
+    )
+    mid_id = _add_with_provenance(
+        mm, "Reuse test mid summary.", mid_prov, kind="external_doc"
+    )
+    root_prov = make_provenance(
+        written_by="agent:search",
+        derivation_kind=DerivationKind.SYNTHESIS,
+        confidence=0.78,
+        derived_from=[CitationRef.memory(mid_id)],
+    )
+    root_id = _add_with_provenance(
+        mm, "Reuse test root synthesis.", root_prov, kind="entity_fact"
+    )
+
+    walker = ProvenanceWalker(mm)
+
+    get_calls: list[str] = []
+    real_get = walker._store.get
+
+    def spy_get(memory_id):
+        get_calls.append(memory_id)
+        return real_get(memory_id)
+
+    monkeypatch.setattr(walker._store, "get", spy_get)
+
+    graph = walker.walk(root_id, tenant_id=TENANT)
+
+    assert {n.memory_id for n in graph.nodes} == {root_id, mid_id, leaf_id}
+    by_id = {n.memory_id: n for n in graph.nodes}
+    assert by_id[root_id].provenance is not None
+    assert by_id[root_id].provenance.derivation_kind == DerivationKind.SYNTHESIS
+    assert by_id[leaf_id].provenance is not None
+    assert by_id[leaf_id].provenance.derivation_kind == DerivationKind.DIRECT_INGEST
+    assert get_calls == []

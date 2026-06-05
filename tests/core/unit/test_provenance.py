@@ -192,6 +192,7 @@ class _StubProvenanceStore:
         ordered = []
         visited = set()
         primary = []
+        records_by_id = {}
         truncated = False
         frontier = [(root, 0)]
         while frontier:
@@ -208,6 +209,7 @@ class _StubProvenanceStore:
                 # Unknown memory_id: surface as a primary memory ref.
                 primary.append(CitationRef.memory(mid))
                 continue
+            records_by_id[mid] = rec
             # External refs surface as primary sources.
             for ref_dict in rec.derived_from_other:
                 primary.append(CitationRef.from_dict(ref_dict))
@@ -221,7 +223,7 @@ class _StubProvenanceStore:
                 continue
             for child_id in rec.derived_from_memory_ids:
                 frontier.append((child_id, depth + 1))
-        return ordered, primary, truncated
+        return ordered, primary, truncated, records_by_id
 
 
 class FakeManager:
