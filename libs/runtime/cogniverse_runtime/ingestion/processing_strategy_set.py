@@ -456,12 +456,64 @@ class ProcessingStrategySet:
             )
             return {"code_files": code_file_list}
 
+        elif "document_page" in requirements:
+            from pdf2image import convert_from_path
+
+            content_path = video_path
+
+            if content_path.is_dir():
+                pdf_files = sorted(
+                    f for f in content_path.iterdir() if f.suffix.lower() == ".pdf"
+                )
+            elif content_path.suffix.lower() == ".pdf":
+                pdf_files = [content_path]
+            else:
+                raise ValueError(f"Expected PDF file or directory, got: {content_path}")
+
+            max_files = requirements["document_page"].get("max_files", 10000)
+            pdf_files = pdf_files[:max_files]
+
+            if not pdf_files:
+                raise ValueError(f"No PDF files found at {content_path}")
+
+            dpi = requirements["document_page"].get("dpi", 150)
+            pages_dir = pipeline_context.profile_output_dir / "document_pages"
+
+            document_pages = []
+            for pdf_path in pdf_files:
+                document_id = pdf_path.stem
+                out_dir = pages_dir / document_id
+                out_dir.mkdir(parents=True, exist_ok=True)
+                page_images = convert_from_path(str(pdf_path), dpi=dpi)
+                page_count = len(page_images)
+                for page_index, page_image in enumerate(page_images):
+                    page_number = page_index + 1
+                    page_path = out_dir / f"page_{page_number:04d}.png"
+                    page_image.save(page_path, format="PNG")
+                    document_pages.append(
+                        {
+                            "document_id": document_id,
+                            "page_number": page_number,
+                            "page_count": page_count,
+                            "path": str(page_path),
+                            "filename": page_path.name,
+                            "document_path": str(pdf_path),
+                            "document_title": pdf_path.name,
+                            "document_type": "pdf",
+                        }
+                    )
+
+            pipeline_context.logger.info(
+                f"  Rendered {len(document_pages)} pages from {len(pdf_files)} PDF(s)"
+            )
+            return {"document_pages": document_pages}
+
         else:
             processor_keys = list(requirements.keys())
             raise ValueError(
                 f"Segmentation strategy {type(strategy).__name__!r} requires unknown "
                 f"processor(s) {processor_keys}. Supported: keyframe, chunk, single_vector, "
-                f"document_file, audio_file, image, code_file."
+                f"document_file, document_page, audio_file, image, code_file."
             )
 
     async def _process_transcription(

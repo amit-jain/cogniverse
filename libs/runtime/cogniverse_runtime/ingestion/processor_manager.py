@@ -140,6 +140,7 @@ class ProcessorManager:
             "image",
             "audio_file",
             "document_file",
+            "document_page",
             "code_file",
             "single_vector",
             "embedding",

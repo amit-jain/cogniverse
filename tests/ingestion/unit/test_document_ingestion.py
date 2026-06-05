@@ -19,6 +19,7 @@ from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrat
 from cogniverse_runtime.ingestion.strategies import (
     DocumentSegmentationStrategy,
     DocumentTextEmbeddingStrategy,
+    DocumentVisualSegmentationStrategy,
     NoDescriptionStrategy,
     NoTranscriptionStrategy,
 )
@@ -213,6 +214,67 @@ class TestStrategyFactoryDocumentProfile:
         assert isinstance(strategy_set.transcription, NoTranscriptionStrategy)
         assert isinstance(strategy_set.description, NoDescriptionStrategy)
         assert isinstance(strategy_set.embedding, DocumentTextEmbeddingStrategy)
+
+
+@pytest.fixture
+def two_page_pdf(tmp_path):
+    """Create a real 2-page PDF poppler can render (via PIL multi-page save)."""
+    from PIL import Image
+
+    pdf_dir = tmp_path / "pdfs"
+    pdf_dir.mkdir()
+    pdf_path = pdf_dir / "guide.pdf"
+    page1 = Image.new("RGB", (300, 400), color=(255, 255, 255))
+    page2 = Image.new("RGB", (300, 400), color=(200, 200, 200))
+    page1.save(pdf_path, format="PDF", save_all=True, append_images=[page2])
+    return pdf_path
+
+
+class TestDocumentVisualSegmentationDispatch:
+    """ProcessingStrategySet renders PDF pages for the document_page dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_visual_segmentation_renders_pages(self, two_page_pdf, tmp_path):
+        strategy = DocumentVisualSegmentationStrategy(max_files=10, dpi=72)
+
+        class MockContext:
+            profile_output_dir = tmp_path / "visual_output"
+            logger = type(
+                "L",
+                (),
+                {
+                    "info": staticmethod(lambda msg: None),
+                    "warning": staticmethod(lambda msg: None),
+                    "error": staticmethod(lambda msg: None),
+                },
+            )()
+
+        MockContext.profile_output_dir.mkdir(exist_ok=True)
+
+        strategy_set = ProcessingStrategySet(
+            segmentation=strategy,
+            transcription=NoTranscriptionStrategy(),
+            description=NoDescriptionStrategy(),
+            embedding=DocumentTextEmbeddingStrategy(),
+        )
+
+        result = await strategy_set._process_segmentation(
+            strategy, two_page_pdf, None, MockContext()
+        )
+
+        assert "document_pages" in result
+        pages = result["document_pages"]
+        assert len(pages) == 2
+        assert [p["page_number"] for p in pages] == [1, 2]
+
+        for page in pages:
+            assert page["document_id"] == "guide"
+            assert page["page_count"] == 2
+            assert page["document_path"] == str(two_page_pdf)
+            assert page["document_title"] == "guide.pdf"
+            assert page["document_type"] == "pdf"
+            assert Path(page["path"]).exists()
+            assert page["filename"] == f"page_{page['page_number']:04d}.png"
 
 
 class TestDocumentSegmentationDispatch:

@@ -315,6 +315,22 @@ class DocumentSegmentationStrategy(BaseStrategy):
         return {"document_file": {"max_files": self.max_files}}
 
 
+class DocumentVisualSegmentationStrategy(BaseStrategy):
+    """Render PDF pages to images for ColPali page-as-image ingestion.
+
+    Each PDF page becomes one page image (via pdf2image/poppler) that the
+    downstream DocumentVisualEmbeddingStrategy embeds with ColPali, analogous
+    to how ImageSegmentationStrategy presents images as keyframes.
+    """
+
+    def __init__(self, max_files: int = 10000, dpi: int = 150):
+        self.max_files = max_files
+        self.dpi = dpi
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        return {"document_page": {"max_files": self.max_files, "dpi": self.dpi}}
+
+
 class CodeSegmentationStrategy(BaseStrategy):
     """Parse source code files into AST-aware chunks using tree-sitter.
 
