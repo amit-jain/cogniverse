@@ -779,6 +779,41 @@ class TestSearchAgentEdgeCases:
                 "test query", tenant_id="test_tenant", ranking="binary_binary"
             )
 
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_core.config.utils.get_config")
+    def test_search_by_text_omits_strategy_when_no_ranking(
+        self, mock_get_config, mock_registry, mock_encoder_factory
+    ):
+        """With no explicit ranking, the agent must send strategy=None so the
+        backend auto-selects the schema default — not a hardcoded binary_binary
+        (invalid for audio)."""
+        mock_config = Mock()
+        mock_config.get_active_profile.return_value = "frame_based_colpali"
+        mock_config.get.return_value = {}
+        mock_get_config.return_value = mock_config
+
+        mock_search_backend = Mock()
+        mock_search_backend.search.return_value = []
+        mock_registry.return_value.get_search_backend.return_value = mock_search_backend
+        mock_encoder = Mock()
+        mock_encoder.encode.return_value = [[0.0] * 128]
+        mock_encoder_factory.create_encoder.return_value = mock_encoder
+
+        agent = SearchAgent(
+            deps=SearchAgentDeps(
+                backend_url="http://localhost",
+                backend_port=8080,
+            ),
+            schema_loader=mock_schema_loader,
+        )
+
+        agent._search_by_text("test query", tenant_id="test_tenant")
+
+        query_dict = mock_search_backend.search.call_args[0][0]
+        assert query_dict["strategy"] is None
+        assert query_dict["strategy"] != "binary_binary"
+
 
 @pytest.mark.unit
 class TestSearchAgentAdvancedFeatures:

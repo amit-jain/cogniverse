@@ -874,7 +874,7 @@ class SearchAgent(
                         kwargs.get("start_date"), kwargs.get("end_date")
                     )
                     or None,
-                    "strategy": kwargs.get("ranking", "binary_binary"),
+                    "strategy": kwargs.get("ranking"),
                     "profile": profile_name,
                     "tenant_id": tenant_id,
                 }
@@ -1018,7 +1018,7 @@ class SearchAgent(
                     kwargs.get("start_date"), kwargs.get("end_date")
                 )
                 or None,
-                "strategy": kwargs.get("ranking", "binary_binary"),
+                "strategy": kwargs.get("ranking"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
             }
@@ -1144,7 +1144,7 @@ class SearchAgent(
                     kwargs.get("start_date"), kwargs.get("end_date")
                 )
                 or None,
-                "strategy": kwargs.get("ranking", "binary_binary"),
+                "strategy": kwargs.get("ranking"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
             }
@@ -1246,7 +1246,7 @@ class SearchAgent(
                     kwargs.get("start_date"), kwargs.get("end_date")
                 )
                 or None,
-                "strategy": kwargs.get("ranking", "binary_binary"),
+                "strategy": kwargs.get("ranking"),
                 "profile": self.active_profile,
                 "tenant_id": tenant_id,
             }
@@ -1435,7 +1435,7 @@ class SearchAgent(
                     top_k=top_k,
                     rrf_k=rrf_k,
                     ranking_strategy=search_params.ranking_strategy
-                    or kwargs.get("ranking", "binary_binary"),
+                    or kwargs.get("ranking"),
                 )
                 variant_names = [v["name"] for v in context.query_variants]
                 logger.info(
@@ -1454,8 +1454,7 @@ class SearchAgent(
                         search_params.start_date, search_params.end_date
                     )
                     or None,
-                    "strategy": search_params.ranking_strategy
-                    or kwargs.get("ranking", "binary_binary"),
+                    "strategy": search_params.ranking_strategy or kwargs.get("ranking"),
                     "profile": self.active_profile,
                     "tenant_id": tenant_id,
                 }
@@ -1827,7 +1826,7 @@ class SearchAgent(
                 modality=modality,
                 top_k=top_k,
                 rrf_k=input.rrf_k,
-                ranking_strategy="binary_binary",
+                ranking_strategy=None,
             )
             rrf_k_used = input.rrf_k
             enhanced_query = input.enhanced_query or query

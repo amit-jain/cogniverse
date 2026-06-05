@@ -285,3 +285,39 @@ class TestRankingStrategiesReal:
             }
         )
         _assert_results_well_formed(results, strategy)
+
+
+@pytest.mark.integration
+@pytest.mark.requires_vespa
+@pytest.mark.requires_colpali
+class TestAutoSelectDefaultRanking:
+    """Omitting ``strategy`` must auto-resolve the schema's default rank profile
+    and return results — the contract SearchAgent now relies on after dropping
+    its hardcoded ``binary_binary`` (which was invalid for audio). Before the
+    backend fallback this raised "no default configured" on the 15-strategy
+    video profile."""
+
+    def test_search_without_strategy_auto_selects(
+        self, search_backend, colpali_client, seeded_ranking_corpus
+    ):
+        result = colpali_client.process_queries(
+            ["ocean waves coastal"], model_name=COLPALI_MODEL_NAME
+        )
+        embeddings = np.asarray(result["embeddings"]).astype(np.float32)
+        if embeddings.ndim == 3:
+            embeddings = embeddings.squeeze(0)
+
+        results = search_backend.search(
+            {
+                "query": "ocean waves",
+                "type": "video",
+                "profile": PROFILE_NAME,
+                "top_k": 10,
+                "tenant_id": TENANT_ID,
+                "query_embeddings": embeddings,
+            }
+        )
+        assert isinstance(results, list)
+        assert len(results) > 0, "auto-select returned no results"
+        for r in results:
+            assert r.document.metadata.get("source_id", "").startswith("ranking_")

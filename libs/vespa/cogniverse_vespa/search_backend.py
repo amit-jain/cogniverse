@@ -723,10 +723,12 @@ class VespaSearchBackend(SearchBackend):
                     strategy_name = profile_config.get("default_ranking")
 
                 if not strategy_name or strategy_name not in available_strategies:
-                    raise ValueError(
-                        f"Multiple strategies available for profile '{profile_name}' but no default configured. "
-                        f"Available strategies: {list(available_strategies.keys())}. "
-                        f"Either specify 'strategy' in query_dict or configure backend.default_profiles.{content_type}.strategy"
+                    # Fall back to the schema's conventional default profile,
+                    # mirroring how the profile registry derives a default
+                    # (default → hybrid → first available).
+                    strategy_name = next(
+                        (s for s in ("default", "hybrid") if s in available_strategies),
+                        next(iter(available_strategies)),
                     )
 
                 logger.info(
