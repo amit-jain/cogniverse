@@ -679,7 +679,10 @@ class VideoIngestionPipeline:
         video_data = self._extract_base_video_data(results)
         video_data = self._add_strategy_metadata(video_data)
 
-        if "document_files" in results:
+        if "document_pages" in results:
+            video_data["document_pages"] = results["document_pages"]
+            return video_data
+        elif "document_files" in results:
             video_data["document_files"] = results["document_files"]
             return video_data
         elif "code_files" in results:

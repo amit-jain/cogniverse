@@ -816,6 +816,46 @@
           "binary_dim": 16
         }
       },
+      "document_visual_colpali": {
+        "type": "document",
+        "description": "Document page-as-image ColPali multi-vector embeddings (128-dim per patch). Renders PDF pages to images.",
+        "schema_name": "document_visual",
+        "embedding_model": "vidore/colsmol-500m",
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "DocumentVisualSegmentationStrategy",
+            "params": {
+              "max_files": 10000,
+              "dpi": 150
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "DocumentVisualEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "multi_vector",
+        "model_loader": "colpali",
+        "schema_config": {
+          "schema_name": "document_visual",
+          "embedding_dim": 128,
+          "binary_dim": 16
+        }
+      },
       "lateon_mv": {
         "type": "document",
         "description": "General text retrieval with LateOn multi-vector embeddings (128-dim per token). Binary-first MaxSim with bfloat16 rerank.",

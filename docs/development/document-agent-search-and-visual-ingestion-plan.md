@@ -86,13 +86,50 @@ Root facts established by investigation:
   `_search_visual` retrieves + ranks it (image-test pattern).
 
 ### Phase 4 — page-image ColPali ingestion for `document_visual`
-- New `DocumentVisualSegmentationStrategy` (render PDF pages → images) +
-  `DocumentVisualEmbeddingStrategy` (ColPali page-image embedding), wired into
-  the strategy/pipeline registry; add a `document_visual` processing profile.
-- Decisions to confirm at this phase: PDF render lib (pymupdf vs pdf2image),
-  page-image source/limits, profile/config shape.
-- Test (real ingestion e2e): ingest a small PDF, assert `document_visual` docs
-  with `colpali_embedding` land in Vespa and `_search_visual` retrieves them.
+
+Render lib: **pdf2image** (already a declared workspace dep in
+libs/runtime/pyproject.toml + root pyproject.toml; poppler `pdftoppm` present
+on host). No new dependency, no AGPL concern (pymupdf rejected).
+
+Architecture (recon-grounded): segmentation strategies emit a per-content-type
+key (`document_files`/`audio_files`/keyframes); `pipeline._prepare_video_data`
+routes it; `embedding_generator_impl.generate_embeddings` dispatches to a
+per-content builder (`_process_document_segments` is the working `document_text`
+template) that ColPali/ColBERT-embeds and feeds `backend_client.ingest_documents
+(docs, schema_name)`. `_generate_frame_embeddings` already ColPali-embeds an
+image file → (num_patches, 128); `VespaEmbeddingProcessor._convert_to_binary_dict`
+already produces the `(patch{}, v[16])` binary form. Page-image ingestion
+mirrors document_text exactly, swapping ColBERT-text for ColPali-page-image.
+
+Status: ☑ 4a done (a8969658), ☑ 4b + ☑ 4c done (this commit) — full PDF page →
+ColPali → Vespa → search round-trip verified against real Vespa + real ColPali
+(test_document_visual_ingestion_real.py, 3 passed). Note: field names stay
+`embedding`/`embedding_binary`-convention-compatible via the schema's rank
+profiles (`get_embedding_field_names` auto-discovers `colpali_embedding` from
+`attribute(...)` refs), so the generic processor output remaps correctly; the
+gitignored `ranking_strategies.json` cache is refreshed in the 4c fixture so a
+stale cache doesn't hide a newly added schema.
+
+Sub-phases (≤5 code files each, verify + report between):
+- **4a — segmentation side**: `DocumentVisualSegmentationStrategy` (pdf2image
+  render each PDF page → PNG under profile_output_dir, return page dicts:
+  document_id, page_number, page_count, page_image path, document_path,
+  document_title) + `document_page` dispatch branch in
+  `processing_strategy_set._process_segmentation` → `{"document_pages": [...]}`
+  + add `document_page` to `processor_manager` directly-handled list. Unit test:
+  render a tiny real PDF, assert N page dicts with existing PNG paths + metadata.
+- **4b — embedding/doc-build side**: `DocumentVisualEmbeddingStrategy`
+  (requirement `{"embedding": {"type": "document_visual", "colpali_model": ...}}`,
+  delegates to generate_embeddings) + `embedding_generator_impl`:
+  `generate_embeddings` `document_pages` route + `_process_document_visual_segments`
+  (ColPali-embed each page image, build document_visual docs with colpali_embedding
+  + colpali_embedding_binary + page_number/page_count/document_path/document_title,
+  feed schema document_visual) + `pipeline._prepare_video_data` `document_pages`
+  branch + `configs/config.json` `document_visual_colpali` profile. Factory +
+  generator unit tests.
+- **4c — real ingestion e2e**: ingest a small PDF through the pipeline, assert
+  `document_visual_<tenant>` docs with `colpali_embedding` land in Vespa and
+  `DocumentAgent._search_visual` retrieves them (mirrors image/text real tests).
 
 ## Done criteria
 All 4 phases shipped, each with a real-boundary test that fails on the pre-fix

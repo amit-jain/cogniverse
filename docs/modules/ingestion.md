@@ -101,8 +101,9 @@ The Ingestion Module transforms raw content files into searchable, multi-modal r
 3. **Visual Description** - VLM-based frame descriptions
 4. **Embedding Generation** - ColPali, VideoPrism, ColQwen, ColBERT embeddings
 5. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
-6. **Audio Processing** - CLAP acoustic + ColBERT semantic dual embeddings for audio content
-7. **Backend Ingestion** - Feed documents to Vespa search
+6. **Document Visual Processing** - PDF pages rendered to images (pdf2image) with ColPali multi-vector page embeddings (`document_visual_colpali` profile → `document_visual` schema)
+7. **Audio Processing** - CLAP acoustic + ColBERT semantic dual embeddings for audio content
+8. **Backend Ingestion** - Feed documents to Vespa search
 
 ### Key Features
 
@@ -530,6 +531,7 @@ sequenceDiagram
 - **Direct Video** (`multi_vector`): VideoPrism single global embedding
 - **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
 - **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
+- **Document Visual ColPali** (`multi_vector`): ColPali 128-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Audio Dual** (`multi_vector`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---

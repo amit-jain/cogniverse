@@ -145,7 +145,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             f"📊 Processing {len(segments)} segments for {video_id} (schema: {self.schema_name})"
         )
 
-        if "document_files" in video_data:
+        if "document_pages" in video_data:
+            result = self._process_document_visual_segments(video_data, segments)
+        elif "document_files" in video_data:
             result = self._process_document_segments(video_data, segments)
         elif "code_files" in video_data:
             result = self._process_code_segments(video_data, segments)
@@ -181,7 +183,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         - 'code_files' (source-code chunks)
         - 'audio_files' (audio content)
         """
-        for key in ["document_files", "code_files", "audio_files"]:
+        for key in ["document_pages", "document_files", "code_files", "audio_files"]:
             if key in video_data:
                 return video_data[key]
 
@@ -473,6 +475,80 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             processing_time=0,
             errors=errors,
             metadata={"num_documents": len(segments)},
+        )
+
+    def _process_document_visual_segments(
+        self, video_data: dict[str, Any], segments: list[dict[str, Any]]
+    ) -> EmbeddingResult:
+        """Process PDF page images: ColPali-embed each page, build document_visual
+        Documents (one per page), feed to backend.
+
+        Each ``segment`` is a rendered page from DocumentVisualSegmentationStrategy
+        carrying ``path`` (page PNG) plus document_id/page_number/page_count/
+        document_path/document_title — mapped onto the document_visual schema
+        fields. The page image is embedded with ColPali via the shared
+        ``_generate_frame_embeddings`` (same multi-vector path as video frames).
+        """
+        content_id = video_data.get("video_id", "unknown")
+
+        documents_processed = 0
+        documents_fed = 0
+        errors = []
+
+        for idx, page in enumerate(segments):
+            try:
+                page_path = Path(page.get("path", ""))
+                if not page_path.exists():
+                    raise ValueError(
+                        f"Page image missing for "
+                        f"{page.get('document_id', idx)!r}: {page_path}"
+                    )
+
+                embeddings_np = self._generate_frame_embeddings(page_path)
+                if embeddings_np is None:
+                    raise ValueError(
+                        f"ColPali embedding failed for page {page_path.name}"
+                    )
+                embeddings_np = np.asarray(embeddings_np, dtype=np.float32)
+
+                page_number = page.get("page_number", idx + 1)
+                self.logger.info(
+                    f"  🖼️ Page {page.get('document_id', idx)} p{page_number}: "
+                    f"embeddings shape={embeddings_np.shape}"
+                )
+
+                doc = Document(
+                    id=f"{content_id}_{page.get('document_id', idx)}_p{page_number}",
+                    content_type=ContentType.DOCUMENT,
+                    content_id=content_id,
+                    status=ProcessingStatus.COMPLETED,
+                )
+                doc.add_embedding(
+                    "embedding", embeddings_np, {"type": "float", "raw": True}
+                )
+                doc.add_metadata("document_id", page.get("document_id", ""))
+                doc.add_metadata("document_title", page.get("document_title", ""))
+                doc.add_metadata("document_type", page.get("document_type", "pdf"))
+                doc.add_metadata("document_path", page.get("document_path", ""))
+                doc.add_metadata("page_number", page_number)
+                doc.add_metadata("page_count", page.get("page_count", len(segments)))
+
+                documents_processed += 1
+                if self._feed_document(doc):
+                    documents_fed += 1
+
+            except Exception as e:
+                self.logger.error(f"Error processing page {idx}: {e}")
+                errors.append(f"Page {idx}: {str(e)}")
+
+        return EmbeddingResult(
+            video_id=content_id,
+            total_documents=len(segments),
+            documents_processed=documents_processed,
+            documents_fed=documents_fed,
+            processing_time=0,
+            errors=errors,
+            metadata={"num_pages": len(segments)},
         )
 
     def _process_code_segments(

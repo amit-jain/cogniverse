@@ -19,6 +19,7 @@ from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrat
 from cogniverse_runtime.ingestion.strategies import (
     DocumentSegmentationStrategy,
     DocumentTextEmbeddingStrategy,
+    DocumentVisualEmbeddingStrategy,
     DocumentVisualSegmentationStrategy,
     NoDescriptionStrategy,
     NoTranscriptionStrategy,
@@ -214,6 +215,25 @@ class TestStrategyFactoryDocumentProfile:
         assert isinstance(strategy_set.transcription, NoTranscriptionStrategy)
         assert isinstance(strategy_set.description, NoDescriptionStrategy)
         assert isinstance(strategy_set.embedding, DocumentTextEmbeddingStrategy)
+
+    def test_factory_creates_document_visual_strategy_set(self):
+        with open("configs/config.json") as f:
+            profile_config = json.load(f)["backend"]["profiles"][
+                "document_visual_colpali"
+            ]
+
+        strategy_set = StrategyFactory.create_from_profile_config(profile_config)
+        assert isinstance(strategy_set.segmentation, DocumentVisualSegmentationStrategy)
+        assert isinstance(strategy_set.embedding, DocumentVisualEmbeddingStrategy)
+        assert isinstance(strategy_set.transcription, NoTranscriptionStrategy)
+        assert isinstance(strategy_set.description, NoDescriptionStrategy)
+        assert strategy_set.segmentation.get_required_processors() == {
+            "document_page": {"max_files": 10000, "dpi": 150}
+        }
+        assert (
+            strategy_set.embedding.get_required_processors()["embedding"]["type"]
+            == "document_visual"
+        )
 
 
 @pytest.fixture

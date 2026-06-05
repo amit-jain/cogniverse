@@ -584,6 +584,49 @@ class DocumentTextEmbeddingStrategy(BaseStrategy):
         return await pipeline_context.generate_embeddings(wrapped_results)
 
 
+class DocumentVisualEmbeddingStrategy(BaseStrategy):
+    """Generate ColPali multi-vector embeddings (128-dim per patch) for PDF pages.
+
+    Each rendered page image is embedded with ColPali by EmbeddingGeneratorImpl
+    (loaded lazily via the colpali model loader). This strategy wraps the page
+    list and delegates embedding generation to the pipeline's embedding generator.
+    """
+
+    def __init__(
+        self,
+        colpali_model: str = "vidore/colsmol-500m",
+        inference_service: str | None = None,
+    ):
+        self.colpali_model = colpali_model
+        self.inference_service = inference_service
+
+    def get_required_processors(self) -> dict[str, dict[str, Any]]:
+        config: dict[str, Any] = {
+            "type": "document_visual",
+            "colpali_model": self.colpali_model,
+        }
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"embedding": config}
+
+    async def generate_embeddings_with_processor(
+        self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
+    ) -> dict[str, Any]:
+        """Delegate to pipeline_context.generate_embeddings() which routes through EmbeddingGeneratorImpl."""
+        if not hasattr(pipeline_context, "video_path"):
+            raise AttributeError(
+                "DocumentVisualEmbeddingStrategy requires pipeline_context.video_path to be set. "
+                "Ensure the pipeline context carries a 'video_path' attribute pointing to the content path."
+            )
+        wrapped_results = {
+            "video_id": pipeline_context.video_path.stem,
+            "video_path": str(pipeline_context.video_path),
+            "results": results,
+            "document_pages": results.get("document_pages", []),
+        }
+        return await pipeline_context.generate_embeddings(wrapped_results)
+
+
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
