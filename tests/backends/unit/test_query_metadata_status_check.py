@@ -34,14 +34,17 @@ from cogniverse_vespa.backend import VespaBackend
 
 @pytest.fixture
 def backend() -> VespaBackend:
-    # query_metadata_documents only reads self._url and self._port; the
-    # constructor demands a full BackendConfig + schema_loader + config_manager
-    # for real init. Bypass __init__ to keep the unit test focused on the
-    # method-level status_code branch (the real-Vespa integration suite
-    # exercises full construction).
+    # query_metadata_documents reads self._url/_port and the lazily-cached
+    # metadata client (_metadata_app / _metadata_app_key); the constructor
+    # demands a full BackendConfig + schema_loader + config_manager for real
+    # init. Bypass __init__ to keep the unit test focused on the method-level
+    # status_code branch (the real-Vespa integration suite exercises full
+    # construction).
     b = object.__new__(VespaBackend)
     b._url = "http://test-vespa"
     b._port = 8080
+    b._metadata_app = None
+    b._metadata_app_key = None
     return b
 
 

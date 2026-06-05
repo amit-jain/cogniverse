@@ -94,6 +94,8 @@ class TestVespaPartialUpdate:
         backend = object.__new__(VespaBackend)
         backend._url = "http://localhost"
         backend._port = 8080
+        backend._metadata_app = None
+        backend._metadata_app_key = None
 
         client = MagicMock()
         client.delete_data = MagicMock(return_value=MagicMock(status_code=500))
