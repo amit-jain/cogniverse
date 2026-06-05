@@ -3,6 +3,7 @@ WikiManager — persists wiki pages to Vespa and maintains a per-tenant index.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -91,15 +92,35 @@ class WikiManager:
         """
         sources = sources or []
 
-        # Upsert a topic page for every entity; collect their doc_ids.
-        cross_refs: List[str] = []
+        # Upsert a topic page for every entity, concurrently — each entity's
+        # GET/merge/feed is an independent round-trip, so latency no longer
+        # scales linearly in entity count. Dedup by slug first: same-slug
+        # entities map to one topic doc, and concurrent upserts of that doc
+        # would race the read-modify-write merge.
+        seen_slugs: set = set()
+        unique_entities: List[str] = []
         for entity in entities:
-            topic = self._get_or_create_topic(
-                entity=entity,
-                new_content=response,
-                sources=sources,
-            )
-            cross_refs.append(topic.doc_id)
+            slug = generate_slug(entity)
+            if slug not in seen_slugs:
+                seen_slugs.add(slug)
+                unique_entities.append(entity)
+
+        cross_refs: List[str] = []
+        if unique_entities:
+            with ThreadPoolExecutor(
+                max_workers=min(8, len(unique_entities))
+            ) as executor:
+                topics = list(
+                    executor.map(
+                        lambda entity: self._get_or_create_topic(
+                            entity=entity,
+                            new_content=response,
+                            sources=sources,
+                        ),
+                        unique_entities,
+                    )
+                )
+            cross_refs = [topic.doc_id for topic in topics]
 
         # Build the session page.
         session = WikiPage(

@@ -11,6 +11,7 @@ and that the stored content is retrievable via the Document v1 HTTP API.
 import json
 import platform
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -323,6 +324,41 @@ class TestWikiVespaIntegration:
             fields = doc.get("fields", {})
             assert fields.get("page_type") == "topic"
             assert fields.get("tenant_id") == TENANT_ID
+
+    def test_save_session_upserts_topics_concurrently(self, wiki_manager, monkeypatch):
+        """save_session upserts each entity's topic page concurrently, and the
+        session's cross_references collects one doc_id per entity."""
+        manager, port = wiki_manager
+        entities = ["concur_alpha", "concur_beta", "concur_gamma", "concur_delta"]
+
+        barrier = threading.Barrier(len(entities), timeout=20)
+        real_topic = manager._get_or_create_topic
+
+        def barrier_gated(*, entity, new_content, sources):
+            # The topic upserts share no state, so concurrent save_session gets
+            # all four into the barrier at once. A serial loop processes them
+            # one at a time — the first caller blocks until the 20s timeout
+            # raises BrokenBarrierError and the test fails.
+            barrier.wait()
+            return real_topic(entity=entity, new_content=new_content, sources=sources)
+
+        monkeypatch.setattr(manager, "_get_or_create_topic", barrier_gated)
+
+        page = manager.save_session(
+            query="Concurrent entity upsert",
+            response="Body referencing several entities at once.",
+            entities=entities,
+            agent_name="search_agent",
+        )
+
+        assert len(page.cross_references) == len(entities)
+        safe = TENANT_ID.replace(":", "_")
+        for entity in entities:
+            doc_id = f"wiki_topic_{safe}_{generate_slug(entity)}"
+            assert doc_id in page.cross_references
+            doc = _get_vespa_doc(port, doc_id)
+            assert doc is not None, f"Topic page {doc_id} missing after save_session."
+            assert doc.get("fields", {}).get("page_type") == "topic"
 
     def test_topic_update_merges_content(self, wiki_manager):
         """Saving two sessions with the same entity merges content on the topic page.
