@@ -360,6 +360,35 @@ class TestGoldenEvaluation:
             ):
                 await monitor.evaluate_golden_set()
 
+    @pytest.mark.asyncio
+    async def test_evaluate_golden_set_runs_queries_concurrently(self, monitor):
+        """The per-query /search posts run concurrently, not one at a time."""
+        import asyncio
+
+        n = len(monitor._load_golden_queries())
+        assert n >= 2
+        barrier = asyncio.Barrier(n)
+
+        class _FakeResp:
+            status_code = 200
+
+            def json(self):
+                return {"results": [{"source_id": "v1", "score": 0.9}]}
+
+        class _GatedClient:
+            async def post(self, url, json=None):
+                # Releases only when all N posts are concurrently in flight; a
+                # sequential loop blocks the first one and wait_for times out.
+                await barrier.wait()
+                return _FakeResp()
+
+        monitor._http_client = _GatedClient()
+
+        with patch.object(monitor, "_store_golden_eval_result", new_callable=AsyncMock):
+            result = await asyncio.wait_for(monitor.evaluate_golden_set(), timeout=10)
+
+        assert result.query_count == n
+
 
 class TestUpdateBaseline:
     @pytest.mark.asyncio
@@ -493,6 +522,47 @@ class TestEvaluateAgentSpans:
         # Only the scored span counts; averaging the failed one would give 0.65.
         assert result.sample_count == 1
         assert result.score == 0.8
+
+    @pytest.mark.asyncio
+    async def test_evaluate_agent_spans_scores_concurrently(self, monitor):
+        """Each span's judge call runs concurrently, not one at a time."""
+        import asyncio
+
+        import pandas as pd
+
+        n = 3
+        spans = pd.DataFrame(
+            [
+                {
+                    "span_id": f"s{i}",
+                    "attributes": {"query": f"q{i}"},
+                    "outputs": {"results": [{"video_id": f"v{i}", "score": 0.9}]},
+                }
+                for i in range(n)
+            ]
+        )
+
+        barrier = asyncio.Barrier(n)
+
+        async def gated_call_llm(prompt, system_prompt=None, images=None):
+            # Releases only when all N judge calls are concurrently in flight.
+            await barrier.wait()
+            return "Score: 8/10. Good."
+
+        judge = MagicMock()
+        judge._call_llm = gated_call_llm
+        judge._extract_score_from_response = MagicMock(return_value=(0.8, "Good"))
+        monitor._llm_judge = judge
+
+        with patch.object(
+            monitor, "_get_agent_baseline", new_callable=AsyncMock, return_value=None
+        ):
+            result = await asyncio.wait_for(
+                monitor._evaluate_agent_spans(AgentType.SEARCH, spans), timeout=10
+            )
+
+        assert result.sample_count == n
+        assert result.score == pytest.approx(0.8)
 
     @pytest.mark.asyncio
     async def test_unreachable_lm_endpoint_skips_span(self, monitor):

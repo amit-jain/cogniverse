@@ -338,14 +338,9 @@ class QualityMonitor:
         queries = self._load_golden_queries()
         client = self._get_http_client()
 
-        per_query_scores = []
-        low_scoring = []
-        high_scoring = []
-
-        for query_data in queries:
+        async def _score_query(query_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             query = query_data["query"]
             expected_videos = query_data.get("expected_videos", [])
-
             try:
                 response = await client.post(
                     f"{self.runtime_url}/search/",
@@ -361,7 +356,7 @@ class QualityMonitor:
                     logger.warning(
                         f"Search failed for '{query}': {response.status_code}"
                     )
-                    continue
+                    return None
 
                 results = response.json().get("results", [])
                 retrieved_ids = [
@@ -372,21 +367,32 @@ class QualityMonitor:
                     retrieved_ids, expected_videos, k_values=[1, 5, 10]
                 )
 
-                entry = {
+                return {
                     "query": query,
                     "expected_videos": expected_videos,
                     "retrieved_videos": retrieved_ids[:10],
                     **metrics,
                 }
-                per_query_scores.append(entry)
-
-                if metrics["mrr"] < 0.3:
-                    low_scoring.append(entry)
-                elif metrics["mrr"] >= 0.8:
-                    high_scoring.append(entry)
-
             except Exception as e:
                 logger.warning(f"Error evaluating golden query '{query}': {e}")
+                return None
+
+        # Queries are independent /search calls — run them concurrently so eval
+        # latency scales with the slowest query, not the sum. Classification
+        # below stays serial and in query order so output is order-stable.
+        entries = await asyncio.gather(*(_score_query(q) for q in queries))
+
+        per_query_scores = []
+        low_scoring = []
+        high_scoring = []
+        for entry in entries:
+            if entry is None:
+                continue
+            per_query_scores.append(entry)
+            if entry["mrr"] < 0.3:
+                low_scoring.append(entry)
+            elif entry["mrr"] >= 0.8:
+                high_scoring.append(entry)
 
         if not per_query_scores:
             raise RuntimeError("No golden queries evaluated successfully")
@@ -469,7 +475,7 @@ class QualityMonitor:
         low_scoring = []
         high_scoring = []
 
-        for _, span in spans_df.iterrows():
+        async def _score_span(span) -> Optional[tuple]:
             attributes = span.get("attributes", {})
             outputs = span.get("outputs", {})
             query = attributes.get("query", "")
@@ -493,7 +499,7 @@ class QualityMonitor:
                 routing = value if isinstance(value, dict) else {}
                 prompt = self._build_routing_judge_prompt(query, routing)
             else:
-                continue
+                return None
 
             try:
                 response = await judge._call_llm(
@@ -513,7 +519,7 @@ class QualityMonitor:
                         "Skipping %s span with no parseable judge score",
                         agent_type.value,
                     )
-                    continue
+                    return None
 
                 example = {
                     "query": query,
@@ -522,17 +528,27 @@ class QualityMonitor:
                     "explanation": explanation,
                     "span_id": span.get("span_id", ""),
                 }
-                scores.append(score)
-
-                if score < 0.5:
-                    example["output"] = outputs
-                    low_scoring.append(example)
-                elif score >= 0.8:
-                    example["output"] = outputs
-                    high_scoring.append(example)
-
+                return score, example, outputs
             except Exception as e:
                 logger.warning(f"LLM judge failed for span: {e}")
+                return None
+
+        # Each span is an independent judge call — score them concurrently.
+        # Aggregation below stays serial and in span order for stable output.
+        scored = await asyncio.gather(
+            *(_score_span(span) for _, span in spans_df.iterrows())
+        )
+        for item in scored:
+            if item is None:
+                continue
+            score, example, outputs = item
+            scores.append(score)
+            if score < 0.5:
+                example["output"] = outputs
+                low_scoring.append(example)
+            elif score >= 0.8:
+                example["output"] = outputs
+                high_scoring.append(example)
 
         mean_score = sum(scores) / len(scores) if scores else 0.0
 
