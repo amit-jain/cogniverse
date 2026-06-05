@@ -556,18 +556,14 @@ class TestContentTypeVespaSchemas:
         with torch.no_grad():
             embeddings = model(**batch_inputs)
 
-        # Convert to numpy and remove batch dimension
+        # Convert to numpy and remove batch dimension -> (num_patches, 128)
         embeddings_np = embeddings.squeeze(0).cpu().numpy()
-
-        # Pad or truncate to exactly 1024 patches
-        if embeddings_np.shape[0] < 1024:
-            padding = np.zeros((1024 - embeddings_np.shape[0], embeddings_np.shape[1]))
-            embeddings_np = np.vstack([embeddings_np, padding])
-        elif embeddings_np.shape[0] > 1024:
-            embeddings_np = embeddings_np[:1024]
-
-        colpali_embedding = embeddings_np.tolist()
         print(f"✅ Generated embedding shape: {embeddings_np.shape}")
+
+        # Mapped patch{} tensor feed: one block per page patch.
+        colpali_embedding = {
+            "blocks": {str(i): row for i, row in enumerate(embeddings_np.tolist())}
+        }
 
         # Sample document page matching document_visual schema
         sample_doc_page = {
@@ -577,7 +573,7 @@ class TestContentTypeVespaSchemas:
                 "document_type": "pdf",
                 "page_number": 1,
                 "page_count": 10,
-                "source_url": "file:///test/docs/ml_fundamentals.pdf",
+                "document_path": "file:///test/docs/ml_fundamentals.pdf",
                 "creation_timestamp": int(time.time()),
                 "colpali_embedding": colpali_embedding,
             }
@@ -719,14 +715,14 @@ class TestContentTypeVespaSchemas:
         query_encoder = ColPaliQueryEncoder(model_name="vidore/colsmol-500m")
         print("✅ Query encoder loaded")
 
-        # Encode query
+        # Encode query -> (num_tokens, 128) per-token embedding
         query = "machine learning fundamentals"
         print(f"\n🔍 Encoding query: '{query}'")
         query_embedding = query_encoder.encode(query)
-        query_embedding_flat = query_embedding.flatten().tolist()
+        qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
         print(f"✅ Query embedding generated: shape {query_embedding.shape}")
 
-        # Search with ColPali rank profile
+        # Search with the float_float ColPali MaxSim rank profile
         print("\n🔍 Searching with ColPali visual strategy...")
         yql = "select * from document_visual where true"
 
@@ -735,8 +731,8 @@ class TestContentTypeVespaSchemas:
             json={
                 "yql": yql,
                 "hits": 10,
-                "ranking.profile": "colpali",
-                "input.query(qt)": str(query_embedding_flat),
+                "ranking.profile": "float_float",
+                "input.query(qt)": qt_value,
             },
             timeout=10,
         )
@@ -749,14 +745,17 @@ class TestContentTypeVespaSchemas:
         hits = results.get("root", {}).get("children", [])
         print(f"✅ Visual search completed: {len(hits)} hits")
 
-        if len(hits) > 0:
-            first_hit = hits[0]["fields"]
-            print(f"   Top result: {first_hit.get('document_title', 'no title')}")
-            print(f"   Relevance: {hits[0].get('relevance', 0.0):.4f}")
-            assert first_hit.get("document_id") == "doc_test_001_p1"
-            print("✅ Ingested document page found in visual search results")
-        else:
-            print("⚠️  No search results found (document may not be indexed yet)")
+        # The page ingested by test_document_visual_ingestion (module-scoped
+        # container) must be retrieved and rank first under the float_float
+        # ColPali MaxSim profile.
+        assert hits, "visual search returned no hits for the ingested page"
+        first_hit = hits[0]["fields"]
+        print(f"   Top result: {first_hit.get('document_title', 'no title')}")
+        print(f"   Relevance: {hits[0].get('relevance', 0.0):.4f}")
+        assert first_hit.get("document_id") == "doc_test_001_p1"
+        assert first_hit.get("document_path") == "file:///test/docs/ml_fundamentals.pdf"
+        assert hits[0].get("relevance", 0.0) > 0
+        print("✅ Ingested document page found in visual search results")
 
     def test_document_text_search(self, test_vespa_manager):
         """Test searching documents with text strategy (semantic + BM25)"""

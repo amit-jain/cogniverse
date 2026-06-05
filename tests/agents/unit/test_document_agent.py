@@ -110,11 +110,17 @@ class TestDocumentAgent:
     @patch.object(DocumentAgent, "query_encoder", new_callable=PropertyMock)
     @patch("requests.post")
     async def test_search_visual(self, mock_post, mock_query_encoder):
-        """Test visual search strategy"""
-        # Mock query encoder
+        """Test visual search strategy.
+
+        End-to-end retrieval against real Vespa is covered by
+        test_document_agent_visual_search_vespa.py; this unit guards the query
+        contract the document_visual schema declares (float_float profile,
+        query(qt) mapped tensor, tenant-scoped schema) and the document_path
+        parse.
+        """
+        # ColPali query encoder → 2 per-token (patch) 128-d vectors.
         mock_encoder = MagicMock()
-        mock_embedding = np.random.randn(1024, 128)
-        mock_encoder.encode.return_value = mock_embedding
+        mock_encoder.encode.return_value = np.zeros((2, 128), dtype=np.float32)
         mock_query_encoder.return_value = mock_encoder
 
         # Mock Vespa response
@@ -127,7 +133,7 @@ class TestDocumentAgent:
                         "relevance": 0.95,
                         "fields": {
                             "document_id": "doc_001_p1",
-                            "source_url": "http://example.com/doc1.pdf",
+                            "document_path": "s3://example/doc1.pdf",
                             "document_title": "Machine Learning Basics",
                             "page_number": 1,
                             "page_count": 10,
@@ -145,15 +151,22 @@ class TestDocumentAgent:
         # Verify results
         assert len(results) == 1
         assert results[0].document_id == "doc_001_p1"
+        assert results[0].document_url == "s3://example/doc1.pdf"
         assert results[0].title == "Machine Learning Basics"
         assert results[0].page_number == 1
         assert results[0].strategy_used == "visual"
         assert results[0].relevance_score == 0.95
 
-        # Verify Vespa was called correctly
+        # The query must match the document_visual schema's declared contract:
+        # the float_float profile, the query(qt) mapped tensor input, and the
+        # tenant-scoped schema name.
         mock_post.assert_called_once()
-        call_args = mock_post.call_args
-        assert "colpali" in str(call_args)
+        sent = mock_post.call_args.kwargs["json"]
+        assert sent["ranking.profile"] == "float_float"
+        assert "input.query(qt)" in sent
+        assert isinstance(sent["input.query(qt)"], dict)
+        assert "document_visual_" in sent["yql"]
+        assert "str(" not in str(sent["input.query(qt)"])
 
     @pytest.mark.asyncio
     @patch.object(DocumentAgent, "text_query_encoder", new_callable=PropertyMock)

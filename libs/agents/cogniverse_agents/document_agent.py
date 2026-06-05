@@ -412,20 +412,24 @@ class DocumentAgent(
         """
         import requests
 
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
         logger.info("🖼️  Using visual strategy (ColPali page-as-image)")
 
-        # Encode query with ColPali
+        # ColPali per-token (patch) query embedding (matches document_visual
+        # ingestion); send as the mapped querytoken{} tensor the schema declares.
         query_embedding = self.query_encoder.encode(query)
+        qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
 
-        # Build Vespa query for document_visual schema
-        yql = "select * from document_visual where true"
-        query_embedding_flat = query_embedding.flatten().tolist()
+        safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
+        schema = f"document_visual_{safe_tenant}"
+        yql = f"select * from {schema} where true"
 
         params = {
             "yql": yql,
             "hits": limit,
-            "ranking.profile": "colpali",
-            "input.query(qt)": str(query_embedding_flat),
+            "ranking.profile": "float_float",
+            "input.query(qt)": qt_value,
         }
 
         # Execute search — offload the blocking HTTP call so it doesn't stall
@@ -453,7 +457,7 @@ class DocumentAgent(
             results.append(
                 DocumentResult(
                     document_id=fields.get("document_id", ""),
-                    document_url=fields.get("source_url", ""),
+                    document_url=fields.get("document_path", ""),
                     title=fields.get("document_title", ""),
                     page_number=fields.get("page_number"),
                     page_count=fields.get("page_count"),

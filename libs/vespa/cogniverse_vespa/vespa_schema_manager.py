@@ -277,7 +277,7 @@ class VespaSchemaManager:
                                 indexing=["summary", "attribute"],
                             ),
                             Field(
-                                name="source_url",
+                                name="document_path",
                                 type="string",
                                 indexing=["summary", "attribute"],
                             ),
@@ -286,27 +286,34 @@ class VespaSchemaManager:
                                 type="long",
                                 indexing=["summary", "attribute"],
                             ),
-                            # ColPali multi-vector embeddings per page (same as video frames)
+                            # ColPali multi-vector page embeddings, mapped per-token
+                            # form matching configs/schemas/document_visual_schema.json.
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<float>(x[1024],d[128])",
+                                type="tensor<bfloat16>(patch{}, v[128])",
                                 indexing=["attribute"],
-                                attribute=["distance-metric:prenormalized-angular"],
+                            ),
+                            Field(
+                                name="colpali_embedding_binary",
+                                type="tensor<int8>(patch{}, v[16])",
+                                indexing=["attribute", "index"],
                             ),
                         ]
                     ),
                     rank_profiles=[
-                        # Pure ColPali max similarity (identical to video frames)
                         RankProfile(
-                            name="colpali",
-                            inputs=[("query(qt)", "tensor<float>(x[1024],d[128])")],
-                            first_phase="sum(reduce(sum(query(qt) * attribute(colpali_embedding), d), max, x))",
+                            name="float_float",
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[128])")
+                            ],
+                            first_phase="sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)",
                         ),
-                        # Hybrid: visual recall -> text re-ranking
                         RankProfile(
-                            name="hybrid_visual_text",
-                            inputs=[("query(qt)", "tensor<float>(x[1024],d[128])")],
-                            first_phase="sum(reduce(sum(query(qt) * attribute(colpali_embedding), d), max, x))",
+                            name="hybrid_float_bm25",
+                            inputs=[
+                                ("query(qt)", "tensor<float>(querytoken{}, v[128])")
+                            ],
+                            first_phase="sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)",
                             second_phase=SecondPhaseRanking(
                                 expression="bm25(document_title)", rerank_count=100
                             ),
