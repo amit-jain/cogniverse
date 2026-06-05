@@ -131,13 +131,16 @@ class TestDocumentAgent:
         assert results[0].relevance_score == 0.95
 
         # The query must match the document_visual schema's declared contract:
-        # the float_float profile, the query(qt) mapped tensor input, and the
+        # the phased profile (binary recall + float rerank) with both the float
+        # query(qt) and binarized query(qtb) mapped tensors, and the
         # tenant-scoped schema name.
         mock_post.assert_called_once()
         sent = mock_post.call_args.kwargs["json"]
-        assert sent["ranking.profile"] == "float_float"
-        assert "input.query(qt)" in sent
+        assert sent["ranking.profile"] == "phased"
         assert isinstance(sent["input.query(qt)"], dict)
+        assert isinstance(sent["input.query(qtb)"], dict)
+        # qtb is the packed binary form: 128 dims -> 16 int8 bytes per token.
+        assert all(len(v) == 16 for v in sent["input.query(qtb)"].values())
         assert "document_visual_" in sent["yql"]
         assert "str(" not in str(sent["input.query(qt)"])
 

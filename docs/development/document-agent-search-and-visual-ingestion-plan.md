@@ -39,11 +39,12 @@ Root facts established by investigation:
 > test + an agent unit test. Incidental: fixed 2 stale `_metadata_app`
 > bare-construct backend tests, bd82db13.) Phase 3 ☑ done — added
 > configs/schemas/document_visual_schema.json (mapped patch{}/v[128] ColPali +
-> binary + float/hybrid profiles); fixed `_search_visual` (mapped query(qt),
-> float_float profile, tenant-scoped name, document_path parse); aligned the
-> legacy inline schema in vespa_schema_manager.py to the same shape; real-Vespa
-> test (test_document_agent_visual_search_vespa.py) + updated the inline-schema
-> content-types test. Phase 4 remains.
+> binary + float/hybrid profiles, binary `default`); fixed `_search_visual`
+> (mapped query(qt) + binarized query(qtb), `phased` profile = binary hamming
+> recall then float MaxSim rerank, tenant-scoped name, document_path parse);
+> aligned the legacy inline schema in vespa_schema_manager.py to the same shape;
+> real-Vespa test (test_document_agent_visual_search_vespa.py) + updated the
+> inline-schema content-types test. Phase 4 remains.
 
 ### Phase 1 — `_search_text` matches the real ColBERT producer
 - Use `ColBERTQueryEncoder` (LateOn) for the query; send mapped

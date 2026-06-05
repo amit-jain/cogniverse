@@ -24,6 +24,10 @@ pytestmark = [pytest.mark.integration, pytest.mark.requires_docker]
 TENANT = "docvis_rt"
 _MATCH = [0.1] * 128
 _OPPOSED = [-0.1] * 128
+# Binary (packbits) form of the float vectors: all-positive -> 0xFF (-1 int8),
+# all-negative -> 0x00. The phased profile's hamming first-phase reads these.
+_MATCH_BIN = [-1] * 16
+_OPPOSED_BIN = [0] * 16
 
 
 @pytest.fixture(scope="module")
@@ -42,6 +46,7 @@ def docvisual_schema(shared_vespa):
             "page_number": 1,
             "page_count": 12,
             "colpali_embedding": {"blocks": {"0": _MATCH}},
+            "colpali_embedding_binary": {"blocks": {"0": _MATCH_BIN}},
         },
         "doc_blank_p1": {
             "document_id": "doc_blank_p1",
@@ -51,6 +56,7 @@ def docvisual_schema(shared_vespa):
             "page_number": 1,
             "page_count": 3,
             "colpali_embedding": {"blocks": {"0": _OPPOSED}},
+            "colpali_embedding_binary": {"blocks": {"0": _OPPOSED_BIN}},
         },
     }
     for doc_id, fields in docs.items():

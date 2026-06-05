@@ -13,6 +13,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import dspy
+import numpy as np
 from pydantic import Field
 
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
@@ -397,9 +398,15 @@ class DocumentAgent(
         logger.info("🖼️  Using visual strategy (ColPali page-as-image)")
 
         # ColPali per-token (patch) query embedding (matches document_visual
-        # ingestion); send as the mapped querytoken{} tensor the schema declares.
+        # ingestion). The phased profile does binary hamming recall then a float
+        # MaxSim rerank, so send both the float (qt) and binarized (qtb) query
+        # tensors the schema declares.
         query_embedding = self.query_encoder.encode(query)
         qt_value = {str(i): row.tolist() for i, row in enumerate(query_embedding)}
+        binary_query = np.packbits(
+            np.where(query_embedding > 0, 1, 0).astype(np.uint8), axis=1
+        ).astype(np.int8)
+        qtb_value = {str(i): row.tolist() for i, row in enumerate(binary_query)}
 
         safe_tenant = canonical_tenant_id(self._tenant_id).replace(":", "_")
         schema = f"document_visual_{safe_tenant}"
@@ -408,8 +415,9 @@ class DocumentAgent(
         params = {
             "yql": yql,
             "hits": limit,
-            "ranking.profile": "float_float",
+            "ranking.profile": "phased",
             "input.query(qt)": qt_value,
+            "input.query(qtb)": qtb_value,
         }
 
         # Execute search — offload the blocking HTTP call so it doesn't stall
