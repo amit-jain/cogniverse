@@ -15,6 +15,7 @@ and relation), so re-indexing the same file is safe.
 
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -199,9 +200,20 @@ class GraphManager:
         frontier: List[Tuple[str, List[str]]] = [(source_id, [source_id])]
 
         for _ in range(max_depth):
+            # Visit every frontier node's edges concurrently — the GETs are
+            # independent, so BFS latency scales with depth rather than total
+            # frontier width. The bookkeeping below stays serial and in frontier
+            # order, so the returned path is identical to fetching one at a time.
+            with ThreadPoolExecutor(max_workers=min(8, len(frontier))) as executor:
+                edge_lists = list(
+                    executor.map(
+                        lambda current: self._visit_edges(source_node_id=current),
+                        (current for current, _ in frontier),
+                    )
+                )
+
             next_frontier: List[Tuple[str, List[str]]] = []
-            for current, path in frontier:
-                out_edges = self._visit_edges(source_node_id=current)
+            for (current, path), out_edges in zip(frontier, edge_lists):
                 for edge in out_edges:
                     neighbor = edge.get("target_node_id", "")
                     if not neighbor or neighbor in visited:

@@ -22,6 +22,7 @@ from cogniverse_agents.graph.graph_schema import (
     ExtractionResult,
     Mention,
     Node,
+    normalize_name,
 )
 from tests.utils.docker_utils import generate_unique_ports
 from tests.utils.vespa_test_helpers import schema_full_name
@@ -561,6 +562,78 @@ class TestGraphVespaQueries:
 
         path = manager.get_path("PathA", "PathD", max_depth=5)
         assert path == ["patha", "pathb", "pathc", "pathd"]
+
+    def test_path_visits_frontier_concurrently(self, graph_manager, monkeypatch):
+        manager, _ = graph_manager
+
+        fanout = ["CcA1", "CcA2", "CcA3", "CcA4"]
+        nodes = [
+            Node(
+                tenant_id=TENANT_ID,
+                name=name,
+                mentions=[_test_mention(source_doc_id="concur_test.py")],
+            )
+            for name in ["CcSource", *fanout, "CcTarget"]
+        ]
+        edges = []
+        for fan in fanout:
+            edges.append(
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source="CcSource",
+                    target=fan,
+                    relation="calls",
+                    evidence_span=f"CcSource calls {fan}",
+                    segment_id="function:CcSource",
+                    ts_start=0.0,
+                    ts_end=0.0,
+                    modality="code",
+                    source_doc_id="concur_test.py",
+                )
+            )
+            edges.append(
+                Edge(
+                    tenant_id=TENANT_ID,
+                    source=fan,
+                    target="CcTarget",
+                    relation="calls",
+                    evidence_span=f"{fan} calls CcTarget",
+                    segment_id=f"function:{fan}",
+                    ts_start=0.0,
+                    ts_end=0.0,
+                    modality="code",
+                    source_doc_id="concur_test.py",
+                )
+            )
+        manager.upsert(
+            ExtractionResult(source_doc_id="concur_test.py", nodes=nodes, edges=edges)
+        )
+        time.sleep(2)
+
+        fanout_ids = {normalize_name(name) for name in fanout}
+        barrier = threading.Barrier(len(fanout), timeout=20)
+        real_visit_edges = manager._visit_edges
+
+        def barrier_gated(source_node_id=None, target_node_id=None):
+            # CcSource fans out to four nodes that share one BFS level. A serial
+            # implementation visits them one at a time, so the barrier never
+            # fills — the first caller blocks until the 20s timeout raises
+            # BrokenBarrierError and the test fails. Only concurrent fetching
+            # gets all four into the barrier at once.
+            if source_node_id in fanout_ids:
+                barrier.wait()
+            return real_visit_edges(
+                source_node_id=source_node_id, target_node_id=target_node_id
+            )
+
+        monkeypatch.setattr(manager, "_visit_edges", barrier_gated)
+
+        path = manager.get_path("CcSource", "CcTarget", max_depth=5)
+        assert path is not None
+        assert path[0] == "ccsource"
+        assert path[-1] == "cctarget"
+        assert len(path) == 3
+        assert path[1] in fanout_ids
 
     def test_stats_reports_counts_and_top_nodes(self, graph_manager):
         manager, _ = graph_manager
