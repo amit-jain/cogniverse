@@ -821,3 +821,155 @@ class TestStoreOperationsRealPhoenix:
             0.10, abs=1e-6
         )
         assert str(_roundtrip_value(rows["high_scoring"], "query")) == "strong query"
+
+
+def _emit_agent_span(telemetry, tenant_id, span_name, query, output_value):
+    """Emit one agent span to the tenant's runtime project in real Phoenix."""
+    with telemetry.span(
+        name=span_name,
+        tenant_id=tenant_id,
+        project_name="runtime",
+        attributes={
+            "input.value": query,
+            "output.value": output_value,
+        },
+    ):
+        pass
+
+
+async def _wait_for_span(span_evaluator, span_name, deadline_s=60):
+    """Poll get_recent_spans until ``span_name`` is retrievable (shape-agnostic)."""
+    import asyncio
+
+    deadline = time.monotonic() + deadline_s
+    while time.monotonic() < deadline:
+        df = await span_evaluator.get_recent_spans(
+            hours=1,
+            operation_name=span_name,
+            limit=200,
+            require_search_shape=False,
+        )
+        if df is not None and not df.empty:
+            return df
+        await asyncio.sleep(2)
+    return None
+
+
+@pytest.mark.integration
+class TestLiveTrafficRealPhoenix:
+    """evaluate_live_traffic must score SUMMARY/REPORT/GATEWAY agents whose
+    outputs are strings / routing dicts — not just SEARCH. Regression guard for
+    C4: get_recent_spans previously assumed search-result shape and dropped
+    every non-search span, so 3 of 4 agent types scored zero live samples.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_recent_spans_keeps_non_search_summary_span(self, real_telemetry):
+        """A summary-string span is retrievable with require_search_shape=False
+        (its text under outputs['value']) and dropped when the search shape is
+        required — the exact C4 boundary, no LLM judge involved."""
+        from cogniverse_evaluation.span_evaluator import SpanEvaluator
+
+        tenant_id = "live_eval_shape_rt"
+        real_telemetry.register_project(
+            tenant_id=tenant_id,
+            project_name="runtime",
+            otlp_endpoint=real_telemetry.config.provider_config["grpc_endpoint"],
+            http_endpoint=real_telemetry.config.provider_config["http_endpoint"],
+            use_sync_export=True,
+        )
+
+        _emit_agent_span(
+            real_telemetry,
+            tenant_id,
+            "SummarizerAgent.process",
+            "summarize the quarterly results",
+            "The quarter showed strong growth across all product lines.",
+        )
+        real_telemetry.force_flush(timeout_millis=10000)
+
+        evaluator = SpanEvaluator(
+            tenant_id=tenant_id,
+            project_name=f"cogniverse-{tenant_id}-runtime",
+        )
+
+        kept = await _wait_for_span(evaluator, "SummarizerAgent.process")
+        assert kept is not None and not kept.empty, (
+            "summary span not retrievable with require_search_shape=False"
+        )
+        row = kept.iloc[0]
+        assert row["operation_name"] == "SummarizerAgent.process"
+        assert (
+            row["outputs"]["value"]
+            == "The quarter showed strong growth across all product lines."
+        )
+
+        # With the search shape required, the same span is dropped.
+        dropped = await evaluator.get_recent_spans(
+            hours=1,
+            operation_name="SummarizerAgent.process",
+            limit=200,
+            require_search_shape=True,
+        )
+        assert dropped.empty, (
+            "summary span should be dropped when search-result shape is required"
+        )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_live_traffic_scores_summary_agent(self, real_telemetry):
+        """Full path: a summary span is fetched, scored by the real LLM judge,
+        and surfaced in evaluate_live_traffic().agent_results[SUMMARY] — not
+        dropped as a non-search shape."""
+        import asyncio
+
+        tenant_id = "live_eval_score_rt"
+        real_telemetry.register_project(
+            tenant_id=tenant_id,
+            project_name="runtime",
+            otlp_endpoint=real_telemetry.config.provider_config["grpc_endpoint"],
+            http_endpoint=real_telemetry.config.provider_config["http_endpoint"],
+            use_sync_export=True,
+        )
+
+        _emit_agent_span(
+            real_telemetry,
+            tenant_id,
+            "SummarizerAgent.process",
+            "summarize the onboarding guide",
+            "The onboarding guide covers account setup, first project, and support.",
+        )
+        real_telemetry.force_flush(timeout_millis=10000)
+
+        from cogniverse_evaluation.span_evaluator import SpanEvaluator
+
+        probe = SpanEvaluator(
+            tenant_id=tenant_id, project_name=f"cogniverse-{tenant_id}-runtime"
+        )
+        assert await _wait_for_span(probe, "SummarizerAgent.process") is not None, (
+            "summary span never landed in Phoenix"
+        )
+
+        monitor = QualityMonitor(
+            tenant_id=tenant_id,
+            runtime_url="http://localhost:99999",
+            phoenix_http_endpoint=real_telemetry.config.provider_config[
+                "http_endpoint"
+            ],
+            llm_base_url=get_llm_base_url(),
+            llm_model=get_llm_model(),
+            golden_dataset_path="/tmp/nonexistent_golden.csv",
+        )
+        try:
+            result = await asyncio.wait_for(
+                monitor.evaluate_live_traffic(), timeout=180
+            )
+        finally:
+            await monitor.close()
+
+        assert AgentType.SUMMARY in result.agent_results, (
+            f"SUMMARY agent not scored; got {list(result.agent_results)}"
+        )
+        summary_eval = result.agent_results[AgentType.SUMMARY]
+        assert summary_eval.sample_count >= 1
+        assert isinstance(summary_eval.score, float)
+        assert summary_eval.score >= 0.0
