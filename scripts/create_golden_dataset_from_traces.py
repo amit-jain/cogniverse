@@ -12,7 +12,7 @@ import json
 import logging
 import sys
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -73,8 +73,9 @@ class GoldenDatasetGenerator:
         """
         logger.info(f"Fetching traces from last {self.hours_back} hours...")
 
-        # Calculate time range
-        end_time = datetime.now()
+        # Calculate time range — UTC-aware so the Phoenix lookback window is
+        # not shifted by the host's local offset (Phoenix stores UTC).
+        end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(hours=self.hours_back)
 
         try:
