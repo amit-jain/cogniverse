@@ -15,7 +15,7 @@ import argparse
 import logging
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Add parent to path
@@ -87,8 +87,9 @@ class AutoOptimizationTrigger:
             Tuple of (sufficient, actual_count)
         """
         try:
-            # Calculate time window
-            end_time = datetime.now()
+            # Calculate time window — UTC-aware so the Phoenix lookback window
+            # is not shifted by the host's local offset (Phoenix stores UTC).
+            end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(hours=lookback_hours)
 
             # Query spans using provider abstraction
