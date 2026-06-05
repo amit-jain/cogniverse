@@ -610,3 +610,79 @@ class TestGraphExtractorE2E:
         neighbors = manager.get_neighbors("roundtrip")
         out_targets = {e["target_node_id"] for e in neighbors["out_edges"]}
         assert "alpha" in out_targets or "beta" in out_targets
+
+
+@pytest.mark.integration
+class TestSearchNodesRealVespa:
+    """search_nodes runs its real /search/ MaxSim+bm25 query and returns the
+    node, rather than silently falling back to the substring _visit. Previously
+    this path had only a pylate-sidecar-gated (usually skipped) test plus a unit
+    test asserting the YQL string — nothing proved the real query executes."""
+
+    def _feed_node(self, port, doc_id, name, description):
+        fields = {
+            "doc_id": doc_id,
+            "tenant_id": TENANT_ID,
+            "doc_type": "node",
+            "name": name,
+            "description": description,
+            "embedding": {"blocks": {"0": [0.1] * 128}},
+            "embedding_binary": {"blocks": {"0": [1] * 16}},
+        }
+        r = requests.post(_doc_url(port, doc_id), json={"fields": fields}, timeout=15)
+        assert r.status_code in (200, 201), r.text[:300]
+
+    def test_search_nodes_uses_real_query_not_substring_fallback(
+        self, graph_vespa, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        port = graph_vespa["http_port"]
+        self._feed_node(
+            port,
+            "kg_node_search_marie",
+            "Marie Curie",
+            "studied radioactivity and polonium isotopes",
+        )
+        self._feed_node(
+            port,
+            "kg_node_search_other",
+            "Random Topic",
+            "unrelated cooking recipes and gardening",
+        )
+        time.sleep(2)
+
+        mgr = GraphManager.__new__(GraphManager)
+        mgr._schema_name = GRAPH_SCHEMA
+        mgr._tenant_id = TENANT_ID
+        mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+
+        # Controlled query blocks bypass the pylate encoder — the encoder
+        # output is exercised elsewhere; here we cover the Vespa query path.
+        monkeypatch.setattr(
+            mgr,
+            "_encode_query_blocks",
+            lambda q: ({"0": [0.1] * 128}, {"0": [1] * 16}),
+        )
+
+        # The fallback only does substring name matching; "radioactivity" is in
+        # the description, not the name, so a fallback would miss it. Asserting
+        # no fallback fired proves the real /search/ query (not _visit) returned
+        # the hit.
+        visit_calls = []
+        real_visit = mgr._visit
+
+        def _spy_visit(*args, **kwargs):
+            visit_calls.append((args, kwargs))
+            return real_visit(*args, **kwargs)
+
+        monkeypatch.setattr(mgr, "_visit", _spy_visit)
+
+        results = mgr.search_nodes("radioactivity polonium", top_k=10)
+
+        assert not visit_calls, (
+            "search_nodes fell back to substring _visit instead of running the "
+            "real /search/ query"
+        )
+        names = [r.get("name") for r in results]
+        assert "Marie Curie" in names, names
