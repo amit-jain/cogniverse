@@ -285,8 +285,11 @@ class TestAudioAcousticHybridSearch:
 
     @staticmethod
     def _stub_embedding(agent, vec):
+        # Acoustic search must encode the query with CLAP text features
+        # (generate_acoustic_text_embedding), NOT the sentence-transformer
+        # semantic embedder — providing only the former asserts the call site.
         agent._embedding_generator = SimpleNamespace(
-            generate_semantic_embedding=lambda q: np.array(vec, dtype=np.float32)
+            generate_acoustic_text_embedding=lambda q: np.array(vec, dtype=np.float32)
         )
 
     @pytest.mark.asyncio

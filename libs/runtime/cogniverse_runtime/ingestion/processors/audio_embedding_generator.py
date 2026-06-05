@@ -162,6 +162,47 @@ class AudioEmbeddingGenerator:
             logger.error(f"Failed to generate acoustic embedding: {e}")
             raise
 
+    def generate_acoustic_text_embedding(self, text: str) -> np.ndarray:
+        """Generate a 512-dim text embedding in CLAP's joint audio-text space.
+
+        CLAP is contrastively trained so text and audio share one embedding
+        space; encoding a query with get_text_features yields a vector directly
+        comparable to the stored audio acoustic_embedding. A sentence-transformer
+        embedding lives in a different space and cannot be compared to it.
+
+        Returns:
+            512-dim acoustic-space text embedding
+        """
+        try:
+            inputs = self.clap_processor(
+                text=[text],
+                return_tensors="pt",
+                padding=True,
+            )
+
+            import torch
+
+            with torch.no_grad():
+                text_embeds = self.clap_model.get_text_features(**inputs)
+
+            embedding = text_embeds.squeeze().cpu().numpy()
+
+            if embedding.shape[0] != 512:
+                logger.warning(
+                    f"CLAP text embedding has {embedding.shape[0]} dims, expected 512"
+                )
+                if embedding.shape[0] > 512:
+                    embedding = embedding[:512]
+                else:
+                    padding = np.zeros(512 - embedding.shape[0])
+                    embedding = np.concatenate([embedding, padding])
+
+            return embedding
+
+        except Exception as e:
+            logger.error(f"Failed to generate acoustic text embedding: {e}")
+            raise
+
     def generate_semantic_embedding(self, text: str) -> np.ndarray:
         """
         Generate semantic embedding from text using sentence transformers

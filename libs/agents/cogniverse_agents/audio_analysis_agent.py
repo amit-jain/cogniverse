@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import dspy
-import numpy as np
 from pydantic import Field as PydanticField
 
 from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
@@ -386,17 +385,12 @@ class AudioAnalysisAgent(
         """Search by acoustic similarity using CLAP embeddings"""
         import requests
 
-        # Generate acoustic embedding from query text (CLAP supports text-to-audio retrieval)
-        # For now, use semantic embedding as proxy - CLAP text encoder would be better
+        # CLAP text features land in the same 512-dim space as the stored audio
+        # acoustic_embedding, so a text query is directly comparable to it.
         logger.info("Generating query embedding for acoustic search...")
-        query_embedding = self.embedding_generator.generate_semantic_embedding(query)
-
-        # Pad/truncate to 512 dims for acoustic search
-        if len(query_embedding) > 512:
-            query_embedding = query_embedding[:512]
-        else:
-            padding = np.zeros(512 - len(query_embedding))
-            query_embedding = np.concatenate([query_embedding, padding])
+        query_embedding = self.embedding_generator.generate_acoustic_text_embedding(
+            query
+        )
 
         # acoustic_similarity ranks via closeness(field, acoustic_embedding),
         # which binds to a nearestNeighbor operator over the HNSW field; the
@@ -457,16 +451,12 @@ class AudioAnalysisAgent(
         """Search by hybrid (BM25 transcript + semantic embeddings)"""
         import requests
 
-        # Generate semantic embedding for query
+        # CLAP text features for the acoustic half (same 512-dim space as the
+        # stored acoustic_embedding); the transcript half uses the raw query text.
         logger.info("Generating query embedding for hybrid search...")
-        query_embedding = self.embedding_generator.generate_semantic_embedding(query)
-
-        # acoustic_query is tensor<float>(v[512]); pad/truncate to match.
-        if len(query_embedding) > 512:
-            query_embedding = query_embedding[:512]
-        else:
-            padding = np.zeros(512 - len(query_embedding))
-            query_embedding = np.concatenate([query_embedding, padding])
+        query_embedding = self.embedding_generator.generate_acoustic_text_embedding(
+            query
+        )
 
         # hybrid_acoustic_bm25 = 0.5*closeness(acoustic) + 0.5*bm25(text); the
         # acoustic half needs the nearestNeighbor operator, OR-ed with the text
