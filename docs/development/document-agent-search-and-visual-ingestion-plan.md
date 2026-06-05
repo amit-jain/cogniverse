@@ -49,6 +49,17 @@ Root facts established by investigation:
 - Test (real Vespa): SearchAgent `_process_impl` for video returns
   `len(results) > 0` with no explicit ranking; an audio-modality call returns
   gracefully (no `ValueError`).
+- RISK FOUND DURING EXECUTION (not yet implemented): backend auto-select
+  (`search_backend.py:711-730`) RAISES when a profile has >1 strategy and no
+  `default_ranking` is resolved in `profile_config` at search time. NOTHING
+  currently exercises the no-strategy path (`test_ranking_strategies_real`
+  always passes an explicit strategy), so dropping `binary_binary`→None could
+  break the working VIDEO path, not just fix audio. DO FIRST: a real-Vespa
+  SearchAgent `_process_impl` test (deployed multi-strategy video profile +
+  ColPali encoder) that proves auto-select resolves `default_ranking`; only
+  then drop the hardcode. If auto-select does NOT resolve, the fix also needs
+  `backend.default_profiles.<type>.strategy` config (bigger). The 7 sites:
+  search_agent.py:877, 1021, 1147, 1249, 1438, 1458, 1830.
 
 ### Phase 3 — `document_visual` schema redesign + `_search_visual` query fix
 - Add `configs/schemas/document_visual_schema.json` mirroring `image_colpali_mv`
