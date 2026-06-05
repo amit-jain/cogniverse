@@ -15,6 +15,7 @@ Enhanced with:
 - Multi-profile ensemble search with RRF fusion
 """
 
+import asyncio
 import logging
 import tempfile
 from contextlib import asynccontextmanager
@@ -1934,7 +1935,8 @@ class SearchAgent(
             self.emit_progress("rlm_synthesis", "Synthesizing answer with RLM...")
             logger.info(f"RLM enabled for query: {query[:50]}...")
             try:
-                rlm_result = self.process_with_rlm(
+                rlm_result = await asyncio.to_thread(
+                    self.process_with_rlm,
                     query=query,
                     context=results_context,
                     rlm_options=input.rlm,
@@ -2063,7 +2065,7 @@ async def process_task(task: Dict[str, Any]):
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
     try:
-        result = search_agent.process_enhanced_task(task)
+        result = await asyncio.to_thread(search_agent.process_enhanced_task, task)
         return result
     except Exception as e:
         logger.error(f"Task processing failed: {e}")
@@ -2087,7 +2089,8 @@ async def upload_video_search(
 
     try:
         video_data = await file.read()
-        results = search_agent._search_by_video(
+        results = await asyncio.to_thread(
+            search_agent._search_by_video,
             video_data=video_data,
             filename=file.filename or "uploaded_video.mp4",
             tenant_id=tenant_id,
@@ -2126,7 +2129,8 @@ async def upload_image_search(
 
     try:
         image_data = await file.read()
-        results = search_agent._search_by_image(
+        results = await asyncio.to_thread(
+            search_agent._search_by_image,
             image_data=image_data,
             filename=file.filename or "uploaded_image.jpg",
             tenant_id=tenant_id,
@@ -2166,7 +2170,8 @@ async def enhanced_search(params: RelationshipAwareSearchParams):
         )
 
         # Perform relationship-aware search
-        result = search_agent.search_with_relationship_context(
+        result = await asyncio.to_thread(
+            search_agent.search_with_relationship_context,
             search_context,
             tenant_id=params.tenant_id,
             top_k=params.top_k,
