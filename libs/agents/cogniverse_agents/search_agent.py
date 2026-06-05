@@ -820,9 +820,13 @@ class SearchAgent(
                     "embedding_model", "vidore/colsmol-500m"
                 )
 
-                # Reuse active encoder if same model
+                # encode() is synchronous, CPU/GPU-blocking work — offload it so
+                # gather actually runs the per-profile encodings concurrently
+                # instead of serially on (and blocking) the event loop.
                 if profile_name == self.active_profile:
-                    embeddings = self.query_encoder.encode(query)
+                    embeddings = await asyncio.to_thread(
+                        self.query_encoder.encode, query
+                    )
                 else:
                     # Create temporary encoder for this profile
                     from cogniverse_core.query.encoders import QueryEncoderFactory
@@ -830,7 +834,7 @@ class SearchAgent(
                     encoder = QueryEncoderFactory.create_encoder(
                         profile_name, model_name, config=self.search_config
                     )
-                    embeddings = encoder.encode(query)
+                    embeddings = await asyncio.to_thread(encoder.encode, query)
 
                 logger.debug(
                     f"Encoded query for profile {profile_name}: shape {embeddings.shape}"

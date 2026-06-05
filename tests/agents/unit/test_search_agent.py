@@ -2030,3 +2030,58 @@ class TestDspyConfidenceGate:
         )
 
         assert captured["query"] == "enhanced cats"
+
+
+class TestEnsembleEncodingConcurrency:
+    """_search_ensemble must encode per-profile query embeddings concurrently
+    (off the event loop), not serially on it."""
+
+    @pytest.mark.asyncio
+    async def test_profiles_encode_concurrently(self, monkeypatch):
+        import asyncio
+        import threading
+        from types import SimpleNamespace
+
+        from cogniverse_core.query import encoders as enc_mod
+
+        # A barrier of 2 only releases once BOTH profile encodings are in
+        # flight. If the encodes run serially on the event loop (the bug), the
+        # first blocks here forever and the barrier times out -> the search
+        # raises "Failed to encode query for any profile".
+        barrier = threading.Barrier(2, timeout=5)
+
+        def blocking_encode(_query):
+            barrier.wait()
+            return np.zeros((2, 128), dtype=np.float32)
+
+        agent = SearchAgent.__new__(SearchAgent)
+        agent.active_profile = "p_active"
+        agent.query_encoder = SimpleNamespace(encode=blocking_encode)
+        agent.search_config = {
+            "backend": {
+                "profiles": {
+                    "p_active": {"embedding_model": "m_active"},
+                    "p_other": {"embedding_model": "m_other"},
+                }
+            }
+        }
+        monkeypatch.setattr(
+            enc_mod.QueryEncoderFactory,
+            "create_encoder",
+            lambda *a, **k: SimpleNamespace(encode=blocking_encode),
+        )
+        agent._get_backend = lambda: SimpleNamespace(search=lambda _qd: [])
+        agent._build_date_filter = lambda _s, _e: None
+
+        results = await asyncio.wait_for(
+            agent._search_ensemble(
+                "q",
+                tenant_id="t:t",
+                profiles=["p_active", "p_other"],
+                modality="video",
+                top_k=5,
+            ),
+            timeout=8,
+        )
+
+        assert results == []
