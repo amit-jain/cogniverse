@@ -64,7 +64,7 @@ def real_runtime_app(vespa_instance, config_manager, schema_loader):
         mgr = WikiManager(
             backend=backend,
             tenant_id=tenant_id,
-            schema_name=f"wiki_pages_{tenant_id}",
+            schema_name=backend.get_tenant_schema_name(tenant_id, "wiki_pages"),
         )
         managers[tenant_id] = mgr
         return mgr
@@ -113,8 +113,7 @@ class TestTelegramWikiDispatchRoundTrip:
     @pytest.mark.asyncio
     async def test_wiki_index_full_chain(self, gateway_with_real_runtime):
         """``/wiki index`` from Telegram → real /wiki/index endpoint → real
-        WikiManager.get_index() → real Vespa. Pre-fix the command was
-        parsed into is_wiki=True but never dispatched anywhere."""
+        WikiManager.get_index() → real Vespa."""
         gateway = gateway_with_real_runtime
         update = _mock_telegram_update()
 
@@ -156,7 +155,7 @@ class TestTelegramInstructionsDispatchRoundTrip:
     async def test_instructions_set_then_show(self, gateway_with_real_runtime):
         """``/instructions set`` followed by ``/instructions show`` must
         round-trip through the real ConfigStore — set persists, show
-        retrieves the same text. Pre-fix neither command worked at all."""
+        retrieves the same text."""
         gateway = gateway_with_real_runtime
         tenant_id = "tg_instr_rt_test"
 
@@ -180,8 +179,7 @@ class TestTelegramJobsDispatchRoundTrip:
     @pytest.mark.asyncio
     async def test_jobs_create_then_list(self, gateway_with_real_runtime):
         """``/jobs create`` followed by ``/jobs list`` must round-trip
-        through real ConfigStore. Pre-fix the entire /jobs family was
-        silently dropped."""
+        through real ConfigStore."""
         gateway = gateway_with_real_runtime
         tenant_id = "tg_jobs_rt_test"
 
