@@ -61,6 +61,10 @@ class TelemetryManager:
         # Thread-safe caches
         self._tenant_providers: Dict[str, TracerProvider] = {}
         self._tenant_tracers: Dict[str, Tracer] = {}
+        # cache_key -> the _tenant_providers key that tracer was built from.
+        # Lets eviction drop providers no live tracer still references,
+        # without parsing the (colon-bearing) tenant id out of cache_key.
+        self._tracer_provider_keys: Dict[str, str] = {}
         self._lock = threading.RLock()
 
         # Per-project configs (single source of truth for project-specific settings)
@@ -122,6 +126,7 @@ class TelemetryManager:
 
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
+                self._tracer_provider_keys[cache_key] = tenant_id
                 self._evict_old_tracers()
 
                 return tracer
@@ -372,6 +377,7 @@ class TelemetryManager:
 
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
+                self._tracer_provider_keys[cache_key] = provider_key
                 self._evict_old_tracers()
 
                 return tracer
@@ -521,18 +527,33 @@ class TelemetryManager:
             raise
 
     def _evict_old_tracers(self):
-        """Evict old tracers using LRU policy."""
-        if len(self._tenant_tracers) <= self.config.max_cached_tenants:
-            return
+        """Evict old tracers (LRU) and any providers no tracer still references.
 
-        # Simple LRU - remove oldest entries
-        # In production, you'd want a proper LRU cache
-        items_to_remove = len(self._tenant_tracers) - self.config.max_cached_tenants
-        oldest_keys = list(self._tenant_tracers.keys())[:items_to_remove]
+        Providers are evicted only once no remaining tracer maps to them, so a
+        provider shared across one tenant's projects survives until its last
+        tracer is gone. ``shutdown()`` flushes the provider's pending spans
+        before it is dropped.
+        """
+        if len(self._tenant_tracers) > self.config.max_cached_tenants:
+            items_to_remove = len(self._tenant_tracers) - self.config.max_cached_tenants
+            oldest_keys = list(self._tenant_tracers.keys())[:items_to_remove]
+            for key in oldest_keys:
+                del self._tenant_tracers[key]
+                self._tracer_provider_keys.pop(key, None)
+                logger.debug(f"Evicted tracer from cache: {key}")
 
-        for key in oldest_keys:
-            del self._tenant_tracers[key]
-            logger.debug(f"Evicted tracer from cache: {key}")
+        still_referenced = set(self._tracer_provider_keys.values())
+        for provider_key in list(self._tenant_providers.keys()):
+            if provider_key in still_referenced:
+                continue
+            provider = self._tenant_providers.pop(provider_key)
+            try:
+                provider.shutdown()
+            except Exception:
+                logger.debug(
+                    "Provider shutdown failed for %s", provider_key, exc_info=True
+                )
+            logger.debug(f"Evicted tracer provider from cache: {provider_key}")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get telemetry manager statistics."""
@@ -593,6 +614,7 @@ class TelemetryManager:
 
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
+            self._tracer_provider_keys.clear()
 
     @classmethod
     def reset(cls) -> None:
@@ -676,4 +698,6 @@ def get_telemetry_manager(config_manager=None) -> TelemetryManager:
         if otlp_override and otlp_override != _telemetry_manager.config.otlp_endpoint:
             _telemetry_manager.config.otlp_endpoint = otlp_override
             _telemetry_manager._tenant_providers.clear()
+            _telemetry_manager._tenant_tracers.clear()
+            _telemetry_manager._tracer_provider_keys.clear()
     return _telemetry_manager
