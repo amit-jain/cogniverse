@@ -226,13 +226,14 @@ class ExperimentTracker:
                 profiles=[profile],
                 strategies=[strategy],
                 config={
+                    "tenant_id": self.tenant_id,
                     "evaluation": {
                         "enable_quality_evaluators": self.enable_quality_evaluators,
                         "enable_llm_evaluators": self.enable_llm_evaluators,
                         "evaluator_name": self.evaluator_name,
                         "llm_model": self.llm_model,
                         "llm_base_url": self.llm_base_url,
-                    }
+                    },
                 },
             )
 
@@ -246,15 +247,15 @@ class ExperimentTracker:
                 log_dir=str(self.output_dir / "logs"),
             )
 
-            # Extract metrics from result
+            # inspect_ai.eval returns a list of EvalLog; the per-scorer mean
+            # lives at result[0].results.scores[i].metrics["mean"].value.
             metrics = {}
-            if result and hasattr(result, "scores"):
-                for score_name, score_value in result.scores.items():
-                    metrics[score_name] = (
-                        score_value.value
-                        if hasattr(score_value, "value")
-                        else score_value
-                    )
+            if result:
+                eval_results = getattr(result[0], "results", None)
+                for score in getattr(eval_results, "scores", None) or []:
+                    mean_metric = (score.metrics or {}).get("mean")
+                    if mean_metric is not None:
+                        metrics[score.name] = mean_metric.value
 
             # Record experiment completion
             self.provider.log_experiment_event(

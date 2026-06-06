@@ -119,6 +119,53 @@ class TestEndToEnd:
                 assert len(sample.scores) > 0, f"Sample {sample.id} has empty scores"
 
     @pytest.mark.integration
+    def test_experiment_tracker_run_experiment_real_eval(
+        self, search_evaluator_provider, eval_search_client, tmp_path
+    ):
+        """ExperimentTracker.run_experiment drives a real inspect_ai eval —
+        real ColPali+Vespa retrieval through the search router, real Phoenix
+        dataset — and extracts per-scorer means into its result dict.
+
+        run_experiment uses mockllm/model (the solvers do direct Vespa
+        searches), so no live LLM is needed.
+        """
+        from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
+        from tests.evaluation.conftest import intercept_search_calls
+
+        tracker = ExperimentTracker(
+            tenant_id="test:unit",
+            experiment_project_name="tracker_real_eval",
+            output_dir=tmp_path,
+            enable_quality_evaluators=False,
+            enable_llm_evaluators=False,
+            evaluation_provider=search_evaluator_provider,
+        )
+
+        with intercept_search_calls(eval_search_client):
+            result = tracker.run_experiment(
+                profile="test_colpali",
+                strategy="default",
+                dataset_name="test_dataset",
+                description="tracker real eval",
+            )
+
+        assert result["status"] == "success", result.get("error")
+        assert result["profile"] == "test_colpali"
+        assert result["strategy"] == "default"
+        assert result["description"] == "tracker real eval"
+
+        metrics = result["metrics"]
+        assert metrics, "run_experiment extracted no metrics from the EvalLog"
+        assert "result_count_scorer" in metrics
+        for name, value in metrics.items():
+            assert 0.0 <= value <= 1.0, f"{name} mean {value} out of [0, 1]"
+        # Non-zero result_count proves the solver retrieved real docs through
+        # run_experiment's own task wiring (tenant_id threaded to the solver).
+        assert metrics["result_count_scorer"] > 0.0, (
+            f"solver returned no results via run_experiment; metrics={metrics}"
+        )
+
+    @pytest.mark.integration
     def test_batch_mode_e2e(self, search_evaluator_provider, llm_endpoint):
         """Test complete batch mode workflow.
 

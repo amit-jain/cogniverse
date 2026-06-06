@@ -241,12 +241,16 @@ class TestExperimentTracker:
 
     @pytest.mark.unit
     def test_run_experiment_success(self, tracker):
-        """Test successful experiment execution (synchronous)."""
-        mock_result = [Mock()]
-        mock_result[0].results = Mock()
-        mock_result[0].results.scores = [
-            Mock(name="mrr", value=Mock(as_float=Mock(return_value=0.85))),
-        ]
+        """run_experiment extracts each scorer's mean from the EvalLog list."""
+        mean_metric = Mock()
+        mean_metric.value = 0.85
+        score = Mock()
+        score.name = "result_count_scorer"
+        score.metrics = {"mean": mean_metric}
+        eval_log = Mock()
+        eval_log.results = Mock()
+        eval_log.results.scores = [score]
+        mock_result = [eval_log]
 
         with (
             patch("cogniverse_evaluation.core.experiment_tracker.evaluation_task"),
@@ -263,6 +267,7 @@ class TestExperimentTracker:
             assert result["profile"] == "test_profile"
             assert result["strategy"] == "test_strategy"
             assert result["description"] == "Test Description"
+            assert result["metrics"] == {"result_count_scorer": 0.85}
             assert "timestamp" in result
 
     @pytest.mark.unit
