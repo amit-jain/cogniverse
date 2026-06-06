@@ -1,13 +1,8 @@
-"""Round-trip integration test for per-tenant wiki isolation.
+"""Per-tenant wiki isolation against real Vespa.
 
-Verifies that two tenants writing wiki pages end up in DIFFERENT real
-Vespa schemas (`wiki_pages_<tenant>`), not the shared default schema.
-
-Before this fix the wiki router bound a singleton
-``WikiManager(tenant_id="test:unit")`` at startup and ignored
-``WikiSaveRequest.tenant_id``. Every tenant's writes ended up in the
-default wiki. This test would have caught the bug because it asserts
-that two tenants' pages live in distinct schemas in real Vespa.
+Two tenants posting wiki pages must resolve distinct ``WikiManager``
+instances bound to distinct ``wiki_pages_<canonical>`` schemas, driven
+through the real wiki router's per-tenant factory.
 """
 
 import pytest
@@ -58,7 +53,7 @@ def per_tenant_wiki_app(vespa_instance, config_manager, schema_loader):
         mgr = WikiManager(
             backend=backend,
             tenant_id=tenant_id,
-            schema_name=f"wiki_pages_{tenant_id}",
+            schema_name=backend.get_tenant_schema_name(tenant_id, "wiki_pages"),
         )
         managers[tenant_id] = mgr
         return mgr
@@ -79,10 +74,8 @@ def per_tenant_wiki_app(vespa_instance, config_manager, schema_loader):
 @pytest.mark.integration
 class TestWikiTenantIsolationRoundTrip:
     def test_two_tenants_get_distinct_managers(self, per_tenant_wiki_app):
-        """Saving for tenant_a then tenant_b must materialise two distinct
-        WikiManager instances. The router used to share a singleton, so
-        before fix #12 there would only ever be one manager regardless
-        of how many tenants posted."""
+        """Saving for tenant_a then tenant_b materialises two distinct
+        WikiManager instances."""
         client, managers = per_tenant_wiki_app
 
         client.post(
@@ -110,10 +103,8 @@ class TestWikiTenantIsolationRoundTrip:
         )
 
     def test_managers_use_distinct_schemas(self, per_tenant_wiki_app):
-        """Each tenant's WikiManager must be bound to a distinct
-        ``wiki_pages_<tenant>`` schema name, not the shared default. The
-        old singleton fix bound everything to ``wiki_pages_default``, so
-        this assertion would have failed pre-fix."""
+        """Each tenant's WikiManager binds to its own canonical
+        ``wiki_pages_<canonical>`` schema, not a shared default."""
         client, managers = per_tenant_wiki_app
 
         client.post(
@@ -133,8 +124,14 @@ class TestWikiTenantIsolationRoundTrip:
             },
         )
 
-        assert managers["schema_iso_a"]._schema_name == "wiki_pages_schema_iso_a"
-        assert managers["schema_iso_b"]._schema_name == "wiki_pages_schema_iso_b"
+        assert (
+            managers["schema_iso_a"]._schema_name
+            == "wiki_pages_schema_iso_a_schema_iso_a"
+        )
+        assert (
+            managers["schema_iso_b"]._schema_name
+            == "wiki_pages_schema_iso_b_schema_iso_b"
+        )
         assert (
             managers["schema_iso_a"]._schema_name
             != managers["schema_iso_b"]._schema_name
