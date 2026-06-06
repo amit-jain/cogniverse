@@ -196,3 +196,71 @@ class TestReturnValue:
         pool = SandboxSessionPool(client, config=SandboxPoolConfig())
         out = pool.with_session("agent", lambda s: {"result": "ok", "name": s.id})
         assert out == {"result": "ok", "name": "sandbox-1"}
+
+
+class TestConcurrentCheckoutRace:
+    def test_overprovisioned_checkout_does_not_overwrite_pooled_slot(self):
+        client = _CountingClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=8))
+
+        e1 = pool._checkout("agent")
+        e2 = pool._checkout("agent")  # e1 still in_use → over-provisioned transient
+
+        assert e1 is not e2
+        assert e1.session is not e2.session
+        # The pooled slot keeps the first entry; the transient never replaces it.
+        assert pool._entries["agent"] is e1
+
+        pool._release(e2)  # transient → its session is destroyed, not pooled
+        assert e2.session.delete_count == 1
+        assert pool._entries["agent"] is e1
+
+        pool._release(e1)  # canonical → pooled and reusable
+        assert e1.session.delete_count == 0
+        assert e1.in_use is False
+
+        e3 = pool._checkout("agent")
+        assert e3 is e1
+        assert client.create_calls == 2
+
+    def test_concurrent_checkouts_destroy_the_loser_no_leak(self):
+        import threading
+
+        create_barrier = threading.Barrier(2)
+        callback_barrier = threading.Barrier(2)
+
+        class _BarrierClient(_CountingClient):
+            def create_session(self):
+                # Both threads pass the empty-slot check, then create at once.
+                create_barrier.wait(timeout=10)
+                return super().create_session()
+
+        client = _BarrierClient()
+        pool = SandboxSessionPool(client, config=SandboxPoolConfig(max_pool_size=8))
+
+        results: list[str] = []
+
+        def callback(session):
+            results.append(session.id)
+            # Hold the session in_use until BOTH callbacks are running, so the
+            # second checkout observes the first as in_use and takes the
+            # over-provision path deterministically.
+            callback_barrier.wait(timeout=10)
+            return session.id
+
+        def worker():
+            pool.with_session("agent", callback)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=15)
+
+        assert len(results) == 2
+        assert client.create_calls == 2  # both raced past the empty-slot check
+        assert pool.stats()["pool_size"] == 1
+        assert pool.stats()["in_use"] == 0
+        # The over-provisioned loser's session is destroyed, not orphaned.
+        destroyed = sum(s.delete_count for s in client.created)
+        assert destroyed == 1

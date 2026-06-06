@@ -206,20 +206,31 @@ class SandboxSessionPool:
             in_use=True,
         )
         with self._lock:
-            # If a concurrent checkout populated the slot meanwhile, drop
-            # the loser to avoid leaking sessions.
+            # If a concurrent checkout populated the slot meanwhile, never
+            # overwrite it — that orphans the live pooled session.
             existing = self._entries.get(agent_type)
-            if existing is not None and not existing.in_use:
-                self._destroy_session_quiet(new_entry.session)
-                existing.in_use = True
-                return existing
+            if existing is not None:
+                if not existing.in_use:
+                    # Reusable entry already pooled — take it, discard ours.
+                    self._destroy_session_quiet(new_entry.session)
+                    existing.in_use = True
+                    return existing
+                # Slot holds an in-use session; ours is an over-provisioned
+                # transient that _release destroys instead of pooling.
+                return new_entry
             self._entries[agent_type] = new_entry
             return new_entry
 
     def _release(self, entry: _PoolEntry) -> None:
         with self._lock:
-            entry.in_use = False
-            entry.last_used_at = time.monotonic()
+            if self._entries.get(entry.agent_type) is entry:
+                entry.in_use = False
+                entry.last_used_at = time.monotonic()
+                return
+        # Not the pooled slot — an over-provisioned transient (or one
+        # replaced by a concurrent checkout). Destroy it so the live
+        # session isn't orphaned.
+        self._destroy_session_quiet(entry.session)
 
     def _discard(self, agent_type: str, entry: _PoolEntry, *, reason: str) -> None:
         with self._lock:
