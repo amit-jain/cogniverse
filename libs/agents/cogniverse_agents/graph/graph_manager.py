@@ -486,11 +486,3 @@ class GraphManager:
         except Exception:
             logger.exception("Edge GET failed for edge_id=%s", edge_id)
             return None
-
-    def _extract_hits(self, response) -> List[Dict[str, Any]]:
-        """Extract hit fields from a search backend response."""
-        if hasattr(response, "hits"):
-            return [h.fields for h in response.hits]
-        if isinstance(response, dict):
-            return response.get("hits", [])
-        return []
