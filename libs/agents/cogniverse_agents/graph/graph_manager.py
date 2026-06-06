@@ -237,9 +237,8 @@ class GraphManager:
 
         degree: Dict[str, int] = defaultdict(int)
         for edge in all_edges:
-            fields = edge.get("fields", edge)
-            src = fields.get("source_node_id", "")
-            tgt = fields.get("target_node_id", "")
+            src = edge.get("source_node_id", "")
+            tgt = edge.get("target_node_id", "")
             if src:
                 degree[src] += 1
             if tgt:
