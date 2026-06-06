@@ -332,5 +332,140 @@ class TestDSPyEndToEndOptimization:
     """End-to-end integration tests for DSPy optimization."""
 
 
+class TestTrainingDataShapes:
+    """load_training_data builds the per-module example sets verbatim."""
+
+    @pytest.fixture
+    def pipeline(self):
+        return object.__new__(DSPyAgentOptimizerPipeline)
+
+    @pytest.mark.ci_fast
+    def test_returns_expected_module_sets_and_counts(self, pipeline):
+        data = pipeline.load_training_data()
+        assert set(data) == {
+            "query_analysis",
+            "agent_routing",
+            "summary_generation",
+            "detailed_report",
+        }
+        assert len(data["query_analysis"]) == 3
+        assert len(data["agent_routing"]) == 3
+        assert len(data["summary_generation"]) == 2
+        assert len(data["detailed_report"]) == 1
+        # load_training_data caches the result on the instance.
+        assert pipeline.training_data is data
+
+    @pytest.mark.ci_fast
+    def test_example_fields_are_verbatim(self, pipeline):
+        data = pipeline.load_training_data()
+        qa = data["query_analysis"][0]
+        assert qa.query == "Show me videos of robots from yesterday"
+        assert qa.primary_intent == "video_search"
+        assert qa.temporal_pattern == "yesterday"
+        routing = data["agent_routing"][0]
+        assert routing.primary_agent == "video_search"
+        assert routing.routing_confidence == "0.9"
+
+
+class TestModuleMetrics:
+    """_create_metric_for_module returns pure scoring functions."""
+
+    @pytest.fixture
+    def pipeline(self):
+        return object.__new__(DSPyAgentOptimizerPipeline)
+
+    @pytest.mark.ci_fast
+    def test_query_analysis_metric_scores_field_match_ratio(self, pipeline):
+        from types import SimpleNamespace
+
+        metric = pipeline._create_metric_for_module("query_analysis")
+        fields = dict(
+            primary_intent="video_search",
+            complexity_level="simple",
+            needs_video_search="true",
+            needs_text_search="false",
+            multimodal_query="false",
+            temporal_pattern="yesterday",
+        )
+        ex = SimpleNamespace(**fields)
+        assert metric(ex, SimpleNamespace(**fields)) == 1.0
+
+        wrong = SimpleNamespace(**{k: "x" for k in fields})
+        assert metric(ex, wrong) == 0.0
+
+        half = SimpleNamespace(**fields)
+        half.needs_text_search = "x"
+        half.multimodal_query = "x"
+        half.temporal_pattern = "x"
+        assert metric(ex, half) == 0.5
+
+    @pytest.mark.ci_fast
+    def test_agent_routing_metric_weights_and_confidence_bonus(self, pipeline):
+        from types import SimpleNamespace
+
+        metric = pipeline._create_metric_for_module("agent_routing")
+        ex = SimpleNamespace(
+            recommended_workflow="direct_search",
+            primary_agent="video_search",
+            routing_confidence="0.9",
+        )
+        assert metric(ex, SimpleNamespace(**vars(ex))) == 1.0
+
+        wrong_agent = SimpleNamespace(**vars(ex))
+        wrong_agent.primary_agent = "summarizer"
+        assert metric(ex, wrong_agent) == pytest.approx(0.6)
+
+        bad_conf = SimpleNamespace(**vars(ex))
+        bad_conf.routing_confidence = "high"
+        assert metric(ex, bad_conf) == pytest.approx(0.8)
+
+    @pytest.mark.ci_fast
+    def test_summary_metric_counts_key_points_in_summary(self, pipeline):
+        from types import SimpleNamespace
+
+        metric = pipeline._create_metric_for_module("summary_generation")
+        ex = SimpleNamespace(key_points="['cats', 'dogs']", summary="ignored")
+        pred = SimpleNamespace(summary="A summary about cats and birds.")
+        assert metric(ex, pred) == 0.5
+
+    @pytest.mark.ci_fast
+    def test_report_metric_scores_quarter_per_section(self, pipeline):
+        from types import SimpleNamespace
+
+        metric = pipeline._create_metric_for_module("detailed_report")
+        full = SimpleNamespace(
+            executive_summary="a",
+            detailed_findings="b",
+            recommendations="c",
+            technical_details="d",
+        )
+        assert metric(None, full) == 1.0
+
+        partial = SimpleNamespace(
+            executive_summary="a",
+            detailed_findings="b",
+            recommendations="",
+            technical_details=None,
+        )
+        assert metric(None, partial) == 0.5
+        assert metric(None, SimpleNamespace()) == 0.0
+
+    @pytest.mark.ci_fast
+    def test_unknown_module_falls_back_to_query_analysis_metric(self, pipeline):
+        from types import SimpleNamespace
+
+        metric = pipeline._create_metric_for_module("nonexistent")
+        fields = SimpleNamespace(
+            primary_intent="a",
+            complexity_level="a",
+            needs_video_search="a",
+            needs_text_search="a",
+            multimodal_query="a",
+            temporal_pattern="a",
+        )
+        # The query-analysis metric scores a full 6/6 field match as 1.0.
+        assert metric(fields, fields) == 1.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
