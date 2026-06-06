@@ -1002,7 +1002,7 @@ class VespaSearchBackend(SearchBackend):
                 # The input names are like 'qt', 'qtb', etc. We need to construct the full Vespa query parameter name
                 vespa_param_name = f"input.query({input_name})"
 
-                if input_name == "qt" and "float" in input_type:
+                if input_name in ("qt", "acoustic_query") and "float" in input_type:
                     logger.debug(
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
@@ -1053,7 +1053,8 @@ class VespaSearchBackend(SearchBackend):
                     logger.warning(
                         f"[{correlation_id}] Unknown input name '{input_name}' with type '{input_type}' "
                         f"in ranking strategy '{ranking_profile}'. This input will be skipped. "
-                        f"Known input names: 'qt' (float), 'qtb' (binary), 'q' (generic)."
+                        f"Known input names: 'qt'/'acoustic_query' (float), "
+                        f"'qtb' (binary), 'q' (generic)."
                     )
 
         query_params["model.restrict"] = schema_name
