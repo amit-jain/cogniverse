@@ -66,7 +66,6 @@ class VespaBackend(Backend):
             )
 
         super().__init__("vespa")
-        self._backend_config = backend_config
         self._schema_loader_instance = schema_loader
         self._config_manager_instance = config_manager
         self._vespa_search_backend: Optional[VespaSearchBackend] = None

@@ -33,7 +33,6 @@ class PhoenixAnalytics:
     def __init__(self, telemetry_url: str = "http://localhost:6006"):
         self.telemetry_url = telemetry_url
         self.client = _PhoenixSyncClient(base_url=telemetry_url)
-        self._cache = {}
 
     def get_traces(
         self,

@@ -168,7 +168,6 @@ class FederatedQueryAgent(
         from cogniverse_agents._llm_resolution import resolve_llm_config
         from cogniverse_agents._mm_factory import make_mm_factory
 
-        self._config_manager = config_manager
         self._registry = registry or build_default_registry()
         self._mm_factory = make_mm_factory(memory_manager_factory)
         # Fall back to the system primary LM via config_manager when no
