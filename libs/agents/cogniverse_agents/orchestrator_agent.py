@@ -2020,13 +2020,6 @@ class OrchestratorAgent(
         ``agent_results_sink`` receives the per-agent results from each
         iteration so the caller can keep emitting them (the orchestration
         envelope still surfaces agent_results) without re-running steps.
-
-        Tries to attach the encoded ColBERT query (with joint-trace) to
-        each plan step's ``input_data`` via the ``query_embedding`` field
-        so search agents that opt in can reuse the trace-conditioned
-        embedding. If the encoder is unavailable the loop continues with
-        only the reformulated text — the trace-encoding lift is an
-        optimisation, not a correctness gate.
         """
         loop_started = time.monotonic()
         # ``raw_accumulated`` keeps every snippet that came back from a
@@ -2152,28 +2145,9 @@ class OrchestratorAgent(
             # missing_aspects — the caller's explicit steering is more
             # specific than the gate's inferred gaps.
             missing_aspects = list(accumulated_inbound_constraints) + list(base_missing)
-            reformulated_query, cot_rationale = await self._reformulate_query(
+            reformulated_query, _ = await self._reformulate_query(
                 query, missing_aspects
             )
-
-            # Encode the (reformulated_query, trace) pair if the orchestrator
-            # has a wired ColBERT encoder, then stash it on plan step inputs
-            # for any downstream agent that wants the joint-trace embedding.
-            try:
-                encoder = getattr(self, "_colbert_query_encoder", None)
-                if encoder is not None:
-                    embedding = await asyncio.to_thread(
-                        encoder.encode, reformulated_query, cot_rationale
-                    )
-                    for step in plan.steps:
-                        step.input_data["query_embedding"] = embedding
-            except Exception as exc:
-                logger.debug(
-                    "Joint-trace ColBERT encode failed at iter=%d (%s); "
-                    "continuing with text query",
-                    iter_idx,
-                    exc,
-                )
 
             # Inject the reformulated query into every plan step so the
             # execution path re-runs against the targeted question.
