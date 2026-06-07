@@ -33,7 +33,6 @@ class VLMDescriptor:
         self.batch_size = batch_size
         self.timeout = timeout  # 3 hours default
         self.auto_start = auto_start
-        self._modal_process = None
         self._service_started = False
 
         # Setup logging

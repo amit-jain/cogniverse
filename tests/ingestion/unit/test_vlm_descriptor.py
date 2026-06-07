@@ -82,7 +82,6 @@ class TestVLMDescriptor:
             assert descriptor.batch_size == 500
             assert descriptor.timeout == 10800
             assert descriptor.auto_start is True
-            assert descriptor._modal_process is None
             assert descriptor._service_started is False
 
     def test_initialization_custom_values(self):

@@ -51,9 +51,6 @@ class DynamicDSPyMixin:
         # Dynamic modules will be created on demand
         self._dynamic_modules: Dict[str, dspy.Module] = {}
 
-        # Optimizer instance
-        self._optimizer: Optional[Any] = None
-
         logger.info(
             f"Initialized dynamic DSPy for agent: {config.agent_name} "
             f"with module type: {config.module_config.module_type.value}"
@@ -177,8 +174,6 @@ class DynamicDSPyMixin:
             optimizer_type=config.optimizer_type, **optimizer_params
         )
 
-        self._optimizer = optimizer
-
         return optimizer
 
     def update_module_config(self, module_config: ModuleConfig):
@@ -203,9 +198,6 @@ class DynamicDSPyMixin:
             optimizer_config: New optimizer configuration
         """
         self.agent_config.optimizer_config = optimizer_config
-
-        # Clear cached optimizer
-        self._optimizer = None
 
         logger.info(
             f"Updated optimizer config to: {optimizer_config.optimizer_type.value}"

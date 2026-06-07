@@ -83,10 +83,8 @@ class TestDynamicDSPyMixin:
         assert agent.agent_config == agent_config
         assert hasattr(agent, "_signatures")
         assert hasattr(agent, "_dynamic_modules")
-        assert hasattr(agent, "_optimizer")
         assert agent._signatures == {}
         assert agent._dynamic_modules == {}
-        assert agent._optimizer is None
 
     def test_configure_dspy_lm(self, agent_config):
         """``create_dspy_lm`` passes ``LLMEndpointConfig.model`` through
@@ -187,7 +185,6 @@ class TestDynamicDSPyMixin:
 
         assert optimizer is not None
         assert isinstance(optimizer, dspy.BootstrapFewShot)
-        assert agent._optimizer == optimizer
 
     def test_create_optimizer_no_config_raises_error(self, agent_config):
         """Test creating optimizer without config raises error"""
@@ -249,9 +246,6 @@ class TestDynamicDSPyMixin:
 
         # Verify config updated
         assert agent.agent_config.optimizer_config == new_config
-
-        # Verify optimizer cleared
-        assert agent._optimizer is None
 
     def test_get_module_info(self, agent_config):
         """Test getting module information"""

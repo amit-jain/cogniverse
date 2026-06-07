@@ -313,35 +313,6 @@ class TestConfigAPIMixin:
         # Verify cache was cleared
         assert len(agent._dynamic_modules) == 0
 
-    def test_post_optimizer_config_clears_optimizer(
-        self, agent_config, app, config_manager
-    ):
-        """Test updating optimizer config clears cached optimizer"""
-        with patch("dspy.LM"):
-            agent = TestAgent(agent_config, app, config_manager)
-            agent.register_signature("test_sig", TestSignature)
-
-            # Create initial optimizer
-            optimizer_config = OptimizerConfig(
-                optimizer_type=OptimizerType.BOOTSTRAP_FEW_SHOT
-            )
-            agent.agent_config.optimizer_config = optimizer_config
-            agent.create_optimizer()
-            assert agent._optimizer is not None
-
-        client = TestClient(app)
-
-        # Update optimizer config
-        request_data = {
-            "optimizer_type": "copro",
-        }
-
-        response = client.post("/config/optimizer", json=request_data)
-
-        assert response.status_code == 200
-        # Verify optimizer was cleared
-        assert agent._optimizer is None
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
