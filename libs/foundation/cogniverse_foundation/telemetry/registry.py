@@ -31,6 +31,19 @@ class TelemetryRegistry(EntryPointRegistry[TelemetryProvider]):
     _label = "telemetry provider"
     _tenant_scoped = True
 
+    @classmethod
+    def _cache_key(cls, name, config, tenant_id):
+        """Key telemetry providers per (tenant, project).
+
+        Unlike the default tenant-only key, a tenant can register distinct
+        endpoints per project (manager.register_project), so projects must not
+        share one cached provider — else the second project silently reuses the
+        first's endpoints. Falls back to the tenant-only key when no project.
+        """
+        base = super()._cache_key(name, config, tenant_id)
+        project = (config or {}).get("project_name")
+        return f"{base}_{project}" if project else base
+
 
 _telemetry_registry = TelemetryRegistry()
 

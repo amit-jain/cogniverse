@@ -452,6 +452,12 @@ class TelemetryManager:
             "http_endpoint": http_default,
             **self.config.provider_config,  # Explicit overrides take precedence
         }
+        # Carry the project so the registry caches one provider PER project —
+        # otherwise the project-specific endpoint overlay below is computed but
+        # a second project for the same tenant reuses the first's cached
+        # provider (and its endpoints).
+        if project_name:
+            provider_config["project_name"] = project_name
 
         # Check for project-specific endpoints in registered project configs
         if project_name:
