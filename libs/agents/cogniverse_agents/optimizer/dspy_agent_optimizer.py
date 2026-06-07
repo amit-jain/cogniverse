@@ -688,8 +688,10 @@ async def main():
     optimizer = DSPyAgentPromptOptimizer()
 
     from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-    from cogniverse_foundation.config import create_default_config_manager
-    from cogniverse_foundation.config.utils import get_config
+    from cogniverse_foundation.config.utils import (
+        create_default_config_manager,
+        get_config,
+    )
     from cogniverse_foundation.telemetry import get_telemetry_manager
 
     config_manager = create_default_config_manager()

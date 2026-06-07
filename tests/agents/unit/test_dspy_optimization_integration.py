@@ -467,5 +467,53 @@ class TestModuleMetrics:
         assert metric(fields, fields) == 1.0
 
 
+class TestMainCLIOrchestration:
+    """main() guards on LM init and swallows optimization failures."""
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_main_returns_before_optimizing_when_lm_init_fails(self):
+        from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
+
+        optimizer = MagicMock()
+        optimizer.initialize_language_model.return_value = False
+
+        with (
+            patch.object(mod, "DSPyAgentPromptOptimizer", return_value=optimizer),
+            patch.object(mod, "DSPyAgentOptimizerPipeline") as pipeline_cls,
+            patch("cogniverse_foundation.config.utils.create_default_config_manager"),
+            patch("cogniverse_foundation.config.utils.get_config"),
+        ):
+            await mod.main()
+
+        optimizer.initialize_language_model.assert_called_once()
+        # Early return — the pipeline is never even constructed.
+        pipeline_cls.assert_not_called()
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_main_swallows_optimization_failure_without_saving(self):
+        from cogniverse_agents.optimizer import dspy_agent_optimizer as mod
+
+        optimizer = MagicMock()
+        optimizer.initialize_language_model.return_value = True
+        pipeline = MagicMock()
+        pipeline.optimize_all_modules = AsyncMock(side_effect=RuntimeError("boom"))
+        pipeline.save_optimized_prompts = AsyncMock()
+
+        with (
+            patch.object(mod, "DSPyAgentPromptOptimizer", return_value=optimizer),
+            patch.object(mod, "DSPyAgentOptimizerPipeline", return_value=pipeline),
+            patch("cogniverse_foundation.config.utils.create_default_config_manager"),
+            patch("cogniverse_foundation.config.utils.get_config"),
+            patch("cogniverse_foundation.telemetry.get_telemetry_manager"),
+        ):
+            # Must not propagate — the CLI catches optimization errors.
+            await mod.main()
+
+        pipeline.optimize_all_modules.assert_awaited_once()
+        pipeline.save_optimized_prompts.assert_not_called()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
