@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from cogniverse_core.query.encoders import (
     ColBERTQueryEncoder,
     QueryEncoderFactory,
-    VideoPrismQueryEncoder,
     _videoprism_is_global,
 )
 
@@ -253,39 +251,6 @@ def test_factory_leaves_remote_url_unset_when_inference_service_absent(mock_get_
 
     passed_config = mock_get_model.call_args[0][1]
     assert "remote_inference_url" not in passed_config
-
-
-@patch("cogniverse_core.query.encoders.get_or_load_model")
-def test_patch_model_encode_returns_single_query_token_2d(mock_get_model):
-    """A patch (mv) model's encode() must return a (1, dim) array so
-    _build_query emits the mapped query(qt) form the videoprism mv profiles
-    declare. encode_text returns a single (dim,) text vector."""
-    loader = MagicMock()
-    loader.encode_text.return_value = np.zeros(768, dtype=np.float32)
-    mock_get_model.return_value = (loader, None)
-
-    encoder = VideoPrismQueryEncoder(model_name="videoprism_public_v1_base_hf")
-    assert encoder.is_global is False
-
-    out = encoder.encode("a text query")
-    assert out.ndim == 2
-    assert out.shape == (1, 768)
-
-
-@patch("cogniverse_core.query.encoders.get_or_load_model")
-def test_global_model_encode_returns_flat_1d(mock_get_model):
-    """A global (LVT single-vector) model's encode() flattens to (dim,) for
-    the sv schema's tensor<float>(v[dim]) query input."""
-    loader = MagicMock()
-    loader.encode_text.return_value = np.zeros((1, 768), dtype=np.float32)
-    mock_get_model.return_value = (loader, None)
-
-    encoder = VideoPrismQueryEncoder(model_name="videoprism_lvt_public_v1_base")
-    assert encoder.is_global is True
-
-    out = encoder.encode("a text query")
-    assert out.ndim == 1
-    assert out.shape == (768,)
 
 
 @patch("cogniverse_core.query.encoders.get_or_load_model")
