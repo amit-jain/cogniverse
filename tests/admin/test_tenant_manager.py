@@ -475,5 +475,32 @@ class TestTenantManagerAPI:
         assert response.status_code == 400
 
 
+class TestDiscoverOrphanSchemaTargets:
+    """A tenant delete must not match another tenant's schema by a short
+    (bare) suffix. Every deploy canonicalizes, so only the canonical suffix
+    is matched."""
+
+    def test_canonical_suffix_only_no_cross_tenant_over_delete(self):
+        from cogniverse_runtime.admin.tenant_manager import (
+            _discover_orphan_schema_targets,
+        )
+
+        deployed = [
+            "video_colpali_pr_pr",  # tenant "pr" canonical → ours
+            "agent_memories_pr_pr",  # tenant "pr" Mem0 (canonical) → ours
+            "video_colpali_base_a_pr",  # tenant "a_pr" — ends in "_pr", NOT ours
+            "agent_memories_a_pr_a_pr",  # tenant "a_pr" canonical → NOT ours
+        ]
+
+        targets = _discover_orphan_schema_targets(deployed, "pr:pr")
+
+        assert ("pr:pr", "video_colpali") in targets
+        assert ("pr:pr", "agent_memories") in targets
+        # Neither of tenant a_pr's schemas may be attributed to pr.
+        assert ("pr:pr", "video_colpali_base_a") not in targets
+        assert all("a_pr" not in base for _, base in targets)
+        assert len(targets) == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

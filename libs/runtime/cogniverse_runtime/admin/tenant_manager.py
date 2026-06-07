@@ -725,18 +725,37 @@ async def delete_tenant(tenant_full_id: str) -> Dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _discover_orphan_schema_targets(
+    deployed_full_names: List[str], canonical_tid: str
+) -> set:
+    """Attribute deployed Vespa schemas to (canonical_tid, base) for deletion.
+
+    Matches the canonical (doubled) tenant suffix only. Every deploy path
+    canonicalizes the tenant id (schema_registry.deploy_schema /
+    backend.get_tenant_schema_name), so a tenant's live schemas always carry
+    the canonical suffix. The bare tenant suffix is deliberately NOT matched:
+    it is short enough to be a false suffix of another tenant's schema
+    (``base_a_pr`` ends in ``_pr``), which would over-delete across tenants.
+    Registered bare-form legacy schemas are still covered by the registry
+    lookup above; unregistered orphans are handled by /admin/reconcile-orphans.
+    """
+    canonical_suffix = "_" + canonical_tid.replace(":", "_")
+    targets: set[tuple[str, str]] = set()
+    for full_name in deployed_full_names:
+        if full_name.endswith(canonical_suffix):
+            targets.add((canonical_tid, full_name[: -len(canonical_suffix)]))
+    return targets
+
+
 async def delete_tenant_internal(tenant_full_id: str) -> Dict:
     """Delete a tenant's schemas and metadata.
 
-    Looks up tenant_metadata under the canonical form (POST stored it
-    that way) but suffix-matches Vespa schemas against BOTH the canonical
-    form AND the original input — Mem0MemoryManager's in-process
-    ``auto_create_schema=True`` deploys ``agent_memories_<tid>`` /
-    ``provenance_<tid>`` directly without going through the runtime's
-    HTTP boundary, so simple-form inputs accumulate simple-suffix
-    schemas the canonical-only suffix match would silently leave behind
-    on every cleanup. Each delete_schema call uses the tenant_id form
-    that matches its target schema's actual suffix.
+    Looks up tenant_metadata under the canonical form (POST stored it that
+    way) and discovers schemas from the registry (both id forms) plus a
+    canonical-suffix match against Vespa-deployed names. Every deploy path
+    canonicalizes the tenant id, so live schemas carry the canonical suffix;
+    the bare suffix is intentionally not matched because it over-deletes
+    across tenants (``base_a_pr`` ends in ``_pr``).
     """
     from cogniverse_core.common.tenant_utils import canonical_tenant_id
 
@@ -766,20 +785,7 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
             f"'{canonical_tid}' (continuing with registry-only set): {e}"
         )
 
-    # Suffix-match both forms. Longer suffix (canonical/doubled) is
-    # tested first so a name ending in the doubled suffix is attributed
-    # to the canonical tid even though it also ends in the simple suffix.
-    canonical_suffix = "_" + canonical_tid.replace(":", "_")
-    original_suffix = "_" + original_tid.replace(":", "_")
-    suffix_to_tid = [(canonical_suffix, canonical_tid)]
-    if original_suffix != canonical_suffix:
-        suffix_to_tid.append((original_suffix, original_tid))
-    for full_name in deployed_full_names:
-        for suf, tid in suffix_to_tid:
-            if full_name.endswith(suf):
-                base = full_name[: -len(suf)]
-                targets.add((tid, base))
-                break
+    targets |= _discover_orphan_schema_targets(deployed_full_names, canonical_tid)
 
     # Allow schema-only orphans (no tenant_metadata record) to be cleaned
     # up — they're created by /ingestion/upload auto-deploy bypassing
