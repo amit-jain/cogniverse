@@ -2227,16 +2227,12 @@ class OrchestratorAgent(
                 bool(self._extract_evidence_from_results({agent: result}))
                 for agent, result in iter_results.items()
             )
-            # Skip the convergence heuristic when the caller has POSTed
-            # inbound constraints — those are explicit user steering
-            # (``[constraint] solve via X``) and warrant another
-            # iteration with the constraint folded into reformulation
-            # rather than an early break.
-            if (
-                iter_idx >= 1
-                and all_agents_returned_evidence
-                and not accumulated_inbound_constraints
-            ):
+            # A constraint is folded into THIS iteration's reformulation
+            # (above) and the evidence below is gathered against it before this
+            # check, so it never blocks convergence — it keeps steering via
+            # missing_aspects. The loop converges once every sub-agent
+            # contributed evidence this round.
+            if iter_idx >= 1 and all_agents_returned_evidence:
                 exit_reason = "sufficient"
                 break
 

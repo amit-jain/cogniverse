@@ -161,10 +161,6 @@ class _StubOrchestrator:
     ) -> List[Dict[str, Any]]:
         return []
 
-    @property
-    def _colbert_query_encoder(self):
-        return None
-
 
 async def _run_loop(orch, plan, *, inbound_queue):
     """Bind ``_iterative_retrieval_loop`` from the real class so the
