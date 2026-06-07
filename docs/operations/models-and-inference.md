@@ -149,7 +149,10 @@ Used by the `video_colqwen_omni_mv_chunk_30s` profile when enabled.
 | Default state | disabled |
 
 Custom JAX sidecar — no upstream vLLM equivalent. Used by the
-`video_videoprism_*` family of profiles.
+`video_videoprism_*` family of profiles. Build with
+`docker build -t cogniverse/videoprism:dev deploy/videoprism/`; see
+[`deploy/videoprism/README.md`](../../deploy/videoprism/README.md) for the
+endpoint, supported models, and the video-only scope.
 
 ---
 
