@@ -269,7 +269,13 @@ class VideoPrismQueryEncoder(QueryEncoder):
                     embeddings_np = embeddings_np.flatten()
                 return embeddings_np
 
-            # For patch-based models, the loader should handle the format
+            # Patch (multi-vector) models feed the mv rank profiles whose
+            # query(qt) is tensor<float>(querytoken{}, v[dim]); _build_query
+            # emits the mapped form only for a 2D array. encode_text returns a
+            # single (dim,) text vector, so present it as one query token —
+            # otherwise the flat list never binds and MaxSim scores nothing.
+            if embeddings_np.ndim == 1:
+                embeddings_np = embeddings_np.reshape(1, -1)
             return embeddings_np
 
         except Exception as e:
