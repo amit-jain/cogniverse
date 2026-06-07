@@ -459,3 +459,50 @@ class TestApprovalStorageEventLoop:
         # A blocking time.sleep(0.5) would freeze the loop so the ticker could
         # not advance; awaiting asyncio.sleep lets it tick many times.
         assert ticks >= 5
+
+    @pytest.mark.asyncio
+    async def test_get_pending_batches_reuses_spans_single_fetch(self):
+        """get_pending_batches must reconstruct every batch from one project
+        span fetch, not re-query the whole project per batch (N+1)."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        import pandas as pd
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        spans = pd.DataFrame(
+            [
+                {
+                    "name": "approval_batch",
+                    "attributes.batch_id": "b1",
+                    "attributes.pending_review": 2,
+                    "context.span_id": "s1",
+                    "parent_id": None,
+                },
+                {
+                    "name": "approval_batch",
+                    "attributes.batch_id": "b2",
+                    "attributes.pending_review": 1,
+                    "context.span_id": "s2",
+                    "parent_id": None,
+                },
+            ]
+        )
+        get_spans = AsyncMock(return_value=spans)
+        storage = object.__new__(ApprovalStorageImpl)
+        storage.full_project_name = "cogniverse-acme:acme-synthetic_data"
+        storage.tenant_id = "acme:acme"
+        storage.project_name = "synthetic_data"
+        storage.provider = SimpleNamespace(
+            traces=SimpleNamespace(get_spans=get_spans),
+            annotations=SimpleNamespace(
+                get_annotations=AsyncMock(return_value=pd.DataFrame())
+            ),
+        )
+
+        batches = await storage.get_pending_batches()
+
+        assert {b.batch_id for b in batches} == {"b1", "b2"}
+        # One fetch total — not 1 + N (the per-batch get_batch re-fetch).
+        assert get_spans.call_count == 1

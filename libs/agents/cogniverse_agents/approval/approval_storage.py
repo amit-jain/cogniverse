@@ -227,7 +227,44 @@ class ApprovalStorageImpl(ApprovalStorage):
         ) as item_span:
             item_span.set_status(Status(StatusCode.OK))
 
-    async def get_batch(self, batch_id: str) -> Optional[ApprovalBatch]:
+    async def _fetch_project_spans_with_retry(self, batch_id: str):
+        """Query the project's spans, retrying with backoff for indexing lag.
+
+        Returns the spans DataFrame (possibly empty) once the batch appears or
+        the retries are exhausted.
+        """
+        retry_delays = [2, 5, 10, 15, 20]  # seconds (total: 52s)
+
+        project_spans = None
+        for attempt, delay in enumerate(retry_delays):
+            logger.debug(
+                f"Attempt {attempt + 1}/{len(retry_delays)}: Querying telemetry "
+                f"backend for batch {batch_id}"
+            )
+            project_spans = await self.provider.traces.get_spans(
+                project=self.full_project_name
+            )
+            if (
+                not project_spans.empty
+                and "attributes.batch_id" in project_spans.columns
+            ):
+                batch_check = project_spans[
+                    (project_spans["name"] == "approval_batch")
+                    & (project_spans["attributes.batch_id"] == batch_id)
+                ]
+                if not batch_check.empty:
+                    logger.info(f"Found batch {batch_id} on attempt {attempt + 1}")
+                    break
+
+            if attempt < len(retry_delays) - 1:
+                logger.debug(f"Batch {batch_id} not found yet, retrying in {delay}s")
+                await asyncio.sleep(delay)
+
+        return project_spans
+
+    async def get_batch(
+        self, batch_id: str, spans_df: Optional["pd.DataFrame"] = None
+    ) -> Optional[ApprovalBatch]:
         """
         Retrieve approval batch from telemetry backend using SDK APIs with retry
 
@@ -236,52 +273,18 @@ class ApprovalStorageImpl(ApprovalStorage):
 
         Args:
             batch_id: Batch ID to retrieve
+            spans_df: Optional pre-fetched project spans. When provided (e.g. by
+                get_pending_batches, which already queried the whole project),
+                the per-batch span re-fetch is skipped.
 
         Returns:
             ApprovalBatch if found, None otherwise
         """
         try:
-            # Retry with exponential backoff for telemetry backend indexing lag
-            # Phoenix SDK can take significant time to index spans
-            max_retries = 5
-            retry_delays = [2, 5, 10, 15, 20]  # seconds (total: 52s)
-
-            project_spans = None
-            for attempt, delay in enumerate(retry_delays):
-                logger.debug(
-                    f"Attempt {attempt + 1}/{max_retries}: Querying telemetry backend for batch {batch_id}"
-                )
-
-                # Query spans using telemetry provider
-                project_spans = await self.provider.traces.get_spans(
-                    project=self.full_project_name
-                )
-
-                if not project_spans.empty:
-                    logger.info(
-                        f"Got {len(project_spans)} spans for project {self.full_project_name}"
-                    )
-
-                    if not project_spans.empty:
-                        # Check if batch exists
-                        # In Phoenix 11.18.0, attributes are flattened as columns: attributes.batch_id
-                        if "attributes.batch_id" in project_spans.columns:
-                            batch_check = project_spans[
-                                (project_spans["name"] == "approval_batch")
-                                & (project_spans["attributes.batch_id"] == batch_id)
-                            ]
-                            if not batch_check.empty:
-                                logger.info(
-                                    f"Found batch {batch_id} on attempt {attempt + 1}"
-                                )
-                                break
-
-                # Retry with exponential backoff
-                if attempt < len(retry_delays) - 1:
-                    logger.debug(
-                        f"Batch {batch_id} not found yet, retrying in {delay}s"
-                    )
-                    await asyncio.sleep(delay)
+            if spans_df is not None:
+                project_spans = spans_df
+            else:
+                project_spans = await self._fetch_project_spans_with_retry(batch_id)
 
             if project_spans is None or project_spans.empty:
                 logger.warning(
@@ -582,8 +585,9 @@ class ApprovalStorageImpl(ApprovalStorage):
                     if not match:
                         continue
 
-                # Retrieve full batch
-                batch = await self.get_batch(batch_id)
+                # Retrieve full batch, reusing the spans already fetched above
+                # instead of re-querying the whole project per batch (N+1).
+                batch = await self.get_batch(batch_id, spans_df=spans_df)
                 if batch:
                     pending_batches.append(batch)
 
