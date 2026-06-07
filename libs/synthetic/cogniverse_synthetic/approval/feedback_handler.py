@@ -5,7 +5,7 @@ Handle rejection feedback and regenerate synthetic data with DSPy.
 """
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from cogniverse_agents.approval.interfaces import (
     ApprovalStatus,
@@ -154,32 +154,3 @@ class SyntheticDataFeedbackHandler(FeedbackHandler):
             f"Failed to regenerate {item.item_id} after {self.max_attempts} attempts"
         )
         return None
-
-    def get_regeneration_stats(self, items: list[ReviewItem]) -> Dict[str, Any]:
-        """
-        Get regeneration statistics
-
-        Args:
-            items: List of review items (original + regenerated)
-
-        Returns:
-            Dictionary with regeneration metrics
-        """
-        regenerated = [
-            item for item in items if item.status == ApprovalStatus.REGENERATED
-        ]
-        successful = [
-            item
-            for item in regenerated
-            if item.metadata.get("regeneration_attempt", 0) <= self.max_attempts
-        ]
-
-        return {
-            "total_items": len(items),
-            "regenerated_count": len(regenerated),
-            "successful_regenerations": len(successful),
-            "failed_regenerations": len(regenerated) - len(successful),
-            "regeneration_rate": (
-                len(regenerated) / len(items) if len(items) > 0 else 0
-            ),
-        }
