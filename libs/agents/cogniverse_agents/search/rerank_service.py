@@ -14,6 +14,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from cogniverse_agents.search.temporal_query import extract_time_range
 from cogniverse_agents.search.types import RerankerSearchResult
 
 
@@ -85,5 +86,15 @@ async def rerank_result_dicts(
     if not results:
         return []
     reranker = build_reranker(strategy, tenant_id, config_manager)
-    reranked = await reranker.rerank(query=query, results=[_to_rsr(r) for r in results])
+    rerank_kwargs: Dict[str, Any] = {}
+    # Feed the temporal scorer a query time-range only when the query carries
+    # explicit temporal intent; otherwise the multi-modal reranker keeps its
+    # neutral temporal score (no distortion of non-temporal queries).
+    if strategy == "multi_modal":
+        time_range = extract_time_range(query)
+        if time_range is not None:
+            rerank_kwargs["context"] = {"temporal": {"time_range": time_range}}
+    reranked = await reranker.rerank(
+        query=query, results=[_to_rsr(r) for r in results], **rerank_kwargs
+    )
     return [_to_dict(r) for r in reranked]

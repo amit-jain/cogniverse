@@ -38,6 +38,8 @@ libs/agents/cogniverse_agents/search/
 ├── multi_modal_reranker.py    # Heuristic multi-modal reranking (MultiModalReranker)
 ├── learned_reranker.py        # LiteLLM neural reranking
 ├── hybrid_reranker.py         # Hybrid fusion strategies
+├── rerank_service.py          # Strategy selection + dict<->result conversion
+├── temporal_query.py          # Query temporal-range extraction (extract_time_range)
 └── rerankers/                 # Reserved for future reranker implementations
     └── __init__.py
 ```
@@ -339,6 +341,7 @@ async def rerank_results(
    - <30 days outside: 0.5
    - 30-90 days: 0.3
    - >365 days: 0.1
+   - The time range is supplied by `rerank_service` via `temporal_query.extract_time_range(query)`, which returns a `(start, end)` UTC window only for queries with explicit temporal intent ("last 7 days", "in 2023", "yesterday"). Non-temporal queries get no range, so the score stays neutral (0.5).
 
 3. **Complementarity Score** (multi_modal_reranker.py:253-292):
    - Keyword overlap analysis
