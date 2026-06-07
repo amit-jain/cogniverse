@@ -21,7 +21,6 @@ Based on the configurable pipeline design from CLAUDE.md.
 import asyncio
 import json
 import logging
-import os
 import sys
 import time
 import uuid
@@ -1373,68 +1372,3 @@ class VideoIngestionPipeline:
         self.logger.info("Processors cleaned up")
 
         return results
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Video Processing Pipeline")
-    parser.add_argument("--video_dir", type=Path, help="Directory containing videos")
-    parser.add_argument("--output_dir", type=Path, help="Output directory")
-    parser.add_argument(
-        "--backend", choices=["byaldi", "vespa"], default="vespa", help="Search backend"
-    )
-    parser.add_argument("--profile", type=str, help="Video processing profile")
-    parser.add_argument("--max-frames", type=int, help="Maximum frames per video")
-
-    parser.add_argument(
-        "--max-concurrent",
-        type=int,
-        default=3,
-        help="Maximum concurrent videos (default: 3)",
-    )
-
-    # Pipeline step toggles
-    parser.add_argument(
-        "--skip-keyframes", action="store_true", help="Skip keyframe extraction"
-    )
-    parser.add_argument(
-        "--skip-audio", action="store_true", help="Skip audio transcription"
-    )
-    parser.add_argument(
-        "--skip-descriptions", action="store_true", help="Skip VLM descriptions"
-    )
-    parser.add_argument(
-        "--skip-embeddings", action="store_true", help="Skip embedding generation"
-    )
-
-    args = parser.parse_args()
-
-    if args.profile:
-        import os
-
-        os.environ["VIDEO_PROFILE"] = args.profile
-
-    config = PipelineConfig.from_config()
-
-    if args.video_dir:
-        config.video_dir = args.video_dir
-    if args.output_dir:
-        config.output_dir = args.output_dir
-    if args.backend:
-        config.search_backend = args.backend
-    if args.max_frames:
-        config.max_frames_per_video = args.max_frames
-
-    if args.skip_keyframes:
-        config.extract_keyframes = False
-    if args.skip_audio:
-        config.transcribe_audio = False
-    if args.skip_descriptions:
-        config.generate_descriptions = False
-    if args.skip_embeddings:
-        config.generate_embeddings = False
-
-    print("🚀 Starting Video Processing Pipeline")
-    pipeline = VideoIngestionPipeline(config)
-    results = pipeline.process_directory(max_concurrent=args.max_concurrent)

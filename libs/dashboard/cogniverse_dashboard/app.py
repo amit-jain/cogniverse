@@ -2882,18 +2882,6 @@ with main_tabs[10]:
                 else:
                     st.warning("⚠️ Please select a session outcome")
 
-    # Search Analytics
-    st.subheader("📈 Search Analytics")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total Searches", "142", "23 today")
-    with col2:
-        st.metric("Avg Response Time", "1.2s", "-0.3s")
-    with col3:
-        st.metric("User Satisfaction", "87%", "5%")
-    with col4:
-        st.metric("Coverage Rate", "76%", "2%")
-
 # Chat Tab
 with main_tabs[11]:
     st.header("💬 Multi-Modal Chat")
