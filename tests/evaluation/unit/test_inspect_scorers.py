@@ -63,3 +63,17 @@ class TestPrecisionRecallScorers:
 
     def test_precision_recall_can_be_disabled(self):
         assert len(get_configured_scorers({"use_precision_recall": False})) == 3
+
+    def test_visual_scorers_wired_when_enabled(self):
+        # Visual-judge / quality scorers are opt-in and were previously defined
+        # but never added to the production scorer set.
+        base = len(get_configured_scorers({}))
+        assert len(get_configured_scorers({"enable_llm_evaluators": True})) == base + 1
+        assert (
+            len(
+                get_configured_scorers(
+                    {"enable_llm_evaluators": True, "enable_quality_evaluators": True}
+                )
+            )
+            == base + 2
+        )

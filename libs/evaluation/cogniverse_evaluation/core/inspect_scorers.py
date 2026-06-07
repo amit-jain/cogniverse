@@ -38,6 +38,13 @@ def get_configured_scorers(config: dict[str, Any]) -> list:
     if config.get("use_precision_recall", True):
         scorers.extend([precision_scorer(), recall_scorer()])
 
+    # Visual-judge / quality scorers, opt-in via enable_llm_evaluators /
+    # enable_quality_evaluators (both default off). Defined in the visual
+    # evaluator plugin but previously never added to the production set.
+    from cogniverse_evaluation.plugins.visual_evaluator import get_visual_scorers
+
+    scorers.extend(get_visual_scorers(config))
+
     # Always have at least one scorer
     if not scorers:
         scorers.append(relevance_scorer())

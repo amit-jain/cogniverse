@@ -638,8 +638,8 @@ sequenceDiagram
 ```python
 experiment_project_name: str          # Project name for experiments
 output_dir: Path                       # Results directory
-enable_quality_evaluators: bool        # Enable quality metrics
-enable_llm_evaluators: bool           # Enable LLM-based evaluators
+enable_quality_evaluators: bool        # Adds the visual quality scorer to the Inspect scorer set (get_configured_scorers via get_visual_scorers)
+enable_llm_evaluators: bool           # Adds the visual_judge scorer to the Inspect scorer set
 evaluator_name: str                    # Evaluator to use
 llm_model: str                         # LLM model for evaluators
 llm_base_url: str | None              # Base URL for LLM API
