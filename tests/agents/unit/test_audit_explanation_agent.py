@@ -59,7 +59,7 @@ class _StubProvenanceStore:
     """In-memory ProvenanceStore that walks rows_by_id's provenance chains.
 
     Implements the contract ProvenanceWalker depends on:
-      ``walk(root, max_depth, max_nodes) → (ordered, primary_sources, truncated)``
+      ``walk(root, max_depth, max_nodes) → (ordered, primary_sources, truncated, records_by_id)``
       ``get(memory_id) → ProvenanceRecord | None``
     """
 
@@ -103,6 +103,7 @@ class _StubProvenanceStore:
         visited = set()
         primary: List = []
         truncated = False
+        records_by_id: dict = {}
         frontier = [(root, 0)]
         while frontier:
             mid, depth = frontier.pop(0)
@@ -114,6 +115,8 @@ class _StubProvenanceStore:
             visited.add(mid)
             ordered.append((mid, depth))
             rec = self._record(mid)
+            if rec is not None:
+                records_by_id[mid] = rec
             if rec is None or not rec.derived_from_memory_ids:
                 primary.append(CitationRef.memory(mid))
                 continue
@@ -125,7 +128,7 @@ class _StubProvenanceStore:
                 continue
             for child_id in rec.derived_from_memory_ids:
                 frontier.append((child_id, depth + 1))
-        return ordered, primary, truncated
+        return ordered, primary, truncated, records_by_id
 
 
 def _factory_for(rows_by_id: Dict[str, Dict[str, Any]]):

@@ -477,9 +477,10 @@ async def test_explains_real_provenance_chain():
         """Minimal in-memory stand-in for ProvenanceStore.
 
         Implements the (root, max_depth, max_nodes) → (ordered,
-        primary_sources, truncated) contract the indexed walker uses,
-        plus the per-node ``get`` lookup. src_a has no provenance row
-        (it's a primary source), so the walk terminates after one hop.
+        primary_sources, truncated, records_by_id) contract the indexed
+        walker uses, plus the per-node ``get`` lookup. src_a has no
+        provenance row (it's a primary source), so the walk terminates
+        after one hop.
         """
 
         def __init__(self):
@@ -489,7 +490,7 @@ async def test_explains_real_provenance_chain():
             del max_depth, max_nodes  # not exercised by this stub
             ordered = [("answer", 0), ("src_a", 1)]
             primary_sources = [CitationRef.memory("src_a")]
-            return ordered, primary_sources, False
+            return ordered, primary_sources, False, dict(self._records)
 
         def get(self, memory_id: str):
             return self._records.get(memory_id)

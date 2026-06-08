@@ -6,6 +6,7 @@ Tests:
 3. Each function produces expected artifact types when given mock span data
 """
 
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
@@ -106,11 +107,26 @@ def fake_telemetry_manager(empty_provider):
     return FakeTelemetryManager(empty_provider)
 
 
+@contextmanager
+def _patch_telemetry(fake_mgr):
+    """Patch get_telemetry_manager at BOTH lookup sites: the source module
+    (optimization_cli imports it at call time) and the orchestration evaluator
+    (which binds it at module import, so the source patch doesn't reach it)."""
+    with (
+        patch(_PATCH_TELEMETRY, return_value=fake_mgr),
+        patch(
+            "cogniverse_agents.routing.orchestration_evaluator.get_telemetry_manager",
+            return_value=fake_mgr,
+        ),
+    ):
+        yield
+
+
 def _patch_infra(fake_mgr):
     """Return a combined context manager patching config + telemetry."""
     return (
         patch(_PATCH_CONFIG),
-        patch(_PATCH_TELEMETRY, return_value=fake_mgr),
+        _patch_telemetry(fake_mgr),
     )
 
 
