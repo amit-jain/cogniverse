@@ -22,19 +22,25 @@ def _is_single_vector_schema(schema_name: str) -> bool:
     return any(token in name for token in _SINGLE_VECTOR_TOKENS)
 
 
-def schema_is_single_vector(schema_def: Dict[str, Any]) -> bool:
-    """Whether a schema's ``embedding`` field holds a single vector.
+def schema_is_single_vector(schema_def: Dict[str, Any]) -> Optional[bool]:
+    """Whether a schema's embedding tensors are single-vector.
 
-    Authoritative — reads the field's tensor type from the schema definition
-    rather than guessing from the schema name. A mapped dimension (``{}``)
-    means multi-vector / patch (``tensor<bfloat16>(patch{}, v[128])``); its
-    absence means single-vector (``tensor<float>(d0[768])``). A schema with no
-    embedding field is treated as single-vector.
+    Authoritative — inspects EVERY tensor field's type (the embedding field is
+    named differently per schema: ``embedding``, ``colpali_embedding``,
+    ``semantic_embedding`` …). A mapped dimension (``{}``) means
+    multi-vector / patch (``tensor<bfloat16>(patch{}, v[128])``); a schema is
+    single-vector only when none of its tensor fields has one. Returns ``None``
+    when the schema declares no tensor field, so the caller falls back to the
+    schema-name heuristic rather than guessing.
     """
-    for field in schema_def.get("document", {}).get("fields", []):
-        if isinstance(field, dict) and field.get("name") == "embedding":
-            return "{" not in str(field.get("type", ""))
-    return True
+    tensor_fields = [
+        field
+        for field in schema_def.get("document", {}).get("fields", [])
+        if isinstance(field, dict) and "tensor" in str(field.get("type", ""))
+    ]
+    if not tensor_fields:
+        return None
+    return all("{" not in str(f.get("type", "")) for f in tensor_fields)
 
 
 class VespaEmbeddingProcessor:

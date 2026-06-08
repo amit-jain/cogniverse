@@ -29,8 +29,56 @@ def test_schema_is_single_vector_reads_tensor_type():
     assert (
         schema_is_single_vector(_schema("tensor<bfloat16>(token{}, v[128])")) is False
     )
-    # No embedding field → single-vector (scalar) by default.
-    assert schema_is_single_vector(_schema(None)) is True
+    # No tensor field → undeterminable → None (caller falls back to heuristic).
+    assert schema_is_single_vector(_schema(None)) is None
+
+
+def test_classifies_by_any_tensor_field_not_named_embedding():
+    # The embedding field is named differently per schema (colpali_embedding,
+    # semantic_embedding, …) — classification must inspect ALL tensor fields,
+    # not just one named "embedding".
+    colpali = {
+        "document": {
+            "fields": [
+                {"name": "title", "type": "string"},
+                {
+                    "name": "colpali_embedding",
+                    "type": "tensor<bfloat16>(patch{}, v[128])",
+                },
+            ]
+        }
+    }
+    assert schema_is_single_vector(colpali) is False
+
+
+def test_mixed_single_and_multi_tensor_fields_is_multi():
+    # audio_content holds a single-vector acoustic field AND a multi-vector
+    # semantic field — any mapped dimension makes the schema multi-vector.
+    audio = {
+        "document": {
+            "fields": [
+                {"name": "acoustic_embedding", "type": "tensor<float>(v[512])"},
+                {
+                    "name": "semantic_embedding",
+                    "type": "tensor<bfloat16>(token{}, v[128])",
+                },
+            ]
+        }
+    }
+    assert schema_is_single_vector(audio) is False
+
+
+def test_real_schemas_classified_correctly():
+    import glob
+    import json
+
+    def _load(name):
+        return json.load(open(glob.glob(f"configs/schemas/{name}*.json")[0]))
+
+    assert schema_is_single_vector(_load("agent_memories")) is True
+    assert schema_is_single_vector(_load("document_visual")) is False
+    assert schema_is_single_vector(_load("audio_content")) is False
+    assert schema_is_single_vector(_load("video_colpali_smol500_mv_frame")) is False
 
 
 def test_authoritative_flag_formats_2d_single_vector_as_float_list():
