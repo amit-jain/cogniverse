@@ -11,6 +11,7 @@ Producer-consumer split:
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -19,6 +20,14 @@ from redis.exceptions import ResponseError
 
 QUEUE_STREAM = "ingest:queue"
 ACTIVE_KEY_PREFIX = "ingest:active:"
+
+# Self-healing TTL on the per-tenant active counter. The counter is decremented
+# in the worker's terminal cleanup; a job that's incremented but never reaches
+# cleanup (e.g. a poison message redelivered forever) would leak it and wedge
+# backpressure. Each increment refreshes the TTL, so a continuously-ingesting
+# tenant keeps the key alive while a stale leaked counter expires on its own.
+# Must exceed the longest expected ingestion job.
+ACTIVE_TTL_SECONDS = int(os.environ.get("INGEST_ACTIVE_TTL_SECONDS", "3600"))
 
 
 @dataclass(frozen=True)
@@ -119,8 +128,15 @@ async def queue_depth(redis: aioredis.Redis) -> int:
 
 
 async def increment_active(redis: aioredis.Redis, tenant_id: str) -> int:
-    """INCR the per-tenant active counter and return the new value."""
-    return await redis.incr(f"{ACTIVE_KEY_PREFIX}{tenant_id}")
+    """INCR the per-tenant active counter and return the new value.
+
+    Refreshes a TTL on every increment so a leaked counter (incremented but
+    never decremented) self-heals instead of wedging backpressure forever.
+    """
+    key = f"{ACTIVE_KEY_PREFIX}{tenant_id}"
+    new_val = await redis.incr(key)
+    await redis.expire(key, ACTIVE_TTL_SECONDS)
+    return new_val
 
 
 async def decrement_active(redis: aioredis.Redis, tenant_id: str) -> int:

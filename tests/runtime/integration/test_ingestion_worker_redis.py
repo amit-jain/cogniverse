@@ -265,6 +265,18 @@ class TestActiveCounter:
         assert await queue.get_active(redis, "acme") == 2
         assert await queue.get_active(redis, "other") == 1
 
+    @pytest.mark.asyncio
+    async def test_increment_sets_self_healing_ttl(self, redis):
+        """A leaked counter (incremented but never decremented) must expire so
+        backpressure self-heals instead of wedging the tenant forever."""
+        key = f"{queue.ACTIVE_KEY_PREFIX}acme"
+        await queue.increment_active(redis, "acme")
+        # A TTL is set (not -1 = no-expiry), bounded by the configured ceiling.
+        assert 0 < await redis.ttl(key) <= queue.ACTIVE_TTL_SECONDS
+        # Re-incrementing refreshes it — an active tenant keeps the key alive.
+        await queue.increment_active(redis, "acme")
+        assert 0 < await redis.ttl(key) <= queue.ACTIVE_TTL_SECONDS
+
 
 class TestStatusStream:
     @pytest.mark.asyncio
