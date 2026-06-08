@@ -122,11 +122,11 @@ async def test_close_prevents_further_enqueue():
     q = InboundQueue("sess-1", "tenant-x")
     await q.enqueue(_msg("before"))
     q.close()
-    assert q.is_closed is True
+    assert (await q.is_closed) is True
 
     # Idempotent — double-close doesn't raise.
     q.close()
-    assert q.is_closed is True
+    assert (await q.is_closed) is True
 
     # Post-close enqueue raises with explicit reason.
     with pytest.raises(QueueClosedError) as exc_info:
@@ -239,10 +239,10 @@ async def test_close_queue_propagates_close_to_live_queue():
     """
     registry = InboundQueueRegistry()
     q = await registry.get_or_create_queue("sess-1", "tenant-x")
-    assert q.is_closed is False
+    assert (await q.is_closed) is False
 
     await registry.close_queue("sess-1")
-    assert q.is_closed is True
+    assert (await q.is_closed) is True
     with pytest.raises(QueueClosedError):
         await q.enqueue(_msg("after-close"))
 

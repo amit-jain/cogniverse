@@ -103,7 +103,9 @@ class InboundQueue:
         return self._tenant_id
 
     @property
-    def is_closed(self) -> bool:
+    async def is_closed(self) -> bool:
+        # Async to match the durable RedisInboundQueue (which needs a round
+        # trip) so the two backends are interchangeable behind ``await``.
         return self._closed
 
     @property
