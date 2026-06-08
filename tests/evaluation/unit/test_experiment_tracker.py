@@ -17,14 +17,9 @@ class TestExperimentTracker:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock all external dependencies."""
-        with (
-            patch(
-                "cogniverse_evaluation.core.experiment_tracker.register_plugin"
-            ) as mock_reg,
-            patch(
-                "cogniverse_evaluation.core.experiment_tracker.get_evaluation_provider"
-            ) as mock_provider,
-        ):
+        with patch(
+            "cogniverse_evaluation.core.experiment_tracker.get_evaluation_provider"
+        ) as mock_provider:
             # Mock provider to avoid actual Phoenix connection
             mock_provider_instance = Mock()
             mock_provider_instance.get_dataset_url.return_value = (
@@ -32,10 +27,7 @@ class TestExperimentTracker:
             )
             mock_provider.return_value = mock_provider_instance
 
-            yield {
-                "register_plugin": mock_reg,
-                "provider": mock_provider_instance,
-            }
+            yield {"provider": mock_provider_instance}
 
     @pytest.fixture
     def tracker(self, mock_dependencies):
@@ -92,45 +84,33 @@ class TestExperimentTracker:
         assert tracker.llm_base_url == "http://custom.api"
 
     @pytest.mark.unit
-    def test_register_evaluator_plugins_quality(self, mock_dependencies):
-        """Test registering quality evaluator plugins."""
-        # Mock the entire module since VideoAnalyzerPlugin may not exist
-        with patch("cogniverse_evaluation.plugins.video_analyzer") as mock_module:
-            mock_plugin = Mock()
-            mock_module.VideoAnalyzerPlugin = Mock(return_value=mock_plugin)
+    def test_run_experiment_threads_quality_flag_into_task_config(self, tracker):
+        """enable_quality_evaluators must reach evaluation_task's config so the
+        Inspect scorer set adds the quality scorer (get_configured_scorers)."""
+        captured = {}
 
-            ExperimentTracker(tenant_id="test:unit", enable_quality_evaluators=True)
+        def _capture(*args, **kwargs):
+            captured.update(kwargs)
+            return Mock()
 
-            # Should not raise exception even if plugin doesn't exist
-
-    @pytest.mark.unit
-    def test_register_evaluator_plugins_llm(self, mock_dependencies):
-        """Test registering LLM evaluator plugins."""
-        with patch(
-            "cogniverse_evaluation.plugins.visual_evaluator.VisualEvaluatorPlugin"
+        eval_log = Mock()
+        eval_log.results = Mock()
+        eval_log.results.scores = []
+        with (
+            patch(
+                "cogniverse_evaluation.core.experiment_tracker.evaluation_task",
+                side_effect=_capture,
+            ),
+            patch("inspect_ai.eval", return_value=[eval_log]),
         ):
-            ExperimentTracker(
-                tenant_id="test:unit",
-                enable_llm_evaluators=True,
-                llm_model="test-model",
+            tracker.run_experiment(
+                profile="p",
+                strategy="s",
+                dataset_name="d",
+                description="x",
             )
 
-            mock_dependencies["register_plugin"].assert_called()
-
-    @pytest.mark.unit
-    def test_register_evaluator_plugins_import_error(self, mock_dependencies):
-        """Test handling import errors when registering plugins."""
-        # Mock the import to fail
-        with patch(
-            "cogniverse_evaluation.core.experiment_tracker.register_plugin"
-        ) as mock_reg:
-            mock_reg.side_effect = ImportError("Module not found")
-
-            # Should not raise exception
-            tracker = ExperimentTracker(
-                tenant_id="test:unit", enable_quality_evaluators=True
-            )
-            assert tracker is not None
+        assert captured["config"]["evaluation"]["enable_quality_evaluators"] is True
 
     @pytest.mark.unit
     def test_get_experiment_configurations_default(self, tracker):

@@ -32,8 +32,7 @@ libs/evaluation/cogniverse_evaluation/
 │   ├── sync_reference_free.py           # Synchronous reference-free evaluators
 │   ├── configurable_visual_judge.py     # Visual judge (provider/model from config)
 │   ├── _media_helpers.py                # source_url resolution + frame extraction
-│   ├── base.py                          # Base evaluator classes
-│   └── metadata_fetcher.py              # Metadata fetching utilities
+│   └── base.py                          # Base evaluator classes
 ├── metrics/                             # Metric definitions
 │   └── custom.py                        # Custom metrics
 ├── data/                                # Data loaders and datasets
@@ -1372,59 +1371,24 @@ provider.log_session_evaluation(
 
 The evaluation module provides LLM-based evaluators for video retrieval quality:
 
-**1. SyncLLMReferenceFreeEvaluator**
+**1. LLMJudgeCore**
 
-Evaluates query-result relevance without requiring ground truth.
-
-```python
-from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceFreeEvaluator
-
-evaluator = SyncLLMReferenceFreeEvaluator(
-    model_name="google/gemma-4-e4b-it",
-    base_url="http://localhost:11434"
-)
-
-# Evaluate video search results
-result = evaluator.evaluate(
-    input={"query": "cooking tutorial pasta"},
-    output={
-        "results": [{
-            "video_id": "vid_001",
-            "title": "Italian Pasta Making",
-            "description": "Learn to make fresh pasta from scratch",
-            "score": 0.95
-        }]
-    }
-)
-print(f"Relevance score: {result.score}")
-```
-
-**2. SyncLLMReferenceBasedEvaluator**
-
-Compares results against ground truth from database.
+Scores query-result relevance via an OAI-compatible LLM endpoint. Used by the
+quality monitor for live-traffic relevance scoring; `_extract_score_from_response`
+parses an `X/10` or `0.x` rating (or `None` for an unscored/failed reply).
 
 ```python
-from cogniverse_evaluation.evaluators.llm_judge import SyncLLMReferenceBasedEvaluator
+from cogniverse_evaluation.evaluators.llm_judge import LLMJudgeCore
 
-evaluator = SyncLLMReferenceBasedEvaluator(
+judge = LLMJudgeCore(
     model_name="google/gemma-4-e4b-it",
-    base_url="http://localhost:11434"
+    base_url="http://localhost:11434",
 )
-
-# Evaluate with expected results
-result = evaluator.evaluate(
-    input={"query": "cooking tutorial", "expected_videos": ["vid_001", "vid_003"]},
-    output={
-        "results": [
-            {"video_id": "vid_001", "score": 0.95},
-            {"video_id": "vid_002", "score": 0.85}
-        ]
-    }
-)
-print(f"Score: {result.score}")
+score, explanation = judge._extract_score_from_response("Score: 8/10. Relevant.")
+# score == 0.8
 ```
 
-**3. QueryResultRelevanceEvaluator**
+**2. QueryResultRelevanceEvaluator**
 
 Evaluates relevance without LLM (embedding-based).
 

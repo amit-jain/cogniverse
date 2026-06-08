@@ -15,7 +15,6 @@ import pandas as pd
 from tabulate import tabulate
 
 from cogniverse_evaluation.core.task import evaluation_task
-from cogniverse_evaluation.plugins import register_plugin
 from cogniverse_evaluation.providers import get_evaluation_provider
 from cogniverse_evaluation.providers.base import EvaluationProvider
 
@@ -85,38 +84,6 @@ class ExperimentTracker:
         self.experiments: list[dict] = []
         self.configurations: list[dict] = []
         self.dataset_url: str | None = None
-
-        # Register plugins if needed
-        self._register_evaluator_plugins()
-
-    def _register_evaluator_plugins(self):
-        """Register evaluator plugins based on configuration."""
-        if self.enable_quality_evaluators:
-            # Register quality evaluator plugins
-            try:
-                from cogniverse_evaluation.plugins.video_analyzer import (
-                    VideoAnalyzerPlugin,
-                )
-
-                register_plugin("video_analyzer", VideoAnalyzerPlugin())
-                logger.info("Registered video analyzer plugin for quality metrics")
-            except Exception as e:
-                logger.warning(f"Could not register video analyzer plugin: {e}")
-
-        if self.enable_llm_evaluators:
-            # Register LLM evaluator plugins
-            try:
-                from cogniverse_evaluation.plugins.visual_evaluator import (
-                    VisualEvaluatorPlugin,
-                )
-
-                plugin = VisualEvaluatorPlugin()
-                register_plugin("visual_evaluator", plugin)
-                logger.info(
-                    f"Registered visual evaluator plugin with {self.evaluator_name}"
-                )
-            except Exception as e:
-                logger.warning(f"Could not register visual evaluator plugin: {e}")
 
     def get_experiment_configurations(
         self,

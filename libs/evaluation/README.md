@@ -34,12 +34,11 @@ cogniverse_evaluation/
 ├── evaluators/              # Built-in evaluators
 │   ├── base.py              # BaseEvaluator abstract class
 │   ├── golden_dataset.py    # GoldenDatasetEvaluator
-│   ├── llm_judge.py         # LLMJudgeCore, SyncLLMReferenceFreeEvaluator, etc.
+│   ├── llm_judge.py         # LLMJudgeCore (live-traffic relevance scoring)
 │   ├── configurable_visual_judge.py # ConfigurableVisualJudge
 │   ├── _media_helpers.py    # Shared source_url resolution + frame extraction
 │   ├── reference_free.py    # QueryResultRelevanceEvaluator, etc. (async)
 │   ├── sync_reference_free.py # SyncQueryResultRelevanceEvaluator, etc.
-│   ├── metadata_fetcher.py  # Metadata fetching helpers
 │   └── routing_evaluator.py # RoutingEvaluator
 ├── metrics/                 # Evaluation metrics
 │   └── custom.py            # calculate_mrr, calculate_ndcg, etc. (no CustomMetric class)
@@ -62,10 +61,7 @@ Built-in evaluators for different evaluation scenarios:
 - `RoutingEvaluator`: Specialized routing agent evaluation
 
 **LLM-Based Evaluators** (in `cogniverse_evaluation.evaluators.llm_judge`):
-- `LLMJudgeCore`: Base class for LLM judge evaluators (OAI-compatible endpoint)
-- `SyncLLMReferenceFreeEvaluator`: Synchronous LLM reference-free evaluation
-- `SyncLLMReferenceBasedEvaluator`: Synchronous LLM reference-based evaluation
-- `SyncLLMHybridEvaluator`: Combines reference-free and reference-based
+- `LLMJudgeCore`: LLM judge for live-traffic relevance scoring (OAI-compatible endpoint), used by the quality monitor
 - `ConfigurableVisualJudge`: Visual evaluation; provider, model, and endpoint
   come from the evaluator config. Resolves frames from each result's
   ``source_url`` via :class:`MediaLocator`.
@@ -182,31 +178,6 @@ result = await evaluator.evaluate(
 )
 
 print(f"Score (MRR): {result.score:.3f}")
-print(f"Label: {result.label}")
-```
-
-### LLM-as-Judge Evaluation
-
-```python
-from cogniverse_evaluation.evaluators.llm_judge import (
-    LLMJudgeCore,
-    SyncLLMReferenceFreeEvaluator,
-)
-
-# Synchronous LLM-based reference-free evaluator
-# (used directly in Phoenix experiment runners)
-judge = SyncLLMReferenceFreeEvaluator(
-    model_name="qwen2-vl",
-    base_url="http://localhost:11434",
-)
-
-# Evaluate a query-result pair
-result = judge.evaluate(
-    input={"query": "machine learning tutorials"},
-    output=[{"source_id": "v_abc123", "score": 0.92}],
-)
-
-print(f"Score: {result.score:.2f}")
 print(f"Label: {result.label}")
 ```
 

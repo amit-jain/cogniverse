@@ -77,3 +77,11 @@ class TestPrecisionRecallScorers:
             )
             == base + 2
         )
+        # experiment_tracker nests the flags under "evaluation" — still wired.
+        nested = {
+            "evaluation": {
+                "enable_llm_evaluators": True,
+                "enable_quality_evaluators": True,
+            }
+        }
+        assert len(get_configured_scorers(nested)) == base + 2
