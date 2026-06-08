@@ -87,7 +87,12 @@ class GraphManager:
         )
         self._encoder, _ = loader.load_model()
         self._embedding_processor = VespaEmbeddingProcessor(
-            logger=logger, model_name=colbert_model, schema_name=schema_name
+            logger=logger,
+            model_name=colbert_model,
+            schema_name=schema_name,
+            # knowledge_graph embeddings are ColBERT multi-vector
+            # (tensor(token{}, v[128])).
+            single_vector=False,
         )
 
     # ------------------------------------------------------------------ #

@@ -10,16 +10,31 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-# Single-vector schemas have a ``_sv_`` or ``_lvt_`` token in the name. The
-# tokens are bracketed by underscores to avoid an unrelated schema whose
-# name merely embeds the substring (e.g. ``audio_alvtree_index``); both
-# halves of the check are lower-cased so an uppercase ``_SV_`` matches too.
+# Fallback name heuristic for callers that don't resolve the authoritative
+# flag. Single-vector schemas carry a ``_sv_`` / ``_lvt_`` token (bracketed by
+# underscores so an unrelated substring like ``audio_alvtree_index`` doesn't
+# match); lower-cased so ``_SV_`` matches too. Prefer schema_is_single_vector.
 _SINGLE_VECTOR_TOKENS = ("_sv_", "_lvt_")
 
 
 def _is_single_vector_schema(schema_name: str) -> bool:
     name = (schema_name or "").lower()
     return any(token in name for token in _SINGLE_VECTOR_TOKENS)
+
+
+def schema_is_single_vector(schema_def: Dict[str, Any]) -> bool:
+    """Whether a schema's ``embedding`` field holds a single vector.
+
+    Authoritative — reads the field's tensor type from the schema definition
+    rather than guessing from the schema name. A mapped dimension (``{}``)
+    means multi-vector / patch (``tensor<bfloat16>(patch{}, v[128])``); its
+    absence means single-vector (``tensor<float>(d0[768])``). A schema with no
+    embedding field is treated as single-vector.
+    """
+    for field in schema_def.get("document", {}).get("fields", []):
+        if isinstance(field, dict) and field.get("name") == "embedding":
+            return "{" not in str(field.get("type", ""))
+    return True
 
 
 class VespaEmbeddingProcessor:
@@ -30,10 +45,25 @@ class VespaEmbeddingProcessor:
         logger: Optional[logging.Logger] = None,
         model_name: str = None,
         schema_name: str = None,
+        single_vector: Optional[bool] = None,
     ):
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.model_name = model_name or ""
         self.schema_name = schema_name or ""
+        # Authoritative single-vector vs multi-vector flag, resolved from the
+        # schema's embedding tensor type by the caller (schema_is_single_vector).
+        self._single_vector = single_vector
+
+    def _resolve_single_vector(self) -> bool:
+        """Single-vector format for the target schema.
+
+        Prefers the authoritative flag the caller resolved from the schema's
+        embedding tensor type (schema_is_single_vector); falls back to the
+        schema-name heuristic when the caller didn't supply it.
+        """
+        if self._single_vector is not None:
+            return self._single_vector
+        return _is_single_vector_schema(self.schema_name)
 
     def process_embeddings(self, raw_embeddings: Any) -> Dict[str, Any]:
         """
@@ -124,17 +154,15 @@ class VespaEmbeddingProcessor:
     def _convert_to_float_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to Vespa float format.
 
-        Schema name is the authority: ``_sv_`` / ``lvt`` schemas use a raw float
-        list; everything else (patch-based / multi-vector) uses hex-encoded
-        bfloat16 in a mapped ``{patch_idx: hex}`` dict. A row-count heuristic
-        wrongly fired single-vector format for a single-token multi-vector
-        schema, producing the wrong tensor shape.
+        The schema's embedding tensor type is the authority: single-vector
+        schemas use a raw float list; multi-vector / patch schemas use
+        hex-encoded bfloat16 in a mapped ``{patch_idx: hex}`` dict.
         """
         is_1d_input = embeddings.ndim == 1
         if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
 
-        if is_1d_input or _is_single_vector_schema(self.schema_name):
+        if is_1d_input or self._resolve_single_vector():
             self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return embeddings[0].tolist()
 
@@ -167,7 +195,7 @@ class VespaEmbeddingProcessor:
         # Binarize: positive values -> 1, negative/zero -> 0
         binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 
-        if is_1d_input or _is_single_vector_schema(self.schema_name):
+        if is_1d_input or self._resolve_single_vector():
             # Single-vector schemas use hex string for binary embeddings
             self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return hexlify(binarized[0].tobytes()).decode("utf-8")

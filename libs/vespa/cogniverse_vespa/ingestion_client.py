@@ -22,7 +22,7 @@ from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
 from cogniverse_sdk.document import Document
 from cogniverse_vespa._vespa_factory import make_vespa_app
 
-from .embedding_processor import VespaEmbeddingProcessor
+from .embedding_processor import VespaEmbeddingProcessor, schema_is_single_vector
 from .strategy_aware_processor import StrategyAwareProcessor
 
 # Unix-epoch ms / s magnitude bands for sanity-checking caller stamps.
@@ -107,17 +107,33 @@ class VespaPyClient:
         profile_config = config.get("profile_config", {})
         model_name = profile_config.get("model", "")
 
-        # Create embedding processor with this client's schema
-        self._embedding_processor = VespaEmbeddingProcessor(
-            self.logger, model_name, self.schema_name
-        )
-
-        # Initialize strategy-aware processor with schema_loader
         schema_loader = config.get("schema_loader")
         if schema_loader is None:
             raise ValueError(
                 "schema_loader is required in config for StrategyAwareProcessor"
             )
+
+        # Resolve single-vector vs multi-vector authoritatively from the
+        # schema's embedding tensor type (tenant schemas reuse the base
+        # schema's field structure). On any lookup failure leave it None so the
+        # processor falls back to its schema-name heuristic.
+        single_vector = None
+        try:
+            single_vector = schema_is_single_vector(
+                schema_loader.load_schema(self.base_schema_name)
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Could not resolve embedding shape for '%s': %s",
+                self.base_schema_name,
+                exc,
+            )
+
+        # Create embedding processor with this client's schema
+        self._embedding_processor = VespaEmbeddingProcessor(
+            self.logger, model_name, self.schema_name, single_vector=single_vector
+        )
+
         self._strategy_processor = StrategyAwareProcessor(schema_loader)
 
         # Load schema fields for this specific schema
