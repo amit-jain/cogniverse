@@ -667,12 +667,14 @@ class Mem0MemoryManager:
             ContradictionDetector,
         )
 
-        # Pull every memory for this tenant, then filter to the same
-        # subject_key client-side. Mem0's filter syntax for nested metadata
-        # keys differs across backends, so we do the filter in Python to
-        # keep the contract backend-agnostic.
+        # Fetch only same-subject peers. subject_key is promoted to a
+        # top-level Vespa field, so the backend filters server-side rather than
+        # pulling the tenant's memories (capped at Mem0's limit, which could
+        # also miss same-subject peers past the cap) and filtering in Python.
         try:
-            raw = self.memory.get_all(user_id=tenant_id)
+            raw = self.memory.get_all(
+                user_id=tenant_id, filters={"subject_key": subject_key}
+            )
         except Exception as exc:
             logger.warning("get_all for contradiction scan failed: %s", exc)
             return

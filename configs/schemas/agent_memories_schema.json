@@ -33,6 +33,12 @@
         "attribute": ["fast-search"]
       },
       {
+        "name": "subject_key",
+        "type": "string",
+        "indexing": ["summary", "attribute"],
+        "attribute": ["fast-search"]
+      },
+      {
         "name": "metadata_",
         "type": "string",
         "indexing": ["summary"]

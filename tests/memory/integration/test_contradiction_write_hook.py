@@ -254,3 +254,40 @@ class TestRecursionAndScopeGuards:
         }
         assert mid_a not in referenced
         assert mid_b not in referenced
+
+
+class TestSubjectKeyServerSideFilter:
+    """subject_key is promoted to a top-level Vespa field, so get_all can
+    filter same-subject peers server-side instead of pulling and filtering in
+    Python (and missing peers past Mem0's limit)."""
+
+    def test_get_all_subject_key_filter_returns_only_same_subject(
+        self, manager_with_registry
+    ):
+        mm = manager_with_registry
+        alpha = "subj:alpha_filter"
+        beta = "subj:beta_filter"
+        a1 = mm.add_memory(
+            content="alpha subject fact",
+            tenant_id=TENANT,
+            agent_name=AGENT,
+            metadata={"kind": "tenant_instruction", "subject_key": alpha},
+            infer=False,
+        )
+        b1 = mm.add_memory(
+            content="beta subject fact",
+            tenant_id=TENANT,
+            agent_name=AGENT,
+            metadata={"kind": "tenant_instruction", "subject_key": beta},
+            infer=False,
+        )
+        assert a1 and b1
+
+        raw = mm.memory.get_all(user_id=TENANT, filters={"subject_key": alpha})
+        rows = raw.get("results", []) if isinstance(raw, dict) else (raw or [])
+        subjects = {(r.get("metadata") or {}).get("subject_key") for r in rows}
+
+        # Server-side filter on the promoted field: only the alpha subject is
+        # returned — the beta write is excluded by the backend, not in Python.
+        assert subjects == {alpha}
+        assert any(r.get("id") == a1 for r in rows)
