@@ -242,6 +242,23 @@ class ConfigUtils:
             )
         return LLMConfig.from_dict(llm_config_data)
 
+    def _primary_llm_field(self, field: str, fallback: Any) -> Any:
+        """Resolve an LM field from config.json's ``llm_config.primary`` — the
+        complete, chart-rendered config the global runtime LM uses — falling
+        back to the per-field system config.
+
+        Agents build their DSPy LM from ``llm_model`` / ``llm_base_url`` /
+        ``llm_api_key``. Sourcing these from the system config leaves
+        ``base_url`` empty (litellm then silently targets the public OpenAI
+        host and 401s); ``llm_config.primary`` carries the model id, in-cluster
+        api_base, and no-auth key together.
+        """
+        try:
+            value = getattr(self.get_llm_config().primary, field, None)
+        except (ValueError, AttributeError, KeyError):
+            value = None
+        return value if value else fallback
+
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get config value by key with dict-like interface.
@@ -275,14 +292,24 @@ class ConfigUtils:
             "port": lambda: (
                 self._system_config.backend_port
             ),  # Alias for backend dict access
-            "llm_model": lambda: self._system_config.llm_model,
-            "local_llm_model": lambda: self._system_config.llm_model,  # Alias
+            # Agent DSPy LM fields resolve from config.json's complete
+            # llm_config.primary (model + in-cluster api_base + no-auth key),
+            # falling back to the piecemeal system config. The system config's
+            # base_url is often empty, which makes litellm target the public
+            # OpenAI host and 401.
+            "llm_model": lambda: self._primary_llm_field(
+                "model", self._system_config.llm_model
+            ),
+            "local_llm_model": lambda: self._primary_llm_field(
+                "model", self._system_config.llm_model
+            ),  # Alias
             "base_url": lambda: self._system_config.base_url,
-            # Alias: agents build their DSPy LM off ``llm_base_url`` (the LM
-            # endpoint). Without it litellm falls back to the public OpenAI
-            # host and 401s on the in-cluster no-auth key.
-            "llm_base_url": lambda: self._system_config.base_url,
-            "llm_api_key": lambda: self._system_config.llm_api_key,
+            "llm_base_url": lambda: self._primary_llm_field(
+                "api_base", self._system_config.base_url
+            ),
+            "llm_api_key": lambda: self._primary_llm_field(
+                "api_key", self._system_config.llm_api_key
+            ),
             "telemetry_url": lambda: self._system_config.telemetry_url,
             "telemetry_collector_endpoint": lambda: (
                 self._system_config.telemetry_collector_endpoint
