@@ -937,12 +937,31 @@ def _cleanup_test_tenants() -> None:
         if tid and any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
             tenants_seen.add(tid)
 
-    for tid in sorted(tenants_seen):
+    # Delete concurrently with a total budget so a large backlog can't hang
+    # session setup/teardown (each delete undeploys a Vespa schema, which is
+    # slow; sequentially, hundreds of accumulated test tenants take hours).
+    # What isn't reaped this run is picked up by the next sweep.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _delete_one(tid: str) -> None:
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with httpx.Client(timeout=20.0) as client:
                 client.delete(f"{RUNTIME}/admin/tenants/{tid}")
         except (httpx.HTTPError, OSError) as exc:
             print(f"Cleanup failed for tenant {tid}: {exc}")
+
+    sweep_deadline = _t.monotonic() + 180.0
+    pool = ThreadPoolExecutor(max_workers=8)
+    try:
+        futures = [pool.submit(_delete_one, tid) for tid in sorted(tenants_seen)]
+        for _fut in as_completed(futures):
+            if _t.monotonic() > sweep_deadline:
+                print("Tenant cleanup budget exhausted; remainder left for next run")
+                break
+    finally:
+        # Don't block on the queued/in-flight deletes — cancel the rest so a
+        # large backlog can't hang session setup/teardown past the budget.
+        pool.shutdown(wait=False, cancel_futures=True)
 
     # 2. Org sweep — DELETE /admin/organizations/{org_id}. Tenants
     # have been removed above so org delete is unblocked. Skip orgs
