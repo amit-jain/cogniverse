@@ -481,12 +481,44 @@ async def worker_task(real_stack):
 @pytest_asyncio.fixture
 async def http_client(real_stack):
     """FastAPI ASGI client mounting the real ingestion router + status_api."""
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
     from cogniverse_runtime.ingestion_worker import status_api as ingest_status
     from cogniverse_runtime.routers import ingestion as ingestion_router
 
     application = FastAPI()
     application.include_router(ingestion_router.router, prefix="/ingestion")
     application.include_router(ingest_status.router, prefix="/ingestion")
+
+    # The router's ConfigManager / SchemaLoader dependencies 503 until
+    # overridden — wire them as main.py does so the upload route is reachable
+    # (real_stack already seeded SystemConfig in the test Vespa).
+    config_manager = create_default_config_manager()
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+    application.dependency_overrides[
+        ingestion_router.get_config_manager_dependency
+    ] = lambda: config_manager
+    application.dependency_overrides[
+        ingestion_router.get_schema_loader_dependency
+    ] = lambda: schema_loader
+
+    # The upload route calls assert_tenant_exists, which reads tenant_metadata
+    # via the tenant manager — wire it and ensure the tenant exists so the
+    # route doesn't 404 before the MinIO/Redis env checks.
+    from fastapi import HTTPException
+
+    from cogniverse_runtime.admin import tenant_manager
+    from cogniverse_runtime.admin.models import CreateTenantRequest
+
+    tenant_manager.set_config_manager(config_manager)
+    tenant_manager.set_schema_loader(schema_loader)
+    try:
+        await tenant_manager.create_tenant(
+            CreateTenantRequest(tenant_id=TENANT_ID, created_by="test")
+        )
+    except HTTPException as exc:
+        if exc.status_code != 409:  # 409 = already exists (module-scoped reuse)
+            raise
 
     transport = httpx.ASGITransport(app=application)
     async with httpx.AsyncClient(
@@ -805,7 +837,8 @@ class TestUploadRealStack:
         )
         assert resp.status_code == 503
         body = resp.json()
-        assert "MINIO_ENDPOINT" in body["detail"]["missing_env"]
+        # The route reports the missing SystemConfig fields (lowercase keys).
+        assert "minio_endpoint" in body["detail"]["missing_env"]
 
     @pytest.mark.asyncio
     async def test_upload_503_when_redis_env_missing(
@@ -820,4 +853,4 @@ class TestUploadRealStack:
         )
         assert resp.status_code == 503
         body = resp.json()
-        assert "REDIS_URL" in body["detail"]["missing_env"]
+        assert "redis_url" in body["detail"]["missing_env"]
