@@ -26,6 +26,7 @@ from pathlib import Path
 import dspy
 import pytest
 
+from cogniverse_core.common.tenant_utils import canonical_tenant_id
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -442,7 +443,12 @@ class TestTelemetrySpansInPhoenix:
         # Allow Phoenix to ingest the span
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_a2a_test")
+        # The gateway canonicalizes the tenant (require_tenant_id) before
+        # emitting, so spans land in the canonical project; get_project_name
+        # doesn't canonicalize, so the querier must (per its docstring).
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_a2a_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
 
         span = _query_phoenix_for_span(
@@ -472,7 +478,12 @@ class TestTelemetrySpansInPhoenix:
 
         await asyncio.sleep(2)
 
-        project_name = real_telemetry.config.get_project_name("telemetry_a2a_test")
+        # The gateway canonicalizes the tenant (require_tenant_id) before
+        # emitting, so spans land in the canonical project; get_project_name
+        # doesn't canonicalize, so the querier must (per its docstring).
+        project_name = real_telemetry.config.get_project_name(
+            canonical_tenant_id("telemetry_a2a_test")
+        )
         phoenix_url = real_telemetry.config.provider_config["http_endpoint"]
 
         span = _query_phoenix_for_span("cogniverse.gateway", project_name, phoenix_url)

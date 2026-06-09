@@ -241,9 +241,13 @@ class TestCodeSearchVespaEndToEnd:
         import numpy as np
         import requests
 
+        from tests.utils.vespa_test_helpers import schema_full_name
+
         base_url = vespa_with_schema["base_url"]
         base_schema = vespa_with_schema["default_schema"]
-        schema_name = f"{base_schema}_test_tenant"
+        # deploy_schema canonicalizes test_tenant → test_tenant:test_tenant, so
+        # the deployed doc type is double-suffixed; build the same name here.
+        schema_name = schema_full_name(base_schema, "test_tenant")
         schema_embedding_dim = 128
 
         # 1. Parse real agent files
