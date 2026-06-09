@@ -327,6 +327,10 @@ class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearch
 
         params = {
             "yql": yql,
+            # Scope to this schema so query(qt) resolves from its rank profile;
+            # sibling tenant schemas share the profile name with a different
+            # query-tensor dim, which Vespa otherwise can't disambiguate.
+            "model.restrict": schema,
             "hits": limit,
             "ranking.profile": rank_profile,
             "input.query(qt)": qt_value,

@@ -414,6 +414,10 @@ class DocumentAgent(
 
         params = {
             "yql": yql,
+            # Scope to this schema so query(qt)/query(qtb) resolve from its rank
+            # profile; sibling tenant schemas share the profile name with a
+            # different query-tensor dim, which Vespa otherwise can't resolve.
+            "model.restrict": schema,
             "hits": limit,
             "ranking.profile": "phased",
             "input.query(qt)": qt_value,
@@ -483,6 +487,10 @@ class DocumentAgent(
 
         params = {
             "yql": yql,
+            # Scope to this schema so query(qt) resolves from its rank profile;
+            # other tenant schemas share the profile name with a different
+            # query-tensor dim, which Vespa otherwise can't disambiguate.
+            "model.restrict": schema,
             "query": query,
             "hits": limit,
             "ranking.profile": "hybrid_float_bm25",
