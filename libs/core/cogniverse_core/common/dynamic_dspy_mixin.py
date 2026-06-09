@@ -64,18 +64,36 @@ class DynamicDSPyMixin:
         Args:
             config: Agent configuration
         """
-        # config.llm_model comes from the in-cluster serving config
-        # (system_config.llm_model), which the chart populates with a BARE
-        # model id (e.g. "gemma3:4b"). litellm rejects a bare id with "LLM
-        # Provider NOT provided", so attach the openai-compatible provider
-        # prefix the in-cluster vLLM/Ollama endpoint speaks.
+        # The LM endpoint/model/key are deployment-runtime, not agent state.
+        # An AgentConfig persisted on an earlier deploy carries a stale/None
+        # llm_base_url, so re-resolve from config.json's live llm_config.primary
+        # (the complete model + in-cluster api_base + no-auth key the global
+        # runtime LM uses), falling back to the AgentConfig. Without this the
+        # persisted empty endpoint makes litellm silently target the public
+        # OpenAI host and 401.
+        model = config.llm_model
+        base_url = config.llm_base_url
+        api_key = config.llm_api_key
+        system_config = getattr(self, "system_config", None)
+        if system_config is not None and hasattr(system_config, "get_llm_config"):
+            try:
+                primary = system_config.get_llm_config().primary
+                model = primary.model or model
+                base_url = primary.api_base or base_url
+                api_key = primary.api_key or api_key
+            except Exception:  # noqa: BLE001 — degrade to the AgentConfig values
+                logger.debug("No llm_config.primary; using AgentConfig LM fields")
+
+        # The model id may be a BARE in-cluster name (e.g. "gemma3:4b"); litellm
+        # rejects a bare id with "LLM Provider NOT provided", so attach the
+        # openai-compatible provider prefix the in-cluster endpoint speaks.
         endpoint_config = LLMEndpointConfig(
-            model=ensure_provider_prefix(config.llm_model),
-            api_base=config.llm_base_url,
+            model=ensure_provider_prefix(model),
+            api_base=base_url,
             # litellm's openai client refuses to dispatch with a null key even
             # against an in-cluster vLLM/Ollama endpoint that ignores auth —
             # hand it the no-auth sentinel (matches the chart + worker).
-            api_key=config.llm_api_key or "placeholder-no-auth-needed",
+            api_key=api_key or "placeholder-no-auth-needed",
             temperature=config.llm_temperature,
             max_tokens=config.llm_max_tokens or 1000,
         )

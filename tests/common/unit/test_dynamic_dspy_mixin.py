@@ -2,7 +2,7 @@
 Unit tests for DynamicDSPyMixin.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import dspy
 import pytest
@@ -15,6 +15,7 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
+from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
 
 
 class TestSignature(dspy.Signature):
@@ -114,6 +115,35 @@ class TestDynamicDSPyMixin:
             # A null key would make litellm's openai client refuse to dispatch
             # even against the no-auth in-cluster endpoint.
             assert mock_lm.call_args[1]["api_key"] == "placeholder-no-auth-needed"
+
+    def test_stale_persisted_config_overridden_by_llm_config_primary(
+        self, agent_config
+    ):
+        """A persisted AgentConfig with an empty llm_base_url (saved on an
+        earlier deploy) must be overridden by config.json's live
+        llm_config.primary, so litellm targets the in-cluster endpoint instead
+        of silently falling back to the public OpenAI host."""
+        agent_config.llm_base_url = None  # stale persisted endpoint
+        agent_config.llm_model = "stale:model"
+        primary = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://cogniverse-vllm-llm-student:8000/v1",
+            api_key="placeholder-no-auth-needed",
+        )
+        sysconf = MagicMock()
+        sysconf.get_llm_config.return_value = LLMConfig(
+            primary=primary, teacher=primary
+        )
+        agent = TestAgent.__new__(TestAgent)
+        agent.system_config = sysconf
+        with patch("dspy.LM") as mock_lm:
+            agent.initialize_dynamic_dspy(agent_config)
+
+            assert mock_lm.call_args[0][0] == "openai/google/gemma-4-e4b-it"
+            assert (
+                mock_lm.call_args[1]["api_base"]
+                == "http://cogniverse-vllm-llm-student:8000/v1"
+            )
 
     def test_register_signature(self, agent_config):
         """Test signature registration"""
