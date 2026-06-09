@@ -442,7 +442,8 @@ class TestA2ACustomTelemetrySpansRealPhoenix:
         registry.tenant_id = "test:unit"
         registry.config_manager = MagicMock()
         registry.config = {}
-        registry.http_client = MagicMock()
+        # http_client is a read-only lazy property; inject via the backing field.
+        registry._http_client = MagicMock()
 
         agents = [
             AgentEndpoint(

@@ -370,7 +370,9 @@ class TestJobExecution:
         test_cm = tenant._config_manager
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {"response": "Found 3 ColPali papers"}
+        # The orchestrator route returns the answer under "result"/"message"
+        # (see job_executor._execute_query); "response" is not a real field.
+        mock_response.json.return_value = {"result": "Found 3 ColPali papers"}
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock()
@@ -397,8 +399,9 @@ class TestJobExecution:
 
         first_payload = calls[0][1]["json"]
         assert first_payload["query"] == "find recent papers on ColPali retrieval"
-        assert first_payload["tenant_id"] == "test_tenant"
-        assert "context" not in first_payload
+        # tenant_id travels inside context — the /agents/{name}/process route
+        # reads task.context["tenant_id"]; a top-level one is dropped.
+        assert first_payload["context"]["tenant_id"] == "test_tenant"
 
         # Second call is _deliver_to_wiki (pure delivery skips gateway_agent)
         second_payload = calls[1][1]["json"]
