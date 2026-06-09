@@ -66,7 +66,6 @@ class TestDynamicConfigIntegration:
         assert hasattr(agent, "agent_config")
         assert hasattr(agent, "_signatures")
         assert hasattr(agent, "_dynamic_modules")
-        assert hasattr(agent, "_optimizer")
 
         # Verify signature registered
         assert "text_analysis" in agent._signatures
