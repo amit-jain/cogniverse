@@ -98,24 +98,25 @@ class TestSchemaRegistryValidation:
         schema_registry._validate_tenant_id("tenant_123")
         schema_registry._validate_tenant_id("org:tenant")
         schema_registry._validate_tenant_id("UPPERCASE")
-        # Hyphens are allowed — tenant creation accepts them (see below).
-        schema_registry._validate_tenant_id("my-team")
-        schema_registry._validate_tenant_id("my-org:cell-a")
 
-    def test_validate_tenant_id_accepts_every_created_tenant(self, schema_registry):
-        """Any id the tenant-creation contract admits must deploy a schema.
-
-        Regression: validate_tenant_name allowed hyphens but _validate_tenant_id
-        rejected them, so a validly-created tenant like 'my-team' could never
-        deploy a schema (ValueError at deploy time).
+    def test_tenant_id_validation_agrees_with_creation(self, schema_registry):
+        """Creation and deploy must AGREE on which ids are valid — no gap that
+        lets a created tenant fail at deploy time. Hyphens are rejected by both
+        (they can't be Vespa schema-name chars, and sanitizing "-"→"_" would
+        collide distinct tenants like acme-corp / acme_corp).
         """
         from cogniverse_runtime.admin.tenant_manager import validate_tenant_name
 
-        for name in ["acme", "my-team", "tenant_123", "acme-corp"]:
+        for name in ["acme", "tenant_123", "tenant456"]:
             validate_tenant_name(name)  # accepted by creation
-            schema_registry._validate_tenant_id(name)  # must also validate here
-            # canonical org:tenant form of the same names must validate too
+            schema_registry._validate_tenant_id(name)  # and by deploy
             schema_registry._validate_tenant_id(f"{name}:{name}")
+
+        for bad in ["my-team", "acme-corp"]:
+            with pytest.raises(ValueError, match="only alphanumeric"):
+                validate_tenant_name(bad)
+            with pytest.raises(ValueError, match="only alphanumeric"):
+                schema_registry._validate_tenant_id(bad)
 
     def test_validate_tenant_id_empty_rejected(self, schema_registry):
         """Test empty tenant_id is rejected"""

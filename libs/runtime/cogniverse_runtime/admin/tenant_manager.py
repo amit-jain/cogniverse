@@ -159,9 +159,13 @@ def validate_tenant_name(tenant_name: str) -> None:
     if not isinstance(tenant_name, str):
         raise ValueError(f"tenant_name must be string, got {type(tenant_name)}")
 
-    if not tenant_name.replace("_", "").replace("-", "").isalnum():
+    # No hyphens: the tenant name becomes part of the Vespa schema name
+    # (which allows only [a-zA-Z0-9_]), and sanitizing "-"→"_" would collide
+    # distinct tenants (acme-corp vs acme_corp → same schema). Matches the
+    # org_id rule above.
+    if not tenant_name.replace("_", "").isalnum():
         raise ValueError(
-            f"Invalid tenant_name '{tenant_name}': only alphanumeric, underscore, and hyphen allowed"
+            f"Invalid tenant_name '{tenant_name}': only alphanumeric and underscore allowed"
         )
 
 

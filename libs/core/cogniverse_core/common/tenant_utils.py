@@ -137,11 +137,14 @@ def validate_tenant_id(tenant_id: str) -> None:
             f"are reserved for runtime-internal use"
         )
 
-    # Allow alphanumeric, underscores, hyphens, and colons
-    allowed_chars = tenant_id.replace("_", "").replace("-", "").replace(":", "")
+    # Allow alphanumeric, underscores, and colons. No hyphens: the tenant id
+    # becomes part of the Vespa schema name ([a-zA-Z0-9_] only) and sanitizing
+    # "-"→"_" would collide distinct tenants (acme-corp vs acme_corp → same
+    # schema). The ':' separates the org:tenant canonical form.
+    allowed_chars = tenant_id.replace("_", "").replace(":", "")
     if not allowed_chars.isalnum():
         raise ValueError(
-            f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, hyphen, and colon allowed"
+            f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
         )
 
     # If colon present, validate org:tenant format

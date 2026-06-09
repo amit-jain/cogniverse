@@ -87,10 +87,13 @@ class TestValidateTenantName:
         validate_tenant_name("prod_env")  # Should not raise
         validate_tenant_name("my_tenant")  # Should not raise
 
-    def test_valid_tenant_name_with_hyphen(self):
-        """Test tenant name with hyphen is valid"""
-        validate_tenant_name("prod-2024")  # Should not raise
-        validate_tenant_name("dev-env")  # Should not raise
+    def test_tenant_name_with_hyphen_rejected(self):
+        """Hyphens are rejected: the tenant name becomes part of the Vespa
+        schema name, and sanitizing "-"→"_" would collide distinct tenants."""
+        with pytest.raises(ValueError, match="only alphanumeric"):
+            validate_tenant_name("prod-2024")
+        with pytest.raises(ValueError, match="only alphanumeric"):
+            validate_tenant_name("dev-env")
 
     def test_valid_tenant_name_alphanumeric(self):
         """Test tenant name with numbers is valid"""
@@ -100,7 +103,7 @@ class TestValidateTenantName:
     def test_valid_tenant_name_mixed(self):
         """Test tenant name with mixed characters"""
         validate_tenant_name("prod_env_2024")  # Should not raise
-        validate_tenant_name("dev-env-1")  # Should not raise
+        validate_tenant_name("dev_env_1")  # Should not raise
         validate_tenant_name("staging_v2")  # Should not raise
 
     def test_empty_tenant_name_raises_error(self):
@@ -116,24 +119,24 @@ class TestValidateTenantName:
     def test_invalid_tenant_name_with_special_char(self):
         """Test tenant name with special characters raises ValueError"""
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("prod@env")
 
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("prod.env")
 
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("prod env")  # Space
 
     def test_invalid_tenant_name_with_colon(self):
         """Test tenant name with colon raises ValueError"""
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("prod:env")
 
@@ -189,12 +192,12 @@ class TestValidationEdgeCases:
     def test_tenant_name_only_special_char_invalid(self):
         """Test tenant name with only underscore or hyphen is invalid"""
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("_")
 
         with pytest.raises(
-            ValueError, match="only alphanumeric, underscore, and hyphen"
+            ValueError, match="only alphanumeric and underscore"
         ):
             validate_tenant_name("-")
 

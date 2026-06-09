@@ -116,10 +116,13 @@ class TestValidateTenantId:
         validate_tenant_id("acme:prod_env")  # Should not raise
 
     @pytest.mark.ci_fast
-    def test_validate_with_hyphen(self):
-        """Test validating tenant ID with hyphen"""
-        validate_tenant_id("acme-corp")  # Should not raise
-        validate_tenant_id("acme:prod-env")  # Should not raise
+    def test_validate_hyphen_rejected(self):
+        """Hyphens are rejected: the tenant id becomes part of the Vespa schema
+        name, and sanitizing "-"→"_" would collide distinct tenants."""
+        with pytest.raises(ValueError, match="only alphanumeric"):
+            validate_tenant_id("acme-corp")
+        with pytest.raises(ValueError, match="only alphanumeric"):
+            validate_tenant_id("acme:prod-env")
 
     @pytest.mark.ci_fast
     def test_validate_empty_tenant_id(self):
