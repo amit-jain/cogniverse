@@ -278,14 +278,25 @@ async def upload_video(
             source_doc_id = (
                 pipeline_result.get("video_id") or result.ingest_id or file.filename
             )
-            counts = await _extract_graph_per_segment(
-                processing_results=pipeline_result.get("results", {}) or {},
-                source_doc_id=source_doc_id,
-                tenant_id=upload_tenant_id,
-                config_manager=config_manager,
-            )
-            response["graph_nodes"] = counts.get("nodes_upserted", 0)
-            response["graph_edges"] = counts.get("edges_upserted", 0)
+            # KG extraction is best-effort — content ingestion already
+            # succeeded, so a missing inference service or a graph failure must
+            # not fail the upload (matches the worker's degrade-not-fail path).
+            try:
+                counts = await _extract_graph_per_segment(
+                    processing_results=pipeline_result.get("results", {}) or {},
+                    source_doc_id=source_doc_id,
+                    tenant_id=upload_tenant_id,
+                    config_manager=config_manager,
+                )
+                response["graph_nodes"] = counts.get("nodes_upserted", 0)
+                response["graph_edges"] = counts.get("edges_upserted", 0)
+            except Exception as exc:  # noqa: BLE001 — never fail a completed ingest
+                logger.warning(
+                    "per-segment KG extraction failed for %s: %s — content "
+                    "ingestion already succeeded, returning without graph counts",
+                    source_doc_id,
+                    exc,
+                )
     else:
         response["status"] = "queued"
     return response

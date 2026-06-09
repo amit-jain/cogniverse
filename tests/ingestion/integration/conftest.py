@@ -161,6 +161,16 @@ _INFERENCE_SIDECARS = {
         "model_name": "vidore/colpali-v1.3-hf",
         "internal_port": 8000,
         "extra_env": {},
+        # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
+        # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
+        # 0.92 of host RAM (~113 GiB) and aborts, so cap it.
+        "command": [
+            "vidore/colpali-v1.3-hf",
+            "--gpu-memory-utilization",
+            "0.3",
+            "--max-model-len",
+            "2048",
+        ],
     },
     "videoprism_jax": {
         "image": _VIDEOPRISM_IMAGE,
@@ -214,6 +224,9 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
             spec["image"],
         ]
     )
+    # Upstream vLLM images need the model + flags as CLI args appended to the
+    # ``vllm serve`` entrypoint; the custom videoprism image reads MODEL_NAME.
+    cmd.extend(spec.get("command", []))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"[ingest-conftest] {service} sidecar docker run failed: {result.stderr}")

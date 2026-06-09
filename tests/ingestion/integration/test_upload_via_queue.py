@@ -373,7 +373,9 @@ async def real_stack(
     monkeypatch.setenv("REDIS_URL", redis_container)
     monkeypatch.setenv("INGEST_QUEUE_DEPTH_LIMIT", "100")
     monkeypatch.setenv("INGEST_PER_TENANT_CONCURRENCY", "5")
-    monkeypatch.setenv("INGEST_IDEMPOTENCY_TTL_SECONDS", "60")
+    # Long enough that a done-record survives the slow CPU pipeline (~100s+
+    # per job) until the idempotency re-submit checks it.
+    monkeypatch.setenv("INGEST_IDEMPOTENCY_TTL_SECONDS", "3600")
     monkeypatch.setenv("MINIO_ENDPOINT", minio_container["endpoint"])
     monkeypatch.setenv("MINIO_ACCESS_KEY", minio_container["access_key"])
     monkeypatch.setenv("MINIO_SECRET_KEY", minio_container["secret_key"])
@@ -415,6 +417,10 @@ async def real_stack(
         SystemConfig(
             backend_url="http://localhost",
             backend_port=vespa_backend["http_port"],
+            # The /ingestion/upload route reads these off SystemConfig (not env)
+            # for its deploy-gate; point them at the real test containers.
+            redis_url=redis_container,
+            minio_endpoint=minio_container["endpoint"],
             # Profiles route VideoPrism inference through the sidecar via
             # ``inference_services.embedding=videoprism_jax`` on the profile
             # (see configs/config.json). The factory pulls the URL out of
@@ -495,12 +501,12 @@ async def http_client(real_stack):
     # (real_stack already seeded SystemConfig in the test Vespa).
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    application.dependency_overrides[
-        ingestion_router.get_config_manager_dependency
-    ] = lambda: config_manager
-    application.dependency_overrides[
-        ingestion_router.get_schema_loader_dependency
-    ] = lambda: schema_loader
+    application.dependency_overrides[ingestion_router.get_config_manager_dependency] = (
+        lambda: config_manager
+    )
+    application.dependency_overrides[ingestion_router.get_schema_loader_dependency] = (
+        lambda: schema_loader
+    )
 
     # The upload route calls assert_tenant_exists, which reads tenant_metadata
     # via the tenant manager — wire it and ensure the tenant exists so the
@@ -535,14 +541,18 @@ def _vespa_visit_count(
 ) -> int:
     """Count documents the worker fed for ``tenant_id`` under ``base_schema_name``.
 
-    The worker deploys schema as ``<base>_<tenant>`` (tenant-scoped), so
-    the visit URL must use the full tenant-scoped name, not the base name.
+    The worker deploys schema as ``<base>_<canonical_tenant>`` (the deploy
+    path canonicalizes ``tenant`` → ``tenant:tenant`` → ``tenant_tenant``), so
+    the visit URL must use that canonical tenant-scoped name.
 
     Polls up to ``wait_seconds`` because content/distributor nodes lag
     config-server schema activation by 30-120s on a fresh container —
     feed acks before docs are queryable. Returns the first non-zero count
     or 0 after the deadline."""
-    schema_name = f"{base_schema_name}_{tenant_id}"
+    from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+    canonical_suffix = canonical_tenant_id(tenant_id).replace(":", "_")
+    schema_name = f"{base_schema_name}_{canonical_suffix}"
     yql = f"select * from {schema_name} where true"
     deadline = time.time() + wait_seconds
     last_status = None
@@ -793,7 +803,7 @@ class TestUploadRealStack:
         # First, upload once via /upload to get a real source_url.
         video_bytes = VIDEO_PATH.read_bytes()
         files = {"file": (VIDEO_PATH.name, io.BytesIO(video_bytes), "video/mp4")}
-        data = {"profile": PROFILE, "tenant_id": TENANT_ID}
+        data = {"profile": PROFILE, "backend": "vespa", "tenant_id": TENANT_ID}
         first_resp = await http_client.post(
             "/ingestion/upload",
             params={"wait": "true", "wait_timeout": 600},
@@ -802,16 +812,24 @@ class TestUploadRealStack:
         )
         assert first_resp.status_code == 200
         first_body = first_resp.json()
+        assert first_body["state"] == "complete", (
+            f"first upload must complete so it marks the idempotency record; "
+            f"got {first_body!r}"
+        )
         source_url = first_body["source_url"]
         first_id = first_body["ingest_id"]
 
         # Re-submit via the helper with the SAME source_url — should
-        # hit the idempotency cache and return first_id.
+        # hit the idempotency cache and return first_id. The /upload route
+        # canonicalizes the tenant (require_tenant_id) before computing the
+        # idempotency sha, so the re-submit must do the same to match it.
+        from cogniverse_core.common.tenant_utils import require_tenant_id
+
         result = await enqueue_ingestion(
             real_stack["redis"],
             source_url=source_url,
             profile=PROFILE,
-            tenant_id=TENANT_ID,
+            tenant_id=require_tenant_id(TENANT_ID, source="test"),
         )
         assert result.existing is True, (
             f"Re-submit with same source_url should be a cache hit, got {result}"
