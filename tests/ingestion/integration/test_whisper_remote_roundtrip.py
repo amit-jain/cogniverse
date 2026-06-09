@@ -24,8 +24,11 @@ import cgi
 import io
 import json
 import logging
+import math
 import socket
+import struct
 import threading
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -37,6 +40,27 @@ from cogniverse_runtime.ingestion.processing_strategy_set import (
 from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
 from cogniverse_runtime.ingestion.strategies import AudioTranscriptionStrategy
+
+
+def _valid_wav_bytes(seconds: float = 0.2, rate: int = 16000) -> bytes:
+    """A real 16 kHz mono PCM WAV the processor's pyav extraction can decode.
+
+    The remote path re-encodes audio to 16 kHz mono before POSTing, so the
+    fixture must supply genuinely decodable audio (not placeholder bytes).
+    """
+    buf = io.BytesIO()
+    w = wave.open(buf, "wb")
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(rate)
+    w.writeframes(
+        b"".join(
+            struct.pack("<h", int(2000 * math.sin(2 * math.pi * 440 * i / rate)))
+            for i in range(int(seconds * rate))
+        )
+    )
+    w.close()
+    return buf.getvalue()
 
 
 def _free_port() -> int:
@@ -146,8 +170,7 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
     url, stub = stub_whisper
 
     audio_path = tmp_path / "clip.wav"
-    audio_bytes = b"FAKE-WAV-PAYLOAD-" + b"x" * 100
-    audio_path.write_bytes(audio_bytes)
+    audio_path.write_bytes(_valid_wav_bytes())
 
     strategy = AudioTranscriptionStrategy(
         model="base", language="en", inference_service="vllm_asr"
@@ -169,8 +192,9 @@ def test_strategy_to_pod_roundtrip(stub_whisper, tmp_path):
     assert "file" in sent and isinstance(sent["file"], dict), (
         "remote path must POST the audio as a multipart 'file' part"
     )
-    assert sent["file"]["bytes"] == audio_bytes, (
-        "audio bytes must round-trip multipart unchanged"
+    posted = sent["file"]["bytes"]
+    assert posted[:4] == b"RIFF" and len(posted) > 44, (
+        "remote path must POST re-encoded 16 kHz mono PCM WAV bytes"
     )
     assert sent.get("model"), "model id must be present in form data"
     assert sent.get("language") == "en", (
@@ -199,7 +223,7 @@ def test_language_auto_is_omitted_from_request(stub_whisper, tmp_path):
     url, stub = stub_whisper
 
     audio_path = tmp_path / "clip.wav"
-    audio_path.write_bytes(b"AUDIO")
+    audio_path.write_bytes(_valid_wav_bytes())
 
     strategy = AudioTranscriptionStrategy(
         model="base", language="auto", inference_service="vllm_asr"
@@ -242,7 +266,7 @@ def test_pod_500_surfaces_as_error_dict(stub_whisper, tmp_path):
     thread.start()
     try:
         audio_path = tmp_path / "clip.wav"
-        audio_path.write_bytes(b"AUDIO")
+        audio_path.write_bytes(_valid_wav_bytes())
 
         processor = AudioProcessor(
             logging.getLogger("test"),
