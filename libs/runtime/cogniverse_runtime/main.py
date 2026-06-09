@@ -418,15 +418,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         system_config.base_url = os.environ["LLM_ENDPOINT"]
         updated = True
     # LLM_ENGINE / LLM_MODEL come from the chart's llm.engine / llm.model
-    # values. Kept on system_config for components that surface the
-    # serving topology (e.g. dashboard health UI). The DSPy LM
-    # construction path no longer reads these — the chart renders the
-    # full litellm-prefixed model id into config.json directly.
+    # values (the chart passes the BARE model id). Agents that build a
+    # per-tenant DSPy LM off system_config.llm_model (e.g. TextAnalysisAgent
+    # via DynamicDSPyMixin) hand it straight to litellm, which rejects a bare
+    # id with "LLM Provider NOT provided" — so attach the provider prefix
+    # here, matching the worker and the chart's config.json model helper.
     if os.environ.get("LLM_ENGINE"):
         system_config.llm_engine = os.environ["LLM_ENGINE"]
         updated = True
     if os.environ.get("LLM_MODEL"):
-        system_config.llm_model = os.environ["LLM_MODEL"]
+        from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
+
+        system_config.llm_model = ensure_provider_prefix(os.environ["LLM_MODEL"])
         updated = True
     if os.environ.get("TELEMETRY_HTTP_ENDPOINT"):
         system_config.telemetry_url = os.environ["TELEMETRY_HTTP_ENDPOINT"]

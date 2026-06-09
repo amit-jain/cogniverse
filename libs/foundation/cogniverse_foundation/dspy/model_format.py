@@ -30,3 +30,24 @@ def bare_model_name(model: str) -> str:
     if head in _KNOWN_PREFIXES:
         return tail
     return model
+
+
+def ensure_provider_prefix(model: str, default_provider: str = "openai") -> str:
+    """Prepend ``default_provider/`` when ``model`` lacks a known litellm prefix.
+
+    litellm's ``get_llm_provider`` needs an explicit provider — a bare
+    ``gemma3:4b`` raises "LLM Provider NOT provided". An HF-org id like
+    ``Qwen/Qwen2.5-7B`` also needs the prefix, so only a KNOWN prefix head
+    counts as already-prefixed (mirrors ``bare_model_name``).
+
+    ``gemma3:4b`` → ``openai/gemma3:4b``
+    ``Qwen/Qwen2.5-7B`` → ``openai/Qwen/Qwen2.5-7B``
+    ``openai/gpt-4o`` → unchanged
+    ``ollama/llama3`` → unchanged
+    """
+    if not model:
+        return model
+    head = model.split("/", 1)[0]
+    if head in _KNOWN_PREFIXES:
+        return model
+    return f"{default_provider}/{model}"

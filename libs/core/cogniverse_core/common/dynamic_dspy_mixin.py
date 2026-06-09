@@ -18,6 +18,7 @@ from cogniverse_foundation.config.agent_config import (
 )
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
 logger = logging.getLogger(__name__)
 
@@ -63,10 +64,18 @@ class DynamicDSPyMixin:
         Args:
             config: Agent configuration
         """
+        # config.llm_model comes from the in-cluster serving config
+        # (system_config.llm_model), which the chart populates with a BARE
+        # model id (e.g. "gemma3:4b"). litellm rejects a bare id with "LLM
+        # Provider NOT provided", so attach the openai-compatible provider
+        # prefix the in-cluster vLLM/Ollama endpoint speaks.
         endpoint_config = LLMEndpointConfig(
-            model=config.llm_model,
+            model=ensure_provider_prefix(config.llm_model),
             api_base=config.llm_base_url,
-            api_key=config.llm_api_key,
+            # litellm's openai client refuses to dispatch with a null key even
+            # against an in-cluster vLLM/Ollama endpoint that ignores auth —
+            # hand it the no-auth sentinel (matches the chart + worker).
+            api_key=config.llm_api_key or "placeholder-no-auth-needed",
             temperature=config.llm_temperature,
             max_tokens=config.llm_max_tokens or 1000,
         )

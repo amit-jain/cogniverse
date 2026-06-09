@@ -87,18 +87,33 @@ class TestDynamicDSPyMixin:
         assert agent._dynamic_modules == {}
 
     def test_configure_dspy_lm(self, agent_config):
-        """``create_dspy_lm`` passes ``LLMEndpointConfig.model`` through
-        to dspy.LM verbatim; whatever the AgentConfig set is what dspy
-        sees. The agent fixture sets ``llm_model="gpt-4"`` so the
-        dspy.LM boundary receives exactly that.
+        """The mixin attaches a litellm provider prefix before dspy.LM.
+
+        ``config.llm_model`` is the in-cluster serving model, which the chart
+        populates BARE. litellm needs an explicit provider, so the mixin
+        prefixes it — ``gpt-4`` → ``openai/gpt-4``.
         """
         with patch("dspy.LM") as mock_lm:
             TestAgent(agent_config)
 
             mock_lm.assert_called_once()
             call_args = mock_lm.call_args
-            assert call_args[0][0] == "gpt-4"
+            assert call_args[0][0] == "openai/gpt-4"
             assert call_args[1]["api_base"] == "http://localhost:11434"
+
+    def test_bare_ollama_model_gains_provider_prefix(self, agent_config):
+        """A bare ollama tag like ``gemma3:4b`` must reach dspy.LM as
+        ``openai/gemma3:4b`` — litellm rejects the bare id with "LLM
+        Provider NOT provided", which is the live e2e agent-500 bug."""
+        agent_config.llm_model = "gemma3:4b"
+        agent_config.llm_api_key = None
+        with patch("dspy.LM") as mock_lm:
+            TestAgent(agent_config)
+
+            assert mock_lm.call_args[0][0] == "openai/gemma3:4b"
+            # A null key would make litellm's openai client refuse to dispatch
+            # even against the no-auth in-cluster endpoint.
+            assert mock_lm.call_args[1]["api_key"] == "placeholder-no-auth-needed"
 
     def test_register_signature(self, agent_config):
         """Test signature registration"""

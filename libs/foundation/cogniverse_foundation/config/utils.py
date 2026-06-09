@@ -278,6 +278,10 @@ class ConfigUtils:
             "llm_model": lambda: self._system_config.llm_model,
             "local_llm_model": lambda: self._system_config.llm_model,  # Alias
             "base_url": lambda: self._system_config.base_url,
+            # Alias: agents build their DSPy LM off ``llm_base_url`` (the LM
+            # endpoint). Without it litellm falls back to the public OpenAI
+            # host and 401s on the in-cluster no-auth key.
+            "llm_base_url": lambda: self._system_config.base_url,
             "llm_api_key": lambda: self._system_config.llm_api_key,
             "telemetry_url": lambda: self._system_config.telemetry_url,
             "telemetry_collector_endpoint": lambda: (

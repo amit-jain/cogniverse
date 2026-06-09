@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from cogniverse_foundation.dspy import bare_model_name
+from cogniverse_foundation.dspy import bare_model_name, ensure_provider_prefix
 
 
 class TestBareModelName:
@@ -39,3 +39,39 @@ class TestBareModelName:
     )
     def test_strip_only_known_prefixes(self, model: str, expected: str):
         assert bare_model_name(model) == expected
+
+
+class TestEnsureProviderPrefix:
+    """Bare ids must gain a provider prefix so litellm can route them."""
+
+    @pytest.mark.parametrize(
+        "model,expected",
+        [
+            # Bare ollama tag (the engine=ollama default) — gains openai/.
+            ("gemma3:4b", "openai/gemma3:4b"),
+            ("qwen3:4b", "openai/qwen3:4b"),
+            # HF org/name — leading segment is NOT a known prefix, so litellm
+            # still needs a provider; the org slash is preserved after it.
+            ("Qwen/Qwen2.5-7B", "openai/Qwen/Qwen2.5-7B"),
+            ("google/gemma-4-e4b-it", "openai/google/gemma-4-e4b-it"),
+            # Already prefixed with a known provider — untouched.
+            ("openai/gpt-4o", "openai/gpt-4o"),
+            ("ollama/llama3", "ollama/llama3"),
+            ("hosted_vllm/Qwen/Qwen2.5-7B", "hosted_vllm/Qwen/Qwen2.5-7B"),
+            # Empty passes through unchanged.
+            ("", ""),
+        ],
+    )
+    def test_prefix_only_unprefixed(self, model: str, expected: str):
+        assert ensure_provider_prefix(model) == expected
+
+    def test_ensure_then_bare_round_trip(self):
+        # ensure_provider_prefix and bare_model_name are inverses for the
+        # bare→prefixed→bare cycle the runtime relies on.
+        assert bare_model_name(ensure_provider_prefix("gemma3:4b")) == "gemma3:4b"
+
+    def test_custom_default_provider(self):
+        assert (
+            ensure_provider_prefix("gemma3:4b", default_provider="hosted_vllm")
+            == "hosted_vllm/gemma3:4b"
+        )
