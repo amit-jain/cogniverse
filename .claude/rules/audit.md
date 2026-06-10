@@ -166,6 +166,19 @@ grep -rnP '"lvt" in [^.]*\.lower\(\)|"global" in [^.]*\.lower\(\)' libs/ --inclu
 # stripping a trailing /v1 (see tests/agents/integration/conftest.py:is_llm_available
 # and tests/fixtures/llm.py). The negative-lookahead finds single-probe gates.
 grep -rnP '/api/tags(?!.*v1/models)' tests/ --include="*.py" | grep -iE 'available|skip|reachable'
+
+# FastAPI Query params sent as multipart FORM fields by test clients —
+# FastAPI silently applies the defaults (8th: wait/wait_timeout/force posted
+# in data= to /ingestion/upload; the test believed wait=true but the route
+# returned immediately and force was never honored, so idempotency dedupe
+# reused stale ingests). For each hit, check the route's declaration.
+grep -rnP '"(wait|wait_timeout|force|limit|timeout_s)"\s*:' tests/ --include="*.py" -A0 | xargs -I{} true # then verify each data={...} block against the route's Form/Query split
+
+# Optional enrichment step inside a larger pipeline called UNGUARDED — one
+# unreachable sidecar throws away all prior computation (8th: face pipeline
+# inside KG extraction; ConnectError destroyed entities+claims already
+# extracted). Look for conditional `if <feature>_url:` calls without try.
+grep -rnP 'if \w+_(url|endpoint):' libs/ --include="*.py" -A3 | grep -B2 -A2 "_run_\|_pipeline(" | grep -v "try:"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
