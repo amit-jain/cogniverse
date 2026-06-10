@@ -164,11 +164,14 @@ def upload_result():
         resp = requests.post(
             f"{RUNTIME_URL}/ingestion/upload",
             files={"file": (SAMPLE_VIDEO.name, f, "video/mp4")},
+            # force is a Query param — in form data it is silently ignored
+            # and idempotency dedupe reuses the previous ingest of the
+            # same content.
             data={
                 "profile": PROFILE,
                 "tenant_id": TENANT_FULL_ID,
-                "force": "true",
             },
+            params={"force": "true"},
             timeout=60,
         )
     assert resp.status_code == 200, (

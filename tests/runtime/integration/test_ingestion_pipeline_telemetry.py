@@ -194,18 +194,27 @@ def _upload_fixture(tenant_id: str) -> str:
             r = c.post(
                 f"{RUNTIME_BASE}/ingestion/upload",
                 files={"file": (upload_name, fh, "video/mp4")},
+                # tenant_id/profile are Form fields; wait/wait_timeout/force
+                # are Query params — sent as form data they are silently
+                # ignored and the route returns 202 without waiting.
                 data={
                     "tenant_id": tenant_id,
                     "profile": "video_colpali_smol500_mv_frame",
-                    "wait": "true",
-                    "wait_timeout": "300",
-                    "force": "true",
                 },
+                params={"wait": "true", "wait_timeout": "300", "force": "true"},
             )
     assert r.status_code in (200, 202), f"upload failed: {r.status_code} {r.text[:300]}"
     body = r.json()
     ingest_id = body.get("ingest_id") or body.get("job_id") or ""
     assert ingest_id, f"upload response missing ingest_id: {body}"
+    # wait=true returns after wait_timeout even when the job is still
+    # running — the route only reports status="success" on terminal
+    # 'complete'. A non-terminal ingest must fail HERE with the real
+    # cause, not later as "no pipeline.* spans found".
+    assert body.get("status") == "success", (
+        f"ingest {ingest_id} not terminal-complete within wait_timeout: "
+        f"status={body.get('status')!r}"
+    )
     return ingest_id
 
 
