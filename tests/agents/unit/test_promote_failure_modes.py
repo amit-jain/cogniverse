@@ -63,7 +63,9 @@ class FaultInjectingStore:
             raise KeyError(name)
         return self.created[name]
 
-    async def append_to_dataset(self, name: str, data: pd.DataFrame) -> None:
+    async def append_to_dataset(
+        self, name: str, data: pd.DataFrame, metadata: dict | None = None
+    ) -> None:
         if self.mode == _Mode.FAIL_EXPERIMENT and "experiments" in name:
             raise ConnectionError("simulated Phoenix 503 on experiment append")
         if name not in self.created:

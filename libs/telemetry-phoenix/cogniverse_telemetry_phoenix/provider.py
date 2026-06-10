@@ -394,50 +394,49 @@ class PhoenixDatasetStore(DatasetStore):
             logger.error(f"Failed to retrieve dataset '{name}': {e}")
             raise
 
-    async def append_to_dataset(self, name: str, data: pd.DataFrame) -> None:
+    async def append_to_dataset(
+        self,
+        name: str,
+        data: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
-        Append records to existing dataset.
+        Append records to an existing dataset as a new version.
 
-        Note: Phoenix doesn't support direct append, so this creates a versioned copy.
+        Phoenix appends natively via ``add_examples_to_dataset`` — the
+        dataset keeps its identity and ``get_dataset`` returns the full
+        appended history.
 
         Args:
             name: Dataset name
             data: DataFrame with new records
+            metadata: Optional dict with input_keys/output_keys/metadata_keys
+                to classify columns, same shape as ``create_dataset``.
+
+        Raises:
+            ValueError: If the dataset does not exist (callers create it
+                with their full metadata, which append cannot infer).
         """
+        metadata = metadata or {}
+        input_keys = metadata.get("input_keys", [])
+        output_keys = metadata.get("output_keys", [])
+        metadata_keys = metadata.get("metadata_keys", [])
+
         try:
-            # Try to load existing dataset
-            try:
-                from phoenix.client import Client
+            from phoenix.client import Client
 
-                sync_client = Client(base_url=self.http_endpoint)
-                existing_dataset = sync_client.datasets.get_dataset(dataset=name)
-                existing_df = existing_dataset.to_dataframe()
-
-                # Concatenate and create versioned dataset
-                combined_df = pd.concat([existing_df, data], ignore_index=True)
-
-                # Create versioned name
-                from datetime import datetime
-
-                version_suffix = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                versioned_name = f"{name}_v{version_suffix}"
-
-                sync_client.datasets.create_dataset(
-                    name=versioned_name,
-                    dataframe=combined_df,
-                )
-
-                logger.info(
-                    f"Appended {len(data)} records to dataset '{name}' "
-                    f"(created versioned copy: {versioned_name})"
-                )
-
-            except Exception:
-                # Dataset doesn't exist, create it
-                await self.create_dataset(name=name, data=data)
-                logger.info(f"Created new dataset '{name}' with {len(data)} records")
-
+            sync_client = Client(base_url=self.http_endpoint)
+            sync_client.datasets.add_examples_to_dataset(
+                dataset=name,
+                dataframe=data,
+                input_keys=input_keys if input_keys else (),
+                output_keys=output_keys if output_keys else (),
+                metadata_keys=metadata_keys if metadata_keys else (),
+            )
+            logger.info(f"Appended {len(data)} records to dataset '{name}'")
         except Exception as e:
+            if "not found" in str(e).lower() or "does not exist" in str(e).lower():
+                raise ValueError(f"Dataset not found: {name}") from e
             logger.error(f"Failed to append to dataset '{name}': {e}")
             raise
 

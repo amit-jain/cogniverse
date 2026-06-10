@@ -34,7 +34,9 @@ class FakeDatasetStore:
             raise KeyError(name)
         return self.created[name]
 
-    async def append_to_dataset(self, name: str, data: pd.DataFrame) -> None:
+    async def append_to_dataset(
+        self, name: str, data: pd.DataFrame, metadata: dict | None = None
+    ) -> None:
         if name not in self.created:
             raise KeyError(name)
         self.append_calls.append((name, data))

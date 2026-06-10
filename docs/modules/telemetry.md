@@ -467,8 +467,18 @@ class DatasetStore(ABC):
         pass
 
     @abstractmethod
-    async def append_to_dataset(self, name: str, data: pd.DataFrame) -> None:
-        """Append records to existing dataset."""
+    async def append_to_dataset(
+        self,
+        name: str,
+        data: pd.DataFrame,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Append records to an existing dataset as a new version.
+
+        ``metadata`` carries input_keys/output_keys/metadata_keys (same
+        shape as ``create_dataset``). Raises ValueError if the dataset
+        does not exist.
+        """
         pass
 ```
 

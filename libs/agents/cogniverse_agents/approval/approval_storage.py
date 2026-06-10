@@ -834,7 +834,6 @@ class ApprovalStorageImpl(ApprovalStorage):
                 logger.info(
                     f"Appending {len(dataset_records)} items to existing dataset '{dataset_name}'"
                 )
-                # Use provider's append method (which creates versioned copy in telemetry backend)
                 await self.provider.datasets.append_to_dataset(
                     name=dataset_name, data=df
                 )

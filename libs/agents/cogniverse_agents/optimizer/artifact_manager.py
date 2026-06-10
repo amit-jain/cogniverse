@@ -1125,9 +1125,9 @@ class ArtifactManager:
         """Persist a typed ``ExperimentMetrics`` record.
 
         Each call appends a row to ``dspy-experiments-{tenant}-{agent}``.
-        PhoenixProvider's ``append_to_dataset`` creates a versioned copy on
-        each append, so the *latest* version is always the full history; we
-        list versioned datasets to read all rows.
+        PhoenixProvider's ``append_to_dataset`` adds examples to the same
+        dataset (a new Phoenix version), so ``get_dataset`` always returns
+        the full history.
 
         The previous workaround (``save_blob`` overwriting per-agent) lost
         history every run; this implementation makes the experiment ledger
@@ -1149,7 +1149,9 @@ class ArtifactManager:
         all_columns = list(row_df.columns)
         try:
             await self._provider.datasets.append_to_dataset(
-                name=dataset_name, data=row_df
+                name=dataset_name,
+                data=row_df,
+                metadata={"metadata_keys": all_columns},
             )
             return dataset_name
         except (KeyError, ValueError):
@@ -1175,9 +1177,9 @@ class ArtifactManager:
     async def load_experiments(self, agent_type: str) -> List[ExperimentMetrics]:
         """Return the full experiment history for an agent in chronological order.
 
-        Reads the latest versioned dataset (Phoenix's append model creates
-        ``{name}_v{ts}`` per append; the highest timestamp suffix has the
-        complete history). Empty list when no experiments have been logged.
+        ``get_dataset`` on the base name returns the latest Phoenix version,
+        which carries every appended row. Empty list when no experiments
+        have been logged.
         """
         dataset_name = self._experiments_dataset_name(agent_type)
         latest_df = await self._latest_versioned_dataset(dataset_name)
@@ -1199,13 +1201,14 @@ class ArtifactManager:
         return history[-1] if history else None
 
     async def _latest_versioned_dataset(self, base_name: str) -> Optional[pd.DataFrame]:
-        """Find the most-recent ``{base_name}_v{ts}`` dataset.
+        """Load the dataset's full history.
 
-        Phoenix's ``append_to_dataset`` creates a versioned copy each call;
-        the highest-timestamped suffix carries the full appended history.
-        Falls back to the un-versioned dataset for a fresh first row.
+        The base dataset carries every appended row (Phoenix versions the
+        same dataset on append). The ``{base_name}_v{ts}`` enumeration below
+        remains only to read side datasets written by the pre-native-append
+        implementation.
         """
-        # Try the un-versioned name first (the very first save creates it).
+        # The base name is authoritative — appends land here.
         try:
             df = await self._provider.datasets.get_dataset(name=base_name)
             return df
