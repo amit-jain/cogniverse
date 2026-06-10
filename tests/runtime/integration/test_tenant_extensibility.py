@@ -23,10 +23,31 @@ TENANT_ID = "test_extensibility"
 
 
 def _llm_available():
+    """Probe the configured LLM endpoint (both ``/api/tags`` and
+    ``/v1/models`` after stripping a trailing ``/v1``). A vLLM endpoint
+    whose api_base ends in ``/v1`` 404s on ``/api/tags``, so probing only
+    that path falsely skips the suite even when the LM is up."""
     try:
-        return (
-            httpx.get("http://localhost:11434/api/tags", timeout=5).status_code == 200
-        )
+        import json
+        from pathlib import Path
+
+        config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
+        with open(config_path) as f:
+            api_base = (
+                json.load(f)
+                .get("llm_config", {})
+                .get("primary", {})
+                .get("api_base", "http://localhost:11434")
+            ).rstrip("/")
+        if api_base.endswith("/v1"):
+            api_base = api_base[: -len("/v1")]
+        for path in ("/api/tags", "/v1/models"):
+            try:
+                if httpx.get(f"{api_base}{path}", timeout=5.0).status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                continue
+        return False
     except Exception:
         return False
 
