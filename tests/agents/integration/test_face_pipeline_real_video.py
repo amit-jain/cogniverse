@@ -109,6 +109,38 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _warm_face_embed_model():
+    """Absorb the sidecar's cold start before any test issues real work.
+
+    The first /embed on a fresh sidecar triggers the ~210 MiB buffalo_l
+    download; until it finishes, requests 500/stall and the first test
+    fails on infrastructure rather than behavior.
+    """
+    import httpx
+
+    one_px_png_b64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg"
+        "YGBgAAAABQABh6FO1AAAAABJRU5ErkJggg=="
+    )
+    deadline = time.time() + 600
+    last = "never reached"
+    while time.time() < deadline:
+        try:
+            r = httpx.post(
+                f"{FACE_EMBED_URL}/embed",
+                json={"image_b64": one_px_png_b64},
+                timeout=600.0,
+            )
+            if r.status_code == 200:
+                return
+            last = f"HTTP {r.status_code}: {r.text[:120]}"
+        except httpx.HTTPError as exc:
+            last = repr(exc)
+        time.sleep(5)
+    pytest.fail(f"face-embed sidecar never warmed within 600s; last: {last}")
+
+
 # --------------------------------------------------------------------- #
 # Real frame extraction                                                  #
 # --------------------------------------------------------------------- #

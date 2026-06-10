@@ -7,6 +7,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         ca-certificates \
+        # insightface ships no py3.12 wheel — pip builds its Cython
+        # extension from source, which needs a C++ toolchain.
+        g++ \
         # InsightFace's onnxruntime needs libgomp; pillow needs the usual
         # image-codec libs. Keep this list minimal.
         libgomp1 \

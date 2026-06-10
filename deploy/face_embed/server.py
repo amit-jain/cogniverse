@@ -24,6 +24,7 @@ import base64
 import io
 import logging
 import os
+import threading
 from typing import List, Optional
 
 import numpy as np
@@ -85,6 +86,7 @@ class EmbedResponse(BaseModel):
 
 
 _MODEL = None
+_MODEL_LOCK = threading.Lock()
 
 
 def _load_model():
@@ -95,26 +97,33 @@ def _load_model():
         join its Service early.
       * Tests can patch ``_MODEL`` with a deterministic stand-in without
         ever hitting the real ArcFace weights.
+
+    The lock serialises concurrent first requests — without it each one
+    starts its own ~210 MiB model-pack download and the losers crash on
+    the partially-written zip.
     """
     global _MODEL
     if _MODEL is not None:
         return _MODEL
-    # Imported inside the function so test patches can avoid the heavy
-    # native dependency entirely.
-    from insightface.app import FaceAnalysis  # noqa: PLC0415
+    with _MODEL_LOCK:
+        if _MODEL is not None:
+            return _MODEL
+        # Imported inside the function so test patches can avoid the heavy
+        # native dependency entirely.
+        from insightface.app import FaceAnalysis  # noqa: PLC0415
 
-    model_name = os.environ.get("FACE_EMBED_MODEL", "buffalo_l")
-    ctx_id = int(os.environ.get("FACE_EMBED_CTX_ID", "-1"))  # -1 = CPU
-    logger.info(
-        "Loading InsightFace model=%s ctx_id=%s (this takes ~5s on cold start)",
-        model_name,
-        ctx_id,
-    )
-    app_ = FaceAnalysis(name=model_name)
-    app_.prepare(ctx_id=ctx_id, det_size=(640, 640))
-    _MODEL = app_
-    logger.info("InsightFace ready")
-    return _MODEL
+        model_name = os.environ.get("FACE_EMBED_MODEL", "buffalo_l")
+        ctx_id = int(os.environ.get("FACE_EMBED_CTX_ID", "-1"))  # -1 = CPU
+        logger.info(
+            "Loading InsightFace model=%s ctx_id=%s (this takes ~5s on cold start)",
+            model_name,
+            ctx_id,
+        )
+        app_ = FaceAnalysis(name=model_name)
+        app_.prepare(ctx_id=ctx_id, det_size=(640, 640))
+        _MODEL = app_
+        logger.info("InsightFace ready")
+        return _MODEL
 
 
 # ---------------------------------------------------------------------------
