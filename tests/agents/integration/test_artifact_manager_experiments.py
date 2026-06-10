@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -47,9 +48,13 @@ pytestmark = [
 def artifact_manager() -> ArtifactManager:
     """Real PhoenixProvider against the locally-running Phoenix instance."""
     tenant_id = f"c1_int_{uuid.uuid4().hex[:8]}"
-    provider = PhoenixProvider(
-        http_endpoint=PHOENIX_HTTP,
-        tenant_id=tenant_id,
+    provider = PhoenixProvider()
+    provider.initialize(
+        {
+            "tenant_id": tenant_id,
+            "http_endpoint": PHOENIX_HTTP,
+            "grpc_endpoint": f"{urlparse(PHOENIX_HTTP).hostname or 'localhost'}:4317",
+        }
     )
     return ArtifactManager(telemetry_provider=provider, tenant_id=tenant_id)
 
