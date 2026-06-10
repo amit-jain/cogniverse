@@ -43,7 +43,7 @@ RUN case "$TORCH_BACKEND" in \
               --extra-index-url https://pypi.org/simple "torch==2.5.1" ;; \
     esac
 
-COPY requirements.txt ./
+COPY deploy/pylate/requirements.txt ./
 # fast-plaid (a pylate transitive dep used for indexing, not inference) has
 # no aarch64 wheel. Install pylate --no-deps and add the minimum deps the
 # encode path actually needs.
@@ -57,7 +57,10 @@ RUN pip install --no-cache-dir \
         numpy \
     && pip install --no-cache-dir --no-deps pylate==1.4.0
 
-COPY server.py ./
+# The module is import-free of cogniverse packages by design, so the
+# image carries just this one file plus requirements.txt. Build from
+# the REPO ROOT: docker build -f deploy/pylate/Dockerfile .
+COPY libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py ./server.py
 
 ENV MODEL_NAME=lightonai/LateOn \
     DEVICE=cpu \

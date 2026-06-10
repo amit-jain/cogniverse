@@ -164,7 +164,7 @@ endpoint, supported models, and the video-only scope.
 |---|---|
 | Chart key | `inference.colbert_pylate` |
 | Model | `lightonai/LateOn` (ColBERT-style, late-interaction) |
-| Image | **`cogniverse/pylate:dev` (CUSTOM, built from `deploy/pylate/`)** |
+| Image | **`cogniverse/pylate:dev` (CUSTOM, `deploy/pylate/Dockerfile`, module `cogniverse_runtime/sidecars/colbert_pylate.py`)** |
 | Engine | `pylate` |
 | NodePort | 29002 |
 | Default state | enabled |
@@ -229,7 +229,7 @@ startup before exec-ing `vllm serve`. The endpoint is
 | `vllm_colpali` (ROCm 7.12+) | `vllm/vllm-openai-rocm` | No |
 | `vllm_colqwen` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
 | `vllm_asr` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
-| `colbert_pylate` | `cogniverse/pylate:dev` | **Yes** (`deploy/pylate/`) |
+| `colbert_pylate` | `cogniverse/pylate:dev` | **Yes** (`deploy/pylate/Dockerfile`) |
 | `code_colbert_pylate` | `cogniverse/pylate:dev` | **Yes** (same image) |
 | `denseon` | `cogniverse/pylate:dev` | **Yes** (same image, `MODE=dense`) |
 | `videoprism` | `cogniverse/videoprism:dev` | **Yes** (`deploy/videoprism/`) |

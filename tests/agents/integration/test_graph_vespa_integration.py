@@ -186,7 +186,7 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def pylate_server():
-    """Run the real deploy/pylate/server.py in a background thread.
+    """Run the real colbert_pylate sidecar module in a background thread.
 
     Loads ``lightonai/LateOn`` via PyLate (downloads ~300MB on first
     run, cached in HF home thereafter) and serves the same /pooling
@@ -201,7 +201,8 @@ def pylate_server():
 
     # Load the production sidecar module by path (no package install).
     spec = importlib.util.spec_from_file_location(
-        "pylate_server_under_test", "deploy/pylate/server.py"
+        "pylate_server_under_test",
+        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

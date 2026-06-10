@@ -1,6 +1,6 @@
 """Contract test for the PyLate remote inference FastAPI server.
 
-Loads the server module from ``deploy/pylate/``, stubs the PyLate ColBERT
+Loads the colbert_pylate sidecar module, stubs the PyLate ColBERT
 class, and verifies the ``/pooling`` response shape matches what
 ``cogniverse_core.common.models.model_loaders.RemoteColBERTLoader`` parses
 when calling a vLLM-compatible endpoint.
@@ -17,8 +17,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-SERVER_DIR = Path(__file__).resolve().parents[3] / "deploy" / "pylate"
-SERVER_PATH = SERVER_DIR / "server.py"
+SERVER_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py"
+)
 
 
 class _FakeColBERT:

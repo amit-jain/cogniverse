@@ -128,7 +128,7 @@ def _colbert_endpoint_from_env() -> Optional[str]:
 
 
 def _pylate_sidecar_module_importable() -> bool:
-    sidecar_path = Path("deploy/pylate/server.py")
+    sidecar_path = Path("libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py")
     if not sidecar_path.exists():
         return False
     try:
@@ -160,7 +160,7 @@ pytestmark = [
         reason=(
             "Content-schema back-ref tests need a real ColBERT endpoint — "
             "set INFERENCE_SERVICE_URLS with a live colbert_pylate URL or "
-            "make deploy/pylate/server.py importable so the in-process "
+            "make the colbert_pylate sidecar module importable so the in-process "
             "fallback can spawn it."
         ),
     ),
@@ -357,7 +357,8 @@ def colbert_endpoint():
     import uvicorn  # noqa: PLC0415
 
     spec = importlib.util.spec_from_file_location(
-        "pylate_server_under_test_backrefs", "deploy/pylate/server.py"
+        "pylate_server_under_test_backrefs",
+        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

@@ -28,7 +28,7 @@ from typing import Optional
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SIDECAR_DIR = REPO_ROOT / "deploy" / "pylate"
+SIDECAR_DOCKERFILE = REPO_ROOT / "deploy" / "pylate" / "Dockerfile"
 DEFAULT_IMAGE_TAG = "cogniverse/pylate:inttest"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 300
 HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
@@ -83,7 +83,15 @@ class PylateSidecarFactory:
         if self._image_built:
             return
         subprocess.run(
-            ["docker", "build", "-t", self.image_tag, str(SIDECAR_DIR)],
+            [
+                "docker",
+                "build",
+                "-f",
+                str(SIDECAR_DOCKERFILE),
+                "-t",
+                self.image_tag,
+                str(REPO_ROOT),
+            ],
             check=True,
             timeout=1200,
         )

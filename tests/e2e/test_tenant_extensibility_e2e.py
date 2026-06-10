@@ -13,7 +13,7 @@ import pytest
 
 from tests.e2e.conftest import RUNTIME, TENANT_ID, skip_if_no_runtime
 
-# DenseOn (768-dim, ModernBERT) served by deploy/pylate in mode=dense.
+# DenseOn (768-dim, ModernBERT) served by the colbert_pylate sidecar in mode=dense.
 # k3s NodePort wired in chart values: inference.denseon.service.nodePort.
 DENSEON_URL = "http://localhost:29006"
 

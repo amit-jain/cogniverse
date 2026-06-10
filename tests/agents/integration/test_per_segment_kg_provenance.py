@@ -301,14 +301,15 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def pylate_server():
-    """Real ``deploy/pylate/server.py`` in a background thread, serving
+    """Real colbert_pylate sidecar module in a background thread, serving
     ``lightonai/LateOn`` via the production /pooling contract."""
     import importlib.util
 
     import uvicorn
 
     spec = importlib.util.spec_from_file_location(
-        "pylate_server_per_segment", "deploy/pylate/server.py"
+        "pylate_server_per_segment",
+        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

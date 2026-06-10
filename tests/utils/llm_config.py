@@ -64,7 +64,7 @@ def get_memory_embedding_model() -> str:
 
     Mem0 needs a model that produces 768-dim vectors to match the
     agent_memories Vespa schema. DenseOn (ModernBERT-based,
-    768-dim, CLS pooling) served by the deploy/pylate sidecar in
+    768-dim, CLS pooling) served by the colbert_pylate sidecar in
     mode=dense.
     """
     memory_section = _load_config().get("memory", {})

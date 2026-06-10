@@ -27,7 +27,7 @@ def _shared_denseon_free_port() -> int:
 
 @pytest.fixture(scope="session")
 def shared_denseon():
-    """Run the real deploy/pylate/server.py in mode=dense for any tests
+    """Run the real colbert_pylate sidecar module in mode=dense for any tests
     that need a DenseOn embedding endpoint (Mem0, semantic_embedder, etc).
 
     Loads ``lightonai/DenseOn`` via SentenceTransformer (~150MB
@@ -39,7 +39,8 @@ def shared_denseon():
     import uvicorn
 
     spec = importlib.util.spec_from_file_location(
-        "denseon_server_under_test", "deploy/pylate/server.py"
+        "denseon_server_under_test",
+        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

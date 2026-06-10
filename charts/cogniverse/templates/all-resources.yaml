@@ -305,7 +305,7 @@ spec:
         - name: INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS
           value: {{ default 120 .Values.runtime.inferenceHealthBootDeadlineSeconds | quote }}
         # Route semantic text embeddings to the denseon sidecar (DenseOn
-        # via deploy/pylate in mode=dense).
+        # via the colbert_pylate sidecar in mode=dense).
         {{- if .Values.inference.denseon.enabled }}
         - name: COGNIVERSE_SEMANTIC_EMBED_URL
           value: "http://{{ $fullName }}-denseon:{{ .Values.inference.denseon.service.port }}"

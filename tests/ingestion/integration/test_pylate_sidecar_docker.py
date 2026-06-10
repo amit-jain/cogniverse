@@ -18,7 +18,7 @@ import pytest
 import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SIDECAR_DIR = REPO_ROOT / "deploy" / "pylate"
+SIDECAR_DOCKERFILE = REPO_ROOT / "deploy" / "pylate" / "Dockerfile"
 IMAGE_TAG = "cogniverse/pylate:inttest"
 CONTAINER_NAME = "cogniverse-pylate-inttest"
 
@@ -75,7 +75,15 @@ def _wait_for_health(base_url: str, deadline_seconds: int = 300) -> None:
 def running_sidecar():
     # Always rebuild to pick up server.py / Dockerfile / requirements changes.
     _run(
-        ["docker", "build", "-t", IMAGE_TAG, str(SIDECAR_DIR)],
+        [
+            "docker",
+            "build",
+            "-f",
+            str(SIDECAR_DOCKERFILE),
+            "-t",
+            IMAGE_TAG,
+            str(REPO_ROOT),
+        ],
         timeout=1200,
     )
 

@@ -72,8 +72,9 @@ class TestBuildImages:
         assert "cogniverse/dashboard-rocm:dev" in dashboard_cmd
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_pylate_uses_its_own_context(self, mock_run: object) -> None:
-        """pylate builds from deploy/pylate (self-contained), not repo root."""
+    def test_build_images_pylate_uses_repo_root_context(self, mock_run: object) -> None:
+        """pylate builds from the repo root — the Dockerfile COPYs the
+        sidecar module out of libs/runtime/cogniverse_runtime/sidecars/."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -83,7 +84,7 @@ class TestBuildImages:
         pylate_call = mock_run.call_args_list[2]  # type: ignore[attr-defined]
         cmd = pylate_call[0][0]
         assert "deploy/pylate/Dockerfile" in cmd
-        assert cmd[-1] == "deploy/pylate"  # build context is its own directory
+        assert cmd[-1] == "."  # repo-root build context
         assert "cogniverse/pylate:dev" in cmd
 
 

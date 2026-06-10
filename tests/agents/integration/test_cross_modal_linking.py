@@ -95,7 +95,7 @@ def _colbert_endpoint_from_env() -> Optional[str]:
 
 def _pylate_sidecar_module_importable() -> bool:
     """True iff the in-process pylate server can be imported & a model loaded."""
-    sidecar_path = Path("deploy/pylate/server.py")
+    sidecar_path = Path("libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py")
     if not sidecar_path.exists():
         return False
     try:

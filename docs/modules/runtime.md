@@ -108,6 +108,9 @@ cogniverse_runtime/
 │   ├── backpressure.py
 │   └── idempotency.py
 └── sidecars/                        # Standalone inference sidecars
+    ├── colbert_pylate.py            # PyLate ColBERT / DenseOn /pooling +
+    │                                # /v1/embeddings service; shipped via
+    │                                # deploy/pylate/Dockerfile
     └── face_embed.py                # InsightFace /embed FastAPI service;
                                      # shipped alone via deploy/face_embed/
                                      # Dockerfile (no cogniverse imports)
@@ -118,8 +121,9 @@ data, `build_app(cfg)` is the app factory, and `main()` is the deployed
 entrypoint — the only place the container env (`FACE_EMBED_MODEL`,
 `FACE_EMBED_CTX_ID`, `FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
 Run locally with `uv run python -m cogniverse_runtime.sidecars.face_embed`;
-build the image from the repo root with
-`docker build -f deploy/face_embed/Dockerfile .`.
+build the images from the repo root with
+`docker build -f deploy/face_embed/Dockerfile .` /
+`docker build -f deploy/pylate/Dockerfile .`.
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 

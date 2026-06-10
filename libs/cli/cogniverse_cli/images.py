@@ -105,7 +105,7 @@ def build_images(
         (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
         (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
         # Pass TORCH_BACKEND so the pylate sidecar wheel matches the host.
-        (PYLATE_TAG, "deploy/pylate/Dockerfile", "deploy/pylate", backend_arg),
+        (PYLATE_TAG, "deploy/pylate/Dockerfile", ".", backend_arg),
     ]
     built: list[str] = []
     for tag, dockerfile, context, extra_args in workspace_builds:

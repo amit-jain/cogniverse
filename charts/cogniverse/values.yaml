@@ -661,7 +661,7 @@ llm:
     # Models pulled by the post-install init job (only when engine=ollama).
     # vLLM downloads on first request via HF cache instead.
     # Embedding model intentionally absent: DenseOn is served by the
-    # ``denseon`` sidecar pod (deploy/pylate in mode=dense), not Ollama.
+    # ``denseon`` sidecar pod (the colbert_pylate sidecar in mode=dense), not Ollama.
     models:
       - "gemma3:4b"
     resources:
@@ -843,7 +843,7 @@ inference:
       failureThreshold: 24
 
   # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
-  # sidecar (deploy/pylate). Used by profiles with
+  # sidecar (cogniverse_runtime/sidecars/colbert_pylate.py). Used by profiles with
   # ``inference_service: "colbert_pylate"`` (e.g., document_text_semantic,
   # lateon_mv). Swap model via ``model:`` — same pylate pod serves any
   # ColBERT-family checkpoint. If you want a second ColBERT pod (e.g. for
@@ -967,7 +967,7 @@ inference:
       timeoutSeconds: 5
       failureThreshold: 5
 
-  # Dense single-vector embedding service: the SAME deploy/pylate
+  # Dense single-vector embedding service: the SAME colbert_pylate
   # sidecar image, run in ``mode: dense`` so it loads via
   # SentenceTransformer and exposes POST /v1/embeddings
   # (OpenAI-compatible). Used by Mem0 + SemanticEmbedder + the
