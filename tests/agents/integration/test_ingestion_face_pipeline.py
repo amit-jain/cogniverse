@@ -37,8 +37,10 @@ from cogniverse_agents.graph.graph_schema import (
     Node,
 )
 
-SERVER_DIR = Path(__file__).resolve().parents[3] / "deploy" / "face_embed"
-SERVER_PATH = SERVER_DIR / "server.py"
+SERVER_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "libs/runtime/cogniverse_runtime/sidecars/face_embed.py"
+)
 
 pytestmark = pytest.mark.integration
 

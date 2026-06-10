@@ -98,16 +98,28 @@ cogniverse_runtime/
 │           ├── embedding_generator_impl.py
 │           ├── embedding_generator_factory.py
 │           └── backend_factory.py
-└── ingestion_worker/                # Async Redis-Streams ingestion worker
-    ├── worker.py                    # Worker entrypoint + queue consumer
-    ├── queue.py
-    ├── redis_client.py
-    ├── minio_client.py
-    ├── submit_api.py
-    ├── status_api.py
-    ├── backpressure.py
-    └── idempotency.py
+├── ingestion_worker/                # Async Redis-Streams ingestion worker
+│   ├── worker.py                    # Worker entrypoint + queue consumer
+│   ├── queue.py
+│   ├── redis_client.py
+│   ├── minio_client.py
+│   ├── submit_api.py
+│   ├── status_api.py
+│   ├── backpressure.py
+│   └── idempotency.py
+└── sidecars/                        # Standalone inference sidecars
+    └── face_embed.py                # InsightFace /embed FastAPI service;
+                                     # shipped alone via deploy/face_embed/
+                                     # Dockerfile (no cogniverse imports)
 ```
+
+The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain
+data, `build_app(cfg)` is the app factory, and `main()` is the deployed
+entrypoint — the only place the container env (`FACE_EMBED_MODEL`,
+`FACE_EMBED_CTX_ID`, `FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
+Run locally with `uv run python -m cogniverse_runtime.sidecars.face_embed`;
+build the image from the repo root with
+`docker build -f deploy/face_embed/Dockerfile .`.
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 

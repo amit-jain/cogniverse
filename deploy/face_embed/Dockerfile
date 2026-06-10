@@ -1,6 +1,7 @@
 # Cogniverse face-embed sidecar. Serves InsightFace Buffalo_L on CPU.
-# Mirrors the deploy/pylate/ layout — single image, single process,
-# single model.
+# Single image, single process, single model. The application module
+# lives in the runtime package; build from the REPO ROOT:
+#   docker build -f deploy/face_embed/Dockerfile -t cogniverse-face-embed .
 FROM python:3.12-slim AS final
 
 RUN apt-get update \
@@ -20,10 +21,12 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY deploy/face_embed/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py ./
+# The module is import-free of cogniverse packages by design, so the
+# image carries just this one file plus requirements.txt.
+COPY libs/runtime/cogniverse_runtime/sidecars/face_embed.py ./server.py
 
 ENV FACE_EMBED_MODEL=buffalo_l \
     FACE_EMBED_CTX_ID=-1 \

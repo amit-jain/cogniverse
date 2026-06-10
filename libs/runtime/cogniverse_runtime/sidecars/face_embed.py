@@ -25,6 +25,7 @@ import io
 import logging
 import os
 import threading
+from dataclasses import dataclass
 from typing import List, Optional
 
 import numpy as np
@@ -81,6 +82,20 @@ class EmbedResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FaceEmbedConfig:
+    model_name: str = "buffalo_l"
+    ctx_id: int = -1  # -1 = CPU; a GPU index for CUDA
+    url_timeout_s: float = 5.0
+    host: str = "0.0.0.0"
+    port: int = 8080
+
+
+# ---------------------------------------------------------------------------
 # Model lifecycle
 # ---------------------------------------------------------------------------
 
@@ -89,8 +104,8 @@ _MODEL = None
 _MODEL_LOCK = threading.Lock()
 
 
-def _load_model():
-    """Load InsightFace Buffalo_L lazily on first request.
+def _load_model(cfg: FaceEmbedConfig):
+    """Load InsightFace lazily on first request.
 
     Two reasons not to eager-load:
       * Health probes pass before the model is in memory, so the pod can
@@ -112,15 +127,13 @@ def _load_model():
         # native dependency entirely.
         from insightface.app import FaceAnalysis  # noqa: PLC0415
 
-        model_name = os.environ.get("FACE_EMBED_MODEL", "buffalo_l")
-        ctx_id = int(os.environ.get("FACE_EMBED_CTX_ID", "-1"))  # -1 = CPU
         logger.info(
             "Loading InsightFace model=%s ctx_id=%s (this takes ~5s on cold start)",
-            model_name,
-            ctx_id,
+            cfg.model_name,
+            cfg.ctx_id,
         )
-        app_ = FaceAnalysis(name=model_name)
-        app_.prepare(ctx_id=ctx_id, det_size=(640, 640))
+        app_ = FaceAnalysis(name=cfg.model_name)
+        app_.prepare(ctx_id=cfg.ctx_id, det_size=(640, 640))
         _MODEL = app_
         logger.info("InsightFace ready")
         return _MODEL
@@ -131,7 +144,7 @@ def _load_model():
 # ---------------------------------------------------------------------------
 
 
-def _bytes_from_request(req: EmbedRequest) -> bytes:
+def _bytes_from_request(req: EmbedRequest, url_timeout_s: float) -> bytes:
     """Resolve the EmbedRequest to raw image bytes — URL fetch or b64 decode."""
     if (req.image_url is None) == (req.image_b64 is None):
         raise HTTPException(
@@ -146,13 +159,10 @@ def _bytes_from_request(req: EmbedRequest) -> bytes:
                 status_code=400, detail=f"image_b64 decode failed: {exc}"
             ) from exc
 
-    # URL fetch — local-only by default for security; expand via env if
-    # the operator explicitly opts in (e.g. via a sidecar-internal cache).
     import httpx  # noqa: PLC0415
 
-    timeout = float(os.environ.get("FACE_EMBED_URL_TIMEOUT_S", "5.0"))
     try:
-        resp = httpx.get(req.image_url, timeout=timeout)
+        resp = httpx.get(req.image_url, timeout=url_timeout_s)
         resp.raise_for_status()
         return resp.content
     except httpx.HTTPError as exc:
@@ -180,41 +190,60 @@ def _decode_to_bgr(image_bytes: bytes) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-app = FastAPI(title="cogniverse face-embed sidecar", version="1.0.0")
+def build_app(cfg: FaceEmbedConfig) -> FastAPI:
+    app = FastAPI(title="cogniverse face-embed sidecar", version="1.0.0")
 
+    @app.get("/health")
+    def health() -> dict:
+        return {"status": "ok"}
 
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok"}
+    @app.post("/embed", response_model=EmbedResponse)
+    def embed(req: EmbedRequest) -> EmbedResponse:
+        model = _load_model(cfg)
+        image_bytes = _bytes_from_request(req, cfg.url_timeout_s)
+        image = _decode_to_bgr(image_bytes)
+        raw_faces = model.get(image)
 
-
-@app.post("/embed", response_model=EmbedResponse)
-def embed(req: EmbedRequest) -> EmbedResponse:
-    model = _load_model()
-    image_bytes = _bytes_from_request(req)
-    image = _decode_to_bgr(image_bytes)
-    raw_faces = model.get(image)
-
-    faces: List[FaceRecord] = []
-    for f in raw_faces:
-        # f.normed_embedding is L2-normalised already, which is what we
-        # want for cosine clustering on the consumer side.
-        faces.append(
-            FaceRecord(
-                bbox=[int(c) for c in f.bbox.astype(int).tolist()],
-                vec=[float(v) for v in f.normed_embedding.tolist()],
-                det_score=float(f.det_score),
+        faces: List[FaceRecord] = []
+        for f in raw_faces:
+            # f.normed_embedding is L2-normalised already, which is what we
+            # want for cosine clustering on the consumer side.
+            faces.append(
+                FaceRecord(
+                    bbox=[int(c) for c in f.bbox.astype(int).tolist()],
+                    vec=[float(v) for v in f.normed_embedding.tolist()],
+                    det_score=float(f.det_score),
+                )
             )
-        )
-    return EmbedResponse(n=len(faces), faces=faces)
+        return EmbedResponse(n=len(faces), faces=faces)
+
+    return app
+
+
+# Default-config app for in-process consumers (tests import ``app`` and
+# patch ``_MODEL``). The deployed entrypoint is ``main()``, which parses
+# the container env once and builds its own app from it.
+app = build_app(FaceEmbedConfig())
 
 
 def main() -> None:
+    """Deployed entrypoint. The container contract (Dockerfile ENV +
+    Helm values) configures the sidecar via environment — parsed here,
+    once, and nowhere else. Defaults are single-sourced from the
+    dataclass."""
     import uvicorn  # noqa: PLC0415
 
-    host = os.environ.get("HOST", "0.0.0.0")
-    port = int(os.environ.get("PORT", "8080"))
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    defaults = FaceEmbedConfig()
+    cfg = FaceEmbedConfig(
+        model_name=os.environ.get("FACE_EMBED_MODEL", defaults.model_name),
+        ctx_id=int(os.environ.get("FACE_EMBED_CTX_ID", str(defaults.ctx_id))),
+        url_timeout_s=float(
+            os.environ.get("FACE_EMBED_URL_TIMEOUT_S", str(defaults.url_timeout_s))
+        ),
+        host=os.environ.get("HOST", defaults.host),
+        port=int(os.environ.get("PORT", str(defaults.port))),
+    )
+    uvicorn.run(build_app(cfg), host=cfg.host, port=cfg.port, log_level="info")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """Contract test for the face-embed FastAPI sidecar.
 
-Loads ``deploy/face_embed/server.py`` with InsightFace's
+Loads ``cogniverse_runtime/sidecars/face_embed.py`` with InsightFace's
 ``FaceAnalysis`` class mocked so the test doesn't pull the 210 MiB
 Buffalo_L weights. Verifies:
 
@@ -26,8 +26,10 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-SERVER_DIR = Path(__file__).resolve().parents[3] / "deploy" / "face_embed"
-SERVER_PATH = SERVER_DIR / "server.py"
+SERVER_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "libs/runtime/cogniverse_runtime/sidecars/face_embed.py"
+)
 
 
 class _FakeFace:

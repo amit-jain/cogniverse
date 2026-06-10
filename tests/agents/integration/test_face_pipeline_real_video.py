@@ -29,7 +29,7 @@ PRE-REQS (the test will fail loudly if any are missing)
 ========================================================
 
 * Real face-embed sidecar reachable at ``localhost:29007``. Start
-  locally via ``PORT=29007 uv run python deploy/face_embed/server.py``.
+  locally via ``PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed``.
 * Real Vespa reachable at ``localhost:8080`` (k3d serverlb).
 * Real ColBERT pylate sidecar reachable at ``localhost:29002``.
 * ``cv2`` installed (``uv pip install opencv-python-headless``).
@@ -95,7 +95,7 @@ pytestmark = [
         not _service_up(f"{FACE_EMBED_URL}/health"),
         reason=(
             "face-embed sidecar not reachable at localhost:29007. Start it "
-            "with: PORT=29007 uv run python deploy/face_embed/server.py"
+            "with: PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed"
         ),
     ),
     pytest.mark.skipif(
