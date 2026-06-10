@@ -18,7 +18,10 @@ from cogniverse_agents.graph.graph_schema import Node, node_id_from_doc_id
     [
         ("acme", "Marie Curie"),  # single-segment tenant, multi-word name
         ("acme:cell_a", "Marie Curie"),  # colon-form tenant WITH underscore
-        ("my_org:cell_b", "Niels Bohr Institute"),  # underscores in both segments + multiword
+        (
+            "my_org:cell_b",
+            "Niels Bohr Institute",
+        ),  # underscores in both segments + multiword
         ("acme:prod", "X"),  # short node_id
     ],
 )

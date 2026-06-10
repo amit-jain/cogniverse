@@ -118,26 +118,18 @@ class TestValidateTenantName:
 
     def test_invalid_tenant_name_with_special_char(self):
         """Test tenant name with special characters raises ValueError"""
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("prod@env")
 
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("prod.env")
 
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("prod env")  # Space
 
     def test_invalid_tenant_name_with_colon(self):
         """Test tenant name with colon raises ValueError"""
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("prod:env")
 
     def test_invalid_tenant_name_non_string(self):
@@ -191,14 +183,10 @@ class TestValidationEdgeCases:
 
     def test_tenant_name_only_special_char_invalid(self):
         """Test tenant name with only underscore or hyphen is invalid"""
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("_")
 
-        with pytest.raises(
-            ValueError, match="only alphanumeric and underscore"
-        ):
+        with pytest.raises(ValueError, match="only alphanumeric and underscore"):
             validate_tenant_name("-")
 
     def test_org_id_long_name(self):
