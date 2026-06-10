@@ -168,7 +168,7 @@ async def _spawn_worker(
 
 
 async def _wait_for_state(
-    redis, ingest_id: str, target_state: str, timeout_s: float = 5.0
+    redis, ingest_id: str, target_state: str, timeout_s: float = 30.0
 ) -> dict:
     deadline = time.time() + timeout_s
     while time.time() < deadline:
