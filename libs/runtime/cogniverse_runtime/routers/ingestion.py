@@ -544,24 +544,31 @@ async def _extract_graph_per_segment(
             "kg.source_doc_id": source_doc_id,
         },
     ) as kg_span:
-        result = await _extract_graph_per_segment_inner(
-            processing_results=processing_results,
-            source_doc_id=source_doc_id,
-            tenant_id=tenant_id,
-            config_manager=config_manager,
-            DocExtractor=DocExtractor,
-            ClaimExtractor=ClaimExtractor,
-            CrossModalLinker=CrossModalLinker,
-            ExtractionResult=ExtractionResult,
-            graph_router=graph_router,
-        )
-        kg_span.set_attribute("kg.nodes_count", result.get("nodes_upserted", 0))
-        kg_span.set_attribute("kg.edges_count", result.get("edges_upserted", 0))
-        kg_span.set_attribute(
-            "kg.segments_count", len(result.get("backrefs_by_segment", {}))
-        )
-        kg_span.set_attribute("duration_ms", int((_time.time() - kg_started) * 1000))
-        return result
+        result: Dict[str, Any] = {}
+        try:
+            result = await _extract_graph_per_segment_inner(
+                processing_results=processing_results,
+                source_doc_id=source_doc_id,
+                tenant_id=tenant_id,
+                config_manager=config_manager,
+                DocExtractor=DocExtractor,
+                ClaimExtractor=ClaimExtractor,
+                CrossModalLinker=CrossModalLinker,
+                ExtractionResult=ExtractionResult,
+                graph_router=graph_router,
+            )
+            return result
+        finally:
+            # Counts land on the span on the failure path too — a span
+            # without them is indistinguishable from a broken emitter.
+            kg_span.set_attribute("kg.nodes_count", result.get("nodes_upserted", 0))
+            kg_span.set_attribute("kg.edges_count", result.get("edges_upserted", 0))
+            kg_span.set_attribute(
+                "kg.segments_count", len(result.get("backrefs_by_segment", {}))
+            )
+            kg_span.set_attribute(
+                "duration_ms", int((_time.time() - kg_started) * 1000)
+            )
 
 
 async def _extract_graph_per_segment_inner(
@@ -672,16 +679,23 @@ async def _extract_graph_per_segment_inner(
     #     isn't lost; a manual operator can attach a same_as edge
     #     to label them later.
     face_embed_url = _lookup_face_embed_endpoint(config_manager)
+    face_edges, face_nodes = [], []
     if face_embed_url:
-        face_edges, face_nodes = _run_face_pipeline(
-            processing_results=processing_results,
-            linked_extraction=linked,
-            source_doc_id=source_doc_id,
-            tenant_id=tenant_id,
-            face_embed_url=face_embed_url,
-        )
-    else:
-        face_edges, face_nodes = [], []
+        # Face enrichment is additive — an unreachable face-embed sidecar
+        # must not discard the entity/claim extraction already computed.
+        try:
+            face_edges, face_nodes = _run_face_pipeline(
+                processing_results=processing_results,
+                linked_extraction=linked,
+                source_doc_id=source_doc_id,
+                tenant_id=tenant_id,
+                face_embed_url=face_embed_url,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"Face pipeline failed for {source_doc_id}: {exc} — "
+                f"continuing with entity/claim extraction only"
+            )
     if face_edges or face_nodes:
         linked = ExtractionResult(
             source_doc_id=linked.source_doc_id,
