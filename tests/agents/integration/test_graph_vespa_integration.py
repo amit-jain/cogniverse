@@ -759,3 +759,76 @@ class TestSearchNodesRealVespa:
         )
         names = [r.get("name") for r in results]
         assert "Marie Curie" in names, names
+
+    def test_search_nodes_survives_conflicting_qt_schema(
+        self, graph_vespa, shared_memory_vespa, monkeypatch
+    ):
+        """Other schemas in the shared content cluster declare
+        hybrid_binary_bm25 with different query(qt) dims (videoprism
+        ``v[768]`` vs the graph's ``v[128]``). Without ``model.restrict``
+        the query 400s on the conflicting input declarations and silently
+        falls back to substring _visit. Deploys the conflicting schema
+        explicitly so the conflict exists even in isolation.
+        """
+        from types import SimpleNamespace
+
+        from tests.utils.vespa_test_helpers import deploy_tenant_schema
+
+        deploy_tenant_schema(
+            shared_memory_vespa,
+            tenant_id=TENANT_ID,
+            base_schema_name="video_videoprism_base_mv_chunk_30s",
+            config_manager=shared_memory_vespa["config_manager"],
+        )
+        port = graph_vespa["http_port"]
+        conflicting = schema_full_name("video_videoprism_base_mv_chunk_30s", TENANT_ID)
+        # The graph probe document doesn't fit the videoprism schema, so
+        # poll doc-type liveness via GET: 404 = type known + doc absent.
+        probe_url = (
+            f"http://localhost:{port}/document/v1/graph_content/"
+            f"{conflicting}/docid/liveness_probe"
+        )
+        for _ in range(120):
+            if requests.get(probe_url, timeout=5).status_code in (200, 404):
+                break
+            time.sleep(1)
+        else:
+            pytest.fail(f"conflicting schema {conflicting} doc type never went live")
+        if not _wait_for_schema_ready(port, GRAPH_SCHEMA, timeout=120):
+            pytest.fail(f"Schema {GRAPH_SCHEMA} not ready after co-deploy")
+
+        self._feed_node(
+            port,
+            "kg_node_search_ada",
+            "Ada Lovelace",
+            "wrote the first analytical engine program",
+        )
+        time.sleep(2)
+
+        mgr = GraphManager.__new__(GraphManager)
+        mgr._schema_name = GRAPH_SCHEMA
+        mgr._tenant_id = TENANT_ID
+        mgr._backend = SimpleNamespace(_url="http://localhost", _port=port)
+        monkeypatch.setattr(
+            mgr,
+            "_encode_query_blocks",
+            lambda q: ({"0": [0.1] * 128}, {"0": [1] * 16}),
+        )
+
+        visit_calls = []
+        real_visit = mgr._visit
+
+        def _spy_visit(*args, **kwargs):
+            visit_calls.append((args, kwargs))
+            return real_visit(*args, **kwargs)
+
+        monkeypatch.setattr(mgr, "_visit", _spy_visit)
+
+        results = mgr.search_nodes("analytical engine program", top_k=10)
+
+        assert not visit_calls, (
+            "search_nodes fell back to _visit — the conflicting query(qt) "
+            "declaration leaked into the graph query (model.restrict missing)"
+        )
+        names = [r.get("name") for r in results]
+        assert "Ada Lovelace" in names, names

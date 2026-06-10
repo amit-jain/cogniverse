@@ -166,6 +166,11 @@ class GraphManager:
             "ranking.profile": "hybrid_binary_bm25",
             "input.query(qtb)": {"blocks": qtb_blocks},
             "input.query(qt)": {"blocks": qt_blocks},
+            # Scope rank-profile input validation to this schema — other
+            # schemas in the content cluster define hybrid_binary_bm25 with
+            # different query(qt) dims, and an unrestricted query 400s on
+            # the conflicting declarations.
+            "model.restrict": self._schema_name,
         }
         url = f"{self._backend._url}:{self._backend._port}/search/"
         try:
