@@ -278,6 +278,11 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        # numba JIT-caches next to the library source, which is read-only
+        # in the image — without a writable cache dir librosa's notation
+        # helpers crash ("no locator available") and audio chunking dies.
+        - name: NUMBA_CACHE_DIR
+          value: /tmp/numba-cache
         - name: RUNTIME_URL
           value: "http://{{ $fullName }}-runtime:{{ .Values.runtime.service.port }}"
         - name: VESPA_URL

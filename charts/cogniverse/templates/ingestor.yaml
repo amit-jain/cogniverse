@@ -47,6 +47,11 @@ spec:
           - -m
           - cogniverse_runtime.ingestion_worker.worker
         env:
+        # numba JIT-caches next to the library source, which is read-only
+        # in the image — without a writable cache dir librosa's notation
+        # helpers crash ("no locator available") and audio chunking dies.
+        - name: NUMBA_CACHE_DIR
+          value: /tmp/numba-cache
         - name: REDIS_URL
           value: "redis://{{ $fullName }}-redis:{{ .Values.redis.service.port }}/0"
         - name: INGEST_CONSUMER_GROUP
