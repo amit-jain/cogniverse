@@ -23,6 +23,9 @@ dependencies = [
     "pillow==12.2.0",
 
     # Audio processing — librosa stays in base (used by audio embedding).
+    # CLAP acoustic embeddings import transformers directly
+    # (audio_embedding_generator); undeclared, the deployed image lacks it.
+    "transformers==4.56.2",
     # In-process Whisper (openai-whisper, faster-whisper) lives in the
     # whisper-local extra so the default runtime image relies on the
     # cluster vLLM ASR sidecar instead of shipping ~3 GB of model code.
