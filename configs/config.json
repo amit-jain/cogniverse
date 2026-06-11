@@ -1272,5 +1272,8 @@
       "max_results_per_message": 5
     }
   },
-  "base_url": "http://localhost:11434"
+  "base_url": "http://localhost:11434",
+  "inference_service_urls": {
+    "colbert_pylate": "http://localhost:29002"
+  }
 }

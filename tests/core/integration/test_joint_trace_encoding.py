@@ -57,6 +57,7 @@ def _resolve_colbert_sidecar_url() -> Optional[str]:
         pass
     # Fall back to the standard in-cluster name on the off-chance the
     # test runs under port-forward or kubectl proxy.
+    candidates.append("http://localhost:29002")
     candidates.append("http://localhost:8000")
     candidates.append("http://cogniverse-colbert-pylate:8000")
 
