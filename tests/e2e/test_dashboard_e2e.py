@@ -41,6 +41,22 @@ SEARCH_TIMEOUT = 120_000
 LLM_TIMEOUT = 300_000
 
 
+def _wait_for_rerun_complete(page, timeout_ms=SEARCH_TIMEOUT):
+    """Wait for the in-flight Streamlit rerun to finish instead of
+    sleeping a fixed interval — the status widget is attached while a
+    callback executes and detaches when the script run completes. A
+    typical search returns in seconds; the ceiling only bounds the
+    worst case."""
+    page.wait_for_timeout(1_000)  # let the rerun register
+    status = page.locator('[data-testid="stStatusWidget"]')
+    try:
+        status.wait_for(state="detached", timeout=timeout_ms)
+    except Exception:
+        # Fast reruns may finish before the widget ever attaches.
+        pass
+    page.wait_for_timeout(500)
+
+
 def _nav(page):
     """Navigate to dashboard and wait for Streamlit to load."""
     page.goto(DASHBOARD, timeout=30_000)
@@ -158,7 +174,7 @@ class TestInteractiveSearch:
 
         # Click the exact "Search" button
         page.locator('button[kind="primary"]:has-text("Search")').click()
-        page.wait_for_timeout(SEARCH_TIMEOUT)
+        _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
         # Verify search actually executed — "Search Results" heading is the
@@ -205,7 +221,7 @@ class TestInteractiveSearch:
         exact_search = page.locator('button[kind="primary"]:has-text("Search")')
         assert exact_search.count() > 0, "Search button must be present"
         exact_search.click()
-        page.wait_for_timeout(SEARCH_TIMEOUT)
+        _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
         # Verify search executed — "Search Results" heading or "No results" must appear
@@ -266,7 +282,7 @@ class TestInteractiveSearch:
         exact_search = page.locator('button[kind="primary"]:has-text("Search")')
         assert exact_search.count() > 0, "Search button must be present"
         exact_search.click()
-        page.wait_for_timeout(SEARCH_TIMEOUT)
+        _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
         results_heading = page.get_by_role("heading", name=re.compile("Search Results"))
@@ -316,7 +332,7 @@ class TestMultiModalChat:
 
         click_button(page, "Send")
 
-        page.wait_for_timeout(LLM_TIMEOUT)
+        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Chat uses st.rerun() after sending — response appears as chat message elements
@@ -352,7 +368,7 @@ class TestMultiModalChat:
             chat_input = page.locator('[data-testid="stTextInput"] input')
             fill_input(chat_input.first, "search for sports clips")
         click_button(page, "Send")
-        page.wait_for_timeout(LLM_TIMEOUT)
+        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Turn 2
@@ -363,7 +379,7 @@ class TestMultiModalChat:
             chat_input = page.locator('[data-testid="stTextInput"] input')
             fill_input(chat_input.first, "Tell me more about the first one")
         click_button(page, "Send")
-        page.wait_for_timeout(LLM_TIMEOUT)
+        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Multi-turn: verify both turns were processed
@@ -530,7 +546,7 @@ class TestGoldenDataset:
         page.wait_for_load_state("networkidle")
 
         click_button(page, "Build")
-        page.wait_for_timeout(SEARCH_TIMEOUT)
+        _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
         # Check for specific outcomes
@@ -591,7 +607,7 @@ class TestSyntheticDataAndApproval:
         page.wait_for_load_state("networkidle")
 
         click_button(page, "Generate")
-        page.wait_for_timeout(LLM_TIMEOUT)
+        _wait_for_rerun_complete(page, timeout_ms=LLM_TIMEOUT)
         page.wait_for_load_state("networkidle")
 
         # Connection and timeout errors = infrastructure broken
@@ -711,7 +727,7 @@ class TestModuleOptimization:
         )
 
         click_button(page, "Submit")
-        page.wait_for_timeout(SEARCH_TIMEOUT)
+        _wait_for_rerun_complete(page)
         page.wait_for_load_state("networkidle")
 
         success = page.locator(
