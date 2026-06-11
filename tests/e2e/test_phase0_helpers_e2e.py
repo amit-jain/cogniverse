@@ -36,6 +36,12 @@ _NEW_PREFIXES = (
     "opt_",
     "sbx_",
     "kagent_",
+    "cron_e2e_org_",
+    "boot_",
+    "canonsmoke_",
+    "canontest_",
+    "smk_",
+    "smk2_",
 )
 
 # The pre-existing prefixes the conftest had before this change. Recorded
