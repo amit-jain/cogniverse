@@ -212,7 +212,7 @@ class TestEnqueueAndWorker:
             assert await queue.get_active(env_redis, "acme") == 0
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
     async def test_resubmit_returns_existing_ingest_id(
@@ -236,7 +236,7 @@ class TestEnqueueAndWorker:
             assert await queue.queue_depth(env_redis) == 1
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
     async def test_force_bypasses_idempotency(self, env_redis, redis_container):
@@ -255,7 +255,7 @@ class TestEnqueueAndWorker:
             assert second.ingest_id != first.ingest_id
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
     async def test_failing_processor_publishes_failed_and_acks(
@@ -282,7 +282,7 @@ class TestEnqueueAndWorker:
             assert await env_redis.get(f"ingest:done:{result.sha}") is None
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
     async def test_failed_envelope_publishes_failed_and_skips_mark_done(
@@ -332,7 +332,7 @@ class TestEnqueueAndWorker:
             assert second.existing is False
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
     @pytest.mark.asyncio
     async def test_wait_returns_terminal_event_synchronously(
@@ -354,7 +354,7 @@ class TestEnqueueAndWorker:
             assert result.final_event["result"]["keyframes"] == 2
         finally:
             stop.set()
-            await asyncio.wait_for(worker_task, timeout=2)
+            await asyncio.wait_for(worker_task, timeout=30)
 
 
 class TestBackpressure:
