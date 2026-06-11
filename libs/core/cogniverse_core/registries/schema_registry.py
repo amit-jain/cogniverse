@@ -395,12 +395,23 @@ class SchemaRegistry:
         safe_tenant_id = tenant_id.replace(":", "_")
         tenant_schema_name = f"{base_schema_name}_{safe_tenant_id}"
 
-        # Check if already deployed (unless force=True)
+        # Check if already deployed (unless force=True). A tracking record
+        # alone is not proof the CURRENT name is live: records written
+        # before tenant-id canonicalization carry the legacy single-suffix
+        # name, and skipping here would return a name Vespa never deployed.
         if not force and self.schema_exists(tenant_id, base_schema_name):
-            logger.debug(
-                f"Schema '{tenant_schema_name}' already deployed for tenant '{tenant_id}'"
+            tracked = self._schemas[(tenant_id, base_schema_name)]
+            if tracked.full_schema_name == tenant_schema_name:
+                logger.debug(
+                    f"Schema '{tenant_schema_name}' already deployed for "
+                    f"tenant '{tenant_id}'"
+                )
+                return tenant_schema_name
+            logger.info(
+                f"Schema tracking for tenant '{tenant_id}' carries legacy "
+                f"name '{tracked.full_schema_name}'; redeploying as "
+                f"'{tenant_schema_name}'"
             )
-            return tenant_schema_name
 
         # Load base schema from schema loader
         try:

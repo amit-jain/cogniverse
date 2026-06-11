@@ -223,6 +223,25 @@ class TestSchemaRegistryDeployment:
         assert result1 == result2
         assert result1 == "test_schema_acme_acme"
 
+    def test_deploy_schema_redeploys_when_tracked_name_is_legacy(
+        self, schema_registry, mock_backend
+    ):
+        """A tracking record from before tenant-id canonicalization carries
+        the single-suffix name — deploy must NOT short-circuit on it, or it
+        returns a schema name Vespa never deployed."""
+        schema_registry.register_schema(
+            tenant_id="acme",
+            base_schema_name="test_schema",
+            full_schema_name="test_schema_acme",  # legacy single suffix
+            schema_definition="{}",
+        )
+        mock_backend.reset_mock()
+
+        result = schema_registry.deploy_schema("acme", "test_schema")
+
+        assert result == "test_schema_acme_acme"
+        mock_backend.deploy_schemas.assert_called_once()
+
     def test_deploy_schema_force_flag_bypasses_exists_check(
         self, schema_registry, mock_backend
     ):
