@@ -226,12 +226,18 @@ async def upload_video(
     )
 
     content = await file.read()
-    source_url = minio_client.upload_bytes(
-        content,
-        tenant_id=upload_tenant_id,
-        filename=file.filename,
-        content_type=file.content_type,
-    )
+    try:
+        source_url = minio_client.upload_bytes(
+            content,
+            tenant_id=upload_tenant_id,
+            filename=file.filename,
+            content_type=file.content_type,
+        )
+    except RuntimeError as exc:
+        # SystemConfig advertises MinIO but the process env lacks the
+        # credentials (config/env drift) — retryable deployment problem,
+        # not a client error or a 500.
+        raise HTTPException(status_code=503, detail={"message": str(exc)})
 
     redis = await get_redis(redis_url)
     try:

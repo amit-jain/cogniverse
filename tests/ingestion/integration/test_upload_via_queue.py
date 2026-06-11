@@ -837,14 +837,29 @@ class TestUploadRealStack:
         assert result.ingest_id == first_id
         # No new ingest_id was minted, no new pipeline run.
 
+    @staticmethod
+    def _blank_system_config_field(monkeypatch, **overrides):
+        """Route infra checks read SystemConfig (the authoritative source),
+        not process env — blank the field there."""
+        import dataclasses
+
+        from cogniverse_foundation.config.manager import ConfigManager
+
+        real_get = ConfigManager.get_system_config
+
+        def patched(self):
+            return dataclasses.replace(real_get(self), **overrides)
+
+        monkeypatch.setattr(ConfigManager, "get_system_config", patched)
+
     @pytest.mark.asyncio
-    async def test_upload_503_when_minio_env_missing(
+    async def test_upload_503_when_minio_config_missing(
         self, real_stack, http_client, monkeypatch
     ):
-        """Without MINIO_ENDPOINT the upload must fail fast — the
-        legacy in-process path is gone, so missing env can't silently
-        downgrade to a different code path."""
-        monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
+        """Without SystemConfig.minio_endpoint the upload must fail fast —
+        the legacy in-process path is gone, so missing infra config can't
+        silently downgrade to a different code path."""
+        self._blank_system_config_field(monkeypatch, minio_endpoint="")
         files = {
             "file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4"),
         }
@@ -859,10 +874,10 @@ class TestUploadRealStack:
         assert "minio_endpoint" in body["detail"]["missing_env"]
 
     @pytest.mark.asyncio
-    async def test_upload_503_when_redis_env_missing(
+    async def test_upload_503_when_redis_config_missing(
         self, real_stack, http_client, monkeypatch
     ):
-        monkeypatch.delenv("REDIS_URL", raising=False)
+        self._blank_system_config_field(monkeypatch, redis_url="")
         files = {"file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4")}
         resp = await http_client.post(
             "/ingestion/upload",
@@ -872,3 +887,21 @@ class TestUploadRealStack:
         assert resp.status_code == 503
         body = resp.json()
         assert "redis_url" in body["detail"]["missing_env"]
+
+    @pytest.mark.asyncio
+    async def test_upload_503_when_minio_env_drifts_from_config(
+        self, real_stack, http_client, monkeypatch
+    ):
+        """SystemConfig advertises MinIO but the process env lacks the
+        credentials — the route must answer a retryable 503, not a raw
+        RuntimeError/500."""
+        monkeypatch.delenv("MINIO_ENDPOINT", raising=False)
+        files = {"file": (VIDEO_PATH.name, io.BytesIO(b"x"), "video/mp4")}
+        resp = await http_client.post(
+            "/ingestion/upload",
+            files=files,
+            data={"profile": PROFILE, "tenant_id": TENANT_ID},
+        )
+        assert resp.status_code == 503
+        body = resp.json()
+        assert "MINIO_ENDPOINT" in body["detail"]["message"]
