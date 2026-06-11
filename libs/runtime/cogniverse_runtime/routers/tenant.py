@@ -479,7 +479,8 @@ async def _submit_cron_workflow(manifest: dict) -> None:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
                 f"{_argo_api_url}/api/v1/cron-workflows/{namespace}",
-                json=manifest,
+                # Argo's CreateCronWorkflowRequest wraps the manifest.
+                json={"namespace": namespace, "cronWorkflow": manifest},
                 headers=_argo_auth_headers(),
             )
     except Exception as exc:
