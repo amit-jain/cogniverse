@@ -423,14 +423,29 @@ class QualityMonitor:
         await self._store_golden_eval_result(result)
         return result
 
-    async def evaluate_live_traffic(self) -> LiveEvalResult:
-        """Sample recent spans per agent, score with LLM judge."""
+    def _make_span_evaluator(self):
+        """SpanEvaluator wired to THIS monitor's Phoenix endpoint — the
+        default provider resolves to localhost, which is wrong everywhere
+        but a dev laptop (silent context drop inside Argo workflow pods)."""
+        from cogniverse_evaluation.providers import get_evaluation_provider
         from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
-        span_evaluator = SpanEvaluator(
+        project_name = f"cogniverse-{self.tenant_id}-runtime"
+        return SpanEvaluator(
             tenant_id=self.tenant_id,
-            project_name=f"cogniverse-{self.tenant_id}-runtime",
+            project_name=project_name,
+            provider=get_evaluation_provider(
+                tenant_id=self.tenant_id,
+                config={
+                    "project_name": project_name,
+                    "http_endpoint": self.phoenix_http_endpoint,
+                },
+            ),
         )
+
+    async def evaluate_live_traffic(self) -> LiveEvalResult:
+        """Sample recent spans per agent, score with LLM judge."""
+        span_evaluator = self._make_span_evaluator()
 
         result = LiveEvalResult(
             timestamp=datetime.utcnow(),

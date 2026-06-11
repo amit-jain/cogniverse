@@ -56,6 +56,36 @@ def monitor(golden_dataset):
     )
 
 
+class TestSpanEvaluatorEndpoint:
+    def test_span_evaluator_uses_monitor_phoenix_endpoint(self, golden_dataset):
+        """The live-traffic span evaluator must query THIS monitor's Phoenix,
+        not the provider default (localhost) — inside an Argo workflow pod
+        the default endpoint is unreachable and every span query fails."""
+        monitor = QualityMonitor(
+            tenant_id="test_tenant",
+            runtime_url="http://localhost:28000",
+            phoenix_http_endpoint="http://cogniverse-phoenix:6006",
+            llm_base_url="http://localhost:11434",
+            llm_model="qwen3:4b",
+            golden_dataset_path=golden_dataset,
+            argo_api_url="http://localhost:2746",
+            argo_namespace="test-ns",
+        )
+        import cogniverse_evaluation.providers as providers_mod
+
+        monitor._make_span_evaluator()
+        # The suite-level autouse fixture mocks the factory; the wiring
+        # under test is the CALL — the monitor must hand its endpoint over.
+        call = providers_mod.get_evaluation_provider.call_args
+        assert call.kwargs["tenant_id"] == "test_tenant"
+        assert call.kwargs["config"]["http_endpoint"] == (
+            "http://cogniverse-phoenix:6006"
+        )
+        assert call.kwargs["config"]["project_name"] == (
+            "cogniverse-test_tenant-runtime"
+        )
+
+
 class TestGoldenDatasetLoading:
     def test_load_golden_queries(self, monitor):
         queries = monitor._load_golden_queries()

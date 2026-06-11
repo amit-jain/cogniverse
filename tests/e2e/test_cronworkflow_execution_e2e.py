@@ -293,12 +293,14 @@ def _runtime_pod_restart_count() -> int:
 # ---------------------------------------------------------------------------
 
 
-def _mc_ls_count(prefix: str) -> int:
-    """List objects under cogniverse-backups/<prefix>/ via the in-cluster MinIO.
+def _mc_ls_names(prefix: str) -> list:
+    """Sorted object names under cogniverse-backups/<prefix>/ via the
+    in-cluster MinIO.
 
     Spins a one-off mc pod that talks to the cluster's MinIO service —
-    same access pattern the backup workflow uses. Returns -1 on any
-    failure (caller treats as "skip detection of pre-state").
+    same access pattern the backup workflow uses. Snapshot names embed
+    ISO timestamps, so lexical order == chronological order. Returns
+    None on any failure (caller treats as "skip detection of pre-state").
     """
     result = subprocess.run(
         [
@@ -342,7 +344,8 @@ def _mc_ls_count(prefix: str) -> int:
                                 "command": ["sh", "-c"],
                                 "args": [
                                     'mc alias set dest http://cogniverse-minio:9000 "$ACCESS" "$SECRET" >/dev/null 2>&1 && '
-                                    f"mc ls dest/cogniverse-backups/{prefix}/ 2>/dev/null | wc -l"
+                                    f"mc ls dest/cogniverse-backups/{prefix}/ 2>/dev/null "
+                                    "| awk '{print \"OBJ:\"$NF}' | sort"
                                 ],
                             }
                         ]
@@ -357,14 +360,16 @@ def _mc_ls_count(prefix: str) -> int:
         timeout=120,
     )
     try:
-        # mc ls output is the last non-empty line; pod attach prefixes some chatter
-        for line in reversed(result.stdout.splitlines()):
-            line = line.strip()
-            if line.isdigit():
-                return int(line)
-        return -1
+        # Object-name lines carry the OBJ: marker; pod-attach chatter never
+        # does. mc ls emits one name per line.
+        names = [
+            line.strip()[4:]
+            for line in result.stdout.splitlines()
+            if line.strip().startswith("OBJ:")
+        ]
+        return sorted(names) if result.returncode == 0 else None
     except Exception:
-        return -1
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -485,14 +490,23 @@ class TestBackupVespaWorkflow:
                 "cogniverse-backup-vespa CronWorkflow not deployed "
                 "(hostStorage.backup.enabled defaults to false)"
             )
-        count_before = _mc_ls_count("vespa")
+        names_before = _mc_ls_names("vespa")
         _submit_and_wait_succeeded("cogniverse-backup-vespa", timeout_s=600)
-        count_after = _mc_ls_count("vespa")
-        assert count_after > count_before, (
-            f"backup-vespa workflow Succeeded but MinIO object count under "
-            f"cogniverse-backups/vespa/ did not increase "
-            f"({count_before} → {count_after})"
+        names_after = _mc_ls_names("vespa")
+        assert names_after, "could not list cogniverse-backups/vespa/ after the run"
+        newest_before = names_before[-1] if names_before else ""
+        # The upload step prunes to retainLast, so the COUNT stays flat at
+        # capacity — the invariant is a strictly newer snapshot at the top.
+        assert names_after[-1] > newest_before, (
+            f"backup-vespa workflow Succeeded but no new snapshot appeared "
+            f"under cogniverse-backups/vespa/ (newest {newest_before!r} → "
+            f"{names_after[-1]!r})"
         )
+        if names_before is not None:
+            assert len(names_after) <= len(names_before) + 1, (
+                f"retention pruning regressed: {len(names_before)} → "
+                f"{len(names_after)} objects"
+            )
 
 
 @pytest.mark.e2e
@@ -508,14 +522,23 @@ class TestBackupPhoenixWorkflow:
                 "cogniverse-backup-phoenix CronWorkflow not deployed "
                 "(hostStorage.backup.enabled defaults to false)"
             )
-        count_before = _mc_ls_count("phoenix")
+        names_before = _mc_ls_names("phoenix")
         _submit_and_wait_succeeded("cogniverse-backup-phoenix", timeout_s=600)
-        count_after = _mc_ls_count("phoenix")
-        assert count_after > count_before, (
-            f"backup-phoenix workflow Succeeded but MinIO object count under "
-            f"cogniverse-backups/phoenix/ did not increase "
-            f"({count_before} → {count_after})"
+        names_after = _mc_ls_names("phoenix")
+        assert names_after, "could not list cogniverse-backups/phoenix/ after the run"
+        newest_before = names_before[-1] if names_before else ""
+        # The upload step prunes to retainLast, so the COUNT stays flat at
+        # capacity — the invariant is a strictly newer snapshot at the top.
+        assert names_after[-1] > newest_before, (
+            f"backup-phoenix workflow Succeeded but no new snapshot appeared "
+            f"under cogniverse-backups/phoenix/ (newest {newest_before!r} → "
+            f"{names_after[-1]!r})"
         )
+        if names_before is not None:
+            assert len(names_after) <= len(names_before) + 1, (
+                f"retention pruning regressed: {len(names_before)} → "
+                f"{len(names_after)} objects"
+            )
 
 
 @pytest.mark.e2e
@@ -530,9 +553,11 @@ class TestMonthlyReportsWorkflow:
     def test_workflow_uploads_usage_and_perf_reports_to_minio(self):
         if not _cronworkflow_exists("cogniverse-monthly-reports"):
             pytest.skip("cogniverse-monthly-reports CronWorkflow not deployed")
-        count_before = _mc_ls_count("reports")
+        names_before = _mc_ls_names("reports")
+        count_before = len(names_before) if names_before is not None else -1
         _submit_and_wait_succeeded("cogniverse-monthly-reports", timeout_s=600)
-        count_after = _mc_ls_count("reports")
+        names_after = _mc_ls_names("reports")
+        count_after = len(names_after) if names_after is not None else -1
         # Two files per run (usage + performance); count must advance by
         # at least 1 (the same month overwrites the same key). Bare
         # Succeeded is not enough — the upload step must have actually
