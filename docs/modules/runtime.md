@@ -108,6 +108,9 @@ cogniverse_runtime/
 │   ├── backpressure.py
 │   └── idempotency.py
 └── sidecars/                        # Standalone inference sidecars
+    ├── clap_embed.py                # CLAP /embed/audio + /embed/text
+    │                                # (joint acoustic space); shipped via
+    │                                # deploy/clap_embed/Dockerfile
     ├── colbert_pylate.py            # PyLate ColBERT / DenseOn /pooling +
     │                                # /v1/embeddings service; shipped via
     │                                # deploy/pylate/Dockerfile
