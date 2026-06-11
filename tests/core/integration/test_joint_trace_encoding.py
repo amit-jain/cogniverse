@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -79,7 +80,19 @@ def _resolve_colbert_sidecar_url() -> Optional[str]:
     return None
 
 
-_COLBERT_URL = _resolve_colbert_sidecar_url()
+def _resolve_with_retries(attempts: int = 3, delay_s: float = 5.0):
+    """A NodePort blip or a load-slowed health response must not skip the
+    module — retry the candidate sweep before declaring unreachable."""
+    for i in range(attempts):
+        url = _resolve_colbert_sidecar_url()
+        if url is not None:
+            return url
+        if i < attempts - 1:
+            time.sleep(delay_s)
+    return None
+
+
+_COLBERT_URL = _resolve_with_retries()
 
 if _COLBERT_URL is None:
     pytest.skip(

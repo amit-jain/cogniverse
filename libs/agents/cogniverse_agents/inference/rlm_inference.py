@@ -363,23 +363,43 @@ class RLMInference:
         full_query = f"{system_prompt}\n\n{query}" if system_prompt else query
 
         try:
-            # Execute RLM with timeout protection
-            if self.timeout_seconds:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(
-                        self._execute_rlm, rlm, full_query, context
+            # The code interpreter runs as a Deno subprocess that can die
+            # under host pressure — a dead pipe is retryable with a fresh
+            # RLM (and therefore a fresh interpreter), not a result.
+            for attempt in (1, 2):
+                try:
+                    # Execute RLM with timeout protection
+                    if self.timeout_seconds:
+                        with concurrent.futures.ThreadPoolExecutor(
+                            max_workers=1
+                        ) as executor:
+                            future = executor.submit(
+                                self._execute_rlm, rlm, full_query, context
+                            )
+                            try:
+                                result, tokens_used = future.result(
+                                    timeout=self.timeout_seconds
+                                )
+                            except concurrent.futures.TimeoutError:
+                                raise RLMTimeoutError(
+                                    f"RLM processing exceeded timeout of "
+                                    f"{self.timeout_seconds}s"
+                                )
+                    else:
+                        # No timeout - execute directly
+                        result, tokens_used = self._execute_rlm(
+                            rlm, full_query, context
+                        )
+                    break
+                except BrokenPipeError as e:
+                    if attempt == 2:
+                        raise
+                    logger.warning(
+                        f"RLM interpreter subprocess died ({e}); retrying "
+                        f"with a fresh instance"
                     )
-                    try:
-                        result, tokens_used = future.result(
-                            timeout=self.timeout_seconds
-                        )
-                    except concurrent.futures.TimeoutError:
-                        raise RLMTimeoutError(
-                            f"RLM processing exceeded timeout of {self.timeout_seconds}s"
-                        )
-            else:
-                # No timeout - execute directly
-                result, tokens_used = self._execute_rlm(rlm, full_query, context)
+                    self._rlm = None
+                    rlm = self._get_rlm()
 
             answer = result.answer if hasattr(result, "answer") else str(result)
 

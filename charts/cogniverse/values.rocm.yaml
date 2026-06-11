@@ -97,8 +97,12 @@ inference:
       - "--max-model-len"
       - "448"
       - "--gpu-memory-utilization"
-      - "0.10"
-    # Unified memory: 0.10 × 62 = 6.2 GiB GPU + 4 GiB framework.
+      - "0.16"
+    # Unified memory: 0.16 × 62 = 9.9 GiB GPU (within the 12 Gi container
+    # limit). 0.10 left no cache-block headroom when every vLLM pod
+    # cold-starts at once after a host reboot — the ASR pod crash-looped
+    # on "No available memory for the cache blocks" until the others
+    # finished loading.
     resources:
       limits:
         cpu: "2"
