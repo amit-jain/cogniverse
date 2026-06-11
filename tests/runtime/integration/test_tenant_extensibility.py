@@ -330,13 +330,15 @@ class TestJobExecutorRealLLM:
         llm = get_config(tenant_id="test:unit", config_manager=cm).get_llm_config()
         endpoint = llm.resolve("primary")
         lm = create_dspy_lm(endpoint)
-        dspy.configure(lm=lm)
 
+        # dspy.configure is owned by whichever async task calls it first —
+        # inside an async test body, scope the LM with dspy.context instead.
         router = DSPyAdvancedRoutingModule()
-        result = router.forward(
-            query="Find the latest AI research papers on transformers",
-            available_agents="search_agent, summarizer_agent, detailed_report_agent",
-        )
+        with dspy.context(lm=lm):
+            result = router.forward(
+                query="Find the latest AI research papers on transformers",
+                available_agents="search_agent, summarizer_agent, detailed_report_agent",
+            )
 
         assert result is not None
         assert result.overall_confidence > 0.3, (
