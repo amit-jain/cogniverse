@@ -70,7 +70,7 @@ class TestAudioChunkResilience:
         )
 
         class _NoTorchClap:
-            def __init__(self, clap_model):
+            def __init__(self, clap_model, clap_endpoint_url=None):
                 pass
 
             def generate_acoustic_embedding(self, **_kw):

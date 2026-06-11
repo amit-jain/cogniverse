@@ -101,6 +101,14 @@ class AudioAnalysisDeps(AgentDeps):
             "default is openai/whisper-large-v3-turbo."
         ),
     )
+    clap_endpoint: Optional[str] = PydanticField(
+        None,
+        description=(
+            "URL of the clap_embed sidecar for acoustic-mode query "
+            "encoding. When unset, CLAP loads in-process (requires torch "
+            "— unavailable in the deployed runtime image)."
+        ),
+    )
 
 
 @dataclass
@@ -203,7 +211,9 @@ class AudioAnalysisAgent(
         """Lazy load AudioEmbeddingGenerator"""
         if self._embedding_generator is None:
             logger.info("Loading audio embedding models...")
-            self._embedding_generator = AudioEmbeddingGenerator()
+            self._embedding_generator = AudioEmbeddingGenerator(
+                clap_endpoint_url=self.deps.clap_endpoint
+            )
             logger.info("✅ AudioEmbeddingGenerator loaded")
         return self._embedding_generator
 

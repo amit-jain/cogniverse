@@ -651,7 +651,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         clap_model_name = self.profile_config.get(
             "embedding_model", "laion/clap-htsat-unfused"
         )
-        audio_generator = AudioEmbeddingGenerator(clap_model=clap_model_name)
+        audio_generator = AudioEmbeddingGenerator(
+            clap_model=clap_model_name,
+            clap_endpoint_url=self.profile_config.get("clap_endpoint_url"),
+        )
 
         transcript_data = video_data.get("transcript", {})
         if not isinstance(transcript_data, dict):

@@ -108,6 +108,14 @@ def create_embedding_generator(
     # embedding service configured.
     if "remote_inference_url" not in profile_config and config_manager is not None:
         system_config = config_manager.get_system_config()
+        # Audio profiles: route CLAP acoustic embeddings to the clap_embed
+        # sidecar when it is deployed (in-process CLAP needs torch, which
+        # the runtime image doesn't ship).
+        clap_url = (getattr(system_config, "inference_service_urls", {}) or {}).get(
+            "clap_embed"
+        )
+        if clap_url and "clap_endpoint_url" not in profile_config:
+            profile_config["clap_endpoint_url"] = clap_url
         loader = profile_config.get("model_loader", "")
         service_name = (profile_config.get("inference_services") or {}).get("embedding")
         service_urls = getattr(system_config, "inference_service_urls", {}) or {}

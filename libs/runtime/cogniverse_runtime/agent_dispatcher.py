@@ -1563,9 +1563,11 @@ class AgentDispatcher:
         )
 
         vespa_endpoint = self._get_vespa_endpoint(tenant_id)
+        sys_cfg = self._config_manager.get_system_config()
         deps = AudioAnalysisDeps(
             vespa_endpoint=vespa_endpoint,
             tenant_id=tenant_id,
+            clap_endpoint=(sys_cfg.inference_service_urls or {}).get("clap_embed"),
         )
         agent = AudioAnalysisAgent(deps=deps)
 

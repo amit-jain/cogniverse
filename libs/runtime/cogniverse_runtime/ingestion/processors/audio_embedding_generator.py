@@ -25,6 +25,7 @@ class AudioEmbeddingGenerator:
         self,
         clap_model: str = "laion/clap-htsat-unfused",
         semantic_model: Optional[str] = None,
+        clap_endpoint_url: Optional[str] = None,
     ):
         """
         Initialize audio embedding generator
@@ -36,9 +37,16 @@ class AudioEmbeddingGenerator:
                 a default — DenseOn served by the denseon sidecar when
                 ``COGNIVERSE_SEMANTIC_EMBED_URL`` is set, otherwise an
                 in-process ``all-mpnet-base-v2``.
+            clap_endpoint_url: URL of the clap_embed sidecar. When set,
+                acoustic embeddings route over HTTP instead of loading
+                CLAP in-process — the deployed runtime image ships no
+                torch, so in-cluster this is the only working path.
         """
         self._clap_model_name = clap_model
         self._semantic_model_name = semantic_model
+        self._clap_endpoint_url = (
+            clap_endpoint_url.rstrip("/") if clap_endpoint_url else None
+        )
 
         # Lazy loading
         self._clap_model = None
@@ -117,6 +125,13 @@ class AudioEmbeddingGenerator:
         if audio_path is None and audio_array is None:
             raise ValueError("Must provide either audio_path or audio_array")
 
+        if self._clap_endpoint_url:
+            return self._remote_acoustic_embedding(
+                audio_path=audio_path,
+                audio_array=audio_array,
+                sample_rate=sample_rate,
+            )
+
         try:
             # Load audio if path provided
             if audio_path is not None:
@@ -162,6 +177,50 @@ class AudioEmbeddingGenerator:
             logger.error(f"Failed to generate acoustic embedding: {e}")
             raise
 
+    def _remote_acoustic_embedding(
+        self,
+        audio_path: Optional[Path],
+        audio_array: Optional[np.ndarray],
+        sample_rate: int,
+    ) -> np.ndarray:
+        """POST the audio to the clap_embed sidecar and return its vector.
+
+        An array input is serialised to WAV first; a path is sent as raw
+        file bytes. The generous timeout absorbs the sidecar's one-time
+        model cold-load."""
+        import base64
+        import io
+
+        import httpx
+
+        if audio_path is not None:
+            raw = Path(audio_path).read_bytes()
+        else:
+            import soundfile as sf
+
+            buf = io.BytesIO()
+            sf.write(buf, audio_array, sample_rate, format="WAV")
+            raw = buf.getvalue()
+
+        resp = httpx.post(
+            f"{self._clap_endpoint_url}/embed/audio",
+            json={"audio_b64": base64.b64encode(raw).decode()},
+            timeout=600.0,
+        )
+        resp.raise_for_status()
+        return np.asarray(resp.json()["vec"], dtype=np.float32)
+
+    def _remote_acoustic_text_embedding(self, text: str) -> np.ndarray:
+        import httpx
+
+        resp = httpx.post(
+            f"{self._clap_endpoint_url}/embed/text",
+            json={"text": text},
+            timeout=600.0,
+        )
+        resp.raise_for_status()
+        return np.asarray(resp.json()["vec"], dtype=np.float32)
+
     def generate_acoustic_text_embedding(self, text: str) -> np.ndarray:
         """Generate a 512-dim text embedding in CLAP's joint audio-text space.
 
@@ -173,6 +232,9 @@ class AudioEmbeddingGenerator:
         Returns:
             512-dim acoustic-space text embedding
         """
+        if self._clap_endpoint_url:
+            return self._remote_acoustic_text_embedding(text)
+
         try:
             inputs = self.clap_processor(
                 text=[text],
