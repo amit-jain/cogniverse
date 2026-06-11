@@ -210,11 +210,21 @@ class TestIncludeTrajectoryShape:
         assert len(r.trajectory) <= max_entries
         # Each entry's truncatable string fields must respect the
         # _TRAJECTORY_FIELD_TRUNCATE (500) limit + the truncate marker.
-        _ALLOWED_KEYS = {"iteration", "reasoning", "code", "observation", "result"}
+        # The serializer passes through whichever step-output key the
+        # installed dspy emits: REPLEntry's "output" on current versions,
+        # "observation"/"result" on older ones.
+        _ALLOWED_KEYS = {
+            "iteration",
+            "reasoning",
+            "code",
+            "output",
+            "observation",
+            "result",
+        }
         for entry in r.trajectory:
             assert set(entry.keys()) <= _ALLOWED_KEYS, entry
             assert isinstance(entry["iteration"], int)
-            for k in ("reasoning", "code", "observation", "result"):
+            for k in ("reasoning", "code", "output", "observation", "result"):
                 if k in entry:
                     assert len(str(entry[k])) <= 501, (
                         f"trajectory entry {entry['iteration']!r} field {k!r} "
