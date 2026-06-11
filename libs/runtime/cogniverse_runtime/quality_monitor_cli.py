@@ -172,26 +172,37 @@ def main():
         # One-shot scheduled distillation for Argo CronWorkflows: force-build
         # a trigger from the current eval and submit it regardless of
         # thresholds, then exit cleanly so the CronWorkflow run completes.
+        # close() must run in the SAME loop as the cycle — the monitor's
+        # async clients are bound to it, and a second asyncio.run() raises
+        # "Event loop is closed" after a fully successful cycle.
         logger.info(f"Running forced optimization cycle for tenant={args.tenant_id}")
-        try:
-            result = asyncio.run(monitor.force_optimization_cycle())
-            logger.info(f"Forced cycle result: {result}")
-            exit_code = 0 if result.get("status") == "ok" else 1
-        finally:
-            asyncio.run(monitor.close())
-        sys.exit(exit_code)
+
+        async def _cycle_and_close():
+            try:
+                return await monitor.force_optimization_cycle()
+            finally:
+                await monitor.close()
+
+        result = asyncio.run(_cycle_and_close())
+        logger.info(f"Forced cycle result: {result}")
+        sys.exit(0 if result.get("status") == "ok" else 1)
 
     logger.info(
         f"Starting quality monitor for tenant={args.tenant_id} "
         f"(golden every {args.golden_interval}s, live every {args.live_interval}s)"
     )
 
+    async def _run_and_close():
+        try:
+            await monitor.run()
+        finally:
+            await monitor.close()
+
     try:
-        asyncio.run(monitor.run())
+        asyncio.run(_run_and_close())
     except KeyboardInterrupt:
         logger.info("Quality monitor stopped by user")
     finally:
-        asyncio.run(monitor.close())
         sys.exit(0)
 
 
