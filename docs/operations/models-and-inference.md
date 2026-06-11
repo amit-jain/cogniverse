@@ -217,6 +217,21 @@ the chart's pod template runs `pip install soundfile librosa` at
 startup before exec-ing `vllm serve`. The endpoint is
 `/v1/audio/transcriptions` (OpenAI-compatible multipart upload).
 
+### CLAP acoustic embeddings (in-process, runtime/ingestor pods)
+
+| Field | Value |
+|---|---|
+| Model | `laion/clap-htsat-unfused` (~1.7 GiB) |
+| Loaded by | `cogniverse_runtime.ingestion.processors.audio_embedding_generator` via `transformers` |
+| Cache | HF hub cache (`/home/cogniverse/.cache/huggingface`, hostPath-mounted) |
+
+The pods cannot reach the HF hub, so the model must be present in the
+mounted cache (`hf download laion/clap-htsat-unfused` on the host, or
+add it to `hfCache.persistence.minio.models`). A missing model fails
+audio chunking — the upload completes but `chunks_created` stays 0.
+The pods also need `NUMBA_CACHE_DIR` writable (set by the chart) or
+librosa's numba JIT crashes with "no locator available".
+
 ---
 
 ## Deployment style summary
