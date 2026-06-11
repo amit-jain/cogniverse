@@ -217,20 +217,28 @@ the chart's pod template runs `pip install soundfile librosa` at
 startup before exec-ing `vllm serve`. The endpoint is
 `/v1/audio/transcriptions` (OpenAI-compatible multipart upload).
 
-### CLAP acoustic embeddings (in-process, runtime/ingestor pods)
+### CLAP acoustic embeddings (`clap_embed` sidecar)
 
 | Field | Value |
 |---|---|
+| Chart key | `inference.clap_embed` |
 | Model | `laion/clap-htsat-unfused` (~1.7 GiB) |
-| Loaded by | `cogniverse_runtime.ingestion.processors.audio_embedding_generator` via `transformers` |
-| Cache | HF hub cache (`/home/cogniverse/.cache/huggingface`, hostPath-mounted) |
+| Image | `cogniverse/clap-embed` (CUSTOM, `deploy/clap_embed/Dockerfile`, module `cogniverse_runtime/sidecars/clap_embed.py`) |
+| Endpoints | `POST /embed/audio`, `POST /embed/text` (one joint space) |
+| NodePort | 29008 |
+| Default state | disabled |
 
-The pods cannot reach the HF hub, so the model must be present in the
-mounted cache (`hf download laion/clap-htsat-unfused` on the host, or
-add it to `hfCache.persistence.minio.models`). A missing model fails
-audio chunking — the upload completes but `chunks_created` stays 0.
-The pods also need `NUMBA_CACHE_DIR` writable (set by the chart) or
-librosa's numba JIT crashes with "no locator available".
+When the sidecar is deployed, `AudioEmbeddingGenerator` routes acoustic
+embeddings to it via `inference_service_urls["clap_embed"]` (ingestion
+side injected by the embedding-generator factory; query side via
+`AudioAnalysisDeps.clap_endpoint` filled by the dispatcher). Without it,
+CLAP loads in-process — which requires torch and therefore only works in
+dev environments, never in the deployed runtime image; in that case the
+acoustic vector is skipped (best-effort) and audio chunks carry only
+transcript + semantic embeddings.
+
+The runtime pods also need `NUMBA_CACHE_DIR` writable (set by the
+chart) or librosa's numba JIT crashes with "no locator available".
 
 ---
 

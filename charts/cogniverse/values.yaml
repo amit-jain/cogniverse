@@ -1375,6 +1375,44 @@ inference:
   # vectors per source_doc_id, and attributes each cluster to the
   # temporally-aligned named Person. CPU-only; the model pack
   # (~210 MiB) downloads on first /embed call.
+  clap_embed:
+    enabled: false
+    replicaCount: 1
+    image:
+      repository: cogniverse/clap-embed
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    service:
+      type: NodePort
+      port: 8000
+      nodePort: 29008
+    env:
+      CLAP_EMBED_MODEL: laion/clap-htsat-unfused
+      CLAP_EMBED_SAMPLE_RATE: "48000"
+    resources:
+      limits:
+        cpu: "2"
+        memory: "6Gi"
+      requests:
+        cpu: "500m"
+        memory: "2Gi"
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 5
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 8000
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 5
+
   face_embed:
     enabled: false
     replicaCount: 1

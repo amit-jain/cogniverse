@@ -1,0 +1,14 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi==0.120.1
+uvicorn[standard]==0.44.0
+pydantic==2.13.0
+numpy==1.26.4
+httpx==0.27.2
+# librosa mirrors the in-process preprocessing (48 kHz mono load);
+# soundfile/libsndfile handles the WAV containers ingestion sends.
+librosa==0.11.0
+soundfile==0.13.1
+# CLAP (laion/clap-htsat-unfused) via transformers; CPU torch wheels
+# from the pytorch index keep the image GPU-free.
+transformers==4.56.2
+torch==2.8.0
