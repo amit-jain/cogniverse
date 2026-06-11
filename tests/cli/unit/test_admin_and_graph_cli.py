@@ -213,3 +213,35 @@ def test_graph_stats_non_200_prints_red_error(
     out = capture_console.getvalue()
     assert "Graph stats failed" in out
     assert "500" in out
+
+
+class TestGraphUpsertPayloadContract:
+    def test_cli_payload_validates_against_route_models(self, tmp_path):
+        """The CLI serialises extraction results for /graph/upsert — every
+        edge field the route's EdgeDoc requires must be present, or the
+        whole upsert 422s and `cogniverse index` silently reports zero
+        graph nodes."""
+        from cogniverse_agents.graph.code_extractor import CodeExtractor
+        from cogniverse_cli.index import _build_graph_payload
+        from cogniverse_runtime.routers.graph import EdgeDoc, NodeDoc
+
+        f = tmp_path / "utils.py"
+        f.write_text(
+            "def make_greeter(name):\n"
+            "    return lambda: name\n"
+            "\n"
+            "class Greeter:\n"
+            "    def __init__(self, name):\n"
+            "        self.greeter = make_greeter(name)\n"
+        )
+        result = CodeExtractor().extract(f, "acme", "utils.py")
+        assert result is not None and result.edges, "extraction must yield edges"
+
+        payload = _build_graph_payload(result, "acme", "utils.py")
+
+        for node in payload["nodes"]:
+            NodeDoc.model_validate(node)
+        validated = [EdgeDoc.model_validate(edge) for edge in payload["edges"]]
+        assert len(validated) == len(result.edges)
+        assert all(e.evidence_span for e in validated)
+        assert all(e.modality == "code" for e in validated)

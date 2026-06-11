@@ -17,6 +17,7 @@ image → image profile, audio → audio profile). Code only maps to
 ``code_lateon_mv``.
 """
 
+import dataclasses
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -219,6 +220,47 @@ def _upload_file(
     return {"error": resp.text[:200], "status": resp.status_code}
 
 
+def _build_graph_payload(result, tenant_id: str, source_doc_id: str) -> Dict:
+    """Serialise an ExtractionResult into the /graph/upsert request body.
+
+    Every field the route's EdgeDoc declares required must be present —
+    a missing provenance field 422s the whole upsert and the CLI summary
+    silently reports zero graph nodes.
+    """
+    return {
+        "tenant_id": tenant_id,
+        "source_doc_id": source_doc_id,
+        "nodes": [
+            {
+                "name": n.name,
+                "description": n.description,
+                "kind": n.kind,
+                # Mention dataclasses are not JSON-serialisable as-is.
+                "mentions": [
+                    m if isinstance(m, dict) else dataclasses.asdict(m)
+                    for m in n.mentions
+                ],
+            }
+            for n in result.nodes
+        ],
+        "edges": [
+            {
+                "source": e.source,
+                "target": e.target,
+                "relation": e.relation,
+                "evidence_span": e.evidence_span,
+                "segment_id": e.segment_id,
+                "ts_start": e.ts_start,
+                "ts_end": e.ts_end,
+                "modality": e.modality,
+                "provenance": e.provenance,
+                "confidence": e.confidence,
+            }
+            for e in result.edges
+        ],
+    }
+
+
 def _extract_and_upsert_graph(
     client: httpx.Client,
     file_path: Path,
@@ -253,29 +295,7 @@ def _extract_and_upsert_graph(
     if result is None or (not result.nodes and not result.edges):
         return None
 
-    payload = {
-        "tenant_id": tenant_id,
-        "source_doc_id": source_doc_id,
-        "nodes": [
-            {
-                "name": n.name,
-                "description": n.description,
-                "kind": n.kind,
-                "mentions": n.mentions,
-            }
-            for n in result.nodes
-        ],
-        "edges": [
-            {
-                "source": e.source,
-                "target": e.target,
-                "relation": e.relation,
-                "provenance": e.provenance,
-                "confidence": e.confidence,
-            }
-            for e in result.edges
-        ],
-    }
+    payload = _build_graph_payload(result, tenant_id, source_doc_id)
 
     try:
         resp = client.post("/graph/upsert", json=payload, timeout=60.0)
