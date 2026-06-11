@@ -478,7 +478,7 @@ async def _submit_cron_workflow(manifest: dict) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{_argo_api_url}/api/v1/cronworkflows/{namespace}",
+                f"{_argo_api_url}/api/v1/cron-workflows/{namespace}",
                 json=manifest,
                 headers=_argo_auth_headers(),
             )
@@ -517,7 +517,7 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.delete(
-                f"{_argo_api_url}/api/v1/cronworkflows/{namespace}/{name}",
+                f"{_argo_api_url}/api/v1/cron-workflows/{namespace}/{name}",
                 headers=_argo_auth_headers(),
             )
     except Exception as exc:
