@@ -668,10 +668,21 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             try:
                 audio_path = Path(audio_info["path"])
 
-                # Generate CLAP acoustic embedding (512-dim float list)
-                acoustic_emb = audio_generator.generate_acoustic_embedding(
-                    audio_path=audio_path
-                )
+                # CLAP acoustic embedding (512-dim float list). Best-effort:
+                # it needs torch+CLAP in-process, which the deployed runtime
+                # image doesn't ship — an unavailable acoustic vector must
+                # not discard the semantic/transcript chunk.
+                try:
+                    acoustic_emb = audio_generator.generate_acoustic_embedding(
+                        audio_path=audio_path
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        f"Acoustic embedding unavailable for "
+                        f"{audio_info.get('filename', idx)}: {exc} — feeding "
+                        f"semantic-only audio chunk"
+                    )
+                    acoustic_emb = None
 
                 if not transcript_text.strip():
                     raise ValueError(
@@ -683,9 +694,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 )[0]
                 semantic_np = np.array(semantic_tokens, dtype=np.float32)
 
+                acoustic_shape = None if acoustic_emb is None else acoustic_emb.shape
                 self.logger.info(
                     f"  🔊 Audio {audio_info.get('filename', idx)}: "
-                    f"acoustic={acoustic_emb.shape}, semantic={semantic_np.shape}"
+                    f"acoustic={acoustic_shape}, semantic={semantic_np.shape}"
                 )
 
                 # Create Document with dual embeddings
@@ -704,7 +716,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # Acoustic CLAP embedding stored as pre-formatted Vespa field in metadata.
                 # The ingestion client's generic metadata→field mapping picks this up
                 # because 'acoustic_embedding' matches the schema field name.
-                doc.add_metadata("acoustic_embedding", acoustic_emb.tolist())
+                if acoustic_emb is not None:
+                    doc.add_metadata("acoustic_embedding", acoustic_emb.tolist())
 
                 doc.add_metadata(
                     "audio_id", audio_info.get("audio_id", audio_path.stem)

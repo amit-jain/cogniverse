@@ -53,3 +53,53 @@ class TestSourceUrlInDocuments:
             {"video_id": "v1", "video_path": "/data/v1.mp4", "duration": 5.0}
         )
         assert video_data["source_url"] == "s3://corpus/v1.mp4"
+
+
+@pytest.mark.unit
+class TestAudioChunkResilience:
+    def test_audio_chunk_feeds_without_acoustic_when_clap_unavailable(
+        self, monkeypatch
+    ):
+        """An in-process CLAP failure (no torch in the deployed image) must
+        not discard the chunk — the semantic/transcript document still feeds,
+        just without the acoustic_embedding field."""
+        import logging
+
+        from cogniverse_runtime.ingestion.processors import (
+            audio_embedding_generator as aeg,
+        )
+
+        class _NoTorchClap:
+            def __init__(self, clap_model):
+                pass
+
+            def generate_acoustic_embedding(self, **_kw):
+                raise RuntimeError("ClapModel requires the PyTorch library")
+
+        monkeypatch.setattr(aeg, "AudioEmbeddingGenerator", _NoTorchClap)
+
+        class _FakeColbert:
+            def encode(self, texts, is_query=False):
+                return [np.zeros((4, 128), dtype=np.float32)]
+
+        gen = object.__new__(EmbeddingGeneratorImpl)
+        gen.logger = logging.getLogger("test_audio_resilience")
+        gen.profile_config = {}
+        gen.colbert_model = _FakeColbert()
+        fed = []
+        gen._feed_document = lambda doc: bool(fed.append(doc)) or True
+
+        result = gen._process_audio_segments(
+            video_data={
+                "video_id": "a1",
+                "transcript": {"full_text": "hello world"},
+                "source_url": "s3://corpus/a1.mp3",
+            },
+            segments=[{"path": "/tmp/a1.mp3", "audio_id": "a1", "filename": "a1.mp3"}],
+        )
+
+        assert result.documents_fed == 1
+        assert len(fed) == 1
+        assert "acoustic_embedding" not in fed[0].metadata
+        assert fed[0].metadata["audio_transcript"] == "hello world"
+        assert fed[0].metadata["source_url"] == "s3://corpus/a1.mp3"
