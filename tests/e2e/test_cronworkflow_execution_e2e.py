@@ -344,8 +344,8 @@ def _mc_ls_names(prefix: str) -> list:
                                 "command": ["sh", "-c"],
                                 "args": [
                                     'mc alias set dest http://cogniverse-minio:9000 "$ACCESS" "$SECRET" >/dev/null 2>&1 && '
-                                    f"mc ls dest/cogniverse-backups/{prefix}/ 2>/dev/null "
-                                    "| awk '{print \"OBJ:\"$NF}' | sort"
+                                    f"mc find dest/cogniverse-backups/{prefix} 2>/dev/null"
+                                    " || true"
                                 ],
                             }
                         ]
@@ -360,12 +360,12 @@ def _mc_ls_names(prefix: str) -> list:
         timeout=120,
     )
     try:
-        # Object-name lines carry the OBJ: marker; pod-attach chatter never
-        # does. mc ls emits one name per line.
+        # mc find prints full object paths (dest/bucket/prefix/name), one
+        # per line — the minimal mc image has no awk/sed, so parse here.
         names = [
-            line.strip()[4:]
+            line.strip().rsplit("/", 1)[-1]
             for line in result.stdout.splitlines()
-            if line.strip().startswith("OBJ:")
+            if line.strip().startswith("dest/cogniverse-backups/")
         ]
         return sorted(names) if result.returncode == 0 else None
     except Exception:

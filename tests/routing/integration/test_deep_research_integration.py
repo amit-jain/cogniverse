@@ -9,6 +9,7 @@ Requires the configured test LM endpoint to be reachable (see
 """
 
 import logging
+import time
 
 import dspy
 import pytest
@@ -90,10 +91,77 @@ def real_search_fn(vespa_instance):
     return search
 
 
+@pytest.fixture
+def seeded_outdoor_corpus(vespa_instance):
+    """Deep research can only find evidence that exists — feed segments
+    whose descriptions cover outdoor scenes so the search step returns
+    real passages instead of an empty index."""
+    import requests
+
+    from tests.utils.vespa_test_helpers import schema_full_name
+
+    schema = schema_full_name("video_colpali_smol500_mv_frame", "test_unit")
+    port = vespa_instance["http_port"]
+
+    # The doc type takes a few seconds to converge after deploy_schema
+    # activates — poll GET liveness (404 = type known, doc absent) before
+    # feeding, or the first POST 400s with "Document type does not exist".
+    probe_url = (
+        f"http://localhost:{port}/document/v1/video/{schema}/docid/liveness_probe"
+    )
+    for _ in range(120):
+        if requests.get(probe_url, timeout=5).status_code in (200, 404):
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(f"schema {schema} doc type never went live")
+
+    segments = [
+        (
+            "outdoor_forest",
+            "A hiker walks through a dense green forest with tall pine "
+            "trees, ferns, and sunlight filtering through the canopy.",
+        ),
+        (
+            "outdoor_park",
+            "Children play on swings in an urban park with grass lawns, "
+            "oak trees and a fountain on a sunny afternoon.",
+        ),
+        (
+            "outdoor_mountain",
+            "A wide mountain landscape with snow-capped peaks, a clear "
+            "blue sky and a rocky hiking trail across a meadow.",
+        ),
+    ]
+    for video_id, description in segments:
+        fields = {
+            "video_id": video_id,
+            "video_title": video_id.replace("_", " "),
+            "source_url": f"file:///{video_id}.mp4",
+            "creation_timestamp": 1700000000,
+            "segment_id": 0,
+            "start_time": 0.0,
+            "end_time": 1.0,
+            "segment_description": description,
+            "audio_transcript": description,
+            "embedding": {"blocks": {"0": [0.1] * 128}},
+            "embedding_binary": {"blocks": {"0": [1] * 16}},
+        }
+        resp = requests.post(
+            f"http://localhost:{port}/document/v1/video/{schema}"
+            f"/docid/{video_id}_seg_0",
+            json={"fields": fields},
+            timeout=15,
+        )
+        assert resp.status_code in (200, 201), resp.text[:300]
+    time.sleep(2)
+    return [v for v, _ in segments]
+
+
 class TestDeepResearchWithRealServices:
     @pytest.mark.asyncio
     @pytest.mark.timeout(120)
-    async def test_full_research_cycle(self, real_search_fn):
+    async def test_full_research_cycle(self, real_search_fn, seeded_outdoor_corpus):
         """Decompose → search Vespa → evaluate → synthesize against the configured LM."""
         deps = DeepResearchDeps(tenant_id="test:unit")
         agent = DeepResearchAgent(deps=deps, search_fn=real_search_fn)
