@@ -70,7 +70,7 @@ def _runtime_reachable() -> bool:
 
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.e2e,
     pytest.mark.skipif(
         not _runtime_reachable(),
         reason=(

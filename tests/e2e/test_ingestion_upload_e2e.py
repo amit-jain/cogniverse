@@ -46,7 +46,7 @@ import httpx
 import pytest
 import requests
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.e2e
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
@@ -85,7 +85,7 @@ def _tenant_registered() -> bool:
 
 
 pytestmark = [
-    pytest.mark.integration,
+    pytest.mark.e2e,
     pytest.mark.skipif(
         not SAMPLE_VIDEO.exists(),
         reason=f"sample video missing: {SAMPLE_VIDEO}",
