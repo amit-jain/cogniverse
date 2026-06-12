@@ -84,13 +84,22 @@ def seeded_dataset(phoenix_container, tenant_id: str) -> str:
     return dataset_name
 
 
+@pytest.fixture(autouse=True)
+def _backend_url_from_shared_vespa(shared_vespa, monkeypatch):
+    """CLI subprocesses must hit the session Vespa container, never the
+    k3d cluster — integration provisions its own infrastructure."""
+    monkeypatch.setenv("BACKEND_URL", f"http://localhost:{shared_vespa['http_port']}")
+    monkeypatch.setenv("BACKEND_PORT", str(shared_vespa["http_port"]))
+
+
 def _run_cli(
     args: list,
     phoenix_container: dict,
     env_overlay: dict | None = None,
 ) -> subprocess.CompletedProcess:
     env = dict(os.environ)
-    env["BACKEND_URL"] = env.get("BACKEND_URL", "http://localhost:8080")
+    env["BACKEND_URL"] = os.environ["BACKEND_URL"]  # set by the
+    # autouse shared-vespa fixture; never the k3d cluster.
     env["PHOENIX_HTTP_ENDPOINT"] = phoenix_container["http_endpoint"]
     env["PHOENIX_GRPC_ENDPOINT"] = phoenix_container["otlp_endpoint"]
     # Avoid Deno requirement at import time inside the subprocess.

@@ -185,58 +185,6 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def pylate_server():
-    """Run the real colbert_pylate sidecar module in a background thread.
-
-    Loads ``lightonai/LateOn`` via PyLate (downloads ~300MB on first
-    run, cached in HF home thereafter) and serves the same /pooling
-    contract the production sidecar speaks. The graph_manager fixture
-    points GraphManager at this URL so upserts exercise the full
-    encode → VespaEmbeddingProcessor → Vespa write path against real
-    multi-vector embeddings.
-    """
-    import importlib.util
-
-    import uvicorn
-
-    # Load the production sidecar module by path (no package install).
-    spec = importlib.util.spec_from_file_location(
-        "pylate_server_under_test",
-        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 180  # model load on first run is slow
-    while time.time() < deadline:
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("pylate /health did not come up within 180s — model load failed")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
-
-
-@pytest.fixture(scope="module")
 def graph_manager(graph_vespa, pylate_server):
     """GraphManager wired to the test Vespa via the production VespaBackend
     (BackendRegistry path) and the real PyLate /pooling server."""

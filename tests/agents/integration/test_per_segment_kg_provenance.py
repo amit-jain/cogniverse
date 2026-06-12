@@ -23,7 +23,6 @@ from __future__ import annotations
 import json
 import os
 import socket
-import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -297,50 +296,6 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def pylate_server():
-    """Real colbert_pylate sidecar module in a background thread, serving
-    ``lightonai/LateOn`` via the production /pooling contract."""
-    import importlib.util
-
-    import uvicorn
-
-    spec = importlib.util.spec_from_file_location(
-        "pylate_server_per_segment",
-        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("pylate /health did not come up within 180s")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
 
 
 @pytest.fixture(scope="module")

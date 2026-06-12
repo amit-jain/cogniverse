@@ -34,9 +34,18 @@ import yaml
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(autouse=True)
+def _backend_url_from_shared_vespa(shared_vespa, monkeypatch):
+    """CLI subprocesses must hit the session Vespa container, never the
+    k3d cluster — integration provisions its own infrastructure."""
+    monkeypatch.setenv("BACKEND_URL", f"http://localhost:{shared_vespa['http_port']}")
+    monkeypatch.setenv("BACKEND_PORT", str(shared_vespa["http_port"]))
+
+
 def _run_cli(args: list) -> subprocess.CompletedProcess:
     env = dict(os.environ)
-    env["BACKEND_URL"] = env.get("BACKEND_URL", "http://localhost:8080")
+    env["BACKEND_URL"] = os.environ["BACKEND_URL"]  # set by the
+    # autouse shared-vespa fixture; never the k3d cluster.
     return subprocess.run(
         [
             sys.executable,

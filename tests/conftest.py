@@ -26,6 +26,140 @@ def _shared_denseon_free_port() -> int:
 
 
 @pytest.fixture(scope="session")
+def face_embed_container():
+    """Self-provisioned face-embed sidecar container.
+
+    Builds the image from deploy/face_embed/Dockerfile when absent, runs
+    it with the shared HF/insightface cache volume, and yields the base
+    URL — integration tests never depend on a pre-started service.
+    """
+    import socket
+    import subprocess
+    import time as _time
+
+    import requests as _requests
+
+    repo = Path(__file__).resolve().parents[1]
+    image = "cogniverse-face-embed:local"
+    have = subprocess.run(
+        ["docker", "image", "inspect", image], capture_output=True
+    )
+    if have.returncode != 0:
+        subprocess.run(
+            [
+                "docker",
+                "build",
+                "-f",
+                str(repo / "deploy/face_embed/Dockerfile"),
+                "-t",
+                image,
+                str(repo),
+            ],
+            check=True,
+            timeout=1800,
+        )
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    name = f"face-embed-test-{port}"
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+    subprocess.run(["docker", "volume", "create", "face-embed-cache"], capture_output=True)
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "-p",
+            f"{port}:8080",
+            "-v",
+            "face-embed-cache:/root/.insightface",
+            "--oom-score-adj=500",
+            image,
+        ],
+        check=True,
+        timeout=120,
+    )
+
+    base_url = f"http://127.0.0.1:{port}"
+    deadline = _time.time() + 120
+    while _time.time() < deadline:
+        try:
+            if _requests.get(f"{base_url}/health", timeout=2).status_code == 200:
+                break
+        except Exception:
+            pass
+        _time.sleep(2)
+    else:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        pytest.fail("face-embed sidecar container did not become healthy")
+
+    try:
+        yield base_url
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def pylate_server():
+    """The real colbert_pylate sidecar module served from a background
+    thread — session-scoped so LateOn loads once per run.
+
+    Serves the production /pooling contract (and /v1/embeddings in dense
+    mode) without depending on the k3d cluster: integration tests must
+    provision their own inference, the cluster belongs to the e2e tier.
+    """
+    import importlib.util
+    import socket
+    import threading
+    import time as _time
+
+    import requests as _requests
+    import uvicorn
+
+    spec = importlib.util.spec_from_file_location(
+        "pylate_server_shared",
+        str(
+            Path(__file__).resolve().parents[1]
+            / "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py"
+        ),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    deadline = _time.time() + 180
+    while _time.time() < deadline:
+        try:
+            if _requests.get(f"{base_url}/health", timeout=2).status_code == 200:
+                break
+        except Exception:
+            pass
+        _time.sleep(1)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        pytest.fail("pylate /health did not come up within 180s — model load failed")
+
+    try:
+        yield base_url
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+
+
+@pytest.fixture(scope="session")
 def shared_denseon():
     """Run the real colbert_pylate sidecar module in mode=dense for any tests
     that need a DenseOn embedding endpoint (Mem0, semantic_embedder, etc).

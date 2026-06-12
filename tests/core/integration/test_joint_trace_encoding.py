@@ -19,7 +19,6 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Optional
 
 import httpx
 import numpy as np
@@ -32,75 +31,6 @@ pytestmark = pytest.mark.integration
 # File-level skip: the ColBERT pylate sidecar must be reachable. Without it
 # every encode call raises and there's no byte-stable output to lock.
 # ---------------------------------------------------------------------------
-
-
-def _resolve_colbert_sidecar_url() -> Optional[str]:
-    """Return a reachable colbert_pylate URL or ``None``.
-
-    Reads ``configs/config.json`` for the candidate URL set, then probes
-    each one for ``/health`` (or, failing that, ``/pooling``). The first
-    reachable URL wins.
-    """
-    candidates: list[str] = []
-    env_url = os.environ.get("COLBERT_PYLATE_URL")
-    if env_url:
-        candidates.append(env_url.rstrip("/"))
-    try:
-        config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        config = json.loads(config_path.read_text())
-        urls = config.get("inference_service_urls", {})
-        if isinstance(urls, dict):
-            url = urls.get("colbert_pylate")
-            if url:
-                candidates.append(str(url).rstrip("/"))
-    except Exception:
-        pass
-    # Fall back to the standard in-cluster name on the off-chance the
-    # test runs under port-forward or kubectl proxy.
-    candidates.append("http://localhost:29002")
-    candidates.append("http://localhost:8000")
-    candidates.append("http://cogniverse-colbert-pylate:8000")
-
-    for url in candidates:
-        try:
-            resp = httpx.get(f"{url}/health", timeout=2.0)
-            if resp.status_code < 500:
-                return url
-        except Exception:
-            pass
-        try:
-            resp = httpx.post(
-                f"{url}/pooling",
-                json={"input": ["healthcheck"], "model": "lightonai/LateOn"},
-                timeout=3.0,
-            )
-            if resp.status_code < 500:
-                return url
-        except Exception:
-            continue
-    return None
-
-
-def _resolve_with_retries(attempts: int = 3, delay_s: float = 5.0):
-    """A NodePort blip or a load-slowed health response must not skip the
-    module — retry the candidate sweep before declaring unreachable."""
-    for i in range(attempts):
-        url = _resolve_colbert_sidecar_url()
-        if url is not None:
-            return url
-        if i < attempts - 1:
-            time.sleep(delay_s)
-    return None
-
-
-_COLBERT_URL = _resolve_with_retries()
-
-if _COLBERT_URL is None:
-    pytest.skip(
-        "colbert_pylate sidecar not reachable — joint-trace encoder needs "
-        "a live ColBERT endpoint to produce byte-stable embeddings",
-        allow_module_level=True,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,13 +68,13 @@ def assert_golden_npy(actual_array: np.ndarray, name: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def colbert_encoder():
+def colbert_encoder(pylate_server):
     from cogniverse_core.query.encoders import ColBERTQueryEncoder
 
     return ColBERTQueryEncoder(
         model_name="lightonai/LateOn",
         embedding_dim=128,
-        inference_service_url=_COLBERT_URL,
+        inference_service_url=pylate_server,
     )
 
 
@@ -239,7 +169,7 @@ def _graph_manager_available() -> bool:
 
 
 @pytest.fixture(scope="module")
-def seeded_graph_manager():
+def seeded_graph_manager(pylate_server):
     """Deploy knowledge_graph schema for tenant=g4test in live Vespa and
     upsert the Marie Curie node set the search test exercises.
 
@@ -315,7 +245,7 @@ def seeded_graph_manager():
         backend=search_backend,
         tenant_id=tenant_id,
         schema_name=schema_name,
-        colbert_endpoint_url=_COLBERT_URL,
+        colbert_endpoint_url=pylate_server,
     )
 
     seg_anchor = Mention(
@@ -376,7 +306,6 @@ def seeded_graph_manager():
         ]
     ]
     mgr.upsert(ExtractionResult(source_doc_id="marie_curie_30s", nodes=nodes, edges=[]))
-    import time
 
     time.sleep(2)  # Vespa indexing lag
     return mgr

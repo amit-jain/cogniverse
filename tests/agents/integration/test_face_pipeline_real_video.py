@@ -11,7 +11,7 @@ WHAT'S REAL HERE
   synthetic colours.
 * Real ``extract_faces_per_keyframe`` → real ``cluster_faces`` →
   real ``attribute_clusters_to_persons`` → real ``GraphManager.upsert``
-  to a live Vespa instance (``localhost:8080``).
+  to the session-scoped Vespa test container.
 * Real Vespa query after the upsert verifies the persisted edge.
 
 WHAT'S HAND-BUILT
@@ -30,8 +30,8 @@ PRE-REQS (the test will fail loudly if any are missing)
 
 * Real face-embed sidecar reachable at ``localhost:29007``. Start
   locally via ``PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed``.
-* Real Vespa reachable at ``localhost:8080`` (k3d serverlb).
-* Real ColBERT pylate sidecar reachable at ``localhost:29002``.
+* Session Vespa container (``shared_vespa``) and the in-process
+  ColBERT pylate sidecar (``pylate_server``) — both self-provisioned.
 * ``cv2`` installed (``uv pip install opencv-python-headless``).
 """
 
@@ -62,11 +62,7 @@ pytestmark = pytest.mark.integration
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
 TENANT_ID = "test_face_real"
-FACE_EMBED_URL = "http://localhost:29007"
 VESPA_HOST = "localhost"
-VESPA_PORT = 8080
-VESPA_CONFIG_PORT = 19071
-PYLATE_URL = "http://localhost:29002"
 
 
 # --------------------------------------------------------------------- #
@@ -81,36 +77,17 @@ def _service_up(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
-def _vespa_up() -> bool:
-    return _service_up(f"http://{VESPA_HOST}:{VESPA_PORT}/state/v1/health")
-
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         not SAMPLE_VIDEO.exists(),
         reason=f"sample video missing: {SAMPLE_VIDEO}",
     ),
-    pytest.mark.skipif(
-        not _service_up(f"{FACE_EMBED_URL}/health"),
-        reason=(
-            "face-embed sidecar not reachable at localhost:29007. Start it "
-            "with: PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed"
-        ),
-    ),
-    pytest.mark.skipif(
-        not _vespa_up(),
-        reason="live Vespa not reachable at localhost:8080",
-    ),
-    pytest.mark.skipif(
-        not _service_up(f"{PYLATE_URL}/health"),
-        reason="ColBERT pylate sidecar not reachable at localhost:29002",
-    ),
 ]
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _warm_face_embed_model():
+def _warm_face_embed_model(face_embed_container):
     """Absorb the sidecar's cold start before any test issues real work.
 
     The first /embed on a fresh sidecar triggers the ~210 MiB buffalo_l
@@ -128,7 +105,7 @@ def _warm_face_embed_model():
     while time.time() < deadline:
         try:
             r = httpx.post(
-                f"{FACE_EMBED_URL}/embed",
+                f"{face_embed_container}/embed",
                 json={"image_b64": one_px_png_b64},
                 timeout=600.0,
             )
@@ -203,8 +180,11 @@ def _free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def graph_manager_live():
-    """Real GraphManager wired to live Vespa + live ColBERT sidecar."""
+def graph_manager_live(shared_vespa, pylate_server):
+    """Real GraphManager wired to the session Vespa container + the
+    in-process ColBERT sidecar — no k3d dependency."""
+    vespa_port = shared_vespa["http_port"]
+    vespa_config_port = shared_vespa["config_port"]
     from cogniverse_core.registries.backend_registry import BackendRegistry
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.manager import ConfigManager
@@ -215,18 +195,18 @@ def graph_manager_live():
     BackendRegistry._backend_instances.clear()
     config_store = VespaConfigStore(
         backend_url=f"http://{VESPA_HOST}",
-        backend_port=VESPA_PORT,
+        backend_port=vespa_port,
     )
     config_manager = ConfigManager(store=config_store)
     config_manager.set_system_config(
-        SystemConfig(backend_url=f"http://{VESPA_HOST}", backend_port=VESPA_PORT)
+        SystemConfig(backend_url=f"http://{VESPA_HOST}", backend_port=vespa_port)
     )
     schema_loader = FilesystemSchemaLoader(REPO_ROOT / "configs/schemas")
 
     deploy_tenant_schema(
         {
-            "http_port": VESPA_PORT,
-            "config_port": VESPA_CONFIG_PORT,
+            "http_port": vespa_port,
+            "config_port": vespa_config_port,
             "backend_url": f"http://{VESPA_HOST}",
         },
         tenant_id=TENANT_ID,
@@ -247,7 +227,7 @@ def graph_manager_live():
     while time.time() < deadline:
         try:
             resp = httpx.post(
-                f"http://{VESPA_HOST}:{VESPA_PORT}/search/",
+                f"http://{VESPA_HOST}:{vespa_port}/search/",
                 json={"yql": yql, "hits": 0},
                 timeout=5.0,
             )
@@ -265,8 +245,8 @@ def graph_manager_live():
         config={
             "backend": {
                 "url": f"http://{VESPA_HOST}",
-                "config_port": VESPA_CONFIG_PORT,
-                "port": VESPA_PORT,
+                "config_port": vespa_config_port,
+                "port": vespa_port,
             }
         },
         config_manager=config_manager,
@@ -277,7 +257,7 @@ def graph_manager_live():
         backend=backend,
         tenant_id=TENANT_ID,
         schema_name=schema_name,
-        colbert_endpoint_url=PYLATE_URL,
+        colbert_endpoint_url=pylate_server,
     )
     try:
         yield manager
@@ -290,10 +270,12 @@ def graph_manager_live():
 # --------------------------------------------------------------------- #
 
 
-def test_real_face_extraction_detects_one_face_per_keyframe(processing_results):
+def test_real_face_extraction_detects_one_face_per_keyframe(
+    processing_results, face_embed_container
+):
     """The three real keyframes each contain exactly one face."""
     records = extract_faces_per_keyframe(
-        processing_results, "v_D1gdv_gQyw", FACE_EMBED_URL
+        processing_results, "v_D1gdv_gQyw", face_embed_container
     )
     assert len(records) == 3
     by_segment = {r.segment_id: r for r in records}
@@ -311,10 +293,12 @@ def test_real_face_extraction_detects_one_face_per_keyframe(processing_results):
 # --------------------------------------------------------------------- #
 
 
-def test_real_clustering_groups_same_subject_into_one_cluster(processing_results):
+def test_real_clustering_groups_same_subject_into_one_cluster(
+    processing_results, face_embed_container
+):
     """Three frames of the same on-camera person cluster into one identity."""
     records = extract_faces_per_keyframe(
-        processing_results, "v_D1gdv_gQyw", FACE_EMBED_URL
+        processing_results, "v_D1gdv_gQyw", face_embed_container
     )
     clusters = cluster_faces(records)
     # The three keyframes are within 4 seconds of the same single
@@ -343,11 +327,11 @@ def test_real_clustering_groups_same_subject_into_one_cluster(processing_results
 
 
 def test_real_attribution_links_cluster_to_transcript_subject(
-    processing_results,
+    processing_results, face_embed_container
 ):
     """Hand-built Person whose window covers the cluster's faces gets the same_as."""
     records = extract_faces_per_keyframe(
-        processing_results, "v_D1gdv_gQyw", FACE_EMBED_URL
+        processing_results, "v_D1gdv_gQyw", face_embed_container
     )
     clusters = cluster_faces(records)
 
@@ -405,11 +389,11 @@ def test_real_attribution_links_cluster_to_transcript_subject(
 
 
 def test_real_vespa_round_trip_persists_face_cluster_edge(
-    processing_results, graph_manager_live
+    processing_results, graph_manager_live, face_embed_container
 ):
     """Upsert face-cluster nodes + same_as edge to real Vespa, then visit."""
     records = extract_faces_per_keyframe(
-        processing_results, "v_D1gdv_gQyw", FACE_EMBED_URL
+        processing_results, "v_D1gdv_gQyw", face_embed_container
     )
     clusters = cluster_faces(records)
 
