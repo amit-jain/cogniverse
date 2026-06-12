@@ -89,10 +89,11 @@ class VllmSidecarFactory:
         *,
         extra_args: Optional[list[str]] = None,
         image: Optional[str] = None,
+        device: str = "cpu",
     ) -> str:
         """Return a base URL serving ``model``. Cached by (model, image, args)."""
         image = image or self.image
-        key = (model, image, tuple(extra_args or ()))
+        key = (model, image, tuple(extra_args or ()), device)
         if key in self._spawned:
             return self._spawned[key].base_url
 
@@ -123,6 +124,23 @@ class VllmSidecarFactory:
             # downstream.
             "--oom-score-adj=500",
         ]
+        if device == "rocm":
+            # ROCm containers need the kernel fusion + render devices and
+            # membership of the render group (gid varies per distro).
+            cmd.extend(
+                [
+                    "--device",
+                    "/dev/kfd",
+                    "--device",
+                    "/dev/dri",
+                    "--group-add",
+                    "video",
+                    "--group-add",
+                    "render",
+                    "--security-opt",
+                    "seccomp=unconfined",
+                ]
+            )
         if os.path.isdir(HOST_HF_CACHE):
             cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])
         cmd.extend([image, "--model", model])
