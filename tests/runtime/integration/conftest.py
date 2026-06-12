@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 
 import dspy
-import httpx
 import pytest
 from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -438,38 +437,11 @@ def health_client(vespa_instance, config_manager):
 
 
 def _is_llm_available() -> bool:
-    """Check if the configured LLM endpoint is reachable.
+    """Provision (or reattach to) the self-managed test LM sidecar —
+    see tests/utils/hermetic_llm.py. Never probes the k3d cluster."""
+    from tests.utils.hermetic_llm import ensure_llm
 
-    Reads api_base from configs/config.json directly (no ConfigManager
-    needed — avoids BACKEND_URL env var requirement at import time).
-    Probes both ``/api/tags`` (Ollama native) and ``/v1/models`` (OAI-compat
-    / vLLM) after stripping a trailing ``/v1``; either 200 means up. A vLLM
-    endpoint whose api_base ends in ``/v1`` 404s on ``/api/tags``, so probing
-    only that path falsely skips the whole suite.
-    """
-    try:
-        import json as _json
-        from pathlib import Path as _Path
-
-        config_path = _Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        with open(config_path) as f:
-            config = _json.load(f)
-        api_base = (
-            config.get("llm_config", {})
-            .get("primary", {})
-            .get("api_base", "http://localhost:11434")
-        ).rstrip("/")
-        if api_base.endswith("/v1"):
-            api_base = api_base[: -len("/v1")]
-        for path in ("/api/tags", "/v1/models"):
-            try:
-                if httpx.get(f"{api_base}{path}", timeout=5.0).status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                continue
-        return False
-    except Exception:
-        return False
+    return ensure_llm() is not None
 
 
 skip_if_no_lm = pytest.mark.skipif(

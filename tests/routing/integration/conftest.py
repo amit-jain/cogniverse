@@ -39,8 +39,12 @@ def dspy_lm():
         resolve_prefixed_model,
     )
 
-    if not is_test_lm_available():
-        pytest.skip(f"Test LM not reachable at {resolve_base_url()}")
+    # Provision the self-managed LM sidecar first — it exports
+    # COGNIVERSE_CONFIG so the resolvers below see the hermetic endpoint.
+    from tests.utils.hermetic_llm import ensure_llm
+
+    if ensure_llm() is None or not is_test_lm_available():
+        pytest.skip(f"Test LM not provisionable (resolved {resolve_base_url()})")
 
     config = LLMEndpointConfig(
         model=resolve_prefixed_model(),

@@ -41,7 +41,12 @@ def _config_llm_defaults() -> tuple[str | None, str | None]:
     import json
     from pathlib import Path
 
-    src = Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
+    env_path = os.environ.get("COGNIVERSE_CONFIG")
+    src = (
+        Path(env_path)
+        if env_path
+        else Path(__file__).resolve().parent.parent.parent / "configs" / "config.json"
+    )
     if not src.exists():
         return None, None
     try:

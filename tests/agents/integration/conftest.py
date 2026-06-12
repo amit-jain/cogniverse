@@ -18,7 +18,6 @@ import zipfile
 from pathlib import Path
 
 import dspy
-import httpx
 import pytest
 
 from cogniverse_agents.inference.deno_check import is_deno_available
@@ -35,37 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 def is_llm_available() -> bool:
-    """Check if the LM endpoint configured in ``configs/config.json`` is reachable.
+    """Provision (or reattach to) the self-managed test LM sidecar.
 
-    Reads ``llm_config.primary.api_base`` directly (no ConfigManager — avoids the
-    BACKEND_URL env var requirement at import time) and probes both ``/api/tags``
-    (native LM-server tag listing) and ``/v1/models`` (OAI-compat). Either
-    returning HTTP 200 means the endpoint is up.
+    Integration must not depend on the k3d cluster — ``ensure_llm`` runs
+    the same model as the production student in a local Docker sidecar
+    (ROCm-accelerated when the host supports it) and points
+    ``COGNIVERSE_CONFIG`` at it. False only when provisioning failed.
     """
-    try:
-        import json as _json
-        from pathlib import Path as _Path
+    from tests.utils.hermetic_llm import ensure_llm
 
-        config_path = _Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        with open(config_path) as f:
-            config = _json.load(f)
-        api_base = (
-            config.get("llm_config", {}).get("primary", {}).get("api_base") or ""
-        ).rstrip("/")
-        if not api_base:
-            return False
-        if api_base.endswith("/v1"):
-            api_base = api_base[: -len("/v1")]
-        for path in ("/api/tags", "/v1/models"):
-            try:
-                response = httpx.get(f"{api_base}{path}", timeout=5.0)
-                if response.status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                continue
-        return False
-    except Exception:
-        return False
+    return ensure_llm() is not None
 
 
 def is_teacher_api_available() -> bool:
