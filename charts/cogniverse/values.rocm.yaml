@@ -71,7 +71,10 @@ inference:
       - "--convert"
       - "embed"
       - "--gpu-memory-utilization"
-      - "0.20"
+      # Embedding-only runner: short inputs, no generation, tiny KV
+      # demand. vLLM PINS the full budget at startup (GTT, unswappable),
+      # so an oversized value here is ~6 GiB of RAM no process can use.
+      - "0.12"
     kvCacheGiB: null
     image: null
     # Strix Halo iGPU: GPU "VRAM" IS system RAM (unified memory). The
