@@ -1455,7 +1455,42 @@ spec:
             memory: "512Mi"
       {{- end }}
       containers:
-      {{- if eq $engine "pylate" }}
+      {{- if eq $engine "fastapi" }}
+      # Custom single-file FastAPI sidecar (deploy/<name>) — the image's
+      # own CMD starts the server; the chart only supplies env + port.
+      - name: {{ $name | kebabcase }}
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: {{ $cfg.service.port }}
+        env:
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: {{ $cfg.service.port | quote }}
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        {{- range $key, $value := $cfg.env }}
+        - name: {{ $key }}
+          value: {{ $value | quote }}
+        {{- end }}
+        {{- if $cfg.resources }}
+        resources:
+          {{- toYaml $cfg.resources | nindent 10 }}
+        {{- end }}
+        {{- if $cfg.livenessProbe }}
+        livenessProbe:
+          {{- toYaml $cfg.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if $cfg.readinessProbe }}
+        readinessProbe:
+          {{- toYaml $cfg.readinessProbe | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+      {{- else if eq $engine "pylate" }}
       - name: pylate
         image: "{{ $resolvedPylateImage.repository }}:{{ $resolvedPylateImage.tag }}"
         imagePullPolicy: {{ $resolvedPylateImage.pullPolicy }}

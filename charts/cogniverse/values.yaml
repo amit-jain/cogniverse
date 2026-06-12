@@ -1377,6 +1377,7 @@ inference:
   # (~210 MiB) downloads on first /embed call.
   clap_embed:
     enabled: false
+    engine: fastapi
     replicaCount: 1
     image:
       repository: cogniverse/clap-embed
@@ -1415,6 +1416,7 @@ inference:
 
   face_embed:
     enabled: false
+    engine: fastapi
     replicaCount: 1
     image:
       repository: cogniverse/face-embed
