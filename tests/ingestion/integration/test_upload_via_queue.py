@@ -370,6 +370,16 @@ async def real_stack(
     if not VIDEO_PATH.exists():
         pytest.skip(f"Test video missing at {VIDEO_PATH}")
 
+    # Earlier modules in the same session leave BackendRegistry singletons
+    # bound to their (now-dead) containers; a stale shared SchemaRegistry
+    # makes the worker's auto-deploy silently target the wrong Vespa and
+    # every feed 599s with "Document type does not exist".
+    from cogniverse_core.registries.backend_registry import BackendRegistry
+
+    BackendRegistry._instance = None
+    BackendRegistry._backend_instances.clear()
+    BackendRegistry._shared_schema_registry = None
+
     monkeypatch.setenv("REDIS_URL", redis_container)
     monkeypatch.setenv("INGEST_QUEUE_DEPTH_LIMIT", "100")
     monkeypatch.setenv("INGEST_PER_TENANT_CONCURRENCY", "5")
