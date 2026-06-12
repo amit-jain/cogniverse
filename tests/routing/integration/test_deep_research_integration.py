@@ -100,7 +100,9 @@ def seeded_outdoor_corpus(vespa_instance):
 
     from tests.utils.vespa_test_helpers import schema_full_name
 
-    schema = schema_full_name("video_colpali_smol500_mv_frame", "test_unit")
+    # The conftest deploys for the colon-form tenant ``test:unit`` —
+    # schema_full_name must receive the same form or it double-suffixes.
+    schema = schema_full_name("video_colpali_smol500_mv_frame", "test:unit")
     port = vespa_instance["http_port"]
 
     # The doc type takes a few seconds to converge after deploy_schema
