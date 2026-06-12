@@ -23,6 +23,7 @@ def test_clap_failure_raises_instead_of_zero_vector():
     # processor raises to simulate a CLAP/decode failure.
     gen._clap_model = object()
     gen._clap_processor = Mock(side_effect=RuntimeError("CLAP boom"))
+    gen._clap_endpoint_url = None  # in-process path, no sidecar
 
     with pytest.raises(RuntimeError, match="CLAP boom"):
         gen.generate_acoustic_embedding(audio_array=np.zeros(48000, dtype=np.float32))
