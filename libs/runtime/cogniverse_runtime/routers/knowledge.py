@@ -45,7 +45,10 @@ def _build_factory(_tid: str):
         from cogniverse_runtime.memory_init import lazy_init_memory
         from cogniverse_runtime.routers.tenant import _require_config_manager
 
-        lazy_init_memory(mm, _tid, _require_config_manager())
+        # Read-only routes must not auto-create schemas: a deploy here
+        # triggers a Vespa redeploy that can drop another process's
+        # freshly-fed rows mid-read. Connect to the existing schema only.
+        lazy_init_memory(mm, _tid, _require_config_manager(), auto_create_schema=False)
     if not mm.memory:
         raise HTTPException(
             status_code=503,
@@ -118,7 +121,9 @@ def _bind_graph(agent, tenant_id: str) -> None:
     try:
         from cogniverse_runtime.routers.graph import get_graph_manager
 
-        setter(get_graph_manager(tenant_id))
+        # Read-only routes: never deploy the KG schema here. A deploy
+        # triggers a Vespa redeploy that drops rows the caller just fed.
+        setter(get_graph_manager(tenant_id, deploy=False))
     except Exception as exc:  # graph backend not configured / unavailable
         logger.debug("Graph manager bind skipped for tenant %s: %s", tenant_id, exc)
 

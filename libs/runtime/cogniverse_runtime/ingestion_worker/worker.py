@@ -142,28 +142,33 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
 
     _graph_managers: dict = {}
 
-    def _factory(tenant_id: str) -> GraphManager:
+    def _factory(tenant_id: str, deploy: bool = True) -> GraphManager:
+        # ``deploy`` MUST be False on read-only paths: deploy_schema
+        # triggers a Vespa redeploy that can drop another process's
+        # just-fed rows mid-read. Read-built managers are not cached so
+        # the first writer still deploys.
         tenant_id = canonical_tenant_id(tenant_id)
         if tenant_id in _graph_managers:
             return _graph_managers[tenant_id]
-        try:
-            graph_backend.schema_registry.deploy_schema(
-                tenant_id=tenant_id, base_schema_name="knowledge_graph"
-            )
-        except Exception as exc:  # noqa: BLE001 — log + degrade
-            # The common case is "schema already deployed"; the deploy
-            # call is idempotent at the Vespa convergence layer but the
-            # client wrapper can raise on transient transport errors
-            # or genuine schema validation failures. Log so a real
-            # failure is visible — first feed/query attempt will then
-            # surface the actual blocking error to the caller.
-            logger.warning(
-                "Knowledge-graph schema deploy for tenant %s raised "
-                "(treating as already-deployed; real error surfaces on "
-                "first feed/query): %s",
-                tenant_id,
-                exc,
-            )
+        if deploy:
+            try:
+                graph_backend.schema_registry.deploy_schema(
+                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                )
+            except Exception as exc:  # noqa: BLE001 — log + degrade
+                # The common case is "schema already deployed"; the deploy
+                # call is idempotent at the Vespa convergence layer but the
+                # client wrapper can raise on transient transport errors
+                # or genuine schema validation failures. Log so a real
+                # failure is visible — first feed/query attempt will then
+                # surface the actual blocking error to the caller.
+                logger.warning(
+                    "Knowledge-graph schema deploy for tenant %s raised "
+                    "(treating as already-deployed; real error surfaces on "
+                    "first feed/query): %s",
+                    tenant_id,
+                    exc,
+                )
         sys_cfg = config_manager.get_system_config()
         colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
         if not colbert_url:
@@ -180,7 +185,8 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
             ),
             colbert_endpoint_url=colbert_url,
         )
-        _graph_managers[tenant_id] = mgr
+        if deploy:
+            _graph_managers[tenant_id] = mgr
         return mgr
 
     graph_router.set_graph_manager_factory(_factory)

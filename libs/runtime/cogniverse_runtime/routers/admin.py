@@ -1090,7 +1090,13 @@ def _get_pin_service(tenant_id: str):
         from cogniverse_runtime.memory_init import lazy_init_memory
         from cogniverse_runtime.routers.tenant import _require_config_manager
 
-        lazy_init_memory(mgr, tenant_id, _require_config_manager())
+        # Pin/promote/restore operate on memories that already exist, so
+        # the schema is already deployed. Don't auto-create here: a deploy
+        # triggers a Vespa redeploy that can drop rows another process
+        # just fed mid-operation (the source memory then reads as 404).
+        lazy_init_memory(
+            mgr, tenant_id, _require_config_manager(), auto_create_schema=False
+        )
     if not mgr.memory:
         raise HTTPException(
             status_code=503,

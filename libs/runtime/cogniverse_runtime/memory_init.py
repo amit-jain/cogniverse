@@ -38,6 +38,7 @@ def lazy_init_memory(
     mgr: Mem0MemoryManager,
     tenant_id: str,
     config_manager: ConfigManager,
+    auto_create_schema: bool = True,
 ) -> bool:
     """Initialise ``mgr`` for ``tenant_id`` from the system config.
 
@@ -46,6 +47,13 @@ def lazy_init_memory(
     failed for any reason (missing system config, missing llm model id,
     missing denseon URL, Mem0/Vespa init failure). On False the caller
     can treat the tenant as unprocessable.
+
+    ``auto_create_schema`` MUST be False on read-only paths. Schema
+    creation triggers a Vespa global app-redeploy; doing that while
+    serving a read reconfigures the content cluster and can drop
+    documents another process just fed but Vespa hasn't flushed yet —
+    the reader then sees its target rows vanish. A reader connects to
+    the already-existing tenant schema and returns empty when absent.
     """
     if mgr.memory:
         return True
@@ -90,7 +98,7 @@ def lazy_init_memory(
             embedding_model="lightonai/DenseOn",
             llm_base_url=llm_base_url,
             embedder_base_url=denseon_url,
-            auto_create_schema=True,
+            auto_create_schema=auto_create_schema,
             config_manager=config_manager,
             schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
         )

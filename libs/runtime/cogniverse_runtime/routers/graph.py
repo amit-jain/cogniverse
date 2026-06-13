@@ -26,14 +26,19 @@ def set_graph_manager_factory(factory) -> None:
     logger.info("GraphManager factory injected into graph router")
 
 
-def get_graph_manager(tenant_id: str):
+def get_graph_manager(tenant_id: str, deploy: bool = True):
+    """Return the tenant's GraphManager.
+
+    ``deploy`` MUST be False on read-only paths — schema deploy triggers a
+    Vespa redeploy that can drop another process's just-fed rows mid-read.
+    """
     if _graph_manager_factory is None:
         raise HTTPException(
             status_code=503,
             detail="GraphManager not configured",
         )
     try:
-        return _graph_manager_factory(tenant_id)
+        return _graph_manager_factory(tenant_id, deploy=deploy)
     except Exception as exc:
         logger.warning("Graph manager init failed for %s: %s", tenant_id, exc)
         raise HTTPException(status_code=503, detail="Graph backend unavailable")

@@ -698,7 +698,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         _graph_managers: dict = {}
 
-        def _graph_manager_factory(tenant_id: str) -> GraphManager:
+        def _graph_manager_factory(tenant_id: str, deploy: bool = True) -> GraphManager:
             """Return a GraphManager for the given tenant, building on demand.
 
             Each tenant gets a dedicated knowledge_graph_<tenant> schema.
@@ -706,6 +706,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             accesses reuse the cached manager. Errors during schema deploy
             are non-fatal — the manager still constructs and the first
             feed/query attempt surfaces the real error.
+
+            ``deploy`` MUST be False on read-only paths. deploy_schema
+            triggers a Vespa global app-redeploy that reconfigures the
+            content cluster and can drop rows another process just fed but
+            Vespa hasn't flushed — a read then loses the documents it was
+            meant to return. Read-built managers are not cached so the
+            first writer still deploys.
 
             Canonicalizes the tenant_id so the schema name matches what
             POST /admin/tenants stored it under. Without this, /graph/upsert
@@ -720,15 +727,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if tenant_id in _graph_managers:
                 return _graph_managers[tenant_id]
 
-            try:
-                graph_backend.schema_registry.deploy_schema(
-                    tenant_id=tenant_id, base_schema_name="knowledge_graph"
-                )
-            except Exception as schema_err:
-                logger.warning(
-                    f"Knowledge graph schema deploy for tenant {tenant_id} "
-                    f"skipped: {schema_err}"
-                )
+            if deploy:
+                try:
+                    graph_backend.schema_registry.deploy_schema(
+                        tenant_id=tenant_id, base_schema_name="knowledge_graph"
+                    )
+                except Exception as schema_err:
+                    logger.warning(
+                        f"Knowledge graph schema deploy for tenant {tenant_id} "
+                        f"skipped: {schema_err}"
+                    )
 
             sys_cfg = config_manager.get_system_config()
             colbert_url = sys_cfg.inference_service_urls.get("colbert_pylate")
@@ -747,7 +755,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ),
                 colbert_endpoint_url=colbert_url,
             )
-            _graph_managers[tenant_id] = mgr
+            if deploy:
+                _graph_managers[tenant_id] = mgr
             return mgr
 
         graph_router.set_graph_manager_factory(_graph_manager_factory)
