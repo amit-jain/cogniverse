@@ -379,11 +379,15 @@ def _drain_test_tenants_after_each_test():
         )
     # Tests that mint via unique_id("<base>") may construct derived
     # tenants like f"{base}:t1". Cover the common shapes so we delete
-    # the actual tenant the test wrote under.
+    # the actual tenant the test wrote under. ``:_org_trunk`` is the
+    # federation promotion target (org_trunk_tenant_id maps "<org>:x" to
+    # "<org>:_org_trunk"): the promote route creates it as a side effect,
+    # the test never mints it, so without reaping it here every
+    # promotion test leaks one org-trunk schema set forever.
     targets: set[str] = set()
     for tid in minted:
         targets.add(tid)
-        for suf in (":t1", ":t2", ":t3", ":production", ":org_admin"):
+        for suf in (":t1", ":t2", ":t3", ":production", ":org_admin", ":_org_trunk"):
             targets.add(tid + suf)
     for full_tid in targets:
         # Skip tenants that aren't actually in Vespa — most derived
