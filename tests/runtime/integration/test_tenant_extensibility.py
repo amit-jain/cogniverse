@@ -9,7 +9,6 @@ routing with real LLM.
 
 import logging
 
-import httpx
 import pytest
 
 from cogniverse_foundation.config.manager import ConfigManager
@@ -23,33 +22,14 @@ TENANT_ID = "test_extensibility"
 
 
 def _llm_available():
-    """Probe the configured LLM endpoint (both ``/api/tags`` and
-    ``/v1/models`` after stripping a trailing ``/v1``). A vLLM endpoint
-    whose api_base ends in ``/v1`` 404s on ``/api/tags``, so probing only
-    that path falsely skips the suite even when the LM is up."""
-    try:
-        import json
-        from pathlib import Path
+    """Provision (or reattach to) the self-managed test LM sidecar.
 
-        config_path = Path(__file__).resolve().parents[3] / "configs" / "config.json"
-        with open(config_path) as f:
-            api_base = (
-                json.load(f)
-                .get("llm_config", {})
-                .get("primary", {})
-                .get("api_base", "http://localhost:11434")
-            ).rstrip("/")
-        if api_base.endswith("/v1"):
-            api_base = api_base[: -len("/v1")]
-        for path in ("/api/tags", "/v1/models"):
-            try:
-                if httpx.get(f"{api_base}{path}", timeout=5.0).status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                continue
-        return False
-    except Exception:
-        return False
+    Integration tests must not depend on the k3d cluster's student pod;
+    ``ensure_llm`` brings up the hermetic vLLM container and points
+    ``COGNIVERSE_CONFIG`` at it."""
+    from tests.utils.hermetic_llm import ensure_llm
+
+    return ensure_llm() is not None
 
 
 skip_if_no_lm = pytest.mark.skipif(not _llm_available(), reason="LLM not available")

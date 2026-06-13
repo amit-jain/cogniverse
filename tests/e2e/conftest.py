@@ -867,15 +867,15 @@ _TEST_TENANT_PREFIXES = (
     # Knowledge-system e2e prefixes (added with the Section A/B/C/D coverage).
     # Each phase claims one prefix; tests mint via unique_id("<prefix>") so the
     # session-end sweep at _cleanup_test_tenants reaps them automatically.
-    "know_",  # KnowledgeRegistry / lifecycle / pinning (Phases 1, 4)
-    "prov_",  # Provenance round-trip (Phase 2)
-    "confl_",  # Contradiction detection (Phase 3)
-    "trust_",  # Trust ranking (Phase 3)
-    "fed_",  # Federation + cross-tenant (Phases 4, 9)
-    "rlm_",  # RLM telemetry / A-B / deep-synthesis (Phases 5, 11)
-    "opt_",  # Optimizer canary / variants / rollback (Phase 6)
-    "sbx_",  # Sandbox policy + health probe (Phase 7)
-    "kagent_",  # Nine knowledge agents (Phases 8, 9, 10)
+    "know_",  # KnowledgeRegistry / lifecycle / pinning
+    "prov_",  # Provenance round-trip
+    "confl_",  # Contradiction detection
+    "trust_",  # Trust ranking
+    "fed_",  # Federation + cross-tenant
+    "rlm_",  # RLM telemetry / A-B / deep-synthesis
+    "opt_",  # Optimizer canary / variants / rollback
+    "sbx_",  # Sandbox policy + health probe
+    "kagent_",  # Nine knowledge agents
     "cron_e2e_org_",  # CronWorkflow execution e2e (org+tenant pair, both sides matched)
     # Smoke-test / CLI bootstrap prefixes observed in operator runs of
     # ``cogniverse up`` / smoke commands. These create orgs with epoch

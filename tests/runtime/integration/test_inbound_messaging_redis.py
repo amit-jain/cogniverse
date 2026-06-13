@@ -1,19 +1,20 @@
-"""Phase 2 + Phase 3 contract: Redis-backed durable cross-pod inbound queue.
+"""Redis-backed durable cross-pod inbound queue contract.
 
-Tests against a real Redis (cogniverse-redis NodePort 26379 on the
-k3d cluster, or REDIS_URL env override). No mocks. Two
+Tests against a real Redis the suite provisions itself (a throwaway
+``redis:7.4-alpine`` container on a free port; ``COGNIVERSE_TEST_REDIS_URL``
+overrides for operators with their own instance). No mocks. Two
 ``RedisInboundQueueRegistry`` instances bound to the same Redis URL
 simulate two pods; the assertions verify cross-pod routing and
 durability across registry resets.
 
 Assertions:
 
-* Cross-pod routing (Phase 2): Pod A enqueues, Pod B drains the
+* Cross-pod routing: Pod A enqueues, Pod B drains the
   same message byte-equal.
 * Session-active visibility across pods.
 * Cross-tenant collision raises ValueError across pods.
 * Close on Pod A → 404-equivalent (get_queue None) on Pod B.
-* Durability (Phase 3): enqueue → reset registry → fresh registry
+* Durability: enqueue → reset registry → fresh registry
   drains the persisted messages byte-equal.
 * TTL expiry: active-marker disappears after TTL, get_queue returns
   None.
@@ -25,6 +26,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
+import subprocess
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -37,34 +41,69 @@ from cogniverse_runtime.messaging_redis import (
     reset_redis_inbound_queue_registry_for_testing,
 )
 
-REDIS_URL = os.environ.get("COGNIVERSE_TEST_REDIS_URL", "redis://localhost:26379/0")
-
-
-async def _redis_reachable() -> bool:
-    try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        await r.ping()
-        await r.close()
-        return True
-    except Exception:
-        return False
-
+CONTAINER_NAME = "redis-inbound-messaging-tests"
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.asyncio,
-    pytest.mark.skipif(
-        not asyncio.get_event_loop().run_until_complete(_redis_reachable())
-        if not asyncio.get_event_loop().is_running()
-        else False,
-        reason=f"Redis not reachable at {REDIS_URL}",
-    ),
 ]
 
 
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def redis_url():
+    override = os.environ.get("COGNIVERSE_TEST_REDIS_URL")
+    if override:
+        yield override
+        return
+
+    port = _free_port()
+    subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
+    result = subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            CONTAINER_NAME,
+            "-p",
+            f"{port}:6379",
+            "redis:7.4-alpine",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"Failed to start Redis: {result.stderr}")
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        ping = subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "redis-cli", "ping"],
+            capture_output=True,
+            text=True,
+        )
+        if ping.stdout.strip() == "PONG":
+            break
+        time.sleep(0.5)
+    else:
+        subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
+        pytest.fail("Redis did not become ready within 30s")
+
+    try:
+        yield f"redis://127.0.0.1:{port}/0"
+    finally:
+        subprocess.run(["docker", "rm", "-f", CONTAINER_NAME], capture_output=True)
+
+
 @pytest.fixture
-async def redis_client():
-    r = aioredis.from_url(REDIS_URL, decode_responses=True)
+async def redis_client(redis_url):
+    r = aioredis.from_url(redis_url, decode_responses=True)
     # Wipe inbound + session keys from any previous test run.
     async for k in r.scan_iter(match="inbound:*"):
         await r.delete(k)
@@ -103,7 +142,7 @@ def _msg(content: str, *, tags=("constraint",)) -> InboundMessage:
 
 
 # --------------------------------------------------------------------- #
-# Phase 2: cross-pod routing                                              #
+# Cross-pod routing                                                       #
 # --------------------------------------------------------------------- #
 
 
@@ -149,7 +188,7 @@ async def test_cross_pod_close_makes_get_queue_return_none(reg_a, reg_b):
 
 
 # --------------------------------------------------------------------- #
-# Phase 2: cross-tenant collision raises across pods                      #
+# Cross-tenant collision raises across pods                               #
 # --------------------------------------------------------------------- #
 
 
@@ -178,7 +217,7 @@ async def test_get_or_create_idempotent_same_tenant_across_pods(reg_a, reg_b):
 
 
 # --------------------------------------------------------------------- #
-# Phase 3: durability across registry resets (simulated pod restart)     #
+# Durability across registry resets (simulated pod restart)              #
 # --------------------------------------------------------------------- #
 
 
@@ -186,7 +225,7 @@ async def test_messages_persist_across_registry_reset(redis_client):
     """Enqueue → simulate pod restart by resetting the Python-side
     registry singleton AND discarding the registry instance →
     create a fresh registry bound to the same Redis → drain returns
-    the persisted messages byte-equal. This is Phase 3's durability
+    the persisted messages byte-equal. This is the durability
     contract: messages survive pod death because they live in
     Redis, not in Python.
     """

@@ -48,7 +48,7 @@ import requests
 
 pytestmark = pytest.mark.e2e
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SAMPLE_VIDEO = REPO_ROOT / "data/testset/evaluation/sample_videos/v_-D1gdv_gQyw.mp4"
 RUNTIME_URL = "http://localhost:28000"
 VESPA_URL = "http://localhost:8080"

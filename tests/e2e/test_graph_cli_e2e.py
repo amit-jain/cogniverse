@@ -296,9 +296,11 @@ class TestMultimodalGraphExtraction:
         with httpx.Client(timeout=1800.0) as client:
             with open(video_path, "rb") as f:
                 # wait=true is needed: graph_nodes/graph_edges are only
-                # populated in the synchronous response shape.
+                # populated in the synchronous response shape. wait_timeout
+                # stays under the k3d serverlb's proxy_timeout (600s) —
+                # a longer silent hold gets the TCP stream cut mid-wait.
                 resp = client.post(
-                    f"{RUNTIME}/ingestion/upload?wait=true&wait_timeout=900",
+                    f"{RUNTIME}/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (video_path.name, f, "video/mp4")},
                     data={
                         "profile": "video_colpali_smol500_mv_frame",
@@ -307,10 +309,9 @@ class TestMultimodalGraphExtraction:
                     },
                 )
 
-        if resp.status_code != 200:
-            pytest.skip(
-                f"Video ingestion returned {resp.status_code}: {resp.text[:200]}"
-            )
+        assert resp.status_code == 200, (
+            f"Video ingestion returned {resp.status_code}: {resp.text[:200]}"
+        )
 
         data = resp.json()
         assert data["status"] == "success", data

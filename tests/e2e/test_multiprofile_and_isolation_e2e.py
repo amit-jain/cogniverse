@@ -168,7 +168,7 @@ def _restart_runtime_if_unhealthy():
         resp = httpx.get(f"{RUNTIME}/health/live", timeout=10)
         if resp.status_code == 200:
             return
-    except (httpx.ConnectError, httpx.ReadTimeout):
+    except httpx.HTTPError:
         pass
     raise RuntimeError(
         "Runtime /health/live did not respond within 10s. Check pod "

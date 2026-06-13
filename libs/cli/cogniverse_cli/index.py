@@ -18,6 +18,7 @@ image → image profile, audio → audio profile). Code only maps to
 """
 
 import dataclasses
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -202,12 +203,16 @@ def _upload_file(
     rel_path: Path,
     profile: str,
     tenant_id: str,
+    poll_timeout_s: float = 900.0,
 ) -> Optional[Dict]:
-    # Synchronous upload so the schema registration completes before the
-    # caller fires follow-up requests against the same tenant.
+    # Upload async and poll to terminal state. A ``wait=true`` hold keeps
+    # the socket silent for the whole ingest, and load balancers cut
+    # long-silent streams (k3d serverlb: ``proxy_timeout 600``); polling
+    # gives the same completed-before-return guarantee — schema
+    # registration is done before follow-up requests — without it.
     with open(file_path, "rb") as f:
         resp = client.post(
-            "/ingestion/upload?wait=true&wait_timeout=900",
+            "/ingestion/upload",
             files={"file": (str(rel_path), f, "application/octet-stream")},
             data={
                 "profile": profile,
@@ -215,9 +220,42 @@ def _upload_file(
                 "tenant_id": tenant_id,
             },
         )
-    if resp.status_code == 200:
-        return resp.json()
-    return {"error": resp.text[:200], "status": resp.status_code}
+    if resp.status_code not in (200, 202):
+        return {"error": resp.text[:200], "status": resp.status_code}
+    body = resp.json()
+    ingest_id = body.get("ingest_id")
+    if not ingest_id:
+        return {
+            "error": f"no ingest_id in upload response: {str(body)[:200]}",
+            "status": resp.status_code,
+        }
+
+    deadline = time.monotonic() + poll_timeout_s
+    state = body.get("state", "queued")
+    latest: Dict = {}
+    while time.monotonic() < deadline:
+        status = client.get(f"/ingestion/{ingest_id}/status")
+        if status.status_code == 200:
+            payload = status.json()
+            state = payload.get("state", state)
+            latest = payload.get("latest", {}) or {}
+            if state in ("complete", "failed"):
+                break
+        time.sleep(2)
+
+    if state != "complete":
+        return {
+            "error": f"ingest {ingest_id} did not complete: state={state!r}",
+            "status": resp.status_code,
+        }
+    result = latest.get("result", {}) or {}
+    return {
+        "status": "success",
+        "ingest_id": ingest_id,
+        "video_id": result.get("video_id"),
+        "chunks_created": result.get("chunks", result.get("keyframes", 0)),
+        "documents_fed": result.get("documents_fed", 0),
+    }
 
 
 def _build_graph_payload(result, tenant_id: str, source_doc_id: str) -> Dict:

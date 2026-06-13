@@ -82,19 +82,18 @@ pytestmark = pytest.mark.integration
 # pytest discovers them in this module's namespace. The ``_reexport`` prefix
 # keeps the imports out of the way; tests reference the fixtures by their
 # canonical names via the assignments below.
+from tests.agents.integration.test_graph_vespa_integration import (
+    GRAPH_SCHEMA,
+)
 from tests.agents.integration.test_graph_vespa_integration import (  # noqa: E402
     graph_manager as _reexport_graph_manager,
 )
 from tests.agents.integration.test_graph_vespa_integration import (
     graph_vespa as _reexport_graph_vespa,
 )
-from tests.agents.integration.test_graph_vespa_integration import (
-    pylate_server as _reexport_pylate_server,
-)
 
 graph_manager = _reexport_graph_manager
 graph_vespa = _reexport_graph_vespa
-pylate_server = _reexport_pylate_server
 
 # ---------------------------------------------------------------------------
 # Golden file helper
@@ -378,6 +377,33 @@ def _build_curie_extraction() -> ExtractionResult:
     )
 
 
+def _purge_graph_schema(http_port: int, schema_name: str) -> None:
+    """Delete every document in the graph schema.
+
+    The schema and tenant are shared with test_graph_vespa_integration,
+    whose tests feed code-graph documents into the same session Vespa;
+    the synthesis/comparison agents here group over the whole tenant, so
+    leftover documents from sibling modules corrupt the goldens.
+    """
+    import requests
+
+    url = (
+        f"http://localhost:{http_port}/document/v1/graph_content/"
+        f"{schema_name}/docid?selection=true&cluster=cogniverse_content"
+    )
+    while True:
+        resp = requests.delete(url, timeout=30)
+        resp.raise_for_status()
+        continuation = resp.json().get("continuation")
+        if not continuation:
+            return
+        url = (
+            f"http://localhost:{http_port}/document/v1/graph_content/"
+            f"{schema_name}/docid?selection=true&cluster=cogniverse_content"
+            f"&continuation={continuation}"
+        )
+
+
 @pytest.fixture(scope="module")
 def ingested_curie_graph(graph_manager):
     """Idempotently ingest the four-clip Curie fixture into the test KG.
@@ -387,6 +413,7 @@ def ingested_curie_graph(graph_manager):
     self-contained when run in isolation.
     """
     manager, _http_port = graph_manager
+    _purge_graph_schema(_http_port, GRAPH_SCHEMA)
     extraction = _build_curie_extraction()
     counts = manager.upsert(extraction)
     logger.info(

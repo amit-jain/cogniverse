@@ -484,9 +484,54 @@ def _read_pod_logs(pod_name: str, since: str = "5m", tail_lines: int = 5000) -> 
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="class")
+def seeded_gateway_traffic():
+    """Route real queries through the gateway so its spans land inside the
+    thresholds job's lookback window.
+
+    The job reads ``cogniverse.gateway`` spans from the last
+    ``LOOKBACK_HOURS`` hours; without seeding, the test silently depends
+    on some earlier suite (a2a_gateway) having run recently, and returns
+    ``no_data`` when executed on its own.
+    """
+    queries = [
+        "search for video content about AI",
+        "find clips showing outdoor scenes",
+        "show me videos about machine learning",
+        "search for cooking demonstrations",
+        "find footage of city traffic",
+        "show videos with people talking",
+    ]
+    # The gateway span is emitted as soon as the gateway CLASSIFIES the
+    # query — the downstream agent's answer is irrelevant here, so keep a
+    # short per-query budget and tolerate individual slow dispatches; one
+    # classified query is enough for the job's span analysis.
+    seeded = 0
+    with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        for query in queries:
+            try:
+                resp = client.post(
+                    "/agents/gateway_agent/process",
+                    json={
+                        "agent_name": "gateway_agent",
+                        "query": query,
+                        "context": {"tenant_id": TENANT_ID},
+                        "top_k": 3,
+                    },
+                )
+                if resp.status_code == 200:
+                    seeded += 1
+            except httpx.HTTPError:
+                continue
+    assert seeded >= 1, "No gateway seeding query succeeded within 120s each"
+    # OTLP export is batched; give the exporter time to flush to Phoenix.
+    time.sleep(15)
+
+
 @pytest.mark.e2e
 @skip_if_no_runtime
 @skip_if_no_kubectl
+@pytest.mark.usefixtures("seeded_gateway_traffic")
 class TestGatewayThresholds:
     """Verify gateway-thresholds batch job produces valid threshold artifact."""
 

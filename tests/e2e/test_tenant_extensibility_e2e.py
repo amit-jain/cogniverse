@@ -46,7 +46,7 @@ def _memory_available() -> bool:
             timeout=10.0,
         )
         return r.status_code != 503
-    except (httpx.ConnectError, httpx.ReadTimeout):
+    except httpx.HTTPError:
         return False
 
 
@@ -419,7 +419,7 @@ class TestJobExecution:
         unique_marker = f"e2e_test_{int(time.time())}"
         content = f"ColPali retrieval outperforms CLIP on temporal video queries ({unique_marker})"
 
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/wiki/save",
                 json={
@@ -446,7 +446,7 @@ class TestJobExecution:
         """
         from unittest.mock import AsyncMock, MagicMock, patch
 
-        with httpx.Client(base_url=RUNTIME, timeout=30.0) as client:
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 f"/admin/tenant/{TENANT_ID}/jobs",
                 json={

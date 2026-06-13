@@ -46,19 +46,28 @@ def pytest_collection_modifyitems(items):
 _PROJECT_CONFIG = Path(__file__).resolve().parents[3] / "configs" / "config.json"
 
 
+def _config_path() -> Path:
+    """The session config when ``COGNIVERSE_CONFIG`` is exported (the
+    hermetic test-LM sidecar writes one via ``ensure_llm``), otherwise the
+    project's ``configs/config.json``."""
+    override = os.environ.get("COGNIVERSE_CONFIG")
+    return Path(override) if override else _PROJECT_CONFIG
+
+
 def _load_from_project_config() -> dict[str, Any] | None:
-    """Read ``llm_config.primary`` from ``configs/config.json`` and shape it
+    """Read ``llm_config.primary`` from the active config and shape it
     into the same ``{provider_uri, base_url}`` dict the env-var path returns.
 
-    The project config carries ``model`` as the LiteLLM-style provider URI
+    The config carries ``model`` as the LiteLLM-style provider URI
     (``openai/gpt-4o``) and ``api_base`` as the endpoint. Inspect AI's
     provider plugins read base URLs from per-provider env vars
     (``OPENAI_API_KEY``, ``ANTHROPIC_API_KEY``, ...), which the ``llm_endpoint``
     fixture already wires up downstream — same plumbing, lower friction."""
-    if not _PROJECT_CONFIG.exists():
+    config_path = _config_path()
+    if not config_path.exists():
         return None
     try:
-        with _PROJECT_CONFIG.open() as fh:
+        with config_path.open() as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
         return None
@@ -112,6 +121,14 @@ def llm_endpoint(monkeypatch_module):
     The fixture skips the test when no endpoint is configured — the test
     class does not reference any specific provider, model, or default URL.
     """
+    if not os.environ.get("COGNIVERSE_TEST_LLM_PROVIDER_URI"):
+        # Self-provision the hermetic test-LM sidecar; ensure_llm exports
+        # COGNIVERSE_CONFIG pointing llm_config.primary at it, which the
+        # config-file resolution path below then picks up. Integration
+        # tests must not depend on the k3d cluster's student pod.
+        from tests.utils.hermetic_llm import ensure_llm
+
+        ensure_llm()
     config = _load_llm_config()
     if config is None:
         pytest.skip(
@@ -135,6 +152,11 @@ def llm_endpoint(monkeypatch_module):
         }.get(provider_prefix)
         if env_var:
             monkeypatch_module.setenv(env_var, config["base_url"])
+        # Inspect AI's provider client refuses to initialise without an API
+        # key even against a keyless local endpoint (vLLM/Ollama).
+        key_var = env_var.replace("_BASE_URL", "_API_KEY") if env_var else None
+        if key_var and not os.environ.get(key_var):
+            monkeypatch_module.setenv(key_var, "not-required")
 
     return config
 

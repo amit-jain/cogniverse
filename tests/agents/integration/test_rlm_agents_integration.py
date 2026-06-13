@@ -384,6 +384,28 @@ class TestRLMTrajectoryCapture:
         assert isinstance(result.metadata["trajectory_length"], int)
 
 
+class TestTolerantInterpreterRealDeno:
+    """TolerantPythonInterpreter against a real Deno/Pyodide sandbox."""
+
+    def test_register_and_execute_roundtrip(self):
+        """Tool registration (the _send_request path the stock reader fails
+        on under stale channel messages) followed by an execute that calls
+        the registered tool — exact output asserted."""
+        from cogniverse_agents.inference.tolerant_interpreter import (
+            TolerantPythonInterpreter,
+        )
+
+        interp = TolerantPythonInterpreter(
+            tools={"double": lambda x: int(x) * 2},
+            output_fields=[{"name": "answer", "type": "str"}],
+        )
+        try:
+            out = interp.execute("print(double(21))")
+        finally:
+            interp.shutdown()
+        assert out.strip() == "42"
+
+
 @skip_if_no_lm
 class TestRLMFallbackMarker:
     """verify RLMResult.was_fallback against a real LM-backed RLM run.

@@ -1330,7 +1330,7 @@ class TestVideoIngestionAndSearch:
                 # (status, chunks_created, ...); the default async
                 # path returns only ingest_id + state=queued.
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=900",
+                    "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_video_path.name, f, "video/mp4")},
                     data={
                         "profile": "video_colpali_smol500_mv_frame",
@@ -1386,7 +1386,7 @@ class TestImageIngestionAndSearch:
 
             with open(real_image_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=600",
+                    "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_image_path.name, f, "image/jpeg")},
                     data={
                         "profile": "image_colpali_mv",
@@ -1437,7 +1437,7 @@ class TestAudioIngestionAndSearch:
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(extracted_audio_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=600",
+                    "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (extracted_audio_path.name, f, "audio/wav")},
                     data={
                         "profile": "audio_clap_semantic",
@@ -1476,11 +1476,19 @@ class TestPDFIngestionAndSearch:
     """Upload real arxiv PDF (Video-ChatGPT paper), verify pipeline processes it."""
 
     def test_upload_pdf_processing(self, real_pdf_path):
-        """Upload Video-ChatGPT paper → PDF text extraction → embedding."""
+        """Upload Video-ChatGPT paper → PDF text extraction → embedding.
+
+        Uploads async and polls ``/ingestion/{id}/status`` rather than
+        holding ``wait=true`` open: a full PDF ingest can stay silent
+        past the k3d serverlb's ``proxy_timeout 600``, which then cuts
+        the TCP stream mid-wait ("Server disconnected without sending a
+        response"). Polling exercises the same worker path without a
+        long-silent connection.
+        """
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_pdf_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=600",
+                    "/ingestion/upload?force=true",
                     files={"file": (real_pdf_path.name, f, "application/pdf")},
                     data={
                         "profile": "document_text_semantic",
@@ -1488,13 +1496,37 @@ class TestPDFIngestionAndSearch:
                     },
                 )
 
-            assert resp.status_code == 200, f"PDF upload failed: {resp.text}"
+            assert resp.status_code in (200, 202), f"PDF upload failed: {resp.text}"
             upload_data = resp.json()
-            assert upload_data["status"] == "success"
             assert upload_data["filename"] == real_pdf_path.name
-            assert upload_data["chunks_created"] >= 1, (
-                f"PDF should create >=1 chunk, got {upload_data['chunks_created']}"
+            ingest_id = upload_data["ingest_id"]
+
+            deadline = time.time() + 1200
+            state = upload_data["state"]
+            latest: dict = {}
+            while time.time() < deadline:
+                status_resp = client.get(f"/ingestion/{ingest_id}/status")
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    state = status_data["state"]
+                    latest = status_data["latest"]
+                    if state in ("complete", "failed", "error"):
+                        break
+                time.sleep(5)
+
+            assert state == "complete", (
+                f"PDF ingest {ingest_id} did not complete within 1200s; "
+                f"state={state!r} latest={latest!r}"
             )
+            pipeline_result = latest.get("result", {}) or {}
+            chunks_created = pipeline_result.get(
+                "chunks", pipeline_result.get("keyframes", 0)
+            )
+            assert chunks_created >= 1, (
+                f"PDF should create >=1 chunk, got {chunks_created} "
+                f"(result={pipeline_result!r})"
+            )
+            upload_data["documents_fed"] = pipeline_result.get("documents_fed", 0)
 
             # Search uses same encoder limitation as document test
             time.sleep(3)
@@ -1524,7 +1556,7 @@ class TestDocumentIngestionAndSearch:
         with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             with open(real_document_path, "rb") as f:
                 resp = client.post(
-                    "/ingestion/upload?wait=true&wait_timeout=600",
+                    "/ingestion/upload?wait=true&wait_timeout=540",
                     files={"file": (real_document_path.name, f, "text/markdown")},
                     data={
                         "profile": "document_text_semantic",
@@ -1655,7 +1687,7 @@ class TestBatchVideoIngestion:
                         status_data = status_resp.json()
                         if status_data["status"] in ("completed", "failed"):
                             break
-            except (httpx.ReadTimeout, httpx.ConnectError):
+            except httpx.HTTPError:
                 continue
 
         # Event loop responsiveness is the key assertion for the deadlock fix

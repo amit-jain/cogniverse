@@ -26,7 +26,7 @@ def runtime_available() -> bool:
     try:
         r = httpx.get(f"{RUNTIME}/health/live", timeout=10.0)
         return r.status_code == 200
-    except (httpx.ConnectError, httpx.ReadTimeout):
+    except httpx.HTTPError:
         return False
 
 
