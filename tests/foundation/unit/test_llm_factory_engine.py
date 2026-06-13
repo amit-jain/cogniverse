@@ -61,6 +61,28 @@ class TestModelPassthrough:
         assert "api_key" not in lm.kwargs
         assert "extra_body" not in lm.kwargs
 
+    def test_keyless_api_base_gets_placeholder_key(self):
+        # Self-hosted OAI-compat endpoints ignore the key, but the OpenAI
+        # client refuses to construct without one — the factory must fill
+        # a placeholder or every keyless vLLM/Ollama config fails at the
+        # first call with a client-side AuthenticationError.
+        endpoint = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://127.0.0.1:29110/v1",
+        )
+        lm = create_dspy_lm(endpoint)
+        assert lm.kwargs["api_base"] == "http://127.0.0.1:29110/v1"
+        assert lm.kwargs["api_key"] == "not-required"
+
+    def test_explicit_key_not_overridden_by_placeholder(self):
+        endpoint = LLMEndpointConfig(
+            model="openai/gpt-4o",
+            api_base="https://api.openai.com/v1",
+            api_key="sk-real",
+        )
+        lm = create_dspy_lm(endpoint)
+        assert lm.kwargs["api_key"] == "sk-real"
+
     def test_empty_model_raises(self):
         endpoint = LLMEndpointConfig(model="", api_base="http://x")
         with pytest.raises(ValueError, match="model is required"):

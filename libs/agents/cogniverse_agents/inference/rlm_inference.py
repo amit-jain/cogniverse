@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from cogniverse_agents.inference.deno_check import assert_deno_available
 from cogniverse_agents.inference.instrumented_rlm import InstrumentedRLM
+from cogniverse_agents.inference.tolerant_interpreter import TolerantRLM
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -278,7 +279,7 @@ class RLMInference:
                     tenant_id=self._tenant_id,
                 )
             else:
-                self._rlm = dspy.RLM(
+                self._rlm = TolerantRLM(
                     "context, query -> answer",
                     max_iterations=self.max_iterations,
                     max_llm_calls=self.max_llm_calls,

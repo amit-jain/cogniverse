@@ -51,6 +51,12 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
 
     if config.api_key is not None:
         kwargs["api_key"] = config.api_key
+    elif config.api_base is not None:
+        # The OpenAI client refuses to construct without a key even though
+        # self-hosted OAI-compat servers (vLLM, Ollama) ignore it. A real
+        # endpoint that enforces auth rejects the placeholder server-side
+        # with a clear 401 instead of a client-side construction error.
+        kwargs["api_key"] = "not-required"
 
     # Merge config.seed into extra_body when set. vLLM's OpenAI-compat
     # layer reads ``seed`` from the request body and uses it for the

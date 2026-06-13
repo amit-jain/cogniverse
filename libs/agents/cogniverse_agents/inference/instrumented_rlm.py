@@ -25,13 +25,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional
 
-import dspy
 from dspy.primitives.prediction import Prediction
 from dspy.primitives.repl_types import REPLHistory
 
 if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
 
+from cogniverse_agents.inference.tolerant_interpreter import TolerantRLM
 from cogniverse_core.events.types import (
     TaskState,
     create_progress_event,
@@ -69,10 +69,11 @@ def _mark_fallback(prediction: Prediction) -> None:
         )
 
 
-class InstrumentedRLM(dspy.RLM):
+class InstrumentedRLM(TolerantRLM):
     """RLM with EventQueue integration for real-time progress tracking.
 
-    Subclasses dspy.RLM to emit events at each iteration:
+    Subclasses dspy.RLM (via TolerantRLM, which hardens the Deno JSON-RPC
+    channel against stale messages) to emit events at each iteration:
     - StatusEvent(WORKING) on start
     - ProgressEvent after each iteration (current/total)
     - StatusEvent(COMPLETED) or ErrorEvent on finish
