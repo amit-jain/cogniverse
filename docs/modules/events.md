@@ -330,11 +330,11 @@ flowchart TD
     Execution["<span style='color:#000'>Execution Phase</span>"]
     ExecutionEvent["<span style='color:#000'>Orchestrator emits<br/>StatusEvent('executing')</span>"]
 
-    Phase1["<span style='color:#000'>Phase 1 completes</span>"]
-    Phase1Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
+    TaskGroup1["<span style='color:#000'>First task group completes</span>"]
+    TaskGroup1Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
 
-    Phase2["<span style='color:#000'>Phase 2 completes</span>"]
-    Phase2Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
+    TaskGroup2["<span style='color:#000'>Second task group completes</span>"]
+    TaskGroup2Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
 
     Completion["<span style='color:#000'>Completion</span>"]
     CompletionEvent1["<span style='color:#000'>Checkpoint saves<br/>StatusEvent(COMPLETED)</span>"]
@@ -344,11 +344,11 @@ flowchart TD
     Planning --> PlanningEvent
     PlanningEvent --> Execution
     Execution --> ExecutionEvent
-    ExecutionEvent --> Phase1
-    Phase1 --> Phase1Event
-    Phase1Event --> Phase2
-    Phase2 --> Phase2Event
-    Phase2Event --> Completion
+    ExecutionEvent --> TaskGroup1
+    TaskGroup1 --> TaskGroup1Event
+    TaskGroup1Event --> TaskGroup2
+    TaskGroup2 --> TaskGroup2Event
+    TaskGroup2Event --> Completion
     Completion --> CompletionEvent1
     Completion --> CompletionEvent2
 
@@ -357,10 +357,10 @@ flowchart TD
     style PlanningEvent fill:#ffcc80,stroke:#ef6c00,color:#000
     style Execution fill:#a5d6a7,stroke:#388e3c,color:#000
     style ExecutionEvent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Phase1 fill:#81d4fa,stroke:#0288d1,color:#000
-    style Phase1Event fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Phase2 fill:#81d4fa,stroke:#0288d1,color:#000
-    style Phase2Event fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TaskGroup1 fill:#81d4fa,stroke:#0288d1,color:#000
+    style TaskGroup1Event fill:#ffcc80,stroke:#ef6c00,color:#000
+    style TaskGroup2 fill:#81d4fa,stroke:#0288d1,color:#000
+    style TaskGroup2Event fill:#ffcc80,stroke:#ef6c00,color:#000
     style Completion fill:#a5d6a7,stroke:#388e3c,color:#000
     style CompletionEvent1 fill:#ffcc80,stroke:#ef6c00,color:#000
     style CompletionEvent2 fill:#ffcc80,stroke:#ef6c00,color:#000

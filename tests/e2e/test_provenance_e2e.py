@@ -1,4 +1,4 @@
-"""Phase 2 — Provenance round-trip + per-tenant store end-to-end.
+"""Provenance round-trip + per-tenant store end-to-end.
 
 Pins the contracts the citation/audit/synthesis agents rely on:
   * a provenance write lands in the per-tenant Vespa schema and is
@@ -42,8 +42,8 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_vespa.config.config_store import VespaConfigStore
 from tests.e2e.conftest import RUNTIME, skip_if_no_runtime, unique_id
 
-# k3d-cogniverse-serverlb forwards these. Same constants as Phase 1; if
-# those tests pass, the host port mapping is correct.
+# k3d-cogniverse-serverlb forwards these. Same constants as the
+# knowledge-schema e2e tests; if those pass, the host port mapping is correct.
 VESPA_HTTP_PORT = 8080
 VESPA_CONFIG_PORT = 19071
 DENSEON_URL = "http://localhost:29006"
@@ -149,9 +149,9 @@ def _write_with_provenance(
     content: str,
     derivation_kind: DerivationKind,
     derived_from: list[CitationRef],
-    written_by: str = "agent:phase2",
+    written_by: str = "agent:prov",
     confidence: float = 0.85,
-    agent_name: str = "phase2_agent",
+    agent_name: str = "prov_agent",
 ) -> str:
     """Write a memory whose metadata carries a Provenance record.
 
@@ -223,7 +223,7 @@ class TestProvenanceRoundTripThroughVespa:
                 kind="external_doc",
                 content="root document content",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
-                derived_from=[CitationRef.external("phase2://root", label="root_src")],
+                derived_from=[CitationRef.external("prov://root", label="root_src")],
             )
             _wait_for_provenance(mm, root_id)
 
@@ -261,11 +261,11 @@ class TestProvenanceRoundTripThroughVespa:
             # children — ROOT — so it descends rather than terminating).
             primary = [(r.ref_kind, r.ref_id) for r in graph.primary_sources]
             assert primary == [
-                ("url", "phase2://root"),
+                ("url", "prov://root"),
                 ("memory", root_id),
             ], primary
         finally:
-            mm.clear_agent_memory(tenant_id, "phase2_agent")
+            mm.clear_agent_memory(tenant_id, "prov_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -288,7 +288,7 @@ class TestCitationTraceHTTPRoute:
                 kind="external_doc",
                 content="root for HTTP trace",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
-                derived_from=[CitationRef.external("phase2://http_root")],
+                derived_from=[CitationRef.external("prov://http_root")],
             )
             _wait_for_provenance(mm, root_id)
             child_id = _write_with_provenance(
@@ -319,17 +319,17 @@ class TestCitationTraceHTTPRoute:
             ]
             assert body["truncated"] is False
             # Telemetry block is filled in by the agent. primary_source_count
-            # is 2: external URL + ROOT memory leaf-self-ref (see Phase 2's
+            # is 2: external URL + ROOT memory leaf-self-ref (see
             # TestExternalCitationLeafSurvivesWalk for the walker contract).
             assert body["metadata"]["nodes_visited"] == 2, body["metadata"]
             assert body["metadata"]["primary_source_count"] == 2, body["metadata"]
             primary = [(r["ref_kind"], r["ref_id"]) for r in body["primary_sources"]]
             assert primary == [
-                ("url", "phase2://http_root"),
+                ("url", "prov://http_root"),
                 ("memory", root_id),
             ], primary
         finally:
-            mm.clear_agent_memory(tenant_id, "phase2_agent")
+            mm.clear_agent_memory(tenant_id, "prov_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -351,7 +351,7 @@ class TestProvenanceRequiredEnforcement:
                 mm.add_memory(
                     content="should be rejected",
                     tenant_id=tenant_id,
-                    agent_name="phase2_agent",
+                    agent_name="prov_agent",
                     metadata={"kind": "external_doc"},  # no provenance block
                     infer=False,
                 )
@@ -410,7 +410,7 @@ class TestExternalCitationLeafSurvivesWalk:
                 CitationRef(ref_kind="memory", ref_id=mid, label=None),
             ]
         finally:
-            mm.clear_agent_memory(tenant_id, "phase2_agent")
+            mm.clear_agent_memory(tenant_id, "prov_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -433,7 +433,7 @@ class TestPerTenantProvenanceSchemaIsolation:
                 kind="entity_fact",
                 content="tenant A only",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
-                derived_from=[CitationRef.external("phase2://iso_a")],
+                derived_from=[CitationRef.external("prov://iso_a")],
             )
             _wait_for_provenance(mm_a, mid_a)
 
@@ -451,10 +451,10 @@ class TestPerTenantProvenanceSchemaIsolation:
                     f"per-tenant provenance schema isolation is broken"
                 )
             finally:
-                mm_b.clear_agent_memory(tid_b, "phase2_agent")
+                mm_b.clear_agent_memory(tid_b, "prov_agent")
         finally:
             try:
-                mm_a.clear_agent_memory(tid_a, "phase2_agent")
+                mm_a.clear_agent_memory(tid_a, "prov_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()

@@ -1,6 +1,6 @@
 """Regression tests for the URI-hash cache-key change in PipelineArtifactCache.
 
-Phase 2 of the unified MediaLocator rollout switched
+The unified MediaLocator rollout switched
 ``PipelineArtifactCache._generate_video_key`` from ``Path.stem`` (which collides
 across roots) to ``sha256(canonical_uri)[:16]``. These tests would have failed
 on the pre-change code.

@@ -70,7 +70,7 @@ graph LR
 
 The routing pipeline processes each query through four phases, progressively enriching the query representation before making a routing decision.
 
-### Phase 1: Entity Extraction via GLiNER
+### Entity Extraction via GLiNER
 
 Zero-shot Named Entity Recognition using [GLiNER](https://github.com/urchade/GLiNER) — a generalist model that extracts entities without task-specific fine-tuning.
 
@@ -123,7 +123,7 @@ flowchart TD
 
 **Why GLiNER over spaCy NER?** GLiNER handles domain-specific entities (TECHNOLOGY, ACTIVITY, TOOL) without training data. Traditional NER models are limited to PERSON/ORG/GPE and miss the entity types most relevant to multi-modal content queries.
 
-### Phase 2: Composable Query Analysis (Entity Extraction + Relationship Inference + Query Enhancement)
+### Composable Query Analysis (Entity Extraction + Relationship Inference + Query Enhancement)
 
 The `ComposableQueryAnalysisModule` (a `dspy.Module`) combines entity extraction, relationship inference, and LLM-powered query reformulation into a single composable step with two paths:
 
@@ -134,7 +134,7 @@ Both paths produce identical output: `entities`, `relationships`, `enhanced_quer
 
 The `QueryEnhancementAgent` (A2A agent at `cogniverse_agents/query_enhancement_agent.py`) wraps the composable module and handles query enhancement as part of the orchestration pipeline. For batch optimization, SIMBA (Similarity-Based Memory Augmentation) runs as an Argo batch job — it is not an inline fast-path shortcut. The composable module is always used for real-time enhancement.
 
-### Phase 3: DSPy Routing Decision
+### DSPy Routing Decision
 
 The enhanced query, entities, and relationships feed into a DSPy `ChainOfThought` module that produces a structured routing decision with confidence calibration.
 
@@ -181,7 +181,7 @@ The routing decision includes:
 - **Execution mode**: sequential, parallel, or hybrid
 - **Confidence**: calibrated via learned thresholds (see AdaptiveThresholdSignature)
 
-### Phase 4: GRPO Optimization
+### GRPO Optimization
 
 Group Relative Policy Optimization continuously improves routing decisions from outcome signals. The optimizer tracks routing experiences and periodically retrains.
 
@@ -296,7 +296,7 @@ sequenceDiagram
     O->>TS: Resolve execution order
     TS-->>O: Execution phases
 
-    Note over O: Phase 1: Independent tasks
+    Note over O: Independent tasks
     par Parallel Execution
         O->>A1: POST /agents/{name}/process {query, context, tenant_id}
         O->>A2: POST /agents/{name}/process {query, context, tenant_id}
@@ -304,7 +304,7 @@ sequenceDiagram
     A1-->>O: Search results
     A2-->>O: Summary results
 
-    Note over O: Phase 2: Dependent tasks
+    Note over O: Dependent tasks
     O->>A3: POST /agents/{name}/process {query, context, tenant_id}
     A3-->>O: Report
 

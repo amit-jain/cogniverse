@@ -1,4 +1,4 @@
-"""Phase 3 end-to-end durability check against the live runtime pod.
+"""End-to-end durability check against the live runtime pod.
 
 Simulates an Argo-replay scenario: a constraint is POSTed to a
 session that's active in the live runtime; the pod is killed
@@ -281,8 +281,8 @@ async def test_constraint_buffered_in_redis_survives_pod_restart():
     Strong assertion: after ``kubectl delete pod`` mid-flight, the
     inbound list under ``inbound:<tenant>:<session>`` still
     contains the constraint payload — proving Redis truly
-    persists messages across pod death (the canonical Phase 3
-    contract).
+    persists messages across pod death (the canonical
+    durability contract).
     """
     session_id = f"e2e-replay-kill-{uuid.uuid4().hex[:8]}"
 

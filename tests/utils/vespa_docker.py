@@ -178,7 +178,7 @@ class VespaDockerManager:
         http_port = container_info["http_port"]
 
         logger.info(f"Waiting for application endpoint on port {http_port}...")
-        # Phase 1: Wait for container node (GET-based probe)
+        # Wait for container node (GET-based probe)
         container_ready = False
         for i in range(timeout):
             try:
@@ -196,7 +196,7 @@ class VespaDockerManager:
         if not container_ready:
             raise RuntimeError(f"Container node not ready after {timeout} seconds")
 
-        # Phase 2: Wait for content/distributor node (PUT-based feed probe).
+        # Wait for content/distributor node (PUT-based feed probe).
         # GET probes only check the container node. The content node that
         # handles feeds/queries may still be initializing. A PUT probe
         # verifies the full data path is operational.

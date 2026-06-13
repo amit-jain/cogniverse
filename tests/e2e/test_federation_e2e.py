@@ -1,4 +1,4 @@
-"""Phase 4a — Federation: org trunk + tenant overlay end-to-end.
+"""Federation: org trunk + tenant overlay end-to-end.
 
 Pins the shipped FederationService + the
 ``/admin/tenants/{t}/memories/{m}/promote_to_org_trunk`` HTTP route
@@ -63,7 +63,7 @@ DENSEON_URL = "http://localhost:29006"
 # kind — the route is exercised separately by TestTenantPrivateRefuses
 # Promotion which asserts the 403 (rejection) path.
 _FED_KIND = KnowledgeSchema(
-    kind="phase4_org_shared",
+    kind="fed_org_shared",
     retention=Retention.PERMANENT,
     sensitivity=Sensitivity.ORG_SHARED,
     pinnable_by=Pinnable.TENANT_ADMIN,
@@ -84,7 +84,7 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 
     Does NOT clear the per-tenant singleton cache here — federation
     tests intentionally hold multiple managers (t1, t2, trunk) live
-    across the same test. The custom ``phase4_org_shared`` kind is
+    across the same test. The custom ``fed_org_shared`` kind is
     registered on the write-time registry so external_doc-shaped
     writes can carry ``Sensitivity.ORG_SHARED`` and become promotable.
     """
@@ -124,17 +124,17 @@ def _write_shared(
     *,
     subject_key: str,
     content: str,
-    agent_name: str = "phase4_agent",
+    agent_name: str = "fed_agent",
 ) -> str:
-    """Write a ``phase4_org_shared`` memory (ORG_SHARED, promotable)."""
+    """Write a ``fed_org_shared`` memory (ORG_SHARED, promotable)."""
     prov = make_provenance(
-        written_by="agent:phase4",
+        written_by="agent:fed",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase4://src", label="src")],
+        derived_from=[CitationRef.external("fed://src", label="src")],
     )
     metadata = attach_to_metadata(
-        {"kind": "phase4_org_shared", "subject_key": subject_key}, prov
+        {"kind": "fed_org_shared", "subject_key": subject_key}, prov
     )
     mid = mm.add_memory(
         content=content,
@@ -152,7 +152,7 @@ def _write_tenant_instruction(
     *,
     subject_key: str,
     content: str,
-    agent_name: str = "phase4_agent",
+    agent_name: str = "fed_agent",
 ) -> str:
     """Write a tenant_instruction (TENANT_PRIVATE — never promotable)."""
     mid = mm.add_memory(
@@ -171,7 +171,7 @@ def _make_fed_service() -> FederationService:
 
     Used in place of the HTTP /promote_to_org_trunk route because the
     runtime route builds its own ``build_default_registry()`` which
-    does not have the test-only ``phase4_org_shared`` ORG_SHARED kind.
+    does not have the test-only ``fed_org_shared`` ORG_SHARED kind.
     Promotion logic lives entirely in FederationService — the route is
     a thin wrapper, so the round-trip in-process is the same Vespa
     write + same federation merge.
@@ -185,18 +185,18 @@ def _make_fed_service() -> FederationService:
 def _federated_rows(t_view_tenant: str) -> list[dict]:
     """Read t_view_tenant's federated view (tenant + org-trunk merge).
 
-    Both tenant writes and trunk writes share ``phase4_agent`` —
+    Both tenant writes and trunk writes share ``fed_agent`` —
     FederationService.promote_to_org_trunk copies ``source_memory.agent_name``
     forward (falling back to ``_promoted`` only when missing). The
     source memory's agent_name is set explicitly by callers below so
     a single agent_name filter sees both sides of the merge.
     """
     return _make_fed_service().federated_get_all(
-        tenant_id=t_view_tenant, agent_name="phase4_agent"
+        tenant_id=t_view_tenant, agent_name="fed_agent"
     )
 
 
-def _cleanup(mm: Mem0MemoryManager, agent_name: str = "phase4_agent") -> None:
+def _cleanup(mm: Mem0MemoryManager, agent_name: str = "fed_agent") -> None:
     try:
         mm.clear_agent_memory(mm.tenant_id, agent_name)
     except Exception:
@@ -250,7 +250,7 @@ class TestOrgTrunkVisibleToBothTenants:
             # not populate agent_name, so stamp it explicitly so the
             # trunk write lands under the same agent_name the federated
             # read filters by.
-            src["agent_name"] = "phase4_agent"
+            src["agent_name"] = "fed_agent"
             promotion = _make_fed_service().promote_to_org_trunk(
                 source_tenant_id=t1,
                 source_memory=src,
@@ -311,7 +311,7 @@ class TestTenantOverlayWinsOnSubjectKeyCollision:
             )
             src_rows = mm_t1.memory.get_all(user_id=t1).get("results", [])
             src = next(r for r in src_rows if str(r.get("id")) == trunk_seed_id)
-            src["agent_name"] = "phase4_agent"
+            src["agent_name"] = "fed_agent"
             promotion = _make_fed_service().promote_to_org_trunk(
                 source_tenant_id=t1,
                 source_memory=src,
@@ -433,7 +433,7 @@ class TestCrossOrgIsolation:
             )
             src_rows = mm_a.memory.get_all(user_id=t_a).get("results", [])
             src = next(r for r in src_rows if str(r.get("id")) == mid)
-            src["agent_name"] = "phase4_agent"
+            src["agent_name"] = "fed_agent"
             promotion = _make_fed_service().promote_to_org_trunk(
                 source_tenant_id=t_a,
                 source_memory=src,

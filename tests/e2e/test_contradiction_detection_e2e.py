@@ -1,4 +1,4 @@
-"""Phase 3a — Contradiction detection + reconciliation end-to-end.
+"""Contradiction detection + reconciliation end-to-end.
 
 Pins the shipped ContradictionDetector + reconcile() + the
 ``/admin/tenants/{t}/knowledge/contradictions/reconcile`` HTTP route
@@ -102,10 +102,10 @@ def _mem(
         )
     if confidence is not None:
         prov = make_provenance(
-            written_by="agent:phase3",
+            written_by="agent:contra",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=confidence,
-            derived_from=[CitationRef.external("phase3://src")],
+            derived_from=[CitationRef.external("contra://src")],
         )
         metadata = attach_to_metadata(metadata, prov)
     return {"id": mid, "memory": content, "metadata": metadata}
@@ -258,16 +258,16 @@ def _write_with_trust(
     deterministically per derivation kind.
     """
     prov = make_provenance(
-        written_by="agent:phase3",
+        written_by="agent:contra",
         derivation_kind=derivation_kind,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase3://src", label="src")],
+        derived_from=[CitationRef.external("contra://src", label="src")],
     )
     metadata = attach_to_metadata({"subject_key": subject, "kind": "entity_fact"}, prov)
     mid = mm.add_memory(
         content=content,
         tenant_id=mm.tenant_id,
-        agent_name="phase3_agent",
+        agent_name="contra_agent",
         metadata=metadata,
         infer=False,
     )
@@ -330,5 +330,5 @@ class TestReconcileViaHTTPRoute:
             assert body["metadata"]["survivor_count"] == 1
             assert body["metadata"]["policy_overridden"] is True
         finally:
-            mm.clear_agent_memory(tenant_id, "phase3_agent")
+            mm.clear_agent_memory(tenant_id, "contra_agent")
             Mem0MemoryManager._instances.clear()

@@ -34,7 +34,7 @@ class MockAgent(MemoryAwareMixin):
         """Test wrapper that supplies sane defaults for required init args.
 
         ``embedder_base_url`` (positional-required in the real signature) and
-        ``llm_model`` (keyword-only required after Phase 1c-2b) get test
+        ``llm_model`` (keyword-only required) get test
         defaults here so individual tests can focus on the behaviour they
         exercise without re-typing infrastructure plumbing.
         """

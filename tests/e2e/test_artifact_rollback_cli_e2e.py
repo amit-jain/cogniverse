@@ -1,4 +1,4 @@
-"""Phase 6c — ArtifactManager rollback CLI + hot-reload + reverse-rollback.
+"""ArtifactManager rollback CLI + hot-reload + reverse-rollback.
 
 Pins:
 

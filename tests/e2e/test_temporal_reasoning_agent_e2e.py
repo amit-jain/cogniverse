@@ -1,4 +1,4 @@
-"""Phase 10b — TemporalReasoningAgent end-to-end.
+"""TemporalReasoningAgent end-to-end.
 
 Pins the agent's window-bucketing contract:
 
@@ -121,11 +121,11 @@ def _write_at(
     we can place memories in deterministic time windows.
     """
     prov = Provenance(
-        written_by="agent:phase10_temporal",
+        written_by="agent:temporal",
         written_at=written_at_iso,
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase10://temporal")],
+        derived_from=[CitationRef.external("temporal://src")],
     )
     metadata = attach_to_metadata({"kind": "entity_fact", "subject_key": subject}, prov)
     mid = mm.add_memory(

@@ -1,4 +1,4 @@
-"""Phase 9a — CrossTenantComparisonAgent end-to-end.
+"""CrossTenantComparisonAgent end-to-end.
 
 Pins:
 
@@ -76,10 +76,10 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 def _write_fact(mm: Mem0MemoryManager, *, subject: str, content: str) -> str:
     """Write an entity_fact under agent_name='_promoted' so federation reads it."""
     prov = make_provenance(
-        written_by="agent:phase9",
+        written_by="agent:xtenant",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase9://src")],
+        derived_from=[CitationRef.external("xtenant://src")],
     )
     metadata = attach_to_metadata({"kind": "entity_fact", "subject_key": subject}, prov)
     mid = mm.add_memory(

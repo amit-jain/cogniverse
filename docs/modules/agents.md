@@ -1365,10 +1365,10 @@ async def _process_impl(
 
     query = input.query
 
-    # Phase 1: Planning
+    # Planning
     plan = await self._create_plan(query)
 
-    # Phase 2: Action
+    # Action
     agent_results = await self._execute_plan(plan)
 
     # Aggregate results
@@ -3164,7 +3164,9 @@ libs/agents/cogniverse_agents/
 │   ├── __init__.py
 │   ├── deno_check.py             # Boot probe: fail-fast if Deno missing
 │   ├── instrumented_rlm.py       # InstrumentedRLM with EventQueue + fallback marker
-│   └── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
+│   ├── rlm_inference.py          # RLMInference wrapper, RLMResult, RLMTimeoutError
+│   └── tolerant_interpreter.py   # TolerantPythonInterpreter/TolerantRLM: skip
+│                                 # stale id-null messages on the Deno channel
 ├── mixins/
 │   ├── __init__.py
 │   └── rlm_aware_mixin.py        # RLMAwareMixin for agents
@@ -3858,7 +3860,7 @@ RLM operations can be long-running (up to 5 minutes). Use `InstrumentedRLM` with
 
 #### InstrumentedRLM
 
-`InstrumentedRLM` subclasses `dspy.RLM` to emit events at each iteration:
+`InstrumentedRLM` subclasses `dspy.RLM` (via `TolerantRLM`) to emit events at each iteration:
 
 ```python
 from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError
@@ -4671,7 +4673,7 @@ flowchart TD
     RLM --> Check{"<span style='color:#000'>EventQueue<br/>provided?</span>"}
 
     Check -->|Yes| Instrumented["<span style='color:#000'>InstrumentedRLM</span>"]
-    Check -->|No| Standard["<span style='color:#000'>dspy.RLM</span>"]
+    Check -->|No| Standard["<span style='color:#000'>TolerantRLM</span>"]
 
     Instrumented --> Events["<span style='color:#000'>Progress Events</span>"]
     Instrumented --> Cancel["<span style='color:#000'>Cancellation Check</span>"]
@@ -4792,7 +4794,7 @@ class RLMResult:
 
 **Location:** `libs/agents/cogniverse_agents/inference/instrumented_rlm.py`
 
-Subclass of `dspy.RLM` with real-time progress events and cancellation support.
+Subclass of `dspy.RLM` (via `TolerantRLM`, which hardens the Deno JSON-RPC channel against stale `id: null` messages) with real-time progress events and cancellation support.
 
 ```python
 from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError

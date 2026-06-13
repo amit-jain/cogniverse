@@ -1,4 +1,4 @@
-"""Phase 9b — FederatedQueryAgent end-to-end.
+"""FederatedQueryAgent end-to-end.
 
 Pins:
 
@@ -71,10 +71,10 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 def _write_fact(mm: Mem0MemoryManager, *, content: str, subject: str) -> str:
     """Write under '_promoted' so federation reads find it."""
     prov = make_provenance(
-        written_by="agent:phase9_fed",
+        written_by="agent:fedq",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase9://fed")],
+        derived_from=[CitationRef.external("fedq://fed")],
     )
     metadata = attach_to_metadata({"kind": "entity_fact", "subject_key": subject}, prov)
     mid = mm.add_memory(

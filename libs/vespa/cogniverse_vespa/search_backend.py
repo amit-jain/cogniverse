@@ -588,7 +588,7 @@ class VespaSearchBackend(SearchBackend):
         top_k = query_dict.get("top_k", 10)
         filters = query_dict.get("filters", {})  # Get filters from query_dict
 
-        # Phase 1: Profile Resolution
+        # Profile resolution
         # Snapshot profiles+default_profiles under the lock so a concurrent
         # add_profile / remove_profile can't produce a torn read here.
         with self._profiles_lock:
@@ -693,7 +693,7 @@ class VespaSearchBackend(SearchBackend):
                 f"Available schemas: {list(cache.keys())}"
             )
 
-        # Phase 2: Strategy Resolution
+        # Strategy resolution
         requested_strategy = query_dict.get("strategy")
 
         if requested_strategy:

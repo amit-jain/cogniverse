@@ -1,4 +1,4 @@
-"""Smoke test for the Phase 0 conftest plumbing.
+"""Smoke test for the shared e2e conftest plumbing.
 
 Verifies that the additions in tests/e2e/conftest.py for the knowledge-system
 e2e coverage work end-to-end:
@@ -66,8 +66,8 @@ _LEGACY_PREFIXES = (
 
 @pytest.mark.e2e
 @skip_if_no_runtime
-def test_phase0_helpers_self_check(phoenix_client_session):
-    """One self-check covering every Phase 0 contract.
+def test_conftest_helpers_self_check(phoenix_client_session):
+    """One self-check covering every conftest-helper contract.
 
     Folded into a single function so it pays the e2e_stack autouse fixture
     cost (Vespa + Phoenix + runtime + Ollama bootstrap) exactly once. The
@@ -107,9 +107,9 @@ def test_phase0_helpers_self_check(phoenix_client_session):
     # a missing span and never short-circuit before the deadline. This is
     # what every later phase relies on when it asserts a positive match
     # within a known window. We test the negative path here because it's
-    # deterministic; the positive path is exercised by every Phase 5+
+    # deterministic; the positive path is exercised by every later
     # test that drives a real span (e.g. RLM telemetry, sandbox.exec).
-    bogus_project = f"cogniverse-{unique_id('know_phase0_bogus')}"
+    bogus_project = f"cogniverse-{unique_id('know_selfcheck_bogus')}"
     started = time.monotonic()
     found = wait_for_span(
         phoenix_client_session,

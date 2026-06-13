@@ -1,4 +1,4 @@
-"""Phase 7a — SandboxManager boot policy + exec span end-to-end.
+"""SandboxManager boot policy + exec span end-to-end.
 
 Pins the shipped SandboxPolicy enum + ``SandboxManager._connect`` against
 a live OpenShell gateway started by the module-scoped fixture below:
@@ -101,8 +101,8 @@ def live_gateway() -> Iterator[None]:
         _start_gateway_with_retry()
         if not _gateway_running():
             pytest.fail(
-                "openshell gateway did not come up after start — Phase 7 "
-                "tests cannot run without a live gateway"
+                "openshell gateway did not come up after start — sandbox "
+                "policy tests cannot run without a live gateway"
             )
     # The openshell SDK's SandboxClient(endpoint="host:port") path expects
     # a specific URL format that the deployed gateway doesn't handle the
@@ -264,7 +264,7 @@ class TestExecSpanAttributesEmitted:
             # assert is the SPAN, not the exec result.
             try:
                 mgr.exec_in_sandbox(
-                    agent_type, ["echo", "hello-from-phase7"], timeout_seconds=30
+                    agent_type, ["echo", "hello-from-sandbox"], timeout_seconds=30
                 )
             except Exception:
                 # Some sandbox executor errors raise; the span must still

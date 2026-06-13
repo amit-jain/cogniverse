@@ -1,4 +1,4 @@
-"""Phase 8b — KGTraversalAgent end-to-end.
+"""KGTraversalAgent end-to-end.
 
 Pins the shipped KG walker against the deployed cluster:
 
@@ -78,10 +78,10 @@ def _write_kg_node(
 ) -> str:
     """kg_node is provenance_required (default). Attach a minimal provenance."""
     prov = make_provenance(
-        written_by="agent:phase8",
+        written_by="agent:traversal",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase8://node")],
+        derived_from=[CitationRef.external("traversal://node")],
     )
     metadata = attach_to_metadata(
         {"kind": "kg_node", "subject_key": subject_key, "label": subject_key.title()},
@@ -108,10 +108,10 @@ def _write_kg_edge(
 ) -> str:
     """kg_edge is provenance_required (default)."""
     prov = make_provenance(
-        written_by="agent:phase8",
+        written_by="agent:traversal",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase8://edge")],
+        derived_from=[CitationRef.external("traversal://edge")],
     )
     metadata = attach_to_metadata(
         {

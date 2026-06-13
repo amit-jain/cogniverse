@@ -1,4 +1,4 @@
-"""Phase 3b — Trust ranking + endorsement end-to-end.
+"""Trust ranking + endorsement end-to-end.
 
 Pins:
   * the initial-trust-from-derivation-kind multiplier table
@@ -93,10 +93,10 @@ def _write_with_derivation(
     ``entity_fact`` is 0.5.
     """
     prov = make_provenance(
-        written_by="agent:phase3_trust",
+        written_by="agent:trust",
         derivation_kind=derivation_kind,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase3://trust_src", label="src")],
+        derived_from=[CitationRef.external("trust://src", label="src")],
     )
     metadata = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": f"trust.{derivation_kind.value}"},
@@ -105,7 +105,7 @@ def _write_with_derivation(
     mid = mm.add_memory(
         content=content,
         tenant_id=mm.tenant_id,
-        agent_name="phase3_trust_agent",
+        agent_name="trust_rank_agent",
         metadata=metadata,
         infer=False,
     )
@@ -161,7 +161,7 @@ class TestInitialTrustFromDerivationKind:
                 )
                 assert trust.endorsements == 0
         finally:
-            mm.clear_agent_memory(tenant_id, "phase3_trust_agent")
+            mm.clear_agent_memory(tenant_id, "trust_rank_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -222,7 +222,7 @@ class TestEndorsementBumpsTrust:
             )
             assert body2["endorsements"] == 2
         finally:
-            mm.clear_agent_memory(tenant_id, "phase3_trust_agent")
+            mm.clear_agent_memory(tenant_id, "trust_rank_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -246,10 +246,10 @@ def _synthetic(
         ),
     )
     prov = make_provenance(
-        written_by="agent:phase3",
+        written_by="agent:trust_syn",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=confidence,
-        derived_from=[CitationRef.external("phase3://syn")],
+        derived_from=[CitationRef.external("trust://syn")],
     )
     metadata = attach_to_metadata(metadata, prov)
     return {"id": mid, "memory": f"content {mid}", "score": score, "metadata": metadata}
@@ -298,5 +298,5 @@ class TestEndorseUnknownRoleRejected:
             detail = resp.json().get("detail", "")
             assert "unknown endorser_role='random'" in detail, detail
         finally:
-            mm.clear_agent_memory(tenant_id, "phase3_trust_agent")
+            mm.clear_agent_memory(tenant_id, "trust_rank_agent")
             Mem0MemoryManager._instances.clear()

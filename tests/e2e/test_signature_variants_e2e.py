@@ -1,4 +1,4 @@
-"""Phase 6a — SignatureVariantRegistry + variant routing end-to-end.
+"""SignatureVariantRegistry + variant routing end-to-end.
 
 Pins the shipped registry semantics + the runtime's per-tenant
 selection HTTP route:

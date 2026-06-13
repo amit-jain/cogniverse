@@ -1,4 +1,4 @@
-"""Phase 5a — RLM telemetry end-to-end.
+"""RLM telemetry end-to-end.
 
 Pins the shipped RLMResult telemetry fields against a real vLLM
 endpoint inside the deployed cogniverse up cluster:
@@ -117,8 +117,8 @@ def _import_rlm() -> tuple:
 # A small but non-trivial context that nudges the REPL into at least
 # one iteration. The query asks for a count + classification — RLM
 # typically issues 1-3 sub-LLM calls to get there.
-_PHASE5_QUERY = "Count how many planets are mentioned and list them by name."
-_PHASE5_CONTEXT = (
+_RLM_QUERY = "Count how many planets are mentioned and list them by name."
+_RLM_CONTEXT = (
     "Our solar system has eight planets: Mercury, Venus, Earth, Mars, "
     "Jupiter, Saturn, Uranus, Neptune. Pluto was reclassified as a "
     "dwarf planet in 2006. Earth has one moon, Jupiter has four large "
@@ -151,7 +151,7 @@ class TestTokensUsedReportedAndMonotone:
             timeout_seconds=600,
             tenant_id=unique_id("rlm_tokens"),
         )
-        r1 = small.process(query=_PHASE5_QUERY, context=_PHASE5_CONTEXT)
+        r1 = small.process(query=_RLM_QUERY, context=_RLM_CONTEXT)
         # Lower bound chosen so a fully-deterministic single-iteration
         # completion still passes; upper bound rejects a runaway loop.
         assert 1 <= r1.tokens_used <= 50_000, r1.tokens_used
@@ -166,8 +166,8 @@ class TestTokensUsedReportedAndMonotone:
             tenant_id=unique_id("rlm_tokens"),
         )
         # Inflate context so the bigger budget actually has more to do.
-        big_context = _PHASE5_CONTEXT * 4
-        r2 = big.process(query=_PHASE5_QUERY, context=big_context)
+        big_context = _RLM_CONTEXT * 4
+        r2 = big.process(query=_RLM_QUERY, context=big_context)
         assert r2.tokens_used >= r1.tokens_used, (
             f"larger budget should not use fewer tokens: "
             f"small={r1.tokens_used} big={r2.tokens_used}"
@@ -197,8 +197,8 @@ class TestIncludeTrajectoryShape:
         )
         max_entries = 8
         r = rlm.process(
-            query=_PHASE5_QUERY,
-            context=_PHASE5_CONTEXT,
+            query=_RLM_QUERY,
+            context=_RLM_CONTEXT,
             include_trajectory=True,
             trajectory_max_entries=max_entries,
         )
@@ -247,8 +247,8 @@ class TestIncludeTrajectoryShape:
             tenant_id=unique_id("rlm_traj"),
         )
         r = rlm.process(
-            query=_PHASE5_QUERY,
-            context=_PHASE5_CONTEXT,
+            query=_RLM_QUERY,
+            context=_RLM_CONTEXT,
             include_trajectory=False,
         )
         assert r.trajectory == []
@@ -284,7 +284,7 @@ class TestWasFallbackContract:
             timeout_seconds=600,
             tenant_id=unique_id("rlm_fb"),
         )
-        r = rlm.process(query=_PHASE5_QUERY, context=_PHASE5_CONTEXT)
+        r = rlm.process(query=_RLM_QUERY, context=_RLM_CONTEXT)
         # Strict bool — would catch a regression that returns int/None.
         assert isinstance(r.was_fallback, bool), (
             f"was_fallback must be a strict bool, got {type(r.was_fallback)!r}"
@@ -314,7 +314,7 @@ class TestTelemetryDictShape:
             timeout_seconds=600,
             tenant_id=unique_id("rlm_tel"),
         )
-        r = rlm.process(query=_PHASE5_QUERY, context=_PHASE5_CONTEXT)
+        r = rlm.process(query=_RLM_QUERY, context=_RLM_CONTEXT)
         td = r.to_telemetry_dict()
         # Exact key set — drift = silent dashboard breakage.
         expected_keys = {

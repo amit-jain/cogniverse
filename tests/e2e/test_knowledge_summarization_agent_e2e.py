@@ -1,4 +1,4 @@
-"""Phase 8c — KnowledgeSummarizationAgent end-to-end.
+"""KnowledgeSummarizationAgent end-to-end.
 
 Pins:
 
@@ -79,10 +79,10 @@ def _seed_facts(mm: Mem0MemoryManager, *, subject: str, count: int) -> List[str]
     ids: List[str] = []
     for i in range(count):
         prov = make_provenance(
-            written_by="agent:phase8_summary",
+            written_by="agent:summary",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=0.9,
-            derived_from=[CitationRef.external(f"phase8://summary/{i}")],
+            derived_from=[CitationRef.external(f"summary://item/{i}")],
         )
         meta = attach_to_metadata({"kind": "entity_fact", "subject_key": subject}, prov)
         mid = mm.add_memory(
@@ -90,7 +90,7 @@ def _seed_facts(mm: Mem0MemoryManager, *, subject: str, count: int) -> List[str]
                 f"fact #{i} about {subject}: detail-{i}-with-some-distinguishing-text"
             ),
             tenant_id=mm.tenant_id,
-            agent_name="phase8_agent",
+            agent_name="summary_agent",
             metadata=meta,
             infer=False,
         )
@@ -126,9 +126,9 @@ class TestSummarizationOverSubjectSlice:
                         "actor_id": "alice",
                         "promote": False,
                         # Summarizer defaults agent_name_filter to "_promoted";
-                        # the test wrote under "phase8_agent" via in-process
+                        # the test wrote under "summary_agent" via in-process
                         # Mem0, so point the filter at that agent_name.
-                        "agent_name_filter": "phase8_agent",
+                        "agent_name_filter": "summary_agent",
                     },
                 )
             assert resp.status_code == 200, resp.text[:300]
@@ -151,7 +151,7 @@ class TestSummarizationOverSubjectSlice:
             assert isinstance(body["summary"], str)
             assert 80 <= len(body["summary"]) <= 6000, len(body["summary"])
         finally:
-            mm.clear_agent_memory(tenant_id, "phase8_agent")
+            mm.clear_agent_memory(tenant_id, "summary_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -185,7 +185,7 @@ class TestSummarizationPromotesToOrgTrunk:
                         "actor_role": "tenant_admin",
                         "actor_id": "boss",
                         "promote": True,
-                        "agent_name_filter": "phase8_agent",
+                        "agent_name_filter": "summary_agent",
                     },
                 )
             assert resp.status_code == 200, resp.text[:300]
@@ -199,7 +199,7 @@ class TestSummarizationPromotesToOrgTrunk:
             assert isinstance(promoted_id, str) and promoted_id, promoted_id
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase8_agent")
+                mm.clear_agent_memory(tenant_id, "summary_agent")
                 mm_trunk.clear_agent_memory(trunk_id, "_promoted")
             except Exception:
                 pass

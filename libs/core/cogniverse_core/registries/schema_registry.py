@@ -450,7 +450,7 @@ class SchemaRegistry:
             }
         )
 
-        # TRANSACTION PHASE 1: Deploy to backend (atomic operation)
+        # Deploy to backend first (atomic operation)
         try:
             success = self._backend.deploy_schemas(all_schemas)
             if not success:
@@ -464,7 +464,7 @@ class SchemaRegistry:
                 f"Backend deployment failed for schema '{tenant_schema_name}': {e}"
             )
 
-        # TRANSACTION PHASE 2: Register in ConfigStore (critical section)
+        # Then register in ConfigStore (critical section)
         try:
             logger.info(f"Registering schema {tenant_schema_name} in database")
             self.register_schema(

@@ -306,7 +306,7 @@ class TestDSPyAgentOptimizer:
 
 @pytest.mark.unit
 class TestDSPy30A2ABaseIntegration:
-    """Test DSPy 3.0 + A2A base integration layer (Phase 1.2).
+    """Test DSPy 3.0 + A2A base integration layer.
 
     This tests the new A2AAgent implementation with type-safe generics.
     """
@@ -388,7 +388,7 @@ class TestDSPy30A2ABaseIntegration:
 
 @pytest.mark.unit
 class TestDSPy30RoutingSignatures:
-    """Test DSPy 3.0 routing signatures (Phase 1.3).
+    """Test DSPy 3.0 routing signatures.
 
     This tests the new dspy_routing_signatures.py that will replace the
     old signature creation in dspy_agent_optimizer.py.
@@ -799,7 +799,7 @@ class TestDSPyModules:
 
 @pytest.mark.unit
 class TestDSPyIntegrationReadiness:
-    """Test Phase 2 integration readiness with Phase 3 preparation."""
+    """Test composable module readiness for query enhancement and routing."""
 
     def test_composable_module_ready_for_query_enhancement(self):
         """Test that composable module produces outputs suitable for query enhancement"""
@@ -950,7 +950,7 @@ class TestDSPyComponentsIntegration:
     def test_end_to_end_query_processing_pipeline(self):
         """Test complete pipeline: A2A input → relationship extraction → query enhancement"""
 
-        # Phase 1: A2A-DSPy integration
+        # A2A-DSPy integration
         from cogniverse_agents.routing.dspy_routing_signatures import (
             BasicQueryAnalysisSignature,
         )
@@ -964,7 +964,7 @@ class TestDSPyComponentsIntegration:
             def forward(self, query):
                 return self.analyze(query=query)
 
-        # Test Phase 1: A2A to process flow
+        # Test A2A to process flow
         # Create agent with proper constructor
         agent = SimpleDSPyA2AAgent(port=8000)
 
@@ -985,7 +985,7 @@ class TestDSPyComponentsIntegration:
     def test_error_propagation_across_phases(self):
         """Test error handling propagates correctly through the pipeline"""
 
-        # Test Phase 1 error handling
+        # Test A2A-DSPy error handling
 
         class FailingModule(dspy.Module):
             def forward(self, query):
@@ -1109,7 +1109,7 @@ class TestDSPyComponentsIntegration:
 @pytest.mark.unit
 @pytest.mark.unit
 class TestWorkflowIntelligence:
-    """Unit tests for Workflow Intelligence (Phase 4.4)"""
+    """Unit tests for Workflow Intelligence"""
 
     def test_query_type_classification(self):
         """Test query type classification logic"""

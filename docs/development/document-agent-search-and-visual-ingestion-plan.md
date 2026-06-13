@@ -30,23 +30,24 @@ Root facts established by investigation:
   sites); audio has no such profile → audio A2A raises. The backend already
   auto-selects per-profile `default_ranking` when no strategy is passed.
 
-## Phases
+## Plan
 
-> Phase 1 ☑ done (e220d480). Phase 2 ☑ done (921a7183 — chosen approach:
+> `_search_text` alignment ☑ done (e220d480). Default strategy ☑ done
+> (921a7183 — chosen approach:
 > backend falls back to the schema's `default` profile when no strategy is
 > requested and none configured; agent drops the 7 `binary_binary` hardcodes →
 > passes the caller's ranking or None. Verified by a real-Vespa auto-select
 > test + an agent unit test. Incidental: fixed 2 stale `_metadata_app`
-> bare-construct backend tests, bd82db13.) Phase 3 ☑ done — added
+> bare-construct backend tests, bd82db13.) Schema redesign ☑ done — added
 > configs/schemas/document_visual_schema.json (mapped patch{}/v[128] ColPali +
 > binary + float/hybrid profiles, binary `default`); fixed `_search_visual`
 > (mapped query(qt) + binarized query(qtb), `phased` profile = binary hamming
 > recall then float MaxSim rerank, tenant-scoped name, document_path parse);
 > aligned the legacy inline schema in vespa_schema_manager.py to the same shape;
 > real-Vespa test (test_document_agent_visual_search_vespa.py) + updated the
-> inline-schema content-types test. Phase 4 remains.
+> inline-schema content-types test. Page-image ingestion remains.
 
-### Phase 1 — `_search_text` matches the real ColBERT producer
+### `_search_text` matches the real ColBERT producer
 - Use `ColBERTQueryEncoder` (LateOn) for the query; send mapped
   `{str(i): vec.tolist()}` as `input.query(qt)`; profile `hybrid_float_bm25`;
   tenant-scope the schema (`document_text_<canonical_tenant>`); read
@@ -56,7 +57,7 @@ Root facts established by investigation:
   assert the matching `document_id` is returned, `document_url == document_path`,
   `strategy_used == "text"`. Controlled embedding (model not the boundary risk).
 
-### Phase 2 — `search_agent` per-modality default strategy
+### `search_agent` per-modality default strategy
 - Drop the 7 hardcoded `binary_binary` fallbacks; pass `kwargs.get("ranking")`
   (None when absent) so the backend auto-selects per profile/type. Audio must
   not raise.
@@ -75,7 +76,7 @@ Root facts established by investigation:
   `backend.default_profiles.<type>.strategy` config (bigger). The 7 sites:
   search_agent.py:877, 1021, 1147, 1249, 1438, 1458, 1830.
 
-### Phase 3 — `document_visual` schema redesign + `_search_visual` query fix
+### `document_visual` schema redesign + `_search_visual` query fix
 - Add `configs/schemas/document_visual_schema.json` mirroring `image_colpali_mv`
   (`colpali_embedding tensor<bfloat16>(patch{}, v[128])` + `embedding_binary`,
   profiles `float_float`/`hybrid_float_bm25`, proper per-token MaxSim). Retire
@@ -86,7 +87,7 @@ Root facts established by investigation:
 - Test (real Vespa): feed a page doc with a controlled colpali embedding, assert
   `_search_visual` retrieves + ranks it (image-test pattern).
 
-### Phase 4 — page-image ColPali ingestion for `document_visual`
+### Page-image ColPali ingestion for `document_visual`
 
 Render lib: **pdf2image** (already a declared workspace dep in
 libs/runtime/pyproject.toml + root pyproject.toml; poppler `pdftoppm` present
@@ -102,24 +103,25 @@ image file → (num_patches, 128); `VespaEmbeddingProcessor._convert_to_binary_d
 already produces the `(patch{}, v[16])` binary form. Page-image ingestion
 mirrors document_text exactly, swapping ColBERT-text for ColPali-page-image.
 
-Status: ☑ 4a done (a8969658), ☑ 4b + ☑ 4c done (this commit) — full PDF page →
+Status: segmentation ☑ done (a8969658), embedding/doc-build + e2e ☑ done
+(this commit) — full PDF page →
 ColPali → Vespa → search round-trip verified against real Vespa + real ColPali
 (test_document_visual_ingestion_real.py, 3 passed). Note: field names stay
 `embedding`/`embedding_binary`-convention-compatible via the schema's rank
 profiles (`get_embedding_field_names` auto-discovers `colpali_embedding` from
 `attribute(...)` refs), so the generic processor output remaps correctly; the
-gitignored `ranking_strategies.json` cache is refreshed in the 4c fixture so a
+gitignored `ranking_strategies.json` cache is refreshed in the e2e fixture so a
 stale cache doesn't hide a newly added schema.
 
-Sub-phases (≤5 code files each, verify + report between):
-- **4a — segmentation side**: `DocumentVisualSegmentationStrategy` (pdf2image
+Sub-steps (≤5 code files each, verify + report between):
+- **Segmentation side**: `DocumentVisualSegmentationStrategy` (pdf2image
   render each PDF page → PNG under profile_output_dir, return page dicts:
   document_id, page_number, page_count, page_image path, document_path,
   document_title) + `document_page` dispatch branch in
   `processing_strategy_set._process_segmentation` → `{"document_pages": [...]}`
   + add `document_page` to `processor_manager` directly-handled list. Unit test:
   render a tiny real PDF, assert N page dicts with existing PNG paths + metadata.
-- **4b — embedding/doc-build side**: `DocumentVisualEmbeddingStrategy`
+- **Embedding/doc-build side**: `DocumentVisualEmbeddingStrategy`
   (requirement `{"embedding": {"type": "document_visual", "colpali_model": ...}}`,
   delegates to generate_embeddings) + `embedding_generator_impl`:
   `generate_embeddings` `document_pages` route + `_process_document_visual_segments`
@@ -128,11 +130,11 @@ Sub-phases (≤5 code files each, verify + report between):
   feed schema document_visual) + `pipeline._prepare_video_data` `document_pages`
   branch + `configs/config.json` `document_visual_colpali` profile. Factory +
   generator unit tests.
-- **4c — real ingestion e2e**: ingest a small PDF through the pipeline, assert
+- **Real ingestion e2e**: ingest a small PDF through the pipeline, assert
   `document_visual_<tenant>` docs with `colpali_embedding` land in Vespa and
   `DocumentAgent._search_visual` retrieves them (mirrors image/text real tests).
 
 ## Done criteria
-All 4 phases shipped, each with a real-boundary test that fails on the pre-fix
-code; document_agent search returns real results end-to-end for text and
-(post-Phase-4) visual; `search_agent` audio no longer raises.
+All four plan items shipped, each with a real-boundary test that fails on the
+pre-fix code; document_agent search returns real results end-to-end for text
+and (after page-image ingestion) visual; `search_agent` audio no longer raises.

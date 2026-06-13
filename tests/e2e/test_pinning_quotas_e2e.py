@@ -1,4 +1,4 @@
-"""Phase 4b — Pin quotas + soft-delete restore end-to-end.
+"""Pin quotas + soft-delete restore end-to-end.
 
 Pins the shipped PinService quota path + the admin restore route:
 
@@ -84,14 +84,14 @@ def _write_entity_fact(
     *,
     subject_key: str,
     content: str,
-    agent_name: str = "phase4_agent",
+    agent_name: str = "quota_agent",
 ) -> str:
     """Write an entity_fact (provenance_required, pinnable_by=tenant_admin)."""
     prov = make_provenance(
-        written_by="agent:phase4",
+        written_by="agent:quota",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external("phase4://src")],
+        derived_from=[CitationRef.external("quota://src")],
     )
     metadata = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": subject_key}, prov
@@ -154,7 +154,7 @@ class TestUserQuotaEnforced:
                 mid = mm.add_memory(
                     content=f"turn {i}",
                     tenant_id=tenant_id,
-                    agent_name="phase4_agent",
+                    agent_name="quota_agent",
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
@@ -192,7 +192,7 @@ class TestUserQuotaEnforced:
             assert "user" in detail.lower(), detail
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase4_agent")
+                mm.clear_agent_memory(tenant_id, "quota_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()
@@ -217,7 +217,7 @@ class TestOrgAdminOverridesQuota:
                 mid = mm.add_memory(
                     content=f"turn {i}",
                     tenant_id=tenant_id,
-                    agent_name="phase4_agent",
+                    agent_name="quota_agent",
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
@@ -249,7 +249,7 @@ class TestOrgAdminOverridesQuota:
             assert body3["pinned_by"] == "org_admin"
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase4_agent")
+                mm.clear_agent_memory(tenant_id, "quota_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()
@@ -270,10 +270,10 @@ class TestSchemaPinnableFloorRejected:
         mm = _build_manager(tenant_id)
         try:
             prov = make_provenance(
-                written_by="agent:phase4",
+                written_by="agent:quota",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
                 confidence=0.9,
-                derived_from=[CitationRef.external("phase4://src")],
+                derived_from=[CitationRef.external("quota://src")],
             )
             metadata = attach_to_metadata(
                 {"kind": "kg_node", "subject_key": "node_x"}, prov
@@ -281,7 +281,7 @@ class TestSchemaPinnableFloorRejected:
             mid = mm.add_memory(
                 content="kg node x",
                 tenant_id=tenant_id,
-                agent_name="phase4_agent",
+                agent_name="quota_agent",
                 metadata=metadata,
                 infer=False,
             )
@@ -299,7 +299,7 @@ class TestSchemaPinnableFloorRejected:
             assert "forbids pin from role=user" in detail, detail
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase4_agent")
+                mm.clear_agent_memory(tenant_id, "quota_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()
@@ -324,7 +324,7 @@ class TestListPinsRoundTrip:
                 mid = mm.add_memory(
                     content=f"turn {i}",
                     tenant_id=tenant_id,
-                    agent_name="phase4_agent",
+                    agent_name="quota_agent",
                     metadata={"kind": "conversation_turn", "subject_key": f"c{i}"},
                     infer=False,
                 )
@@ -354,7 +354,7 @@ class TestListPinsRoundTrip:
                 assert p["pinned_by_actor"] == "alice"
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase4_agent")
+                mm.clear_agent_memory(tenant_id, "quota_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()
@@ -375,8 +375,9 @@ class TestRestoreSoftDeletedMemory:
         mm = _build_manager(tenant_id)
         try:
             # Register a 1-day ephemeral kind on mm's write-time registry
-            # AND a local copy used at cleanup time. Phase 1 caught the
-            # gotcha that these must be the same instance or kind.
+            # AND a local copy used at cleanup time. The knowledge-schema
+            # tests caught the gotcha that these must be the same instance
+            # or kind.
             ephemeral = KnowledgeSchema(
                 kind="know_rest_ephemeral",
                 retention=Retention.EPHEMERAL_DAYS,
@@ -399,7 +400,7 @@ class TestRestoreSoftDeletedMemory:
             mid = mm.add_memory(
                 content="aged memory awaiting restore",
                 tenant_id=tenant_id,
-                agent_name="phase4_agent",
+                agent_name="quota_agent",
                 metadata={
                     "kind": "know_rest_ephemeral",
                     "subject_key": "restore_subj",
@@ -439,7 +440,7 @@ class TestRestoreSoftDeletedMemory:
             assert not restored_meta.get("archived"), restored_meta
         finally:
             try:
-                mm.clear_agent_memory(tenant_id, "phase4_agent")
+                mm.clear_agent_memory(tenant_id, "quota_agent")
             except Exception:
                 pass
             Mem0MemoryManager._instances.clear()

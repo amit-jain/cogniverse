@@ -1,4 +1,4 @@
-"""Phase 1 — KnowledgeRegistry + schema-driven retention end-to-end.
+"""KnowledgeRegistry + schema-driven retention end-to-end.
 
 Exercises the shipped knowledge subsystem against the deployed e2e stack:
   * registry defaults (conservative permanent-by-default, exact seed set);
@@ -103,7 +103,7 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 def _provenance_metadata(kind: str, subject_key: str, source: str) -> dict:
     """Compose a minimal valid metadata dict for a provenance_required kind."""
     prov = make_provenance(
-        written_by=f"agent:phase1_{kind}",
+        written_by=f"agent:schema_{kind}",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
         derived_from=[CitationRef.external(source, label=f"src_{kind}")],
@@ -119,7 +119,7 @@ def _seed(
     content: str,
     metadata_extra: dict | None = None,
     age_days: float = 0.0,
-    agent_name: str = "phase1_agent",
+    agent_name: str = "schema_agent",
 ) -> str:
     """Add a memory with optional pre-set ``created_at`` for age tests.
 
@@ -135,7 +135,7 @@ def _seed(
         "learned_strategy",
     ):
         meta = _provenance_metadata(
-            kind=kind, subject_key=f"{kind}_subj", source="phase1://seed"
+            kind=kind, subject_key=f"{kind}_subj", source="schema://seed"
         )
     else:
         meta = {"kind": kind}
@@ -235,7 +235,7 @@ class TestPermanentByDefault:
         tenant_id = unique_id("know_perm")
         mm = _build_manager(tenant_id)
         try:
-            mid = _seed(mm, kind=kind, content=f"phase1 permanent {kind}")
+            mid = _seed(mm, kind=kind, content=f"permanent {kind}")
             registry = build_default_registry()
             result = mm.cleanup_with_schema(registry, set())
             # Permanent kinds must NOT contribute either a hard-delete
@@ -247,7 +247,7 @@ class TestPermanentByDefault:
                 f"permanent kind {kind!r} memory {mid} disappeared after cleanup"
             )
         finally:
-            mm.clear_agent_memory(tenant_id, "phase1_agent")
+            mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -315,7 +315,7 @@ class TestRetentionEphemeralDays:
             assert result2.get("know_ephemeral_3d") == 1, result2
             assert _memory_by_id(mm, very_old_id) is None
         finally:
-            mm.clear_agent_memory(tenant_id, "phase1_agent")
+            mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -368,7 +368,7 @@ class TestRetentionSchemaDriven:
                 "A (low-confirm + 40d) should have been retired but survives"
             )
         finally:
-            mm.clear_agent_memory(tenant_id, "phase1_agent")
+            mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()
 
     def test_retire_hook_unit_contract(self) -> None:
@@ -422,7 +422,7 @@ class TestRetentionEphemeralSession:
             mid = _seed(
                 mm,
                 kind="session_scratch",
-                content="phase1 session scratch",
+                content="session scratch",
                 metadata_extra={"session_id": "sess_abc"},
             )
 
@@ -437,7 +437,7 @@ class TestRetentionEphemeralSession:
             assert drop_result == {"session_scratch": 1}
             assert _memory_by_id(mm, mid) is None
         finally:
-            mm.clear_agent_memory(tenant_id, "phase1_agent")
+            mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()
 
     def test_session_scratch_write_without_session_id_rejected(self) -> None:
@@ -448,7 +448,7 @@ class TestRetentionEphemeralSession:
                 mm.add_memory(
                     content="should be rejected",
                     tenant_id=tenant_id,
-                    agent_name="phase1_agent",
+                    agent_name="schema_agent",
                     metadata={"kind": "session_scratch"},  # no session_id
                     infer=False,
                 )
@@ -495,7 +495,7 @@ class TestPinningSurvivesLifecycle:
             mid = _seed(
                 mm,
                 kind="know_pin_ephemeral",
-                content="phase1 pin candidate",
+                content="pin candidate",
                 age_days=5,
             )
 
@@ -507,7 +507,7 @@ class TestPinningSurvivesLifecycle:
                     json={
                         "target_kind": "know_pin_ephemeral",
                         "pinned_by": "tenant_admin",
-                        "actor_id": "phase1_admin",
+                        "actor_id": "schema_admin",
                     },
                 )
             assert resp.status_code == 200, (
@@ -544,10 +544,10 @@ class TestPinningSurvivesLifecycle:
                         f"/admin/tenants/{tenant_id}/memories/{mid}/pin",
                         json={
                             "requester_role": "tenant_admin",
-                            "actor_id": "phase1_admin",
+                            "actor_id": "schema_admin",
                         },
                     )
             except Exception:
                 pass
-            mm.clear_agent_memory(tenant_id, "phase1_agent")
+            mm.clear_agent_memory(tenant_id, "schema_agent")
             Mem0MemoryManager._instances.clear()

@@ -35,9 +35,9 @@ Foundation Layer
 
 ---
 
-## Learning Path (8 Phases)
+## Learning Path (8 Steps)
 
-### Phase 1: SDK (Days 1-2)
+### Step 1: SDK (Days 1-2)
 
 **Package**: `cogniverse-sdk` — Zero dependencies, core abstractions
 
@@ -50,7 +50,7 @@ Foundation Layer
 
 ---
 
-### Phase 2: Foundation (Days 3-4)
+### Step 2: Foundation (Days 3-4)
 
 **Package**: `cogniverse-foundation` — Config + telemetry infrastructure
 
@@ -63,7 +63,7 @@ Foundation Layer
 
 ---
 
-### Phase 3: Core (Days 5-7)
+### Step 3: Core (Days 5-7)
 
 **Package**: `cogniverse-core` — Agent base classes, registries, memory, events
 
@@ -78,7 +78,7 @@ Foundation Layer
 
 ---
 
-### Phase 4: Evaluation & Telemetry (Days 8-9)
+### Step 4: Evaluation & Telemetry (Days 8-9)
 
 **Packages**: `cogniverse-evaluation`, `cogniverse-telemetry-phoenix`
 
@@ -92,7 +92,7 @@ Foundation Layer
 
 ---
 
-### Phase 5: Agents (Days 10-12)
+### Step 5: Agents (Days 10-12)
 
 **Package**: `cogniverse-agents` — Agent implementations with DSPy
 
@@ -106,7 +106,7 @@ Foundation Layer
 
 ---
 
-### Phase 6: Vespa & Synthetic (Days 13-14)
+### Step 6: Vespa & Synthetic (Days 13-14)
 
 **Packages**: `cogniverse-vespa`, `cogniverse-synthetic`
 
@@ -120,7 +120,7 @@ Foundation Layer
 
 ---
 
-### Phase 7: Fine-Tuning (Days 15-16)
+### Step 7: Fine-Tuning (Days 15-16)
 
 **Package**: `cogniverse-finetuning` — Phoenix-to-adapter pipeline
 
@@ -134,7 +134,7 @@ Foundation Layer
 
 ---
 
-### Phase 8: Runtime & Dashboard (Days 17-20)
+### Step 8: Runtime & Dashboard (Days 17-20)
 
 **Packages**: `cogniverse-runtime`, `cogniverse-dashboard`
 
@@ -150,7 +150,7 @@ Foundation Layer
 
 ## Knowledge Subsystem
 
-Cross-cutting track for the memory/provenance/trust stack and the agents that consume it. Read after Phase 5.
+Cross-cutting track for the memory/provenance/trust stack and the agents that consume it. Read after Step 5.
 
 ### 1. Memory Layer Foundations
 

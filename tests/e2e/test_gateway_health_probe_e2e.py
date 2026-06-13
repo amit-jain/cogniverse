@@ -1,4 +1,4 @@
-"""Phase 7b — GatewayHealthProbe end-to-end.
+"""GatewayHealthProbe end-to-end.
 
 Pins the shipped probe contract against the live OpenShell gateway:
 
@@ -135,7 +135,7 @@ class TestProbeEmitsOpenshellGatewayHealthSpan:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-        tracer = provider.get_tracer("phase7_test")
+        tracer = provider.get_tracer("gateway_probe_test")
 
         mgr = _make_manager()
         probe = GatewayHealthProbe(mgr, interval_seconds=1.0, tracer=tracer)
@@ -176,7 +176,7 @@ class TestProbeLoopRunsOnSchedule:
         exporter = InMemorySpanExporter()
         provider = TracerProvider()
         provider.add_span_processor(SimpleSpanProcessor(exporter))
-        tracer = provider.get_tracer("phase7_loop_test")
+        tracer = provider.get_tracer("gateway_probe_loop_test")
 
         mgr = _make_manager()
         probe = GatewayHealthProbe(mgr, interval_seconds=0.5, tracer=tracer)
@@ -212,8 +212,8 @@ class TestProbeFlipsToUnavailableWhenClientGone:
     """Forcing manager._client = None makes probe_once return (False, latency_ms).
 
     The plan called for ``pkill openshell-sandbox-gateway``; that destroys
-    the live gateway needed by every other Phase 7 test in the same
-    module. We exercise the same code path (the ``client is None`` branch
+    the live gateway needed by every other test in this module. We
+    exercise the same code path (the ``client is None`` branch
     in ``probe_once``) by setting ``mgr._client = None`` directly — the
     "gateway disappeared" semantics is what the probe code branches on,
     not the kill itself.

@@ -181,7 +181,7 @@ class TestBackfillSourceUrl:
         http_port = ingestion_vespa_backend["http_port"]
         media_root_uri = "s3://corpus/videos"
 
-        # Phase 1: write source_url onto every legacy doc via the same
+        # Write source_url onto every legacy doc via the same
         # namespace ('video') the fixture used to feed them.
         for i in range(3):
             doc_id = f"backfill_doc_{i}"
@@ -209,7 +209,7 @@ class TestBackfillSourceUrl:
                 f"{fields.get('source_url')!r}"
             )
 
-        # Phase 2: a fresh iter_documents call returns the docs with
+        # Then a fresh iter_documents call returns the docs with
         # source_url populated, which is the condition main()'s skip branch
         # checks via `if existing_source_url: skipped += 1; continue`.
         skipped = 0

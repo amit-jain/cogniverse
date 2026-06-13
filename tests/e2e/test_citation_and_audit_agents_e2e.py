@@ -1,4 +1,4 @@
-"""Phase 8a — CitationTracingAgent (truncate path) + AuditExplanationAgent.
+"""CitationTracingAgent (truncate path) + AuditExplanationAgent.
 
 Pins two read-only knowledge agents against the deployed cluster:
 
@@ -9,8 +9,8 @@ Pins two read-only knowledge agents against the deployed cluster:
     conflicting same-subject facts surfaces those sources with trust
     annotations AND lists the conflict in ``contradictions_touched``.
 
-The Phase 2 file already pins the happy-path citation chain walk via the
-HTTP route; this module only adds the truncation and audit contracts.
+test_provenance_e2e already pins the happy-path citation chain walk via
+the HTTP route; this module only adds the truncation and audit contracts.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 
 
 def _warmup_provenance_schema(mm: Mem0MemoryManager, timeout_s: float = 120.0) -> None:
-    """Block until the per-tenant provenance schema accepts writes (Phase 2 pattern)."""
+    """Block until the per-tenant provenance schema accepts writes."""
     import time
     import uuid
 
@@ -123,10 +123,10 @@ def _write_with_provenance(
     derived_from: List[CitationRef],
     subject_key: str,
     confidence: float = 0.85,
-    agent_name: str = "phase8_agent",
+    agent_name: str = "citation_agent",
 ) -> str:
     prov = make_provenance(
-        written_by="agent:phase8",
+        written_by="agent:citation",
         derivation_kind=derivation_kind,
         confidence=confidence,
         derived_from=derived_from,
@@ -162,7 +162,7 @@ class TestCitationTracingAgentWalksToPrimary:
                 kind="external_doc",
                 content="ROOT primary source",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
-                derived_from=[CitationRef.external("phase8://primary")],
+                derived_from=[CitationRef.external("citation://primary")],
                 subject_key="cw.root",
             )
             _wait_for_provenance(mm, root)
@@ -205,7 +205,7 @@ class TestCitationTracingAgentWalksToPrimary:
                 "direct_ingest",
             ]
         finally:
-            mm.clear_agent_memory(tenant_id, "phase8_agent")
+            mm.clear_agent_memory(tenant_id, "citation_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -228,7 +228,7 @@ class TestCitationTracingAgentTruncatesAtMaxDepth:
                 kind="external_doc",
                 content="ROOT doc",
                 derivation_kind=DerivationKind.DIRECT_INGEST,
-                derived_from=[CitationRef.external("phase8://root")],
+                derived_from=[CitationRef.external("citation://root")],
                 subject_key="ct.root",
             )
             _wait_for_provenance(mm, root)
@@ -265,7 +265,7 @@ class TestCitationTracingAgentTruncatesAtMaxDepth:
             assert [n["memory_id"] for n in body["nodes"]] == [leaf, mid]
             assert [n["depth"] for n in body["nodes"]] == [0, 1]
         finally:
-            mm.clear_agent_memory(tenant_id, "phase8_agent")
+            mm.clear_agent_memory(tenant_id, "citation_agent")
             Mem0MemoryManager._instances.clear()
 
 
@@ -281,14 +281,14 @@ def _write_entity_fact_no_prov(
     content: str,
     derivation_kind: DerivationKind = DerivationKind.DIRECT_INGEST,
     confidence: float = 0.9,
-    agent_name: str = "phase8_agent",
+    agent_name: str = "citation_agent",
 ) -> str:
     """Write an entity_fact with provenance (entity_fact is provenance_required)."""
     prov = make_provenance(
-        written_by="agent:phase8",
+        written_by="agent:citation",
         derivation_kind=derivation_kind,
         confidence=confidence,
-        derived_from=[CitationRef.external("phase8://src")],
+        derived_from=[CitationRef.external("citation://src")],
     )
     metadata = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": subject_key}, prov
@@ -371,5 +371,5 @@ class TestAuditExplanationAgentSurfacesTrustAndContradictions:
             assert conflict["subject_key"] == "company.ceo"
             assert sorted(conflict["conflicting_memory_ids"]) == sorted([a, b])
         finally:
-            mm.clear_agent_memory(tenant_id, "phase8_agent")
+            mm.clear_agent_memory(tenant_id, "citation_agent")
             Mem0MemoryManager._instances.clear()

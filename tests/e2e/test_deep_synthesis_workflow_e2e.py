@@ -1,4 +1,4 @@
-"""Phase 11 — DeepSynthesisWorkflow composition end-to-end.
+"""DeepSynthesisWorkflow composition end-to-end.
 
 Pins the four cost-bound invariants documented in the workflow's
 module docstring:
@@ -235,10 +235,10 @@ class TestDeepSynthesisOverHundredDocuments:
             for topic, base_content in topics.items():
                 for i in range(20):
                     prov = make_provenance(
-                        written_by="agent:phase11",
+                        written_by="agent:synthesis",
                         derivation_kind=DerivationKind.DIRECT_INGEST,
                         confidence=0.9,
-                        derived_from=[CitationRef.external(f"phase11://{topic}/{i}")],
+                        derived_from=[CitationRef.external(f"synthesis://{topic}/{i}")],
                     )
                     metadata = attach_to_metadata(
                         {"kind": "external_doc", "subject_key": f"{topic}.{i}"},

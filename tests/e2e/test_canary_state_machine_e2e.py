@@ -1,4 +1,4 @@
-"""Phase 6b — ArtifactManager canary state machine end-to-end.
+"""ArtifactManager canary state machine end-to-end.
 
 Pins the FSM behaviour against the deployed cogniverse Phoenix:
 

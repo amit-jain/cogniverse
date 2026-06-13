@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backfill ``source_url`` on existing Vespa documents.
 
-Phase 3 of the unified-MediaLocator rollout populates ``source_url`` on every
+The unified-MediaLocator rollout populates ``source_url`` on every
 new document at ingest time. Pre-existing documents (ingested before the field
 was wired) have an empty value, which forces visual evaluators down the
 warning-logged legacy probe path.

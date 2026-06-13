@@ -1,4 +1,4 @@
-"""Phase 10a — MultiDocumentSynthesisAgent end-to-end.
+"""MultiDocumentSynthesisAgent end-to-end.
 
 Pins:
 
@@ -113,10 +113,10 @@ def _build_manager(tenant_id: str) -> Mem0MemoryManager:
 def _write_doc(mm: Mem0MemoryManager, *, label: str, content: str) -> str:
     """Write an external_doc with provenance under SYN_AGENT."""
     prov = make_provenance(
-        written_by="agent:phase10",
+        written_by="agent:multidoc",
         derivation_kind=DerivationKind.DIRECT_INGEST,
         confidence=0.9,
-        derived_from=[CitationRef.external(f"phase10://{label}")],
+        derived_from=[CitationRef.external(f"multidoc://{label}")],
     )
     metadata = attach_to_metadata({"kind": "external_doc", "subject_key": label}, prov)
     mid = mm.add_memory(

@@ -1,7 +1,7 @@
 """Wiring tests for the MediaLocator integration in VideoIngestionPipeline.
 
-Phase 2 of the unified-MediaLocator rollout: file:// only, processors still
-receive Path objects. These tests cover the boundaries we changed:
+This stage of the unified-MediaLocator rollout is file:// only; processors
+still receive Path objects. These tests cover the boundaries we changed:
 - PipelineConfig.media_root_uri propagates through the builder
 - Pipeline construction wires up self.locator
 - get_video_files returns URIs from the locator when media_root_uri is set

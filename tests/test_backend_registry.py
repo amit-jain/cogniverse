@@ -202,7 +202,7 @@ class MockFullBackend(Backend):
             "binary_field": "embedding_binary",
         }
 
-    # Phase 2 Backend interface methods
+    # Backend interface methods
     def deploy_schema(
         self, schema_name: str, tenant_id: Optional[str] = None, **kwargs
     ) -> bool:

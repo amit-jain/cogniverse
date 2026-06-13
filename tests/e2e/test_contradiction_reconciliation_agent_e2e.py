@@ -1,4 +1,4 @@
-"""Phase 9c — ContradictionReconciliationAgent end-to-end.
+"""ContradictionReconciliationAgent end-to-end.
 
 Pins the runtime ``/knowledge/contradictions/reconcile`` route under
 each contradiction policy:
@@ -9,9 +9,10 @@ each contradiction policy:
   * ``policy_override="preserve_both"`` → both members survive flagged
     ``disputed=True``.
 
-Phase 3's TestReconcileViaHTTPRoute already covered the trust-ranked
-path under override; this module adds the schema-default + the other
-two override branches with the same ResolvedMemberOut shape pinned.
+test_contradiction_detection_e2e's TestReconcileViaHTTPRoute already
+covered the trust-ranked path under override; this module adds the
+schema-default + the other two override branches with the same
+ResolvedMemberOut shape pinned.
 """
 
 from __future__ import annotations
@@ -93,10 +94,10 @@ def _write_conflicting(
     high_meta = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": subject},
         make_provenance(
-            written_by="agent:phase9_recon",
+            written_by="agent:recon",
             derivation_kind=DerivationKind.DIRECT_INGEST,
             confidence=0.95,
-            derived_from=[CitationRef.external("phase9://high")],
+            derived_from=[CitationRef.external("recon://high")],
         ),
     )
     if high_trust_age_days > 0:
@@ -115,10 +116,10 @@ def _write_conflicting(
     low_meta = attach_to_metadata(
         {"kind": "entity_fact", "subject_key": subject},
         make_provenance(
-            written_by="agent:phase9_recon",
+            written_by="agent:recon",
             derivation_kind=DerivationKind.AGENT_INFERENCE,
             confidence=0.5,
-            derived_from=[CitationRef.external("phase9://low")],
+            derived_from=[CitationRef.external("recon://low")],
         ),
     )
     if low_trust_age_days > 0:

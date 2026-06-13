@@ -288,17 +288,17 @@ class DetailedReportAgent(
 
         with dspy.context(lm=self._dspy_lm):
             try:
-                # Phase 1: Thinking phase - comprehensive analysis
+                # Thinking pass: comprehensive analysis
                 self.emit_progress("thinking", "Analyzing content...")
                 thinking_phase = await self._thinking_phase(request)
 
-                # Phase 2: Visual analysis (if enabled)
+                # Visual analysis (if enabled)
                 self.emit_progress("visual_analysis", "Performing visual analysis...")
                 visual_analysis = await self._perform_visual_analysis(
                     request, thinking_phase
                 )
 
-                # Phase 3: Generate executive summary
+                # Executive summary
                 self.emit_progress(
                     "executive_summary", "Generating executive summary..."
                 )
@@ -306,13 +306,13 @@ class DetailedReportAgent(
                     request, thinking_phase
                 )
 
-                # Phase 4: Generate detailed findings
+                # Detailed findings
                 self.emit_progress("findings", "Compiling detailed findings...")
                 detailed_findings = self._generate_detailed_findings(
                     request, thinking_phase
                 )
 
-                # Phase 5: Generate technical details
+                # Technical details
                 self.emit_progress(
                     "technical_details", "Generating technical details..."
                 )
@@ -320,13 +320,13 @@ class DetailedReportAgent(
                     request, thinking_phase
                 )
 
-                # Phase 6: Generate recommendations
+                # Recommendations
                 self.emit_progress("recommendations", "Generating recommendations...")
                 recommendations = self._generate_recommendations(
                     request, thinking_phase
                 )
 
-                # Phase 7: Confidence assessment
+                # Confidence assessment
                 self.emit_progress("confidence", "Calculating confidence assessment...")
                 confidence_assessment = self._calculate_confidence_assessment(
                     request, thinking_phase

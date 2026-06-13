@@ -1303,7 +1303,6 @@ class VideoIngestionPipeline:
             "total_videos": len(video_files),
             "max_concurrent": max_concurrent,
             "async_optimized": True,
-            "phase2_concurrent": True,
             "started_at": time.time(),
         }
 

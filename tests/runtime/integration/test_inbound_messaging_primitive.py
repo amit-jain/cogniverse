@@ -1,8 +1,8 @@
 """Behavioural contract for the inbound-messaging primitive.
 
 Locks the observable behaviour of ``InboundMessage``, ``InboundQueue``,
-and ``InboundQueueRegistry`` — the foundation Phase 1 wires the HTTP
-route + orchestrator integration onto. Subsequent phases test the
+and ``InboundQueueRegistry`` — the foundation the HTTP route +
+orchestrator integration is wired onto. Other suites test the
 INTEGRATION; this file tests only the primitive's promises to its
 in-process consumers.
 

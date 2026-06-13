@@ -1,4 +1,4 @@
-"""Phase 5b — RLM A/B harness end-to-end.
+"""RLM A/B harness end-to-end.
 
 Pins the shipped RLMABRunner output:
 
