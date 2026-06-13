@@ -462,8 +462,14 @@ class TestJobExecution:
         from cogniverse_runtime.job_executor import run_job
 
         agent_response = MagicMock()
+        # The AgentDispatcher /process response always carries the answer
+        # under "message" (and sometimes "result"); it never returns a bare
+        # top-level "response". Mock the real contract so _call_agent's
+        # extraction is exercised against what the boundary actually sends.
         agent_response.json.return_value = {
-            "response": "Found 5 ColPali papers on video retrieval"
+            "status": "success",
+            "agent": "orchestrator_agent",
+            "message": "Found 5 ColPali papers on video retrieval",
         }
         agent_response.raise_for_status = MagicMock()
         agent_response.status_code = 200
