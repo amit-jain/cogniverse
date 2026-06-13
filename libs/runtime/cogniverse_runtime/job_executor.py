@@ -153,9 +153,15 @@ async def _call_agent(
         # AgentDispatcher returns one of:
         #   {"orchestration_result": {...}, "message": "...", ...}  (orchestrator route)
         #   {"result": "...", "message": "..."}                      (specialized agent route)
-        # Pick the canonical human-readable field; fall back to the
-        # whole dict only when neither is present (caller-error case).
-        return data.get("message") or data.get("result") or str(data)
+        #   {"result": {"response": "..."}, ...}                     (agents that wrap the text)
+        # Pick the canonical human-readable field; some agents nest it
+        # one level deep — unwrap so delivery never persists str(dict).
+        value = data.get("message") or data.get("result")
+        if isinstance(value, dict):
+            value = value.get("response") or value.get("answer") or value.get("message")
+        if isinstance(value, str) and value:
+            return value
+        return str(data)
     except httpx.HTTPStatusError as exc:
         logger.error(
             "Agent call failed (%s): %s",

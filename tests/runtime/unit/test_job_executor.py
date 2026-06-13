@@ -265,3 +265,39 @@ async def test_deliver_to_wiki_server_error_is_swallowed(caplog):
             )
 
     assert "Wiki delivery failed" in caplog.text
+
+
+async def _call_agent_against(response_body: dict) -> str:
+    app = FastAPI()
+
+    @app.post("/agents/orchestrator_agent/process")
+    async def _proc(body: dict):
+        return response_body
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        return await je._call_agent(client, "http://test", "acme:acme", "find papers")
+
+
+async def test_call_agent_returns_message_field():
+    out = await _call_agent_against({"message": "Found 5 papers", "status": "success"})
+    assert out == "Found 5 papers"
+
+
+async def test_call_agent_returns_string_result():
+    out = await _call_agent_against({"result": "Found 5 papers"})
+    assert out == "Found 5 papers"
+
+
+async def test_call_agent_unwraps_dict_result_response():
+    # Some agents wrap the text one level deep; delivery must never
+    # persist str(dict) into the wiki.
+    out = await _call_agent_against(
+        {"result": {"response": "Found 5 ColPali papers on video retrieval"}}
+    )
+    assert out == "Found 5 ColPali papers on video retrieval"
+
+
+async def test_call_agent_unwraps_dict_result_answer():
+    out = await _call_agent_against({"result": {"answer": "The answer text"}})
+    assert out == "The answer text"
