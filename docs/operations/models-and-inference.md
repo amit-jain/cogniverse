@@ -16,7 +16,7 @@ Cogniverse runs four classes of inference services:
 |---|---|
 | **LLMs** (chat / generation) | Agent reasoning, query enhancement, distillation. Two tiers: a small **student** model used at runtime, and a larger **teacher** model used only during DSPy MIPROv2 optimization. |
 | **Visual / multimodal embeddings** | ColPali + ColQwen for video/image patch embeddings, VideoPrism for chunk embeddings. |
-| **Text embeddings** | ColBERT-style late-interaction (PyLate) for documents/code, DenseOn (ModernBERT) for query/single-vector text. |
+| **Text embeddings** | ColBERT-style late-interaction (LateOn, served by vLLM) for documents/code, DenseOn (ModernBERT) for query/single-vector text. |
 | **Audio (ASR)** | Whisper transcription of audio files. |
 
 Each service lives in `charts/cogniverse/values.yaml` under the
@@ -164,15 +164,21 @@ endpoint, supported models, and the video-only scope.
 |---|---|
 | Chart key | `inference.colbert_pylate` |
 | Model | `lightonai/LateOn` (ColBERT-style, late-interaction) |
-| Image | **`cogniverse/pylate:dev` (CUSTOM, `deploy/pylate/Dockerfile`, module `cogniverse_runtime/sidecars/colbert_pylate.py`)** |
-| Engine | `pylate` |
+| Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
+| Engine | `vllm_token_embed` |
+| Endpoint | `POST /pooling` (per-token multi-vector) |
 | NodePort | 29002 |
 | Default state | enabled |
 
-**Why custom**: PyLate (the late-interaction backbone the chart uses)
-has no upstream containerized release. The cogniverse build ships the
-right torch flavour for the host (CPU / ROCm / CUDA) per the
-`TORCH_BACKEND` build-arg.
+**Serving**: vLLM's pooling runner (`--runner pooling --convert embed`)
+serves the per-token `/pooling` contract. The
+`--hf-overrides '{"architectures": ["ColBERTModernBertModel"]}'` flag
+forces the multi-vector architecture; without it vLLM serves a plain
+dense ModernBert and the per-token outputs LateOn retrieval needs vanish.
+The chart key keeps the historical `colbert_pylate` name; the custom
+PyLate FastAPI sidecar it once referred to has been retired. Query vs
+document is distinguished client-side by a `[Q] `/`[D] ` prefix, never an
+`is_query` field.
 
 ### Code search (ColBERT variant)
 
@@ -180,7 +186,8 @@ right torch flavour for the host (CPU / ROCm / CUDA) per the
 |---|---|
 | Chart key | `inference.code_colbert_pylate` |
 | Model | `lightonai/LateOn-Code-edge` |
-| Image | `cogniverse/pylate:dev` (same custom image as above) |
+| Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
+| Engine | `vllm_token_embed` |
 | Default state | disabled |
 
 ### DenseOn (single-vector dense text)
@@ -189,13 +196,14 @@ right torch flavour for the host (CPU / ROCm / CUDA) per the
 |---|---|
 | Chart key | `inference.denseon` |
 | Model | `lightonai/DenseOn` (ModernBERT-base, 768-dim, CLS pooling, 512 ctx) |
-| Image | `cogniverse/pylate:dev` (same image, `MODE=dense`) |
-| Engine | `pylate` |
+| Image | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` (official) |
+| Engine | `vllm_embed` |
+| Endpoint | `POST /v1/embeddings` (OpenAI-compatible, single dense vector) |
 | Default state | enabled |
 
-The same `cogniverse/pylate` image serves both the multi-vector
-ColBERT path and the single-vector DenseOn path; the
-`MODE` env var picks the head.
+DenseOn uses the same vLLM pooling runner as the ColBERT path, but
+`vllm_embed` pools to a single dense vector per input (no per-token
+reshape), matching DenseOn's dense-retrieval semantics.
 
 ---
 
@@ -252,9 +260,9 @@ chart) or librosa's numba JIT crashes with "no locator available".
 | `vllm_colpali` (ROCm 7.12+) | `vllm/vllm-openai-rocm` | No |
 | `vllm_colqwen` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
 | `vllm_asr` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No |
-| `colbert_pylate` | `cogniverse/pylate:dev` | **Yes** (`deploy/pylate/Dockerfile`) |
-| `code_colbert_pylate` | `cogniverse/pylate:dev` | **Yes** (same image) |
-| `denseon` | `cogniverse/pylate:dev` | **Yes** (same image, `MODE=dense`) |
+| `colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
+| `code_colbert_pylate` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
+| `denseon` | `vllm/vllm-openai-cpu` / `vllm/vllm-openai-rocm` | No (official) |
 | `videoprism` | `cogniverse/videoprism:dev` | **Yes** (`deploy/videoprism/`) |
 | `llm.builtin` (Ollama) | `ollama/ollama` | No (official) |
 

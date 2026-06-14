@@ -111,22 +111,23 @@ cogniverse_runtime/
     ├── clap_embed.py                # CLAP /embed/audio + /embed/text
     │                                # (joint acoustic space); shipped via
     │                                # deploy/clap_embed/Dockerfile
-    ├── colbert_pylate.py            # PyLate ColBERT / DenseOn /pooling +
-    │                                # /v1/embeddings service; shipped via
-    │                                # deploy/pylate/Dockerfile
     └── face_embed.py                # InsightFace /embed FastAPI service;
                                      # shipped alone via deploy/face_embed/
                                      # Dockerfile (no cogniverse imports)
 ```
+
+LateOn (ColBERT) and DenseOn text embeddings are served by stock vLLM
+(`vllm_token_embed` / `vllm_embed` chart engines), not a custom sidecar —
+the former `colbert_pylate.py` FastAPI server has been retired. See
+`docs/operations/models-and-inference.md` for the serving details.
 
 The face-embed sidecar runs as its own container: `FaceEmbedConfig` is plain
 data, `build_app(cfg)` is the app factory, and `main()` is the deployed
 entrypoint — the only place the container env (`FACE_EMBED_MODEL`,
 `FACE_EMBED_CTX_ID`, `FACE_EMBED_URL_TIMEOUT_S`, `HOST`, `PORT`) is read.
 Run locally with `uv run python -m cogniverse_runtime.sidecars.face_embed`;
-build the images from the repo root with
-`docker build -f deploy/face_embed/Dockerfile .` /
-`docker build -f deploy/pylate/Dockerfile .`.
+build the image from the repo root with
+`docker build -f deploy/face_embed/Dockerfile .`.
 
 `SearchResult` and `SearchBackend` are imported from `cogniverse_sdk.document` / `cogniverse_sdk.interfaces.backend` — the runtime has no local search ABC any more (the dead duplicates were removed).
 

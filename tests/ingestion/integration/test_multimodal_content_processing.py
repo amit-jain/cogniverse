@@ -130,17 +130,31 @@ class _BackendAdapter:
 
 
 @pytest.fixture(scope="module")
-def pylate_colbert_url(pylate_sidecar):
-    return pylate_sidecar.spawn(model=COLBERT_MODEL_NAME, mode="multi_vector")
+def colbert_vllm_url(vllm_sidecar):
+    """Multi-vector ColBERT served by a real vLLM container (chart
+    ``vllm_token_embed`` engine). The ``ColBERTModernBertModel``
+    hf-override forces the per-token architecture; without it vLLM serves
+    a plain dense ModernBert and the multi-vector outputs vanish."""
+    return vllm_sidecar.spawn(
+        COLBERT_MODEL_NAME,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--hf-overrides",
+            '{"architectures": ["ColBERTModernBertModel"]}',
+        ],
+    )
 
 
 @pytest.fixture(scope="module")
-def colbert_model(pylate_colbert_url):
-    """Real ColBERT served by the pylate sidecar; routed through
-    RemoteColBERTLoader so tests exercise the production code path."""
+def colbert_model(colbert_vllm_url):
+    """Real ColBERT served by vLLM; routed through RemoteColBERTLoader so
+    tests exercise the production code path."""
     loader = RemoteColBERTLoader(
         model_name=COLBERT_MODEL_NAME,
-        config={"remote_inference_url": pylate_colbert_url},
+        config={"remote_inference_url": colbert_vllm_url},
     )
     model, _ = loader.load_model()
     return model

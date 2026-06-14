@@ -21,16 +21,3 @@ def vllm_sidecar():
         yield factory
     finally:
         factory.teardown()
-
-
-@pytest.fixture(scope="session")
-def pylate_sidecar():
-    """Factory for spinning up real pylate sidecars on demand. See
-    tests/utils/pylate_sidecar.py for usage details."""
-    from tests.utils.pylate_sidecar import PylateSidecarFactory
-
-    factory = PylateSidecarFactory()
-    try:
-        yield factory
-    finally:
-        factory.teardown()

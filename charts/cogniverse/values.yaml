@@ -841,12 +841,13 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 24
 
-  # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
-  # sidecar (cogniverse_runtime/sidecars/colbert_pylate.py). Used by profiles with
+  # ColBERT-family text multi-vector retrieval served by stock vLLM
+  # (``vllm_token_embed`` engine, /pooling endpoint). Used by profiles with
   # ``inference_service: "colbert_pylate"`` (e.g., document_text_semantic,
-  # lateon_mv). Swap model via ``model:`` — same pylate pod serves any
-  # ColBERT-family checkpoint. If you want a second ColBERT pod (e.g. for
-  # a different model in parallel), add another entry with a distinct key.
+  # lateon_mv); the key keeps its historical name. Swap model via ``model:``
+  # — vLLM serves any ColBERT-family checkpoint with the matching
+  # ``--hf-overrides`` architecture. If you want a second ColBERT pod (e.g.
+  # for a different model in parallel), add another entry with a distinct key.
   colbert_pylate:
     enabled: true
     engine: vllm_token_embed

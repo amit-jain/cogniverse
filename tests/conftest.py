@@ -19,12 +19,6 @@ import requests
 from tests.utils.async_polling import simulate_processing_delay
 
 
-def _shared_denseon_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture(scope="session")
 def face_embed_container():
     """Self-provisioned face-embed sidecar container.
@@ -33,7 +27,6 @@ def face_embed_container():
     it with the shared HF/insightface cache volume, and yields the base
     URL — integration tests never depend on a pre-started service.
     """
-    import socket
     import subprocess
     import time as _time
 
@@ -41,9 +34,7 @@ def face_embed_container():
 
     repo = Path(__file__).resolve().parents[1]
     image = "cogniverse-face-embed:local"
-    have = subprocess.run(
-        ["docker", "image", "inspect", image], capture_output=True
-    )
+    have = subprocess.run(["docker", "image", "inspect", image], capture_output=True)
     if have.returncode != 0:
         subprocess.run(
             [
@@ -64,7 +55,9 @@ def face_embed_container():
         port = s.getsockname()[1]
     name = f"face-embed-test-{port}"
     subprocess.run(["docker", "rm", "-f", name], capture_output=True)
-    subprocess.run(["docker", "volume", "create", "face-embed-cache"], capture_output=True)
+    subprocess.run(
+        ["docker", "volume", "create", "face-embed-cache"], capture_output=True
+    )
     subprocess.run(
         [
             "docker",
@@ -103,109 +96,47 @@ def face_embed_container():
 
 
 @pytest.fixture(scope="session")
-def pylate_server():
-    """The real colbert_pylate sidecar module served from a background
-    thread — session-scoped so LateOn loads once per run.
+def pylate_server(vllm_sidecar):
+    """LateOn served by a real vLLM container exposing the production
+    ``/pooling`` per-token contract — session-scoped so LateOn loads once
+    per run.
 
-    Serves the production /pooling contract (and /v1/embeddings in dense
-    mode) without depending on the k3d cluster: integration tests must
-    provision their own inference, the cluster belongs to the e2e tier.
+    Mirrors the chart's ``vllm_token_embed`` engine: ``--runner pooling
+    --convert embed`` selects vLLM's pooling runner and the
+    ``ColBERTModernBertModel`` hf-override forces the multi-vector
+    architecture (without it vLLM serves a plain dense ModernBert and the
+    per-token outputs LateOn retrieval needs vanish). Integration tests
+    provision their own inference; the cluster belongs to the e2e tier.
     """
-    import importlib.util
-    import socket
-    import threading
-    import time as _time
-
-    import requests as _requests
-    import uvicorn
-
-    spec = importlib.util.spec_from_file_location(
-        "pylate_server_shared",
-        str(
-            Path(__file__).resolve().parents[1]
-            / "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py"
-        ),
+    return vllm_sidecar.spawn(
+        "lightonai/LateOn",
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "8192",
+            "--hf-overrides",
+            '{"architectures": ["ColBERTModernBertModel"]}',
+        ],
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = _time.time() + 180
-    while _time.time() < deadline:
-        try:
-            if _requests.get(f"{base_url}/health", timeout=2).status_code == 200:
-                break
-        except Exception:
-            pass
-        _time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("pylate /health did not come up within 180s — model load failed")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
 
 
 @pytest.fixture(scope="session")
-def shared_denseon():
-    """Run the real colbert_pylate sidecar module in mode=dense for any tests
-    that need a DenseOn embedding endpoint (Mem0, semantic_embedder, etc).
+def shared_denseon(vllm_sidecar):
+    """DenseOn served by a real vLLM container exposing the
+    OpenAI-compatible ``/v1/embeddings`` contract Mem0's openai provider
+    expects — session-scoped so the model loads once per test run.
 
-    Loads ``lightonai/DenseOn`` via SentenceTransformer (~150MB
-    ModernBERT-base download on first run, cached thereafter) and
-    serves the OpenAI-compatible ``/v1/embeddings`` contract Mem0's
-    openai provider expects. Session-scoped so the model loads once
-    per test run regardless of how many test files request it.
+    Mirrors the chart's ``vllm_embed`` engine: ``--runner pooling
+    --convert embed`` pools to a single dense vector per input (no
+    per-token reshape), matching DenseOn's dense-retrieval semantics.
     """
-    import uvicorn
-
-    spec = importlib.util.spec_from_file_location(
-        "denseon_server_under_test",
-        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
+    return vllm_sidecar.spawn(
+        "lightonai/DenseOn",
+        extra_args=["--runner", "pooling", "--convert", "embed"],
     )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/DenseOn", device="cpu", mode="dense")
-    port = _shared_denseon_free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 240
-    while time.time() < deadline:
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except Exception:
-            pass
-        time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("denseon /health did not come up within 240s")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
 
 
 # Configure torch and tokenizers to avoid threading issues in pytest

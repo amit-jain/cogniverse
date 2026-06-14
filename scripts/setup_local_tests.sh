@@ -11,7 +11,7 @@
 #   localhost:19071 -> Vespa config               (charts default)
 #   localhost:26006 -> Phoenix HTTP               (NodePort 26006)
 #   localhost:4317  -> Phoenix OTLP gRPC          (NodePort 4317)
-#   localhost:29002 -> ColBERT pylate sidecar     (NodePort 29002)
+#   localhost:29002 -> LateOn ColBERT (vLLM)      (NodePort 29002)
 #   localhost:29010 -> vllm-llm-student (gemma)   (NodePort 29010)
 #   localhost:29011 -> vllm-llm-teacher           (NodePort 29011)
 #
