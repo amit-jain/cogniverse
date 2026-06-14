@@ -79,7 +79,7 @@ def multi_profile_vespa(shared_memory_vespa):
 
     real_profiles = [
         "video_colpali_smol500_mv_frame",
-        "video_videoprism_base_mv_chunk_30s",
+        "image_colpali_mv",
         "video_colqwen_omni_mv_chunk_30s",
     ]
     yield {
@@ -102,10 +102,7 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
         BackendConfig,
         BackendProfileConfig,
     )
-    from tests.agents.integration.conftest import (
-        inject_tomoro_url,
-        reroute_videoprism_profile_to_tomoro,
-    )
+    from tests.agents.integration.conftest import inject_tomoro_url
 
     vespa_http_port = multi_profile_vespa["http_port"]
     vespa_config_port = multi_profile_vespa["config_port"]
@@ -116,9 +113,6 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     # Tomoro is remote-only; route the query encoder for every Tomoro-backed
     # profile through the spawned sidecar before the SearchAgent reads config.
     inject_tomoro_url(config_manager, tomoro_inference_url)
-    # The SearchAgent resolves the videoprism profile from config.json (which
-    # carries model_loader=videoprism); reroute it through the Tomoro sidecar.
-    reroute_videoprism_profile_to_tomoro(config_manager)
 
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")
@@ -129,19 +123,20 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     # exercises ensemble RRF metadata, not real cross-encoder retrieval —
     # querying three profile names all backed by the same schema gives
     # three result lists with identical documents, which is exactly what
-    # RRF needs to score each doc across multiple ranks. Pointing the
-    # videoprism / colqwen profile names at their real schemas would
-    # require deploying those schemas + standing up the videoprism sidecar
-    # / colpali_infinity sidecar for query encoding — out of scope for
-    # the RRF-metadata assertion this test makes.
+    # RRF needs to score each doc across multiple ranks. All three are
+    # ColPali-family profiles served by the same Tomoro sidecar, so pointing
+    # each name at the one deployed colpali schema is faithful — no model
+    # masquerade. (Cross-model ensembles, e.g. a real VideoPrism profile,
+    # would deploy their own schema + encoder; out of scope for this
+    # RRF-metadata assertion.)
     backend_profiles = {
         "video_colpali_smol500_mv_frame": BackendProfileConfig(
             profile_name="video_colpali_smol500_mv_frame",
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
-        "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
-            profile_name="video_videoprism_base_mv_chunk_30s",
+        "image_colpali_mv": BackendProfileConfig(
+            profile_name="image_colpali_mv",
             schema_name="video_colpali_smol500_mv_frame",
             embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
