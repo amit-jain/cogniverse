@@ -635,6 +635,33 @@ class RemoteWhisperLoader(ModelLoader):
         return wrapper, None
 
 
+_REMOTE_ONLY_MESSAGE = (
+    "ColQwen3/Tomoro models are remote-only — serve via vLLM and set "
+    "inference_service_url (profile inference_services.embedding). Local "
+    "in-process loading is unsupported (requires transformers>=4.57, blocked "
+    "by the pylate cap)."
+)
+
+
+def _is_colqwen3(model_name: str) -> bool:
+    """True for ColQwen3/Tomoro models, which have no local loader path.
+
+    Matches by model name (``colqwen3``/``tomoro``). The architecture is
+    ``qwen3_vl``, which the pinned ``transformers`` (4.56.2, capped by pylate)
+    cannot build and ``colpali_engine`` mis-maps to ``idefics3``.
+    """
+    name = model_name.lower()
+    return "colqwen3" in name or "tomoro" in name
+
+
+def _raise_if_qwen3_vl(model_name: str, error: Exception) -> None:
+    """Re-raise a local-load failure as the clear remote-only error when it is
+    the ``qwen3_vl`` unsupported-architecture signature."""
+    text = str(error).lower()
+    if "qwen3_vl" in text or "qwen3_vl_text" in text:
+        raise RuntimeError(_REMOTE_ONLY_MESSAGE) from error
+
+
 class ColPaliModelLoader(ModelLoader):
     """Loader for ColPali models"""
 
@@ -647,6 +674,8 @@ class ColPaliModelLoader(ModelLoader):
     )
     def load_model(self) -> Tuple[Any, Any]:
         """Load ColPali model and processor with retry logic"""
+        if _is_colqwen3(self.model_name):
+            raise RuntimeError(_REMOTE_ONLY_MESSAGE)
         try:
             self.logger.info(f"Loading ColPali model: {self.model_name}")
             from colpali_engine.models import ColIdefics3, ColIdefics3Processor
@@ -674,6 +703,7 @@ class ColPaliModelLoader(ModelLoader):
             return model, processor
 
         except Exception as e:
+            _raise_if_qwen3_vl(self.model_name, e)
             self.logger.error(f"Failed to load ColPali model: {e}")
             raise  # Re-raise for retry
 
@@ -690,6 +720,8 @@ class ColQwenModelLoader(ModelLoader):
     )
     def load_model(self) -> Tuple[Any, Any]:
         """Load ColQwen model and processor with retry logic"""
+        if _is_colqwen3(self.model_name):
+            raise RuntimeError(_REMOTE_ONLY_MESSAGE)
         try:
             self.logger.info(f"Loading ColQwen model: {self.model_name}")
 
@@ -757,6 +789,7 @@ class ColQwenModelLoader(ModelLoader):
             return model, processor
 
         except Exception as e:
+            _raise_if_qwen3_vl(self.model_name, e)
             self.logger.error(f"Failed to load ColQwen model: {e}")
             raise  # Re-raise for retry
 

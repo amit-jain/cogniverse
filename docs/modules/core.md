@@ -1322,10 +1322,16 @@ Factory for creating model loaders based on the `model_loader` config key:
 ```python
 from cogniverse_core.common.models import ModelLoaderFactory
 
-# Config must contain "model_loader" key — raises ValueError if missing
+# Config must contain "model_loader" key — raises ValueError if missing.
+# A "remote_inference_url" selects the remote loader; ColQwen3/Tomoro
+# (model_type qwen3_vl) is remote-only and must always carry one.
 loader = ModelLoaderFactory.create_loader(
     model_name="TomoroAI/tomoro-colqwen3-embed-4b",
-    config={"model_loader": "colpali", "embedding_type": "multi_vector"},
+    config={
+        "model_loader": "colpali",
+        "embedding_type": "multi_vector",
+        "remote_inference_url": "http://localhost:8000",
+    },
     logger=logger,
 )
 model, processor = loader.load_model()
@@ -1340,7 +1346,16 @@ model, processor = loader.load_model()
 | `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
 | `colbert` | `ColBERTModelLoader` | *(not yet supported)* |
 
-Remote loaders are selected when `use_remote_inference: true` is set in config.
+Remote loaders are selected when `remote_inference_url` is set in config.
+
+**ColQwen3/Tomoro is remote-only.** `TomoroAI/tomoro-colqwen3-embed-4b`
+(architecture `qwen3_vl`) has no in-process loader: the pinned
+`transformers` (4.56.2, capped by pylate) lacks `qwen3_vl` support and
+`colpali_engine` mis-maps it to `idefics3`. Constructing the local
+`ColPaliModelLoader`/`ColQwenModelLoader` (or the corresponding query
+encoder) for such a model without `remote_inference_url` raises a clear
+`RuntimeError` directing the operator to serve via vLLM and set
+`inference_service_url` (profile `inference_services.embedding`).
 
 ### ColBERTModelLoader (model_loaders.py)
 

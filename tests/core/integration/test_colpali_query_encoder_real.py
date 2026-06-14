@@ -1,48 +1,44 @@
-"""Real-model shape contract for ColPaliQueryEncoder.
+"""Remote-only contract for the ColPali-family query encoder with Tomoro.
 
-ImageSearchAgent._search_vespa assumes the query encoder returns a 2D
-multi-vector array ``(num_tokens, 320)`` — it builds the ``query(qt)``
-mapped tensor as ``{str(i): row.tolist() for i, row in enumerate(emb)}`` and
-the deployed ``image_colpali_mv`` schema declares ``v[320]``. This pins that
-contract against the real model so an encoder-output drift (rank, dim, or a
-wrapped object) is caught before it reaches Vespa.
+Tomoro (``TomoroAI/tomoro-colqwen3-embed-4b``, architecture ``qwen3_vl``) is
+served exclusively via vLLM. The host's ``transformers`` is pinned 4.56.2 by
+the pylate cap, which has no ``qwen3_vl`` support, and ``colpali_engine``
+mis-maps it to ``idefics3`` — so an in-process local load crashes with a bare
+``KeyError: 'qwen3_vl_text'``. The local encoder path must instead raise a
+clear, actionable remote-only ``RuntimeError`` pointing the operator at vLLM +
+``inference_service_url``.
 
-Marked ``requires_models`` + ``slow``: downloads/loads the Tomoro model. Run
-via ``uv run pytest -m requires_models``.
+The remote 320-d MaxSim round-trip is covered by
+``test_tomoro_serving_real.py`` (RemoteColPaliLoader against a live vLLM
+sidecar); this module pins the local-path guard, which needs no sidecar.
 """
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
-from cogniverse_core.query.encoders import ColPaliQueryEncoder
+from cogniverse_core.query.encoders import ColPaliQueryEncoder, ColQwenQueryEncoder
 
-pytestmark = [pytest.mark.requires_models, pytest.mark.slow, pytest.mark.integration]
+pytestmark = [pytest.mark.integration]
 
+TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
-@pytest.fixture(scope="module")
-def colpali_encoder():
-    return ColPaliQueryEncoder("TomoroAI/tomoro-colqwen3-embed-4b")
-
-
-def test_encode_returns_2d_320dim_multivector(colpali_encoder):
-    emb = colpali_encoder.encode("a sunset over the mountains")
-
-    assert isinstance(emb, np.ndarray)
-    # The exact contract _search_vespa relies on for its ndim==2 qt branch.
-    assert emb.ndim == 2, f"expected (tokens, dim), got {emb.shape}"
-    assert emb.shape[0] >= 1, "no query tokens produced"
-    assert emb.shape[1] == 320
-    assert emb.shape[1] == colpali_encoder.embedding_dim
-    assert np.issubdtype(emb.dtype, np.floating)
+_REMOTE_ONLY_SUBSTRINGS = (
+    "ColQwen3/Tomoro models are remote-only",
+    "inference_service_url",
+    "transformers>=4.57",
+)
 
 
-def test_encode_output_maps_to_per_token_320_vectors(colpali_encoder):
-    emb = colpali_encoder.encode("query tokens here")
+@pytest.mark.parametrize("factory", [ColPaliQueryEncoder, ColQwenQueryEncoder])
+def test_local_tomoro_encoder_raises_remote_only(factory):
+    """Building the local (no ``inference_service_url``) encoder for Tomoro
+    raises the clear remote-only RuntimeError, never the bare arch KeyError."""
+    with pytest.raises(RuntimeError) as excinfo:
+        factory(TOMORO_MODEL)
 
-    # Mirror _search_vespa's qt construction: every token row must be a
-    # 320-length float vector the v[320] schema accepts.
-    qt = {str(i): row.tolist() for i, row in enumerate(emb)}
-    assert len(qt) == emb.shape[0]
-    assert all(len(vec) == 320 for vec in qt.values())
+    msg = str(excinfo.value)
+    for substr in _REMOTE_ONLY_SUBSTRINGS:
+        assert substr in msg, f"missing {substr!r} in remote-only message: {msg!r}"
+    assert "KeyError" not in msg
+    assert "qwen3_vl_text" not in msg

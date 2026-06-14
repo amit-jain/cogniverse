@@ -71,6 +71,24 @@ def colpali_client(vllm_colpali_url):
 
 
 @pytest.fixture(scope="module")
+def tomoro_search_url(config_manager, vllm_colpali_url):
+    """Inject the spawned Tomoro vLLM sidecar URL into SystemConfig under the
+    ``tomoro_embedding`` service name the ``test_colpali`` profile references
+    (profile inference_services.embedding). Tomoro (qwen3_vl) is remote-only,
+    so the search query encoder must resolve this URL and route through
+    RemoteColPaliLoader instead of attempting an unsupported local load.
+    """
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["tomoro_embedding"] = vllm_colpali_url
+    config_manager.set_system_config(sys_cfg)
+    # Drop any encoder cached before the URL existed (would be a local encoder).
+    QueryEncoderFactory._encoder_cache.clear()
+    yield vllm_colpali_url
+    QueryEncoderFactory._encoder_cache.clear()
+
+
+@pytest.fixture(scope="module")
 def seeded_documents(vespa_instance, colpali_client):
     """Feed real ColPali-embedded documents into Vespa for search tests."""
 
@@ -211,6 +229,7 @@ class TestSearchIntegration:
         self,
         search_client,
         seeded_documents,
+        tomoro_search_url,
     ):
         """POST /search with real ColPali encoder and real Vespa documents.
 
@@ -244,6 +263,7 @@ class TestSearchIntegration:
         self,
         search_client,
         seeded_documents,
+        tomoro_search_url,
     ):
         """POST /search (stream=True) with real ColPali encoder — verifies SSE path.
 
