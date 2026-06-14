@@ -1374,6 +1374,33 @@ model, _ = loader.load_model()
 # Returns 128-dim per-token multi-vector embeddings
 ```
 
+### RemoteColBERTLoader (model_loaders.py)
+
+Serves the same ColBERT contract from a vLLM `/pooling` endpoint instead of an
+in-process pylate model. `load_model()` returns a `ColBERTRemoteWrapper` whose
+`.encode(texts, is_query=...)` mirrors `pylate.models.ColBERT.encode()`:
+
+- The `[Q] `/`[D] ` marker is prepended client-side as literal text. Each marker
+  is a single token in the LateOn vocabulary, so this reproduces pylate's marker
+  insertion exactly (no extra subword tokens).
+- For documents (`is_query=False`) the wrapper drops the punctuation tokens
+  pylate removes via `ColBERT.skiplist_mask`. `/pooling` returns one embedding
+  per token in tokenizer order, so the wrapper re-tokenizes the prefixed text and
+  drops the rows whose token id is in the punctuation skiplist. Queries keep all
+  tokens.
+
+```python
+from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+
+loader = RemoteColBERTLoader(
+    model_name="lightonai/LateOn",
+    config={"remote_inference_url": "http://localhost:8000"},
+    logger=logger,
+)
+model, _ = loader.load_model()
+doc_tokens = model.encode(["Vespa stores token embeddings."], is_query=False)[0]
+```
+
 ### RemoteInferenceClient (model_loaders.py)
 
 Client for remote model inference providers:
