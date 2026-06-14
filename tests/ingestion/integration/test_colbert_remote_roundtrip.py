@@ -1,13 +1,14 @@
 """End-to-end round-trip of the remote ColBERT path.
 
-Spins up a real HTTP stub that mimics the pylate sidecar's ``/pooling``
-endpoint, routes a text through ``RemoteColBERTLoader`` → wrapper →
-``VespaEmbeddingProcessor``, and asserts the resulting Vespa-feed payload
-contains both the bfloat16 ``embedding`` and the 16-byte ``embedding_binary``
-tensors the ``lateon_mv`` schema expects.
+Spins up a real HTTP stub that mimics the vLLM ``/pooling`` endpoint, routes a
+text through ``RemoteColBERTLoader`` → wrapper → ``VespaEmbeddingProcessor``,
+and asserts the resulting Vespa-feed payload contains both the bfloat16
+``embedding`` and the 16-byte ``embedding_binary`` tensors the ``lateon_mv``
+schema expects.
 
 This is the wiring-correctness test required by CLAUDE.md — it would catch:
-- A client that silently drops ``is_query`` when talking to the sidecar.
+- A client that still sends ``is_query`` (rejected by vLLM /pooling).
+- A client that forgets to prepend the query/document prefix to texts.
 - A response parser that loses per-token structure.
 - A binarization step that emits the wrong byte count per token.
 """
@@ -50,9 +51,13 @@ class _PoolingStub(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length))
         _PoolingStub.captured_requests.append(body)
 
-        # Produce per-text (N_tokens, 128) embeddings. is_query=True gives 3 tokens,
-        # is_query=False gives 5 — exercising the flag propagation path.
-        is_query = bool(body.get("is_query", False))
+        # vLLM /pooling must NOT receive is_query — reject if present.
+        assert "is_query" not in body, (
+            f"is_query must not be sent to vLLM /pooling; got body keys: {list(body.keys())}"
+        )
+
+        # Determine query vs document from client-side prefix.
+        is_query = all(t.startswith("[Q] ") for t in body["input"])
         n_tokens = 3 if is_query else 5
         data = []
         for i, _text in enumerate(body["input"]):
@@ -97,11 +102,12 @@ def test_roundtrip_query_side_produces_vespa_feed_payload(stub_sidecar):
 
     embeddings = model.encode(["what is vector search"], is_query=True)
 
-    # 1. The wrapper forwarded is_query=True to the sidecar.
+    # 1. The wrapper prepended [Q] prefix and did NOT send is_query.
     assert len(stub.captured_requests) == 1
-    assert stub.captured_requests[0]["is_query"] is True
-    assert stub.captured_requests[0]["input"] == ["what is vector search"]
-    assert stub.captured_requests[0]["model"] == "lightonai/LateOn"
+    req = stub.captured_requests[0]
+    assert "is_query" not in req
+    assert req["input"] == ["[Q] what is vector search"]
+    assert req["model"] == "lightonai/LateOn"
 
     # 2. The wrapper produced a per-token array for the single input text.
     assert len(embeddings) == 1
@@ -138,7 +144,9 @@ def test_roundtrip_document_side_passes_is_query_false(stub_sidecar):
         is_query=False,
     )
 
-    assert stub.captured_requests[0]["is_query"] is False
+    req = stub.captured_requests[0]
+    assert "is_query" not in req
+    assert req["input"][0].startswith("[D] ")
     tokens = np.asarray(embeddings[0], dtype=np.float32)
     assert tokens.shape == (5, 128), f"doc-side expected (5, 128), got {tokens.shape}"
 

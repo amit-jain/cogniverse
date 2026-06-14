@@ -511,10 +511,20 @@ class RemoteColBERTLoader(ModelLoader):
         self.logger.info(f"Initialized remote ColBERT inference at {self.remote_url}")
 
         class ColBERTRemoteWrapper:
-            def __init__(self, endpoint_url, api_key, model_name, logger):
+            def __init__(
+                self,
+                endpoint_url,
+                api_key,
+                model_name,
+                logger,
+                query_prefix="[Q] ",
+                document_prefix="[D] ",
+            ):
                 self.endpoint_url = endpoint_url.rstrip("/")
                 self.model_name = model_name
                 self.logger = logger
+                self.query_prefix = query_prefix
+                self.document_prefix = document_prefix
                 self.session = requests.Session()
                 if api_key:
                     self.session.headers["Authorization"] = f"Bearer {api_key}"
@@ -526,45 +536,36 @@ class RemoteColBERTLoader(ModelLoader):
                 batch_size: int = 32,
                 **kwargs,
             ) -> list:
-                """Encode texts via remote endpoint, returning per-token embeddings.
+                """Encode texts via remote /pooling, prepending query/document prefix.
 
-                Matches pylate.models.ColBERT.encode() signature.
+                Matches pylate.models.ColBERT.encode() signature. Prefixing is
+                done client-side because vLLM /pooling rejects unknown fields such
+                as ``is_query``.
                 """
+                prefix = self.query_prefix if is_query else self.document_prefix
                 all_embeddings = []
                 for i in range(0, len(texts), batch_size):
-                    batch = texts[i : i + batch_size]
-                    payload = {
-                        "input": batch,
-                        "model": self.model_name,
-                        "is_query": is_query,
-                    }
-
-                    # Use /pooling for per-token embeddings (vLLM),
-                    # fall back to /v1/embeddings for other services
+                    batch = [f"{prefix}{t}" for t in texts[i : i + batch_size]]
                     resp = self.session.post(
                         f"{self.endpoint_url}/pooling",
-                        json=payload,
+                        json={"input": batch, "model": self.model_name},
                         timeout=120,
                     )
-                    if resp.status_code == 404:
-                        resp = self.session.post(
-                            f"{self.endpoint_url}/v1/embeddings",
-                            json=payload,
-                            timeout=120,
-                        )
                     resp.raise_for_status()
-                    data = resp.json()
-
-                    for item in data.get("data", []):
-                        # vLLM /pooling returns {"data": [...tokens...]}
-                        # /v1/embeddings returns {"embedding": [...]}
-                        embedding = item.get("data", item.get("embedding", []))
-                        all_embeddings.append(embedding)
+                    for item in resp.json().get("data", []):
+                        all_embeddings.append(
+                            item.get("data", item.get("embedding", []))
+                        )
 
                 return all_embeddings
 
         wrapper = ColBERTRemoteWrapper(
-            self.remote_url, self.api_key, self.model_name, self.logger
+            self.remote_url,
+            self.api_key,
+            self.model_name,
+            self.logger,
+            query_prefix=self.config.get("query_prefix", "[Q] "),
+            document_prefix=self.config.get("document_prefix", "[D] "),
         )
         return wrapper, None
 
