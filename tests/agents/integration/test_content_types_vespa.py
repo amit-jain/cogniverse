@@ -14,6 +14,39 @@ import pytest
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from tests.utils.async_polling import wait_for_vespa_indexing
 
+COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
+
+
+@pytest.fixture(scope="module")
+def tomoro_client(vllm_sidecar):
+    """Real vLLM-served Tomoro ColQwen3 via RemoteColPaliLoader.
+
+    Tomoro (qwen3_vl) is remote-only — the image/document-visual ingestion and
+    search paths route image and query embedding through this sidecar. Same
+    ``--runner pooling --convert embed`` serving config the other real-boundary
+    visual fixtures use; cached across the session by the vllm_sidecar factory.
+    """
+    from cogniverse_core.common.models.model_loaders import RemoteColPaliLoader
+
+    url = vllm_sidecar.spawn(
+        model=COLPALI_MODEL,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
+    loader = RemoteColPaliLoader(
+        model_name=COLPALI_MODEL,
+        config={"remote_inference_url": url},
+        logger=None,
+    )
+    client, _ = loader.load_model()
+    return {"client": client, "url": url}
+
 
 @pytest.fixture(scope="module")
 def test_vespa_manager():
@@ -219,7 +252,7 @@ class TestContentTypeVespaSchemas:
         except Exception as e:
             pytest.fail(f"Failed to verify schemas: {e}")
 
-    def test_image_content_document_ingestion(self, test_vespa_manager):
+    def test_image_content_document_ingestion(self, test_vespa_manager, tomoro_client):
         """Test ingesting sample image documents with real ColPali embeddings"""
         print("\n" + "-" * 80)
         print("Test: Image Content Document Ingestion (Real ColPali)")
@@ -229,35 +262,18 @@ class TestContentTypeVespaSchemas:
         import requests
         from PIL import Image
 
-        from cogniverse_core.common.models.model_loaders import get_or_load_model
-
         # Create a test image (100x100 red square)
         print("\n🎨 Creating test image...")
         test_image = Image.new("RGB", (100, 100), color=(255, 0, 0))
 
-        # Load ColPali model
-        print("\n📦 Loading ColPali model...")
-        config = {
-            "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-            "embedding_type": "multi_vector",
-            "model_loader": "colpali",
-        }
-        model, processor = get_or_load_model(
-            "TomoroAI/tomoro-colqwen3-embed-4b", config, None
+        # Generate real ColPali embedding via the remote Tomoro sidecar.
+        print("\n🔢 Generating ColPali embedding (remote)...")
+        result = tomoro_client["client"].process_images(
+            [test_image], model_name=COLPALI_MODEL
         )
-        print("✅ ColPali model loaded")
-
-        # Generate real ColPali embedding
-        print("\n🔢 Generating ColPali embedding...")
-        import torch
-
-        batch_inputs = processor.process_images([test_image]).to(model.device)
-
-        with torch.no_grad():
-            embeddings = model(**batch_inputs)
-
-        # Convert to numpy and remove batch dimension
-        embeddings_np = embeddings.squeeze(0).cpu().numpy()
+        embeddings_np = np.asarray(result["embeddings"]).astype(np.float32)
+        if embeddings_np.ndim == 3 and embeddings_np.shape[0] == 1:
+            embeddings_np = embeddings_np[0]
 
         # Pad or truncate to exactly 1024 patches
         if embeddings_np.shape[0] < 1024:
@@ -517,7 +533,7 @@ class TestContentTypeVespaSchemas:
             )
             # This is okay - the important test is that schema works and document was ingested
 
-    def test_document_visual_ingestion(self, test_vespa_manager):
+    def test_document_visual_ingestion(self, test_vespa_manager, tomoro_client):
         """Test ingesting document pages with real ColPali embeddings"""
         print("\n" + "-" * 80)
         print("Test: Document Visual Strategy Ingestion (ColPali)")
@@ -526,8 +542,6 @@ class TestContentTypeVespaSchemas:
         import numpy as np
         import requests
         from PIL import Image
-
-        from cogniverse_core.common.models.model_loaders import get_or_load_model
 
         # Create a test document page (simulating a PDF page)
         print("\n📄 Creating test document page...")
@@ -539,29 +553,14 @@ class TestContentTypeVespaSchemas:
         page_array[150:200, 50:700] = [0, 0, 0]  # Simulate paragraph
         test_page = Image.fromarray(page_array)
 
-        # Load ColPali model
-        print("\n📦 Loading ColPali model...")
-        config = {
-            "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-            "embedding_type": "multi_vector",
-            "model_loader": "colpali",
-        }
-        model, processor = get_or_load_model(
-            "TomoroAI/tomoro-colqwen3-embed-4b", config, None
+        # Generate ColPali embedding for document page via the remote sidecar.
+        print("\n🔢 Generating ColPali embedding for document page (remote)...")
+        result = tomoro_client["client"].process_images(
+            [test_page], model_name=COLPALI_MODEL
         )
-        print("✅ ColPali model loaded")
-
-        # Generate ColPali embedding for document page
-        print("\n🔢 Generating ColPali embedding for document page...")
-        import torch
-
-        batch_inputs = processor.process_images([test_page]).to(model.device)
-
-        with torch.no_grad():
-            embeddings = model(**batch_inputs)
-
-        # Convert to numpy and remove batch dimension -> (num_patches, 320)
-        embeddings_np = embeddings.squeeze(0).cpu().numpy()
+        embeddings_np = np.asarray(result["embeddings"]).astype(np.float32)
+        if embeddings_np.ndim == 3 and embeddings_np.shape[0] == 1:
+            embeddings_np = embeddings_np[0]
         print(f"✅ Generated embedding shape: {embeddings_np.shape}")
 
         # Mapped patch{} tensor feed: one block per page patch.
@@ -700,7 +699,7 @@ class TestContentTypeVespaSchemas:
         assert len(doc_data["fields"]["section_headings"]) == 3
         print("✅ Document retrieved successfully (text strategy)")
 
-    def test_document_visual_search(self, test_vespa_manager):
+    def test_document_visual_search(self, test_vespa_manager, tomoro_client):
         """Test searching documents with visual strategy (ColPali)"""
         print("\n" + "-" * 80)
         print("Test: Document Visual Search (ColPali)")
@@ -714,10 +713,11 @@ class TestContentTypeVespaSchemas:
         print("\n⏳ Waiting for indexing to complete...")
         wait_for_vespa_indexing(delay=3)
 
-        # Load query encoder
-        print("\n📦 Loading ColPali query encoder...")
+        # Load query encoder routed through the remote Tomoro sidecar.
+        print("\n📦 Loading ColPali query encoder (remote)...")
         query_encoder = ColPaliQueryEncoder(
-            model_name="TomoroAI/tomoro-colqwen3-embed-4b"
+            model_name=COLPALI_MODEL,
+            inference_service_url=tomoro_client["url"],
         )
         print("✅ Query encoder loaded")
 

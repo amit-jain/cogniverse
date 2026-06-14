@@ -861,6 +861,9 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
+        "inference_services": {
+          "embedding": "vllm_colpali"
+        },
         "schema_config": {
           "schema_name": "document_visual",
           "embedding_dim": 320,

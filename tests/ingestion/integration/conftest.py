@@ -163,13 +163,20 @@ _INFERENCE_SIDECARS = {
         "extra_env": {},
         # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
         # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
-        # 0.92 of host RAM (~113 GiB) and aborts, so cap it.
+        # 0.92 of host RAM (~113 GiB) and aborts, so cap it. ``--runner pooling
+        # --convert embed`` selects vLLM's pooling runner so Tomoro serves the
+        # multi-vector embeddings the ColPali ingestion path consumes — same
+        # serving config the search-side vllm_sidecar fixture uses.
         "command": [
             "TomoroAI/tomoro-colqwen3-embed-4b",
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
             "--gpu-memory-utilization",
             "0.3",
             "--max-model-len",
-            "2048",
+            "4096",
         ],
     },
     "videoprism_jax": {
