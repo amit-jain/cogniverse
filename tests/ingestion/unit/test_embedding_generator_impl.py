@@ -858,6 +858,99 @@ class TestEmbeddingGeneratorImpl:
         assert result is not None
         assert result.shape == (30, 320)
 
+    @patch("PIL.Image.fromarray")
+    @patch("cv2.cvtColor")
+    @patch("cv2.VideoCapture")
+    def test_generate_chunk_embeddings_pools_when_factor_set(
+        self,
+        mock_video_capture,
+        mock_cvt_color,
+        mock_from_array,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """Chunk remote path pools the per-chunk multi-vector when the factor
+        is set.
+
+        The remote client returns [N_frames, T, D]; the method mean-pools over
+        the frame dim to a 2D (T, D) multi-vector, which is then token-pooled.
+        30 DISTINCT token rows + pool_factor=3 -> ceil(30/3)=10 clusters.
+        """
+        config = {
+            **frame_based_config,
+            "fps": 1.0,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+            "token_pool_factor": 3,
+        }
+        generator, client = self._make_remote_generator(
+            config, mock_logger, mock_backend_client
+        )
+        generator.model_name = "colqwen_test"
+
+        mock_cap = Mock()
+        mock_cap.get.side_effect = [25.0, 100]  # fps, total_frames
+        mock_cap.read.return_value = (True, np.zeros((8, 8, 3), dtype=np.uint8))
+        mock_video_capture.return_value = mock_cap
+        mock_cvt_color.return_value = np.zeros((8, 8, 3), dtype=np.uint8)
+        mock_from_array.return_value = Mock()
+
+        # Single extracted frame -> [1, 30, 320]; mean(axis=0) -> (30, 320).
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ):
+            result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+
+        assert result is not None
+        assert result.shape == (10, 320)
+        assert result.dtype == np.float32
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    @patch("subprocess.run")
+    def test_generate_chunk_embeddings_videoprism_single_vector_not_pooled(
+        self,
+        mock_subprocess,
+        mock_get_or_load_model,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """A VideoPrism-style single-vector chunk return is never pooled, even
+        when token_pool_factor is set — pooling a single vector is corrupting.
+
+        The shape guard (ndim == 2 and shape[0] > 1) protects it.
+        """
+        mock_get_or_load_model.return_value = (Mock(), None)
+        config = {
+            **frame_based_config,
+            "embedding_type": "multi_vector",
+            "model_loader": "videoprism",
+            "token_pool_factor": 3,
+        }
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator.videoprism_loader = Mock()
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "30.0"
+        mock_subprocess.return_value = mock_result
+
+        rng = np.random.default_rng(1)
+        single_vector = rng.standard_normal((768,)).astype(np.float32)
+        generator.videoprism_loader.process_video_segment.return_value = {
+            "embeddings_np": single_vector
+        }
+
+        result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+
+        assert result is not None
+        assert result.shape == (768,)
+        np.testing.assert_array_equal(result, single_vector)
+
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("torch.no_grad")
     @patch("cv2.cvtColor")
