@@ -567,7 +567,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "VLMDescriptionStrategy",
@@ -591,6 +593,9 @@
           "num_patches": 1024,
           "embedding_dim": 320,
           "binary_dim": 40
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "image_colpali_mv": {
@@ -657,7 +662,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -676,6 +683,9 @@
           "acoustic_embedding_dim": 512,
           "semantic_embedding_dim": 128,
           "semantic_binary_dim": 16
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "document_text_semantic": {
@@ -740,7 +750,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -772,6 +784,9 @@
           "num_patches": 1024,
           "embedding_dim": 128,
           "binary_dim": 16
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
@@ -796,7 +811,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -828,6 +845,9 @@
           "num_patches": 4096,
           "embedding_dim": 768,
           "binary_dim": 96
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_large_mv_chunk_30s": {
@@ -852,7 +872,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -884,6 +906,9 @@
           "num_patches": 2048,
           "embedding_dim": 1024,
           "binary_dim": 128
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_lvt_base_sv_chunk_6s": {
@@ -911,7 +936,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -942,6 +969,9 @@
           "embedding_dim": 768,
           "binary_dim": 96,
           "chunk_based": true
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_lvt_large_sv_chunk_6s": {
@@ -969,7 +999,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -1000,6 +1032,9 @@
           "embedding_dim": 1024,
           "binary_dim": 128,
           "chunk_based": true
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "code_lateon_mv": {

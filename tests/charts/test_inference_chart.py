@@ -197,6 +197,31 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
 
 
+def test_vllm_asr_disabled_by_default():
+    """vllm_asr ships disabled in base values.yaml so a CPU-only install
+    doesn't try to load Whisper; GPU overlays flip it on."""
+    deps = _inference_deployments(_render())
+    assert "vllm_asr" not in deps
+    assert "vllm_asr" not in _service_urls(_render())
+
+
+def test_vllm_asr_serves_whisper_turbo_transcription():
+    """When enabled, vllm_asr serves openai/whisper-large-v3-turbo via the
+    transcription runner and gets a resolvable URL in the service map."""
+    docs = _render("inference.vllm_asr.enabled=true")
+    dep = _inference_deployments(docs)["vllm_asr"]
+    assert dep["metadata"]["name"] == "cogniverse-vllm-asr"
+    c = dep["spec"]["template"]["spec"]["containers"][0]
+    assert c["image"].startswith("vllm/vllm-openai")
+    # The transcription engine renders a single shell command string that
+    # pip-installs the audio extras then execs `vllm serve <model>`.
+    cmd = " ".join(c["args"])
+    assert "vllm serve 'openai/whisper-large-v3-turbo'" in cmd
+    assert "'--runner' \\\n  'generate'" in cmd
+    urls = _service_urls(docs)
+    assert urls["vllm_asr"] == "http://cogniverse-vllm-asr:8000"
+
+
 def test_denseon_uses_vllm_embed_engine():
     docs = _render(
         "inference.denseon.engine=vllm_embed",

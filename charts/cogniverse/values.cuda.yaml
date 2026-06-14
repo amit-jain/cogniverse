@@ -64,6 +64,26 @@ inference:
         cpu: "1"
         memory: "4Gi"
 
+  # ASR via vLLM Whisper — disabled in base values.yaml, flipped on for GPU.
+  # Profiles route audio transcription here via
+  # ``inference_services.transcription: "vllm_asr"``.
+  vllm_asr:
+    enabled: true
+    device: cuda
+    gpuCount: 1
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: latest
+        pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "2"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+
 # ---------------------------------------------------------------------------
 # LLM (chat / DSPy reasoning) — Step 3 of the plan adds ``llm.engine`` so
 # this block can flip Ollama → vLLM here. Until that step lands, keep the

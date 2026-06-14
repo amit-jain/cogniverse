@@ -657,7 +657,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -677,7 +677,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
         "inference_services": {
-          "embedding": "vllm_colpali"
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
         },
         "schema_config": {
           "schema_name": "video_colpali",
@@ -755,7 +756,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -770,7 +771,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
         "inference_services": {
-          "embedding": "colbert_pylate"
+          "embedding": "colbert_pylate",
+          "transcription": "vllm_asr"
         },
         "semantic_model": "lightonai/LateOn",
         "schema_config": {
@@ -934,7 +936,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -949,7 +951,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "colqwen",
         "inference_services": {
-          "embedding": "vllm_colpali"
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
         },
         "model_specific": {
           "max_patches": 1024,
@@ -995,7 +998,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -1010,7 +1013,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
         "inference_services": {
-          "embedding": "videoprism_jax"
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
         },
         "model_specific": {
           "segment_duration": 30.0,
@@ -1056,7 +1060,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -1071,7 +1075,8 @@
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
         "inference_services": {
-          "embedding": "videoprism_jax"
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
         },
         "model_specific": {
           "segment_duration": 30.0,
@@ -1120,7 +1125,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -1135,7 +1140,8 @@
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
         "inference_services": {
-          "embedding": "videoprism_jax"
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
         },
         "model_specific": {
           "chunk_duration": 6.0,
@@ -1183,7 +1189,7 @@
           "transcription": {
             "class": "AudioTranscriptionStrategy",
             "params": {
-              "model": "base"
+              "model": "openai/whisper-large-v3-turbo"
             }
           },
           "description": {
@@ -1198,7 +1204,8 @@
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
         "inference_services": {
-          "embedding": "videoprism_jax"
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
         },
         "model_specific": {
           "chunk_duration": 6.0,
