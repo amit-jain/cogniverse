@@ -182,6 +182,20 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
 
 
+def test_denseon_uses_vllm_embed_engine():
+    docs = _render(
+        "inference.denseon.engine=vllm_embed",
+        "inference.denseon.model=lightonai/DenseOn",
+    )
+    c = _inference_deployments(docs)["denseon"]["spec"]["template"]["spec"][
+        "containers"
+    ][0]
+    assert c["image"].startswith("vllm/vllm-openai")
+    args = " ".join(c["args"])
+    assert "lightonai/DenseOn" in args and "serve" in args
+    assert "--hf-overrides" not in args  # dense, no arch override
+
+
 def test_service_keys_in_url_map_match_deployment_names():
     """Every deployed service has a matching URL entry."""
     docs = _render(
