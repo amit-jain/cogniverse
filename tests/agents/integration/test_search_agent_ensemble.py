@@ -17,23 +17,94 @@ import logging
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
+import requests
 
 from cogniverse_agents.search_agent import SearchInput
 
 logger = logging.getLogger(__name__)
 
+# Each RRF profile is a 320-dim ColPali-family schema served by the same
+# Tomoro sidecar. (base_schema_name, vespa_namespace, doc_id_field).
+ENSEMBLE_PROFILES = [
+    ("video_colpali_smol500_mv_frame", "video", "video_id"),
+    ("image_colpali_mv", "image", "image_id"),
+    ("video_colqwen_omni_mv_chunk_30s", "video", "video_id"),
+]
+
+
+def _multi_patch_blocks(seed: int, *, patches: int = 4, dim: int = 320) -> dict:
+    """A deterministic multi-patch float embedding in document/v1 blocks form.
+
+    ``tensor<bfloat16>(patch{}, v[dim])`` — one block per patch keyed by the
+    mapped ``patch`` dimension, each a dense ``dim``-vector. Values vary per
+    profile (via ``seed``) so the three deployed schemas hold distinct docs.
+    """
+    rng = np.random.default_rng(seed)
+    return {
+        str(p): rng.standard_normal(dim).astype(np.float32).tolist()
+        for p in range(patches)
+    }
+
+
+def _binary_blocks_from_float(float_blocks: dict) -> dict:
+    """Pack a float blocks dict into ``tensor<int8>(patch{}, v[40])``.
+
+    Mirrors the ingestion-side binarization (sign bit per dim, packed 8/byte,
+    viewed as int8) so the default ``max_sim_hamming`` rank profile scores the
+    doc the same way it would a really-ingested one.
+    """
+    out = {}
+    for patch, values in float_blocks.items():
+        bits = np.where(np.asarray(values, dtype=np.float32) > 0, 1, 0).astype(np.uint8)
+        out[patch] = np.packbits(bits).astype(np.int8).tolist()
+    return out
+
+
+def _feed_doc(
+    http_port: int, namespace: str, schema_full: str, doc_id: str, fields: dict
+) -> None:
+    resp = requests.post(
+        f"http://localhost:{http_port}/document/v1/{namespace}/{schema_full}/docid/{doc_id}",
+        json={"fields": fields},
+        timeout=20,
+    )
+    if resp.status_code not in (200, 201):
+        raise RuntimeError(
+            f"Feed of {doc_id} into {schema_full} failed "
+            f"({resp.status_code}): {resp.text[:400]}"
+        )
+
+
+def _doc_fields_for(base_schema_name: str, doc_id_field: str, seed: int) -> dict:
+    """Minimal valid document with float + binary multi-patch embeddings."""
+    float_blocks = _multi_patch_blocks(seed)
+    binary_blocks = _binary_blocks_from_float(float_blocks)
+    fields = {
+        doc_id_field: f"ensemble_doc_{base_schema_name}",
+        "source_url": f"s3://corpus/ensemble/{base_schema_name}.bin",
+        "embedding": {"blocks": float_blocks},
+        "embedding_binary": {"blocks": binary_blocks},
+    }
+    if doc_id_field == "image_id":
+        fields["image_title"] = "Robot playing soccer"
+        fields["image_description"] = "a robot kicking a soccer ball"
+    else:
+        fields["video_title"] = "Robot playing soccer"
+        fields["segment_id"] = 0
+    return fields
+
 
 @pytest.fixture(scope="module")
 def multi_profile_vespa(shared_memory_vespa):
     """Module-scoped multi-profile fixture backed by the project-wide
-    ``shared_vespa``. Deploys ``video_colpali_smol500_mv_frame`` for
-    tenant ``ensemble_test_tenant`` via SchemaRegistry (merge-safe).
-
-    The 3 ``profiles`` returned all map to the same tenant-scoped
-    schema via the ``search_agent_ensemble`` fixture below — the test
-    exercises RRF metadata, not actual cross-encoder retrieval, so
-    pointing 3 profile names at one schema is sufficient.
+    ``shared_vespa``. Deploys ALL THREE RRF schemas
+    (``video_colpali_smol500_mv_frame``, ``image_colpali_mv``,
+    ``video_colqwen_omni_mv_chunk_30s``) for tenant ``ensemble_test_tenant``
+    via SchemaRegistry (merge-safe), then feeds one document into each so
+    every profile returns a real hit and RRF genuinely fuses across the
+    three profiles — not one schema masquerading as three.
 
     Includes a ``manager`` field exposing ``config_manager`` since the
     consumer fixture reads ``multi_profile_vespa["manager"].config_manager``.
@@ -65,32 +136,53 @@ def multi_profile_vespa(shared_memory_vespa):
     )
 
     cm = make_config_manager(shared_memory_vespa)
-    deploy_tenant_schema(
-        shared_memory_vespa,
-        tenant_id="ensemble_test_tenant",
-        base_schema_name="video_colpali_smol500_mv_frame",
-        config_manager=cm,
-    )
+    http_port = shared_memory_vespa["http_port"]
+
+    deployed_docs = []
+    for seed, (base_schema_name, namespace, doc_id_field) in enumerate(
+        ENSEMBLE_PROFILES
+    ):
+        full = deploy_tenant_schema(
+            shared_memory_vespa,
+            tenant_id="ensemble_test_tenant",
+            base_schema_name=base_schema_name,
+            config_manager=cm,
+        )
+        # Reset between deploys so each merge-deploy rebuilds from config.
+        if hasattr(registry, "_backend_instances"):
+            registry._backend_instances.clear()
+        BackendRegistry._shared_schema_registry = None
+
+        fields = _doc_fields_for(base_schema_name, doc_id_field, seed)
+        _feed_doc(http_port, namespace, full, fields[doc_id_field], fields)
+        deployed_docs.append((namespace, full, fields[doc_id_field]))
+
+    # Let Vespa index the freshly fed docs before any query runs.
+    time.sleep(3)
 
     # Reset registry caches so consumer tests don't inherit the deploy's
     # backend instance.
     if hasattr(registry, "_backend_instances"):
         registry._backend_instances.clear()
 
-    real_profiles = [
-        "video_colpali_smol500_mv_frame",
-        "image_colpali_mv",
-        "video_colqwen_omni_mv_chunk_30s",
-    ]
+    real_profiles = [base for base, _, _ in ENSEMBLE_PROFILES]
     yield {
-        "http_port": shared_memory_vespa["http_port"],
+        "http_port": http_port,
         "config_port": shared_memory_vespa["config_port"],
         "base_url": shared_memory_vespa["base_url"],
         "manager": _SharedVespaEnsembleAdapter(cm),
         "profiles": real_profiles,
         "profile_name": real_profiles[0],
     }
-    # No teardown — shared_vespa owns the container.
+
+    for namespace, full, doc_id in deployed_docs:
+        try:
+            requests.delete(
+                f"http://localhost:{http_port}/document/v1/{namespace}/{full}/docid/{doc_id}",
+                timeout=5,
+            )
+        except requests.RequestException:
+            pass
 
 
 @pytest.fixture
@@ -118,33 +210,19 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
         base_path=Path("tests/system/resources/schemas")
     )
 
-    # Register all 3 profile NAMES against the one schema VespaTestManager
-    # actually deploys (``video_colpali_smol500_mv_frame``). The test
-    # exercises ensemble RRF metadata, not real cross-encoder retrieval —
-    # querying three profile names all backed by the same schema gives
-    # three result lists with identical documents, which is exactly what
-    # RRF needs to score each doc across multiple ranks. All three are
-    # ColPali-family profiles served by the same Tomoro sidecar, so pointing
-    # each name at the one deployed colpali schema is faithful — no model
-    # masquerade. (Cross-model ensembles, e.g. a real VideoPrism profile,
-    # would deploy their own schema + encoder; out of scope for this
-    # RRF-metadata assertion.)
+    # Each profile maps to its OWN deployed tenant-scoped schema. All three
+    # are 320-dim ColPali-family schemas served by the same Tomoro sidecar,
+    # so ``inject_tomoro_url`` routes every profile's query encoding remotely.
+    # ``multi_profile_vespa`` deployed each schema and fed one doc into it, so
+    # all three profiles return a real hit and RRF fuses across genuinely
+    # distinct schemas.
     backend_profiles = {
-        "video_colpali_smol500_mv_frame": BackendProfileConfig(
-            profile_name="video_colpali_smol500_mv_frame",
-            schema_name="video_colpali_smol500_mv_frame",
+        base: BackendProfileConfig(
+            profile_name=base,
+            schema_name=base,
             embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
-        ),
-        "image_colpali_mv": BackendProfileConfig(
-            profile_name="image_colpali_mv",
-            schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
-        ),
-        "video_colqwen_omni_mv_chunk_30s": BackendProfileConfig(
-            profile_name="video_colqwen_omni_mv_chunk_30s",
-            schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
-        ),
+        )
+        for base in profiles
     }
 
     backend_config = BackendConfig(
@@ -269,13 +347,24 @@ class TestSearchAgentEnsemble:
         assert result.search_mode == "ensemble"
         assert set(result.profiles) == set(profiles)
 
-        # VALIDATE: Results structure
-        assert result.results is not None
-        assert result.total_results is not None
-        assert isinstance(result.results, list)
+        # VALIDATE: Every profile's own schema is deployed + populated, so the
+        # ensemble returns real fused hits across all three profiles.
+        assert result.results, "ensemble returned no fused results"
+        assert result.total_results == len(result.results)
+
+        # Each fused doc carries RRF metadata; at least one doc was contributed
+        # by every one of the three profiles (genuine cross-profile fusion).
+        contributing = set()
+        for doc in result.results:
+            ranks = (doc.get("metadata") or {}).get("profile_ranks") or {}
+            contributing.update(ranks.keys())
+        assert set(contributing) == set(profiles), (
+            f"RRF only fused profiles {contributing}, expected all of {profiles}"
+        )
 
         logger.info(
-            f"✅ Ensemble search executed with 3 REAL encoders: {result.total_results} results"
+            f"✅ Ensemble fused {result.total_results} results across "
+            f"profiles {sorted(contributing)}"
         )
 
     @pytest.mark.asyncio
