@@ -1228,8 +1228,19 @@ inference:
   # ``inference_services.transcription: "vllm_asr"``. The vLLM image
   # must include the ``vllm[audio]`` extra so ``--task transcription``
   # is registered (set in extraArgs).
+  #
+  # Enabled by default: the default video-ingestion profiles
+  # (video_colpali_smol500_mv_frame and the other video profiles in
+  # config.json) set ``inference_services.transcription: "vllm_asr"``,
+  # and transcription HARD-REQUIRES the remote service (no in-process
+  # fallback). Since base values also ship ``ingestor.enabled: true``
+  # and a video profile in ``initJobs.schemaDeployment.profiles``, video
+  # ingestion is on out of the box, so this service must be too — same
+  # default-on gating as the other required ingestion/runtime services
+  # (colbert_pylate, denseon, gliner). whisper-large-v3-turbo is ~809M,
+  # lighter than those pods.
   vllm_asr:
-    enabled: false
+    enabled: true
     engine: vllm_transcription
     type: transcription
     model: openai/whisper-large-v3-turbo

@@ -61,13 +61,13 @@ inference:
         cpu: "4"
         memory: "16Gi"
 
-  # vLLM-served ASR. Enabling here is environment-level (k3s/dev wants
-  # the sidecar so the deployment-lifecycle e2e exercises the full
-  # chart wiring); the device overlay (values.cpu.yaml /
-  # values.rocm.yaml / values.cuda.yaml) picks the model + image
-  # variant matching the host's hardware budget.
-  vllm_asr:
-    enabled: true
+  # vLLM-served ASR ships enabled in base values.yaml (the default
+  # video-ingestion profiles hard-require transcription), so the
+  # deployment-lifecycle e2e already exercises the full chart wiring.
+  # The device overlay (values.cpu.yaml / values.rocm.yaml /
+  # values.cuda.yaml) picks the model + image variant matching the
+  # host's hardware budget.
+  #
   # Dev override: expose the LateOn text pod on a NodePort. Engine is
   # vllm_token_embed (base values), served by the CPU vLLM image.
   colbert_pylate:

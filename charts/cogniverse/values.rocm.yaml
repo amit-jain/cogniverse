@@ -91,7 +91,6 @@ inference:
         memory: "20Gi"
 
   vllm_asr:
-    enabled: true
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage

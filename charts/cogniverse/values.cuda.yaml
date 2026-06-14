@@ -64,11 +64,10 @@ inference:
         cpu: "1"
         memory: "4Gi"
 
-  # ASR via vLLM Whisper — disabled in base values.yaml, flipped on for GPU.
-  # Profiles route audio transcription here via
-  # ``inference_services.transcription: "vllm_asr"``.
+  # ASR via vLLM Whisper — enabled by default in base values.yaml; this
+  # overlay swaps in the CUDA image + GPU device. Profiles route audio
+  # transcription here via ``inference_services.transcription: "vllm_asr"``.
   vllm_asr:
-    enabled: true
     device: cuda
     gpuCount: 1
     imagesByDevice:
