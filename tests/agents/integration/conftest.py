@@ -423,6 +423,48 @@ def inject_tomoro_url(config_manager, url: str) -> None:
     QueryEncoderFactory._encoder_cache.clear()
 
 
+def reroute_videoprism_profile_to_tomoro(config_manager) -> None:
+    """Make the ``video_videoprism_base_mv_chunk_30s`` profile encode queries
+    through the Tomoro ``vllm_colpali`` sidecar instead of VideoPrism.
+
+    The SearchAgent reads its profile config via ``get_config(SYSTEM_TENANT_ID)``,
+    which deep-merges ``configs/config.json`` (where the videoprism profile
+    carries ``model_loader=videoprism`` + ``inference_services.embedding=
+    videoprism_jax``) with the per-tenant override. VideoPrism is sidecar-only
+    for *document* embedding — its remote loader exposes no text-query encoding,
+    and the in-process JAX package is intentionally not installed — so the
+    ensemble test (which exercises RRF metadata, not real cross-encoder
+    retrieval) routes this profile name at the same Tomoro encoder + colpali
+    schema the other two profiles use.
+
+    Writing the override under ``SYSTEM_TENANT_ID`` is what makes it visible to
+    the SearchAgent's ``get_config(SYSTEM_TENANT_ID)`` lookup; a per-test-tenant
+    override would be silently dropped.
+    """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_core.query.encoders import QueryEncoderFactory
+    from cogniverse_foundation.config.unified_config import (
+        BackendConfig,
+        BackendProfileConfig,
+    )
+
+    override = BackendConfig(
+        tenant_id=SYSTEM_TENANT_ID,
+        backend_type="vespa",
+        profiles={
+            "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
+                profile_name="video_videoprism_base_mv_chunk_30s",
+                schema_name="video_colpali_smol500_mv_frame",
+                embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
+                model_loader="colqwen",
+                extra_config={"inference_services": {"embedding": "vllm_colpali"}},
+            )
+        },
+    )
+    config_manager.set_backend_config(override, tenant_id=SYSTEM_TENANT_ID)
+    QueryEncoderFactory._encoder_cache.clear()
+
+
 @pytest.fixture(scope="module")
 def real_telemetry(phoenix_container):
     """Module-scoped real TelemetryManager backed by Phoenix Docker.
