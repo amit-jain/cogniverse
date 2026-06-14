@@ -17,6 +17,7 @@ from PIL import Image
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult
+from .token_pooling import pool_document_tokens
 
 
 class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
@@ -55,6 +56,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         # Storage mode determines if we create one doc per segment or one doc total
         self.storage_mode = self.profile_config.get("storage_mode", "multi_doc")
+
+        self._token_pool_factor = self.profile_config.get("token_pool_factor")
 
         # Model and processor
         self.model = None
@@ -825,6 +828,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # shape [T, D], so unwrap the batch dim to match.
                 if embeddings_arr.ndim == 3 and embeddings_arr.shape[0] == 1:
                     embeddings_arr = embeddings_arr[0]
+                embeddings_arr = pool_document_tokens(
+                    embeddings_arr, self._token_pool_factor
+                )
                 self.logger.info(
                     f"    🖼️ Generated embeddings for frame {frame_path.name} "
                     f"(remote): shape={embeddings_arr.shape}"

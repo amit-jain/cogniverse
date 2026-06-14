@@ -789,6 +789,75 @@ class TestEmbeddingGeneratorImpl:
             "Error generating frame embeddings: Image load error"
         )
 
+    def _make_remote_generator(self, config, mock_logger, mock_backend_client):
+        """Build a generator whose model/processor is a real
+        RemoteInferenceClient so ``_generate_frame_embeddings`` takes the remote
+        branch (the only branch that applies document-side token pooling)."""
+        from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
+
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        client = RemoteInferenceClient("http://remote.invalid", logger=mock_logger)
+        generator.model = client
+        generator.processor = client
+        return generator, client
+
+    def test_generate_frame_embeddings_pools_when_factor_set(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Frame remote path pools the multi-vector when token_pool_factor set.
+
+        The pooler clusters by cosine similarity (HierarchicalTokenPooler), so
+        30 DISTINCT token rows with pool_factor=3 collapse to ceil(30/3)=10
+        clusters -> shape (10, 320). Identical rows would collapse to 1, which
+        is why the stub returns distinct (seeded) vectors.
+        """
+        from PIL import Image as PILImage
+
+        config = {**frame_based_config, "token_pool_factor": 3}
+        generator, client = self._make_remote_generator(
+            config, mock_logger, mock_backend_client
+        )
+
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ) as mock_proc:
+            result = generator._generate_frame_embeddings(frame_path)
+
+        mock_proc.assert_called_once()
+        assert result is not None
+        assert result.shape == (10, 320)
+        assert result.dtype == np.float32
+
+    def test_generate_frame_embeddings_no_pooling_without_factor(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Control: with no token_pool_factor, the remote path is unpooled."""
+        from PIL import Image as PILImage
+
+        generator, client = self._make_remote_generator(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ):
+            result = generator._generate_frame_embeddings(frame_path)
+
+        assert result is not None
+        assert result.shape == (30, 320)
+
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("torch.no_grad")
     @patch("cv2.cvtColor")
