@@ -94,7 +94,7 @@ def multi_profile_vespa(shared_memory_vespa):
 
 
 @pytest.fixture
-def search_agent_ensemble(multi_profile_vespa):
+def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     """SearchAgent configured for ensemble search with 3 REAL different profiles"""
     from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
@@ -102,12 +102,17 @@ def search_agent_ensemble(multi_profile_vespa):
         BackendConfig,
         BackendProfileConfig,
     )
+    from tests.agents.integration.conftest import inject_tomoro_url
 
     vespa_http_port = multi_profile_vespa["http_port"]
     vespa_config_port = multi_profile_vespa["config_port"]
     vespa_url = "http://localhost"
     config_manager = multi_profile_vespa["manager"].config_manager
     profiles = multi_profile_vespa["profiles"]
+
+    # Tomoro is remote-only; route the query encoder for every Tomoro-backed
+    # profile through the spawned sidecar before the SearchAgent reads config.
+    inject_tomoro_url(config_manager, tomoro_inference_url)
 
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")
@@ -183,16 +188,20 @@ def search_agent_ensemble(multi_profile_vespa):
 
 
 @pytest.fixture
-def search_agent_single_profile(multi_profile_vespa):
+def search_agent_single_profile(multi_profile_vespa, tomoro_inference_url):
     """SearchAgent configured for single-profile search with correct tenant_id."""
     from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from tests.agents.integration.conftest import inject_tomoro_url
 
     vespa_http_port = multi_profile_vespa["http_port"]
     vespa_config_port = multi_profile_vespa["config_port"]
     vespa_url = "http://localhost"
     config_manager = multi_profile_vespa["manager"].config_manager
     default_profile = multi_profile_vespa["profiles"][0]
+
+    # Tomoro is remote-only; route the query encoder through the sidecar.
+    inject_tomoro_url(config_manager, tomoro_inference_url)
 
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")

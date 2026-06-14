@@ -160,7 +160,20 @@ _INFERENCE_SIDECARS = {
         "container_name": "vllm-colpali-ingest-tests",
         "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
         "internal_port": 8000,
-        "extra_env": {},
+        # CPU vLLM budgets RAM from these (NOT --gpu-memory-utilization, which
+        # is a no-op on CPU). The default ~0.1 utilization + the 4B Tomoro
+        # weights OOMs on a loaded host (Vespa + videoprism + LM sidecars all
+        # running), so the container exits before /health and the colpali
+        # skip-gate stays unsatisfied. 0.05 / 2 GiB KV mirrors the proven
+        # tests/utils/vllm_sidecar.py factory used by the search/runtime side.
+        "extra_env": {
+            "VLLM_CPU_MEMORY_UTILIZATION": "0.05",
+            "VLLM_CPU_KVCACHE_SPACE": "2",
+        },
+        # Make this short-lived sidecar a more attractive OOM-kill target than
+        # the session-scoped Vespa (oom-score-adj=-1000); losing it fails only
+        # its own tests, losing Vespa cascades.
+        "run_flags": ["--oom-score-adj=500"],
         # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
         # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
         # 0.92 of host RAM (~113 GiB) and aborts, so cap it. ``--runner pooling
@@ -222,6 +235,7 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
         "-e",
         f"MODEL_NAME={spec['model_name']}",
     ]
+    cmd.extend(spec.get("run_flags", []))
     for env_key, env_val in spec.get("extra_env", {}).items():
         cmd.extend(["-e", f"{env_key}={env_val}"])
     cmd.extend(

@@ -378,6 +378,51 @@ def vespa_with_schema(shared_memory_vespa):  # noqa: F811
     # at the SchemaRegistry layer (tenant-scoped registry entry already exists).
 
 
+TOMORO_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
+
+
+@pytest.fixture(scope="session")
+def tomoro_inference_url(vllm_sidecar):
+    """Session-scoped Tomoro ColQwen3 vLLM sidecar URL.
+
+    Tomoro (qwen3_vl) is remote-only — any SearchAgent / encoder built from
+    a profile whose ``embedding_model`` is Tomoro must route its query
+    encoding through this sidecar or the production factory falls back to a
+    local load and hits the remote-only guard. Same ``--runner pooling
+    --convert embed`` serving config the runtime / ingestion conftests use;
+    cached across the session by the vllm_sidecar factory.
+    """
+    return vllm_sidecar.spawn(
+        model=TOMORO_MODEL,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
+
+
+def inject_tomoro_url(config_manager, url: str) -> None:
+    """Point ``SystemConfig.inference_service_urls['vllm_colpali']`` at ``url``.
+
+    ``vllm_colpali`` is the service name the production config.json visual
+    profiles (video_colpali / video_colqwen) reference under
+    ``inference_services.embedding``; the QueryEncoderFactory resolves that
+    name against this map to route Tomoro encoding remotely. Drops any
+    encoder cached before the URL existed (it would be a local encoder).
+    """
+    from cogniverse_core.query.encoders import QueryEncoderFactory
+
+    sys_cfg = config_manager.get_system_config()
+    sys_cfg.inference_service_urls = dict(sys_cfg.inference_service_urls)
+    sys_cfg.inference_service_urls["vllm_colpali"] = url
+    config_manager.set_system_config(sys_cfg)
+    QueryEncoderFactory._encoder_cache.clear()
+
+
 @pytest.fixture(scope="module")
 def real_telemetry(phoenix_container):
     """Module-scoped real TelemetryManager backed by Phoenix Docker.
