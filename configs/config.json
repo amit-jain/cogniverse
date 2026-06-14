@@ -354,7 +354,7 @@
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
-  "colpali_model": "vidore/colpali-v1.3-hf",
+  "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
     "artifacts_path": null,
@@ -633,7 +633,10 @@
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -680,15 +683,18 @@
           "schema_name": "video_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "image_colpali_mv": {
         "type": "image",
         "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
         "schema_name": "image_colpali_mv",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": false,
@@ -724,8 +730,8 @@
           "schema_name": "image_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "audio_clap_semantic": {
@@ -820,7 +826,10 @@
         "type": "document",
         "description": "Document page-as-image ColPali multi-vector embeddings (128-dim per patch). Renders PDF pages to images.",
         "schema_name": "document_visual",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": false,
@@ -852,8 +861,8 @@
         "model_loader": "colpali",
         "schema_config": {
           "schema_name": "document_visual",
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "lateon_mv": {
@@ -902,8 +911,11 @@
         "type": "video",
         "description": "ColQwen2 visual document retrieval served by the cogniverse/colpali sidecar. 128-dim per-patch multi-vector embeddings.",
         "schema_name": "video_colqwen_omni_mv_chunk_30s",
-        "embedding_model": "vidore/colqwen2-v1.0",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "process_type": "video_chunks",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": true,
@@ -956,8 +968,8 @@
           "schema_name": "video_colqwen_omni_mv_chunk_30s",
           "model_name": "ColQwen2",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
@@ -1011,7 +1023,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colpali-v1.3-hf"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_base_mv_chunk_30s",
@@ -1072,7 +1084,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colpali-v1.3-hf"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_large_mv_chunk_30s",

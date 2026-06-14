@@ -650,7 +650,7 @@ Create custom profiles for specific use cases:
         "type": "video",
         "description": "Custom high-resolution frame-based profile",
         "schema_name": "video_custom_highres_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "pipeline_config": {
           "extract_keyframes": true,
           "keyframe_strategy": "fps",
@@ -1288,7 +1288,7 @@ Configure embedding profiles in `configs/config.json`:
         "type": "video",
         "description": "Frame-based ColPali profile",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "pipeline_config": {
           "extract_keyframes": true,
           "keyframe_strategy": "fps",

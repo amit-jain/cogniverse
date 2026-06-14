@@ -338,7 +338,7 @@ from cogniverse_runtime.ingestion.strategies import (
 )
 
 # Multi-vector (ColPali, ColQwen)
-mv_strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colpali-v1.3-hf")
+mv_strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 
 # Single-vector (VideoPrism)
 sv_strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-base")
@@ -732,7 +732,7 @@ backend:
   profiles:
     video_colpali_mv_frame:
       type: multi_vector
-      embedding_model: vidore/colpali-v1.3-hf
+      embedding_model: TomoroAI/tomoro-colqwen3-embed-4b
       strategies:
         segmentation:
           class: FrameSegmentationStrategy
@@ -750,7 +750,7 @@ backend:
         embedding:
           class: MultiVectorEmbeddingStrategy
           params:
-            model_name: vidore/colpali-v1.3-hf
+            model_name: TomoroAI/tomoro-colqwen3-embed-4b
 
     video_videoprism_sv_chunk:
       type: single_vector
@@ -1046,7 +1046,7 @@ class ProfileCreateRequest(BaseModel):
     type: str = "video"        # video, image, audio, document, code
     description: str = ""
     schema_name: str           # Base schema (must have template)
-    embedding_model: str       # e.g., "vidore/colpali-v1.3-hf"
+    embedding_model: str       # e.g., "TomoroAI/tomoro-colqwen3-embed-4b"
     pipeline_config: Dict      # keyframe extraction, transcription, etc.
     strategies: Dict           # segmentation, embedding strategies
     embedding_type: str        # frame_based, video_chunks, direct_video_segment, single_vector

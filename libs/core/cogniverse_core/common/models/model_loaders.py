@@ -391,10 +391,10 @@ class RemoteColPaliLoader(ModelLoader):
     Remote ColPali multi-vector loader.
 
     Talks to a vLLM ``ColPaliForRetrieval`` instance serving
-    ``vidore/colpali-v1.3-hf`` (or any colpali-engine HF variant vLLM
-    accepts) over the OpenAI-compatible /v1/embeddings endpoint with the
-    ``token_embed`` pooling task. Returns per-token embeddings (shape
-    ``[num_patches, 128]`` for colpali-v1.3-hf).
+    ``TomoroAI/tomoro-colqwen3-embed-4b`` (or any colpali-engine HF
+    variant vLLM accepts) over the OpenAI-compatible /v1/embeddings
+    endpoint with the ``token_embed`` pooling task. Returns per-token
+    embeddings (shape ``[num_patches, 320]`` for tomoro-colqwen3-embed-4b).
 
     The legacy ``deploy/colpali`` FastAPI sidecar is replaced by this
     path. ``RemoteInferenceClient.process_images_vllm`` constructs the

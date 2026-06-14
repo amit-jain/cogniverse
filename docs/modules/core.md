@@ -1310,7 +1310,7 @@ from cogniverse_core.common.models import ModelLoaderFactory
 
 # Config must contain "model_loader" key — raises ValueError if missing
 loader = ModelLoaderFactory.create_loader(
-    model_name="vidore/colpali-v1.3-hf",
+    model_name="TomoroAI/tomoro-colqwen3-embed-4b",
     config={"model_loader": "colpali", "embedding_type": "multi_vector"},
     logger=logger,
 )

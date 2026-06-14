@@ -226,7 +226,7 @@ class TestBackendConfigDataclasses:
             "video_profile",
             {
                 "type": "video",
-                "embedding_model": "vidore/colsmol-500m",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_type": "multi_vector",
                 "schema_name": "video_profile",
                 "strategies": {"float_float": {}},
@@ -246,7 +246,7 @@ class TestBackendConfigDataclasses:
         assert result.model_loader == "colpali", (
             "System model_loader must survive tenant merge when tenant has empty model_loader"
         )
-        assert result.embedding_model == "vidore/colsmol-500m"
+        assert result.embedding_model == "TomoroAI/tomoro-colqwen3-embed-4b"
         assert result.schema_config == {"embedding_dim": 128}
 
 

@@ -265,7 +265,7 @@ def render_create_profile_form(manager, tenant_id: str):
         embedding_model = st.text_input(
             "Embedding Model *",
             help="Model identifier (e.g., HuggingFace model path)",
-            placeholder="e.g., vidore/colsmol-500m",
+            placeholder="e.g., TomoroAI/tomoro-colqwen3-embed-4b",
         )
 
         # Pipeline configuration (JSON)
@@ -314,8 +314,8 @@ def render_create_profile_form(manager, tenant_id: str):
                 {
                     "schema_name": "video_colpali",
                     "model_name": "ColPali",
-                    "embedding_dim": 128,
-                    "binary_dim": 16,
+                    "embedding_dim": 320,
+                    "binary_dim": 40,
                 },
                 indent=2,
             ),

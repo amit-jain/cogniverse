@@ -24,7 +24,7 @@ DASHBOARD_TAGS_BY_BACKEND = {
 }
 PYLATE_TAG = "cogniverse/pylate:dev"
 # colpali and whisper are no longer built by us — vLLM serves both:
-# vidore/colpali-v1.3-hf via inference.vllm_colpali (vllm/vllm-openai-cpu)
+# TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
 # openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 

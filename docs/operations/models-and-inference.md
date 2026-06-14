@@ -110,7 +110,7 @@ host-running Ollama).
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_colpali` |
-| Model | `vidore/colpali-v1.3-hf` |
+| Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
 | Image (CPU / k3s default) | **`cogniverse/colpali:dev` (CUSTOM, built from `deploy/colpali/`)** |
 | Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.20.0` (official) |
 | Engine flag | `colpali_native` (CPU) or `vllm_token_embed` (ROCm) |
@@ -132,7 +132,7 @@ overrides `engine: vllm_token_embed` and uses the official vLLM image.
 | Field | Value |
 |---|---|
 | Chart key | `inference.vllm_colqwen` |
-| Model | `vidore/colqwen2-v1.0` |
+| Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
 | Image | `vllm/vllm-openai-cpu:latest` / `vllm/vllm-openai-rocm` |
 | Default state | disabled |
 
