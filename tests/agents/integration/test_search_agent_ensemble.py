@@ -102,7 +102,10 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
         BackendConfig,
         BackendProfileConfig,
     )
-    from tests.agents.integration.conftest import inject_tomoro_url
+    from tests.agents.integration.conftest import (
+        inject_tomoro_url,
+        reroute_videoprism_profile_to_tomoro,
+    )
 
     vespa_http_port = multi_profile_vespa["http_port"]
     vespa_config_port = multi_profile_vespa["config_port"]
@@ -113,6 +116,9 @@ def search_agent_ensemble(multi_profile_vespa, tomoro_inference_url):
     # Tomoro is remote-only; route the query encoder for every Tomoro-backed
     # profile through the spawned sidecar before the SearchAgent reads config.
     inject_tomoro_url(config_manager, tomoro_inference_url)
+    # The SearchAgent resolves the videoprism profile from config.json (which
+    # carries model_loader=videoprism); reroute it through the Tomoro sidecar.
+    reroute_videoprism_profile_to_tomoro(config_manager)
 
     schema_loader = FilesystemSchemaLoader(
         base_path=Path("tests/system/resources/schemas")
@@ -207,9 +213,11 @@ def search_agent_single_profile(multi_profile_vespa, tomoro_inference_url):
         base_path=Path("tests/system/resources/schemas")
     )
 
-    # Use test_tenant to match VespaTestManager's deployed schema
+    # Match the tenant ``multi_profile_vespa`` deploys the schema for, so the
+    # tenant-scoped source ref (``..._ensemble_test_tenant_ensemble_test_tenant``)
+    # resolves on every single-profile query.
     deps = SearchAgentDeps(
-        tenant_id="test_tenant",
+        tenant_id="ensemble_test_tenant",
         backend_url=vespa_url,
         backend_port=vespa_http_port,
         backend_config_port=vespa_config_port,
@@ -255,7 +263,7 @@ class TestSearchAgentEnsemble:
         result = await agent._process_impl(
             SearchInput(
                 query="robot playing soccer",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles,
                 top_k=5,
                 rrf_k=60,
@@ -290,7 +298,7 @@ class TestSearchAgentEnsemble:
         _result = await agent._process_impl(
             SearchInput(
                 query="test query for latency",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles,
                 top_k=10,
                 rrf_k=60,
@@ -328,7 +336,7 @@ class TestSearchAgentEnsemble:
         result = await agent._process_impl(
             SearchInput(
                 query="test query with failure",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles_with_invalid,
                 top_k=10,
                 rrf_k=60,
@@ -359,7 +367,7 @@ class TestSearchAgentEnsemble:
         _result = await agent._process_impl(
             SearchInput(
                 query="test parallel execution",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles,
                 top_k=10,
                 rrf_k=60,
@@ -399,7 +407,7 @@ class TestSearchAgentEnsemble:
         result = await agent._process_impl(
             SearchInput(
                 query="robot playing soccer",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles,
                 top_k=10,
                 rrf_k=60,
@@ -451,7 +459,7 @@ class TestSearchAgentEnsemble:
         result = await agent._process_impl(
             SearchInput(
                 query="xyzabc123nonexistent query that returns nothing",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=profiles,
                 top_k=10,
                 rrf_k=60,
@@ -480,7 +488,7 @@ class TestMultiQueryFusionIntegration:
 
         input_data = SearchInput(
             query="robot playing soccer",
-            tenant_id="test_tenant",
+            tenant_id="ensemble_test_tenant",
             top_k=10,
             enhanced_query="robot playing soccer (robot playing soccer)",
             entities=[{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}],
@@ -517,7 +525,7 @@ class TestMultiQueryFusionIntegration:
 
         input_data = SearchInput(
             query="machine learning tutorial",
-            tenant_id="test_tenant",
+            tenant_id="ensemble_test_tenant",
             top_k=10,
             enhanced_query="machine learning tutorial (machine learning tutorial)",
             entities=[
@@ -554,7 +562,7 @@ class TestMultiQueryFusionIntegration:
 
         input_data = SearchInput(
             query="xyzabc123nonexistent query fusion test",
-            tenant_id="test_tenant",
+            tenant_id="ensemble_test_tenant",
             top_k=10,
             enhanced_query="xyzabc123nonexistent query fusion expanded",
             query_variants=[
@@ -584,7 +592,7 @@ class TestMultiQueryFusionIntegration:
 
         input_data = SearchInput(
             query="robot playing soccer",
-            tenant_id="test_tenant",
+            tenant_id="ensemble_test_tenant",
             top_k=10,
             enhanced_query="robot playing soccer enhanced",
             entities=[{"text": "robot", "label": "TECHNOLOGY", "confidence": 0.9}],
@@ -615,7 +623,9 @@ class TestSingleProfileSearchIntegration:
         agent = search_agent_single_profile
 
         result = await agent._process_impl(
-            SearchInput(query="robot playing soccer", tenant_id="test_tenant", top_k=10)
+            SearchInput(
+                query="robot playing soccer", tenant_id="ensemble_test_tenant", top_k=10
+            )
         )
 
         assert result.search_mode == "single_profile"
@@ -635,7 +645,7 @@ class TestSingleProfileSearchIntegration:
 
         input_data = SearchInput(
             query="robot playing soccer",
-            tenant_id="test_tenant",
+            tenant_id="ensemble_test_tenant",
             top_k=10,
             enhanced_query="robot playing soccer enhanced",
             entities=[
@@ -695,7 +705,7 @@ class TestSingleProfileSearchIntegration:
         )
 
         result = agent.search_with_relationship_context(
-            context, tenant_id="test_tenant", top_k=10
+            context, tenant_id="ensemble_test_tenant", top_k=10
         )
 
         assert result["status"] == "completed"
@@ -716,7 +726,7 @@ class TestSingleProfileSearchIntegration:
         result = await agent._process_impl(
             SearchInput(
                 query="xyzabc123nonexistent gibberish",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 top_k=10,
             )
         )
@@ -737,7 +747,7 @@ class TestSingleProfileSearchIntegration:
         result = await agent._process_impl(
             SearchInput(
                 query="robot soccer",
-                tenant_id="test_tenant",
+                tenant_id="ensemble_test_tenant",
                 profiles=[agent.active_profile],
                 top_k=10,
             )

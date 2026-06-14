@@ -598,7 +598,7 @@ A **profile** is a complete content processing configuration that defines:
 ```mermaid
 flowchart TB
     subgraph Profiles["<span style='color:#000'>Backend Profiles</span>"]
-        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 128-dim<br/>Binary embeddings</span>"]
+        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 320-dim<br/>Binary embeddings</span>"]
         VideoPrism["<span style='color:#000'>video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks</span>"]
         ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual</span>"]
     end
@@ -646,7 +646,7 @@ flowchart TB
 **Example**: `video_colpali_smol500_mv_frame`
 - Extracts keyframes at fixed FPS (1-5 FPS)
 - Generates patch-level embeddings per frame
-- Schema: Multi-vector with 1024 patches × 128 dimensions
+- Schema: Multi-vector with 1024 patches × 320 dimensions
 - Best for: Fine-grained visual search, specific objects/text in frames
 
 #### Chunk-Based Profiles
@@ -1666,7 +1666,7 @@ Base schemas are stored in `configs/schemas/`:
       },
       {
         "name": "embedding",
-        "type": "tensor<float>(patch{}, v[128])",
+        "type": "tensor<float>(patch{}, v[320])",
         "indexing": ["attribute"]
       }
     ]
@@ -1675,7 +1675,7 @@ Base schemas are stored in `configs/schemas/`:
     {
       "name": "colpali",
       "inputs": [
-        {"name": "query(qt)", "type": "tensor<float>(querytoken{}, v[128])"}
+        {"name": "query(qt)", "type": "tensor<float>(querytoken{}, v[320])"}
       ],
       "first_phase": {
         "expression": "sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)"
@@ -2372,7 +2372,7 @@ processor = VespaEmbeddingProcessor(
 )
 
 # Process raw embeddings
-raw = np.random.randn(1024, 128)  # ColPali: 1024 patches × 128 dims
+raw = np.random.randn(1024, 320)  # ColPali (Tomoro ColQwen3): 1024 patches × 320 dims
 result = processor.process_embeddings(raw)
 # Returns: {"embedding": {...}, "embedding_binary": {...}}
 

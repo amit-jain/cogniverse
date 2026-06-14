@@ -127,7 +127,7 @@ class VespaSchemaManager:
                             # ColPali multi-vector embedding (same as video frames)
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<float>(x[1024],d[128])",
+                                type="tensor<float>(x[1024],d[320])",
                                 indexing=["attribute"],
                                 attribute=["distance-metric:prenormalized-angular"],
                             ),
@@ -136,12 +136,12 @@ class VespaSchemaManager:
                     rank_profiles=[
                         RankProfile(
                             name="colpali_similarity",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[128])")],
+                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
                             first_phase="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
                         ),
                         RankProfile(
                             name="hybrid_image",
-                            inputs=[("query(q)", "tensor<float>(x[1024],d[128])")],
+                            inputs=[("query(q)", "tensor<float>(x[1024],d[320])")],
                             first_phase="bm25(image_description)",
                             second_phase=SecondPhaseRanking(
                                 expression="sum(reduce(sum(query(q) * attribute(colpali_embedding), d), max, x))",
@@ -290,12 +290,12 @@ class VespaSchemaManager:
                             # form matching configs/schemas/document_visual_schema.json.
                             Field(
                                 name="colpali_embedding",
-                                type="tensor<bfloat16>(patch{}, v[128])",
+                                type="tensor<bfloat16>(patch{}, v[320])",
                                 indexing=["attribute"],
                             ),
                             Field(
                                 name="colpali_embedding_binary",
-                                type="tensor<int8>(patch{}, v[16])",
+                                type="tensor<int8>(patch{}, v[40])",
                                 indexing=["attribute", "index"],
                             ),
                         ]
@@ -304,14 +304,14 @@ class VespaSchemaManager:
                         RankProfile(
                             name="float_float",
                             inputs=[
-                                ("query(qt)", "tensor<float>(querytoken{}, v[128])")
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
                             ],
                             first_phase="sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)",
                         ),
                         RankProfile(
                             name="hybrid_float_bm25",
                             inputs=[
-                                ("query(qt)", "tensor<float>(querytoken{}, v[128])")
+                                ("query(qt)", "tensor<float>(querytoken{}, v[320])")
                             ],
                             first_phase="sum(reduce(sum(query(qt) * cell_cast(attribute(colpali_embedding), float), v), max, patch), querytoken)",
                             second_phase=SecondPhaseRanking(

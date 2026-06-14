@@ -531,7 +531,7 @@ sequenceDiagram
 - **Direct Video** (`multi_vector`): VideoPrism single global embedding
 - **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
 - **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
-- **Document Visual ColPali** (`multi_vector`): ColPali 128-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
+- **Document Visual ColPali** (`multi_vector`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Audio Dual** (`multi_vector`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
