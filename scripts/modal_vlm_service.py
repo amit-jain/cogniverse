@@ -24,7 +24,8 @@ MINUTES = 60  # seconds
 
 # Model Configuration
 MODEL_PATH = "Qwen/Qwen3-VL-8B-Instruct"
-MODEL_REVISION = "main"
+# Pinned Qwen3-VL-8B-Instruct main commit for reproducible deploys.
+MODEL_REVISION = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 TOKENIZER_PATH = "Qwen/Qwen3-VL-8B-Instruct"
 # sglang registers no "qwen3-vl" template; "qwen2-vl" is auto-matched for any
 # "qwen.*vl" model path and is the correct template for Qwen3-VL.

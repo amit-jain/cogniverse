@@ -833,7 +833,16 @@ class ColBERTModelLoader(ModelLoader):
         """Load ColBERT model via PyLate and return (model, None)."""
         try:
             self.logger.info(f"Loading ColBERT model: {self.model_name}")
-            from pylate import models as pylate_models
+            try:
+                from pylate import models as pylate_models
+            except ImportError as e:
+                raise ImportError(
+                    "Local ColBERT loading requires the optional 'pylate' "
+                    "dependency (install the project's [test] extra). For "
+                    "production, serve ColBERT via vLLM by setting "
+                    "inference_services.embedding on the profile (routes to "
+                    "RemoteColBERTLoader)."
+                ) from e
 
             device = self.get_device()
             self.logger.info(f"Using device: {device}")
