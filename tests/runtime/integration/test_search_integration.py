@@ -20,17 +20,17 @@ from cogniverse_core.query.encoders import QueryEncoderFactory
 
 logger = logging.getLogger(__name__)
 
-COLPALI_MODEL_NAME = "vidore/colpali-v1.3-hf"
+COLPALI_MODEL_NAME = "TomoroAI/tomoro-colqwen3-embed-4b"
 TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_test_unit"
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
-    """Convert (num_patches, 128) float32 embeddings to Vespa tensor format.
+    """Convert (num_patches, 320) float32 embeddings to Vespa tensor format.
 
     Returns:
         (float_dict, binary_dict) for embedding and embedding_binary fields.
-        Float dict: {patch_idx: [128 floats]} for tensor<bfloat16>(patch{}, v[128])
-        Binary dict: {patch_idx: [16 int8s]} for tensor<int8>(patch{}, v[16])
+        Float dict: {patch_idx: [320 floats]} for tensor<bfloat16>(patch{}, v[320])
+        Binary dict: {patch_idx: [40 int8s]} for tensor<int8>(patch{}, v[40])
     """
     float_dict = {str(idx): vector.tolist() for idx, vector in enumerate(embeddings)}
 
@@ -200,7 +200,7 @@ class TestListProfilesIntegration:
 class TestSearchIntegration:
     # Drops the ``ci_fast`` marker the sibling TestListProfilesIntegration
     # carries. This class spins up a real vLLM-CPU container with
-    # ``vidore/colpali-v1.3-hf`` via the ``seeded_documents`` fixture;
+    # ``TomoroAI/tomoro-colqwen3-embed-4b`` via the ``seeded_documents`` fixture;
     # the model is ~3 GB and GHA's standard runner (7 GB total RAM)
     # caps vLLM at ``VLLM_CPU_MEMORY_UTILIZATION=0.05`` ≈ 350 MB,
     # which can't fit the weights — the container OOMs / resets the

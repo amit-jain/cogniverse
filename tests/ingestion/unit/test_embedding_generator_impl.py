@@ -1452,7 +1452,7 @@ class TestModelLoaderFactoryModelLoader:
         )
 
         loader = ModelLoaderFactory.create_loader(
-            "vidore/colsmol-500m",
+            "TomoroAI/tomoro-colqwen3-embed-4b",
             {"model_loader": "colpali"},
             None,
         )

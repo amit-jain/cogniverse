@@ -189,7 +189,7 @@ class TestBackendConfigDataclasses:
         """Test that model_loader survives from_dict → to_dict roundtrip"""
         data = {
             "type": "video",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "model_loader": "colpali",
             "schema_name": "video_colpali_smol500_mv_frame",
@@ -212,7 +212,7 @@ class TestBackendConfigDataclasses:
             "video_profile",
             {
                 "type": "video",
-                "embedding_model": "vidore/colsmol-500m",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_type": "multi_vector",
                 "model_loader": "colpali",
                 "schema_name": "video_profile",

@@ -145,7 +145,7 @@ def materialise_test_pipeline_config(http_port: int) -> str:
 # decorators evaluated at module-import time, so the env var has to be set
 # *before* pytest imports the test module — which is what ``pytest_configure``
 # is for. We spin up the vllm-colpali container (vLLM serving
-# vidore/colpali-v1.3-hf via ColPaliForRetrieval) and the videoprism JAX
+# TomoroAI/tomoro-colqwen3-embed-4b via ColPaliForRetrieval) and the videoprism JAX
 # sidecar once per session, populate ``INFERENCE_SERVICE_URLS``, and tear
 # them down on session exit. The vllm/vllm-openai-cpu image is pulled
 # from upstream automatically; videoprism is local
@@ -158,14 +158,14 @@ _INFERENCE_SIDECARS = {
     "vllm_colpali": {
         "image": _VLLM_IMAGE,
         "container_name": "vllm-colpali-ingest-tests",
-        "model_name": "vidore/colpali-v1.3-hf",
+        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
         "internal_port": 8000,
         "extra_env": {},
         # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
         # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
         # 0.92 of host RAM (~113 GiB) and aborts, so cap it.
         "command": [
-            "vidore/colpali-v1.3-hf",
+            "TomoroAI/tomoro-colqwen3-embed-4b",
             "--gpu-memory-utilization",
             "0.3",
             "--max-model-len",

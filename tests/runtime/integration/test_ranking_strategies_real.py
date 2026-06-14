@@ -34,7 +34,7 @@ from cogniverse_vespa.search_backend import VespaSearchBackend
 
 logger = logging.getLogger(__name__)
 
-COLPALI_MODEL_NAME = "vidore/colpali-v1.3-hf"
+COLPALI_MODEL_NAME = "TomoroAI/tomoro-colqwen3-embed-4b"
 TENANT_ID = "test:unit"
 TENANT_SCHEMA_NAME = "video_colpali_smol500_mv_frame_test_unit"
 PROFILE_NAME = "test_colpali"
@@ -62,7 +62,7 @@ HYBRID_STRATEGIES = [
 
 
 def _embeddings_to_vespa_tensors(embeddings: np.ndarray):
-    """Convert (num_patches, 128) float32 embeddings to Vespa tensor format."""
+    """Convert (num_patches, 320) float32 embeddings to Vespa tensor format."""
     float_dict = {str(idx): vector.tolist() for idx, vector in enumerate(embeddings)}
     binarized = np.packbits(
         np.where(embeddings > 0, 1, 0).astype(np.uint8), axis=1

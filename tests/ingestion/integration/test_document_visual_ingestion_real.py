@@ -39,7 +39,7 @@ pytestmark = [
 ]
 
 TENANT = "docvis_ingest_rt"
-COLPALI_MODEL = "vidore/colsmol-500m"
+COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 SCHEMAS_DIR = Path("configs/schemas")
 
 

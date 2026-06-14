@@ -127,17 +127,17 @@ def search_agent_ensemble(multi_profile_vespa):
         "video_colpali_smol500_mv_frame": BackendProfileConfig(
             profile_name="video_colpali_smol500_mv_frame",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
         "video_videoprism_base_mv_chunk_30s": BackendProfileConfig(
             profile_name="video_videoprism_base_mv_chunk_30s",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
         "video_colqwen_omni_mv_chunk_30s": BackendProfileConfig(
             profile_name="video_colqwen_omni_mv_chunk_30s",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
     }
 

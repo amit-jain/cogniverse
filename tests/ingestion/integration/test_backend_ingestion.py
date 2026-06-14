@@ -698,7 +698,7 @@ class TestProfileConfigPropagation:
         tenant_profile = BackendProfileConfig(
             profile_name="video_colpali_smol500_mv_frame",
             type="video",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
             embedding_type="multi_vector",
             schema_name="video_colpali_smol500_mv_frame",
             strategies={"float_float": {}},

@@ -238,11 +238,13 @@ class TestContentTypeVespaSchemas:
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
         config = {
-            "colpali_model": "vidore/colsmol-500m",
+            "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
-        model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
+        model, processor = get_or_load_model(
+            "TomoroAI/tomoro-colqwen3-embed-4b", config, None
+        )
         print("✅ ColPali model loaded")
 
         # Generate real ColPali embedding
@@ -540,11 +542,13 @@ class TestContentTypeVespaSchemas:
         # Load ColPali model
         print("\n📦 Loading ColPali model...")
         config = {
-            "colpali_model": "vidore/colsmol-500m",
+            "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "model_loader": "colpali",
         }
-        model, processor = get_or_load_model("vidore/colsmol-500m", config, None)
+        model, processor = get_or_load_model(
+            "TomoroAI/tomoro-colqwen3-embed-4b", config, None
+        )
         print("✅ ColPali model loaded")
 
         # Generate ColPali embedding for document page
@@ -556,7 +560,7 @@ class TestContentTypeVespaSchemas:
         with torch.no_grad():
             embeddings = model(**batch_inputs)
 
-        # Convert to numpy and remove batch dimension -> (num_patches, 128)
+        # Convert to numpy and remove batch dimension -> (num_patches, 320)
         embeddings_np = embeddings.squeeze(0).cpu().numpy()
         print(f"✅ Generated embedding shape: {embeddings_np.shape}")
 
@@ -712,10 +716,12 @@ class TestContentTypeVespaSchemas:
 
         # Load query encoder
         print("\n📦 Loading ColPali query encoder...")
-        query_encoder = ColPaliQueryEncoder(model_name="vidore/colsmol-500m")
+        query_encoder = ColPaliQueryEncoder(
+            model_name="TomoroAI/tomoro-colqwen3-embed-4b"
+        )
         print("✅ Query encoder loaded")
 
-        # Encode query -> (num_tokens, 128) per-token embedding
+        # Encode query -> (num_tokens, 320) per-token embedding
         query = "machine learning fundamentals"
         print(f"\n🔍 Encoding query: '{query}'")
         query_embedding = query_encoder.encode(query)
