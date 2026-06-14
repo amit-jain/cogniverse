@@ -768,16 +768,15 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  # vLLM-served visual multi-vector retrieval (ColPali). Replaces the
-  # legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
-  # ColPaliForRetrieval class to serve vidore/colpali-v1.3-hf — a 3B
-  # PaliGemma-based model with 128-dim per-token output, matching the
-  # existing Vespa schema (no migration). Profiles route here via
-  # ``inference_service: "vllm_colpali"``.
+  # vLLM-served visual multi-vector retrieval (ColPali family). Replaces
+  # the legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
+  # token-embed pooling runner to serve TomoroAI/tomoro-colqwen3-embed-4b
+  # — a 4B ColQwen3 model with 320-dim per-token output. Profiles route
+  # here via ``inference_service: "vllm_colpali"``.
   vllm_colpali:
     enabled: false
     engine: vllm_token_embed
-    model: vidore/colpali-v1.3-hf
+    model: TomoroAI/tomoro-colqwen3-embed-4b
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
@@ -811,7 +810,7 @@ inference:
     # ~12 GiB working set; ``resources.limits.memory: 16Gi`` adds
     # headroom for cudagraph/transient buffers.
     kvCacheGiB: 2
-    hfTokenSecret: ""              # colpali-v1.3-hf is ungated
+    hfTokenSecret: ""              # set to an HF token secret if the model is gated
     replicaCount: 1
     service:
       type: ClusterIP

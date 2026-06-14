@@ -29,6 +29,7 @@ devMode:
 inference:
   vllm_colpali:
     enabled: true
+    model: TomoroAI/tomoro-colqwen3-embed-4b
     device: cuda
     gpuCount: 1
     replicaCount: 3            # scale-out for ingest throughput

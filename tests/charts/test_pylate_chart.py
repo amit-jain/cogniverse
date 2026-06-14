@@ -82,12 +82,15 @@ def _service_urls(docs: list[dict]) -> dict[str, str]:
 
 def test_default_runs_colbert_pylate_and_denseon_services():
     """Default-enabled inference services: colbert_pylate (LateOn text
-    multi-vector) and denseon (DenseOn dense single-vector). Mem0 needs
-    denseon for memory embeddings, so it ships enabled by default."""
+    multi-vector), denseon (DenseOn dense single-vector), and gliner
+    (zero-shot NER). Mem0 needs denseon for memory embeddings and the
+    slim runtime image excludes torch+gliner, so all three ship enabled
+    by default."""
     deps = _inference_deployments(_render())
-    assert set(deps.keys()) == {"colbert_pylate", "denseon"}
+    assert set(deps.keys()) == {"colbert_pylate", "denseon", "gliner"}
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
     assert deps["denseon"]["metadata"]["name"] == "cogniverse-denseon"
+    assert deps["gliner"]["metadata"]["name"] == "cogniverse-gliner"
 
 
 def test_default_colbert_pylate_uses_pylate_with_lateon():
@@ -104,6 +107,7 @@ def test_default_inference_service_urls_contains_colbert_pylate_and_denseon():
     assert urls == {
         "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
         "denseon": "http://cogniverse-denseon:8000",
+        "gliner": "http://cogniverse-gliner:8080",
     }
 
 
@@ -111,7 +115,12 @@ def test_enabling_code_runs_three_parallel_services():
     """code_colbert_pylate adds a third pod alongside the defaults."""
     docs = _render("inference.code_colbert_pylate.enabled=true")
     deps = _inference_deployments(docs)
-    assert set(deps.keys()) == {"colbert_pylate", "denseon", "code_colbert_pylate"}
+    assert set(deps.keys()) == {
+        "colbert_pylate",
+        "denseon",
+        "gliner",
+        "code_colbert_pylate",
+    }
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
     assert (
         deps["code_colbert_pylate"]["metadata"]["name"]
@@ -125,6 +134,7 @@ def test_enabling_code_adds_to_url_map():
         "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
         "code_colbert_pylate": "http://cogniverse-code-colbert-pylate:8000",
         "denseon": "http://cogniverse-denseon:8000",
+        "gliner": "http://cogniverse-gliner:8080",
     }
 
 
@@ -161,6 +171,15 @@ def test_disabling_colbert_pylate_drops_service_and_url():
     deps = _inference_deployments(docs)
     assert "colbert_pylate" not in deps
     assert "colbert_pylate" not in _service_urls(docs)
+
+
+def test_vllm_colpali_serves_tomoro_token_embed():
+    docs = _render("inference.vllm_colpali.enabled=true")
+    dep = _inference_deployments(docs)["vllm_colpali"]
+    c = dep["spec"]["template"]["spec"]["containers"][0]
+    assert c["image"].startswith("vllm/vllm-openai")
+    args = " ".join(c["args"])
+    assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
 
 
 def test_service_keys_in_url_map_match_deployment_names():

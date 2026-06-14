@@ -47,6 +47,7 @@ _vllmRocmImage: &vllmRocmImage
 inference:
   vllm_colpali:
     enabled: true
+    model: TomoroAI/tomoro-colqwen3-embed-4b
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
