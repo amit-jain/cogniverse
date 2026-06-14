@@ -6,11 +6,11 @@ Spawns ``vllm/vllm-openai-cpu`` serving ``lightonai/DenseOn`` and exercises:
   dim, in-order indices), and
 - PARITY of the *production* client path. ``RemoteOpenAIEmbedder`` applies the
   ``document: ``/``query: `` prompt and L2-normalizes (the behavior the pylate
-  sidecar always applied, restored client-side by B0). We therefore test the
+  sidecar always applied, now restored client-side). We therefore test the
   production embedder, NOT a raw /v1/embeddings call with a manual prefix, and
   compare it against ``SentenceTransformer.encode([f"document: {text}"],
-  normalize_embeddings=True)``. If someone reverts B0 (drops the prompt or the
-  normalization) this cosine check fails.
+  normalize_embeddings=True)``. If a change drops the prompt or the
+  normalization, this cosine check fails.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ def test_production_embedder_matches_sentence_transformer_oracle(
         np.linalg.norm(remote_row),
         1.0,
         atol=1e-2,
-        err_msg="RemoteOpenAIEmbedder must L2-normalize its output (B0)",
+        err_msg="RemoteOpenAIEmbedder must L2-normalize its output",
     )
 
     cosine = float(np.dot(remote_row, local_row))
@@ -102,5 +102,5 @@ def test_production_embedder_matches_sentence_transformer_oracle(
         f"production RemoteOpenAIEmbedder(is_query=False) must match "
         f"SentenceTransformer('document: ...', normalize=True) at cosine ≥ 0.99; "
         f"got {cosine:.4f}. A drop below this means the document prompt or the "
-        f"normalization (B0) drifted."
+        f"normalization drifted."
     )
