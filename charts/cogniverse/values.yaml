@@ -849,12 +849,9 @@ inference:
   # a different model in parallel), add another entry with a distinct key.
   colbert_pylate:
     enabled: true
-    engine: pylate
+    engine: vllm_token_embed
     model: lightonai/LateOn
     type: multi_vector
-    # Top-level device drives GPU resources / nodeSelector. The pylate
-    # block below carries its own ``device`` env var which is kept in
-    # sync with this top-level field by the chart template.
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
     nodeSelector: {}
@@ -864,25 +861,20 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29002
-    # vLLM-specific (used when engine=vllm)
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
+    # ``--hf-overrides`` forces vLLM to load the ColBERTModernBertModel
+    # multi-vector architecture; without it vLLM serves a plain dense
+    # ModernBert and the per-token outputs LateOn retrieval needs vanish.
     extraArgs:
       - "--max-model-len"
       - "8192"
-    # pylate-specific (used when engine=pylate)
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}           # per-device image override; same shape as vllm_colpali
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
+      - "--hf-overrides"
+      - '{"architectures": ["ColBERTModernBertModel"]}'
     resources:
       limits:
         cpu: "4"
@@ -913,7 +905,7 @@ inference:
   # via ``inference_service: "code_colbert_pylate"``.
   code_colbert_pylate:
     enabled: false
-    engine: pylate
+    engine: vllm_token_embed
     model: lightonai/LateOn-Code-edge
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm | mps
@@ -925,23 +917,18 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29004
-    # vLLM-specific (unused by default since default engine is pylate)
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
-    extraArgs: []
-    # pylate-specific
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
+    # See colbert_pylate — multi-vector ColBERT arch override.
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
+      - "--hf-overrides"
+      - '{"architectures": ["ColBERTModernBertModel"]}'
     resources:
       limits:
         cpu: "2"
@@ -974,8 +961,7 @@ inference:
   # ``inference_service: "denseon"``.
   denseon:
     enabled: true
-    engine: pylate
-    mode: dense                    # colbert | dense — picks /pooling vs /v1/embeddings
+    engine: vllm_embed
     model: lightonai/DenseOn       # ModernBERT-base, 768-dim, CLS pooling, 512 ctx
     type: single_vector
     device: cpu                    # cpu | cuda | rocm | mps
@@ -987,23 +973,15 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29006
-    # vLLM-specific (unused — engine is pylate)
     image:
       repository: vllm/vllm-openai-cpu
       tag: latest-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
+    # vllm_embed renders ``--dtype {{ .dtype }}``; float32 keeps the
+    # ModernBert dense embeddings numerically stable on CPU.
     dtype: float32
     extraArgs: []
-    # pylate-specific (the actual engine path)
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
     resources:
       limits:
         cpu: "2"

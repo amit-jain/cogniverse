@@ -1,11 +1,12 @@
 """Chart tests for the generic inference services.
 
 The chart supports N parallel inference services under ``inference`` — each
-entry deploys one pod. Keys follow ``<family>_<engine>`` so the deployed
-pod's protocol is readable from the key (e.g. ``colbert_pylate`` is a
-pylate FastAPI serving a ColBERT-family model). Each service has an
-``engine`` (``vllm`` or ``pylate``) and a ``type`` (``multi_vector`` or
-``single_vector``).
+entry deploys one pod. Keys are logical tags (e.g. ``colbert_pylate`` for
+the LateOn text multi-vector pod, ``denseon`` for the DenseOn dense pod).
+Each service has an ``engine`` that selects the container template
+(``vllm_token_embed`` for per-token multi-vector, ``vllm_embed`` for dense
+single-vector, ``vllm_chat``, ``vllm_transcription``, ``gliner``,
+``fastapi``, …) and a ``type`` (``multi_vector`` or ``single_vector``).
 
 The runtime receives one ``INFERENCE_SERVICE_URLS`` JSON env var containing
 {service_key: url} for every enabled service. Profiles pick a service by key.
@@ -93,13 +94,22 @@ def test_default_runs_colbert_pylate_and_denseon_services():
     assert deps["gliner"]["metadata"]["name"] == "cogniverse-gliner"
 
 
-def test_default_colbert_pylate_uses_pylate_with_lateon():
-    """Default colbert_pylate service serves LateOn via pylate."""
+def test_default_colbert_pylate_serves_lateon_via_vllm():
+    """Default colbert_pylate service serves LateOn via vLLM's
+    token-embed runner with the ColBERTModernBertModel arch override."""
     deps = _inference_deployments(_render())
     container = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"].startswith("cogniverse/pylate")
-    env = {e["name"]: e["value"] for e in container["env"]}
-    assert env["MODEL_NAME"] == "lightonai/LateOn"
+    assert container["image"].startswith("vllm/vllm-openai")
+    args = container["args"]
+    assert "lightonai/LateOn" in args
+    assert "--hf-overrides" in args
+    joined = " ".join(args)
+    assert "ColBERTModernBertModel" in joined
+    # The hf-overrides value is one valid-JSON arg, not split across list items.
+    override = args[args.index("--hf-overrides") + 1]
+    assert json.loads(override) == {"architectures": ["ColBERTModernBertModel"]}
+    env = {e["name"]: e.get("value") for e in container.get("env", [])}
+    assert "MODEL_NAME" not in env
 
 
 def test_default_inference_service_urls_contains_colbert_pylate_and_denseon():
@@ -138,32 +148,37 @@ def test_enabling_code_adds_to_url_map():
     }
 
 
-def test_switching_colbert_pylate_to_vllm_does_not_affect_code():
-    """Flipping one service's engine must not affect another."""
+def test_overriding_one_service_model_does_not_affect_another():
+    """Overriding one service's model must not bleed into a sibling pod."""
     docs = _render(
         "inference.code_colbert_pylate.enabled=true",
-        "inference.colbert_pylate.engine=vllm",
         "inference.colbert_pylate.model=lightonai/Reason-ModernColBERT",
     )
     deps = _inference_deployments(docs)
-    colbert_image = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0][
-        "image"
+    colbert_args = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0][
+        "args"
     ]
-    code_image = deps["code_colbert_pylate"]["spec"]["template"]["spec"]["containers"][
+    code_args = deps["code_colbert_pylate"]["spec"]["template"]["spec"]["containers"][
         0
-    ]["image"]
-    assert colbert_image.startswith("vllm/vllm-openai-cpu")
-    assert code_image.startswith("cogniverse/pylate")
+    ]["args"]
+    assert "lightonai/Reason-ModernColBERT" in colbert_args
+    assert "lightonai/LateOn" not in colbert_args
+    assert "lightonai/LateOn-Code-edge" in code_args
+    assert "lightonai/Reason-ModernColBERT" not in code_args
 
 
-def test_pylate_container_env_pins_model_and_device():
-    docs = _render("inference.colbert_pylate.model=lightonai/LateOn-Code-edge")
-    deps = _inference_deployments(docs)
-    container = deps["colbert_pylate"]["spec"]["template"]["spec"]["containers"][0]
-    env = {e["name"]: e["value"] for e in container["env"]}
-    assert env["MODEL_NAME"] == "lightonai/LateOn-Code-edge"
-    assert env["DEVICE"] == "cpu"
-    assert env["PORT"] == "8000"
+def test_default_denseon_serves_via_vllm_embed():
+    """Default denseon service serves DenseOn via vLLM's dense embed runner."""
+    deps = _inference_deployments(_render())
+    container = deps["denseon"]["spec"]["template"]["spec"]["containers"][0]
+    assert container["image"].startswith("vllm/vllm-openai")
+    args = container["args"]
+    assert "lightonai/DenseOn" in args
+    assert "serve" in args
+    assert "--convert" in args and args[args.index("--convert") + 1] == "embed"
+    assert "--hf-overrides" not in args  # dense, no multi-vector arch override
+    env = {e["name"]: e.get("value") for e in container.get("env", [])}
+    assert "MODEL_NAME" not in env
 
 
 def test_disabling_colbert_pylate_drops_service_and_url():

@@ -180,25 +180,26 @@ inference:
         cpu: "4"
         memory: "40Gi"
 
-  # Pylate sidecars (colbert/code_colbert/denseon) — the cogniverse/pylate
-  # image is built with rocm-flavoured torch when
-  # ``detect_torch_backend()`` returns rocm at build time, so the wheels
-  # in the running pod can drive the GPU directly. Setting ``device: rocm``
-  # gates the chart's amd.com/gpu resource limit + nodeSelector +
-  # /dev/kfd hostPath mount on the inference pod template.
+  # LateOn / LateOn-Code / DenseOn served by vLLM on the ROCm iGPU.
+  # ``device: rocm`` gates the chart's amd.com/gpu resource limit +
+  # nodeSelector + /dev/kfd hostPath mount on the inference pod template;
+  # ``imagesByDevice`` points the pod at the ROCm vLLM image.
   colbert_pylate:
     enabled: true
     device: rocm
     gpuCount: 1
+    imagesByDevice: *vllmRocmImage
 
   code_colbert_pylate:
     device: rocm
     gpuCount: 1
+    imagesByDevice: *vllmRocmImage
 
   denseon:
     enabled: true
     device: rocm
     gpuCount: 1
+    imagesByDevice: *vllmRocmImage
 
 runtime:
   # Explicit backend selection so BOTH the runtime Deployment and the

@@ -12,9 +12,7 @@
 # cluster still works without this file.
 #
 # Image tags below assume you have built and pushed:
-#   - cogniverse/colpali:dev-cuda   (PyTorch CUDA base + colpali-engine)
-#   - cogniverse/pylate:0.1.0-cuda  (PyTorch CUDA base + pylate)
-#   - rocm/vllm                     (use vllm/vllm-openai for CUDA, see llm)
+#   - vllm/vllm-openai              (CUDA vLLM image for embedding + chat)
 # Build recipes live under deploy/<component>/Dockerfile.cuda. Adjust
 # repository/tag to match your registry.
 
@@ -53,12 +51,11 @@ inference:
     device: cuda
     gpuCount: 1
     replicaCount: 3
-    pylate:
-      imagesByDevice:
-        cuda:
-          repository: cogniverse/pylate
-          tag: 0.1.0-cuda
-          pullPolicy: IfNotPresent
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: latest
+        pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: "4"

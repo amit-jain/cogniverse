@@ -68,30 +68,19 @@ inference:
   # variant matching the host's hardware budget.
   vllm_asr:
     enabled: true
-  # Dev override: use locally-built pylate image for the default text pod.
+  # Dev override: expose the LateOn text pod on a NodePort. Engine is
+  # vllm_token_embed (base values), served by the CPU vLLM image.
   colbert_pylate:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
-  # Dev override for the code-search pylate pod (disabled by default).
+  # Dev override for the code-search pod (disabled by default).
   code_colbert_pylate:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
-  # Dev override for the dense-mode pylate pod (denseon).
+  # Dev override for the DenseOn dense-embedding pod.
   denseon:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
 
 vespa:
   replicaCount: 1
