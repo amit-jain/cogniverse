@@ -67,6 +67,7 @@ cogniverse_core/
 │   ├── federation.py            # FederationService (org-trunk + tenant overlays, cross-tenant ACLs)
 │   ├── pinning.py               # PinService, PinQuotas, PinRecord
 │   ├── lifecycle_scheduler.py   # LifecycleScheduler (schema-driven periodic cleanup)
+│   ├── mem0_embedder.py         # DenseOnMem0Embedder (DenseOn prompt + L2-norm adapter for Mem0)
 │   ├── backend_config.py        # Memory backend configuration
 │   └── backend_vector_store.py  # Vector store integration
 ├── common/                      # Shared utilities
@@ -566,6 +567,19 @@ memory.delete_memory(
     agent_name="search_agent"
 )
 ```
+
+#### DenseOn embedder adapter
+
+The manager configures Mem0's embedder with the `cogniverse_denseon`
+provider (`memory/mem0_embedder.py`), not Mem0's stock `openai` provider.
+`DenseOnMem0Embedder` wraps `RemoteOpenAIEmbedder` so the DenseOn
+sentence-transformers prompt prefix (`query: ` / `document: `) and
+`normalize_embeddings=True` that the model ships with are restored
+client-side over `/v1/embeddings`. Mem0's `memory_action` selects the
+prompt: `search` embeds a query, `add`/`update` (and any unspecified
+action) embed a document. Without this adapter, stored memory vectors
+would silently change value and drift Mem0's `closeness` ranking against
+existing `agent_memories` rows.
 
 ### Federation: org trunk + tenant overlays (A.5)
 
