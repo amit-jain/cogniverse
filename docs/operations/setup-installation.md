@@ -188,9 +188,11 @@ curl -s http://localhost:8000/health
 Point the agent at it by setting `whisper_endpoint` on
 `AudioAnalysisDeps`. In a Helm-deployed stack the runtime reads it from
 `system_config.inference_service_urls["vllm_asr"]`, populated by the
-chart template `charts/cogniverse/templates/all-resources.yaml` when
-`inference.vllm_asr.enabled=true`
-(`charts/cogniverse/values.yaml`).
+chart template `charts/cogniverse/templates/all-resources.yaml`.
+`inference.vllm_asr.enabled` defaults to `true` in
+`charts/cogniverse/values.yaml` because the default video-ingestion
+profiles hard-require transcription; disable it explicitly only if your
+deployment never ingests video.
 
 For the ingestion side, profiles pick the endpoint by setting
 `inference_services.transcription: "vllm_asr"` at profile level.

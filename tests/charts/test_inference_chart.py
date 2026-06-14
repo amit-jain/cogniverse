@@ -83,15 +83,17 @@ def _service_urls(docs: list[dict]) -> dict[str, str]:
 
 def test_default_runs_colbert_pylate_and_denseon_services():
     """Default-enabled inference services: colbert_pylate (LateOn text
-    multi-vector), denseon (DenseOn dense single-vector), and gliner
-    (zero-shot NER). Mem0 needs denseon for memory embeddings and the
-    slim runtime image excludes torch+gliner, so all three ship enabled
-    by default."""
+    multi-vector), denseon (DenseOn dense single-vector), gliner
+    (zero-shot NER), and vllm_asr (Whisper transcription). Mem0 needs
+    denseon for memory embeddings, the slim runtime image excludes
+    torch+gliner, and the default video-ingestion profiles hard-require
+    vllm_asr for transcription, so all four ship enabled by default."""
     deps = _inference_deployments(_render())
-    assert set(deps.keys()) == {"colbert_pylate", "denseon", "gliner"}
+    assert set(deps.keys()) == {"colbert_pylate", "denseon", "gliner", "vllm_asr"}
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
     assert deps["denseon"]["metadata"]["name"] == "cogniverse-denseon"
     assert deps["gliner"]["metadata"]["name"] == "cogniverse-gliner"
+    assert deps["vllm_asr"]["metadata"]["name"] == "cogniverse-vllm-asr"
 
 
 def test_default_colbert_pylate_serves_lateon_via_vllm():
@@ -118,6 +120,7 @@ def test_default_inference_service_urls_contains_colbert_pylate_and_denseon():
         "colbert_pylate": "http://cogniverse-colbert-pylate:8000",
         "denseon": "http://cogniverse-denseon:8000",
         "gliner": "http://cogniverse-gliner:8080",
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
     }
 
 
@@ -129,6 +132,7 @@ def test_enabling_code_runs_three_parallel_services():
         "colbert_pylate",
         "denseon",
         "gliner",
+        "vllm_asr",
         "code_colbert_pylate",
     }
     assert deps["colbert_pylate"]["metadata"]["name"] == "cogniverse-colbert-pylate"
@@ -145,6 +149,7 @@ def test_enabling_code_adds_to_url_map():
         "code_colbert_pylate": "http://cogniverse-code-colbert-pylate:8000",
         "denseon": "http://cogniverse-denseon:8000",
         "gliner": "http://cogniverse-gliner:8080",
+        "vllm_asr": "http://cogniverse-vllm-asr:8000",
     }
 
 
@@ -197,12 +202,20 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
 
 
-def test_vllm_asr_disabled_by_default():
-    """vllm_asr ships disabled in base values.yaml so a CPU-only install
-    doesn't try to load Whisper; GPU overlays flip it on."""
+def test_vllm_asr_enabled_by_default():
+    """vllm_asr ships enabled in base values.yaml because the default
+    video-ingestion profiles hard-require transcription. Operators that
+    never ingest video can disable it explicitly."""
     deps = _inference_deployments(_render())
+    assert "vllm_asr" in deps
+    assert _service_urls(_render())["vllm_asr"] == "http://cogniverse-vllm-asr:8000"
+
+
+def test_disabling_vllm_asr_drops_service_and_url():
+    docs = _render("inference.vllm_asr.enabled=false")
+    deps = _inference_deployments(docs)
     assert "vllm_asr" not in deps
-    assert "vllm_asr" not in _service_urls(_render())
+    assert "vllm_asr" not in _service_urls(docs)
 
 
 def test_vllm_asr_serves_whisper_turbo_transcription():
