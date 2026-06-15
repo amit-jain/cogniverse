@@ -17,7 +17,7 @@ inference:
     kvCacheGiB: 1
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     extraArgs:
       - "--runner"

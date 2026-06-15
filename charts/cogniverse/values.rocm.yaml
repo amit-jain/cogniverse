@@ -41,7 +41,7 @@ _vllmRocmImage: &vllmRocmImage
     # arch (no per-gfx tag), confirmed working on gfx1151 (Radeon
     # 8060S) via ``rocminfo`` + ``torch.cuda.is_available()``.
     repository: vllm/vllm-openai-rocm
-    tag: v0.20.0
+    tag: v0.23.0
     pullPolicy: IfNotPresent
 
 inference:
@@ -71,24 +71,32 @@ inference:
       - "pooling"
       - "--convert"
       - "embed"
+      # qwen3_vl carries a ViT vision tower; without this vLLM's startup
+      # profiler allocates a worst-case video attention buffer (~144 GiB)
+      # and HIP-OOMs. Tomoro embeds image frames, never native video.
+      - "--limit-mm-per-prompt"
+      - '{"video":0,"image":1}'
       - "--gpu-memory-utilization"
-      # Embedding-only runner: short inputs, no generation, tiny KV
-      # demand. vLLM PINS the full budget at startup (GTT, unswappable),
-      # so an oversized value here is ~6 GiB of RAM no process can use.
-      - "0.12"
+      # The 4B Tomoro weights load at ~9.35 GiB; vLLM PINS the full budget
+      # at startup (GTT, unswappable). 0.20 × 62 ≈ 12 GiB left negative KV
+      # room after weights + ViT-encoder activations ("No available memory
+      # for the cache blocks"). 0.30 × 62 ≈ 18.5 GiB: weights + encoder
+      # activations + a small embedding KV cache, and still fits alongside
+      # llm-student (0.40) + asr (0.16) on the 62 GiB unified pool.
+      - "0.30"
     kvCacheGiB: null
     image: null
     # Strix Halo iGPU: GPU "VRAM" IS system RAM (unified memory). The
     # pod cgroup tracks both, so ``resources.limits.memory`` must cover
     # ``gpu-memory-utilization * 62 GiB`` PLUS the Python/framework
-    # working set. 0.20 × 62 = ~12 GiB GPU + 6 GiB framework = 18 GiB.
+    # working set. 0.30 × 62 = ~18.5 GiB GPU + ~8 GiB framework ≈ 27 GiB.
     resources:
       limits:
         cpu: "4"
-        memory: "20Gi"
+        memory: "28Gi"
       requests:
         cpu: "4"
-        memory: "20Gi"
+        memory: "28Gi"
 
   vllm_asr:
     device: rocm

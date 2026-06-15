@@ -197,9 +197,17 @@ def test_vllm_colpali_serves_tomoro_token_embed():
     docs = _render("inference.vllm_colpali.enabled=true")
     dep = _inference_deployments(docs)["vllm_colpali"]
     c = dep["spec"]["template"]["spec"]["containers"][0]
-    assert c["image"].startswith("vllm/vllm-openai")
-    args = " ".join(c["args"])
+    # Pinned image, not a floating ``latest``: ColQwen3 support landed in
+    # vLLM 0.21, and a stale cached ``latest`` silently serves 0.20 which
+    # fails to load the model.
+    assert c["image"] == "vllm/vllm-openai-cpu:v0.23.0"
+    args = c["args"]
     assert "TomoroAI/tomoro-colqwen3-embed-4b" in args
+    assert args[args.index("--runner") + 1] == "pooling"
+    assert args[args.index("--convert") + 1] == "embed"
+    # qwen3_vl's ViT tower OOMs vLLM's startup profiler on a worst-case
+    # video buffer unless video multimodal input is disabled.
+    assert args[args.index("--limit-mm-per-prompt") + 1] == '{"video":0,"image":1}'
 
 
 def test_vllm_asr_enabled_by_default():
@@ -262,3 +270,42 @@ def test_service_keys_in_url_map_match_deployment_names():
         # cogniverse-<key-kebabcased>
         kebab = key.replace("_", "-")
         assert urls[key].startswith(f"http://cogniverse-{kebab}")
+
+
+def _rendered_chart_config() -> dict:
+    """Parse the config.json the chart renders into the runtime ConfigMap."""
+    docs = _render("runtime.qualityMonitor.tenantId=test-tenant")
+    cm = next(
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and "config.json" in (d.get("data") or {})
+    )
+    return json.loads(cm["data"]["config.json"])
+
+
+def test_chart_config_profiles_match_local_config():
+    """The chart-bundled config.json (what the deployed runtime reads) must
+    carry the SAME backend.profiles as configs/config.json (what local/tests
+    use). Drift here ships a stale model to the cluster and crashes the
+    runtime's validate_inference_services on startup — the colpali-v1.3 vs
+    Tomoro mismatch this test guards against."""
+    local = json.loads((REPO_ROOT / "configs" / "config.json").read_text())
+    chart = _rendered_chart_config()
+    assert chart["backend"]["profiles"] == local["backend"]["profiles"]
+
+
+def test_chart_visual_profiles_serve_tomoro():
+    """Every col* visual profile in the deployed config must bind vllm_colpali
+    to Tomoro ColQwen3 — the model the chart actually serves."""
+    chart = _rendered_chart_config()
+    visual = {
+        "video_colpali_smol500_mv_frame",
+        "image_colpali_mv",
+        "document_visual_colpali",
+        "video_colqwen_omni_mv_chunk_30s",
+    }
+    profiles = chart["backend"]["profiles"]
+    for name in visual:
+        p = profiles[name]
+        assert p["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b", name
+        assert p["inference_services"]["embedding"] == "vllm_colpali", name
