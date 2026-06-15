@@ -156,7 +156,7 @@ def materialise_test_pipeline_config(http_port: int) -> str:
 # (``docker build -t cogniverse/videoprism:dev deploy/videoprism/``).
 # ---------------------------------------------------------------------------
 
-_VLLM_IMAGE = "vllm/vllm-openai-cpu:latest"
+_VLLM_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 _VIDEOPRISM_IMAGE = "cogniverse/videoprism:dev"
 _INFERENCE_SIDECARS = {
     "vllm_colpali": {
@@ -190,6 +190,11 @@ _INFERENCE_SIDECARS = {
             "pooling",
             "--convert",
             "embed",
+            # qwen3_vl's ViT tower makes vLLM's profiler allocate a
+            # worst-case video buffer that OOMs; Tomoro embeds image
+            # frames, never native video. Mirrors the chart deploy args.
+            "--limit-mm-per-prompt",
+            '{"video":0,"image":1}',
             "--gpu-memory-utilization",
             "0.3",
             "--max-model-len",

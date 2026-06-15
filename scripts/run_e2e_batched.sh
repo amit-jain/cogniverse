@@ -66,7 +66,7 @@ BATCH2=(
   # under the in-cluster vLLM — keeping these in batch 2 (after the
   # runtime restart) avoids contention with batch 1's lighter
   # gateway/CRUD set.
-  tests/e2e/test_phase0_helpers_e2e.py
+  tests/e2e/test_conftest_helpers_e2e.py
   tests/e2e/test_knowledge_schema_e2e.py
   tests/e2e/test_provenance_e2e.py
   tests/e2e/test_contradiction_detection_e2e.py

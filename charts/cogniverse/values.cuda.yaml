@@ -34,7 +34,7 @@ inference:
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: latest
+        tag: v0.23.0
         pullPolicy: IfNotPresent
     nodeSelector: {}
     tolerations: []
@@ -54,7 +54,7 @@ inference:
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: latest
+        tag: v0.23.0
         pullPolicy: IfNotPresent
     resources:
       limits:
@@ -73,7 +73,7 @@ inference:
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: latest
+        tag: v0.23.0
         pullPolicy: IfNotPresent
     resources:
       limits:

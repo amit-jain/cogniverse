@@ -33,9 +33,30 @@ from typing import Optional
 
 import requests
 
-DEFAULT_IMAGE = "vllm/vllm-openai-cpu:latest"
+DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
+
+
+def _merge_serve_args(model: str, extra_args: Optional[list[str]]) -> list[str]:
+    """``extra_args`` plus serving defaults the deploy chart also applies.
+
+    - ``--gpu-memory-utilization 0.10`` when unset (CPU vLLM budgets host RAM
+      from this; the default 0.92 aborts on a loaded test host).
+    - ``--limit-mm-per-prompt {"video":0,"image":1}`` for qwen3_vl (Tomoro
+      ColQwen3): its ViT vision tower makes vLLM's startup profiler allocate a
+      worst-case video attention buffer and OOM. Tomoro embeds image frames,
+      never native video. Mirrors ``charts/.../values*.yaml`` so the sidecar
+      exercises the real serving config.
+    """
+    merged = list(extra_args or [])
+    if not any(a == "--gpu-memory-utilization" for a in merged):
+        merged.extend(["--gpu-memory-utilization", "0.10"])
+    if "colqwen3" in model.lower() and not any(
+        a == "--limit-mm-per-prompt" for a in merged
+    ):
+        merged.extend(["--limit-mm-per-prompt", '{"video":0,"image":1}'])
+    return merged
 
 
 def _free_port() -> int:
@@ -144,10 +165,7 @@ class VllmSidecarFactory:
         if os.path.isdir(HOST_HF_CACHE):
             cmd.extend(["-v", f"{HOST_HF_CACHE}:/root/.cache/huggingface"])
         cmd.extend([image, "--model", model])
-        merged_args = list(extra_args or [])
-        if not any(arg == "--gpu-memory-utilization" for arg in merged_args):
-            merged_args.extend(["--gpu-memory-utilization", "0.10"])
-        cmd.extend(merged_args)
+        cmd.extend(_merge_serve_args(model, extra_args))
         subprocess.run(cmd, check=True, timeout=60)
 
         base_url = f"http://127.0.0.1:{port}"

@@ -265,7 +265,7 @@
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
-  "colpali_model": "vidore/colpali-v1.3-hf",
+  "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
     "artifacts_path": null,
@@ -544,7 +544,10 @@
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -564,7 +567,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "VLMDescriptionStrategy",
@@ -582,20 +587,26 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
-        "inference_services": {"embedding": "vllm_colpali", "transcription": "vllm_asr"},
+        "inference_services": {
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
+        },
         "schema_config": {
           "schema_name": "video_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "image_colpali_mv": {
         "type": "image",
         "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
         "schema_name": "image_colpali_mv",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": false,
@@ -624,13 +635,15 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colpali",
-        "inference_services": {"embedding": "vllm_colpali"},
+        "inference_services": {
+          "embedding": "vllm_colpali"
+        },
         "schema_config": {
           "schema_name": "image_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "audio_clap_semantic": {
@@ -653,7 +666,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -666,7 +681,10 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
-        "inference_services": {"embedding": "colbert_pylate", "transcription": "vllm_asr"},
+        "inference_services": {
+          "embedding": "colbert_pylate",
+          "transcription": "vllm_asr"
+        },
         "semantic_model": "lightonai/LateOn",
         "schema_config": {
           "schema_name": "audio_content",
@@ -708,11 +726,59 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
-        "inference_services": {"embedding": "colbert_pylate"},
+        "inference_services": {
+          "embedding": "colbert_pylate"
+        },
         "schema_config": {
           "schema_name": "document_text",
           "embedding_dim": 128,
           "binary_dim": 16
+        }
+      },
+      "document_visual_colpali": {
+        "type": "document",
+        "description": "Document page-as-image ColPali multi-vector embeddings (128-dim per patch). Renders PDF pages to images.",
+        "schema_name": "document_visual",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
+        "pipeline_config": {
+          "extract_keyframes": false,
+          "transcribe_audio": false,
+          "generate_descriptions": false,
+          "generate_embeddings": true
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "DocumentVisualSegmentationStrategy",
+            "params": {
+              "max_files": 10000,
+              "dpi": 150
+            }
+          },
+          "transcription": {
+            "class": "NoTranscriptionStrategy",
+            "params": {}
+          },
+          "description": {
+            "class": "NoDescriptionStrategy",
+            "params": {}
+          },
+          "embedding": {
+            "class": "DocumentVisualEmbeddingStrategy",
+            "params": {}
+          }
+        },
+        "embedding_type": "multi_vector",
+        "model_loader": "colpali",
+        "inference_services": {
+          "embedding": "vllm_colpali"
+        },
+        "schema_config": {
+          "schema_name": "document_visual",
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "lateon_mv": {
@@ -748,7 +814,9 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
-        "inference_services": {"embedding": "colbert_pylate"},
+        "inference_services": {
+          "embedding": "colbert_pylate"
+        },
         "schema_config": {
           "schema_name": "lateon_mv",
           "embedding_dim": 128,
@@ -759,8 +827,11 @@
         "type": "video",
         "description": "ColQwen2 visual document retrieval served by the cogniverse/colpali sidecar. 128-dim per-patch multi-vector embeddings.",
         "schema_name": "video_colqwen_omni_mv_chunk_30s",
-        "embedding_model": "vidore/colqwen2-v1.0",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "process_type": "video_chunks",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": false,
           "transcribe_audio": true,
@@ -778,7 +849,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -791,7 +864,10 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colqwen",
-        "inference_services": {"embedding": "vllm_colqwen", "transcription": "vllm_asr"},
+        "inference_services": {
+          "embedding": "vllm_colpali",
+          "transcription": "vllm_asr"
+        },
         "model_specific": {
           "max_patches": 1024,
           "segment_duration": 30.0,
@@ -809,8 +885,8 @@
           "schema_name": "video_colqwen_omni_mv_chunk_30s",
           "model_name": "ColQwen2",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
@@ -835,7 +911,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -848,7 +926,10 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
-        "inference_services": {"embedding": "videoprism_jax"},
+        "inference_services": {
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
+        },
         "model_specific": {
           "segment_duration": 30.0,
           "sampling_fps": 1.0,
@@ -860,7 +941,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colpali-v1.3-hf"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_base_mv_chunk_30s",
@@ -892,7 +973,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -905,7 +988,10 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "videoprism",
-        "inference_services": {"embedding": "videoprism_jax"},
+        "inference_services": {
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
+        },
         "model_specific": {
           "segment_duration": 30.0,
           "sampling_fps": 1.0,
@@ -917,7 +1003,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colpali-v1.3-hf"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_large_mv_chunk_30s",
@@ -952,7 +1038,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -965,7 +1053,10 @@
         },
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
-        "inference_services": {"embedding": "videoprism_jax"},
+        "inference_services": {
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
+        },
         "model_specific": {
           "chunk_duration": 6.0,
           "chunk_overlap": 1.0,
@@ -1011,7 +1102,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {"model": "base"}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -1024,7 +1117,10 @@
         },
         "embedding_type": "single_vector",
         "model_loader": "videoprism",
-        "inference_services": {"embedding": "videoprism_jax"},
+        "inference_services": {
+          "embedding": "videoprism_jax",
+          "transcription": "vllm_asr"
+        },
         "model_specific": {
           "chunk_duration": 6.0,
           "chunk_overlap": 1.0,
@@ -1083,7 +1179,9 @@
         },
         "embedding_type": "multi_vector",
         "model_loader": "colbert",
-        "inference_services": {"embedding": "code_colbert_pylate"},
+        "inference_services": {
+          "embedding": "code_colbert_pylate"
+        },
         "schema_config": {
           "schema_name": "code_lateon_mv",
           "model_name": "LateOn-Code-edge",

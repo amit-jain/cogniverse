@@ -698,7 +698,7 @@ llm:
   vllm:
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     # Per-device image override; chart picks ``imagesByDevice[device]`` if
     # present, else falls back to ``image`` above. Set in values.cuda.yaml /
@@ -784,7 +784,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vLLM 0.20+ retired the ``--task token_embed`` flag in favour of
@@ -800,6 +800,11 @@ inference:
       - "pooling"
       - "--convert"
       - "embed"
+      # qwen3_vl carries a ViT vision tower; without this vLLM's startup
+      # profiler allocates a worst-case video attention buffer and OOMs.
+      # Tomoro embeds image frames, never native video.
+      - "--limit-mm-per-prompt"
+      - '{"video":0,"image":1}'
     # ``VLLM_CPU_KVCACHE_SPACE`` (GiB) is the CPU equivalent of
     # ``--gpu-memory-utilization``: it sets the absolute size of the
     # KV cache instead of a fraction of node memory. The fraction
@@ -864,7 +869,7 @@ inference:
       nodePort: 29002
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
@@ -920,7 +925,7 @@ inference:
       nodePort: 29004
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
@@ -976,7 +981,7 @@ inference:
       nodePort: 29006
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vllm_embed renders ``--dtype {{ .dtype }}``; float32 keeps the
@@ -1134,7 +1139,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # ``--max-model-len`` is dropped from Gemma 4 native (262144) to
@@ -1250,7 +1255,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vLLM 0.20+ replaced ``--task transcription`` with the implicit
@@ -1319,7 +1324,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     extraArgs:
