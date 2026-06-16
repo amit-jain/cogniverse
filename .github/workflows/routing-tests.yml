@@ -147,7 +147,7 @@ jobs:
         MOCK_LLM_RESPONSES: "true"
         COVERAGE_FILE: .coverage
       run: |
-        uv run python -m pytest tests/routing/integration \
+        uv run --no-sync python -m pytest tests/routing/integration \
           -m "integration and not local_only" \
           --cov=libs/agents/cogniverse_agents/routing \
           --cov-report=term-missing \
