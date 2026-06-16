@@ -1386,7 +1386,7 @@ def shared_vespa():
             "--platform",
             docker_platform,
             "--oom-score-adj=-1000",
-            "vespaengine/vespa",
+            "vespaengine/vespa:8.668.5",
         ],
         capture_output=True,
         text=True,
