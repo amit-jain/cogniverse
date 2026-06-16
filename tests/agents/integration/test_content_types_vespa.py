@@ -92,7 +92,7 @@ def test_vespa_manager():
             f"{config_port}:19071",
             "--platform",
             docker_platform,
-            "vespaengine/vespa",
+            "vespaengine/vespa:8.668.5",
         ],
         capture_output=True,
         timeout=60,

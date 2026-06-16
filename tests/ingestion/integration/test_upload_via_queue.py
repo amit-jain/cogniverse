@@ -320,7 +320,7 @@ def vespa_backend():
             f"{config_port}:19071",
             "--platform",
             docker_platform,
-            "vespaengine/vespa",
+            "vespaengine/vespa:8.668.5",
         ],
         capture_output=True,
         text=True,
