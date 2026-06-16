@@ -219,7 +219,7 @@ jobs:
         # pytest exit 5 = no tests collected; ``ci_fast`` markers may be
         # absent after test restructures, so treat that as success rather
         # than a red build. Real failures still fail.
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest tests/agents/integration/ \
           -m ci_fast \
           -v \
           --tb=short \

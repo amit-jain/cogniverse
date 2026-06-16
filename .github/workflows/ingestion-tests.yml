@@ -212,7 +212,7 @@ jobs:
         COVERAGE_FILE: .coverage
       run: |
         # Tests manage their own Vespa containers via fixtures
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/ingestion/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short \
