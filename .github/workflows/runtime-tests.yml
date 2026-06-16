@@ -163,7 +163,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 25
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short

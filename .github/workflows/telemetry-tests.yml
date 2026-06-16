@@ -173,7 +173,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 8
       run: |
-        uv run python -m pytest \
+        uv run --no-sync python -m pytest \
           tests/telemetry/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short
