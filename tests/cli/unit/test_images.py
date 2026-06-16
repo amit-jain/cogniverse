@@ -29,10 +29,10 @@ class TestBuildImages:
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(self, mock_run: object) -> None:
         """One docker build per cogniverse-owned image: backend-specific
-        runtime + dashboard (TORCH_BACKEND build-arg). ColPali, Whisper, and
-        the LateOn/DenseOn text embedders are now served by vLLM
-        (vllm/vllm-openai-cpu) and pulled directly by k3d, so no local build
-        is needed for them."""
+        runtime + dashboard (TORCH_BACKEND build-arg) plus the backend-agnostic
+        GLiNER sidecar. ColPali, Whisper, and the LateOn/DenseOn text embedders
+        are now served by vLLM (vllm/vllm-openai-cpu) and pulled directly by
+        k3d, so no local build is needed for them."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -43,8 +43,9 @@ class TestBuildImages:
         assert tags == [
             "cogniverse/runtime-cpu:dev",
             "cogniverse/dashboard-cpu:dev",
+            "cogniverse/gliner:dev",
         ]
-        assert mock_run.call_count == 2  # type: ignore[attr-defined]
+        assert mock_run.call_count == 3  # type: ignore[attr-defined]
 
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
             cmd = call[0][0]
@@ -72,12 +73,11 @@ class TestBuildImages:
         assert "cogniverse/dashboard-rocm:dev" in dashboard_cmd
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_builds_only_runtime_and_dashboard(
-        self, mock_run: object
-    ) -> None:
-        """LateOn/DenseOn are served by stock vLLM now — the retired pylate
-        sidecar image must never be built again. Only the runtime and
-        dashboard images are cogniverse-owned builds."""
+    def test_build_images_builds_gliner_not_pylate(self, mock_run: object) -> None:
+        """GLiNER (pullPolicy: Never in the chart) MUST be built+imported by
+        ``up`` or its pod ErrImageNeverPulls on a fresh deploy. The retired
+        pylate sidecar must never be built again. GLiNER takes no
+        TORCH_BACKEND arg and builds from its own ``deploy/gliner`` context."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -87,12 +87,18 @@ class TestBuildImages:
         assert built == [
             "cogniverse/runtime-cpu:dev",
             "cogniverse/dashboard-cpu:dev",
+            "cogniverse/gliner:dev",
         ]
-        assert mock_run.call_count == 2  # type: ignore[attr-defined]
+        assert mock_run.call_count == 3  # type: ignore[attr-defined]
         all_cmds = [
             call[0][0]
             for call in mock_run.call_args_list  # type: ignore[attr-defined]
         ]
+        # GLiNER is built from deploy/gliner/Dockerfile with NO TORCH_BACKEND.
+        gliner_cmd = next(c for c in all_cmds if "cogniverse/gliner:dev" in c)
+        assert "deploy/gliner/Dockerfile" in gliner_cmd
+        assert "deploy/gliner" in gliner_cmd
+        assert not any(a.startswith("TORCH_BACKEND=") for a in gliner_cmd)
         for cmd in all_cmds:
             assert "deploy/pylate/Dockerfile" not in cmd
             assert "cogniverse/pylate:dev" not in cmd
