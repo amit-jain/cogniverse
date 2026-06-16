@@ -941,10 +941,13 @@ def _cleanup_test_tenants() -> None:
         if tid and any(tid.startswith(p) for p in _TEST_TENANT_PREFIXES):
             tenants_seen.add(tid)
 
-    # Delete concurrently with a total budget so a large backlog can't hang
-    # session setup/teardown (each delete undeploys a Vespa schema, which is
-    # slow; sequentially, hundreds of accumulated test tenants take hours).
-    # What isn't reaped this run is picked up by the next sweep.
+    # Delete serially (one worker) under a total budget. Each delete undeploys
+    # a Vespa schema, which redeploys the WHOLE application package; concurrent
+    # undeploys race on that shared package rebuild — the loser sees a stale
+    # survivor set and Vespa rejects it ("services.xml does not exist" /
+    # "schema-removal ... loss of all data"). Serial avoids the race; the
+    # budget keeps a large backlog from hanging setup/teardown, and what isn't
+    # reaped this run is picked up by the next sweep.
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _delete_one(tid: str) -> None:
@@ -955,7 +958,7 @@ def _cleanup_test_tenants() -> None:
             print(f"Cleanup failed for tenant {tid}: {exc}")
 
     sweep_deadline = _t.monotonic() + 180.0
-    pool = ThreadPoolExecutor(max_workers=8)
+    pool = ThreadPoolExecutor(max_workers=1)
     try:
         futures = [pool.submit(_delete_one, tid) for tid in sorted(tenants_seen)]
         for _fut in as_completed(futures):
