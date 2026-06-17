@@ -110,7 +110,7 @@ jobs:
 
   integration-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     needs: unit-tests
 
     steps:
@@ -141,8 +141,14 @@ jobs:
         sudo docker image prune -af
         df -h
 
+    - name: Pre-pull Vespa + vLLM Docker images
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        docker pull vllm/vllm-openai-cpu:v0.23.0
+        df -h
+
     - name: Run routing integration tests
-      timeout-minutes: 15
+      timeout-minutes: 25
       env:
         MOCK_LLM_RESPONSES: "true"
         COVERAGE_FILE: .coverage
