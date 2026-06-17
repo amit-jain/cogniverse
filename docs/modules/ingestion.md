@@ -531,7 +531,7 @@ sequenceDiagram
 - **Direct Video** (`multi_vector`): VideoPrism single global embedding
 - **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
 - **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
-- **Document Visual ColPali** (`multi_vector`): ColPali 128-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
+- **Document Visual ColPali** (`multi_vector`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
 - **Audio Dual** (`multi_vector`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
@@ -882,7 +882,7 @@ profile_config = {
         },
         "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
-            "params": {"model_name": "vidore/colpali-v1.3-hf"}
+            "params": {"model_name": "TomoroAI/tomoro-colqwen3-embed-4b"}
         }
     }
 }
@@ -1184,11 +1184,11 @@ strategy = VLMDescriptionStrategy(
 
 **Parameters**:
 
-- `model_name`: Embedding model (e.g., "vidore/colpali-v1.3-hf")
+- `model_name`: Embedding model (e.g., "TomoroAI/tomoro-colqwen3-embed-4b")
 
 **Usage**:
 ```python
-strategy = MultiVectorEmbeddingStrategy(model_name="vidore/colpali-v1.3-hf")
+strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 ```
 
 **Custom Method**:
@@ -1418,7 +1418,7 @@ class VideoSegment:
    ↓
 6. EMBEDDING GENERATION (MultiVectorEmbeddingStrategy)
    • EmbeddingGeneratorImpl.generate_embeddings()
-   • Model: ColPali (vidore/colpali-v1.3-hf)
+   • Model: ColPali (TomoroAI/tomoro-colqwen3-embed-4b)
    • Processing:
      - Load keyframe images (150 images)
      - Batch inference (batch_size=8)
@@ -1541,7 +1541,7 @@ video_processing_profiles:
       embedding:
         class: "MultiVectorEmbeddingStrategy"
         params:
-          model_name: "vidore/colpali-v1.3-hf"
+          model_name: "TomoroAI/tomoro-colqwen3-embed-4b"
 ```
 
 ### Example 2: Batch Processing with Concurrency
@@ -1688,7 +1688,7 @@ video_colqwen_omni_mv_chunk_30s:
     embedding:
       class: "MultiVectorEmbeddingStrategy"
       params:
-        model_name: "vidore/colqwen2-v1.0"
+        model_name: "TomoroAI/tomoro-colqwen3-embed-4b"
 ```
 
 ### Example 5: Custom Strategy Configuration
@@ -1720,7 +1720,7 @@ async def ingest_with_custom_strategy():
             },
             "embedding": {
                 "class": "MultiVectorEmbeddingStrategy",
-                "params": {"model_name": "vidore/colpali-v1.3-hf"}
+                "params": {"model_name": "TomoroAI/tomoro-colqwen3-embed-4b"}
             }
         }
     }

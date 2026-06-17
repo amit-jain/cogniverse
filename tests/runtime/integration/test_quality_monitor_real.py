@@ -34,7 +34,7 @@ from tests.utils.llm_config import get_llm_base_url, get_llm_model
 
 logger = logging.getLogger(__name__)
 
-COLPALI_MODEL_NAME = "vidore/colpali-v1.3-hf"
+COLPALI_MODEL_NAME = "TomoroAI/tomoro-colqwen3-embed-4b"
 # Schema name follows the canonicalize-then-replace-colons rule the
 # ``SchemaRegistry.deploy_schema`` path uses: ``qm_real_test`` →
 # canonical ``qm_real_test:qm_real_test`` → schema-safe

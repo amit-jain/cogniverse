@@ -363,9 +363,18 @@ class Mem0MemoryManager:
             "temperature": 0.1,
         }
 
-        # The embedder always speaks Mem0's openai provider against the
-        # denseon sidecar's /v1/embeddings endpoint. Independent of the
-        # LLM provider — they're different pods serving different models.
+        # The embedder targets DenseOn's /v1/embeddings endpoint, independent
+        # of the LLM provider (different pods, different models). Route through
+        # the cogniverse DenseOn adapter rather than Mem0's stock openai
+        # embedder so the sentence-transformers prompt prefix + L2-normalization
+        # the pylate sidecar applied are restored client-side; otherwise stored
+        # memory vectors drift against existing agent_memories rows.
+        from cogniverse_core.memory.mem0_embedder import (
+            DENSEON_PROVIDER,
+            register_denseon_provider,
+        )
+
+        register_denseon_provider()
         embedder_url = embedder_base_url.rstrip("/")
         if not embedder_url.endswith("/v1"):
             embedder_url = f"{embedder_url}/v1"
@@ -392,7 +401,7 @@ class Mem0MemoryManager:
                 "config": llm_provider_config,
             },
             "embedder": {
-                "provider": "openai",
+                "provider": DENSEON_PROVIDER,
                 "config": embedder_provider_config,
             },
             "vector_store": {

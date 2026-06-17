@@ -354,8 +354,8 @@ Each embedding profile has its own Vespa schema file. The schema name matches th
     "name": "video_colpali_smol500_mv_frame",
     "fields": [
       {"name": "video_id", "type": "string", ...},
-      {"name": "embedding", "type": "tensor<bfloat16>(patch{}, v[128])", ...},
-      {"name": "embedding_binary", "type": "tensor<int8>(patch{}, v[16])", ...}
+      {"name": "embedding", "type": "tensor<bfloat16>(patch{}, v[320])", ...},
+      {"name": "embedding_binary", "type": "tensor<int8>(patch{}, v[40])", ...}
     ]
   },
   "rank_profiles": [

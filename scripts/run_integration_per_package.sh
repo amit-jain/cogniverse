@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run integration tests one package at a time, each in its own pytest
 # (so the Python process exits between packages and the OS reclaims
-# every byte — shared_vespa stays bounded, ColPali/pylate/Mem0 model
+# every byte — shared_vespa stays bounded, ColPali/LateOn/Mem0 model
 # weights don't accumulate across packages, K3s gateway and Ollama
 # clients don't leak singletons across the session).
 #

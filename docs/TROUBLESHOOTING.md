@@ -189,7 +189,7 @@ Expected 768 values, got 1024
 **Solution:**
 
 - Check schema embedding dimension matches model:
-  - ColPali: Multi-vector format with 128-dim patches (float) or 16-dim (binary): `tensor<bfloat16>(patch{}, v[128])`
+  - ColPali (Tomoro ColQwen3): Multi-vector format with 320-dim patches (float) or 40-dim (binary): `tensor<bfloat16>(patch{}, v[320])`
   - VideoPrism base: 768-dim single vector: `tensor<float>(x[768])`
   - VideoPrism large: 1024-dim single vector: `tensor<float>(x[1024])`
 
@@ -198,7 +198,7 @@ Expected 768 values, got 1024
 cat configs/schemas/video_colpali_smol500_mv_frame_schema.json | grep -A2 '"embedding"'
 
 # Embeddings use tensor type definitions with dimensions specified in brackets
-# Example: tensor<bfloat16>(patch{}, v[128]) means multi-vector with 128-dim patches
+# Example: tensor<bfloat16>(patch{}, v[320]) means multi-vector with 320-dim patches
 ```
 
 ### Search Returns No Results
@@ -326,7 +326,7 @@ OSError: Unable to load weights from pytorch checkpoint
 rm -rf ~/.cache/huggingface/hub
 
 # Download model explicitly
-python -c "from transformers import AutoModel; AutoModel.from_pretrained('vidore/colpali-v1.3-hf')"
+python -c "from transformers import AutoModel; AutoModel.from_pretrained('TomoroAI/tomoro-colqwen3-embed-4b')"
 
 # Check disk space
 df -h

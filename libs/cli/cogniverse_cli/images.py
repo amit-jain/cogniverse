@@ -22,10 +22,12 @@ DASHBOARD_TAGS_BY_BACKEND = {
     "cuda": "cogniverse/dashboard-cuda:dev",
     "rocm": "cogniverse/dashboard-rocm:dev",
 }
-PYLATE_TAG = "cogniverse/pylate:dev"
-# colpali and whisper are no longer built by us — vLLM serves both:
-# vidore/colpali-v1.3-hf via inference.vllm_colpali (vllm/vllm-openai-cpu)
+# colpali, whisper, and the LateOn/DenseOn text embedders are no longer
+# built by us — vLLM serves them all:
+# TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
 # openai/whisper-large-v3-turbo via inference.vllm_asr (vllm/vllm-openai-cpu)
+# lightonai/LateOn + lightonai/DenseOn via inference.colbert_pylate / denseon
+# (vllm_token_embed / vllm_embed engines on vllm/vllm-openai-cpu)
 # Operators pull vllm/vllm-openai-cpu (or per-device variants) directly.
 
 
@@ -92,9 +94,9 @@ def build_images(
     """Build all cogniverse-owned Docker images.
 
     Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected via ``detect_torch_backend()`` when None). The pylate
-    inference sidecar is always built. ColPali and Whisper are now
-    served via vLLM (vllm/vllm-openai-cpu) and pulled directly by k3d.
+    (auto-detected via ``detect_torch_backend()`` when None). ColPali,
+    Whisper, and the LateOn/DenseOn text embedders are now served via
+    vLLM (vllm/vllm-openai-cpu) and pulled directly by k3d.
     """
     backend = torch_backend or detect_torch_backend()
     runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
@@ -104,8 +106,6 @@ def build_images(
     workspace_builds = [
         (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
         (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
-        # Pass TORCH_BACKEND so the pylate sidecar wheel matches the host.
-        (PYLATE_TAG, "deploy/pylate/Dockerfile", ".", backend_arg),
     ]
     built: list[str] = []
     for tag, dockerfile, context, extra_args in workspace_builds:
@@ -158,7 +158,7 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
         _add_image(values.get("llm", {}).get("builtin", {}).get("image"))
 
     # Mirror the chart's image-resolution order:
-    # imagesByDevice[device] -> image -> pylate.imagesByDevice -> pylate.image
+    # imagesByDevice[device] -> image
     inference = values.get("inference", {}) or {}
     for svc_cfg in inference.values():
         if not isinstance(svc_cfg, dict):
@@ -170,12 +170,6 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
         if device and device in by_device:
             _add_image(by_device.get(device))
         _add_image(svc_cfg.get("image"))
-        pylate = svc_cfg.get("pylate") or {}
-        if isinstance(pylate, dict):
-            pylate_by_device = pylate.get("imagesByDevice") or {}
-            if device and device in pylate_by_device:
-                _add_image(pylate_by_device.get(device))
-            _add_image(pylate.get("image"))
 
     seen: set[str] = set()
     unique: list[str] = []

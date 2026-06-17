@@ -30,6 +30,14 @@ TextsT = Union[str, List[str]]
 _DEFAULT_LOCAL_MODEL = "sentence-transformers/all-mpnet-base-v2"
 _DEFAULT_REMOTE_MODEL = "lightonai/DenseOn"
 
+# DenseOn's config_sentence_transformers.json carries
+# prompts={"query": "query: ", "document": "document: "} and the pylate
+# sidecar always applied them plus normalize_embeddings=True. Stock vLLM
+# /v1/embeddings applies neither, so the remote path must restore both
+# client-side or every stored memory vector silently drifts.
+_DENSEON_QUERY_PROMPT = "query: "
+_DENSEON_DOCUMENT_PROMPT = "document: "
+
 
 class SemanticEmbedder:
     """Common interface mirroring SentenceTransformer's ``encode``.
@@ -40,7 +48,9 @@ class SemanticEmbedder:
       call-site compatibility; backends always return ``np.ndarray``.
     """
 
-    def encode(self, texts: TextsT, **kwargs) -> np.ndarray:  # pragma: no cover
+    def encode(
+        self, texts: TextsT, is_query: bool = False, **kwargs
+    ) -> np.ndarray:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -67,9 +77,17 @@ class LocalSentenceTransformerEmbedder(SemanticEmbedder):
         self._model = SentenceTransformer(model_name)
         self._model_name = model_name
 
-    def encode(self, texts: TextsT, **kwargs) -> np.ndarray:
-        # SentenceTransformer handles single-string + kwargs natively.
-        return self._model.encode(texts, **kwargs)
+    def encode(self, texts: TextsT, is_query: bool = False, **kwargs) -> np.ndarray:
+        # SentenceTransformer reads the model's own prompts from
+        # config_sentence_transformers.json via prompt_name, matching the
+        # query/document prefixes DenseOn ships with.
+        prompt_name = "query" if is_query else "document"
+        try:
+            return self._model.encode(texts, prompt_name=prompt_name, **kwargs)
+        except (ValueError, KeyError):
+            # Models without registered prompts (e.g. all-mpnet-base-v2)
+            # reject prompt_name; fall back to plain encode.
+            return self._model.encode(texts, **kwargs)
 
 
 class RemoteOpenAIEmbedder(SemanticEmbedder):
@@ -82,12 +100,21 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
     runtime points at a dedicated vLLM embed pod or a shared embedding service.
     """
 
-    def __init__(self, base_url: str, model: str, timeout: float = 60.0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout: float = 60.0,
+        query_prompt: str = _DENSEON_QUERY_PROMPT,
+        document_prompt: str = _DENSEON_DOCUMENT_PROMPT,
+    ):
         import requests
 
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout = timeout
+        self._query_prompt = query_prompt
+        self._document_prompt = document_prompt
         self._session = requests.Session()
         logger.info(
             "Remote semantic embedder: %s via %s (model=%s)",
@@ -96,14 +123,20 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
             self._model,
         )
 
-    def encode(self, texts: TextsT, **kwargs) -> np.ndarray:
+    def encode(self, texts: TextsT, is_query: bool = False, **kwargs) -> np.ndarray:
         items, single = _to_list(texts)
         if not items:
             return np.zeros((0, 0), dtype=np.float32)
 
+        # Restore the sentence-transformers prompt prefix the pylate sidecar
+        # applied. Stock vLLM /v1/embeddings does not, so prepend it here so
+        # the stored/queried vectors match the historical DenseOn embeddings.
+        prompt = self._query_prompt if is_query else self._document_prompt
+        prefixed = [f"{prompt}{text}" for text in items]
+
         resp = self._session.post(
             f"{self._base_url}/v1/embeddings",
-            json={"model": self._model, "input": items},
+            json={"model": self._model, "input": prefixed},
             timeout=self._timeout,
         )
         resp.raise_for_status()
@@ -119,11 +152,10 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
         rows = sorted(rows, key=lambda r: r.get("index", 0))
         arr = np.asarray([r["embedding"] for r in rows], dtype=np.float32)
 
-        # Call sites pass ``normalize_embeddings=True`` to match
-        # SentenceTransformer behavior. Some backends don't L2-normalize
-        # their output, so we do it here when requested.
-        if kwargs.get("normalize_embeddings"):
-            arr = _l2_normalize(arr)
+        # DenseOn was always served with normalize_embeddings=True. Stock
+        # vLLM may not normalize, so always L2-normalize here; it is
+        # idempotent on an already-unit vector and safe if vLLM later does.
+        arr = _l2_normalize(arr)
 
         if single:
             return arr[0]

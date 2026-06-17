@@ -61,37 +61,26 @@ inference:
         cpu: "4"
         memory: "16Gi"
 
-  # vLLM-served ASR. Enabling here is environment-level (k3s/dev wants
-  # the sidecar so the deployment-lifecycle e2e exercises the full
-  # chart wiring); the device overlay (values.cpu.yaml /
-  # values.rocm.yaml / values.cuda.yaml) picks the model + image
-  # variant matching the host's hardware budget.
-  vllm_asr:
-    enabled: true
-  # Dev override: use locally-built pylate image for the default text pod.
+  # vLLM-served ASR ships enabled in base values.yaml (the default
+  # video-ingestion profiles hard-require transcription), so the
+  # deployment-lifecycle e2e already exercises the full chart wiring.
+  # The device overlay (values.cpu.yaml / values.rocm.yaml /
+  # values.cuda.yaml) picks the model + image variant matching the
+  # host's hardware budget.
+  #
+  # Dev override: expose the LateOn text pod on a NodePort. Engine is
+  # vllm_token_embed (base values), served by the CPU vLLM image.
   colbert_pylate:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
-  # Dev override for the code-search pylate pod (disabled by default).
+  # Dev override for the code-search pod (disabled by default).
   code_colbert_pylate:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
-  # Dev override for the dense-mode pylate pod (denseon).
+  # Dev override for the DenseOn dense-embedding pod.
   denseon:
     service:
       type: NodePort
-    pylate:
-      image:
-        tag: "dev"
-        pullPolicy: Never
 
 vespa:
   replicaCount: 1

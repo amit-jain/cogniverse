@@ -136,7 +136,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -160,7 +160,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "description": "Full test profile",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "pipeline_config": {"keyframe_fps": 30.0, "transcribe_audio": True},
             "strategies": {
                 "segmentation": {
@@ -192,7 +192,7 @@ class TestProfileAPICRUD:
             "profile_name": "test_missing_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -214,7 +214,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -230,7 +230,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "nonexistent_schema",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -245,7 +245,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -280,7 +280,7 @@ class TestProfileAPICRUD:
                 "type": "video",
                 "description": f"Test profile {i}",
                 "schema_name": "video_test",
-                "embedding_model": "vidore/colsmol-500m",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "embedding_type": "multi_vector",
             }
             response = test_client.post("/admin/profiles", json=profile_data)
@@ -319,7 +319,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "description": "Test get profile",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "pipeline_config": {"keyframe_fps": 30.0},
             "strategies": {"segmentation": {"class": "FrameSegmentationStrategy"}},
             "embedding_type": "multi_vector",
@@ -349,7 +349,7 @@ class TestProfileAPICRUD:
         assert data["type"] == "video"
         assert data["description"] == "Test get profile"
         assert data["schema_name"] == "video_test"
-        assert data["embedding_model"] == "vidore/colsmol-500m"
+        assert data["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b"
         assert data["pipeline_config"] == {"keyframe_fps": 30.0}
         assert data["strategies"] == {
             "segmentation": {"class": "FrameSegmentationStrategy"}
@@ -375,7 +375,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "description": "Original description",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "pipeline_config": {"keyframe_fps": 30.0},
             "embedding_type": "multi_vector",
         }
@@ -425,7 +425,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -456,7 +456,7 @@ class TestProfileAPICRUD:
             "tenant_id": "test_tenant",
             "type": "video",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -498,7 +498,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "description": "Tenant 1 profile",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -512,7 +512,7 @@ class TestProfileAPICRUD:
             "type": "video",
             "description": "Tenant 2 profile",
             "schema_name": "video_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
         }
 
@@ -701,7 +701,7 @@ class TestProfileAPISchemaDeployment:
             "tenant_id": "deploy_tenant",
             "type": "video",
             "schema_name": "video_deploy_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
@@ -722,7 +722,7 @@ class TestProfileAPISchemaDeployment:
             "tenant_id": "deploy_tenant",
             "type": "video",
             "schema_name": "video_deploy_test3",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "deploy_schema": False,
         }
@@ -763,7 +763,7 @@ class TestProfileAPISchemaDeployment:
             "tenant_id": tenant_id,
             "type": "video",
             "schema_name": "video_deploy_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
@@ -795,7 +795,7 @@ class TestProfileAPISchemaDeployment:
             "tenant_id": "deploy_tenant",
             "type": "video",
             "schema_name": "video_deploy_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "deploy_schema": True,
         }
@@ -835,7 +835,7 @@ class TestProfileAPISchemaDeployment:
             "type": "video",
             "description": "E2E test profile",
             "schema_name": "video_deploy_test",
-            "embedding_model": "vidore/colsmol-500m",
+            "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
             "embedding_type": "multi_vector",
             "schema_config": {"embedding_dim": 128},
             "deploy_schema": True,

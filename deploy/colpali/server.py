@@ -5,8 +5,8 @@ Response shape matches the ``RemoteInferenceClient.process_images`` contract
 in ``libs/core/cogniverse_core/common/models/model_loaders.py`` — request
 carries base64-encoded images, response returns one multi-vector per image.
 
-Pinned to one model per pod; ``MODEL_NAME`` env var selects it. Same one-pod-
-one-model pattern as ``deploy/pylate``.
+Pinned to one model per pod; ``MODEL_NAME`` env var selects it (one pod
+per model).
 """
 
 from __future__ import annotations

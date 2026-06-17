@@ -51,6 +51,13 @@ jobs:
       with:
         version: "latest"
 
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        sudo docker image prune -af
+        df -h
+
     - name: Install dependencies
       run: |
         uv sync --all-packages --all-extras --no-extra cuda --no-extra rocm
@@ -182,7 +189,7 @@ jobs:
     - name: Run integration tests
       timeout-minutes: 10
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/finetuning/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short

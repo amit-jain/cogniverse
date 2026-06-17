@@ -265,7 +265,7 @@
   "byaldi_index_name": ".byaldi/my_video_index",
   "vlm_endpoint_url": "https://amit-jain--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
   "auto_start_vlm_service": true,
-  "colpali_model": "vidore/colpali-v1.3-hf",
+  "colpali_model": "TomoroAI/tomoro-colqwen3-embed-4b",
   "embedding_model": "lightonai/DenseOn",
   "prompts": {
     "artifacts_path": null,
@@ -544,7 +544,10 @@
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings. Extracts keyframes and generates 128-dim patch embeddings for fine-grained matching.",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -564,7 +567,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "VLMDescriptionStrategy",
@@ -586,15 +591,21 @@
           "schema_name": "video_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "image_colpali_mv": {
         "type": "image",
         "description": "ColPali multi-vector embeddings for image search. Loads images directly and generates 128-dim patch embeddings for fine-grained visual matching.",
         "schema_name": "image_colpali_mv",
-        "embedding_model": "vidore/colsmol-500m",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "model_config": {
+          "token_pool_factor": 3
+        },
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": false,
@@ -627,8 +638,8 @@
           "schema_name": "image_colpali",
           "model_name": "ColPali",
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "audio_clap_semantic": {
@@ -651,7 +662,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -670,6 +683,9 @@
           "acoustic_embedding_dim": 512,
           "semantic_embedding_dim": 128,
           "semantic_binary_dim": 16
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "document_text_semantic": {
@@ -734,7 +750,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -766,6 +784,9 @@
           "num_patches": 1024,
           "embedding_dim": 128,
           "binary_dim": 16
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
@@ -790,7 +811,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -814,7 +837,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colsmol-500m"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_base_mv_chunk_30s",
@@ -822,6 +845,9 @@
           "num_patches": 4096,
           "embedding_dim": 768,
           "binary_dim": 96
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_large_mv_chunk_30s": {
@@ -846,7 +872,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -870,7 +898,7 @@
         "inference_config": {
           "model_type": "videoprism",
           "backend": "auto",
-          "query_encoder": "vidore/colsmol-500m"
+          "query_encoder": "TomoroAI/tomoro-colqwen3-embed-4b"
         },
         "schema_config": {
           "schema_name": "video_videoprism_large_mv_chunk_30s",
@@ -878,6 +906,9 @@
           "num_patches": 2048,
           "embedding_dim": 1024,
           "binary_dim": 128
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_lvt_base_sv_chunk_6s": {
@@ -905,7 +936,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -936,6 +969,9 @@
           "embedding_dim": 768,
           "binary_dim": 96,
           "chunk_based": true
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "video_videoprism_lvt_large_sv_chunk_6s": {
@@ -963,7 +999,9 @@
           },
           "transcription": {
             "class": "AudioTranscriptionStrategy",
-            "params": {}
+            "params": {
+              "model": "openai/whisper-large-v3-turbo"
+            }
           },
           "description": {
             "class": "NoDescriptionStrategy",
@@ -994,6 +1032,9 @@
           "embedding_dim": 1024,
           "binary_dim": 128,
           "chunk_based": true
+        },
+        "inference_services": {
+          "transcription": "vllm_asr"
         }
       },
       "code_lateon_mv": {

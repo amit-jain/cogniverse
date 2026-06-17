@@ -30,8 +30,8 @@ PRE-REQS (the test will fail loudly if any are missing)
 
 * Real face-embed sidecar reachable at ``localhost:29007``. Start
   locally via ``PORT=29007 uv run python -m cogniverse_runtime.sidecars.face_embed``.
-* Session Vespa container (``shared_vespa``) and the in-process
-  ColBERT pylate sidecar (``pylate_server``) — both self-provisioned.
+* Session Vespa container (``shared_vespa``) and the vLLM-served LateOn
+  ColBERT endpoint (``pylate_server``) — both self-provisioned.
 * ``cv2`` installed (``uv pip install opencv-python-headless``).
 """
 

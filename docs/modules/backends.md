@@ -201,7 +201,7 @@ flowchart TD
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
@@ -214,8 +214,8 @@ flowchart TD
         "embedding_type": "multi_vector",
         "schema_config": {
           "num_patches": 1024,
-          "embedding_dim": 128,
-          "binary_dim": 16
+          "embedding_dim": 320,
+          "binary_dim": 40
         }
       },
       "video_videoprism_base_mv_chunk_30s": {
@@ -244,7 +244,7 @@ profile = BackendProfileConfig(
     type="video",
     description="Frame-based ColPali processing",
     schema_name="video_colpali_smol500_mv_frame",  # Vespa schema name
-    embedding_model="vidore/colpali-v1.3-hf",
+    embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
     model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
@@ -367,7 +367,7 @@ modified_profile = config.merge_profile(
     profile_name="video_colpali_smol500_mv_frame",
     overrides={
         "pipeline_config": {"keyframe_fps": 2.0},  # Only override FPS
-        "embedding_model": "vidore/colpali-v1.3-hf-v2"  # Update model
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b"  # Update model
     }
 )
 
@@ -424,7 +424,7 @@ manager = create_default_config_manager()
 tenant_profile = BackendProfileConfig(
     profile_name="acme_high_fps",
     schema_name="video_colpali_smol500_mv_frame",
-    embedding_model="vidore/colpali-v1.3-hf",
+    embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
     model_loader="colpali",
     pipeline_config={"keyframe_fps": 5.0},  # 5 FPS instead of 1 FPS
     embedding_type="multi_vector"
@@ -598,7 +598,7 @@ A **profile** is a complete content processing configuration that defines:
 ```mermaid
 flowchart TB
     subgraph Profiles["<span style='color:#000'>Backend Profiles</span>"]
-        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 128-dim<br/>Binary embeddings</span>"]
+        ColPali["<span style='color:#000'>video_colpali_smol500_mv_frame<br/>Frame-Based<br/>1024 patches × 320-dim<br/>Binary embeddings</span>"]
         VideoPrism["<span style='color:#000'>video_videoprism_base_mv_chunk_30s<br/>Direct Video<br/>768-dim global<br/>30s chunks</span>"]
         ColQwen["<span style='color:#000'>video_colqwen_omni_mv_chunk_30s<br/>Chunk-Based<br/>Multi-modal<br/>Audio + Visual</span>"]
     end
@@ -646,7 +646,7 @@ flowchart TB
 **Example**: `video_colpali_smol500_mv_frame`
 - Extracts keyframes at fixed FPS (1-5 FPS)
 - Generates patch-level embeddings per frame
-- Schema: Multi-vector with 1024 patches × 128 dimensions
+- Schema: Multi-vector with 1024 patches × 320 dimensions
 - Best for: Fine-grained visual search, specific objects/text in frames
 
 #### Chunk-Based Profiles
@@ -700,7 +700,7 @@ backend = BackendRegistry.get_search_backend(
 custom_profile = BackendProfileConfig(
     profile_name="acme_ultra_high_quality",
     schema_name="video_colpali_smol500_mv_frame",  # Reuse existing schema
-    embedding_model="vidore/colpali-v1.3-hf",
+    embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
     model_loader="colpali",
     pipeline_config={
         "extract_keyframes": True,
@@ -1666,7 +1666,7 @@ Base schemas are stored in `configs/schemas/`:
       },
       {
         "name": "embedding",
-        "type": "tensor<float>(patch{}, v[128])",
+        "type": "tensor<float>(patch{}, v[320])",
         "indexing": ["attribute"]
       }
     ]
@@ -1675,7 +1675,7 @@ Base schemas are stored in `configs/schemas/`:
     {
       "name": "colpali",
       "inputs": [
-        {"name": "query(qt)", "type": "tensor<float>(querytoken{}, v[128])"}
+        {"name": "query(qt)", "type": "tensor<float>(querytoken{}, v[320])"}
       ],
       "first_phase": {
         "expression": "sum(reduce(sum(query(qt) * attribute(embedding), v), max, patch), querytoken)"
@@ -2367,12 +2367,12 @@ import logging
 # Create processor (logger is optional first parameter)
 processor = VespaEmbeddingProcessor(
     logger=logging.getLogger(__name__),
-    model_name="vidore/colpali-v1.3-hf",
+    model_name="TomoroAI/tomoro-colqwen3-embed-4b",
     schema_name="video_colpali_smol500_mv_frame"
 )
 
 # Process raw embeddings
-raw = np.random.randn(1024, 128)  # ColPali: 1024 patches × 128 dims
+raw = np.random.randn(1024, 320)  # ColPali (Tomoro ColQwen3): 1024 patches × 320 dims
 result = processor.process_embeddings(raw)
 # Returns: {"embedding": {...}, "embedding_binary": {...}}
 

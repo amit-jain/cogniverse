@@ -147,7 +147,9 @@ class WikiManager:
         """
         import numpy as np
 
-        query_vec = np.asarray(self._generate_embedding(query), dtype=np.float32)
+        query_vec = np.asarray(
+            self._generate_embedding(query, is_query=True), dtype=np.float32
+        )
         try:
             # ``hybrid`` combines closeness(embedding) with bm25(title/content).
             # Gives usable scores on the current backend whether or not the
@@ -544,15 +546,19 @@ class WikiManager:
         except Exception:
             logger.exception("Failed to feed wiki page %s", page.doc_id)
 
-    def _generate_embedding(self, text: str) -> List[float]:
-        """Return a 768-dim text embedding via the shared SemanticEmbedder."""
+    def _generate_embedding(self, text: str, is_query: bool = False) -> List[float]:
+        """Return a 768-dim text embedding via the shared SemanticEmbedder.
+
+        ``is_query`` selects the DenseOn ``query:`` prefix for search queries;
+        stored documents use the default ``document:`` prefix.
+        """
         from cogniverse_core.common.models.semantic_embedder import (
             get_semantic_embedder,
         )
 
         try:
             embedder = get_semantic_embedder()
-            vec = embedder.encode(text)
+            vec = embedder.encode(text, is_query=is_query)
             return vec.tolist() if hasattr(vec, "tolist") else list(vec)
         except Exception as exc:
             logger.warning("Embedding generation failed (%s); using zero vector", exc)

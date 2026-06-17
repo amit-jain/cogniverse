@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -84,7 +87,8 @@ def test_remote_encode_hits_v1_embeddings():
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["model"] == "lightonai/DenseOn"
-    assert payload["input"] == ["hello", "world"]
+    # Documents (default) carry the DenseOn "document: " prompt prefix.
+    assert payload["input"] == ["document: hello", "document: world"]
 
     assert result.shape == (2, 3)
     assert result.dtype == np.float32
@@ -104,9 +108,18 @@ def test_remote_encode_preserves_order_when_backend_reorders():
     with patch.object(embedder._session, "post", return_value=mock_response):
         result = embedder.encode(["first", "second"])
 
-    # Row 0 corresponds to "first" input regardless of backend ordering
-    np.testing.assert_allclose(result[0], [0.1, 0.2, 0.3])
-    np.testing.assert_allclose(result[1], [0.4, 0.5, 0.6])
+    # Row 0 corresponds to "first" input regardless of backend ordering;
+    # vectors come back L2-normalized.
+    np.testing.assert_allclose(
+        result[0],
+        np.array([0.1, 0.2, 0.3]) / np.linalg.norm([0.1, 0.2, 0.3]),
+        rtol=1e-5,
+    )
+    np.testing.assert_allclose(
+        result[1],
+        np.array([0.4, 0.5, 0.6]) / np.linalg.norm([0.4, 0.5, 0.6]),
+        rtol=1e-5,
+    )
 
 
 def test_remote_encode_empty_input_returns_empty_array():
@@ -139,12 +152,16 @@ def test_remote_encode_normalizes_when_requested():
     np.testing.assert_allclose(norm, [0.6, 0.8], rtol=1e-5)
 
 
-def test_remote_encode_skips_normalize_when_not_requested():
+def test_remote_encode_always_normalizes():
+    # DenseOn was always served normalize_embeddings=True; the client
+    # restores it unconditionally so vectors are unit-norm even without
+    # an explicit normalize_embeddings kwarg.
     embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = _openai_embed_response([[3.0, 4.0]])
     with patch.object(embedder._session, "post", return_value=mock_response):
-        raw = embedder.encode("hello")
-    np.testing.assert_allclose(raw, [3.0, 4.0], rtol=1e-5)
+        vec = embedder.encode("hello")
+    np.testing.assert_allclose(vec, [0.6, 0.8], rtol=1e-5)
+    np.testing.assert_allclose(np.linalg.norm(vec), 1.0, rtol=1e-5)
 
 
 def test_remote_encode_raises_when_backend_returns_no_embeddings():
@@ -155,6 +172,137 @@ def test_remote_encode_raises_when_backend_returns_no_embeddings():
     with patch.object(embedder._session, "post", return_value=mock_response):
         with pytest.raises(RuntimeError, match="no embeddings"):
             embedder.encode(["hi"])
+
+
+class _EchoEmbeddingHandler(BaseHTTPRequestHandler):
+    """vLLM /v1/embeddings stub: records each received input string and
+    returns a deterministic non-unit vector ([3, 4], norm 5) per input."""
+
+    received_inputs: list[list[str]] = []
+
+    def log_message(self, *args):  # silence stderr noise
+        pass
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        inputs = body.get("input", [])
+        type(self).received_inputs.append(list(inputs))
+        data = [
+            {"embedding": [3.0, 4.0], "index": i, "object": "embedding"}
+            for i in range(len(inputs))
+        ]
+        payload = json.dumps({"data": data, "model": body.get("model", "")}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+@pytest.fixture
+def echo_embed_server():
+    _EchoEmbeddingHandler.received_inputs = []
+    server = HTTPServer(("127.0.0.1", 0), _EchoEmbeddingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    try:
+        yield f"http://{host}:{port}", _EchoEmbeddingHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+
+def test_remote_query_encode_prefixes_query_prompt(echo_embed_server):
+    base_url, handler = echo_embed_server
+    embedder = RemoteOpenAIEmbedder(base_url, "lightonai/DenseOn")
+
+    vec = embedder.encode("how tall is the tower", is_query=True)
+
+    assert handler.received_inputs == [["query: how tall is the tower"]]
+    # [3, 4] echoed back -> L2-normalized to [0.6, 0.8], unit norm.
+    np.testing.assert_allclose(vec, [0.6, 0.8], rtol=1e-6)
+    np.testing.assert_allclose(np.linalg.norm(vec), 1.0, rtol=1e-6)
+
+
+def test_remote_document_encode_prefixes_document_prompt(echo_embed_server):
+    base_url, handler = echo_embed_server
+    embedder = RemoteOpenAIEmbedder(base_url, "lightonai/DenseOn")
+
+    vecs = embedder.encode(["paris is in france", "the eiffel tower"])
+
+    assert handler.received_inputs == [
+        ["document: paris is in france", "document: the eiffel tower"]
+    ]
+    for v in vecs:
+        np.testing.assert_allclose(v, [0.6, 0.8], rtol=1e-6)
+        np.testing.assert_allclose(np.linalg.norm(v), 1.0, rtol=1e-6)
+
+
+def test_mem0_adapter_search_uses_query_prompt(echo_embed_server):
+    base_url, handler = echo_embed_server
+    from mem0.configs.embeddings.base import BaseEmbedderConfig
+
+    from cogniverse_core.memory.mem0_embedder import DenseOnMem0Embedder
+
+    cfg = BaseEmbedderConfig(
+        model="lightonai/DenseOn",
+        openai_base_url=f"{base_url}/v1",
+        api_key="denseon",
+    )
+    adapter = DenseOnMem0Embedder(cfg)
+
+    out = adapter.embed("what is the capital of france", memory_action="search")
+
+    assert handler.received_inputs == [["query: what is the capital of france"]]
+    np.testing.assert_allclose(out, [0.6, 0.8], rtol=1e-6)
+    np.testing.assert_allclose(np.linalg.norm(out), 1.0, rtol=1e-6)
+
+
+def test_mem0_adapter_add_and_update_use_document_prompt(echo_embed_server):
+    base_url, handler = echo_embed_server
+    from mem0.configs.embeddings.base import BaseEmbedderConfig
+
+    from cogniverse_core.memory.mem0_embedder import DenseOnMem0Embedder
+
+    cfg = BaseEmbedderConfig(
+        model="lightonai/DenseOn",
+        openai_base_url=f"{base_url}/v1",
+        api_key="denseon",
+    )
+    adapter = DenseOnMem0Embedder(cfg)
+
+    adapter.embed("user prefers dark mode", memory_action="add")
+    adapter.embed("user now prefers light mode", memory_action="update")
+    # Mem0 also calls embed() with no action in some code paths -> document.
+    adapter.embed("a bare memory fact")
+
+    assert handler.received_inputs == [
+        ["document: user prefers dark mode"],
+        ["document: user now prefers light mode"],
+        ["document: a bare memory fact"],
+    ]
+
+
+def test_mem0_adapter_registered_provider_resolves(echo_embed_server):
+    base_url, _ = echo_embed_server
+    from mem0.utils.factory import EmbedderFactory
+
+    from cogniverse_core.memory.mem0_embedder import (
+        DENSEON_PROVIDER,
+        DenseOnMem0Embedder,
+        register_denseon_provider,
+    )
+
+    register_denseon_provider()
+    cfg = {
+        "model": "lightonai/DenseOn",
+        "openai_base_url": f"{base_url}/v1",
+        "api_key": "denseon",
+    }
+    embedder = EmbedderFactory.create(DENSEON_PROVIDER, cfg, vector_config=None)
+    assert isinstance(embedder, DenseOnMem0Embedder)
 
 
 def test_model_name_resolution_prefers_explicit_then_env_then_default(monkeypatch):

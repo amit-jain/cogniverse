@@ -14,36 +14,57 @@ from typing import Tuple
 from tests.utils.async_polling import simulate_processing_delay, wait_for_vespa_indexing
 
 
+def _port_is_free(port: int) -> bool:
+    """True if ``port`` can be bound right now (i.e. nothing holds it)."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+            return True
+        except OSError:
+            return False
+
+
 def generate_unique_ports(
     module_name: str, base_http_port: int = 40000
 ) -> Tuple[int, int]:
     """
-    Generate unique HTTP and config ports for a test module in the IANA
-    ephemeral range (49152-65535) so they don't collide with well-known
-    or registered services running on the host.
+    Return a free ``(http_port, config_port)`` pair for a Vespa test container.
 
-    The hash is seeded with module_name + the OS PID so concurrent pytest
-    invocations from different shells land on distinct ports while retries
-    within the same process get the same port.
+    ``config_port`` is always ``http_port + 10991`` (the standard Vespa offset
+    some callers re-derive), and BOTH ports are probed as actually-bindable
+    before being returned — so a leftover container from a crashed prior run
+    or a concurrent session can't cause an ``address already in use`` bind
+    failure. ``http_port`` stays in ``[base_http_port, 54544]`` so the derived
+    ``config_port`` stays under 65535.
+
+    Callers invoke this once and cache the result; there is no
+    same-port-on-retry guarantee. Falls back to a deterministic
+    module_name+PID hash if no free pair is found after probing (e.g. a
+    sandbox where bind probing is unreliable), preserving the old behaviour.
 
     Args:
         module_name: Test module name (e.g., __name__ from the test file)
-        base_http_port: Starting port for HTTP (default: 50000)
+        base_http_port: Lowest HTTP port to consider (default: 40000)
 
     Returns:
-        Tuple of (http_port, config_port). Both in the ephemeral range.
+        Tuple of (http_port, config_port).
     """
     import os
+    import random
 
+    for _ in range(200):
+        http_port = random.randint(base_http_port, 54544)
+        config_port = http_port + 10991
+        if _port_is_free(http_port) and _port_is_free(config_port):
+            return http_port, config_port
+
+    # Fallback: deterministic hash (original behaviour) when probing fails.
     seed = f"{module_name}:{os.getpid()}"
     port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
-
-    # Range: 40000-54544 so config_port (http + 10991) stays under 65535
-    http_port = 40000 + (port_hash % 14544)
-    # Standard Vespa offset so code that derives config_port from http_port works
-    config_port = http_port + 10991
-
-    return http_port, config_port
+    http_port = base_http_port + (port_hash % 14544)
+    return http_port, http_port + 10991
 
 
 def wait_for_container_removal(container_name: str, timeout: int = 30) -> bool:

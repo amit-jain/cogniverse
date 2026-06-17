@@ -1303,7 +1303,7 @@ class TestVideoSearchAgent:
         mock_encoder_config.return_value = {
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             }
@@ -1372,7 +1372,7 @@ class TestVideoSearchAgent:
         mock_encoder_config.return_value = {
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             }

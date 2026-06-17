@@ -130,7 +130,13 @@ def config_manager(vespa_instance):
             profile_name="test_colpali",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colpali-v1.3-hf",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
+            model_loader="colpali",
+            # Tomoro (qwen3_vl) is remote-only — route the query encoder
+            # through the vLLM sidecar. The URL for this service name is
+            # injected into SystemConfig.inference_service_urls by the
+            # search test once the sidecar is spawned (tomoro_search_url).
+            extra_config={"inference_services": {"embedding": "tomoro_embedding"}},
         ),
         tenant_id="test:unit",
     )
@@ -164,7 +170,7 @@ def config_manager(vespa_instance):
                 profile_name="video_colpali_smol500_mv_frame",
                 type="video",
                 schema_name="video_colpali_smol500_mv_frame",
-                embedding_model="vidore/colsmol-500m",
+                embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
             ),
             tenant_id=_tenant,
         )
@@ -174,7 +180,7 @@ def config_manager(vespa_instance):
             profile_name="tenant_b_profile",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
         tenant_id="tenant_b",
     )

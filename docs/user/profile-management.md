@@ -77,7 +77,7 @@ The create form will appear with the following fields:
     "embedding": {
       "class": "MultiVectorEmbeddingStrategy",
       "params": {
-        "model_name": "vidore/colpali-v1.3-hf"
+        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b"
       }
     }
   }
@@ -331,7 +331,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "tenant_id": "my_tenant",
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
-    "embedding_model": "vidore/colpali-v1.3-hf",
+    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
     "embedding_type": "multi_vector",
     "pipeline_config": {},
     "strategies": {},

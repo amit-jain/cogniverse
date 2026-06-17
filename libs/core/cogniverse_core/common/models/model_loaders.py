@@ -391,10 +391,10 @@ class RemoteColPaliLoader(ModelLoader):
     Remote ColPali multi-vector loader.
 
     Talks to a vLLM ``ColPaliForRetrieval`` instance serving
-    ``vidore/colpali-v1.3-hf`` (or any colpali-engine HF variant vLLM
-    accepts) over the OpenAI-compatible /v1/embeddings endpoint with the
-    ``token_embed`` pooling task. Returns per-token embeddings (shape
-    ``[num_patches, 128]`` for colpali-v1.3-hf).
+    ``TomoroAI/tomoro-colqwen3-embed-4b`` (or any colpali-engine HF
+    variant vLLM accepts) over the OpenAI-compatible /v1/embeddings
+    endpoint with the ``token_embed`` pooling task. Returns per-token
+    embeddings (shape ``[num_patches, 320]`` for tomoro-colqwen3-embed-4b).
 
     The legacy ``deploy/colpali`` FastAPI sidecar is replaced by this
     path. ``RemoteInferenceClient.process_images_vllm`` constructs the
@@ -511,13 +511,46 @@ class RemoteColBERTLoader(ModelLoader):
         self.logger.info(f"Initialized remote ColBERT inference at {self.remote_url}")
 
         class ColBERTRemoteWrapper:
-            def __init__(self, endpoint_url, api_key, model_name, logger):
+            def __init__(
+                self,
+                endpoint_url,
+                api_key,
+                model_name,
+                logger,
+                query_prefix="[Q] ",
+                document_prefix="[D] ",
+            ):
                 self.endpoint_url = endpoint_url.rstrip("/")
                 self.model_name = model_name
                 self.logger = logger
+                self.query_prefix = query_prefix
+                self.document_prefix = document_prefix
                 self.session = requests.Session()
                 if api_key:
                     self.session.headers["Authorization"] = f"Bearer {api_key}"
+                self._tokenizer = None
+                self._skiplist_ids = None
+
+            def _load_tokenizer(self):
+                """Lazily load the model tokenizer and build the document skiplist.
+
+                The ``[Q] ``/``[D] `` markers are single tokens in the tokenizer
+                vocabulary, so prepending the literal text reproduces pylate's
+                marker insertion exactly. The document skiplist is the punctuation
+                token ids pylate drops from document embeddings via
+                ``ColBERT.skiplist_mask``.
+                """
+                if self._tokenizer is not None:
+                    return
+                import string
+
+                from transformers import AutoTokenizer
+
+                self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                self._skiplist_ids = {
+                    self._tokenizer.convert_tokens_to_ids(word)
+                    for word in string.punctuation
+                }
 
             def encode(
                 self,
@@ -526,45 +559,71 @@ class RemoteColBERTLoader(ModelLoader):
                 batch_size: int = 32,
                 **kwargs,
             ) -> list:
-                """Encode texts via remote endpoint, returning per-token embeddings.
+                """Encode texts via remote /pooling, reproducing pylate's contract.
 
-                Matches pylate.models.ColBERT.encode() signature.
+                Matches ``pylate.models.ColBERT.encode()``. The ``[Q] ``/``[D] ``
+                marker is prepended client-side as literal text (each marker is a
+                single vocabulary token, identical to pylate's marker insertion);
+                vLLM ``/pooling`` rejects unknown fields such as ``is_query``.
+
+                For documents (``is_query=False``) pylate drops punctuation tokens
+                from the per-token matrix (``ColBERT.skiplist_mask``); vLLM
+                ``/pooling`` returns one embedding per token in tokenizer order, so
+                we drop the same rows client-side. Queries keep all tokens.
                 """
+                self._load_tokenizer()
+                prefix = self.query_prefix if is_query else self.document_prefix
                 all_embeddings = []
                 for i in range(0, len(texts), batch_size):
-                    batch = texts[i : i + batch_size]
-                    payload = {
-                        "input": batch,
-                        "model": self.model_name,
-                        "is_query": is_query,
-                    }
-
-                    # Use /pooling for per-token embeddings (vLLM),
-                    # fall back to /v1/embeddings for other services
+                    chunk = texts[i : i + batch_size]
+                    batch = [f"{prefix}{t}" for t in chunk]
                     resp = self.session.post(
                         f"{self.endpoint_url}/pooling",
-                        json=payload,
+                        json={"input": batch, "model": self.model_name},
                         timeout=120,
                     )
-                    if resp.status_code == 404:
-                        resp = self.session.post(
-                            f"{self.endpoint_url}/v1/embeddings",
-                            json=payload,
-                            timeout=120,
-                        )
                     resp.raise_for_status()
-                    data = resp.json()
-
-                    for item in data.get("data", []):
-                        # vLLM /pooling returns {"data": [...tokens...]}
-                        # /v1/embeddings returns {"embedding": [...]}
-                        embedding = item.get("data", item.get("embedding", []))
-                        all_embeddings.append(embedding)
+                    items = resp.json().get("data", [])
+                    for text, item in zip(batch, items):
+                        matrix = item.get("data", item.get("embedding", []))
+                        if not is_query:
+                            matrix = self._drop_skiplist_rows(text, matrix)
+                        all_embeddings.append(matrix)
 
                 return all_embeddings
 
+            def _drop_skiplist_rows(self, prefixed_text, matrix):
+                """Remove punctuation-token rows from a document per-token matrix.
+
+                ``/pooling`` returns embeddings aligned with the tokenizer's
+                ``input_ids`` (CLS first, SEP last, specials included), so the
+                token ids re-derived from the same prefixed string select exactly
+                the rows pylate's skiplist mask removes.
+                """
+                token_ids = self._tokenizer(prefixed_text, add_special_tokens=True)[
+                    "input_ids"
+                ]
+                if len(token_ids) != len(matrix):
+                    self.logger.warning(
+                        "Token/embedding length mismatch for remote ColBERT "
+                        "document (%d ids vs %d rows); returning unmasked matrix",
+                        len(token_ids),
+                        len(matrix),
+                    )
+                    return matrix
+                return [
+                    row
+                    for tid, row in zip(token_ids, matrix)
+                    if tid not in self._skiplist_ids
+                ]
+
         wrapper = ColBERTRemoteWrapper(
-            self.remote_url, self.api_key, self.model_name, self.logger
+            self.remote_url,
+            self.api_key,
+            self.model_name,
+            self.logger,
+            query_prefix=self.config.get("query_prefix", "[Q] "),
+            document_prefix=self.config.get("document_prefix", "[D] "),
         )
         return wrapper, None
 
@@ -634,6 +693,33 @@ class RemoteWhisperLoader(ModelLoader):
         return wrapper, None
 
 
+_REMOTE_ONLY_MESSAGE = (
+    "ColQwen3/Tomoro models are remote-only — serve via vLLM and set "
+    "inference_service_url (profile inference_services.embedding). Local "
+    "in-process loading is unsupported (requires transformers>=4.57, blocked "
+    "by the pylate cap)."
+)
+
+
+def _is_colqwen3(model_name: str) -> bool:
+    """True for ColQwen3/Tomoro models, which have no local loader path.
+
+    Matches by model name (``colqwen3``/``tomoro``). The architecture is
+    ``qwen3_vl``, which the pinned ``transformers`` (4.56.2, capped by pylate)
+    cannot build and ``colpali_engine`` mis-maps to ``idefics3``.
+    """
+    name = model_name.lower()
+    return "colqwen3" in name or "tomoro" in name
+
+
+def _raise_if_qwen3_vl(model_name: str, error: Exception) -> None:
+    """Re-raise a local-load failure as the clear remote-only error when it is
+    the ``qwen3_vl`` unsupported-architecture signature."""
+    text = str(error).lower()
+    if "qwen3_vl" in text or "qwen3_vl_text" in text:
+        raise RuntimeError(_REMOTE_ONLY_MESSAGE) from error
+
+
 class ColPaliModelLoader(ModelLoader):
     """Loader for ColPali models"""
 
@@ -646,6 +732,8 @@ class ColPaliModelLoader(ModelLoader):
     )
     def load_model(self) -> Tuple[Any, Any]:
         """Load ColPali model and processor with retry logic"""
+        if _is_colqwen3(self.model_name):
+            raise RuntimeError(_REMOTE_ONLY_MESSAGE)
         try:
             self.logger.info(f"Loading ColPali model: {self.model_name}")
             from colpali_engine.models import ColIdefics3, ColIdefics3Processor
@@ -673,6 +761,7 @@ class ColPaliModelLoader(ModelLoader):
             return model, processor
 
         except Exception as e:
+            _raise_if_qwen3_vl(self.model_name, e)
             self.logger.error(f"Failed to load ColPali model: {e}")
             raise  # Re-raise for retry
 
@@ -689,6 +778,8 @@ class ColQwenModelLoader(ModelLoader):
     )
     def load_model(self) -> Tuple[Any, Any]:
         """Load ColQwen model and processor with retry logic"""
+        if _is_colqwen3(self.model_name):
+            raise RuntimeError(_REMOTE_ONLY_MESSAGE)
         try:
             self.logger.info(f"Loading ColQwen model: {self.model_name}")
 
@@ -756,6 +847,7 @@ class ColQwenModelLoader(ModelLoader):
             return model, processor
 
         except Exception as e:
+            _raise_if_qwen3_vl(self.model_name, e)
             self.logger.error(f"Failed to load ColQwen model: {e}")
             raise  # Re-raise for retry
 
@@ -832,7 +924,16 @@ class ColBERTModelLoader(ModelLoader):
         """Load ColBERT model via PyLate and return (model, None)."""
         try:
             self.logger.info(f"Loading ColBERT model: {self.model_name}")
-            from pylate import models as pylate_models
+            try:
+                from pylate import models as pylate_models
+            except ImportError as e:
+                raise ImportError(
+                    "Local ColBERT loading requires the optional 'pylate' "
+                    "dependency (install the project's [test] extra). For "
+                    "production, serve ColBERT via vLLM by setting "
+                    "inference_services.embedding on the profile (routes to "
+                    "RemoteColBERTLoader)."
+                ) from e
 
             device = self.get_device()
             self.logger.info(f"Using device: {device}")

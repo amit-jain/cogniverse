@@ -95,14 +95,14 @@
       },
       {
         "name": "embedding",
-        "type": "tensor<bfloat16>(patch{}, v[128])",
+        "type": "tensor<bfloat16>(patch{}, v[320])",
         "indexing": [
           "attribute"
         ]
       },
       {
         "name": "embedding_binary",
-        "type": "tensor<int8>(patch{}, v[16])",
+        "type": "tensor<int8>(patch{}, v[40])",
         "indexing": [
           "attribute",
           "index"
@@ -126,7 +126,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -153,7 +153,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -170,7 +170,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -187,7 +187,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -204,11 +204,11 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         },
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -233,7 +233,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -258,7 +258,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -283,7 +283,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -308,7 +308,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -333,7 +333,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [
@@ -358,7 +358,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -383,7 +383,7 @@
       "inputs": [
         {
           "name": "query(qtb)",
-          "type": "tensor<int8>(querytoken{}, v[16])"
+          "type": "tensor<int8>(querytoken{}, v[40])"
         }
       ],
       "functions": [
@@ -408,7 +408,7 @@
       "inputs": [
         {
           "name": "query(qt)",
-          "type": "tensor<float>(querytoken{}, v[128])"
+          "type": "tensor<float>(querytoken{}, v[320])"
         }
       ],
       "functions": [

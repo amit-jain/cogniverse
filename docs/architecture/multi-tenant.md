@@ -1015,7 +1015,7 @@ flowchart TB
       "video_colpali_smol500_mv_frame": {
         "type": "video",
         "schema_name": "video_colpali_smol500_mv_frame",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,

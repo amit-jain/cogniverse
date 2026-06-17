@@ -115,7 +115,7 @@ def vespa_instance(shared_vespa):  # noqa: F811
             profile_name="video_colpali_smol500_mv_frame",
             type="video",
             schema_name="video_colpali_smol500_mv_frame",
-            embedding_model="vidore/colsmol-500m",
+            embedding_model="TomoroAI/tomoro-colqwen3-embed-4b",
         ),
         tenant_id="test:unit",
     )

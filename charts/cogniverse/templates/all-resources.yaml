@@ -1268,23 +1268,13 @@ spec:
 {{- /*
      Resolve the container image, allowing per-device overrides via
      ``imagesByDevice.<device>``. Falls back to the engine-default image
-     block when no override is set. Pylate has its own nested image
-     block so we resolve both here for use below.
+     block when no override is set.
 */ -}}
 {{- $imageDefault := $cfg.image }}
 {{- $imageByDev := dict }}
 {{- if $cfg.imagesByDevice }}{{ $imageByDev = $cfg.imagesByDevice }}{{ end }}
 {{- $imageOverride := index $imageByDev $device }}
 {{- $resolvedImage := default $imageDefault $imageOverride }}
-{{- $pylateImageDefault := dict }}
-{{- $pylateImageOverride := dict }}
-{{- if $cfg.pylate }}
-{{- $pylateImageDefault = $cfg.pylate.image }}
-{{- if $cfg.pylate.imagesByDevice }}
-{{- $pylateImageOverride = (index $cfg.pylate.imagesByDevice $device) }}
-{{- end }}
-{{- end }}
-{{- $resolvedPylateImage := default $pylateImageDefault $pylateImageOverride }}
 ---
 # Inference Deployment: {{ $name }} (engine={{ $engine }} device={{ $device }})
 apiVersion: apps/v1
@@ -1490,28 +1480,6 @@ spec:
         volumeMounts:
         - name: model-cache
           mountPath: /root/.cache/huggingface
-      {{- else if eq $engine "pylate" }}
-      - name: pylate
-        image: "{{ $resolvedPylateImage.repository }}:{{ $resolvedPylateImage.tag }}"
-        imagePullPolicy: {{ $resolvedPylateImage.pullPolicy }}
-        ports:
-        - name: http
-          containerPort: {{ $cfg.pylate.containerPort }}
-        env:
-        - name: MODEL_NAME
-          value: {{ $cfg.model | quote }}
-        - name: MODEL_MODE
-          value: {{ default "colbert" $cfg.mode | quote }}
-        - name: DEVICE
-          # PyTorch reuses the cuda:N namespace for ROCm; passing "rocm"
-          # to torch.device fails parsing.
-          value: {{ ternary "cuda" $device (eq $device "rocm") | quote }}
-        - name: HOST
-          value: "0.0.0.0"
-        - name: PORT
-          value: {{ $cfg.pylate.containerPort | quote }}
-        - name: HF_HOME
-          value: /root/.cache/huggingface
       {{- else if eq $engine "videoprism_jax" }}
       # Custom FastAPI sidecar (deploy/videoprism) — loads VideoPrism via
       # the upstream JAX/flax stack and serves POST /v1/video/embeddings.
@@ -1737,6 +1705,58 @@ spec:
               name: {{ $cfg.hfTokenSecret | quote }}
               key: HF_TOKEN
         {{- end }}
+      {{- else if eq $engine "vllm_embed" }}
+      # vLLM serving an OpenAI-compatible /v1/embeddings endpoint with
+      # dense single-vector (pooled) outputs. Used by denseon for
+      # DenseOn-style dense retrieval. ``--convert embed`` selects vLLM's
+      # pooling runner; unlike vllm_token_embed there is no per-token
+      # reshape — the model pools to one vector per input. ``command:
+      # ["vllm"]`` overrides the image ENTRYPOINT so ``args[0] = "serve"``
+      # isn't duplicated (see vllm_transcription comment above). A
+      # first-class named engine so dense embedding services don't rely on
+      # the catch-all.
+      - name: vllm-embed
+        image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"
+        imagePullPolicy: {{ $resolvedImage.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
+          value: "1"
+        - name: HF_HOME
+          value: /root/.cache/huggingface
+        # Persist vLLM's torch.compile cache alongside HF weights.
+        - name: VLLM_CACHE_ROOT
+          value: /root/.cache/huggingface/.vllm
+        {{- if $cfg.kvCacheGiB }}
+        # vLLM's CPU worker doesn't honour pod cgroup limits; without an
+        # explicit cap it pre-allocates from full node memory and OOMKills.
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: {{ $cfg.kvCacheGiB | quote }}
+        {{- end }}
+        {{- if $cfg.hfTokenSecret }}
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ $cfg.hfTokenSecret | quote }}
+              key: HF_TOKEN
+        {{- end }}
+        command: ["vllm"]
+        args:
+          - "serve"
+          - {{ $cfg.model | quote }}
+          - "--convert"
+          - "embed"
+          - "--dtype"
+          - {{ $cfg.dtype | quote }}
+          - "--host"
+          - "0.0.0.0"
+          - "--port"
+          - "8000"
+          {{- range $cfg.extraArgs }}
+          - {{ . | quote }}
+          {{- end }}
       {{- else }}
       - name: vllm
         image: "{{ $resolvedImage.repository }}:{{ $resolvedImage.tag }}"

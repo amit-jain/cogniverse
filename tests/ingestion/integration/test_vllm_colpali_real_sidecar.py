@@ -1,6 +1,6 @@
 """Real vLLM ColPali sidecar — RemoteColPaliLoader end-to-end coverage.
 
-Spawns ``vllm/vllm-openai-cpu`` serving ``vidore/colpali-v1.3-hf`` and
+Spawns ``vllm/vllm-openai-cpu`` serving ``TomoroAI/tomoro-colqwen3-embed-4b`` and
 drives a real image through ``RemoteColPaliLoader`` to verify
 multi-vector embeddings come back with the expected shape. Catches
 vLLM /pooling contract drift, payload shape regressions, and per-token
@@ -29,7 +29,7 @@ pytestmark = [
     ),
 ]
 
-COLPALI_MODEL = "vidore/colpali-v1.3-hf"
+COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 
 
 @pytest.fixture(scope="module")
@@ -76,8 +76,8 @@ def test_remote_colpali_returns_multivector_embeddings(remote_colpali_client, tm
         f"ColPali per-token embeddings must be 2-D [num_patches, dim]; "
         f"got shape {embeddings.shape}"
     )
-    assert embeddings.shape[1] == 128, (
-        f"colpali-v1.3-hf serves 128-dim embeddings; got dim {embeddings.shape[1]}"
+    assert embeddings.shape[1] == 320, (
+        f"Tomoro serves 320-dim embeddings; got dim {embeddings.shape[1]}"
     )
     assert embeddings.shape[0] > 0, "must have at least one patch token"
 
@@ -96,7 +96,7 @@ def test_remote_colpali_query_encoding_returns_multivector_embeddings(
         f"ColPali query embeddings must be 2-D [num_query_tokens, dim]; "
         f"got shape {embeddings.shape}"
     )
-    assert embeddings.shape[1] == 128, (
-        f"colpali-v1.3-hf serves 128-dim embeddings; got dim {embeddings.shape[1]}"
+    assert embeddings.shape[1] == 320, (
+        f"Tomoro serves 320-dim embeddings; got dim {embeddings.shape[1]}"
     )
     assert embeddings.shape[0] > 0, "must have at least one query token"

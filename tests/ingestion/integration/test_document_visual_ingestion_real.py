@@ -39,8 +39,30 @@ pytestmark = [
 ]
 
 TENANT = "docvis_ingest_rt"
-COLPALI_MODEL = "vidore/colsmol-500m"
+COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 SCHEMAS_DIR = Path("configs/schemas")
+
+
+@pytest.fixture(scope="module")
+def tomoro_url(vllm_sidecar):
+    """Real vLLM sidecar serving Tomoro ColQwen3 via the pooling runner.
+
+    Tomoro (qwen3_vl) is remote-only — the ingestion embedding generator and
+    the query encoder both route through this URL via RemoteColPaliLoader. Same
+    serving config the search-side fixtures use (``--runner pooling --convert
+    embed``); cached across the session by the vllm_sidecar factory.
+    """
+    return vllm_sidecar.spawn(
+        model=COLPALI_MODEL,
+        extra_args=[
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            "--max-model-len",
+            "4096",
+        ],
+    )
 
 
 class _BackendAdapter:
@@ -72,7 +94,7 @@ def two_page_pdf(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def ingested(shared_vespa, two_page_pdf, tmp_path_factory):
+def ingested(shared_vespa, two_page_pdf, tmp_path_factory, tomoro_url):
     full = deploy_tenant_schema(
         shared_vespa, tenant_id=TENANT, base_schema_name="document_visual"
     )
@@ -135,6 +157,7 @@ def ingested(shared_vespa, two_page_pdf, tmp_path_factory):
             "embedding_type": "multi_vector",
             "model_loader": "colpali",
             "schema_name": full,
+            "remote_inference_url": tomoro_url,
         },
         backend_client=_BackendAdapter(client),
     )
@@ -158,11 +181,13 @@ def test_all_pages_embedded_and_fed(ingested):
 
 
 @pytest.mark.asyncio
-async def test_search_visual_retrieves_ingested_pages(ingested):
+async def test_search_visual_retrieves_ingested_pages(ingested, tomoro_url):
     agent = DocumentAgent.__new__(DocumentAgent)
     agent._vespa_endpoint = f"http://localhost:{ingested['http_port']}"
     agent._tenant_id = TENANT
-    agent._query_encoder = ColPaliQueryEncoder(model_name=COLPALI_MODEL)
+    agent._query_encoder = ColPaliQueryEncoder(
+        model_name=COLPALI_MODEL, inference_service_url=tomoro_url
+    )
 
     results = await agent._search_visual("a page from the product manual", limit=10)
 

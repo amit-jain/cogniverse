@@ -123,7 +123,7 @@ class TestSearchAgent:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },
@@ -826,7 +826,7 @@ class TestSearchAgentAdvancedFeatures:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },
@@ -998,7 +998,7 @@ class TestSearchAgentAdvancedFeatures:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },
@@ -1040,7 +1040,7 @@ class TestSearchAgentEnsembleSearch:
             "backend": {
                 "profiles": {
                     "profile1": {
-                        "embedding_model": "vidore/colsmol-500m",
+                        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                         "embedding_type": "multi_vector",
                     },
                     "profile2": {
@@ -1364,7 +1364,7 @@ class TestMultiQueryFusion:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },
@@ -1704,7 +1704,7 @@ class TestEnsembleVsFusionPaths:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },
@@ -1998,7 +1998,7 @@ class TestDspyConfidenceGate:
             "active_video_profile": "video_colpali_smol500_mv_frame",
             "video_processing_profiles": {
                 "video_colpali_smol500_mv_frame": {
-                    "embedding_model": "vidore/colsmol-500m",
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                     "embedding_type": "multi_vector",
                 }
             },

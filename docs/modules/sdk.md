@@ -896,7 +896,7 @@ entry = config_store.set_config(
     scope=ConfigScope.AGENT,
     service="video_search_agent",
     config_key="embedding_model",
-    config_value={"model": "vidore/colpali-v1.3-hf", "dimension": 768}
+    config_value={"model": "TomoroAI/tomoro-colqwen3-embed-4b", "dimension": 768}
 )
 # Returns ConfigEntry with version number
 ```

@@ -101,7 +101,7 @@ class VespaDockerManager:
                     # oom-score-adj=-1000). Losing a transient one fails
                     # its own test but doesn't cascade across the sweep.
                     "--oom-score-adj=300",
-                    "vespaengine/vespa",
+                    "vespaengine/vespa:8.668.5",
                 ],
                 capture_output=True,
                 timeout=60,

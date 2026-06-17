@@ -191,7 +191,7 @@ class ProfileValidator:
             )
             return errors
 
-        # Basic format check (allows "org/model" format like "vidore/colsmol-500m")
+        # Basic format check (allows "org/model" format like "TomoroAI/tomoro-colqwen3-embed-4b")
         if "/" not in embedding_model and "-" not in embedding_model:
             logger.warning(
                 f"Embedding model '{embedding_model}' has unusual format. "
