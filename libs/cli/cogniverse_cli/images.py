@@ -22,6 +22,10 @@ DASHBOARD_TAGS_BY_BACKEND = {
     "cuda": "cogniverse/dashboard-cuda:dev",
     "rocm": "cogniverse/dashboard-rocm:dev",
 }
+# GLiNER sidecar — backend-agnostic CPU-only NER server (deploy/gliner). Its
+# chart image uses pullPolicy: Never, so k3d must have it built+imported or
+# the pod ErrImageNeverPulls on a fresh deploy. One image, all backends.
+GLINER_TAG = "cogniverse/gliner:dev"
 # colpali, whisper, and the LateOn/DenseOn text embedders are no longer
 # built by us — vLLM serves them all:
 # TomoroAI/tomoro-colqwen3-embed-4b via inference.vllm_colpali (vllm/vllm-openai-cpu)
@@ -94,9 +98,10 @@ def build_images(
     """Build all cogniverse-owned Docker images.
 
     Builds the runtime + dashboard variants matching ``torch_backend``
-    (auto-detected via ``detect_torch_backend()`` when None). ColPali,
-    Whisper, and the LateOn/DenseOn text embedders are now served via
-    vLLM (vllm/vllm-openai-cpu) and pulled directly by k3d.
+    (auto-detected via ``detect_torch_backend()`` when None) plus the
+    backend-agnostic GLiNER sidecar. ColPali, Whisper, and the
+    LateOn/DenseOn text embedders are served via vLLM
+    (vllm/vllm-openai-cpu) and pulled directly by k3d.
     """
     backend = torch_backend or detect_torch_backend()
     runtime_tag = RUNTIME_TAGS_BY_BACKEND[backend]
@@ -106,6 +111,8 @@ def build_images(
     workspace_builds = [
         (runtime_tag, "libs/runtime/Dockerfile", ".", backend_arg),
         (dashboard_tag, "libs/dashboard/Dockerfile", ".", backend_arg),
+        # GLiNER takes no TORCH_BACKEND arg and builds from its own context.
+        (GLINER_TAG, "deploy/gliner/Dockerfile", "deploy/gliner", []),
     ]
     built: list[str] = []
     for tag, dockerfile, context, extra_args in workspace_builds:
