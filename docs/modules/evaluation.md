@@ -2333,7 +2333,7 @@ Provides visual evaluation scorers for Inspect AI.
 from cogniverse_evaluation.plugins.visual_evaluator import get_visual_scorers
 
 scorers = get_visual_scorers({
-    "model_name": "vidore/colpali-v1.3-hf",
+    "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
     "evaluate_top_k": 5
 })
 # Returns: [visual_relevance_scorer(), visual_diversity_scorer()]

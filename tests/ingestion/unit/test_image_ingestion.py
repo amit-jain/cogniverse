@@ -102,8 +102,8 @@ class TestImageSchemaFile:
         with open("configs/schemas/image_colpali_mv_schema.json") as f:
             schema = json.load(f)
         fields = {f["name"]: f for f in schema["document"]["fields"]}
-        assert "tensor<bfloat16>(patch{}, v[128])" == fields["embedding"]["type"]
-        assert "tensor<int8>(patch{}, v[16])" == fields["embedding_binary"]["type"]
+        assert "tensor<bfloat16>(patch{}, v[320])" == fields["embedding"]["type"]
+        assert "tensor<int8>(patch{}, v[40])" == fields["embedding_binary"]["type"]
 
 
 class TestStrategyFactoryImageProfile:

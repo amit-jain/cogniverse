@@ -297,10 +297,10 @@ Profiles are defined in `config.json`:
       "video_colpali_smol500_mv_frame": {
         "type": "video",
         "description": "Frame-based ColPali for patch-level visual search with multi-vector embeddings",
-        "embedding_model": "vidore/colpali-v1.3-hf",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "schema_config": {
-          "embedding_dim": 128
+          "embedding_dim": 320
         }
       },
       "video_videoprism_base_mv_chunk_30s": {

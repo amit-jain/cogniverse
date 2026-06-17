@@ -146,7 +146,7 @@ jobs:
       env:
         COVERAGE_FILE: .coverage
       run: |
-        uv run python -m pytest tests/evaluation/integration \
+        uv run --no-sync python -m pytest tests/evaluation/integration \
           -m "integration and ci_fast" \
           -v \
           --cov=libs/evaluation/cogniverse_evaluation \

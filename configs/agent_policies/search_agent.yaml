@@ -21,7 +21,7 @@ filesystem:
 inference:
   allowed_models:
     - "ollama/qwen3:4b"
-    - "vidore/colsmol-500m"
+    - "TomoroAI/tomoro-colqwen3-embed-4b"
 
 process:
   max_memory_mb: 4096

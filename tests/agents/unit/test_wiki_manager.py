@@ -348,6 +348,64 @@ class TestSaveSession:
         assert len(session.cross_references) == 2
 
 
+@pytest.mark.unit
+class TestEmbeddingPromptPrefix:
+    """DenseOn prompting is applied client-side: queries must embed with
+    ``is_query=True`` (``query:`` prefix) and stored documents with
+    ``is_query=False`` (``document:`` prefix). A query embedded with the
+    document prefix lands in a different region of the vector space and
+    silently degrades search recall.
+    """
+
+    def _make_manager(self):
+        from cogniverse_agents.wiki.wiki_manager import WikiManager
+
+        backend = MagicMock()
+        backend.search.return_value = []
+        return WikiManager(
+            backend=backend,
+            tenant_id="acme:production",
+            schema_name="wiki_pages_acme_production",
+        )
+
+    def test_search_embeds_query_with_is_query_true(self):
+        import numpy as np
+
+        mgr = self._make_manager()
+        embedder = MagicMock()
+        embedder.encode.return_value = np.zeros(768, dtype=np.float32)
+
+        with patch(
+            "cogniverse_core.common.models.semantic_embedder.get_semantic_embedder",
+            return_value=embedder,
+        ):
+            mgr.search("what is machine learning?", top_k=3)
+
+        embedder.encode.assert_called_once()
+        args, kwargs = embedder.encode.call_args
+        assert args[0] == "what is machine learning?"
+        assert kwargs.get("is_query") is True
+
+    def test_store_embeds_document_with_is_query_false(self):
+        import numpy as np
+
+        mgr = self._make_manager()
+        embedder = MagicMock()
+        embedder.encode.return_value = np.zeros(768, dtype=np.float32)
+
+        with patch(
+            "cogniverse_core.common.models.semantic_embedder.get_semantic_embedder",
+            return_value=embedder,
+        ):
+            vec = mgr._generate_embedding("a stored document body")
+
+        embedder.encode.assert_called_once()
+        args, kwargs = embedder.encode.call_args
+        assert args[0] == "a stored document body"
+        assert kwargs.get("is_query") is False
+        assert len(vec) == 768
+
+
 # ---------------------------------------------------------------------------
 # Helpers shared by TestWikiLint
 # ---------------------------------------------------------------------------

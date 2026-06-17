@@ -14,17 +14,13 @@ any future LM/encoder drift trips immediately.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import os
-import socket
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 import pytest
-import requests
 
 from cogniverse_agents.graph.cross_modal_linker import CrossModalLinker
 from cogniverse_agents.graph.graph_schema import (
@@ -59,69 +55,13 @@ def assert_golden(actual, name: str):
     )
 
 
-# --------------------------------------------------------------------- #
-# ColBERT endpoint resolution (file-level skip)                          #
-# --------------------------------------------------------------------- #
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-def _colbert_endpoint_from_env() -> Optional[str]:
-    """Return ``colbert_pylate`` URL from ``INFERENCE_SERVICE_URLS`` if alive."""
-    raw = os.environ.get("INFERENCE_SERVICE_URLS")
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    url = parsed.get("colbert_pylate")
-    if not url:
-        return None
-    try:
-        resp = requests.get(f"{url.rstrip('/')}/health", timeout=2)
-        if resp.status_code == 200:
-            return url
-    except requests.RequestException:
-        return None
-    return None
-
-
-def _pylate_sidecar_module_importable() -> bool:
-    """True iff the in-process pylate server can be imported & a model loaded."""
-    sidecar_path = Path("libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py")
-    if not sidecar_path.exists():
-        return False
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "pylate_server_probe", str(sidecar_path)
-        )
-        if spec is None or spec.loader is None:
-            return False
-    except Exception:
-        return False
-    return True
-
-
-def _colbert_available() -> bool:
-    if _colbert_endpoint_from_env() is not None:
-        return True
-    return _pylate_sidecar_module_importable()
-
-
 pytestmark = pytest.mark.integration
 
-# Historically the linker depended on a live ColBERT pylate sidecar to
-# score cross-modal pairs by MaxSim cosine. The structural-inference
-# rewrite removed that dependency — the helpers below are kept inert
-# for the few tests that still pass a colbert_endpoint argument, but
-# the value is no longer consumed.
+# Historically the linker depended on a live ColBERT sidecar to score
+# cross-modal pairs by MaxSim cosine. The structural-inference rewrite
+# removed that dependency — the fixture below is kept inert for the few
+# tests that still pass a colbert_endpoint argument, but the value is no
+# longer consumed.
 
 
 # --------------------------------------------------------------------- #

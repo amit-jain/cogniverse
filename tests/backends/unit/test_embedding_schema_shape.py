@@ -102,3 +102,18 @@ def test_authoritative_flag_formats_multi_vector_as_patch_dict():
 
     assert isinstance(out["embedding"], dict)
     assert set(out["embedding"].keys()) == {"0", "1", "2"}
+
+
+def test_visual_schemas_are_320_dim():
+    import glob
+
+    for name in (
+        "document_visual",
+        "video_colqwen_omni_mv_chunk_30s",
+        "video_colpali_smol500_mv_frame",
+        "image_colpali_mv",
+    ):
+        path = glob.glob(f"configs/schemas/{name}*.json")[0]
+        raw = open(path).read()
+        assert "v[320]" in raw and "v[40]" in raw, f"{name} not widened"
+        assert "v[128]" not in raw and "v[16]" not in raw, f"{name} still has 128/16"

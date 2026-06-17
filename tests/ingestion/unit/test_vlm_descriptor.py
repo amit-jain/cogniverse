@@ -919,3 +919,95 @@ class TestVLMDescriptionStrategyWiring:
                 auto_start=False,
             )
             assert result["descriptions"]["f1"] == "a person walking"
+
+
+@pytest.mark.unit
+class TestVLMEndpointContract:
+    """Assert the HTTP contract VLMDescriptor sends to vlm_endpoint_url.
+
+    The Modal server-side model (Qwen2-VL or Qwen3-VL) is irrelevant here:
+    the client payload shape must remain stable regardless of model generation.
+    """
+
+    @pytest.fixture
+    def descriptor(self):
+        return VLMDescriptor(
+            vlm_endpoint="http://modal.run/generate-description",
+            batch_size=100,
+            timeout=300,
+            auto_start=False,
+        )
+
+    @patch("requests.post")
+    def test_single_frame_request_payload_structure(
+        self, mock_post, descriptor, tmp_path
+    ):
+        """process_single_frame sends {frame_base64, prompt} to vlm_endpoint_url."""
+        import base64
+
+        raw_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 12  # minimal JPEG magic
+        frame_path = tmp_path / "frame.jpg"
+        frame_path.write_bytes(raw_bytes)
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "description": "A person walks across a sunlit courtyard carrying a bag.",
+            "request_id": "abc-123",
+            "duration_seconds": 1.5,
+        }
+        mock_post.return_value = mock_response
+
+        result = descriptor.process_single_frame(frame_path)
+
+        mock_post.assert_called_once()
+        call_args = mock_post.call_args
+        assert call_args[0][0] == "http://modal.run/generate-description"
+        assert call_args[1]["headers"] == {"Content-Type": "application/json"}
+
+        payload = call_args[1]["json"]
+        assert set(payload.keys()) >= {"frame_base64", "prompt"}
+        assert payload["frame_base64"] == base64.b64encode(raw_bytes).decode("utf-8")
+        assert isinstance(payload["prompt"], str) and len(payload["prompt"]) > 10
+
+        assert isinstance(result, str)
+        assert 5 <= len(result) <= 2000
+        assert "courtyard" in result
+
+    @patch("requests.post")
+    def test_single_frame_response_description_is_parsed(
+        self, mock_post, descriptor, tmp_path
+    ):
+        """Description field is extracted from the JSON envelope, not the raw body."""
+        frame_path = tmp_path / "frame.jpg"
+        frame_path.write_bytes(b"data")
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "description": "Two cyclists ride past a café terrace.",
+            "request_id": "xyz-999",
+            "duration_seconds": 0.8,
+        }
+        mock_post.return_value = mock_response
+
+        result = descriptor.process_single_frame(frame_path)
+
+        assert result == "Two cyclists ride past a café terrace."
+
+    @patch("requests.post")
+    def test_single_frame_api_non200_returns_error_string(
+        self, mock_post, descriptor, tmp_path
+    ):
+        """Non-200 status produces an error string, not an exception."""
+        frame_path = tmp_path / "frame.jpg"
+        frame_path.write_bytes(b"data")
+
+        mock_response = Mock()
+        mock_response.status_code = 503
+        mock_post.return_value = mock_response
+
+        result = descriptor.process_single_frame(frame_path)
+
+        assert isinstance(result, str)
+        assert "503" in result

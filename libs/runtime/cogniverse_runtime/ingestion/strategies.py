@@ -594,7 +594,7 @@ class DocumentVisualEmbeddingStrategy(BaseStrategy):
 
     def __init__(
         self,
-        colpali_model: str = "vidore/colsmol-500m",
+        colpali_model: str = "TomoroAI/tomoro-colqwen3-embed-4b",
         inference_service: str | None = None,
     ):
         self.colpali_model = colpali_model
@@ -630,7 +630,7 @@ class DocumentVisualEmbeddingStrategy(BaseStrategy):
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
-    def __init__(self, model_name: str = "vidore/colsmol-500m", **kwargs):
+    def __init__(self, model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b", **kwargs):
         self.model_name = model_name
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:

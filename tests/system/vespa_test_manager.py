@@ -530,8 +530,8 @@ class VespaTestManager:
                     "frame_description": "Robot playing soccer with ball control skills",
                     "video_duration": 125.5,
                     "frame_timestamp": 10.0,
-                    "embedding": [0.1] * 128,  # Dummy embedding matching schema
-                    "embedding_binary": "00" * 16,  # Dummy binary embedding
+                    "embedding": [0.1] * 320,  # Dummy embedding matching schema
+                    "embedding_binary": "00" * 40,  # Dummy binary embedding
                 }
             ]
 

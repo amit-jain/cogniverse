@@ -46,18 +46,18 @@ class EncoderStub:
 
 
 class ColPaliStub(EncoderStub):
-    """Stub for ColPali encoder (128-dim patch-based embeddings)"""
+    """Stub for ColPali encoder (320-dim patch-based embeddings)"""
 
-    def __init__(self, model_name: str = "vidore/colpali-v1.2", **kwargs):
-        super().__init__(model_name, embedding_dim=128, load_time_ms=15.0)
+    def __init__(self, model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b", **kwargs):
+        super().__init__(model_name, embedding_dim=320, load_time_ms=15.0)
 
     def encode(self, query: str, **kwargs) -> np.ndarray:
-        """Return 16x128 patch embeddings"""
+        """Return 16x320 patch embeddings"""
         seed = hash(query) % (2**32)
         rng = np.random.RandomState(seed)
 
         # ColPali returns patch-based embeddings (num_patches x dim)
-        return rng.randn(16, 128).astype(np.float32)
+        return rng.randn(16, 320).astype(np.float32)
 
 
 class VideoPrismBaseStub(EncoderStub):
@@ -90,17 +90,17 @@ class VideoPrismLargeStub(EncoderStub):
 
 
 class ColQwenStub(EncoderStub):
-    """Stub for ColQwen encoder (128-dim patch-based embeddings)"""
+    """Stub for ColQwen encoder (320-dim patch-based embeddings)"""
 
-    def __init__(self, model_name: str = "vidore/colqwen2-v1.0", **kwargs):
-        super().__init__(model_name, embedding_dim=128, load_time_ms=15.0)
+    def __init__(self, model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b", **kwargs):
+        super().__init__(model_name, embedding_dim=320, load_time_ms=15.0)
 
     def encode(self, query: str, **kwargs) -> np.ndarray:
-        """Return 16x128 patch embeddings"""
+        """Return 16x320 patch embeddings"""
         seed = hash(query) % (2**32)
         rng = np.random.RandomState(seed)
 
-        return rng.randn(16, 128).astype(np.float32)
+        return rng.randn(16, 320).astype(np.float32)
 
 
 def create_encoder_stub(model_name: str, **kwargs) -> EncoderStub:

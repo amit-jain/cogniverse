@@ -31,8 +31,8 @@ def mock_config():
                     "schema_name": "frame_based_colpali",
                 },
                 "video_colqwen_omni": {
-                    "embedding_model": "vidore/colqwen2-v1.0",
-                    "embedding_dim": 128,
+                    "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                    "embedding_dim": 320,
                     "embedding_format": "binary",
                     "schema_name": "video_colqwen_omni",
                 },

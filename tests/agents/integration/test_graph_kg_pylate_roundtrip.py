@@ -1,8 +1,10 @@
-"""End-to-end round-trip of the KG → colbert_pylate → Vespa write path.
+"""End-to-end round-trip of the KG → vLLM /pooling → Vespa write path.
 
 Spins up an HTTP stub that mimics both:
-  - the colbert_pylate sidecar's ``POST /pooling`` (returns canonical
-    (N, 128) per-token embeddings)
+  - the vLLM token-embed (LateOn) ``POST /pooling`` endpoint (returns
+    canonical (N, 128) per-token embeddings); query vs document is
+    distinguished by the client-side ``[Q] ``/``[D] `` prefix, never an
+    ``is_query`` field
   - Vespa's Document v1 ``PUT /document/v1/...`` (records the payload)
 
 Routes a node upsert through GraphManager and asserts the wire-format
@@ -38,7 +40,7 @@ def _free_port() -> int:
 
 
 class _StubHandler(BaseHTTPRequestHandler):
-    """Two-faced stub: /pooling for colbert_pylate, /document/v1 for Vespa."""
+    """Two-faced stub: /pooling for vLLM token-embed, /document/v1 for Vespa."""
 
     pooling_requests: list[dict] = []
     feed_payloads: list[tuple[str, dict]] = []  # (path, payload)
@@ -53,6 +55,12 @@ class _StubHandler(BaseHTTPRequestHandler):
 
         if self.path == "/pooling":
             _StubHandler.pooling_requests.append(body)
+            # vLLM /pooling must NOT receive is_query — query vs document
+            # is encoded client-side via the [Q] / [D] prefix.
+            assert "is_query" not in body, (
+                f"is_query must not be sent to vLLM /pooling; got keys: "
+                f"{list(body.keys())}"
+            )
             n = _StubHandler.pooling_n_tokens
             data = []
             for i, _text in enumerate(body["input"]):
@@ -143,11 +151,12 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
     counts = manager.upsert(result)
     assert counts == {"nodes_upserted": 1, "edges_upserted": 0}
 
-    # 1. Stub saw a /pooling request with is_query=false (document side).
+    # 1. Stub saw a /pooling request with the [D] document prefix and no
+    #    is_query field (vLLM contract).
     assert len(capture.pooling_requests) == 1
     pool_req = capture.pooling_requests[0]
-    assert pool_req["is_query"] is False
-    assert pool_req["input"] == ["Alpha\nFirst node under test"]
+    assert "is_query" not in pool_req
+    assert pool_req["input"] == ["[D] Alpha\nFirst node under test"]
 
     # 2. Stub saw exactly one PUT to /document/v1/... for the node.
     assert len(capture.feed_payloads) == 1
@@ -183,23 +192,23 @@ def test_node_upsert_writes_both_tensor_fields_in_vespa_wire_format(stub):
         )
 
 
-def test_query_encoding_sets_is_query_true_and_builds_block_inputs(stub):
+def test_query_encoding_prefixes_query_and_builds_block_inputs(stub):
     port, capture = stub
     manager = _make_manager(port)
 
-    # search_nodes encodes the query with is_query=True and POSTs to /search/.
-    # Our stub doesn't implement /search/ — it'll 404, which is fine for
-    # this test: we only care that the encoder was called with is_query=True
-    # and that no exception escaped (search falls back to YQL visit on
-    # transport errors).
+    # search_nodes encodes the query with the [Q] prefix and POSTs to
+    # /search/. Our stub doesn't implement /search/ — it'll 404, which is
+    # fine for this test: we only care that the encoder prefixed the query
+    # with [Q] (and sent no is_query) and that no exception escaped (search
+    # falls back to YQL visit on transport errors).
     manager.search_nodes("find me alpha", top_k=5)
 
     # The stub saw at least one /pooling call for the query side.
-    assert any(req["is_query"] is True for req in capture.pooling_requests), (
-        "search_nodes must encode the query with is_query=True"
-    )
-    query_req = next(req for req in capture.pooling_requests if req["is_query"] is True)
-    assert query_req["input"] == ["find me alpha"]
+    query_reqs = [
+        req for req in capture.pooling_requests if req["input"] == ["[Q] find me alpha"]
+    ]
+    assert query_reqs, "search_nodes must encode the query with the [Q] prefix"
+    assert "is_query" not in query_reqs[0]
 
 
 def test_edge_upsert_omits_embedding_fields(stub):

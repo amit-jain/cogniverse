@@ -4,11 +4,125 @@ Unit tests for AudioProcessor.
 Tests audio transcription functionality using Whisper models.
 """
 
+import json
+import logging
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
+from cogniverse_runtime.ingestion.processor_manager import ProcessorManager
 from cogniverse_runtime.ingestion.processors.audio_processor import AudioProcessor
+from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CONFIG_PATH = REPO_ROOT / "configs" / "config.json"
+VLLM_ASR_URL = "http://cogniverse-vllm-asr:8000"
+
+
+def _build_audio_processor(profile_config: dict, service_urls: dict) -> AudioProcessor:
+    """Run the real factory→manager wiring and return the audio processor.
+
+    Mirrors the production path: ``StrategyFactory`` lifts
+    ``inference_services.transcription`` onto the strategy, then
+    ``ProcessorManager`` resolves the service name to an ``endpoint`` URL
+    before constructing the ``AudioProcessor``. The processor's
+    ``endpoint`` attribute is the remote-mode flag the transcribe path reads.
+    """
+    strategy_set = StrategyFactory.create_from_profile_config(profile_config)
+    manager = ProcessorManager(logging.getLogger("test_audio_routing"))
+    manager.initialize_from_strategies(strategy_set, service_urls)
+    return manager.get_processor("audio")
+
+
+class TestRemoteTranscriptionRouting:
+    """Round-trip wiring: profile config → REMOTE vs in-process AudioProcessor."""
+
+    def test_vllm_asr_profile_builds_remote_processor(self):
+        """``inference_services.transcription: vllm_asr`` + a resolved URL
+        constructs an AudioProcessor in REMOTE mode: its ``endpoint`` is the
+        resolved vLLM ASR URL, so the transcribe path POSTs to the pod
+        instead of loading Whisper locally."""
+        profile_config = {
+            "inference_services": {"transcription": "vllm_asr"},
+            "strategies": {
+                "transcription": {
+                    "class": "AudioTranscriptionStrategy",
+                    "params": {"model": "openai/whisper-large-v3-turbo"},
+                }
+            },
+        }
+
+        processor = _build_audio_processor(profile_config, {"vllm_asr": VLLM_ASR_URL})
+
+        assert isinstance(processor, AudioProcessor)
+        assert processor.endpoint == VLLM_ASR_URL, (
+            "vllm_asr routing must set endpoint = resolved URL (REMOTE mode); "
+            f"got {processor.endpoint!r}"
+        )
+
+    def test_no_transcription_service_builds_local_processor(self):
+        """Control: without ``inference_services.transcription`` the processor
+        has no ``endpoint`` and runs Whisper in-process (LOCAL mode)."""
+        profile_config = {
+            "inference_services": {"embedding": "vllm_colpali"},
+            "strategies": {
+                "transcription": {
+                    "class": "AudioTranscriptionStrategy",
+                    "params": {"model": "base"},
+                }
+            },
+        }
+
+        processor = _build_audio_processor(profile_config, {})
+
+        assert isinstance(processor, AudioProcessor)
+        assert processor.endpoint is None, (
+            "no transcription service must leave endpoint unset (LOCAL mode); "
+            f"got {processor.endpoint!r}"
+        )
+
+
+class TestConfigTranscriptionRouting:
+    """The shipped configs/config.json routes audio transcription to vllm_asr."""
+
+    @pytest.fixture(scope="class")
+    def transcription_profiles(self) -> dict[str, dict]:
+        with open(CONFIG_PATH) as f:
+            cfg = json.load(f)
+        profiles = cfg["backend"]["profiles"]
+        return {
+            name: p
+            for name, p in profiles.items()
+            if p.get("strategies", {}).get("transcription", {}).get("class")
+            == "AudioTranscriptionStrategy"
+        }
+
+    def test_every_transcription_profile_routes_to_vllm_asr(
+        self, transcription_profiles
+    ):
+        """Every profile that runs AudioTranscriptionStrategy sets
+        ``inference_services.transcription: vllm_asr`` and the
+        ``openai/whisper-large-v3-turbo`` model, and builds a REMOTE
+        processor when vllm_asr resolves."""
+        assert transcription_profiles, (
+            "expected at least one AudioTranscriptionStrategy profile in config"
+        )
+        for name, profile in transcription_profiles.items():
+            inf = profile.get("inference_services") or {}
+            assert inf.get("transcription") == "vllm_asr", (
+                f"profile {name!r} must route transcription to vllm_asr; "
+                f"got {inf.get('transcription')!r}"
+            )
+            params = profile["strategies"]["transcription"].get("params", {})
+            assert params.get("model") == "openai/whisper-large-v3-turbo", (
+                f"profile {name!r} transcription model must be "
+                f"openai/whisper-large-v3-turbo; got {params.get('model')!r}"
+            )
+            processor = _build_audio_processor(profile, {"vllm_asr": VLLM_ASR_URL})
+            assert processor.endpoint == VLLM_ASR_URL, (
+                f"profile {name!r} must build a REMOTE audio processor"
+            )
 
 
 @pytest.mark.requires_whisper

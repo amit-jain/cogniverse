@@ -29,7 +29,7 @@ eval_logger = logging.getLogger(__name__)
 
 # Path to schema JSON files
 EVAL_SCHEMAS_DIR = Path(__file__).resolve().parents[2] / "configs" / "schemas"
-EVAL_COLPALI_MODEL = "vidore/colsmol-500m"
+EVAL_COLPALI_MODEL = "TomoroAI/tomoro-colqwen3-embed-4b"
 # Schema name MUST match what ``VespaSearchBackend`` constructs from the
 # tenant_id used in tests. The runtime builds
 # ``f"{base_schema_name}_{tenant_id.replace(':', '_')}"`` (see

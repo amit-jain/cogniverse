@@ -145,31 +145,60 @@ def materialise_test_pipeline_config(http_port: int) -> str:
 # decorators evaluated at module-import time, so the env var has to be set
 # *before* pytest imports the test module — which is what ``pytest_configure``
 # is for. We spin up the vllm-colpali container (vLLM serving
-# vidore/colpali-v1.3-hf via ColPaliForRetrieval) and the videoprism JAX
-# sidecar once per session, populate ``INFERENCE_SERVICE_URLS``, and tear
-# them down on session exit. The vllm/vllm-openai-cpu image is pulled
-# from upstream automatically; videoprism is local
+# TomoroAI/tomoro-colqwen3-embed-4b via ColPaliForRetrieval), the videoprism JAX
+# sidecar, and the vllm-asr Whisper sidecar (vLLM serving
+# openai/whisper-large-v3-turbo via /v1/audio/transcriptions) once per
+# session, populate ``INFERENCE_SERVICE_URLS``, and tear them down on
+# session exit. Transcription hard-requires the remote vllm_asr service, so
+# any video-ingestion test that transcribes needs it running. The
+# vllm/vllm-openai-cpu image is pulled from upstream automatically;
+# videoprism is local
 # (``docker build -t cogniverse/videoprism:dev deploy/videoprism/``).
 # ---------------------------------------------------------------------------
 
-_VLLM_IMAGE = "vllm/vllm-openai-cpu:latest"
+_VLLM_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 _VIDEOPRISM_IMAGE = "cogniverse/videoprism:dev"
 _INFERENCE_SIDECARS = {
     "vllm_colpali": {
         "image": _VLLM_IMAGE,
         "container_name": "vllm-colpali-ingest-tests",
-        "model_name": "vidore/colpali-v1.3-hf",
+        "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
         "internal_port": 8000,
-        "extra_env": {},
+        # CPU vLLM budgets RAM from these (NOT --gpu-memory-utilization, which
+        # is a no-op on CPU). The default ~0.1 utilization + the 4B Tomoro
+        # weights OOMs on a loaded host (Vespa + videoprism + LM sidecars all
+        # running), so the container exits before /health and the colpali
+        # skip-gate stays unsatisfied. 0.05 / 2 GiB KV mirrors the proven
+        # tests/utils/vllm_sidecar.py factory used by the search/runtime side.
+        "extra_env": {
+            "VLLM_CPU_MEMORY_UTILIZATION": "0.05",
+            "VLLM_CPU_KVCACHE_SPACE": "2",
+        },
+        # Make this short-lived sidecar a more attractive OOM-kill target than
+        # the session-scoped Vespa (oom-score-adj=-1000); losing it fails only
+        # its own tests, losing Vespa cascades.
+        "run_flags": ["--oom-score-adj=500"],
         # Upstream vLLM's ``vllm serve`` entrypoint takes the model + flags as
         # CLI args (it ignores MODEL_NAME). On CPU it otherwise tries to grab
-        # 0.92 of host RAM (~113 GiB) and aborts, so cap it.
+        # 0.92 of host RAM (~113 GiB) and aborts, so cap it. ``--runner pooling
+        # --convert embed`` selects vLLM's pooling runner so Tomoro serves the
+        # multi-vector embeddings the ColPali ingestion path consumes — same
+        # serving config the search-side vllm_sidecar fixture uses.
         "command": [
-            "vidore/colpali-v1.3-hf",
+            "TomoroAI/tomoro-colqwen3-embed-4b",
+            "--runner",
+            "pooling",
+            "--convert",
+            "embed",
+            # qwen3_vl's ViT tower makes vLLM's profiler allocate a
+            # worst-case video buffer that OOMs; Tomoro embeds image
+            # frames, never native video. Mirrors the chart deploy args.
+            "--limit-mm-per-prompt",
+            '{"video":0,"image":1}',
             "--gpu-memory-utilization",
             "0.3",
             "--max-model-len",
-            "2048",
+            "4096",
         ],
     },
     "videoprism_jax": {
@@ -178,6 +207,37 @@ _INFERENCE_SIDECARS = {
         "model_name": "videoprism_public_v1_base_hf",
         "internal_port": 7999,
         "extra_env": {"JAX_PLATFORM_NAME": "cpu", "JAX_PLATFORMS": "cpu"},
+    },
+    # Whisper served via vLLM's OpenAI-compatible /v1/audio/transcriptions.
+    # Transcription HARD-REQUIRES this remote service (no in-process
+    # fallback), so any video-ingestion test that transcribes needs it
+    # provisioned. Mirrors the chart's vllm_transcription engine: the
+    # upstream vllm-openai-cpu image lacks the [audio] extras, so we
+    # override the ``vllm serve`` entrypoint with ``sh -c`` to pip-install
+    # soundfile + librosa, then exec ``vllm serve`` (PID 1 for signals).
+    # whisper-large-v3-turbo is ~809M and feasible on CPU.
+    "vllm_asr": {
+        "image": _VLLM_IMAGE,
+        "container_name": "vllm-asr-ingest-tests",
+        "model_name": "openai/whisper-large-v3-turbo",
+        "internal_port": 8000,
+        # Same CPU RAM cap rationale as vllm_colpali. Whisper's KV cache is
+        # negligible (max-model-len 448), so 1 GiB is plenty; keep the
+        # 0.05 utilization floor so it co-exists with the other sidecars.
+        "extra_env": {
+            "VLLM_CPU_MEMORY_UTILIZATION": "0.05",
+            "VLLM_CPU_KVCACHE_SPACE": "1",
+        },
+        "run_flags": ["--oom-score-adj=500"],
+        # Override the image's ``vllm serve`` ENTRYPOINT so the [audio]
+        # extras install before vLLM starts; mirrors the chart command.
+        "entrypoint": ["sh", "-c"],
+        "command": [
+            "pip install --no-cache-dir --quiet soundfile librosa || exit 1; "
+            "exec vllm serve openai/whisper-large-v3-turbo "
+            "--host 0.0.0.0 --port 8000 "
+            "--runner generate --max-model-len 448",
+        ],
     },
 }
 
@@ -215,6 +275,13 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
         "-e",
         f"MODEL_NAME={spec['model_name']}",
     ]
+    # The vllm-openai images ENTRYPOINT is ``vllm serve``; the Whisper ASR
+    # sidecar needs to pip-install the [audio] extras first, so it overrides
+    # the entrypoint with ``sh -c`` and supplies the full install+serve line
+    # as its command.
+    if spec.get("entrypoint"):
+        cmd.extend(["--entrypoint", spec["entrypoint"][0]])
+    cmd.extend(spec.get("run_flags", []))
     for env_key, env_val in spec.get("extra_env", {}).items():
         cmd.extend(["-e", f"{env_key}={env_val}"])
     cmd.extend(
@@ -226,6 +293,9 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
     )
     # Upstream vLLM images need the model + flags as CLI args appended to the
     # ``vllm serve`` entrypoint; the custom videoprism image reads MODEL_NAME.
+    # With an entrypoint override (``["sh", "-c"]``) the leftover entrypoint
+    # tokens (``-c``) become the first positional args before the command.
+    cmd.extend(spec.get("entrypoint", [])[1:])
     cmd.extend(spec.get("command", []))
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -286,9 +356,11 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
 
 
 def pytest_configure(config):
-    """Boot the vllm-colpali + videoprism sidecars before any test module
-    imports so that ``@requires_vllm_colpali`` skipif decorators evaluated
-    at import time see a populated ``INFERENCE_SERVICE_URLS`` env var.
+    """Boot the vllm-colpali + videoprism + vllm-asr sidecars before any test
+    module imports so that ``@requires_vllm_colpali`` skipif decorators
+    evaluated at import time see a populated ``INFERENCE_SERVICE_URLS`` env
+    var, and so transcription (which hard-requires the remote ``vllm_asr``
+    service) finds its URL during video ingestion.
 
     Honours an existing env var: if the user already exported one (e.g.
     pointing at a long-running k3d sidecar) we don't fight them. Skips

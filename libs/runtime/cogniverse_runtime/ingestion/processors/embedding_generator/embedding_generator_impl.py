@@ -17,6 +17,7 @@ from PIL import Image
 from cogniverse_sdk.document import ContentType, Document, ProcessingStatus
 
 from .embedding_generator import BaseEmbeddingGenerator, EmbeddingResult
+from .token_pooling import pool_document_tokens
 
 
 class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
@@ -55,6 +56,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         # Storage mode determines if we create one doc per segment or one doc total
         self.storage_mode = self.profile_config.get("storage_mode", "multi_doc")
+
+        self._token_pool_factor = self.profile_config.get("token_pool_factor")
 
         # Model and processor
         self.model = None
@@ -825,6 +828,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # shape [T, D], so unwrap the batch dim to match.
                 if embeddings_arr.ndim == 3 and embeddings_arr.shape[0] == 1:
                     embeddings_arr = embeddings_arr[0]
+                embeddings_arr = pool_document_tokens(
+                    embeddings_arr, self._token_pool_factor
+                )
                 self.logger.info(
                     f"    🖼️ Generated embeddings for frame {frame_path.name} "
                     f"(remote): shape={embeddings_arr.shape}"
@@ -923,11 +929,16 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     # chunk-level vector by mean-pooling over the frame dim,
                     # matching the local path (which does
                     # ``embeddings_np.mean(axis=0)``).
-                    return (
+                    chunk_arr = (
                         embeddings_arr.mean(axis=0)
                         if embeddings_arr.ndim >= 2
                         else embeddings_arr
-                    ).astype(np.float32, copy=False)
+                    )
+                    if chunk_arr.ndim == 2 and chunk_arr.shape[0] > 1:
+                        chunk_arr = pool_document_tokens(
+                            chunk_arr, self._token_pool_factor
+                        )
+                    return chunk_arr.astype(np.float32, copy=False)
 
                 import torch
 
@@ -943,6 +954,8 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
                 embeddings_np = embeddings.cpu().numpy()
                 result = embeddings_np.mean(axis=0)
+                if result.ndim == 2 and result.shape[0] > 1:
+                    result = pool_document_tokens(result, self._token_pool_factor)
 
                 # Drop tensors so the CPU allocator can reclaim activations
                 # before the caller moves on to the next chunk.
@@ -1062,6 +1075,10 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                         return None
                     if len(frames) > 1 and embeddings_arr.ndim >= 2:
                         embeddings_arr = embeddings_arr.mean(axis=0)
+                    if embeddings_arr.ndim == 2 and embeddings_arr.shape[0] > 1:
+                        embeddings_arr = pool_document_tokens(
+                            embeddings_arr, self._token_pool_factor
+                        )
                     return embeddings_arr.astype(np.float32, copy=False)
 
                 import torch
@@ -1073,7 +1090,12 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     embeddings = self.model(**batch_inputs)
 
                 embeddings_np = embeddings.cpu().numpy()
-                return embeddings_np.mean(axis=0) if len(frames) > 1 else embeddings_np
+                seg_arr = (
+                    embeddings_np.mean(axis=0) if len(frames) > 1 else embeddings_np
+                )
+                if seg_arr.ndim == 2 and seg_arr.shape[0] > 1:
+                    seg_arr = pool_document_tokens(seg_arr, self._token_pool_factor)
+                return seg_arr
 
         except Exception as e:
             self.logger.error(f"Error generating time segment embeddings: {e}")

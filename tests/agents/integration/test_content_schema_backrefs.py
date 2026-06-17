@@ -22,12 +22,9 @@ service is reachable.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import logging
 import os
-import socket
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -67,12 +64,6 @@ def assert_golden(actual, name: str):
 # --------------------------------------------------------------------- #
 # Availability probes for the file-level skip                           #
 # --------------------------------------------------------------------- #
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def _vespa_running() -> bool:
@@ -127,25 +118,6 @@ def _colbert_endpoint_from_env() -> Optional[str]:
     return None
 
 
-def _pylate_sidecar_module_importable() -> bool:
-    sidecar_path = Path("libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py")
-    if not sidecar_path.exists():
-        return False
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "pylate_server_probe_backrefs", str(sidecar_path)
-        )
-    except Exception:
-        return False
-    return spec is not None and spec.loader is not None
-
-
-def _colbert_available() -> bool:
-    return (
-        _colbert_endpoint_from_env() is not None or _pylate_sidecar_module_importable()
-    )
-
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -153,15 +125,6 @@ pytestmark = [
         reason=(
             "Content-schema back-ref tests need a Vespa container the suite "
             "can spin up — Docker is unavailable in this environment."
-        ),
-    ),
-    pytest.mark.skipif(
-        not _colbert_available(),
-        reason=(
-            "Content-schema back-ref tests need a real ColBERT endpoint — "
-            "set INFERENCE_SERVICE_URLS with a live colbert_pylate URL or "
-            "make the colbert_pylate sidecar module importable so the in-process "
-            "fallback can spawn it."
         ),
     ),
 ]
@@ -343,53 +306,18 @@ class _DeterministicClaimExtractor:
 
 
 # --------------------------------------------------------------------- #
-# ColBERT endpoint fixture (shared with cross-modal linker)              #
+# ColBERT endpoint fixture (LateOn served by vLLM)                       #
 # --------------------------------------------------------------------- #
 
 
 @pytest.fixture(scope="module")
-def colbert_endpoint():
+def colbert_endpoint(pylate_server):
+    """LateOn ``/pooling`` endpoint, served by the session-scoped vLLM
+    ``pylate_server`` fixture. An explicit ``INFERENCE_SERVICE_URLS``
+    colbert_pylate URL takes precedence when set so CI can point at a
+    pre-deployed pod."""
     env_url = _colbert_endpoint_from_env()
-    if env_url is not None:
-        yield env_url
-        return
-
-    import uvicorn  # noqa: PLC0415
-
-    spec = importlib.util.spec_from_file_location(
-        "pylate_server_under_test_backrefs",
-        "libs/runtime/cogniverse_runtime/sidecars/colbert_pylate.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-
-    app = mod.build_app(model_name="lightonai/LateOn", device="cpu", mode="colbert")
-    port = _free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        try:
-            resp = requests.get(f"{base_url}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(1)
-    else:
-        server.should_exit = True
-        thread.join(timeout=5)
-        pytest.fail("pylate /health did not come up within 180s — model load failed")
-
-    try:
-        yield base_url
-    finally:
-        server.should_exit = True
-        thread.join(timeout=5)
+    return env_url if env_url is not None else pylate_server
 
 
 # --------------------------------------------------------------------- #

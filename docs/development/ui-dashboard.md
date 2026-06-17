@@ -833,8 +833,8 @@ GET /ingestion/status/{job_id}
 ```
 
 **Available Profiles**:
-1. `video_colpali_smol500_mv_frame` (128-dim, frame-based)
-2. `video_colqwen_omni_mv_chunk_30s` (128-dim, 30s chunks)
+1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)
+2. `video_colqwen_omni_mv_chunk_30s` (320-dim, 30s chunks)
 3. `video_videoprism_base_mv_chunk_30s` (768-dim, 30s chunks)
 4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)

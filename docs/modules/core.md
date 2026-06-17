@@ -67,6 +67,7 @@ cogniverse_core/
 │   ├── federation.py            # FederationService (org-trunk + tenant overlays, cross-tenant ACLs)
 │   ├── pinning.py               # PinService, PinQuotas, PinRecord
 │   ├── lifecycle_scheduler.py   # LifecycleScheduler (schema-driven periodic cleanup)
+│   ├── mem0_embedder.py         # DenseOnMem0Embedder (DenseOn prompt + L2-norm adapter for Mem0)
 │   ├── backend_config.py        # Memory backend configuration
 │   └── backend_vector_store.py  # Vector store integration
 ├── common/                      # Shared utilities
@@ -566,6 +567,19 @@ memory.delete_memory(
     agent_name="search_agent"
 )
 ```
+
+#### DenseOn embedder adapter
+
+The manager configures Mem0's embedder with the `cogniverse_denseon`
+provider (`memory/mem0_embedder.py`), not Mem0's stock `openai` provider.
+`DenseOnMem0Embedder` wraps `RemoteOpenAIEmbedder` so the DenseOn
+sentence-transformers prompt prefix (`query: ` / `document: `) and
+`normalize_embeddings=True` that the model ships with are restored
+client-side over `/v1/embeddings`. Mem0's `memory_action` selects the
+prompt: `search` embeds a query, `add`/`update` (and any unspecified
+action) embed a document. Without this adapter, stored memory vectors
+would silently change value and drift Mem0's `closeness` ranking against
+existing `agent_memories` rows.
 
 ### Federation: org trunk + tenant overlays (A.5)
 
@@ -1308,10 +1322,16 @@ Factory for creating model loaders based on the `model_loader` config key:
 ```python
 from cogniverse_core.common.models import ModelLoaderFactory
 
-# Config must contain "model_loader" key — raises ValueError if missing
+# Config must contain "model_loader" key — raises ValueError if missing.
+# A "remote_inference_url" selects the remote loader; ColQwen3/Tomoro
+# (model_type qwen3_vl) is remote-only and must always carry one.
 loader = ModelLoaderFactory.create_loader(
-    model_name="vidore/colpali-v1.3-hf",
-    config={"model_loader": "colpali", "embedding_type": "multi_vector"},
+    model_name="TomoroAI/tomoro-colqwen3-embed-4b",
+    config={
+        "model_loader": "colpali",
+        "embedding_type": "multi_vector",
+        "remote_inference_url": "http://localhost:8000",
+    },
     logger=logger,
 )
 model, processor = loader.load_model()
@@ -1326,7 +1346,16 @@ model, processor = loader.load_model()
 | `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
 | `colbert` | `ColBERTModelLoader` | *(not yet supported)* |
 
-Remote loaders are selected when `use_remote_inference: true` is set in config.
+Remote loaders are selected when `remote_inference_url` is set in config.
+
+**ColQwen3/Tomoro is remote-only.** `TomoroAI/tomoro-colqwen3-embed-4b`
+(architecture `qwen3_vl`) has no in-process loader: the pinned
+`transformers` (4.56.2, capped by pylate) lacks `qwen3_vl` support and
+`colpali_engine` mis-maps it to `idefics3`. Constructing the local
+`ColPaliModelLoader`/`ColQwenModelLoader` (or the corresponding query
+encoder) for such a model without `remote_inference_url` raises a clear
+`RuntimeError` directing the operator to serve via vLLM and set
+`inference_service_url` (profile `inference_services.embedding`).
 
 ### ColBERTModelLoader (model_loaders.py)
 
@@ -1343,6 +1372,33 @@ loader = ColBERTModelLoader(
 model, _ = loader.load_model()
 # model is a pylate.models.ColBERT instance
 # Returns 128-dim per-token multi-vector embeddings
+```
+
+### RemoteColBERTLoader (model_loaders.py)
+
+Serves the same ColBERT contract from a vLLM `/pooling` endpoint instead of an
+in-process pylate model. `load_model()` returns a `ColBERTRemoteWrapper` whose
+`.encode(texts, is_query=...)` mirrors `pylate.models.ColBERT.encode()`:
+
+- The `[Q] `/`[D] ` marker is prepended client-side as literal text. Each marker
+  is a single token in the LateOn vocabulary, so this reproduces pylate's marker
+  insertion exactly (no extra subword tokens).
+- For documents (`is_query=False`) the wrapper drops the punctuation tokens
+  pylate removes via `ColBERT.skiplist_mask`. `/pooling` returns one embedding
+  per token in tokenizer order, so the wrapper re-tokenizes the prefixed text and
+  drops the rows whose token id is in the punctuation skiplist. Queries keep all
+  tokens.
+
+```python
+from cogniverse_core.common.models.model_loaders import RemoteColBERTLoader
+
+loader = RemoteColBERTLoader(
+    model_name="lightonai/LateOn",
+    config={"remote_inference_url": "http://localhost:8000"},
+    logger=logger,
+)
+model, _ = loader.load_model()
+doc_tokens = model.encode(["Vespa stores token embeddings."], is_query=False)[0]
 ```
 
 ### RemoteInferenceClient (model_loaders.py)

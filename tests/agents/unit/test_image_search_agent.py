@@ -59,7 +59,7 @@ class TestImageSearchAgent:
         # depends on both).
         assert mock_get_model.called
         call_args = mock_get_model.call_args[0]
-        assert call_args[0] == "vidore/colsmol-500m"  # model_name
+        assert call_args[0] == "TomoroAI/tomoro-colqwen3-embed-4b"  # model_name
         assert "colpali_model" in call_args[1]  # config
 
     @patch("cogniverse_core.query.encoders.get_or_load_model")

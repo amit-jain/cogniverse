@@ -157,13 +157,13 @@ jobs:
     - name: Pre-pull Vespa + vLLM Docker images
       run: |
         docker pull vespaengine/vespa:8.668.5
-        docker pull vllm/vllm-openai-cpu:latest
+        docker pull vllm/vllm-openai-cpu:v0.23.0
         df -h
 
     - name: Run integration tests
       timeout-minutes: 25
       run: |
-        JAX_PLATFORM_NAME=cpu uv run python -m pytest \
+        JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \
           -m "integration and ci_fast" \
           -v --tb=short

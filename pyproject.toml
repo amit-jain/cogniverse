@@ -48,7 +48,6 @@ dependencies = [
     # and the JAX stack lives only in that image.
     "transformers==4.56.2",
     "colpali-engine==0.3.13",
-    "pylate==1.4.0",
     "gliner==0.2.26",
     "xgboost==3.2.0",
     "scikit-learn==1.8.0",
@@ -208,6 +207,10 @@ sandbox = [
 ]
 test = [
     "playwright>=1.58.0",
+    # pylate is a test-only parity oracle (vLLM LateOn/DenseOn round-trips)
+    # and future finetuning tool; production serves these models via vLLM
+    # through Remote*Loader and never imports pylate at runtime.
+    "pylate==1.4.0",
 ]
 
 [tool.black]

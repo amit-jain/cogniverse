@@ -26,10 +26,7 @@ import cv2
 import numpy as np
 import pytest
 
-from tests.fixtures.sidecars import (  # noqa: F401
-    pylate_sidecar,
-    vllm_sidecar,
-)
+from tests.fixtures.sidecars import vllm_sidecar  # noqa: F401
 
 # Test data constants
 TEST_VIDEO_WIDTH = 640

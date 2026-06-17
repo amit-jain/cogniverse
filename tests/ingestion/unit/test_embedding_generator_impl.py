@@ -789,6 +789,168 @@ class TestEmbeddingGeneratorImpl:
             "Error generating frame embeddings: Image load error"
         )
 
+    def _make_remote_generator(self, config, mock_logger, mock_backend_client):
+        """Build a generator whose model/processor is a real
+        RemoteInferenceClient so ``_generate_frame_embeddings`` takes the remote
+        branch (the only branch that applies document-side token pooling)."""
+        from cogniverse_core.common.models.model_loaders import RemoteInferenceClient
+
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        client = RemoteInferenceClient("http://remote.invalid", logger=mock_logger)
+        generator.model = client
+        generator.processor = client
+        return generator, client
+
+    def test_generate_frame_embeddings_pools_when_factor_set(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Frame remote path pools the multi-vector when token_pool_factor set.
+
+        The pooler clusters by cosine similarity (HierarchicalTokenPooler), so
+        30 DISTINCT token rows with pool_factor=3 collapse to ceil(30/3)=10
+        clusters -> shape (10, 320). Identical rows would collapse to 1, which
+        is why the stub returns distinct (seeded) vectors.
+        """
+        from PIL import Image as PILImage
+
+        config = {**frame_based_config, "token_pool_factor": 3}
+        generator, client = self._make_remote_generator(
+            config, mock_logger, mock_backend_client
+        )
+
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ) as mock_proc:
+            result = generator._generate_frame_embeddings(frame_path)
+
+        mock_proc.assert_called_once()
+        assert result is not None
+        assert result.shape == (10, 320)
+        assert result.dtype == np.float32
+
+    def test_generate_frame_embeddings_no_pooling_without_factor(
+        self, frame_based_config, mock_logger, mock_backend_client, tmp_path
+    ):
+        """Control: with no token_pool_factor, the remote path is unpooled."""
+        from PIL import Image as PILImage
+
+        generator, client = self._make_remote_generator(
+            frame_based_config, mock_logger, mock_backend_client
+        )
+
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        frame_path = tmp_path / "frame.png"
+        PILImage.new("RGB", (8, 8), (10, 20, 30)).save(frame_path)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ):
+            result = generator._generate_frame_embeddings(frame_path)
+
+        assert result is not None
+        assert result.shape == (30, 320)
+
+    @patch("PIL.Image.fromarray")
+    @patch("cv2.cvtColor")
+    @patch("cv2.VideoCapture")
+    def test_generate_chunk_embeddings_pools_when_factor_set(
+        self,
+        mock_video_capture,
+        mock_cvt_color,
+        mock_from_array,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """Chunk remote path pools the per-chunk multi-vector when the factor
+        is set.
+
+        The remote client returns [N_frames, T, D]; the method mean-pools over
+        the frame dim to a 2D (T, D) multi-vector, which is then token-pooled.
+        30 DISTINCT token rows + pool_factor=3 -> ceil(30/3)=10 clusters.
+        """
+        config = {
+            **frame_based_config,
+            "fps": 1.0,
+            "embedding_type": "multi_vector",
+            "model_loader": "colqwen",
+            "token_pool_factor": 3,
+        }
+        generator, client = self._make_remote_generator(
+            config, mock_logger, mock_backend_client
+        )
+        generator.model_name = "colqwen_test"
+
+        mock_cap = Mock()
+        mock_cap.get.side_effect = [25.0, 100]  # fps, total_frames
+        mock_cap.read.return_value = (True, np.zeros((8, 8, 3), dtype=np.uint8))
+        mock_video_capture.return_value = mock_cap
+        mock_cvt_color.return_value = np.zeros((8, 8, 3), dtype=np.uint8)
+        mock_from_array.return_value = Mock()
+
+        # Single extracted frame -> [1, 30, 320]; mean(axis=0) -> (30, 320).
+        rng = np.random.default_rng(0)
+        tokens = rng.standard_normal((1, 30, 320)).astype(np.float32)
+
+        with patch.object(
+            client, "process_images", return_value={"embeddings": tokens}
+        ):
+            result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+
+        assert result is not None
+        assert result.shape == (10, 320)
+        assert result.dtype == np.float32
+
+    @patch("cogniverse_core.common.models.get_or_load_model")
+    @patch("subprocess.run")
+    def test_generate_chunk_embeddings_videoprism_single_vector_not_pooled(
+        self,
+        mock_subprocess,
+        mock_get_or_load_model,
+        frame_based_config,
+        mock_logger,
+        mock_backend_client,
+    ):
+        """A VideoPrism-style single-vector chunk return is never pooled, even
+        when token_pool_factor is set — pooling a single vector is corrupting.
+
+        The shape guard (ndim == 2 and shape[0] > 1) protects it.
+        """
+        mock_get_or_load_model.return_value = (Mock(), None)
+        config = {
+            **frame_based_config,
+            "embedding_type": "multi_vector",
+            "model_loader": "videoprism",
+            "token_pool_factor": 3,
+        }
+        generator = EmbeddingGeneratorImpl(config, mock_logger, mock_backend_client)
+        generator.videoprism_loader = Mock()
+
+        mock_result = Mock()
+        mock_result.returncode = 0
+        mock_result.stdout = "30.0"
+        mock_subprocess.return_value = mock_result
+
+        rng = np.random.default_rng(1)
+        single_vector = rng.standard_normal((768,)).astype(np.float32)
+        generator.videoprism_loader.process_video_segment.return_value = {
+            "embeddings_np": single_vector
+        }
+
+        result = generator._generate_chunk_embeddings(Path("/path/to/chunk.mp4"))
+
+        assert result is not None
+        assert result.shape == (768,)
+        np.testing.assert_array_equal(result, single_vector)
+
     @patch("cogniverse_core.common.models.get_or_load_model")
     @patch("torch.no_grad")
     @patch("cv2.cvtColor")
@@ -1290,7 +1452,7 @@ class TestModelLoaderFactoryModelLoader:
         )
 
         loader = ModelLoaderFactory.create_loader(
-            "vidore/colsmol-500m",
+            "TomoroAI/tomoro-colqwen3-embed-4b",
             {"model_loader": "colpali"},
             None,
         )

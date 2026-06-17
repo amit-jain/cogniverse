@@ -36,7 +36,8 @@ class ProfileCreateRequest(BaseModel):
         ..., description="Base schema name (must have template in configs/schemas/)"
     )
     embedding_model: str = Field(
-        ..., description="Embedding model identifier (e.g., 'vidore/colsmol-500m')"
+        ...,
+        description="Embedding model identifier (e.g., 'TomoroAI/tomoro-colqwen3-embed-4b')",
     )
     pipeline_config: Dict[str, Any] = Field(
         default_factory=dict,
@@ -69,7 +70,7 @@ class ProfileCreateRequest(BaseModel):
                 "type": "video",
                 "description": "High-quality ColPali with 60 FPS keyframe extraction",
                 "schema_name": "video_colpali_smol500_mv_frame",
-                "embedding_model": "vidore/colsmol-500m",
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
                 "pipeline_config": {
                     "extract_keyframes": True,
                     "transcribe_audio": True,
@@ -91,8 +92,8 @@ class ProfileCreateRequest(BaseModel):
                     "schema_name": "video_colpali",
                     "model_name": "ColPali",
                     "num_patches": 1024,
-                    "embedding_dim": 128,
-                    "binary_dim": 16,
+                    "embedding_dim": 320,
+                    "binary_dim": 40,
                 },
                 "deploy_schema": True,
             }

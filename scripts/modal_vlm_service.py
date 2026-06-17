@@ -22,10 +22,13 @@ GPU_CONFIG = f"{GPU_TYPE}:{GPU_COUNT}"
 SGL_LOG_LEVEL = "error"  # try "debug" or "info" if you have issues
 MINUTES = 60  # seconds
 
-# Model Configuration - Using larger, more capable Qwen2-VL model
-MODEL_PATH = "Qwen/Qwen2-VL-7B-Instruct"
-MODEL_REVISION = "a7a06a1cc11b4514ce9edcde0e3ca1d16e5ff2fc"
-TOKENIZER_PATH = "Qwen/Qwen2-VL-7B-Instruct"
+# Model Configuration
+MODEL_PATH = "Qwen/Qwen3-VL-8B-Instruct"
+# Pinned Qwen3-VL-8B-Instruct main commit for reproducible deploys.
+MODEL_REVISION = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
+TOKENIZER_PATH = "Qwen/Qwen3-VL-8B-Instruct"
+# sglang registers no "qwen3-vl" template; "qwen2-vl" is auto-matched for any
+# "qwen.*vl" model path and is the correct template for Qwen3-VL.
 MODEL_CHAT_TEMPLATE = "qwen2-vl"
 
 # Volume setup for model caching and frame storage
@@ -57,18 +60,19 @@ tag = f"{cuda_version}-{flavor}-{operating_sys}"
 vlm_image = (
     modal.Image.from_registry(f"nvidia/cuda:{tag}", add_python="3.11")
     .pip_install(  # add sglang and Python dependencies
-        "transformers==4.47.1",
+        "transformers>=4.52.0",
         "numpy<2",
         "fastapi[standard]==0.115.4",
         "pydantic==2.9.2",
         "requests==2.32.3",
         "starlette==0.41.2",
-        "torch==2.4.0",
-        "sglang[all]==0.4.1",
-        "sgl-kernel==0.1.0",
+        "torch==2.6.0",
+        # Qwen3-VL architecture (qwen3_vl.py) requires sglang >= 0.5.3
+        "sglang[all]==0.5.13",
+        "sgl-kernel==0.1.9",
         "hf-xet==1.1.5",
-        "Pillow",  # For image processing
-        extra_options="--find-links https://flashinfer.ai/whl/cu124/torch2.4/flashinfer/",
+        "Pillow",
+        extra_options="--find-links https://flashinfer.ai/whl/cu124/torch2.6/flashinfer/",
     )
     .env(
         {

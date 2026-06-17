@@ -31,8 +31,8 @@ HERMETIC_CONFIG = REPO_ROOT / "outputs" / ".hermetic" / "config.json"
 _HF_CACHE = str(Path.home() / ".cache" / "huggingface")
 
 _IMAGES = {
-    "rocm": "vllm/vllm-openai-rocm:v0.20.0",
-    "cpu": "vllm/vllm-openai-cpu:latest",
+    "rocm": "vllm/vllm-openai-rocm:v0.23.0",
+    "cpu": "vllm/vllm-openai-cpu:v0.23.0",
 }
 
 
@@ -131,6 +131,7 @@ def ensure_llm(deadline_s: float = 900.0) -> Optional[str]:
     if state == "running" and _healthy(probe):
         os.environ["COGNIVERSE_CONFIG"] = str(_write_session_config(base_url))
         return base_url
+
     def _await_ready(budget_s: float) -> bool:
         deadline = time.time() + budget_s
         while time.time() < deadline:

@@ -642,13 +642,13 @@ class SearchAgent(
 
         if active_profile and isinstance(profiles, dict) and active_profile in profiles:
             model_name = profiles[active_profile].get(
-                "embedding_model", "vidore/colsmol-500m"
+                "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
             )
             self.embedding_type = profiles[active_profile].get(
                 "embedding_type", "multi_vector"
             )
         else:
-            model_name = deps.model_name or "vidore/colsmol-500m"
+            model_name = deps.model_name or "TomoroAI/tomoro-colqwen3-embed-4b"
             self.embedding_type = "multi_vector"
 
         backend_type = deps.backend_type or self.search_config.get(
@@ -818,7 +818,7 @@ class SearchAgent(
                 # Create encoder for this profile
                 profile_config = profiles_config[profile_name]
                 model_name = profile_config.get(
-                    "embedding_model", "vidore/colsmol-500m"
+                    "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
                 )
 
                 # encode() is synchronous, CPU/GPU-blocking work — offload it so

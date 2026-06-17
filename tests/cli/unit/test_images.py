@@ -28,10 +28,11 @@ class TestBuildImages:
 
     @patch("cogniverse_cli.images.subprocess.run")
     def test_build_images_calls_docker_build(self, mock_run: object) -> None:
-        """One docker build per image: backend-specific runtime + dashboard
-        first (TORCH_BACKEND build-arg), then the pylate sidecar.
-        ColPali and Whisper are now served by vLLM (vllm/vllm-openai-cpu)
-        and pulled directly by k3d, so no local build is needed for them."""
+        """One docker build per cogniverse-owned image: backend-specific
+        runtime + dashboard (TORCH_BACKEND build-arg). ColPali, Whisper, and
+        the LateOn/DenseOn text embedders are now served by vLLM
+        (vllm/vllm-openai-cpu) and pulled directly by k3d, so no local build
+        is needed for them."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
@@ -42,9 +43,8 @@ class TestBuildImages:
         assert tags == [
             "cogniverse/runtime-cpu:dev",
             "cogniverse/dashboard-cpu:dev",
-            "cogniverse/pylate:dev",
         ]
-        assert mock_run.call_count == 3  # type: ignore[attr-defined]
+        assert mock_run.call_count == 2  # type: ignore[attr-defined]
 
         for call in mock_run.call_args_list:  # type: ignore[attr-defined]
             cmd = call[0][0]
@@ -72,20 +72,30 @@ class TestBuildImages:
         assert "cogniverse/dashboard-rocm:dev" in dashboard_cmd
 
     @patch("cogniverse_cli.images.subprocess.run")
-    def test_build_images_pylate_uses_repo_root_context(self, mock_run: object) -> None:
-        """pylate builds from the repo root — the Dockerfile COPYs the
-        sidecar module out of libs/runtime/cogniverse_runtime/sidecars/."""
+    def test_build_images_builds_only_runtime_and_dashboard(
+        self, mock_run: object
+    ) -> None:
+        """LateOn/DenseOn are served by stock vLLM now — the retired pylate
+        sidecar image must never be built again. Only the runtime and
+        dashboard images are cogniverse-owned builds."""
         mock_run.return_value = subprocess.CompletedProcess(  # type: ignore[attr-defined]
             args=[], returncode=0
         )
 
-        build_images(Path("/fake/root"), torch_backend="cpu")
+        built = build_images(Path("/fake/root"), torch_backend="cpu")
 
-        pylate_call = mock_run.call_args_list[2]  # type: ignore[attr-defined]
-        cmd = pylate_call[0][0]
-        assert "deploy/pylate/Dockerfile" in cmd
-        assert cmd[-1] == "."  # repo-root build context
-        assert "cogniverse/pylate:dev" in cmd
+        assert built == [
+            "cogniverse/runtime-cpu:dev",
+            "cogniverse/dashboard-cpu:dev",
+        ]
+        assert mock_run.call_count == 2  # type: ignore[attr-defined]
+        all_cmds = [
+            call[0][0]
+            for call in mock_run.call_args_list  # type: ignore[attr-defined]
+        ]
+        for cmd in all_cmds:
+            assert "deploy/pylate/Dockerfile" not in cmd
+            assert "cogniverse/pylate:dev" not in cmd
 
 
 class TestImportImages:

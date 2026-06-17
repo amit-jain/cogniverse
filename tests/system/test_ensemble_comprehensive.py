@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 # Real profile definitions from the system
 REAL_PROFILES = {
     "video_colpali_smol500_mv_frame": {
-        "model": "vidore/colsmol-500m",
-        "embedding_dim": 128,  # binarized from 1024
-        "binary_dim": 16,
+        "model": "TomoroAI/tomoro-colqwen3-embed-4b",
+        "embedding_dim": 320,
+        "binary_dim": 40,
     },
     "video_videoprism_base_mv_chunk_30s": {
         "model": "google/videoprism-base",
@@ -139,7 +139,7 @@ class TestComprehensiveEnsembleSearch:
         COMPREHENSIVE TEST: Validate ensemble works with profiles using different embedding dimensions.
 
         Real profiles:
-        - video_colpali_smol500_mv_frame: 128-dim (binarized from 1024) → 16 bytes
+        - video_colpali_smol500_mv_frame: 320-dim → 40 bytes
         - video_videoprism_base_mv_chunk_30s: 768-dim → 96 bytes
         - video_colqwen_omni_mv_chunk_30s: 128-dim (binarized from 1024) → 16 bytes
 

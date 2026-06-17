@@ -86,8 +86,8 @@ def ensemble_system_setup():
         profiles = {
             "colpali_profile": {
                 "schema": schema_name,
-                "embedding_model": "vidore/colpali-v1.2",
-                "embedding_dim": 128,
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_dim": 320,
             },
             "videoprism_profile": {
                 "schema": schema_name,
@@ -96,8 +96,8 @@ def ensemble_system_setup():
             },
             "colqwen_profile": {
                 "schema": schema_name,
-                "embedding_model": "vidore/colqwen2-v1.0",
-                "embedding_dim": 128,
+                "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "embedding_dim": 320,
             },
         }
 
@@ -142,7 +142,7 @@ def _create_test_documents():
             "id": f"test_video_{i}",
             "title": f"Test Video {i}",
             "description": f"Test description for video {i}",
-            "embeddings": np.random.rand(128).tolist(),  # Fake embeddings
+            "embeddings": np.random.rand(320).tolist(),  # Fake embeddings
         }
         docs.append(doc)
 
@@ -233,7 +233,7 @@ class TestEnsembleSearchEndToEnd:
             if "videoprism" in model_name.lower():
                 encoder.encode = Mock(return_value=np.random.rand(1024))
             else:
-                encoder.encode = Mock(return_value=np.random.rand(128))
+                encoder.encode = Mock(return_value=np.random.rand(320))
             return encoder
 
         agent._get_backend().search = mock_search_with_profile_mapping
@@ -329,7 +329,7 @@ class TestEnsembleSearchEndToEnd:
                 time.sleep(0.01)  # 10ms encoding time
                 if "videoprism" in model_name.lower():
                     return np.random.rand(1024)
-                return np.random.rand(128)
+                return np.random.rand(320)
 
             encoder.encode = encode_with_timing
             return encoder
@@ -427,7 +427,7 @@ class TestEnsembleSearchEndToEnd:
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
-            encoder.encode = Mock(return_value=np.random.rand(128))
+            encoder.encode = Mock(return_value=np.random.rand(320))
             return encoder
 
         try:
@@ -518,7 +518,7 @@ class TestEnsembleSearchEndToEnd:
 
         def mock_create_encoder(profile_name, model_name, config=None):
             encoder = Mock()
-            encoder.encode = Mock(return_value=np.random.rand(128))
+            encoder.encode = Mock(return_value=np.random.rand(320))
             return encoder
 
         try:

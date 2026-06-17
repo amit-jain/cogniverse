@@ -14,7 +14,7 @@
       "timeout": 2.0,
       "description": "Default ranking profile",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -69,7 +69,7 @@
       "timeout": 2.0,
       "description": "Visual search with float embeddings",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -90,7 +90,7 @@
       "timeout": 2.0,
       "description": "Fast visual search with binary embeddings",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -111,7 +111,7 @@
       "timeout": 2.0,
       "description": "Float query with binary document embeddings",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -132,8 +132,8 @@
       "timeout": 5.0,
       "description": "Two-phase ranking: binary first, float reranking",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])",
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])",
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qtb",
@@ -155,7 +155,7 @@
       "timeout": 2.0,
       "description": "Combined visual (float) and text search",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -176,7 +176,7 @@
       "timeout": 2.0,
       "description": "Combined visual (binary) and text search",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -197,7 +197,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -218,7 +218,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -239,7 +239,7 @@
       "timeout": 2.0,
       "description": "Combined visual (float) and text search (excluding descriptions)",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -260,7 +260,7 @@
       "timeout": 2.0,
       "description": "Combined visual (binary) and text search (excluding descriptions)",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -281,7 +281,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking (excluding descriptions)",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -302,7 +302,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking (excluding descriptions)",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1169,7 +1169,7 @@
       "timeout": 2.0,
       "description": "Default ranking profile",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1224,7 +1224,7 @@
       "timeout": 2.0,
       "description": "Visual search with float embeddings",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1245,7 +1245,7 @@
       "timeout": 2.0,
       "description": "Fast visual search with binary embeddings",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1266,7 +1266,7 @@
       "timeout": 2.0,
       "description": "Float query with binary document embeddings",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1287,8 +1287,8 @@
       "timeout": 5.0,
       "description": "Two-phase ranking: binary first, float reranking",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])",
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])",
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qtb",
@@ -1310,7 +1310,7 @@
       "timeout": 2.0,
       "description": "Combined visual (float) and text search",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1331,7 +1331,7 @@
       "timeout": 2.0,
       "description": "Combined visual (binary) and text search",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1352,7 +1352,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1373,7 +1373,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1394,7 +1394,7 @@
       "timeout": 2.0,
       "description": "Combined visual (float) and text search (excluding descriptions)",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
@@ -1415,7 +1415,7 @@
       "timeout": 2.0,
       "description": "Combined visual (binary) and text search (excluding descriptions)",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1436,7 +1436,7 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking (excluding descriptions)",
       "inputs": {
-        "qtb": "tensor<int8>(querytoken{}, v[16])"
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
       },
       "query_tensors_needed": [
         "qtb"
@@ -1457,12 +1457,180 @@
       "timeout": 2.0,
       "description": "Text-first search with visual reranking (excluding descriptions)",
       "inputs": {
-        "qt": "tensor<float>(querytoken{}, v[128])"
+        "qt": "tensor<float>(querytoken{}, v[320])"
       },
       "query_tensors_needed": [
         "qt"
       ],
       "schema_name": ""
+    }
+  },
+  "image_colpali_mv": {
+    "default": {
+      "name": "default",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Default ranking profile",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "bm25_only": {
+      "name": "bm25_only",
+      "strategy_type": "pure_text",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": null,
+      "query_tensor_name": null,
+      "timeout": 2.0,
+      "description": "Pure text search using BM25",
+      "inputs": {},
+      "query_tensors_needed": [],
+      "schema_name": "image_colpali_mv"
+    },
+    "float_float": {
+      "name": "float_float",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Visual search with float embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[320])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "binary_binary": {
+      "name": "binary_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Fast visual search with binary embeddings",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "float_binary": {
+      "name": "float_binary",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Float query with binary document embeddings",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[320])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "phased": {
+      "name": "phased",
+      "strategy_type": "pure_visual",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": true,
+      "needs_text_query": false,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 5.0,
+      "description": "Two-phase ranking: binary first, float reranking",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])",
+        "qt": "tensor<float>(querytoken{}, v[320])"
+      },
+      "query_tensors_needed": [
+        "qtb",
+        "qt"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "hybrid_float_bm25": {
+      "name": "hybrid_float_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": true,
+      "needs_binary_embeddings": false,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding",
+      "query_tensor_name": "qt",
+      "timeout": 2.0,
+      "description": "Combined visual (float) and text search",
+      "inputs": {
+        "qt": "tensor<float>(querytoken{}, v[320])"
+      },
+      "query_tensors_needed": [
+        "qt"
+      ],
+      "schema_name": "image_colpali_mv"
+    },
+    "hybrid_binary_bm25": {
+      "name": "hybrid_binary_bm25",
+      "strategy_type": "hybrid",
+      "needs_float_embeddings": false,
+      "needs_binary_embeddings": true,
+      "needs_text_query": true,
+      "use_nearestneighbor": false,
+      "nearestneighbor_field": null,
+      "nearestneighbor_tensor": null,
+      "embedding_field": "embedding_binary",
+      "query_tensor_name": "qtb",
+      "timeout": 2.0,
+      "description": "Combined visual (binary) and text search",
+      "inputs": {
+        "qtb": "tensor<int8>(querytoken{}, v[40])"
+      },
+      "query_tensors_needed": [
+        "qtb"
+      ],
+      "schema_name": "image_colpali_mv"
     }
   }
 }

@@ -12,9 +12,7 @@
 # cluster still works without this file.
 #
 # Image tags below assume you have built and pushed:
-#   - cogniverse/colpali:dev-cuda   (PyTorch CUDA base + colpali-engine)
-#   - cogniverse/pylate:0.1.0-cuda  (PyTorch CUDA base + pylate)
-#   - rocm/vllm                     (use vllm/vllm-openai for CUDA, see llm)
+#   - vllm/vllm-openai              (CUDA vLLM image for embedding + chat)
 # Build recipes live under deploy/<component>/Dockerfile.cuda. Adjust
 # repository/tag to match your registry.
 
@@ -29,13 +27,14 @@ devMode:
 inference:
   vllm_colpali:
     enabled: true
+    model: TomoroAI/tomoro-colqwen3-embed-4b
     device: cuda
     gpuCount: 1
     replicaCount: 3            # scale-out for ingest throughput
     imagesByDevice:
       cuda:
         repository: vllm/vllm-openai
-        tag: latest
+        tag: v0.23.0
         pullPolicy: IfNotPresent
     nodeSelector: {}
     tolerations: []
@@ -52,15 +51,33 @@ inference:
     device: cuda
     gpuCount: 1
     replicaCount: 3
-    pylate:
-      imagesByDevice:
-        cuda:
-          repository: cogniverse/pylate
-          tag: 0.1.0-cuda
-          pullPolicy: IfNotPresent
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: v0.23.0
+        pullPolicy: IfNotPresent
     resources:
       limits:
         cpu: "4"
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+
+  # ASR via vLLM Whisper — enabled by default in base values.yaml; this
+  # overlay swaps in the CUDA image + GPU device. Profiles route audio
+  # transcription here via ``inference_services.transcription: "vllm_asr"``.
+  vllm_asr:
+    device: cuda
+    gpuCount: 1
+    imagesByDevice:
+      cuda:
+        repository: vllm/vllm-openai
+        tag: v0.23.0
+        pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: "2"
         memory: "8Gi"
       requests:
         cpu: "1"

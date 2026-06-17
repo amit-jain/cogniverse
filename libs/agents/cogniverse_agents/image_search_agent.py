@@ -63,7 +63,9 @@ class ImageSearchDeps(AgentDeps):
     """Dependencies for image search agent"""
 
     vespa_endpoint: str = Field("http://localhost:8080", description="Vespa endpoint")
-    colpali_model: str = Field("vidore/colsmol-500m", description="ColPali model name")
+    colpali_model: str = Field(
+        "TomoroAI/tomoro-colqwen3-embed-4b", description="ColPali model name"
+    )
 
 
 class ImageSearchAgent(A2AAgent[ImageSearchInput, ImageSearchOutput, ImageSearchDeps]):

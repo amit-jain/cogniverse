@@ -698,7 +698,7 @@ llm:
   vllm:
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     # Per-device image override; chart picks ``imagesByDevice[device]`` if
     # present, else falls back to ``image`` above. Set in values.cuda.yaml /
@@ -768,16 +768,15 @@ llm:
 # a JSON map of {key → url} for every enabled service. Profiles route per
 # request by looking up their ``inference_service`` in that map.
 inference:
-  # vLLM-served visual multi-vector retrieval (ColPali). Replaces the
-  # legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
-  # ColPaliForRetrieval class to serve vidore/colpali-v1.3-hf — a 3B
-  # PaliGemma-based model with 128-dim per-token output, matching the
-  # existing Vespa schema (no migration). Profiles route here via
-  # ``inference_service: "vllm_colpali"``.
+  # vLLM-served visual multi-vector retrieval (ColPali family). Replaces
+  # the legacy custom FastAPI sidecar (deploy/colpali). Uses vLLM's
+  # token-embed pooling runner to serve TomoroAI/tomoro-colqwen3-embed-4b
+  # — a 4B ColQwen3 model with 320-dim per-token output. Profiles route
+  # here via ``inference_service: "vllm_colpali"``.
   vllm_colpali:
     enabled: false
     engine: vllm_token_embed
-    model: vidore/colpali-v1.3-hf
+    model: TomoroAI/tomoro-colqwen3-embed-4b
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm
     gpuCount: 1
@@ -785,7 +784,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vLLM 0.20+ retired the ``--task token_embed`` flag in favour of
@@ -801,6 +800,11 @@ inference:
       - "pooling"
       - "--convert"
       - "embed"
+      # qwen3_vl carries a ViT vision tower; without this vLLM's startup
+      # profiler allocates a worst-case video attention buffer and OOMs.
+      # Tomoro embeds image frames, never native video.
+      - "--limit-mm-per-prompt"
+      - '{"video":0,"image":1}'
     # ``VLLM_CPU_KVCACHE_SPACE`` (GiB) is the CPU equivalent of
     # ``--gpu-memory-utilization``: it sets the absolute size of the
     # KV cache instead of a fraction of node memory. The fraction
@@ -811,7 +815,7 @@ inference:
     # ~12 GiB working set; ``resources.limits.memory: 16Gi`` adds
     # headroom for cudagraph/transient buffers.
     kvCacheGiB: 2
-    hfTokenSecret: ""              # colpali-v1.3-hf is ungated
+    hfTokenSecret: ""              # set to an HF token secret if the model is gated
     replicaCount: 1
     service:
       type: ClusterIP
@@ -842,20 +846,18 @@ inference:
       timeoutSeconds: 10
       failureThreshold: 24
 
-  # ColBERT-family text multi-vector retrieval served by a pylate FastAPI
-  # sidecar (cogniverse_runtime/sidecars/colbert_pylate.py). Used by profiles with
+  # ColBERT-family text multi-vector retrieval served by stock vLLM
+  # (``vllm_token_embed`` engine, /pooling endpoint). Used by profiles with
   # ``inference_service: "colbert_pylate"`` (e.g., document_text_semantic,
-  # lateon_mv). Swap model via ``model:`` — same pylate pod serves any
-  # ColBERT-family checkpoint. If you want a second ColBERT pod (e.g. for
-  # a different model in parallel), add another entry with a distinct key.
+  # lateon_mv); the key keeps its historical name. Swap model via ``model:``
+  # — vLLM serves any ColBERT-family checkpoint with the matching
+  # ``--hf-overrides`` architecture. If you want a second ColBERT pod (e.g.
+  # for a different model in parallel), add another entry with a distinct key.
   colbert_pylate:
     enabled: true
-    engine: pylate
+    engine: vllm_token_embed
     model: lightonai/LateOn
     type: multi_vector
-    # Top-level device drives GPU resources / nodeSelector. The pylate
-    # block below carries its own ``device`` env var which is kept in
-    # sync with this top-level field by the chart template.
     device: cpu                    # cpu | cuda | rocm | mps
     gpuCount: 1
     nodeSelector: {}
@@ -865,25 +867,20 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29002
-    # vLLM-specific (used when engine=vllm)
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
+    # ``--hf-overrides`` forces vLLM to load the ColBERTModernBertModel
+    # multi-vector architecture; without it vLLM serves a plain dense
+    # ModernBert and the per-token outputs LateOn retrieval needs vanish.
     extraArgs:
       - "--max-model-len"
       - "8192"
-    # pylate-specific (used when engine=pylate)
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}           # per-device image override; same shape as vllm_colpali
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
+      - "--hf-overrides"
+      - '{"architectures": ["ColBERTModernBertModel"]}'
     resources:
       limits:
         cpu: "4"
@@ -914,7 +911,7 @@ inference:
   # via ``inference_service: "code_colbert_pylate"``.
   code_colbert_pylate:
     enabled: false
-    engine: pylate
+    engine: vllm_token_embed
     model: lightonai/LateOn-Code-edge
     type: multi_vector
     device: cpu                    # cpu | cuda | rocm | mps
@@ -926,23 +923,18 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29004
-    # vLLM-specific (unused by default since default engine is pylate)
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     dtype: float32
-    extraArgs: []
-    # pylate-specific
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
+    # See colbert_pylate — multi-vector ColBERT arch override.
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
+      - "--hf-overrides"
+      - '{"architectures": ["ColBERTModernBertModel"]}'
     resources:
       limits:
         cpu: "2"
@@ -975,8 +967,7 @@ inference:
   # ``inference_service: "denseon"``.
   denseon:
     enabled: true
-    engine: pylate
-    mode: dense                    # colbert | dense — picks /pooling vs /v1/embeddings
+    engine: vllm_embed
     model: lightonai/DenseOn       # ModernBERT-base, 768-dim, CLS pooling, 512 ctx
     type: single_vector
     device: cpu                    # cpu | cuda | rocm | mps
@@ -988,23 +979,15 @@ inference:
       type: ClusterIP
       port: 8000
       nodePort: 29006
-    # vLLM-specific (unused — engine is pylate)
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest-arm64
+      tag: v0.23.0-arm64
       pullPolicy: IfNotPresent
     imagesByDevice: {}
+    # vllm_embed renders ``--dtype {{ .dtype }}``; float32 keeps the
+    # ModernBert dense embeddings numerically stable on CPU.
     dtype: float32
     extraArgs: []
-    # pylate-specific (the actual engine path)
-    pylate:
-      image:
-        repository: cogniverse/pylate
-        tag: "0.1.0"
-        pullPolicy: IfNotPresent
-      imagesByDevice: {}
-      device: cpu                  # synced with top-level device by template
-      containerPort: 8000
     resources:
       limits:
         cpu: "2"
@@ -1156,7 +1139,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # ``--max-model-len`` is dropped from Gemma 4 native (262144) to
@@ -1250,8 +1233,19 @@ inference:
   # ``inference_services.transcription: "vllm_asr"``. The vLLM image
   # must include the ``vllm[audio]`` extra so ``--task transcription``
   # is registered (set in extraArgs).
+  #
+  # Enabled by default: the default video-ingestion profiles
+  # (video_colpali_smol500_mv_frame and the other video profiles in
+  # config.json) set ``inference_services.transcription: "vllm_asr"``,
+  # and transcription HARD-REQUIRES the remote service (no in-process
+  # fallback). Since base values also ship ``ingestor.enabled: true``
+  # and a video profile in ``initJobs.schemaDeployment.profiles``, video
+  # ingestion is on out of the box, so this service must be too — same
+  # default-on gating as the other required ingestion/runtime services
+  # (colbert_pylate, denseon, gliner). whisper-large-v3-turbo is ~809M,
+  # lighter than those pods.
   vllm_asr:
-    enabled: false
+    enabled: true
     engine: vllm_transcription
     type: transcription
     model: openai/whisper-large-v3-turbo
@@ -1261,7 +1255,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     # vLLM 0.20+ replaced ``--task transcription`` with the implicit
@@ -1330,7 +1324,7 @@ inference:
     tolerations: []
     image:
       repository: vllm/vllm-openai-cpu
-      tag: latest
+      tag: v0.23.0
       pullPolicy: IfNotPresent
     imagesByDevice: {}
     extraArgs:

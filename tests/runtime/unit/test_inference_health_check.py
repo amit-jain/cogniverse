@@ -160,7 +160,7 @@ def test_validate_ignores_conflict_on_undeployed_service():
     image variants) shipped in a single config.json but only partially
     deployed per environment."""
     bindings = [
-        ProfileBinding("colpali_profile", "image", "vidore/colsmol-500m"),
+        ProfileBinding("colpali_profile", "image", "TomoroAI/tomoro-colqwen3-embed-4b"),
         ProfileBinding("colqwen_profile", "image", "vidore/colqwen-omni-v0.1"),
         ProfileBinding("text_profile", "colbert", "lightonai/LateOn"),
     ]

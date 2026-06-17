@@ -95,7 +95,7 @@ class ColPaliFamilyQueryEncoder(QueryEncoder):
     ``cogniverse-agents[torch-local]`` extras installed.
     """
 
-    embedding_dim = 128
+    embedding_dim = 320
 
     def __init__(
         self,
@@ -159,7 +159,7 @@ class ColPaliFamilyQueryEncoder(QueryEncoder):
 
 
 def ColPaliQueryEncoder(  # noqa: N802 — preserve legacy class-style name
-    model_name: str = "vidore/colsmol-500m",
+    model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b",
     *,
     inference_service_url: Optional[str] = None,
 ) -> ColPaliFamilyQueryEncoder:
