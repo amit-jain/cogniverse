@@ -28,6 +28,10 @@ on:
       - 'pytest.ini'
       - 'pyproject.toml'
 
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_MULTIPLEXING: "false"
+
 jobs:
   unit-tests:
     runs-on: ubuntu-latest
