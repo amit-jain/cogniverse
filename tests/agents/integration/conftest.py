@@ -34,16 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 def is_llm_available() -> bool:
-    """Provision (or reattach to) the self-managed test LM sidecar.
+    """Cheap reachability probe for the test LM.
 
-    Integration must not depend on the k3d cluster — ``ensure_llm`` runs
-    the same model as the production student in a local Docker sidecar
-    (ROCm-accelerated when the host supports it) and points
-    ``COGNIVERSE_CONFIG`` at it. False only when provisioning failed.
+    The LM is provisioned by the session-scoped ``ensure_host_ollama``
+    fixture (tests/conftest.py); this only probes whether it answers. It
+    MUST NOT spawn — module-level ``skipif`` markers call it at collection
+    time, so a model-loading call here would block the whole collection.
     """
-    from tests.utils.hermetic_llm import ensure_llm
+    from tests.fixtures.llm import is_test_lm_available
 
-    return ensure_llm() is not None
+    return is_test_lm_available()
 
 
 def is_teacher_api_available() -> bool:

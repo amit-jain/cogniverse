@@ -221,8 +221,21 @@ jobs:
         echo "🔧 To run with external services:"
         echo "   JAX_PLATFORM_NAME=cpu uv run python -m pytest tests/agents/integration/ -m 'integration and not requires_ollama' -v"
     
+    - name: Pre-pull Vespa Docker image
+      run: |
+        docker pull vespaengine/vespa:8.668.5
+        df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
+
     - name: Run integration tests (CI Fast)
+      timeout-minutes: 30
       env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
         COVERAGE_FILE: .coverage
       run: |
         # Run only ci_fast integration tests for quick CI feedback (2-3 minutes vs 50-60 minutes)
