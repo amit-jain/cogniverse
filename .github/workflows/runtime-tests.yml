@@ -165,14 +165,21 @@ jobs:
         sudo docker image prune -af
         df -h
 
-    - name: Pre-pull Vespa + vLLM Docker images
+    - name: Pre-pull Vespa Docker image
       run: |
         docker pull vespaengine/vespa:8.668.5
-        docker pull vllm/vllm-openai-cpu:v0.23.0
         df -h
+
+    - name: Cache Ollama binary and test model
+      uses: actions/cache@v4
+      with:
+        path: ~/.ollama
+        key: ollama-qwen2.5-0.5b-v1
 
     - name: Run integration tests
       timeout-minutes: 25
+      env:
+        TEST_LLM_MODEL: "qwen2.5:0.5b"
       run: |
         JAX_PLATFORM_NAME=cpu uv run --no-sync python -m pytest \
           tests/runtime/integration/ \

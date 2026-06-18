@@ -443,11 +443,15 @@ def health_client(vespa_instance, config_manager):
 
 
 def _is_llm_available() -> bool:
-    """Provision (or reattach to) the self-managed test LM sidecar —
-    see tests/utils/hermetic_llm.py. Never probes the k3d cluster."""
-    from tests.utils.hermetic_llm import ensure_llm
+    """Cheap reachability probe for the test LM provisioned by the
+    session-scoped ``ensure_host_ollama`` fixture (tests/conftest.py).
 
-    return ensure_llm() is not None
+    MUST NOT spawn: the ``skip_if_no_lm`` marker below calls it at module
+    import (collection) time, so a model-loading call here would block
+    collection of the whole suite."""
+    from tests.fixtures.llm import is_test_lm_available
+
+    return is_test_lm_available()
 
 
 skip_if_no_lm = pytest.mark.skipif(

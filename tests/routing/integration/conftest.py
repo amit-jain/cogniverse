@@ -31,7 +31,13 @@ SCHEMAS_DIR = Path(__file__).resolve().parents[3] / "configs" / "schemas"
 
 @pytest.fixture(autouse=True)
 def dspy_lm():
-    """Configure DSPy with the configured test LM for integration tests."""
+    """Configure DSPy with the configured test LM for integration tests.
+
+    The LM is provisioned once by the session-scoped ``ensure_host_ollama``
+    fixture (tests/conftest.py); here we only resolve and configure it. No
+    per-suite vLLM sidecar spawn — that duplicated the Ollama provisioner
+    and the two stomped on each other's ``TEST_LLM_MODEL``/``COGNIVERSE_CONFIG``.
+    """
     from tests.fixtures.llm import (
         is_test_lm_available,
         resolve_api_key,
@@ -39,12 +45,8 @@ def dspy_lm():
         resolve_prefixed_model,
     )
 
-    # Provision the self-managed LM sidecar first — it exports
-    # COGNIVERSE_CONFIG so the resolvers below see the hermetic endpoint.
-    from tests.utils.hermetic_llm import ensure_llm
-
-    if ensure_llm() is None or not is_test_lm_available():
-        pytest.skip(f"Test LM not provisionable (resolved {resolve_base_url()})")
+    if not is_test_lm_available():
+        pytest.skip(f"Test LM not available (resolved {resolve_base_url()})")
 
     config = LLMEndpointConfig(
         model=resolve_prefixed_model(),

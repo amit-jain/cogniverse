@@ -22,14 +22,14 @@ TENANT_ID = "test_extensibility"
 
 
 def _llm_available():
-    """Provision (or reattach to) the self-managed test LM sidecar.
+    """Cheap reachability probe for the test LM provisioned by the
+    session-scoped ``ensure_host_ollama`` fixture (tests/conftest.py).
 
-    Integration tests must not depend on the k3d cluster's student pod;
-    ``ensure_llm`` brings up the hermetic vLLM container and points
-    ``COGNIVERSE_CONFIG`` at it."""
-    from tests.utils.hermetic_llm import ensure_llm
+    MUST NOT spawn: this feeds a module-level ``skipif`` evaluated at
+    collection time, so a model-loading call here would block collection."""
+    from tests.fixtures.llm import is_test_lm_available
 
-    return ensure_llm() is not None
+    return is_test_lm_available()
 
 
 skip_if_no_lm = pytest.mark.skipif(not _llm_available(), reason="LLM not available")
