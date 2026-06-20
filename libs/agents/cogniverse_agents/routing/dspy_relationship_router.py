@@ -442,16 +442,23 @@ class DSPyAdvancedRoutingModule(dspy.Module):
     def __init__(
         self,
         analysis_module: Optional[ComposableQueryAnalysisModule] = None,
+        gliner_model: Optional[str] = None,
+        gliner_inference_url: Optional[str] = None,
     ):
         super().__init__()
         self.router = dspy.ChainOfThought(AdvancedRoutingSignature)
         self.basic_module = DSPyBasicRoutingModule()
 
-        # Use provided analysis module or create a default one
+        # Use provided analysis module or create a default one. ``gliner_model``
+        # / ``gliner_inference_url`` let a config-aware caller inject the
+        # configured GLiNER model and remote endpoint; when None the extractor
+        # falls back to DEFAULT_GLINER_MODEL and in-process loading.
         if analysis_module is not None:
             self.analysis_module = analysis_module
         else:
-            gliner_extractor = GLiNERRelationshipExtractor()
+            gliner_extractor = GLiNERRelationshipExtractor(
+                model_name=gliner_model, inference_url=gliner_inference_url
+            )
             spacy_analyzer = SpaCyDependencyAnalyzer()
             self.analysis_module = ComposableQueryAnalysisModule(
                 gliner_extractor=gliner_extractor,
@@ -743,9 +750,18 @@ class DSPyAdvancedRoutingModule(dspy.Module):
 def create_composable_query_analysis_module(
     entity_confidence_threshold: float = 0.6,
     min_entities_for_fast_path: int = 1,
+    gliner_model: Optional[str] = None,
+    gliner_inference_url: Optional[str] = None,
 ) -> ComposableQueryAnalysisModule:
-    """Create ComposableQueryAnalysisModule with default extractors."""
-    gliner_extractor = GLiNERRelationshipExtractor()
+    """Create ComposableQueryAnalysisModule with default extractors.
+
+    ``gliner_model`` / ``gliner_inference_url`` let a config-aware caller
+    inject the configured GLiNER model and remote endpoint; when None the
+    extractor falls back to DEFAULT_GLINER_MODEL and in-process loading.
+    """
+    gliner_extractor = GLiNERRelationshipExtractor(
+        model_name=gliner_model, inference_url=gliner_inference_url
+    )
     spacy_analyzer = SpaCyDependencyAnalyzer()
     return ComposableQueryAnalysisModule(
         gliner_extractor=gliner_extractor,

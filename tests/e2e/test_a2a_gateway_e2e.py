@@ -734,8 +734,9 @@ class TestEntityExtractionAgent:
         entities = data["entities"]
         entity_texts = {e["text"].lower() for e in entities}
 
-        # Assert EXACT entities, not just "has any tech"
-        assert "python" in entity_texts, (
+        # Assert the named tech terms appear. GLiNER returns whole spans
+        # ("Python programming"), so match by substring, not exact token.
+        assert "python" in entity_texts or any("python" in t for t in entity_texts), (
             f"Must detect 'Python' as entity, got: {entity_texts}"
         )
         assert "tensorflow" in entity_texts or any(
@@ -744,7 +745,7 @@ class TestEntityExtractionAgent:
 
         # Verify types for each detected entity
         for e in entities:
-            if e["text"].lower() == "python":
+            if "python" in e["text"].lower():
                 assert e["type"] in ("TECHNOLOGY", "CONCEPT", "SOFTWARE"), (
                     f"'Python' should be TECHNOLOGY/CONCEPT, got '{e['type']}'"
                 )

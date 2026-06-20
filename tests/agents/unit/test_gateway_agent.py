@@ -173,6 +173,34 @@ class TestClassification:
         assert modality == "both"
         assert conf == 0.8
 
+    def test_classify_modality_keyword_fallback(self, gateway_agent):
+        """No GLiNER entity, but a modality keyword resolves the modality."""
+        modality, conf = gateway_agent._classify_modality([], "show me cooking videos")
+        assert modality == "video"
+        assert conf == 0.5
+
+    def test_classify_modality_keyword_audio(self, gateway_agent):
+        modality, conf = gateway_agent._classify_modality(
+            [], "listen to podcasts about deep learning"
+        )
+        assert modality == "audio"
+        assert conf == 0.5
+
+    def test_classify_modality_gliner_score_beats_keyword(self, gateway_agent):
+        """A real GLiNER score is kept; the keyword does not overwrite it."""
+        entities = [_make_entity("video", "video_content", 0.9)]
+        modality, conf = gateway_agent._classify_modality(entities, "show me videos")
+        assert modality == "video"
+        assert conf == 0.9
+
+    def test_classify_modality_keyword_adds_second_modality(self, gateway_agent):
+        """GLiNER tags one modality; a keyword for another yields 'both'."""
+        entities = [_make_entity("video", "video_content", 0.7)]
+        modality, conf = gateway_agent._classify_modality(
+            entities, "find videos and documents"
+        )
+        assert modality == "both"
+
     def test_classify_generation_type_default(self, gateway_agent):
         gen_type, conf = gateway_agent._classify_generation_type([])
         assert gen_type == "raw_results"
@@ -192,8 +220,8 @@ class TestClassification:
 
 
 class TestComplexityDecision:
-    def test_no_entities_is_always_complex(self, gateway_agent):
-        """No entities → always complex, regardless of query content."""
+    def test_no_modality_signal_is_complex(self, gateway_agent):
+        """No modality signal (zero confidence) → complex, regardless of query."""
         assert (
             gateway_agent._is_complex(
                 "analyze the data", "video", "raw_results", [], 0.0
@@ -324,14 +352,64 @@ class TestProcessImpl:
         assert result.routed_to == "orchestrator_agent"
 
     @pytest.mark.asyncio
-    async def test_no_entities_is_always_complex(
+    async def test_no_modality_signal_is_complex(
         self, gateway_agent, mock_gliner_model
     ):
-        """No entities → always complex, regardless of query."""
+        """No entities and no modality keyword → complex."""
         mock_gliner_model.predict_entities.return_value = []
         result = await gateway_agent._process_impl(
             GatewayInput(query="hello world", tenant_id=TEST_TENANT_ID)
         )
+        assert result.complexity == "complex"
+        assert result.routed_to == "orchestrator_agent"
+
+    @pytest.mark.asyncio
+    async def test_keyword_modality_when_gliner_empty(
+        self, gateway_agent, mock_gliner_model
+    ):
+        """GLiNER misses 'cooking videos' but the 'videos' keyword keeps it a
+        simple video search (the gateway-misroute regression)."""
+        mock_gliner_model.predict_entities.return_value = []
+        result = await gateway_agent._process_impl(
+            GatewayInput(query="show me cooking videos", tenant_id=TEST_TENANT_ID)
+        )
+        assert result.complexity == "simple"
+        assert result.modality == "video"
+        assert result.routed_to == "search_agent"
+        assert result.confidence == 0.5
+
+    @pytest.mark.asyncio
+    async def test_keyword_audio_when_gliner_empty(
+        self, gateway_agent, mock_gliner_model
+    ):
+        """'listen to podcasts' keyword routes audio even when GLiNER returns []."""
+        mock_gliner_model.predict_entities.return_value = []
+        result = await gateway_agent._process_impl(
+            GatewayInput(
+                query="listen to podcasts about deep learning",
+                tenant_id=TEST_TENANT_ID,
+            )
+        )
+        assert result.complexity == "simple"
+        assert result.modality == "audio"
+        assert result.routed_to == "audio_analysis_agent"
+
+    @pytest.mark.asyncio
+    async def test_keyword_multimodal_is_complex_when_gliner_partial(
+        self, gateway_agent, mock_gliner_model
+    ):
+        """GLiNER tags only 'videos'; the 'documents' keyword adds the second
+        modality so the query is correctly 'both' → complex."""
+        mock_gliner_model.predict_entities.return_value = [
+            {"text": "videos", "label": "video_content", "score": 0.7},
+        ]
+        result = await gateway_agent._process_impl(
+            GatewayInput(
+                query="find videos and documents about neural networks",
+                tenant_id=TEST_TENANT_ID,
+            )
+        )
+        assert result.modality == "both"
         assert result.complexity == "complex"
         assert result.routed_to == "orchestrator_agent"
 

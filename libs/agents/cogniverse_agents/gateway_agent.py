@@ -9,7 +9,8 @@ Extracted from ComprehensiveRouter's fast path in routing/router.py.
 """
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple
+import re
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import Field
 
@@ -45,6 +46,40 @@ GENERATION_LABELS: Dict[str, List[str]] = {
 ALL_LABELS: List[str] = [
     label for labels in MODALITY_LABELS.values() for label in labels
 ] + [label for labels in GENERATION_LABELS.values() for label in labels]
+
+# Deterministic modality keywords. GLiNER (gliner_large-v2.1) is zero-shot and
+# phrasing-sensitive against the synthetic *_content labels: it tags "video
+# content about AI" but misses "cooking videos" and "listen to podcasts", and
+# it can time out on the shared inference pod and return nothing. These literal
+# keywords give the gateway a model-independent fallback so obvious single- and
+# multi-modal queries route correctly even when GLiNER yields no entity.
+MODALITY_KEYWORDS: Dict[str, frozenset] = {
+    "video": frozenset(
+        {"video", "videos", "footage", "clip", "clips", "movie", "movies"}
+    ),
+    "audio": frozenset(
+        {
+            "audio",
+            "podcast",
+            "podcasts",
+            "song",
+            "songs",
+            "music",
+            "sound",
+            "listen",
+            "recording",
+            "recordings",
+        }
+    ),
+    "image": frozenset({"image", "images", "photo", "photos", "picture", "pictures"}),
+    "document": frozenset({"document", "documents", "pdf", "pdfs", "doc", "docs"}),
+    "text": frozenset({"text", "article", "articles"}),
+}
+
+# Confidence assigned to a modality detected only by keyword (no GLiNER entity).
+# Above fast_path_confidence_threshold (0.4) so a keyword-routed query stays on
+# the simple fast path rather than spilling to the orchestrator.
+KEYWORD_MODALITY_CONFIDENCE = 0.5
 
 # ---------------------------------------------------------------------------
 # Simple route map: (modality, generation_type) -> agent name
@@ -262,11 +297,25 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
             for e in entities
         ]
 
-    def _classify_modality(self, entities: List[Dict[str, Any]]) -> Tuple[str, float]:
+    def _keyword_modalities(self, query: str) -> Set[str]:
+        """Modalities named by literal keyword in the query (model-independent)."""
+        words = set(re.findall(r"[a-z]+", query.lower()))
+        return {
+            modality
+            for modality, keywords in MODALITY_KEYWORDS.items()
+            if words & keywords
+        }
+
+    def _classify_modality(
+        self, entities: List[Dict[str, Any]], query: str = ""
+    ) -> Tuple[str, float]:
         """Determine the dominant modality from extracted entities.
 
-        Returns (modality, confidence). If entities span multiple modalities,
-        returns ("both", max_score).
+        Returns (modality, confidence). GLiNER entity scores take precedence;
+        modalities named only by keyword are folded in at
+        KEYWORD_MODALITY_CONFIDENCE so the gateway stays robust to GLiNER
+        misses and partial multi-modal tagging. If the combined set spans
+        multiple modalities, returns ("both", max_score).
         """
         modality_scores: Dict[str, float] = {}
         for entity in entities:
@@ -275,6 +324,9 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
                     modality_scores[modality] = max(
                         modality_scores.get(modality, 0.0), entity["score"]
                     )
+
+        for modality in self._keyword_modalities(query):
+            modality_scores.setdefault(modality, KEYWORD_MODALITY_CONFIDENCE)
 
         if not modality_scores:
             return "video", 0.0  # default modality, zero confidence
@@ -355,18 +407,17 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         """Decide whether a query needs orchestration.
 
         Complex if ANY of:
-        - No entities detected (GLiNER can't classify it)
-        - Low modality confidence (below threshold)
+        - No modality signal (confidence below threshold — neither GLiNER nor
+          keyword could classify the query)
         - Multiple modalities detected ("both")
         - Generation type is detailed_report (always needs search → analysis → report)
         - Query contains analysis/comparison/synthesis verbs
         - Query contains multi-step markers ("then", "after that", "first...next")
         - Query has multiple clauses (3+ commas or 2+ "and")
         """
-        # No entities → GLiNER can't classify → complex
-        if not entities:
-            return True
-
+        # No modality signal at all → can't fast-path → orchestrate. A query
+        # GLiNER missed but a modality keyword caught arrives here with
+        # KEYWORD_MODALITY_CONFIDENCE (>= threshold) and stays simple.
         if confidence < self.deps.fast_path_confidence_threshold:
             return True
         if modality == "both":
@@ -483,7 +534,7 @@ class GatewayAgent(A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]):
         # other request including /health/live (readiness failure, pod
         # marked NotReady under concurrent orchestration load).
         entities = await asyncio.to_thread(self._extract_entities, input.query)
-        modality, modality_confidence = self._classify_modality(entities)
+        modality, modality_confidence = self._classify_modality(entities, input.query)
         generation_type, gen_confidence = self._classify_generation_type(entities)
 
         # Conservative: low confidence in either dimension pushes borderline queries
