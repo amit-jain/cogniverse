@@ -142,4 +142,9 @@ workflow_intelligence.db
 
 # Local-only test config — see tests/evaluation/integration/resources/test_llm.example.json
 tests/evaluation/integration/resources/test_llm.json
-docs/development/audit-6-findings.md
+# docs/development/ holds tracked developer guides plus local-only working
+# notes — audit trackers, plans, todos, and bakeoff scratch stay untracked.
+docs/development/audit-*.md
+docs/development/*-plan.md
+docs/development/*-todo.md
+docs/development/*-bakeoff.md
