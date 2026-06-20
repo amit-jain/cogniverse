@@ -1542,7 +1542,22 @@ class OrchestratorAgent(
             create_composable_query_analysis_module,
         )
 
-        self._query_analysis_module = create_composable_query_analysis_module()
+        # Resolve the configured GLiNER model + remote endpoint so the slim
+        # runtime image (no in-process gliner/torch) routes extraction through
+        # the inference service instead of failing to import gliner.
+        gliner_model = None
+        gliner_inference_url = None
+        try:
+            sys_cfg = self._config_manager.get_system_config()
+            gliner_model = getattr(sys_cfg, "gliner_model", None)
+            gliner_inference_url = (sys_cfg.inference_service_urls or {}).get("gliner")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("GLiNER config lookup failed for query analysis: %s", exc)
+
+        self._query_analysis_module = create_composable_query_analysis_module(
+            gliner_model=gliner_model,
+            gliner_inference_url=gliner_inference_url,
+        )
         return self._query_analysis_module
 
     @staticmethod

@@ -135,12 +135,11 @@ graph TD
     Root --> SummarizerAgent["<span style='color:#000'>summarizer_agent.py</span>"]
     Root --> More["<span style='color:#000'>... (knowledge agents + other agent files)</span>"]
 
-    Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>21 files</span>"]
+    Root --> RoutingDir["<span style='color:#000'><b>routing/</b><br/>13 files</span>"]
     RoutingDir --> RoutingInit["<span style='color:#000'>__init__.py</span>"]
-    RoutingDir --> ModalCache["<span style='color:#000'>modality_cache.py</span>"]
     RoutingDir --> RelExtract["<span style='color:#000'>relationship_extraction_tools.py</span>"]
     RoutingDir --> DspyRouter["<span style='color:#000'>dspy_relationship_router.py</span>"]
-    RoutingDir --> ModalOpt["<span style='color:#000'>modality_optimizer.py</span>"]
+    RoutingDir --> DspySigs["<span style='color:#000'>dspy_routing_signatures.py</span>"]
     RoutingDir --> MoreRouting["<span style='color:#000'>... (utility files)</span>"]
 
     Root --> SearchDir["<span style='color:#000'><b>search/</b><br/>7 files</span>"]
@@ -420,7 +419,7 @@ results_startup = agent.search("cooking videos", profile="video_colpali_smol500_
 
 #### What It Does
 
-GatewayAgent is the first agent to handle every incoming query. It uses GLiNER zero-shot NER to detect the content modality and generation type, then decides whether the query is simple (direct to a specialist agent) or complex (forward to OrchestratorAgent for multi-step planning). The entire classification happens in a single model inference call — no LLM, no network round-trips.
+GatewayAgent is the first agent to handle every incoming query. It uses GLiNER zero-shot NER to detect the content modality and generation type, then decides whether the query is simple (direct to a specialist agent) or complex (forward to OrchestratorAgent for multi-step planning). A deterministic `MODALITY_KEYWORDS` fallback (literal word matching) is merged into `_classify_modality()` so queries GLiNER misses or where the remote service times out can still route correctly via keyword detection alone. The confidence assigned to a keyword-only match (`KEYWORD_MODALITY_CONFIDENCE = 0.5`) is above `fast_path_confidence_threshold` (0.4), so obvious single-modal keyword queries stay on the simple fast path.
 
 #### Input / Output
 
@@ -439,19 +438,18 @@ class GatewayOutput(AgentOutput):
     reasoning: str      # Human-readable explanation of the routing decision
 ```
 
-#### 7 Complexity Signals
+#### 6 Complexity Signals
 
 `_is_complex()` returns `True` (routes to orchestrator) when **any** of these hold:
 
 | # | Signal | Example |
 |---|--------|---------|
-| 1 | No GLiNER entities detected | GLiNER returns empty list — query unclassifiable |
-| 2 | Low modality confidence | `confidence < fast_path_confidence_threshold` (default 0.4) |
-| 3 | Multiple modalities detected | Query spans both video and document content |
-| 4 | Generation type is `detailed_report` | Always needs search → analyze → write pipeline |
-| 5 | Analysis/synthesis verbs present | "analyze", "compare", "evaluate", "synthesize", etc. |
-| 6 | Multi-step markers present | "then", "after that", "first...next", "followed by", etc. |
-| 7 | Compound query (multiple clauses) | 3+ commas or 2+ " and " separators in query |
+| 1 | Low modality confidence | `confidence < fast_path_confidence_threshold` (default 0.4) — neither GLiNER nor the deterministic `MODALITY_KEYWORDS` fallback resolved a modality |
+| 2 | Multiple modalities detected | Query spans both video and document content (modality == "both") |
+| 3 | Generation type is `detailed_report` | Always needs search → analyze → write pipeline |
+| 4 | Analysis/synthesis verbs present | "analyze", "compare", "evaluate", "synthesize", etc. |
+| 5 | Multi-step markers present | "then", "after that", "first...next", "followed by", etc. |
+| 6 | Compound query (multiple clauses) | 3+ commas or 2+ " and " separators in query |
 
 #### Routing Logic
 
@@ -497,6 +495,7 @@ gateway.confidence       — float 0.0–1.0
 class GatewayDeps(AgentDeps):
     gliner_model_name: str = "urchade/gliner_large-v2.1"
     gliner_threshold: float = 0.3           # entity detection confidence floor
+    gliner_inference_url: Optional[str] = None  # gliner sidecar URL; None = in-process
     fast_path_confidence_threshold: float = 0.4  # min confidence for simple routing
 
 deps = GatewayDeps(fast_path_confidence_threshold=0.4)
@@ -1024,7 +1023,21 @@ class EntityExtractionOutput(AgentOutput):
 
 class EntityExtractionDeps(AgentDeps):
     """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
-    pass
+    gliner_model_name: Optional[str] = Field(
+        None,
+        description=(
+            "GLiNER model identifier for the fast path. None resolves to "
+            "DEFAULT_GLINER_MODEL in GLiNERRelationshipExtractor."
+        ),
+    )
+    gliner_inference_url: Optional[str] = Field(
+        None,
+        description=(
+            "Optional remote GLiNER service URL (deploy/gliner sidecar). "
+            "When set, the fast path posts to this endpoint instead of "
+            "loading gliner in-process — required on slim runtime images."
+        ),
+    )
 
 class EntityExtractionAgent(
     MemoryAwareMixin,
@@ -1106,12 +1119,21 @@ def _parse_entities(self, entities_str: str, query: str) -> List[Entity]:
 
 #### Configuration
 
-EntityExtractionDeps has no configuration fields — the agent is fully tenant-agnostic at startup. The DSPy LLM is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
+`EntityExtractionDeps` has two optional fields that control the GLiNER fast path:
+
+- `gliner_model_name` — GLiNER model identifier (`None` resolves to the default in `GLiNERRelationshipExtractor`).
+- `gliner_inference_url` — URL of a remote GLiNER service (the `deploy/gliner` sidecar). When set, the fast path POSTs to it instead of loading GLiNER in-process — required on slim runtime images that omit the heavy torch stack.
+
+The DSPy LLM fallback is scoped per-call via `dspy.context(lm=...)` using `create_dspy_lm()` from the centralized `llm_config`.
 
 ```python
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 
-# EntityExtractionAgent requires no agent-specific config — instantiate with empty deps:
+# Remote GLiNER via the deploy/gliner sidecar (production):
+deps = EntityExtractionDeps(gliner_inference_url="http://cogniverse-gliner:8080")
+agent = EntityExtractionAgent(deps=deps, port=8010)
+
+# In-process GLiNER (development/testing):
 deps = EntityExtractionDeps()
 agent = EntityExtractionAgent(deps=deps, port=8010)
 

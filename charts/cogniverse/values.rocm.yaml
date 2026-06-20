@@ -78,12 +78,13 @@ inference:
       - '{"video":0,"image":1}'
       - "--gpu-memory-utilization"
       # The 4B Tomoro weights load at ~9.35 GiB; vLLM PINS the full budget
-      # at startup (GTT, unswappable). 0.20 × 62 ≈ 12 GiB left negative KV
+      # at startup (GTT, unswappable). 0.20 × 62 ≈ 12 GiB leaves negative KV
       # room after weights + ViT-encoder activations ("No available memory
-      # for the cache blocks"). 0.30 × 62 ≈ 18.5 GiB: weights + encoder
-      # activations + a small embedding KV cache, and still fits alongside
-      # llm-student (0.40) + asr (0.16) on the 62 GiB unified pool.
-      - "0.30"
+      # for the cache blocks"). 0.25 × 62 ≈ 15.4 GiB: weights + encoder
+      # activations + ~1.7 GiB embedding KV (3x concurrency), validated under
+      # 6-concurrent load (0 OOM, ~13 GiB pool buffer) alongside colbert/
+      # denseon (0.05) + llm-student (0.40) + asr (0.16).
+      - "0.25"
     kvCacheGiB: null
     image: null
     # Strix Halo iGPU: GPU "VRAM" IS system RAM (unified memory). The
@@ -196,6 +197,17 @@ inference:
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
+    # Constrain on the shared gfx1151 unified pool. LateOn weights measure
+    # 0.3 GiB; 0.05 x 62 ~= 3.1 GiB covers weights + activations + a small
+    # embedding KV cache (~10x weights). Full extraArgs repeated (overlay
+    # lists replace, they don't merge).
+    extraArgs:
+      - "--max-model-len"
+      - "8192"
+      - "--hf-overrides"
+      - '{"architectures": ["ColBERTModernBertModel"]}'
+      - "--gpu-memory-utilization"
+      - "0.05"
 
   code_colbert_pylate:
     device: rocm
@@ -207,6 +219,12 @@ inference:
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
+    # DenseOn weights measure 0.58 GiB; 0.05 x 62 ~= 3.1 GiB covers weights +
+    # activations + a small embedding KV cache. Validated under 6-concurrent
+    # load: 0 OOM, ~13 GiB pool buffer remaining.
+    extraArgs:
+      - "--gpu-memory-utilization"
+      - "0.05"
 
 runtime:
   # Explicit backend selection so BOTH the runtime Deployment and the

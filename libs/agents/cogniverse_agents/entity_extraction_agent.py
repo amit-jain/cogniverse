@@ -79,6 +79,13 @@ class EntityExtractionOutput(AgentOutput):
 class EntityExtractionDeps(AgentDeps):
     """Dependencies for entity extraction agent (tenant-agnostic at startup)."""
 
+    gliner_model_name: Optional[str] = Field(
+        None,
+        description=(
+            "GLiNER model identifier for the fast path. None resolves to "
+            "DEFAULT_GLINER_MODEL in GLiNERRelationshipExtractor."
+        ),
+    )
     gliner_inference_url: Optional[str] = Field(
         None,
         description=(
@@ -220,21 +227,32 @@ class EntityExtractionAgent(
         try:
             from cogniverse_agents.routing.relationship_extraction_tools import (
                 GLiNERRelationshipExtractor,
-                SpaCyDependencyAnalyzer,
             )
 
             self._gliner_extractor = GLiNERRelationshipExtractor(
+                model_name=self.deps.gliner_model_name,
                 inference_url=self.deps.gliner_inference_url,
             )
-            self._spacy_analyzer = SpaCyDependencyAnalyzer()
             logger.info(
-                "GLiNER + SpaCy extractors initialized for fast path "
+                "GLiNER extractor initialized for fast path "
                 f"(remote={'yes' if self.deps.gliner_inference_url else 'no'})"
             )
         except Exception as e:
             self._gliner_extractor = None
+            logger.warning("GLiNER unavailable, using DSPy fallback: %s", e)
+
+        # SpaCy powers relationship extraction only; the fast path runs
+        # entity-only when it's absent (see _extract_fast_path). Keep its
+        # init independent so a missing SpaCy model never disables GLiNER.
+        try:
+            from cogniverse_agents.routing.relationship_extraction_tools import (
+                SpaCyDependencyAnalyzer,
+            )
+
+            self._spacy_analyzer = SpaCyDependencyAnalyzer()
+        except Exception as e:
             self._spacy_analyzer = None
-            logger.warning("GLiNER/SpaCy unavailable, using DSPy fallback: %s", e)
+            logger.warning("SpaCy unavailable, relationships will be empty: %s", e)
 
     async def _process_impl(
         self, input: EntityExtractionInput

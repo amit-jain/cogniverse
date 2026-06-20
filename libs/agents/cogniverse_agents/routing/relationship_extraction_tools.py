@@ -14,6 +14,12 @@ from spacy.tokens import Doc, Token
 
 logger = logging.getLogger(__name__)
 
+# Single source of truth for the default GLiNER model — matches the config
+# default (RoutingConfigUnified.gliner_model) and the gateway. Callers that
+# are config-aware (e.g. EntityExtractionAgent) inject the configured model
+# instead of relying on this; nothing hardcodes a divergent model id.
+DEFAULT_GLINER_MODEL = "urchade/gliner_large-v2.1"
+
 
 class GLiNERRelationshipExtractor:
     """
@@ -25,20 +31,21 @@ class GLiNERRelationshipExtractor:
 
     def __init__(
         self,
-        model_name: str = "urchade/gliner_mediumv2.1",
+        model_name: Optional[str] = None,
         inference_url: Optional[str] = None,
     ):
         """
         Initialize GLiNER relationship extractor.
 
         Args:
-            model_name: GLiNER model to use for entity extraction
+            model_name: GLiNER model to use; falls back to DEFAULT_GLINER_MODEL
+                when None (config-aware callers pass the configured model)
             inference_url: When set, route through the deploy/gliner
                 sidecar instead of loading the model in-process. The
                 slim runtime image excludes torch+gliner by design;
                 production must always pass this URL.
         """
-        self.model_name = model_name
+        self.model_name = model_name or DEFAULT_GLINER_MODEL
         self.inference_url = inference_url
         self.gliner_model = None
 
@@ -549,7 +556,7 @@ class RelationshipExtractorTool:
 
     def __init__(
         self,
-        gliner_model: str = "urchade/gliner_mediumv2.1",
+        gliner_model: Optional[str] = None,
         spacy_model: str = "en_core_web_sm",
     ):
         """
@@ -770,7 +777,7 @@ class RelationshipExtractorTool:
 
 # Factory function for easy instantiation
 def create_relationship_extractor(
-    gliner_model: str = "urchade/gliner_mediumv2.1", spacy_model: str = "en_core_web_sm"
+    gliner_model: Optional[str] = None, spacy_model: str = "en_core_web_sm"
 ) -> RelationshipExtractorTool:
     """
     Factory function to create a relationship extractor tool.
