@@ -1072,6 +1072,16 @@ change until then.
 
 - Temporal segment frames
 
+**Live-path integration:** The ingestion pipeline exposes per-artifact wrappers
+(`get_cached_keyframes`/`set_cached_keyframes`, `..._transcript`,
+`..._descriptions`) that derive their cache-key params from a single source so
+the get and set keys always match. `ProcessingStrategySet` calls these inside
+each strategy step — on a hit it skips extraction/transcription/VLM. Because
+downstream VLM and embedding read frame images from the `path` recorded in the
+keyframe metadata, a keyframe cache hit **rehydrates** the cached frame images
+to the current pod's disk and repoints `path`, so a different pod (empty local
+tier, shared L2) serves the artifact correctly without re-extraction.
+
 **Initialization:**
 ```python
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
