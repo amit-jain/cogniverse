@@ -44,7 +44,7 @@ The Cache Module provides a **comprehensive caching infrastructure** for the Cog
    - Registry-based backend registration
    - Easy addition of new backends
    - Priority-based tier ordering
-   - Currently implemented: structured_filesystem backend
+   - Currently implemented: `structured_filesystem` (L1 local) and `s3` (L2 shared/durable) backends
 
 3. **Specialized Cache Types**
    - **PipelineArtifactCache**: Handles keyframes, transcripts, descriptions, segments
@@ -72,7 +72,8 @@ libs/core/cogniverse_core/common/cache/
 ├── pipeline_cache.py                # Video processing artifact cache
 └── backends/
     ├── __init__.py
-    └── structured_filesystem.py     # Filesystem backend with human-readable paths
+    ├── structured_filesystem.py     # Filesystem backend, human-readable paths (L1)
+    └── s3.py                         # S3/MinIO shared backend, survives pod restart (L2)
 ```
 
 ### Dependencies
@@ -114,7 +115,7 @@ flowchart TB
 
     T1["<span style='color:#000'>TIER 1: IN-MEMORY<br/>• LRU Cache (modality_cache.py)<br/>• Max 1000 items<br/>• <1ms latency<br/>Eviction: LRU<br/>TTL: None</span>"]
     T2["<span style='color:#000'>TIER 2: FILESYSTEM<br/>• Structured FS<br/>• Human-readable<br/>• ~5-10ms latency<br/>Eviction: TTL<br/>TTL: 7 days</span>"]
-    T3["<span style='color:#000'>TIER 3: REMOTE (PLANNED)<br/>• S3/Redis<br/>• Unlimited<br/>• ~50-100ms<br/>Eviction: None<br/>TTL: 30 days</span>"]
+    T3["<span style='color:#000'>TIER 3: REMOTE<br/>• S3/MinIO (implemented)<br/>• Redis (planned)<br/>• ~50-100ms<br/>Eviction: TTL<br/>TTL: configurable</span>"]
 
     VSA --> CM
     SA --> CM
@@ -771,9 +772,12 @@ Create backend instance from configuration.
 
 2. Look up backend class in registry
 
-3. Convert config to appropriate config dataclass
+3. Read the backend class's `CONFIG_CLASS` attribute (each backend advertises
+   its own config dataclass); raise `ValueError` if it declares none
 
-4. Instantiate backend with config
+4. Filter the config dict to that dataclass's fields — shared/extra keys like
+   `default_ttl` or a sibling backend's keys are dropped instead of raising
+   `TypeError` — then instantiate the dataclass and the backend
 
 **Example:**
 ```python
@@ -983,6 +987,72 @@ Clean up expired entries on startup.
 backend = StructuredFilesystemBackend(config)
 # Cleanup runs automatically in background
 ```
+
+---
+
+### S3CacheBackend (backends/s3.py)
+
+**Purpose:** Shared, durable cache tier backed by an S3-compatible object store
+(MinIO or AWS S3). Where `structured_filesystem` is per-pod-ephemeral — cache
+hits only happen when the same worker pod re-processes the same video, and a
+pod restart wipes it — the S3 backend stores artifacts in a shared bucket, so a
+re-ingest of the same video hits cache regardless of which pod handled it.
+
+**Configuration:**
+```python
+@dataclass
+class S3CacheBackendConfig:
+    backend_type: str = "s3"
+    endpoint: Optional[str] = None      # falls back to MINIO_ENDPOINT
+    access_key: Optional[str] = None    # falls back to MINIO_ACCESS_KEY
+    secret_key: Optional[str] = None    # falls back to MINIO_SECRET_KEY
+    bucket: str = "cogniverse-pipeline-cache"
+    key_prefix: str = "pipeline/"
+    region: str = "us-east-1"
+    serialization_format: str = "pickle"  # or "json", "msgpack"
+    enabled: bool = True
+    priority: int = 1
+    enable_ttl: bool = True
+```
+
+The config dataclass is pure data: credential fields default to `None` and are
+resolved from the `MINIO_*` environment when the boto3 client is built (lazily,
+on first cache use), with config values taking precedence. This reuses the same
+MinIO deployment as media uploads but a **different bucket / prefix**.
+
+**Key Features:**
+
+- Object key is `{key_prefix}{cache_key}` (the cache key already namespaces by
+  profile, so no extra tenant segment is added).
+
+- One JSON envelope in S3 user metadata carries `format` (`raw` for image bytes,
+  else the serialization format) and `expires_at`; `get`/`exists` honor TTL
+  lazily and delete on expiry.
+
+- boto3 is synchronous; every call is wrapped in `asyncio.to_thread` so the
+  backend stays compatible with the async `CacheBackend` contract.
+
+- Raw `bytes` values (keyframe / segment-frame JPEGs) round-trip byte-for-byte;
+  dict artifacts are pickle/json/msgpack serialized.
+
+**Layered (L1 + L2) configuration** — `CacheManager` iterates backends by
+priority, so the local filesystem stays the hot L1 tier and S3 is the shared L2
+that survives pod restarts:
+
+```jsonc
+"pipeline_cache": {
+  "enabled": true,
+  "backends": [
+    { "backend_type": "structured_filesystem", "priority": 0, ... },  // L1
+    { "backend_type": "s3", "bucket": "cogniverse-pipeline-cache",
+      "key_prefix": "pipeline/", "priority": 1, "enabled": false }     // L2
+  ]
+}
+```
+
+The L2 entry ships `enabled: false` in `configs/config.json` — production opts
+in by flipping it to `true` (and wiring `MINIO_*` env), with no behavioural
+change until then.
 
 ---
 
@@ -2451,7 +2521,7 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 - Pluggable backend architecture via registry pattern
 
-- Currently implemented: structured filesystem backend
+- Currently implemented: structured filesystem backend (L1) and S3/MinIO backend (L2)
 
 - Specialized cache for pipeline artifacts
 
@@ -2473,7 +2543,7 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 
 - Profile-based namespace isolation
 
-- Extensible for future backends (in-memory, Redis, S3)
+- Extensible for future backends (in-memory, Redis)
 
 **Integration Points:**
 
@@ -2504,3 +2574,5 @@ The Cache Module provides **production-ready caching infrastructure** for the Co
 - Pipeline Cache: `libs/core/cogniverse_core/common/cache/pipeline_cache.py`
 
 - Filesystem Backend: `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py`
+
+- S3 Backend: `libs/core/cogniverse_core/common/cache/backends/s3.py`
