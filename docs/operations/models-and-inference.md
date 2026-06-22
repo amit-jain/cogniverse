@@ -294,6 +294,24 @@ RAM (unified memory). The chart's ROCm overlay tunes
 `--gpu-memory-utilization` per-service so three concurrent vLLM pods
 can coexist (see `values.rocm.yaml` comments).
 
+### GEMM auto-tuning on ROCm (`runtime.tunableOp`)
+
+`runtime.tunableOp` (`false` in `values.yaml`, `true` in
+`values.rocm.yaml`) enables PyTorch TunableOp on every rocm-device
+inference pod. On gfx1151 the default hipBLASLt kernel heuristic
+mistunes many GEMM shapes; TunableOp benchmarks the candidate kernels
+once per shape and reuses the fastest. The key only takes effect when a
+pod's `device` is `rocm` — the `cogniverse.tunableOpEnv` helper gates on
+both the device and the toggle, so CPU/CUDA pods are unaffected.
+
+Each rocm pod gets `PYTORCH_TUNABLEOP_ENABLED=1`,
+`PYTORCH_TUNABLEOP_TUNING=1`, and a per-service
+`PYTORCH_TUNABLEOP_FILENAME=/root/.cache/huggingface/tunableop_<svc>_%d.csv`.
+The results file lives in the persistent `model-cache` volume, so tuning
+survives pod restarts and rollouts — a shape is benchmarked once over the
+file's lifetime. The first request hitting a not-yet-tuned shape pays a
+one-time tuning latency; the persisted file means later pods skip it.
+
 ---
 
 ## Per-tenant Vespa schemas (separate from inference)
