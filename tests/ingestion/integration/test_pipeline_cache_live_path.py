@@ -10,7 +10,9 @@ image files to its own disk so downstream steps can open them.
 from __future__ import annotations
 
 import logging
+import subprocess
 import types
+import uuid
 from pathlib import Path
 
 import cv2
@@ -21,6 +23,42 @@ from cogniverse_core.common.cache.base import CacheConfig, CacheManager
 from cogniverse_core.common.cache.pipeline_cache import PipelineArtifactCache
 from cogniverse_runtime.ingestion.pipeline import VideoIngestionPipeline
 from cogniverse_runtime.ingestion.processing_strategy_set import ProcessingStrategySet
+from tests.system.minio_test_manager import MinIOTestManager
+
+
+def _docker_available() -> bool:
+    try:
+        return subprocess.run(["docker", "info"], capture_output=True).returncode == 0
+    except FileNotFoundError:
+        return False
+
+
+@pytest.fixture(scope="module")
+def minio():
+    if not _docker_available():
+        pytest.skip("Docker not available")
+    pytest.importorskip("boto3")
+    manager = MinIOTestManager()
+    instance = manager.start()
+    try:
+        yield instance
+    finally:
+        manager.stop()
+
+
+def _s3_backend(instance, bucket):
+    return {
+        "backend_type": "s3",
+        "endpoint": instance.endpoint,
+        "access_key": instance.access_key,
+        "secret_key": instance.secret_key,
+        "bucket": bucket,
+        "key_prefix": "pipeline/",
+        "serialization_format": "pickle",
+        "priority": 1,
+        "enabled": True,
+    }
+
 
 TRANSCRIPT = {
     "text": "hello world",
@@ -29,11 +67,14 @@ TRANSCRIPT = {
 DESCRIPTIONS = {"frame_descriptions": {"0": "a frame"}, "model": "vlm"}
 
 
-def _make_pipeline(cache_dir: Path, output_dir: Path) -> VideoIngestionPipeline:
+def _make_pipeline(
+    cache_dir: Path, output_dir: Path, extra_backends: list | None = None
+) -> VideoIngestionPipeline:
     """A real pipeline instance wired to a shared filesystem cache backend.
 
     Two pipelines built with the same ``cache_dir`` but different
-    ``output_dir`` model two pods sharing one cache tier.
+    ``output_dir`` model two pods sharing one cache tier. ``extra_backends``
+    appends lower-priority tiers (e.g. an S3/MinIO L2) shared across pods.
     """
     manager = CacheManager(
         CacheConfig(
@@ -46,7 +87,8 @@ def _make_pipeline(cache_dir: Path, output_dir: Path) -> VideoIngestionPipeline:
                     "enable_ttl": False,
                     "cleanup_on_startup": False,
                 }
-            ],
+            ]
+            + (extra_backends or []),
             default_ttl=0,
         )
     )
@@ -230,3 +272,40 @@ async def test_descriptions_hit_skips_vlm_on_fresh_pod(tmp_path, video):
     r2 = await pss._process_description(strat, video, pm, pipe2, {"keyframes": {}})
     assert strat.calls == 1  # cache hit, VLM not re-run
     assert r2["descriptions"] == DESCRIPTIONS
+
+
+@pytest.mark.requires_docker
+@pytest.mark.asyncio
+async def test_keyframes_wiring_hits_shared_l2_on_fresh_pod(minio, tmp_path, video):
+    bucket = f"cache-{uuid.uuid4().hex[:8]}"
+    pss = ProcessingStrategySet()
+    seg = _SegStrategy()
+    kf_proc = _FakeKeyframeProcessor()
+    pm = _FakeProcessorManager(keyframe=kf_proc)
+
+    # Pod 1: extract + cache through L1(local) + L2(shared MinIO)
+    pipe1 = _make_pipeline(
+        tmp_path / "pod1",
+        tmp_path / "pod1out",
+        extra_backends=[_s3_backend(minio, bucket)],
+    )
+    r1 = await pss._process_segmentation(seg, video, pm, pipe1)
+    assert kf_proc.calls == 1
+    assert len(r1["keyframes"]["keyframes"]) == 1
+
+    # Pod 2: fresh empty L1, SAME shared MinIO L2 bucket
+    pipe2 = _make_pipeline(
+        tmp_path / "pod2_empty",
+        tmp_path / "pod2out",
+        extra_backends=[_s3_backend(minio, bucket)],
+    )
+    r2 = await pss._process_segmentation(seg, video, pm, pipe2)
+
+    assert kf_proc.calls == 1  # NOT re-extracted — served from shared MinIO L2
+    kf = r2["keyframes"]["keyframes"][0]
+    assert Path(kf["path"]).exists()  # frame rehydrated to pod2's own disk
+    assert str(tmp_path / "pod2out") in kf["path"]
+    # the hit was served by the S3/MinIO (L2) backend, not the empty L1
+    s3 = pipe2.cache.cache.backends[1]
+    assert s3.__class__.__name__ == "S3CacheBackend"
+    assert (await s3.get_stats())["hits"] >= 1
