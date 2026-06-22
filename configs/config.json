@@ -397,7 +397,7 @@
     "backends": [
       {
         "backend_type": "structured_filesystem",
-        "base_path": "~/.cache/cogniverse/structured_pipeline",
+        "base_path": "/tmp/cogniverse/structured_pipeline",
         "serialization_format": "json",
         "priority": 0,
         "enable_ttl": true,
