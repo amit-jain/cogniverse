@@ -1013,7 +1013,13 @@ class S3CacheBackendConfig:
     enabled: bool = True
     priority: int = 1
     enable_ttl: bool = True
+    lifecycle_expiration_days: Optional[int] = None  # bucket ILM backstop
 ```
+
+When `lifecycle_expiration_days` is set, the backend applies an S3/MinIO bucket
+lifecycle (ILM) rule on bucket creation that expires objects under `key_prefix`
+after that many days — a server-side growth bound independent of the per-object
+TTL (which only expires on read or explicit cleanup).
 
 The config dataclass is pure data: credential fields default to `None` and are
 resolved from the `MINIO_*` environment when the boto3 client is built (lazily,

@@ -411,6 +411,7 @@
         "serialization_format": "pickle",
         "priority": 1,
         "enable_ttl": true,
+        "lifecycle_expiration_days": 7,
         "enabled": false
       }
     ],
