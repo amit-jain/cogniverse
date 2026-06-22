@@ -1529,6 +1529,7 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: HF_HOME
           value: /root/.cache/huggingface
         {{- if $cfg.kvCacheGiB }}
@@ -1604,6 +1605,7 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
@@ -1651,6 +1653,7 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
@@ -1722,6 +1725,7 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
@@ -1765,6 +1769,7 @@ spec:
         - name: http
           containerPort: 8000
         env:
+        {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
         - name: HF_HOME
