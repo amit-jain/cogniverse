@@ -322,7 +322,7 @@
         "serialization_format": "pickle",
         "priority": 1,
         "enable_ttl": true,
-        "enabled": false
+        "enabled": true
       }
     ],
     "default_ttl": 0,
