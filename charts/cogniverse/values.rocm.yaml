@@ -106,6 +106,13 @@ inference:
       - '{"architectures": ["ColBERTModernBertModel"]}'
       - "--gpu-memory-utilization"
       - "0.05"
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
 
   code_colbert_pylate:
     enabled: true
@@ -135,9 +142,17 @@ inference:
     extraArgs:
       - "--gpu-memory-utilization"
       - "0.05"
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
 
 runtime:
   backend: rocm
+  tunableOp: true
 
 llm:
   engine: vllm
