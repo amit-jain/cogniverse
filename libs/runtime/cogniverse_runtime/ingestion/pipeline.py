@@ -469,122 +469,152 @@ class VideoIngestionPipeline:
             self.logger.warning(f"Could not determine duration for {video_path}: {e}")
             return 0.0
 
-    async def _check_cache_async(self, video_path: Path) -> dict[str, Any]:
-        """
-        Check all cache entries concurrently
-        Returns dict with cached results or None for each step
-        """
-        if not self.cache:
-            return {}
+    def _keyframe_cache_kwargs(self) -> dict[str, Any]:
+        """Disambiguating params for the keyframe cache key (single source).
 
-        cache_tasks = []
-        cache_keys = []
-
-        # Get profile configuration for cache parameters
+        Both the get and set paths read these so the keys always match.
+        """
         backend_config = self.app_config.get("backend", {})
-        profiles = backend_config.get("profiles", {})
-        profile_config = profiles.get(self.schema_name, {})
+        profile_config = backend_config.get("profiles", {}).get(self.schema_name, {})
         pipeline_config = profile_config.get("pipeline_config", {})
+        return {
+            "strategy": pipeline_config.get("keyframe_strategy", "similarity"),
+            "threshold": pipeline_config.get(
+                "keyframe_threshold", self.config.keyframe_threshold
+            ),
+            "fps": pipeline_config.get("keyframe_fps", 1.0),
+            "max_frames": self.config.max_frames_per_video,
+        }
 
-        # Keyframes cache check
-        if self.config.extract_keyframes:
-            strategy = pipeline_config.get("keyframe_strategy", "similarity")
-            cache_tasks.append(
-                self.cache.get_keyframes(
-                    str(video_path),
-                    strategy=strategy,
-                    threshold=pipeline_config.get(
-                        "keyframe_threshold", self.config.keyframe_threshold
-                    ),
-                    fps=pipeline_config.get("keyframe_fps", 1.0),
-                    max_frames=self.config.max_frames_per_video,
-                    load_images=True,
-                )
-            )
-            cache_keys.append("keyframes")
+    def _transcript_cache_kwargs(self) -> dict[str, Any]:
+        audio_processor = self.processor_manager.get_processor("audio")
+        model_size = getattr(audio_processor, "model", None) or "base"
+        return {"model_size": model_size, "language": None}
 
-        # Transcript cache check
-        if self.config.transcribe_audio and self.audio_transcriber:
-            cache_tasks.append(
-                self.cache.get_transcript(
-                    str(video_path),
-                    model_size=self.audio_transcriber.model_size,
-                    language=None,
-                )
-            )
-            cache_keys.append("transcript")
-
-        # Descriptions cache check
+    def _descriptions_cache_kwargs(self) -> dict[str, Any]:
         vlm_processor = self.processor_manager.get_processor("vlm")
-        if self.config.generate_descriptions and vlm_processor:
-            cache_tasks.append(
-                self.cache.get_descriptions(
-                    str(video_path),
-                    model_name="Qwen/Qwen2-VL-7B-Instruct",
-                    batch_size=self.config.vlm_batch_size,
-                )
-            )
-            cache_keys.append("descriptions")
+        model_name = getattr(vlm_processor, "vlm_endpoint", None) or "vlm"
+        return {"model_name": model_name, "batch_size": self.config.vlm_batch_size}
 
-        # Execute all cache checks concurrently
-        if cache_tasks:
-            self.logger.info(
-                f"Checking {len(cache_tasks)} cache entries concurrently for {video_path.name}"
-            )
-            start_time = time.time()
-            cache_results = await asyncio.gather(*cache_tasks, return_exceptions=True)
-            elapsed = time.time() - start_time
-            self.logger.info(f"Cache checks completed in {elapsed:.2f}s")
+    @staticmethod
+    def _ensure_frame_ids(keyframes_metadata: dict[str, Any]) -> None:
+        """Give each keyframe entry a stable ``frame_id``.
 
-            # Build results dict
-            results = {}
-            for key, result in zip(cache_keys, cache_results, strict=False):
-                if isinstance(result, Exception):
-                    self.logger.warning(f"Cache check failed for {key}: {result}")
-                    results[key] = None
-                else:
-                    results[key] = result
-                    if result:
-                        self.logger.info(f"Cache HIT for {key}")
-                    else:
-                        self.logger.info(f"Cache MISS for {key}")
+        The keyframe processor emits ``frame_number``; PipelineArtifactCache
+        keys per-frame images on ``frame_id``. Normalize so image caching
+        round-trips instead of raising KeyError.
+        """
+        for idx, kf in enumerate(keyframes_metadata.get("keyframes", [])):
+            if "frame_id" not in kf:
+                kf["frame_id"] = kf.get("frame_number", idx)
 
-            return results
+    def _load_keyframe_images(
+        self, keyframes_metadata: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Read extracted frame images from disk to store in the shared tier."""
+        import cv2
 
-        return {}
+        images: dict[str, Any] = {}
+        for kf in keyframes_metadata.get("keyframes", []):
+            path = kf.get("path")
+            if path and Path(path).exists():
+                image = cv2.imread(path)
+                if image is not None:
+                    images[str(kf["frame_id"])] = image
+        return images
 
-    async def _save_to_cache_async(
-        self, video_path: Path, step: str, data: Any, **kwargs
+    def _rehydrate_keyframe_images(
+        self,
+        video_path: Path,
+        keyframes_metadata: dict[str, Any],
+        images: dict[str, Any],
     ) -> None:
-        """
-        Save data to cache asynchronously
-        """
-        if not self.cache or not data:
-            return
+        """Write cached frame images back to this pod's disk on a cache hit.
 
-        if step == "keyframes":
-            import cv2
+        Downstream VLM/embedding open frame images from the ``path`` recorded
+        in the metadata; on a hit the originating pod's files are absent, so
+        write them under this pod's keyframes dir and repoint ``path``.
+        """
+        import cv2
 
-            video_id = video_path.stem
-            keyframes_dir = self.profile_output_dir / "keyframes" / video_id
-            images = {}
-            for kf in data.get("keyframes", []):
-                if "filename" in kf:
-                    frame_path = keyframes_dir / kf["filename"]
-                    if frame_path.exists():
-                        image = cv2.imread(str(frame_path))
-                        if image is not None:
-                            images[str(kf["frame_id"])] = image
-            await self.cache.set_keyframes(str(video_path), data, images, **kwargs)
-        elif step == "transcript":
-            await self.cache.set_transcript(str(video_path), data, **kwargs)
-        elif step == "descriptions":
-            await self.cache.set_descriptions(
-                str(video_path), data.get("descriptions", {}), **kwargs
+        keyframes_dir = self.profile_output_dir / "keyframes" / video_path.stem
+        keyframes_dir.mkdir(parents=True, exist_ok=True)
+        for kf in keyframes_metadata.get("keyframes", []):
+            image = images.get(str(kf.get("frame_id")))
+            if image is None:
+                continue
+            filename = kf.get("filename") or (
+                Path(kf["path"]).name
+                if kf.get("path")
+                else f"{video_path.stem}_keyframe_{kf['frame_id']:04d}.jpg"
             )
-        else:
-            raise ValueError(f"Unknown cache step: {step!r}")
-        self.logger.info(f"Cached {step} for {video_path.name}")
+            target = keyframes_dir / filename
+            cv2.imwrite(str(target), image)
+            kf["path"] = str(target)
+            kf["filename"] = filename
+
+    async def get_cached_keyframes(self, video_path: Path) -> dict[str, Any] | None:
+        """Return cached keyframe metadata, rehydrating frame files to disk."""
+        if not self.cache:
+            return None
+        cached = await self.cache.get_keyframes(
+            str(video_path), load_images=True, **self._keyframe_cache_kwargs()
+        )
+        if not cached:
+            return None
+        metadata, images = cached if isinstance(cached, tuple) else (cached, {})
+        self._rehydrate_keyframe_images(video_path, metadata, images)
+        return metadata
+
+    async def set_cached_keyframes(
+        self, video_path: Path, keyframes_metadata: dict[str, Any]
+    ) -> None:
+        if not self.cache or not keyframes_metadata:
+            return
+        self._ensure_frame_ids(keyframes_metadata)
+        images = self._load_keyframe_images(keyframes_metadata)
+        await self.cache.set_keyframes(
+            str(video_path),
+            keyframes_metadata,
+            images,
+            **self._keyframe_cache_kwargs(),
+        )
+
+    async def get_cached_transcript(self, video_path: Path) -> dict[str, Any] | None:
+        if not self.cache:
+            return None
+        return await self.cache.get_transcript(
+            str(video_path), **self._transcript_cache_kwargs()
+        )
+
+    async def set_cached_transcript(
+        self, video_path: Path, transcript_data: dict[str, Any]
+    ) -> None:
+        # Don't cache a failed transcription — ``transcribe_audio`` returns an
+        # ``error`` key with empty text/segments when the ASR call fails;
+        # caching it would serve the stale failure on re-ingest even after ASR
+        # recovers.
+        if not self.cache or not transcript_data or transcript_data.get("error"):
+            return
+        await self.cache.set_transcript(
+            str(video_path), transcript_data, **self._transcript_cache_kwargs()
+        )
+
+    async def get_cached_descriptions(self, video_path: Path) -> dict[str, Any] | None:
+        if not self.cache:
+            return None
+        return await self.cache.get_descriptions(
+            str(video_path), **self._descriptions_cache_kwargs()
+        )
+
+    async def set_cached_descriptions(
+        self, video_path: Path, descriptions_data: dict[str, Any]
+    ) -> None:
+        if not self.cache or not descriptions_data:
+            return
+        await self.cache.set_descriptions(
+            str(video_path), descriptions_data, **self._descriptions_cache_kwargs()
+        )
 
     def _extract_base_video_data(self, results: dict[str, Any]) -> dict[str, Any]:
         """Extract base video metadata from results"""
@@ -942,87 +972,6 @@ class VideoIngestionPipeline:
             "started_at": time.time(),
             "async_optimized": True,
         }
-
-    async def _get_cached_data(
-        self, video_path: Path, results: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Get cached data with timing"""
-        if not self.cache:
-            return {}
-
-        cache_start = time.time()
-        cached_data = await self._check_cache_async(video_path)
-        cache_time = time.time() - cache_start
-        self.logger.info(f"Concurrent cache checks completed in {cache_time:.2f}s")
-        results["cache_check_time"] = cache_time
-        return cached_data
-
-    async def _process_segmentation(
-        self, video_path: Path, cached_data: dict[str, Any], results: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Process video segmentation based on strategy"""
-        # Special handling for different segmentation types
-        from cogniverse_runtime.ingestion.strategies import (
-            FrameSegmentationStrategy,
-            SingleVectorSegmentationStrategy,
-        )
-
-        if isinstance(self.strategy_set.segmentation, SingleVectorSegmentationStrategy):
-            # Single-vector needs transcript first
-            transcript_data = None
-            if self.config.transcribe_audio:
-                transcript_data = await self.strategy_set.transcription.transcribe(
-                    video_path, self, cached_data
-                )
-                if transcript_data:
-                    results["results"]["transcript"] = transcript_data
-
-            # Process with single-vector
-            seg_result = await self.strategy_set.segmentation.segment(
-                video_path, self, transcript_data
-            )
-            if "single_vector_processing" in seg_result:
-                results["results"]["single_vector_processing"] = seg_result[
-                    "single_vector_processing"
-                ]
-        else:
-            # Frame or chunk segmentation
-            if isinstance(self.strategy_set.segmentation, FrameSegmentationStrategy):
-                # Check cache for frames
-                if cached_data.get("keyframes"):
-                    cached_keyframes = cached_data["keyframes"]
-                    if isinstance(cached_keyframes, tuple):
-                        keyframes_data, _ = (
-                            cached_keyframes  # Data is first, images second
-                        )
-                    else:
-                        keyframes_data = cached_keyframes
-                    results["results"]["keyframes"] = keyframes_data
-                    self.logger.info(
-                        f"Using cached keyframes: {len(keyframes_data.get('keyframes', []))} frames"
-                    )
-                else:
-                    seg_result = await self.strategy_set.segmentation.segment(
-                        video_path, self
-                    )
-                    results["results"]["keyframes"] = seg_result
-                    # Cache if needed
-                    if self.cache and seg_result and "keyframes" in seg_result:
-                        await self._save_to_cache_async(
-                            video_path,
-                            "keyframes",
-                            seg_result,
-                            profile=self.schema_name,
-                        )
-            else:
-                # Chunk segmentation
-                seg_result = await self.strategy_set.segmentation.segment(
-                    video_path, self
-                )
-                if "chunks" in seg_result:
-                    results["results"]["chunks"] = seg_result
-
-        return results
 
     async def process_video_async(self, video_path: Path | str) -> dict[str, Any]:
         """

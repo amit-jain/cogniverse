@@ -397,12 +397,21 @@
     "backends": [
       {
         "backend_type": "structured_filesystem",
-        "base_path": "~/.cache/cogniverse/structured_pipeline",
+        "base_path": "/tmp/cogniverse/structured_pipeline",
         "serialization_format": "json",
         "priority": 0,
         "enable_ttl": true,
         "cleanup_on_startup": true,
         "metadata_format": "json"
+      },
+      {
+        "backend_type": "s3",
+        "bucket": "cogniverse-pipeline-cache",
+        "key_prefix": "pipeline/",
+        "serialization_format": "pickle",
+        "priority": 1,
+        "enable_ttl": true,
+        "enabled": false
       }
     ],
     "default_ttl": 0,

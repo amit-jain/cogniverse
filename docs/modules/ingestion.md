@@ -130,48 +130,37 @@ flowchart TB
     CreateStrategySet --> InitProc["<span style='color:#000'>Processor Manager Initializes Required Processors</span>"]
 
     InitProc --> AsyncProc["<span style='color:#000'>Async Video Processing</span>"]
-    AsyncProc --> ConcurrentCache["<span style='color:#000'>Concurrent Cache Checks</span>"]
-
-    ConcurrentCache --> CheckKeyframes{"<span style='color:#000'>Check Keyframes Cache</span>"}
-    ConcurrentCache --> CheckTranscript{"<span style='color:#000'>Check Transcript Cache</span>"}
-    ConcurrentCache --> CheckDesc{"<span style='color:#000'>Check Descriptions Cache</span>"}
-
-    CheckKeyframes -->|Cache Hit| LoadCachedKF["<span style='color:#000'>Load Cached Keyframes</span>"]
-    CheckKeyframes -->|Cache Miss| ProcessKF["<span style='color:#000'>Process Keyframes</span>"]
-
-    CheckTranscript -->|Cache Hit| LoadCachedTrans["<span style='color:#000'>Load Cached Transcript</span>"]
-    CheckTranscript -->|Cache Miss| ProcessTrans["<span style='color:#000'>Process Transcript</span>"]
-
-    CheckDesc -->|Cache Hit| LoadCachedDesc["<span style='color:#000'>Load Cached Descriptions</span>"]
-    CheckDesc -->|Cache Miss| ProcessDesc["<span style='color:#000'>Process Descriptions</span>"]
-
-    LoadCachedKF --> StrategyExec["<span style='color:#000'>Strategy Orchestration</span>"]
-    ProcessKF --> StrategyExec
-    LoadCachedTrans --> StrategyExec
-    ProcessTrans --> StrategyExec
-    LoadCachedDesc --> StrategyExec
-    ProcessDesc --> StrategyExec
+    AsyncProc --> StrategyExec["<span style='color:#000'>Strategy Orchestration</span>"]
 
     StrategyExec --> Sequential["<span style='color:#000'>Sequential Strategy Execution</span>"]
 
     Sequential --> Segment["<span style='color:#000'>1. Segmentation Strategy</span>"]
     Segment --> SegmentType{"<span style='color:#000'>Segmentation Type</span>"}
-    SegmentType -->|Frame-Based| ExtractFrames["<span style='color:#000'>Extract Keyframes</span>"]
+    SegmentType -->|Frame-Based| KFCache{"<span style='color:#000'>Keyframe Cache? shared tier</span>"}
+    KFCache -->|Hit| RehydrateKF["<span style='color:#000'>Load cached keyframes + rehydrate frame files to disk</span>"]
+    KFCache -->|Miss| ExtractFrames["<span style='color:#000'>Extract Keyframes + store in cache</span>"]
     SegmentType -->|Chunk-Based| ExtractChunks["<span style='color:#000'>Extract Video Chunks</span>"]
     SegmentType -->|Single-Vector| ExtractSegments["<span style='color:#000'>Extract Sliding Window Segments</span>"]
 
-    ExtractFrames --> Transcribe["<span style='color:#000'>2. Transcription Strategy</span>"]
+    RehydrateKF --> Transcribe["<span style='color:#000'>2. Transcription Strategy</span>"]
+    ExtractFrames --> Transcribe
     ExtractChunks --> Transcribe
     ExtractSegments --> Transcribe
 
-    Transcribe --> TranscribeAudio["<span style='color:#000'>Whisper Audio Transcription</span>"]
-    TranscribeAudio --> Describe["<span style='color:#000'>3. Description Strategy</span>"]
+    Transcribe --> TransCache{"<span style='color:#000'>Transcript Cache? shared tier</span>"}
+    TransCache -->|Hit| LoadCachedTrans["<span style='color:#000'>Load cached transcript</span>"]
+    TransCache -->|Miss| TranscribeAudio["<span style='color:#000'>Whisper Audio Transcription + store in cache</span>"]
+    LoadCachedTrans --> Describe["<span style='color:#000'>3. Description Strategy</span>"]
+    TranscribeAudio --> Describe
 
     Describe --> DescType{"<span style='color:#000'>Description Type</span>"}
-    DescType -->|VLM Description| GenerateDesc["<span style='color:#000'>Generate VLM Descriptions</span>"]
+    DescType -->|VLM Description| DescCache{"<span style='color:#000'>Descriptions Cache? shared tier</span>"}
+    DescCache -->|Hit| LoadCachedDesc["<span style='color:#000'>Load cached descriptions</span>"]
+    DescCache -->|Miss| GenerateDesc["<span style='color:#000'>Generate VLM Descriptions + store in cache</span>"]
     DescType -->|No Description| SkipDesc["<span style='color:#000'>Skip Descriptions</span>"]
 
     GenerateDesc --> Embed["<span style='color:#000'>4. Embedding Strategy</span>"]
+    LoadCachedDesc --> Embed
     SkipDesc --> Embed
 
     Embed --> EmbedGen["<span style='color:#000'>Embedding Generation & Backend Ingestion</span>"]
@@ -209,16 +198,12 @@ flowchart TB
     style CreateStrategySet fill:#ffcc80,stroke:#ef6c00,color:#000
     style InitProc fill:#ffcc80,stroke:#ef6c00,color:#000
     style AsyncProc fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ConcurrentCache fill:#b0bec5,stroke:#546e7a,color:#000
-    style CheckKeyframes fill:#b0bec5,stroke:#546e7a,color:#000
-    style CheckTranscript fill:#b0bec5,stroke:#546e7a,color:#000
-    style CheckDesc fill:#b0bec5,stroke:#546e7a,color:#000
-    style LoadCachedKF fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ProcessKF fill:#ffcc80,stroke:#ef6c00,color:#000
+    style KFCache fill:#b0bec5,stroke:#546e7a,color:#000
+    style RehydrateKF fill:#a5d6a7,stroke:#388e3c,color:#000
+    style TransCache fill:#b0bec5,stroke:#546e7a,color:#000
     style LoadCachedTrans fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ProcessTrans fill:#ffcc80,stroke:#ef6c00,color:#000
+    style DescCache fill:#b0bec5,stroke:#546e7a,color:#000
     style LoadCachedDesc fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ProcessDesc fill:#ffcc80,stroke:#ef6c00,color:#000
     style StrategyExec fill:#ffcc80,stroke:#ef6c00,color:#000
     style Sequential fill:#ffcc80,stroke:#ef6c00,color:#000
     style Segment fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -1400,20 +1385,23 @@ class VideoSegment:
    • Initialize processors: KeyframeProcessor, AudioProcessor
    • Initialize embedding generator with ColPali model
    ↓
-3. CACHE CHECK (Concurrent)
-   • Check keyframes cache
-   • Check transcript cache
-   • Check descriptions cache
+3. PER-STRATEGY CACHE (shared multi-pod tier)
+   • Each strategy step below first checks the PipelineArtifactCache for
+     its artifact against the shared backend; on a hit it skips the
+     computation (keyframes additionally rehydrate their frame image
+     files to this pod's disk so downstream steps can open them), on a
+     miss it computes and stores the result.
    ↓
 4. SEGMENTATION (FrameSegmentationStrategy)
-   • KeyframeProcessor.extract_keyframes()
-   • Histogram-based scene detection
-   • Extract 150 keyframes → Save to disk
+   • Cache hit → load cached keyframes + rehydrate frame files to disk
+   • Cache miss → KeyframeProcessor.extract_keyframes() (histogram scene
+     detection, ~150 keyframes saved to disk), then store in cache
    • Return: {"keyframes": [{frame_number, timestamp, filename, path}, ...]}
    ↓
 5. TRANSCRIPTION (AudioTranscriptionStrategy)
-   • AudioProcessor.transcribe_audio()
-   • Whisper inference
+   • Cache hit → load cached transcript
+   • Cache miss → AudioProcessor.transcribe_audio() (Whisper), then store
+     in cache
    • Return: {"full_text": "...", "segments": [{start, end, text}, ...]}
    ↓
 6. EMBEDDING GENERATION (MultiVectorEmbeddingStrategy)

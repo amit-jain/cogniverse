@@ -219,11 +219,18 @@ class ProcessingStrategySet:
         if "keyframe" in requirements:
             processor = processor_manager.get_processor("keyframe")
             if processor:
+                cached = await pipeline_context.get_cached_keyframes(video_path)
+                if cached is not None:
+                    pipeline_context.logger.info(
+                        f"  ♻️ Keyframes cache hit: {len(cached.get('keyframes', []))} frames"
+                    )
+                    return {"keyframes": cached}
                 result = processor.extract_keyframes(
                     video_path, pipeline_context.profile_output_dir
                 )
                 num_frames = len(result.get("keyframes", [])) if result else 0
                 pipeline_context.logger.info(f"  🖼️ Extracted {num_frames} keyframes")
+                await pipeline_context.set_cached_keyframes(video_path, result)
                 return {"keyframes": result}
 
         elif "chunk" in requirements:
@@ -533,17 +540,17 @@ class ProcessingStrategySet:
         if "audio" in requirements:
             processor = processor_manager.get_processor("audio")
             if processor:
-                # TODO (multi-pod cache): the live path bypasses
-                # PipelineArtifactCache entirely. Wrap this call with an async
-                # cache check before and set after (Piece B in
-                # docs/development/pipeline-cache-multi-pod-todo.md), so sync
-                # extractors stay sync and the cache stays async.
+                cached = await pipeline_context.get_cached_transcript(video_path)
+                if cached is not None:
+                    pipeline_context.logger.info("  ♻️ Transcript cache hit")
+                    return {"transcript": cached}
                 result = await asyncio.to_thread(
                     processor.transcribe_audio,
                     video_path,
                     pipeline_context.profile_output_dir,
                     None,
                 )
+                await pipeline_context.set_cached_transcript(video_path, result)
                 return {"transcript": result}
 
         return {}
@@ -568,6 +575,10 @@ class ProcessingStrategySet:
                     f"Strategy {type(strategy).__name__!r} requires 'vlm' processor "
                     "but does not implement generate_descriptions()."
                 )
+            cached = await pipeline_context.get_cached_descriptions(video_path)
+            if cached is not None:
+                pipeline_context.logger.info("  ♻️ Descriptions cache hit")
+                return {"descriptions": cached}
             # The segmentation step writes its output under ``keyframes``
             # (frame-strategy) or ``chunks`` (chunk-strategy); fall back
             # to the legacy ``segments`` key for any future shape. VLM
@@ -582,7 +593,10 @@ class ProcessingStrategySet:
             result = await strategy.generate_descriptions(
                 frames_metadata, video_path, pipeline_context, {}
             )
-            return {"descriptions": result} if result else {}
+            if result:
+                await pipeline_context.set_cached_descriptions(video_path, result)
+                return {"descriptions": result}
+            return {}
 
         return {}
 
