@@ -5,13 +5,17 @@ Base classes for the caching system
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type
 
 logger = logging.getLogger(__name__)
 
 
 class CacheBackend(ABC):
     """Abstract base class for cache backends"""
+
+    # Each backend advertises the dataclass that parses its config dict.
+    # The registry uses this for dispatch instead of a per-backend branch.
+    CONFIG_CLASS: ClassVar[Optional[Type]] = None
 
     @abstractmethod
     async def get(self, key: str) -> Optional[Any]:

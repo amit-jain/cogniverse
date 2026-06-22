@@ -38,6 +38,8 @@ class StructuredFilesystemBackend(CacheBackend):
     Instead of hash-based paths, uses actual keys as paths.
     """
 
+    CONFIG_CLASS = StructuredFilesystemConfig
+
     def __init__(self, config: StructuredFilesystemConfig):
         self.config = config
         self.base_path = Path(config.base_path).expanduser()
