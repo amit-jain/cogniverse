@@ -138,13 +138,7 @@ inference:
       - "16384"
       - "--enforce-eager"
       - "--gpu-memory-utilization"
-      - "0.40"
-      # Gemma 4 is multimodal (image + video + audio). The visual_judge
-      # evaluator feeds keyframes to this endpoint, so the multimodal
-      # encoders stay enabled. gpu-memory-utilization=0.40 (≈49 GiB of
-      # the unified pool) leaves room for both the ~5 GiB encoder
-      # reservation and the 16k-token KV cache that DSPy/MIPROv2 +
-      # RLM-promoted ClaimExtractor inputs need at higher context.
+      - "0.30"
     resources:
       limits:
         cpu: "4"
@@ -214,10 +208,6 @@ inference:
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
-    # Serves lightonai/LateOn-Code-edge (model from base values.yaml) the same
-    # way as colbert_pylate — vLLM + ColBERTModernBertModel override. Own pod
-    # so the code_lateon_mv profile resolves to LateOn-Code-edge, not the
-    # general LateOn pod.
     extraArgs:
       - "--max-model-len"
       - "8192"
@@ -225,6 +215,13 @@ inference:
       - '{"architectures": ["ColBERTModernBertModel"]}'
       - "--gpu-memory-utilization"
       - "0.05"
+    resources:
+      limits:
+        cpu: "4"
+        memory: "4Gi"
+      requests:
+        cpu: "1"
+        memory: "4Gi"
 
   denseon:
     enabled: true
