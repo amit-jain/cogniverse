@@ -301,3 +301,22 @@ cogniverse: ingress.className
     You must specify an ingress class name when ingress is enabled
 {{- end -}}
 {{- end -}}
+
+{{/*
+PyTorch TunableOp env for ROCm inference pods. On gfx1151 the default
+hipBLASLt kernel heuristic mistunes many GEMM shapes; TunableOp benchmarks
+candidates once per shape and reuses the winner. The results file lives in
+the persistent model-cache mount (per-service name avoids collisions when
+services share one hostPath cache; %d is the device id) so tuning survives
+restarts and rollouts. Call with (dict "device" $device "name" $name "root" $).
+*/}}
+{{- define "cogniverse.tunableOpEnv" -}}
+{{- if and (eq .device "rocm") .root.Values.runtime.tunableOp }}
+- name: PYTORCH_TUNABLEOP_ENABLED
+  value: "1"
+- name: PYTORCH_TUNABLEOP_TUNING
+  value: "1"
+- name: PYTORCH_TUNABLEOP_FILENAME
+  value: /root/.cache/huggingface/tunableop_{{ .name | kebabcase }}_%d.csv
+{{- end }}
+{{- end -}}

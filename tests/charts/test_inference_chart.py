@@ -29,8 +29,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _render(*set_args: str) -> list[dict]:
+def _render(*set_args: str, values: str | None = None) -> list[dict]:
     cmd = ["helm", "template", "cogniverse", str(CHART_PATH)]
+    if values is not None:
+        cmd.extend(["-f", str(CHART_PATH / values)])
     # The chart fail-fasts if qualityMonitor.tenantId is empty; supply a
     # placeholder so inference wiring is the only variable under test.
     cmd.extend(["--set", "runtime.qualityMonitor.tenantId=test-tenant"])
@@ -57,6 +59,18 @@ def _inference_deployments(docs: list[dict]) -> dict[str, dict]:
         if component.startswith("inference-"):
             out[component.removeprefix("inference-")] = d
     return out
+
+
+def _inference_env(deps: dict[str, dict], key: str) -> dict[str, str]:
+    container = deps[key]["spec"]["template"]["spec"]["containers"][0]
+    return {e["name"]: e.get("value") for e in container.get("env", [])}
+
+
+_TUNABLEOP_VARS = {
+    "PYTORCH_TUNABLEOP_ENABLED",
+    "PYTORCH_TUNABLEOP_TUNING",
+    "PYTORCH_TUNABLEOP_FILENAME",
+}
 
 
 def _runtime_env(docs: list[dict]) -> dict[str, str]:
@@ -309,3 +323,53 @@ def test_chart_visual_profiles_serve_tomoro():
         p = profiles[name]
         assert p["embedding_model"] == "TomoroAI/tomoro-colqwen3-embed-4b", name
         assert p["inference_services"]["embedding"] == "vllm_colpali", name
+
+
+def _is_rocm(dep: dict) -> bool:
+    vols = dep["spec"]["template"]["spec"].get("volumes", [])
+    return any(v.get("name") == "kfd" for v in vols)
+
+
+def test_rocm_overlay_wires_tunableop_env_on_rocm_pods_only():
+    """The ROCm overlay sets runtime.tunableOp, so every rocm-device
+    inference pod gets PyTorch TunableOp pointed at a per-service results
+    file inside the persistent model-cache mount. CPU sidecars in the same
+    render (e.g. gliner) carry none."""
+    deps = _inference_deployments(_render(values="values.rocm.yaml"))
+    rocm_pods = [k for k, d in deps.items() if _is_rocm(d)]
+    assert set(rocm_pods) >= {"vllm_colpali", "denseon", "colbert_pylate"}, rocm_pods
+    for key in rocm_pods:
+        env = _inference_env(deps, key)
+        assert env["PYTORCH_TUNABLEOP_ENABLED"] == "1", key
+        assert env["PYTORCH_TUNABLEOP_TUNING"] == "1", key
+        assert (
+            env["PYTORCH_TUNABLEOP_FILENAME"]
+            == f"/root/.cache/huggingface/tunableop_{key.replace('_', '-')}_%d.csv"
+        ), key
+    for key, dep in deps.items():
+        if not _is_rocm(dep):
+            assert not (set(_inference_env(deps, key)) & _TUNABLEOP_VARS), key
+
+
+def test_tunableop_env_absent_by_default():
+    """Default (non-rocm) render carries no TunableOp env on any pod."""
+    for key, dep in _inference_deployments(_render()).items():
+        names = {
+            e["name"]
+            for e in dep["spec"]["template"]["spec"]["containers"][0].get("env", [])
+        }
+        assert not (names & _TUNABLEOP_VARS), key
+
+
+def test_tunableop_requires_both_rocm_device_and_toggle():
+    """Both conditions are necessary: a rocm pod with the toggle off, and a
+    cpu pod with the toggle on, each carry no TunableOp env."""
+    rocm_no_toggle = _inference_env(
+        _inference_deployments(_render("inference.denseon.device=rocm")), "denseon"
+    )
+    assert not (set(rocm_no_toggle) & _TUNABLEOP_VARS)
+
+    toggle_no_rocm = _inference_env(
+        _inference_deployments(_render("runtime.tunableOp=true")), "denseon"
+    )
+    assert not (set(toggle_no_rocm) & _TUNABLEOP_VARS)

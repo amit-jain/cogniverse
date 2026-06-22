@@ -314,6 +314,11 @@ runtime:
   # ``cpu``/``cuda``/``rocm`` and the template picks the matching entry
   # from ``imagesByBackend``; falls back to ``image`` for back-compat.
   backend: cuda
+  # Enable PyTorch TunableOp GEMM auto-tuning on ROCm inference pods. Only
+  # takes effect when the pod's device is rocm (see cogniverse.tunableOpEnv);
+  # on gfx1151 it recovers large GEMM losses from the default hipBLASLt
+  # kernel heuristic. Tuning results persist in the model-cache volume.
+  tunableOp: false
   image:
     repository: cogniverse/runtime-cuda
     tag: "2.0.0"
