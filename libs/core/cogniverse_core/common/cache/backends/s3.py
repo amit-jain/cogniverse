@@ -49,6 +49,7 @@ class S3CacheBackendConfig:
     enabled: bool = True
     priority: int = 1
     enable_ttl: bool = True
+    lifecycle_expiration_days: Optional[int] = None  # bucket ILM backstop
 
 
 class S3CacheBackend(CacheBackend):
@@ -119,6 +120,37 @@ class S3CacheBackend(CacheBackend):
                 client.create_bucket(Bucket=self.bucket)
             except ClientError as e:
                 logger.warning("Could not create cache bucket %s: %s", self.bucket, e)
+        self._apply_lifecycle(client)
+
+    def _apply_lifecycle(self, client) -> None:
+        """Bound bucket growth server-side: expire cache objects after N days.
+
+        A backstop independent of per-object TTL/cleanup — MinIO/S3 ILM
+        deletes expired objects whether or not they are ever read again.
+        """
+        days = self.config.lifecycle_expiration_days
+        if not days:
+            return
+        from botocore.exceptions import ClientError
+
+        try:
+            client.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket,
+                LifecycleConfiguration={
+                    "Rules": [
+                        {
+                            "ID": "cogniverse-cache-expiry",
+                            "Filter": {"Prefix": self.key_prefix},
+                            "Status": "Enabled",
+                            "Expiration": {"Days": days},
+                        }
+                    ]
+                },
+            )
+        except ClientError as e:
+            logger.warning(
+                "Could not set lifecycle on cache bucket %s: %s", self.bucket, e
+            )
 
     def _s3_key(self, key: str) -> str:
         return f"{self.key_prefix}{key}"

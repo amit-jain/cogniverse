@@ -145,3 +145,31 @@ class TestS3CacheBackendReal:
         s3_backend = manager2.backends[1]
         assert s3_backend.__class__.__name__ == "S3CacheBackend"
         assert (await s3_backend.get_stats())["hits"] >= 1
+
+    async def test_bucket_lifecycle_expiration_applied(self, minio):
+        from cogniverse_core.common.cache.backends.s3 import (
+            S3CacheBackend,
+            S3CacheBackendConfig,
+        )
+
+        bucket = f"cache-{uuid.uuid4().hex[:8]}"
+        backend = S3CacheBackend(
+            S3CacheBackendConfig(
+                endpoint=minio.endpoint,
+                access_key=minio.access_key,
+                secret_key=minio.secret_key,
+                bucket=bucket,
+                key_prefix="pipeline/",
+                lifecycle_expiration_days=7,
+            )
+        )
+        # first op triggers _s3() -> _ensure_bucket -> _apply_lifecycle
+        await backend.set("p:video:abc:transcript", {"x": 1})
+
+        rules = minio.boto3_client().get_bucket_lifecycle_configuration(Bucket=bucket)[
+            "Rules"
+        ]
+        assert len(rules) == 1
+        assert rules[0]["Status"] == "Enabled"
+        assert rules[0]["Expiration"]["Days"] == 7
+        assert rules[0]["Filter"]["Prefix"] == "pipeline/"

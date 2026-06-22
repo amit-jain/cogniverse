@@ -48,10 +48,9 @@ class PipelineArtifactCache:
     Comprehensive caching for video processing pipeline artifacts.
     Supports caching of keyframes, transcripts, descriptions, and embeddings.
 
-    TODO (multi-pod): only ``structured_filesystem`` is registered today, so this
-    cache is per-pod-local — useless across a worker pool and wiped on pod
-    restart. The live strategy path also bypasses it. Approved plan A + B in
-    ``docs/development/pipeline-cache-multi-pod-todo.md``.
+    Backed by ``CacheManager``'s tiered backends: a local-filesystem L1 plus an
+    optional shared S3/MinIO L2 (survives pod restart, hits across pods). The
+    live ingestion path uses this via ``ProcessingStrategySet``.
     """
 
     def __init__(

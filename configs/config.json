@@ -411,10 +411,11 @@
         "serialization_format": "pickle",
         "priority": 1,
         "enable_ttl": true,
+        "lifecycle_expiration_days": 7,
         "enabled": false
       }
     ],
-    "default_ttl": 0,
+    "default_ttl": 604800,
     "enable_compression": true,
     "serialization_format": "json"
   },
