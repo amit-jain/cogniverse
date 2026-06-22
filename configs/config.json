@@ -414,7 +414,7 @@
         "enabled": false
       }
     ],
-    "default_ttl": 0,
+    "default_ttl": 604800,
     "enable_compression": true,
     "serialization_format": "json"
   },
