@@ -30,10 +30,10 @@ inference:
     resources:
       limits:
         cpu: "4"
-        memory: "28Gi"
+        memory: "20Gi"
       requests:
         cpu: "4"
-        memory: "28Gi"
+        memory: "20Gi"
 
   vllm_asr:
     device: rocm
@@ -49,10 +49,10 @@ inference:
     resources:
       limits:
         cpu: "2"
-        memory: "12Gi"
+        memory: "8Gi"
       requests:
         cpu: "2"
-        memory: "12Gi"
+        memory: "8Gi"
 
   vllm_llm_student:
     enabled: true
@@ -68,10 +68,10 @@ inference:
     resources:
       limits:
         cpu: "4"
-        memory: "40Gi"
+        memory: "32Gi"
       requests:
         cpu: "4"
-        memory: "40Gi"
+        memory: "32Gi"
 
   vllm_llm_teacher:
     enabled: true
@@ -89,10 +89,10 @@ inference:
     resources:
       limits:
         cpu: "4"
-        memory: "40Gi"
+        memory: "32Gi"
       requests:
         cpu: "4"
-        memory: "40Gi"
+        memory: "32Gi"
 
   colbert_pylate:
     enabled: true
