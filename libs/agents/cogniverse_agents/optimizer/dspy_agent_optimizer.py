@@ -10,12 +10,17 @@ import ast
 import asyncio
 import logging
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import dspy
 from dspy.teleprompt import BootstrapFewShot
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    ArtifactManager,
+    ExperimentMetrics,
+)
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry.providers.base import TelemetryProvider
@@ -633,7 +638,16 @@ class DSPyAgentOptimizerPipeline:
             if demos:
                 await artifact_mgr.save_demonstrations(module_name, demos)
 
-            await artifact_mgr.log_optimization_run(module_name, metrics)
+            await artifact_mgr.save_experiment(
+                ExperimentMetrics(
+                    tenant_id=tenant_id,
+                    agent_type=module_name,
+                    run_id=uuid.uuid4().hex,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    optimizer="unknown",
+                    extra_metrics=metrics,
+                )
+            )
 
             logger.info("Saved artifacts for %s/%s", tenant_id, module_name)
 

@@ -177,21 +177,24 @@ async def test_promote_if_better_against_real_phoenix(artifact_manager):
 
 
 @pytest.mark.asyncio
-async def test_back_compat_shim_persists_to_typed_ledger(artifact_manager):
-    """log_optimization_run must land in the experiments dataset, not save_blob."""
+async def test_save_experiment_persists_to_typed_ledger(artifact_manager):
+    """save_experiment must land in the experiments dataset, not save_blob."""
     mgr = artifact_manager
-    await mgr.log_optimization_run(
-        "c1_int_legacy_agent",
-        {
-            "optimizer": "MIPROv2",
-            "candidate_score": 0.42,
-            "promoted": False,
-            "extra_signal": "from_back_compat",
-        },
+    await mgr.save_experiment(
+        ExperimentMetrics(
+            tenant_id=mgr._tenant_id,
+            agent_type="c1_int_typed_agent",
+            run_id=uuid.uuid4().hex,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            optimizer="MIPROv2",
+            candidate_score=0.42,
+            promoted=False,
+            extra_metrics={"extra_signal": "from_typed"},
+        )
     )
 
-    latest = await mgr.load_latest_experiment("c1_int_legacy_agent")
+    latest = await mgr.load_latest_experiment("c1_int_typed_agent")
     assert latest is not None
     assert latest.optimizer == "MIPROv2"
     assert latest.candidate_score == 0.42
-    assert latest.extra_metrics.get("extra_signal") == "from_back_compat"
+    assert latest.extra_metrics.get("extra_signal") == "from_typed"

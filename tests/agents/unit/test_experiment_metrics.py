@@ -2,7 +2,6 @@
 
 The typed experiment ledger covers:
   * dataclass round-trip via ``to_row`` / ``from_row``;
-  * back-compat shim ``log_optimization_run`` translates dict → typed record;
   * tenant_id mismatch is rejected at write time.
 
 Real-Phoenix integration coverage lives in
@@ -183,49 +182,3 @@ class TestArtifactManagerExperiments:
         mgr, _ = manager_and_provider
         latest = await mgr.load_latest_experiment("nope")
         assert latest is None
-
-    @pytest.mark.asyncio
-    async def test_log_optimization_run_back_compat_shim(self, manager_and_provider):
-        """Old free-form API still works and routes through the typed ledger."""
-        mgr, _ = manager_and_provider
-        await mgr.log_optimization_run(
-            "search_agent",
-            {
-                "optimizer": "MIPROv2",
-                "baseline_score": 0.7,
-                "candidate_score": 0.85,
-                "improvement": 0.15,
-                "promoted": True,
-                "train_examples": 128,
-                "judge_score": 0.93,  # extras
-            },
-        )
-
-        latest = await mgr.load_latest_experiment("search_agent")
-        assert latest is not None
-        assert latest.optimizer == "MIPROv2"
-        assert latest.candidate_score == 0.85
-        assert latest.promoted is True
-        assert latest.train_examples == 128
-        assert latest.extra_metrics == {"judge_score": 0.93}
-
-    @pytest.mark.asyncio
-    async def test_load_optimization_run_back_compat_shape(self, manager_and_provider):
-        """Deprecated load_optimization_run returns the legacy dict shape."""
-        mgr, _ = manager_and_provider
-        await mgr.log_optimization_run(
-            "search_agent",
-            {
-                "optimizer": "BootstrapFewShot",
-                "candidate_score": 0.6,
-                "promoted": False,
-            },
-        )
-
-        legacy = await mgr.load_optimization_run("search_agent")
-        assert legacy is not None
-        assert legacy["tenant_id"] == "acme:acme"
-        assert legacy["agent_type"] == "search_agent"
-        assert legacy["metrics"]["optimizer"] == "BootstrapFewShot"
-        assert legacy["metrics"]["candidate_score"] == 0.6
-        assert legacy["metrics"]["promoted"] is False
