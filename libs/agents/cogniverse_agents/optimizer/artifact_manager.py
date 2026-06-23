@@ -221,9 +221,8 @@ class ArtifactManager:
 
         The dataset-name builders treat their ``agent_type`` argument as
         already-qualified, so callers that want per-variant artefacts
-        compute this key first and pass it through. Default variant
-        round-trips to the bare agent_type for back-compat with pre-existing
-        single-variant datasets.
+        compute this key first and pass it through. The default variant
+        maps to the bare agent_type (its canonical, unsuffixed key).
         """
         return variant_qualified_agent_key(agent_type, variant_id)
 

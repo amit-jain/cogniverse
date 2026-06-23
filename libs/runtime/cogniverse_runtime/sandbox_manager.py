@@ -166,8 +166,8 @@ class SandboxManager:
         self._policy_dir = self._resolve_policy_dir(policy_dir)
         self._cluster = cluster
         self._policy = self._resolve_policy(policy)
-        # Maintain ``_enabled`` as the legacy "should we try at all" flag —
-        # external callers (tests, dispatcher hot-path) read .enabled.
+        # ``_enabled`` is the "should we try at all" flag that external
+        # callers (dispatcher hot-path, tests) read via ``.enabled``.
         self._enabled = self._policy is not SandboxPolicy.DISABLED
         self._policies: Dict[str, Dict[str, Any]] = {}
         self._client = None
@@ -298,7 +298,7 @@ class SandboxManager:
         When an agent has a registered OpenShell policy, its outbound HTTP
         traffic is vetted against the policy's egress allow-list.
         Agents that do not have a registered policy fall through to a plain
-        ``httpx.AsyncClient`` (back-compat: existing callers keep working).
+        ``httpx.AsyncClient`` (no registered policy → no enforcement).
 
         Operators can disable enforcement by setting
         ``COGNIVERSE_OPENSHELL_HTTP_ENFORCEMENT=disabled`` at boot — useful

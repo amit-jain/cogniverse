@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""
-Pluggable ProcessorManager with auto-discovery - CLEAN VERSION.
-
-No backward compatibility bullshit. Clean, simple, pluggable.
-"""
+"""Pluggable ProcessorManager with processor auto-discovery."""
 
 import importlib
 import logging
