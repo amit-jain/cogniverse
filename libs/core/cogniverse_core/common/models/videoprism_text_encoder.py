@@ -301,7 +301,7 @@ class VideoPrismTextEncoder:
             if "test" in self.model_name.lower():
                 # Test mode - use base LVT model
                 vp_model_name = "videoprism_lvt_public_v1_base"
-            elif "lvt" in self.model_name.lower():
+            elif "_lvt_" in self.model_name.lower():
                 if "large" in self.model_name.lower():
                     vp_model_name = "videoprism_lvt_public_v1_large"
                 else:

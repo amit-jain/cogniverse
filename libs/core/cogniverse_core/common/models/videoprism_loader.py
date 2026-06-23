@@ -625,7 +625,7 @@ def get_videoprism_loader(
     global _videoprism_loaders
 
     # Check if this is a global model request
-    if "global" in model_name or "lvt" in model_name:
+    if "global" in model_name or "_lvt_" in model_name:
         if model_name not in _videoprism_loaders:
             _videoprism_loaders[model_name] = VideoPrismGlobalLoader(model_name, config)
     else:

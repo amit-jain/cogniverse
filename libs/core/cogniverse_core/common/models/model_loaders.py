@@ -877,7 +877,10 @@ class VideoPrismModelLoader(ModelLoader):
             loader_config["model_name"] = self.model_name
 
             # Check if this is a global model that needs text encoder
-            if "global" in self.model_name.lower() or "lvt" in self.model_name.lower():
+            if (
+                "global" in self.model_name.lower()
+                or "_lvt_" in self.model_name.lower()
+            ):
                 loader_config["load_text_encoder"] = True
                 self.logger.info(
                     "Loading VideoPrism with text encoder for global embeddings"
