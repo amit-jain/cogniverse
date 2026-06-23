@@ -202,7 +202,7 @@ async def register_agent(data: AgentRegistrationData) -> Dict[str, Any]:
     """
     registry = get_registry()
 
-    success = registry.register_agent_from_data(data.dict())
+    success = registry.register_agent_from_data(data.model_dump())
 
     if not success:
         raise HTTPException(
