@@ -1,0 +1,88 @@
+{{- $fullName := include "cogniverse.fullname" . -}}
+{{- if .Values.argo.enabled }}
+{{- $workflowBackend := default "cuda" .Values.runtime.backend }}
+{{- $workflowImage := .Values.runtime.image }}
+{{- if .Values.runtime.imagesByBackend }}
+{{- $workflowImage = (index .Values.runtime.imagesByBackend $workflowBackend) | default .Values.runtime.image }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ $fullName }}-job-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: tenant-jobs
+spec:
+  serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+  entrypoint: run-job
+  arguments:
+    parameters:
+    - name: job-id
+    - name: tenant-id
+  volumes:
+  - name: config
+    configMap:
+      name: {{ $fullName }}-config
+  {{- if .Values.devMode.enabled }}
+  - name: src-libs
+    hostPath:
+      path: {{ .Values.devMode.hostPath }}/libs
+      type: Directory
+  - name: src-scripts
+    hostPath:
+      path: {{ .Values.devMode.hostPath }}/scripts
+      type: Directory
+  {{- end }}
+  templates:
+  - name: run-job
+    inputs:
+      parameters:
+      - name: job-id
+      - name: tenant-id
+    container:
+      image: "{{ $workflowImage.repository }}:{{ $workflowImage.tag }}"
+      imagePullPolicy: {{ $workflowImage.pullPolicy }}
+      command: ["python", "-m", "cogniverse_runtime.job_executor"]
+      args:
+        - "--job-id"
+        - "{{`{{inputs.parameters.job-id}}`}}"
+        - "--tenant-id"
+        - "{{`{{inputs.parameters.tenant-id}}`}}"
+        - "--runtime-url"
+        - "{{ include "cogniverse.runtimeUrl" . }}"
+      env:
+      - name: BACKEND_URL
+        value: "http://{{ $fullName }}-vespa"
+      - name: BACKEND_PORT
+        value: "{{ .Values.vespa.service.ports.query }}"
+      - name: TELEMETRY_HTTP_ENDPOINT
+        value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
+      - name: TELEMETRY_OTLP_ENDPOINT
+        value: "{{ $fullName }}-phoenix:4317"
+      - name: LLM_ENDPOINT
+        value: {{ include "cogniverse.primaryLLMEndpoint" . | quote }}
+      - name: LLM_ENGINE
+        value: {{ .Values.llm.engine | quote }}
+      - name: LLM_MODEL
+        value: {{ .Values.llm.model | quote }}
+      resources:
+        requests:
+          cpu: "2"
+          memory: "4Gi"
+        limits:
+          cpu: "4"
+          memory: "8Gi"
+      volumeMounts:
+      - name: config
+        mountPath: /app/configs/config.json
+        subPath: config.json
+        readOnly: true
+      {{- if .Values.devMode.enabled }}
+      - name: src-libs
+        mountPath: /app/libs
+      - name: src-scripts
+        mountPath: /app/scripts
+      {{- end }}
+{{- end }}

@@ -6,6 +6,8 @@ enabling third-party extensions and clean separation of concerns.
 
 import importlib
 import logging
+import os
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from cogniverse_core.registries.agent_registry import AgentRegistry
@@ -17,6 +19,32 @@ logger = logging.getLogger(__name__)
 # Agent capabilities are read from config.json agents.{name}.capabilities
 # No hardcoded mapping — config is the single source of truth.
 AGENT_CAPABILITIES: Dict[str, List[str]] = {}
+
+
+@dataclass(frozen=True)
+class WorkflowSettings:
+    """Settings for submitting jobs to the workflow engine, read from the env.
+
+    The runtime submits work by referencing job templates the deployment
+    installs; it owns no pod spec or image.
+    """
+
+    api_url: Optional[str] = None
+    namespace: str = "cogniverse"
+    service_account: str = "default"
+    job_template: Optional[str] = None
+    optimization_template: Optional[str] = None
+
+    @classmethod
+    def from_environment(cls) -> "WorkflowSettings":
+        return cls(
+            api_url=os.environ.get("WORKFLOW_API_URL") or None,
+            namespace=os.environ.get("WORKFLOW_NAMESPACE", "cogniverse"),
+            service_account=os.environ.get("RUNTIME_SERVICE_ACCOUNT") or "default",
+            job_template=os.environ.get("JOB_WORKFLOW_TEMPLATE") or None,
+            optimization_template=os.environ.get("OPTIMIZATION_WORKFLOW_TEMPLATE")
+            or None,
+        )
 
 
 class ConfigLoader:
@@ -258,3 +286,10 @@ def get_config_loader() -> ConfigLoader:
     if not hasattr(get_config_loader, "_instance"):
         get_config_loader._instance = ConfigLoader()
     return get_config_loader._instance
+
+
+def get_workflow_settings() -> WorkflowSettings:
+    """Cached accessor for workflow-engine settings (no backend/agent load)."""
+    if not hasattr(get_workflow_settings, "_instance"):
+        get_workflow_settings._instance = WorkflowSettings.from_environment()
+    return get_workflow_settings._instance

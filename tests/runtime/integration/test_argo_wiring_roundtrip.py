@@ -1,18 +1,10 @@
-"""Round-trip integration test for Argo CronWorkflow wiring.
+"""Round-trip integration test for scheduled-job workflow submission.
 
-Verifies that the runtime startup helper ``_wire_argo_from_environment``
-actually populates the tenant router's globals from env vars, and that
-``POST /admin/tenant/{tenant}/jobs`` then results in a real Argo
-CronWorkflow submission.
-
-Before this fix ``set_argo_config()`` was defined but
-never called from main.py's lifespan, so ``_argo_api_url`` stayed
-``None`` and POST /jobs silently dropped the CronWorkflow submission.
-The pre-fix tests bypassed the bug by directly mutating
-``tenant._argo_api_url`` from inside the test instead of going through
-the env var → lifespan → set_argo_config wiring.
-
-This test exercises the real chain.
+``POST /admin/tenant/{tenant}/jobs`` must submit a CronWorkflow when the
+workflow engine is configured (``WORKFLOW_API_URL`` set), and persist without
+submitting when it is not. Exercised through the real router + ConfigManager;
+the HTTP boundary (``_submit_cron_workflow`` / ``_delete_cron_workflow``) is
+mocked.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -21,18 +13,24 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from cogniverse_runtime.main import _wire_argo_from_environment
+from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 from cogniverse_runtime.routers import tenant
 
 
+def _configure_workflow(api_url=None):
+    get_workflow_settings._instance = WorkflowSettings(
+        api_url=api_url,
+        namespace="cogniverse",
+        job_template="cogniverse-job-runner",
+        optimization_template="cogniverse-optimization-runner",
+    )
+
+
 @pytest.fixture(autouse=True)
-def reset_argo_state():
-    """Snapshot and restore tenant._argo_api_url around each test."""
-    original_url = tenant._argo_api_url
-    original_ns = tenant._argo_namespace
+def reset_workflow_settings():
     yield
-    tenant._argo_api_url = original_url
-    tenant._argo_namespace = original_ns
+    if hasattr(get_workflow_settings, "_instance"):
+        del get_workflow_settings._instance
 
 
 @pytest.fixture
@@ -46,53 +44,9 @@ def tenant_client(config_manager):
 
 
 @pytest.mark.integration
-class TestArgoWiringRoundTrip:
-    def test_helper_populates_globals_from_env(self, monkeypatch):
-        """The lifespan helper must read BACKEND_PORT-style env vars and
-        call set_argo_config so the router globals end up populated.
-        Pre-fix this never happened — globals stayed None forever."""
-        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
-        monkeypatch.setenv("ARGO_NAMESPACE", "test_ns")
-
-        tenant._argo_api_url = None
-        tenant._argo_namespace = "stale"
-
-        _wire_argo_from_environment()
-
-        assert tenant._argo_api_url == "http://argo-server:2746"
-        assert tenant._argo_namespace == "test_ns"
-
-    def test_helper_handles_missing_env_var_gracefully(self, monkeypatch):
-        """When ARGO_API_URL is unset the helper must explicitly set
-        ``_argo_api_url`` to None so create_job degrades to persist-only
-        mode rather than crashing."""
-        monkeypatch.delenv("ARGO_API_URL", raising=False)
-        monkeypatch.delenv("ARGO_NAMESPACE", raising=False)
-
-        tenant._argo_api_url = "stale"
-
-        _wire_argo_from_environment()
-
-        assert tenant._argo_api_url is None
-        assert tenant._argo_namespace == "cogniverse"
-
-    def test_full_roundtrip_env_var_then_post_submits_workflow(
-        self, monkeypatch, tenant_client
-    ):
-        """Set ARGO_API_URL, run the lifespan helper, POST a job through the
-        real router, and assert the CronWorkflow submission was attempted with
-        the manifest built from the request. The Argo HTTP boundary
-        (``_submit_cron_workflow``) is mocked — this verifies the
-        env→endpoint→manifest wiring, not that a live Argo server accepts it.
-
-        This exercises the real delete path — the
-        previous test directly mutated ``tenant._argo_api_url`` and
-        bypassed the helper entirely."""
-        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
-
-        _wire_argo_from_environment()
-        assert tenant._argo_api_url == "http://argo-server:2746"
-
+class TestWorkflowSubmissionRoundTrip:
+    def test_configured_then_post_submits_workflow(self, tenant_client):
+        _configure_workflow(api_url="http://argo-server:2746")
         with patch(
             "cogniverse_runtime.routers.tenant._submit_cron_workflow",
             new_callable=AsyncMock,
@@ -110,52 +64,32 @@ class TestArgoWiringRoundTrip:
             manifest = mock_submit.call_args[0][0]
             assert manifest["kind"] == "CronWorkflow"
             assert manifest["spec"]["schedule"] == "0 9 * * 1"
-            # The scheduled workflow must actually run the job executor (the job's
-            # query is fetched by job-id at run time, so it isn't in the manifest).
-            container = manifest["spec"]["workflowSpec"]["templates"][0]["container"]
-            assert "cogniverse_runtime.job_executor" in container["command"]
+            assert (
+                manifest["spec"]["workflowSpec"]["workflowTemplateRef"]["name"]
+                == "cogniverse-job-runner"
+            )
 
-    def test_full_roundtrip_no_env_var_skips_workflow(self, monkeypatch, tenant_client):
-        """Symmetric round trip: with no ARGO_API_URL, POST /jobs must
-        still persist the job to ConfigStore but NOT call submit. The
-        bug had this path silently dropping ALL jobs because the global
-        was always None."""
-        monkeypatch.delenv("ARGO_API_URL", raising=False)
-
-        _wire_argo_from_environment()
-        assert tenant._argo_api_url is None
-
+    def test_unconfigured_then_post_persists_without_submitting(self, tenant_client):
+        _configure_workflow(api_url=None)
         with patch(
             "cogniverse_runtime.routers.tenant._submit_cron_workflow",
             new_callable=AsyncMock,
         ) as mock_submit:
             resp = tenant_client.post(
                 "/admin/tenant/test_argo_no_url/jobs",
-                json={
-                    "name": "test_job",
-                    "schedule": "0 9 * * *",
-                    "query": "test",
-                },
+                json={"name": "test_job", "schedule": "0 9 * * *", "query": "test"},
             )
             assert resp.status_code == 200
             mock_submit.assert_not_awaited()
 
-        # And the job WAS persisted — verify by listing jobs.
         resp = tenant_client.get("/admin/tenant/test_argo_no_url/jobs")
         jobs = resp.json().get("jobs", [])
         assert any(j.get("name") == "test_job" for j in jobs), (
-            "Job should be persisted to ConfigStore even when Argo is unconfigured"
+            "Job should be persisted even when the workflow engine is unconfigured"
         )
 
-    def test_delete_job_removes_cron_workflow_and_tombstones(
-        self, monkeypatch, tenant_client
-    ):
-        """DELETE /jobs must remove the backing Argo CronWorkflow (not just
-        the config marker), and a repeat delete must 404. Pre-fix, delete
-        only wrote a config tombstone, so the CronWorkflow kept firing."""
-        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
-        _wire_argo_from_environment()
-
+    def test_delete_job_removes_cron_workflow_and_tombstones(self, tenant_client):
+        _configure_workflow(api_url="http://argo-server:2746")
         with patch(
             "cogniverse_runtime.routers.tenant._submit_cron_workflow",
             new_callable=AsyncMock,
@@ -173,17 +107,13 @@ class TestArgoWiringRoundTrip:
         ) as mock_delete:
             resp = tenant_client.delete(f"/admin/tenant/test_argo_del/jobs/{job_id}")
             assert resp.status_code == 200, resp.text
-            # Delete must target the SAME sanitized name create derived
-            # (underscores/colons are illegal in an RFC-1123 resource name).
             mock_delete.assert_awaited_once_with(
                 tenant._cron_workflow_name("test_argo_del", job_id),
-                tenant._argo_namespace,
+                get_workflow_settings().namespace,
             )
 
-        # Repeat delete must 404 (already tombstoned).
         resp2 = tenant_client.delete(f"/admin/tenant/test_argo_del/jobs/{job_id}")
         assert resp2.status_code == 404
 
-        # And it no longer appears in the listing.
         listed = tenant_client.get("/admin/tenant/test_argo_del/jobs").json()["jobs"]
         assert all(j["job_id"] != job_id for j in listed)

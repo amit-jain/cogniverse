@@ -122,32 +122,21 @@ def _probe_phoenix_reachability() -> None:
         logger.warning(msg)
 
 
-def _wire_argo_from_environment() -> None:
-    """Wire the tenant router's Argo config from environment variables.
+def _log_workflow_submission_status() -> None:
+    """Log whether workflow-engine submission is enabled, at startup."""
+    from cogniverse_runtime.config_loader import get_workflow_settings
 
-    Populates ``tenant._argo_api_url`` so ``POST /{tenant}/jobs`` submits
-    the CronWorkflow step and ``POST /{tenant}/optimize`` submits one-off
-    Workflows. Extracted into a helper so it can be unit-tested without
-    spinning up the whole FastAPI lifespan.
-    """
-    argo_api_url = os.environ.get("ARGO_API_URL") or None
-    argo_namespace = os.environ.get("ARGO_NAMESPACE", "cogniverse")
-    # Name of the SA the Workflow pods run as — must be RBAC-bound to post
-    # ``workflowtaskresults``. The chart sets this; fall back only for tests.
-    runtime_sa = os.environ.get("RUNTIME_SERVICE_ACCOUNT") or "default"
-    tenant.set_argo_config(
-        api_url=argo_api_url,
-        namespace=argo_namespace,
-        service_account=runtime_sa,
-    )
-    if argo_api_url:
+    settings = get_workflow_settings()
+    if settings.api_url:
         logger.info(
-            f"Argo submission enabled (url={argo_api_url}, namespace={argo_namespace})"
+            "Workflow submission enabled (url=%s, namespace=%s)",
+            settings.api_url,
+            settings.namespace,
         )
     else:
         logger.warning(
-            "ARGO_API_URL env var not set — scheduled jobs will be persisted "
-            "but never trigger. Set ARGO_API_URL in deployment to enable."
+            "WORKFLOW_API_URL not set — scheduled jobs will be persisted but "
+            "never trigger. Set WORKFLOW_API_URL in deployment to enable."
         )
 
 
@@ -258,7 +247,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     admin.set_config_manager(config_manager)
     admin.set_schema_loader(schema_loader)
     tenant.set_config_manager(config_manager)
-    _wire_argo_from_environment()
+    _log_workflow_submission_status()
 
     # Wire ingestion and search routers via FastAPI dependency overrides
     app.dependency_overrides[ingestion.get_config_manager_dependency] = lambda: (

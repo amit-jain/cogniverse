@@ -62,8 +62,15 @@ def _patch_httpx(monkeypatch: pytest.MonkeyPatch, fake: _FakeAsyncClient) -> Non
 
 
 def _set_argo_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tenant_router, "_argo_api_url", "http://argo.test")
-    monkeypatch.setattr(tenant_router, "_argo_namespace", "argo")
+    from cogniverse_runtime.config_loader import WorkflowSettings
+
+    settings = WorkflowSettings(
+        api_url="http://argo.test",
+        namespace="argo",
+        job_template="cogniverse-job-runner",
+        optimization_template="cogniverse-optimization-runner",
+    )
+    monkeypatch.setattr(tenant_router, "get_workflow_settings", lambda: settings)
 
 
 def _build_manifest() -> dict:

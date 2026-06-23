@@ -6,7 +6,7 @@ argo-server, Argo actually creates the Workflow, and we verify via the
 Argo API that the Workflow landed with the expected spec.
 
 Requires live stack via ``cogniverse up``:
-- Runtime at localhost:28000 (with ARGO_API_URL wired)
+- Runtime at localhost:28000 (with WORKFLOW_API_URL wired)
 - kubectl context: k3d-cogniverse
 - Argo Workflows installed in the `cogniverse` namespace
 
