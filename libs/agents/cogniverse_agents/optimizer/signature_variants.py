@@ -148,9 +148,8 @@ class SignatureVariantRegistry:
 def variant_qualified_agent_key(agent_type: str, variant_id: str) -> str:
     """Stable, dataset-name-safe key for ``(agent_type, variant_id)``.
 
-    Default variant returns the bare agent_type so existing artefacts (which
-    were saved before the variant story existed) keep working — they map
-    naturally onto the default variant. Non-default variants get the
+    The default variant uses the bare ``agent_type`` as its key (the
+    canonical, unsuffixed dataset name); non-default variants get a
     ``::variant=`` suffix.
     """
     if not variant_id or variant_id == DEFAULT_VARIANT_ID:
