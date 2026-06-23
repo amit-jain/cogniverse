@@ -120,12 +120,9 @@ class TestIngestionUploadRequiresTenant:
                 "tenant_id": "unregistered_xyz",
             },
         )
-        # The endpoint wraps the body in a generic try/except that
-        # converts unexpected errors to 500 with the detail in the body.
-        # HTTPException(404) is re-raised as 404 directly. Either way,
-        # the body must mention "not registered".
-        assert resp.status_code in (404, 500), (
-            f"unexpected status {resp.status_code}: {resp.text}"
+        assert resp.status_code == 404, (
+            f"unregistered tenant must 404 (not 500); got {resp.status_code}: "
+            f"{resp.text}"
         )
         assert "not registered" in resp.text.lower(), (
             f"expected 'not registered' in body, got: {resp.text}"

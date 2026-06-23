@@ -139,6 +139,8 @@ async def start_ingestion(
             "message": "Ingestion job started successfully",
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Ingestion start error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
