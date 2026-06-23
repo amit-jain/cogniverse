@@ -1324,7 +1324,7 @@ bump2version minor  # 0.1.0 -> 0.2.0
 
 **DO**:
 
-- Use absolute imports from package roots (`from cogniverse_core.config import ...`)
+- Use absolute imports from package roots (`from cogniverse_foundation.config import ...`)
 - Keep imports at top of file (except for optional imports)
 - Use `try/except ImportError` for optional dependencies
 

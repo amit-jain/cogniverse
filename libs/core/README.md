@@ -117,7 +117,7 @@ Backend provider abstractions and utilities:
 
 ### Configuration (`cogniverse_foundation.config`)
 
-System-wide configuration management (re-exported via `cogniverse_core.config` shim):
+System-wide configuration management:
 - `SystemConfig`: Unified system configuration (in `cogniverse_foundation.config.unified_config`)
 - `LLMEndpointConfig`, `LLMConfig`: LLM endpoint and model configuration
 - `create_default_config_manager`: Build a default `ConfigManager` (in `cogniverse_foundation.config.utils`)

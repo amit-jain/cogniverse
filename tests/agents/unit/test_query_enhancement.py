@@ -1294,7 +1294,7 @@ class TestVideoSearchAgent:
         assert context.confidence == 0.8
         assert context.routing_metadata["agent"] == "video_search_agent"
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     def test_relevance_score_calculation(self, mock_registry, mock_encoder_config):
         """Test relevance score calculation with relationship context"""
@@ -1362,7 +1362,7 @@ class TestVideoSearchAgent:
             )
             assert partial == 0.5
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
     def test_entity_matching_logic(self, mock_registry, mock_encoder_config):
         """Test entity matching in results"""
