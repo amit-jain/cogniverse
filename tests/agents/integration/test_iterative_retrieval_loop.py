@@ -620,32 +620,6 @@ async def test_kg_traversal_span_attributes_match_golden(captured_spans, dspy_lm
     peer = _IterRetrievalPeer()
     orchestrator = _build_orchestrator(telemetry_manager=captured_spans, peer=peer)
 
-    # Wrap _expand_via_kg_traversal so it always emits the expected span
-    # under the production span name; the call itself still hits the peer.
-    original_expand = orchestrator._expand_via_kg_traversal
-
-    async def _traced_expand(evidence, missing_aspects, *, tenant_id, session_id):
-        anchor = orchestrator._evidence_video_anchor(evidence)
-        attrs = {
-            "node_name": "Marie Curie",
-            "filter_ts_start": float(anchor["ts_start"]) if anchor else 0.0,
-            "filter_ts_end": float(anchor["ts_end"]) if anchor else 0.0,
-            "result_node_ids": json.dumps(["1898", "radium", "sorbonne"]),
-        }
-        with captured_spans.span(
-            name="KnowledgeGraphTraversalAgent.traverse",
-            tenant_id=tenant_id,
-            attributes=attrs,
-        ):
-            return await original_expand(
-                evidence,
-                missing_aspects,
-                tenant_id=tenant_id,
-                session_id=session_id,
-            )
-
-    orchestrator._expand_via_kg_traversal = _traced_expand  # type: ignore[method-assign]
-
     # Force the loop to traverse the KG between iterations.
     real_gate = orchestrator._run_sufficiency_gate
     call_count = {"n": 0}
@@ -679,12 +653,16 @@ async def test_kg_traversal_span_attributes_match_golden(captured_spans, dspy_lm
     assert len(kg_spans) == 1, [
         s.name for s in captured_spans.exporter.get_finished_spans()
     ]
-    attrs = {
-        "node_name": kg_spans[0].attributes.get("node_name"),
-        "filter_ts_start": float(kg_spans[0].attributes.get("filter_ts_start", 0.0)),
-        "filter_ts_end": float(kg_spans[0].attributes.get("filter_ts_end", 0.0)),
-        "result_node_ids": sorted(
-            json.loads(kg_spans[0].attributes.get("result_node_ids", "[]"))
-        ),
-    }
-    assert_golden_json(attrs, "iter_loop_kg_traversal_d12.json")
+    span = kg_spans[0]
+    # Production emits the real traversal: the seed subject (the missing
+    # aspect that triggered traversal), the evidence time window, and the
+    # node ids the peer returned.
+    assert span.attributes.get("node_name") == "work location"
+    assert sorted(json.loads(span.attributes.get("result_node_ids", "[]"))) == [
+        "1898",
+        "radium",
+        "sorbonne",
+    ]
+    ts_start = float(span.attributes.get("filter_ts_start"))
+    ts_end = float(span.attributes.get("filter_ts_end"))
+    assert ts_start <= ts_end
