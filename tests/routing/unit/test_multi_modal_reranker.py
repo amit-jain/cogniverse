@@ -98,6 +98,45 @@ class TestMultiModalReranker:
         assert edge == pytest.approx(0.7)
         assert centered > edge > outside
 
+    def test_temporal_score_handles_naive_aware_timezone_mix(self, reranker):
+        """A naive/aware datetime mix must not raise TypeError and abort the
+        rerank loop; naive datetimes are read as UTC."""
+        from datetime import timezone
+
+        def _res(ts):
+            return RerankerSearchResult(
+                id="x",
+                title="t",
+                content="c",
+                modality="video",
+                score=1.0,
+                metadata={},
+                timestamp=ts,
+            )
+
+        naive_range = {
+            "temporal": {"time_range": (datetime(2026, 5, 1), datetime(2026, 7, 1))}
+        }
+        aware_mid = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        # In-range, near-centered → high score; the point is no TypeError.
+        aware_vs_naive = reranker._calculate_temporal_score(
+            _res(aware_mid), naive_range
+        )
+        assert 0.9 < aware_vs_naive <= 1.0
+
+        aware_range = {
+            "temporal": {
+                "time_range": (
+                    datetime(2026, 5, 1, tzinfo=timezone.utc),
+                    datetime(2026, 7, 1, tzinfo=timezone.utc),
+                )
+            }
+        }
+        naive_vs_aware = reranker._calculate_temporal_score(
+            _res(datetime(2026, 6, 1)), aware_range
+        )
+        assert 0.9 < naive_vs_aware <= 1.0
+
     def test_temporal_score_neutral_without_context(self, reranker):
         now = datetime.now()
         r = RerankerSearchResult(
