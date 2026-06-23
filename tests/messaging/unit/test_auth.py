@@ -43,6 +43,22 @@ class TestInviteTokenManager:
         result = manager.validate_token(token)
         assert result == "acme:alice"
 
+    def test_validate_token_with_tz_aware_expiry(self, config_manager):
+        """A tz-aware stored expiry must validate without error; the old naive
+        utcnow comparison raised TypeError and rejected a valid token."""
+        token = "abc123"
+        mock_entry = MagicMock()
+        mock_entry.config_value = {
+            "token": token,
+            "tenant_id": "acme:alice",
+            "used": False,
+            "expires_at": "2099-12-31T23:59:59+00:00",
+        }
+        config_manager.store.get_config.return_value = mock_entry
+
+        manager = InviteTokenManager(config_manager)
+        assert manager.validate_token(token) == "acme:alice"
+
     def test_validate_used_token(self, config_manager):
         mock_entry = MagicMock()
         mock_entry.config_value = {

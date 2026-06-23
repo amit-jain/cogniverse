@@ -6,7 +6,7 @@ stored in Mem0 with agent_name="_messaging_gateway".
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
@@ -26,7 +26,9 @@ class InviteTokenManager:
     def generate_token(self, tenant_id: str, expires_in_hours: int = 24) -> str:
         """Generate a new invite token for a tenant."""
         token = uuid.uuid4().hex
-        expiry = (datetime.utcnow() + timedelta(hours=expires_in_hours)).isoformat()
+        expiry = (
+            datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+        ).isoformat()
 
         self.config_manager.set_config_value(
             tenant_id="_system",
@@ -77,7 +79,9 @@ class InviteTokenManager:
             expires_at = value.get("expires_at", "")
             if expires_at:
                 expiry = datetime.fromisoformat(expires_at)
-                if datetime.utcnow() > expiry:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) > expiry:
                     logger.warning(f"Token expired: {token[:8]}...")
                     return None
 
