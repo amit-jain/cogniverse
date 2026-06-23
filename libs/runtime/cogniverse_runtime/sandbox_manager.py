@@ -110,7 +110,6 @@ def _exec_under_span(
 
 
 _DEFAULT_POLICY_DIR = Path("configs/agent_policies")
-_LEGACY_POLICY_DIR = Path("configs/openshell")
 
 
 def _probe_gateway_endpoint(endpoint: str, timeout: float = 2.0) -> None:
@@ -207,22 +206,11 @@ class SandboxManager:
 
     @staticmethod
     def _resolve_policy_dir(policy_dir: Path | None) -> Path:
-        """Pick the policy dir: explicit override, the canonical
-        ``configs/agent_policies/``, or the legacy ``configs/openshell/``
-        (with a deprecation warning) so existing deployments that haven't
-        renamed their policy directory still boot. Missing directory is
-        surfaced later in ``_load_policies`` as a warning."""
+        """Pick the policy dir: the explicit override or the default
+        ``configs/agent_policies/``. A missing directory is surfaced later in
+        ``_load_policies`` as a warning."""
         if policy_dir is not None:
             return Path(policy_dir)
-        if not _DEFAULT_POLICY_DIR.exists() and _LEGACY_POLICY_DIR.exists():
-            logger.warning(
-                "Loading agent policies from deprecated %s/; rename to %s/. "
-                "The legacy path is honoured for back-compat but will be "
-                "removed in a future release.",
-                _LEGACY_POLICY_DIR,
-                _DEFAULT_POLICY_DIR,
-            )
-            return _LEGACY_POLICY_DIR
         return _DEFAULT_POLICY_DIR
 
     @staticmethod
