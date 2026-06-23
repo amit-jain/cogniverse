@@ -542,8 +542,8 @@ class Mem0MemoryManager:
         #   * provenance_required=True → reject if no provenance attached
         #   * default_trust set → compute initial trust from provenance and
         #     attach to metadata so retrieval-time ranking has it.
-        # When no registry is wired (legacy deployments), behaviour is
-        # unchanged — the write proceeds without enforcement.
+        # When no registry is wired, the write proceeds without
+        # enforcement.
         metadata = self._enforce_schema_on_write(metadata or {})
 
         result = self.memory.add(

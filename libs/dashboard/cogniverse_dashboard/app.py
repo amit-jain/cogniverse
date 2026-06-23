@@ -449,7 +449,7 @@ def get_agent_config():
     """Get agent configuration for the unified runtime.
 
     In the unified runtime, all agents share the same base URL (RUNTIME_URL).
-    Individual agent URLs (localhost:8001, etc.) are legacy and no longer used.
+    Individual agent URLs (localhost:8001, etc.) are not used in the unified runtime.
     """
     return {
         "runtime_url": RUNTIME_URL,

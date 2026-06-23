@@ -51,7 +51,7 @@ def _read_hf_token() -> Optional[str]:
 
     Order:
       1. ``HF_TOKEN`` env var (CI / explicit override)
-      2. ``HUGGING_FACE_HUB_TOKEN`` env var (legacy)
+      2. ``HUGGING_FACE_HUB_TOKEN`` env var (alias)
       3. ``~/.cache/huggingface/token`` (populated by ``huggingface-cli login``)
     """
     for var in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):

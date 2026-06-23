@@ -381,7 +381,7 @@ class TemporalReasoningAgent(
         for r in rows:
             meta = _read_metadata(r)
             # attach_to_metadata stores provenance under
-            # metadata["provenance"]["written_at"]; legacy callers may
+            # metadata["provenance"]["written_at"]; some callers may
             # also stamp it at the top level.
             written_at: Any = None
             prov = meta.get("provenance")

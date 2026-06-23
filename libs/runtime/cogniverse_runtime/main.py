@@ -1070,7 +1070,7 @@ app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 # to the redis queue (instead of running the pipeline in-process). The
 # new /ingestion/{id}/events SSE + /ingestion/{id}/status snapshot are
 # mounted under the same prefix. Without REDIS_URL, /ingestion/upload
-# falls back to the legacy in-process pipeline.
+# falls back to the in-process pipeline.
 if os.environ.get("REDIS_URL"):
     from cogniverse_runtime.ingestion_worker import status_api as ingest_v2_status
 

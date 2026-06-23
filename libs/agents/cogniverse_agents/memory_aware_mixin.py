@@ -261,8 +261,8 @@ class MemoryAwareMixin:
         reading "what do we know about X" sees both tenant-private
         knowledge and any org-shared trunk knowledge in one pass.
 
-        When the flag is unset (default), behaviour is the legacy
-        tenant-only path so existing code is unchanged.
+        When the flag is unset (default), behaviour is the
+        tenant-only path.
 
         Args:
             query: Query to search memory for
