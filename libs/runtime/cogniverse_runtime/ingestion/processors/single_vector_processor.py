@@ -99,7 +99,7 @@ class SingleVectorVideoProcessor(BaseProcessor):
 
         super().__init__(**params)
 
-        # Set instance variables for backward compatibility with existing code
+        # Expose processing parameters as instance attributes
         self.strategy = strategy
         self.segment_duration = segment_duration
         self.segment_overlap = segment_overlap if strategy != "global" else 0

@@ -42,12 +42,6 @@ class TenantAwareAgentMixin:
                 # Now self.tenant_id is available via deps
                 print(f"Agent initialized for tenant: {deps.tenant_id}")
 
-    Legacy usage (for backward compatibility only):
-        class MyAgent(A2AAgent, TenantAwareAgentMixin):
-            def __init__(self, tenant_id: str, **kwargs):
-                TenantAwareAgentMixin.__init__(self, tenant_id)
-                super().__init__(...)
-
     Key Benefits:
     - Eliminates ~10 lines of duplicated validation code per agent
     - Consistent error messages across all agents

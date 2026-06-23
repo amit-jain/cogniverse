@@ -14,7 +14,7 @@ from cogniverse_evaluation.providers.base import EvaluatorFramework
 
 
 class EvaluationResult(dict):
-    """Dict subclass that supports attribute access for backward compatibility.
+    """Dict subclass that also supports attribute access to its keys.
 
     Phoenix v14 ExperimentEvaluation is a TypedDict (plain dict), but the
     codebase accesses result.score, result.label everywhere. This class
