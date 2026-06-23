@@ -661,7 +661,7 @@ class Mem0MemoryManager:
         record) and the no-context cases (no registry, no subject_key).
         """
         if self._knowledge_registry is None:
-            return  # legacy mode — detector is opt-in via registry wiring
+            return  # detector is opt-in; skipped until a registry is wired
         if not isinstance(metadata, dict):
             return
         kind = metadata.get("kind")

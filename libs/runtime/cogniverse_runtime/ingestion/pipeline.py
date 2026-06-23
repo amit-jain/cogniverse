@@ -84,7 +84,7 @@ class PipelineConfig:
 
     # Media root URI for non-filesystem ingestion sources (s3://, pvc://, etc.).
     # When set, the pipeline enumerates videos via MediaLocator.list instead of
-    # globbing video_dir. None preserves the legacy local-directory behavior.
+    # globbing video_dir. None enumerates local files under video_dir.
     media_root_uri: Optional[str] = None
 
     # Backend selection
