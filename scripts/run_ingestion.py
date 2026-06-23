@@ -120,7 +120,11 @@ async def main_async():
         get_config,
     )
 
-    config_manager = create_default_config_manager()
+    try:
+        config_manager = create_default_config_manager()
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        raise SystemExit(2)
     app_config = get_config(tenant_id=args.tenant_id, config_manager=config_manager)
 
     if args.profile:
