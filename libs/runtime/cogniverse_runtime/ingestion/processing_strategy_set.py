@@ -580,14 +580,12 @@ class ProcessingStrategySet:
                 pipeline_context.logger.info("  ♻️ Descriptions cache hit")
                 return {"descriptions": cached}
             # The segmentation step writes its output under ``keyframes``
-            # (frame-strategy) or ``chunks`` (chunk-strategy); fall back
-            # to the ``segments`` key for any future shape. VLM
-            # needs the rich metadata dict with ``video_id`` + per-frame
-            # entries, not just a bare list.
+            # (frame-strategy) or ``chunks`` (chunk-strategy). VLM needs the
+            # rich metadata dict with ``video_id`` + per-frame entries, not
+            # just a bare list.
             frames_metadata = (
                 accumulated_results.get("keyframes")
                 or accumulated_results.get("chunks")
-                or accumulated_results.get("segments")
                 or {}
             )
             result = await strategy.generate_descriptions(

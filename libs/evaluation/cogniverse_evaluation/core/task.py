@@ -108,25 +108,10 @@ def evaluation_task(
             )
             samples.append(sample)
     else:
-        # Dict format with an "examples" key
-        if not dataset_data or not dataset_data.get("examples"):
-            raise ValueError(f"Dataset '{dataset_name}' not found or empty")
-
-        samples = []
-        examples = dataset_data.get("examples", [])
-        for example in examples:
-            query = example.get("input", {}).get("query", "")
-            expected_videos = example.get("output", {}).get("expected_videos", [])
-
-            sample = Sample(
-                input=query,
-                target=expected_videos,
-                metadata={
-                    "example_id": example.get("id", ""),
-                    "category": example.get("input", {}).get("category", "general"),
-                },
-            )
-            samples.append(sample)
+        raise TypeError(
+            f"Expected a DataFrame from Phoenix for dataset '{dataset_name}', "
+            f"got {type(dataset_data).__name__}"
+        )
 
     if not samples:
         raise ValueError(f"No valid samples in dataset '{dataset_name}'")
