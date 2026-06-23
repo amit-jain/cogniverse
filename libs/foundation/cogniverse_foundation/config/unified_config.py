@@ -44,6 +44,9 @@ class LLMEndpointConfig:
     # against the same vLLM deployment (modulo vLLM batching state — see
     # the test docs for caveats). Default None preserves vanilla behavior.
     seed: Optional[int] = None
+    # Fail fast on a down endpoint instead of litellm's ~600s x dspy retries.
+    request_timeout: float = 120.0
+    num_retries: int = 1
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary, omitting None values for clean serialization."""
@@ -60,6 +63,8 @@ class LLMEndpointConfig:
             result["extra_body"] = self.extra_body
         if self.seed is not None:
             result["seed"] = self.seed
+        result["request_timeout"] = self.request_timeout
+        result["num_retries"] = self.num_retries
         return result
 
     @classmethod
@@ -74,6 +79,8 @@ class LLMEndpointConfig:
             adapter_path=data.get("adapter_path"),
             extra_body=data.get("extra_body"),
             seed=data.get("seed"),
+            request_timeout=data.get("request_timeout", 120.0),
+            num_retries=data.get("num_retries", 1),
         )
 
 

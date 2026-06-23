@@ -120,3 +120,34 @@ class TestLLMEndpointConfigSerialization:
         )
         assert rt.extra_body == {"reasoning": "auto"}
         assert rt.seed == 7
+
+
+class TestFastFailTimeout:
+    """A down/unreachable endpoint must fail fast, not hang on litellm's
+    ~600s default x dspy's default retries."""
+
+    def test_defaults_bound_timeout_and_retries(self):
+        lm = create_dspy_lm(LLMEndpointConfig(model="openai/m", api_base="http://x:1"))
+        assert lm.kwargs["timeout"] == 120.0
+        assert lm.num_retries == 1
+
+    def test_config_overrides_timeout_and_retries(self):
+        lm = create_dspy_lm(
+            LLMEndpointConfig(
+                model="openai/m",
+                api_base="http://x:1",
+                request_timeout=30.0,
+                num_retries=3,
+            )
+        )
+        assert lm.kwargs["timeout"] == 30.0
+        assert lm.num_retries == 3
+
+    def test_timeout_and_retries_round_trip_through_dict(self):
+        rt = LLMEndpointConfig.from_dict(
+            LLMEndpointConfig(
+                model="openai/m", request_timeout=45.0, num_retries=2
+            ).to_dict()
+        )
+        assert rt.request_timeout == 45.0
+        assert rt.num_retries == 2
