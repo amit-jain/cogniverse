@@ -105,7 +105,7 @@ Shortest path between two nodes via BFS traversal of outgoing edges.
 
 ```bash
 cogniverse graph path SearchAgent Vespa
-cogniverse graph path CodingAgent OpenShell --max-depth 6
+cogniverse graph path CodingAgent OpenShell --max-depth 4
 ```
 
 ## Graph Model
@@ -123,7 +123,7 @@ Every node, regardless of whether it came from code or docs, has the same shape:
 | `label` | string | GLiNER entity-type tag (`Person`, `Location`, `Organization`, `Substance`, `Concept`, ...). Defaults to `Concept`. Used by `CrossModalLinker` to gate `same_as` linking — a Person-named transcript mention only co-refers with a Concept/Location VLM caption when the caption contains person-indicator words or shares a name token. |
 | `mentions` | list\[Mention\] | Per-segment grounded mentions (source_doc_id, segment_id, ts_start, ts_end, modality, evidence_span) |
 | `degree` | int | Number of edges touching this node (computed) |
-| `embedding` | tensor(768) | nomic-embed-text vector of `name + description` |
+| `embedding` | tensor(token{}, v[128]) | ColBERT multi-vector (LateOn 128-dim per token) of `name + description` |
 
 The `node_id` is deterministic: "SearchAgent" and "searchagent" normalize to the same id, so the same symbol extracted from different files is a single node with merged `mentions`.
 
@@ -136,11 +136,16 @@ Every edge has the same shape:
 | `source_node_id` | string | Normalized source node id |
 | `target_node_id` | string | Normalized target node id |
 | `relation` | string | Free-text label: `calls`, `imports`, `defines`, `mentioned_with`, etc. |
+| `evidence_span` | string | Verbatim text span that grounded this edge |
+| `segment_id` | string | Segment (e.g. `frame_0`, `transcript_0`) where the edge was found |
+| `ts_start` | float | Segment start timestamp (seconds; 0.0 for non-temporal content) |
+| `ts_end` | float | Segment end timestamp |
+| `modality` | string | Content modality (`code`, `text`, `video`, `image`, `audio`) |
 | `provenance` | `EXTRACTED` \| `INFERRED` | `EXTRACTED` = found structurally (AST); `INFERRED` = LLM guess |
 | `source_doc_id` | string | Source file where this edge was found |
 | `confidence` | float | 0.0-1.0 confidence score |
 
-The `edge_id` is `sha1(source_node_id | relation | target_node_id)` — two extractors finding the same relationship produce the same edge, so upserts are idempotent.
+The `edge_id` is `sha1(source_node_id | relation | target_node_id | segment_id | ts_start | ts_end)[:16]` — the same (source, relation, target, segment) from two extractors produces the same edge, so upserts are idempotent.
 
 ## Extraction
 
@@ -243,7 +248,7 @@ The CLI is a thin client over these endpoints at `/graph/`:
 | `/graph/upsert` | POST | Batch upsert nodes + edges for a tenant |
 | `/graph/search` | GET | Hybrid BM25 + vector search over nodes |
 | `/graph/neighbors` | GET | Out/in edges of a node |
-| `/graph/path` | GET | Shortest path between two nodes (BFS, max depth 6) |
+| `/graph/path` | GET | Shortest path between two nodes (BFS, default max depth 4, up to 6) |
 | `/graph/stats` | GET | Node/edge counts + top-degree nodes |
 
 **Upsert example:**
@@ -259,7 +264,12 @@ curl -X POST http://localhost:28000/graph/upsert \
       {"name": "Bar", "description": "Another class", "kind": "entity"}
     ],
     "edges": [
-      {"source": "Foo", "target": "Bar", "relation": "calls", "provenance": "EXTRACTED"}
+      {
+        "source": "Foo", "target": "Bar", "relation": "calls",
+        "evidence_span": "Foo().bar()", "segment_id": "demo.py",
+        "ts_start": 0.0, "ts_end": 0.0, "modality": "code",
+        "provenance": "EXTRACTED"
+      }
     ]
   }'
 ```
@@ -284,12 +294,12 @@ At dispatch, the tenant's `GraphManager` is bound onto the agent —
 `agent_dispatcher._bind_graph_manager` on the orchestrator-routing path, and
 `routers/knowledge.py::_bind_graph` on the `/admin/.../knowledge/...` routes.
 With the graph bound, the agent's `_process_impl` walks its own Mem0 memory
-**and** consults the shared KG, merging the KG result into a dedicated typed
-`kg_*` output field:
+**and** consults the shared KG, merging the KG result into dedicated output
+fields (named below):
 
-| Agent | `kg_*` field | Bridge from request |
+| Agent | Output field | Bridge from request |
 |---|---|---|
-| `KnowledgeGraphTraversalAgent` | merged `nodes`/`edges` | `start_subject_key` |
+| `KnowledgeGraphTraversalAgent` | `nodes` / `edges` | `start_subject_key` |
 | `TemporalReasoningAgent` | `kg_timeline` | `subject_key` |
 | `MultiDocumentSynthesisAgent` | `kg_claim_groups` | (query-agnostic; all claims) |
 | `ContradictionReconciliationAgent` | `kg_conflict_entries` | `subject_key` + `predicate` |
@@ -303,13 +313,11 @@ Mem0-only answer. See
 
 ## Storage
 
-One Vespa schema — `knowledge_graph` — holds both nodes and edges in the same document type, discriminated by a `doc_type` field (`node` or `edge`). Tenant isolation is enforced by the `tenant_id` field on every document, not by schema naming.
-
-Why one schema instead of per-tenant? Vespa refuses to deploy an application package that removes an existing schema without a `validation-overrides.xml` allowlist. Per-tenant schemas would conflict with each other on every new tenant because the deploy would implicitly "remove" the other tenants' schemas. A single schema with `tenant_id` filtering avoids that entirely and matches how Mem0 and the wiki work internally.
+Each tenant gets its own Vespa schema — `knowledge_graph_<tenant>` — holding both nodes and edges in the same document type, discriminated by a `doc_type` field (`node` or `edge`). The schema is deployed lazily on the first graph upsert or query for a new tenant.
 
 **Namespace:** `graph_content` (Vespa Document v1 API).
-**Schema name:** `knowledge_graph_default` (the shared name used by all tenants).
-**Queries:** All graph manager operations filter by `tenant_id == <tenant>` before returning results, so tenants can't see each other's nodes/edges.
+**Schema name:** `knowledge_graph_<tenant>` (e.g. `knowledge_graph_acme` for tenant `acme`).
+**Queries:** All graph manager operations target the tenant's own schema, so tenants can't see each other's nodes/edges.
 
 ## Architecture
 
@@ -324,7 +332,7 @@ flowchart TD
     CodePath --> CodeContent["<span style='color:#000'>POST /ingestion/upload<br/>→ Vespa (code_lateon_mv,<br/>document_text_semantic)</span>"]
     CodePath --> LocalExtract["<span style='color:#000'>CodeExtractor / DocExtractor<br/>(in CLI process)</span>"]
     LocalExtract --> LocalUpsert["<span style='color:#000'>POST /graph/upsert<br/>→ GraphManager.upsert()</span>"]
-    LocalUpsert --> Vespa[("<span style='color:#000'><b>Vespa</b><br/>knowledge_graph_default</span>")]
+    LocalUpsert --> Vespa[("<span style='color:#000'><b>Vespa</b><br/>knowledge_graph_&lt;tenant&gt;</span>")]
 
     MultiPath --> MultiContent["<span style='color:#000'>POST /ingestion/upload<br/>→ Vespa (video_colpali,<br/>image_colpali, audio_clap)</span>"]
     MultiContent --> Pipeline["<span style='color:#000'>VideoIngestionPipeline<br/>runs Whisper / VLM / OCR</span>"]
@@ -339,7 +347,7 @@ flowchart TD
     BackRefs --> Response["<span style='color:#000'>Response: graph_nodes / graph_edges counts</span>"]
 ```
 
-**Two extraction paths, one graph.** Code and text files are extracted locally in the CLI process so the runtime doesn't re-read them. Multimodal files (video/image/audio) are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR already run. Both paths write to the same `knowledge_graph_default` schema in the same way.
+**Two extraction paths, one graph.** Code and text files are extracted locally in the CLI process so the runtime doesn't re-read them. Multimodal files (video/image/audio) are extracted server-side, inside the ingestion pipeline, because that's where Whisper/VLM/OCR already run. Both paths write to the tenant's `knowledge_graph_<tenant>` schema in the same way.
 
 ## Comparison with graphify
 
@@ -373,7 +381,6 @@ flowchart TD
 
 **`Graph stats: 0 nodes, 0 edges`** — the extraction ran but either didn't find any entities or the upsert failed. Check runtime logs: `kubectl logs deployment/cogniverse-runtime -n cogniverse -c runtime | grep -i graph`.
 
-**`Schema 'knowledge_graph_default' is removed in content cluster`** — a previous deploy accidentally tried to create per-tenant schemas. Fixed in the current version by using a single shared schema with `tenant_id` filtering. If you see this on an old cluster, re-run `cogniverse up` or apply the current Helm chart.
 
 **`tree-sitter parser for X unavailable`** — only Python, JavaScript, TypeScript, and Go parsers are bundled. Other code files are silently skipped by the code extractor but still get content-indexed.
 

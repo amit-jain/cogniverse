@@ -63,7 +63,7 @@ uv run pytest tests/common/ -v
 
 ## System Architecture
 
-### 11-Package Layered Architecture
+### 13-Package Layered Architecture
 
 Cogniverse uses a **UV workspace** with a layered architecture:
 
@@ -117,6 +117,7 @@ flowchart TB
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
     style dashboard fill:#90caf9,stroke:#1565c0,color:#000
     style messaging fill:#90caf9,stroke:#1565c0,color:#000
+    style cogcli fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ### Key Principles
@@ -142,7 +143,7 @@ flowchart TB
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |
 | **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |
 | **messaging** | Application | Telegram messaging gateway | gateway.py, auth.py, command_router.py |
-| **cli** | Application | cogniverse CLI (up, status, code, index, graph, deploy) | main.py, cluster.py, deploy.py, code.py, graph.py |
+| **cli** | Application | cogniverse CLI (up, down, status, code, index, graph, logs) | main.py, cluster.py, deploy.py, code.py, graph.py |
 | **dashboard** | Application | Streamlit UI, analytics | tabs/, utils/ |
 
 ---
@@ -332,7 +333,7 @@ flowchart TB
     subgraph ROOT["<span style='color:#000'><b>Cogniverse Workspace</b></span>"]
         direction TB
 
-        subgraph LIBS["<span style='color:#000'><b>libs/</b><br/>All 11 workspace packages</span>"]
+        subgraph LIBS["<span style='color:#000'><b>libs/</b><br/>All 13 workspace packages</span>"]
             sdk["<span style='color:#000'><b>sdk/</b><br/>Foundation: Pure interfaces</span>"]
             foundation["<span style='color:#000'><b>foundation/</b><br/>Foundation: Config & telemetry</span>"]
             core["<span style='color:#000'><b>core/</b><br/>Core: Base classes & registries</span>"]
@@ -343,6 +344,8 @@ flowchart TB
             finetuning["<span style='color:#000'><b>finetuning/</b><br/>Implementation: Fine-tuning</span>"]
             telemetry_phoenix["<span style='color:#000'><b>telemetry-phoenix/</b><br/>Implementation: Phoenix plugin</span>"]
             runtime["<span style='color:#000'><b>runtime/</b><br/>Application: FastAPI server</span>"]
+            messaging2["<span style='color:#000'><b>messaging/</b><br/>Application: Telegram gateway</span>"]
+            cogcli2["<span style='color:#000'><b>cli/</b><br/>Application: cogniverse CLI</span>"]
             dashboard["<span style='color:#000'><b>dashboard/</b><br/>Application: Streamlit UI</span>"]
         end
 
@@ -361,8 +364,12 @@ flowchart TB
             test_admin["<span style='color:#000'>admin/</span>"]
             test_events["<span style='color:#000'>events/</span>"]
             test_system["<span style='color:#000'>system/</span>"]
-            test_ui["<span style='color:#000'>ui/</span>"]
-            test_unit["<span style='color:#000'>unit/</span>"]
+            test_cli["<span style='color:#000'>cli/</span>"]
+            test_core["<span style='color:#000'>core/</span>"]
+            test_e2e["<span style='color:#000'>e2e/</span>"]
+            test_foundation["<span style='color:#000'>foundation/</span>"]
+            test_messaging["<span style='color:#000'>messaging/</span>"]
+            test_runtime["<span style='color:#000'>runtime/</span>"]
             test_utils["<span style='color:#000'>utils/</span>"]
         end
 
@@ -370,7 +377,7 @@ flowchart TB
             script_ingestion["<span style='color:#000'>run_ingestion.py</span>"]
             script_schema["<span style='color:#000'>deploy_json_schema.py</span>"]
             script_experiments["<span style='color:#000'>run_experiments_with_visualization.py</span>"]
-            script_phoenix["<span style='color:#000'>cogniverse_dashboard/app.py</span>"]
+            script_phoenix["<span style='color:#000'>start_phoenix.py</span>"]
             script_other["<span style='color:#000'>...and more</span>"]
         end
 
@@ -413,6 +420,8 @@ flowchart TB
 
     %% Styling - Application packages (blue)
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
+    style messaging2 fill:#90caf9,stroke:#1565c0,color:#000
+    style cogcli2 fill:#90caf9,stroke:#1565c0,color:#000
     style dashboard fill:#90caf9,stroke:#1565c0,color:#000
 
     %% Styling - Supporting directories (grey)
@@ -673,6 +682,8 @@ flowchart TB
             test_synthetic["<span style='color:#000'><b>synthetic/</b><br/>Synthetic data tests</span>"]
             test_telemetry["<span style='color:#000'><b>telemetry/</b><br/>Telemetry provider tests</span>"]
             test_dashboard["<span style='color:#000'><b>dashboard/</b><br/>Dashboard UI tests</span>"]
+            test_core["<span style='color:#000'><b>core/</b><br/>cogniverse_core unit tests</span>"]
+            test_foundation["<span style='color:#000'><b>foundation/</b><br/>cogniverse_foundation tests</span>"]
         end
 
         subgraph FEATURE_TESTS["<span style='color:#000'><b>Feature Tests</b></span>"]
@@ -681,12 +692,14 @@ flowchart TB
             test_ingestion["<span style='color:#000'><b>ingestion/</b><br/>Ingestion pipeline tests</span>"]
             test_events["<span style='color:#000'><b>events/</b><br/>Event system tests</span>"]
             test_admin["<span style='color:#000'><b>admin/</b><br/>Admin API tests</span>"]
+            test_messaging["<span style='color:#000'><b>messaging/</b><br/>Messaging gateway tests</span>"]
+            test_runtime["<span style='color:#000'><b>runtime/</b><br/>Runtime integration tests</span>"]
+            test_cli["<span style='color:#000'><b>cli/</b><br/>CLI tests</span>"]
         end
 
         subgraph SUPPORT_TESTS["<span style='color:#000'><b>Support</b></span>"]
-            test_unit["<span style='color:#000'><b>unit/</b><br/>Legacy unit tests</span>"]
+            test_e2e["<span style='color:#000'><b>e2e/</b><br/>End-to-end tests</span>"]
             test_system["<span style='color:#000'><b>system/</b><br/>System-level tests</span>"]
-            test_ui["<span style='color:#000'><b>ui/</b><br/>UI component tests</span>"]
             test_utils["<span style='color:#000'><b>utils/</b><br/>Test utilities & helpers</span>"]
         end
     end

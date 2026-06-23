@@ -373,15 +373,6 @@ def deploy_schema_via_api(profile_name: str, tenant_id: str, force: bool = False
 
 ### Profile Creation Flow
 
-Earlier versions of this doc stopped at persistence (step 5). A profile
-written to the ConfigStore wasn't yet visible to the running search
-backend — its `self.profiles` dict was a snapshot from pod startup, so
-`POST /search/?profile=...` against a newly-created profile raised
-`"profile not found"` until the pod restarted. Step 6 below is the
-in-memory propagation that closes that gap (implemented via
-`ConfigManager.profile_change_listener` → `BackendRegistry.add_profile_to_backends`
-→ `VespaSearchBackend.add_profile`).
-
 ```mermaid
 flowchart TB
     User["<span style='color:#000'>1. User fills form - Dashboard</span>"]

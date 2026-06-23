@@ -1029,7 +1029,7 @@ flowchart TD
 cogniverse up --messaging
 
 # 2. Create tenant (auto-provisions org + schemas)
-curl -X POST http://localhost:8000/admin/tenants \
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{"tenant_id": "acme:production", "created_by": "admin",
        "base_schemas": ["video_colpali_smol500_mv_frame"]}'

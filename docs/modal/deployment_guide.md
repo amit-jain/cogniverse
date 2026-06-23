@@ -99,19 +99,14 @@ modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 
 ### LLM Inference Service
 
-The main inference service provides OpenAI-compatible endpoints:
+A separate Modal LLM inference service can provide OpenAI-compatible endpoints for DSPy
+student models. Deploy a custom vLLM-based Modal app for this purpose (not included in
+the repository). Once deployed, configure the endpoint in `llm_config.primary.api_base`.
 
-# Actual location: libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
-# App name: general-inference-service
-# Endpoints: serve (vLLM OpenAI-compatible), /generate, /chat-completions, /health, /models
-
-# Uses vLLM with configurable models (default: HuggingFaceTB/SmolLM3-3B via env var DEFAULT_MODEL)
-# GPU: A100-80GB by default (configurable via DEFAULT_GPU env var)
-
-Deploy:
-```bash
-modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
-```
+Typical app characteristics:
+- App name: `general-inference-service`
+- Endpoints: serve (vLLM OpenAI-compatible), `/health`, `/models`
+- Configurable model (e.g., `HuggingFaceTB/SmolLM3-3B`) and GPU via env vars
 
 ### DSPy with Modal (via create_dspy_lm)
 
@@ -290,7 +285,6 @@ Agents with Modal LLMs:
 
 ```bash
 # 1. Deploy available Modal services
-modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
 modal deploy scripts/modal_vlm_service.py
 modal deploy libs/finetuning/cogniverse_finetuning/training/modal_app.py
 
@@ -312,20 +306,16 @@ print('LM created:', type(lm).__name__)
 ### Development Workflow
 
 ```bash
-# 1. Deploy Modal inference service
-modal deploy libs/runtime/cogniverse_runtime/inference/modal_inference_service.py
-
-# 2. Get your Modal endpoint
+# 1. Get your Modal endpoint (after deploying a vLLM inference service)
 modal app list  # Note the general-inference-service endpoint
 
-# 3. Update your configuration with the Modal endpoint
-# Set inference.modal_endpoint in config.json to your deployed endpoint
+# 2. Update your configuration with the Modal endpoint
+# Set llm_config.primary.api_base in config.json to your deployed endpoint
 
-# 4. Run DSPy optimization with teacher/student
-# Note: Orchestrator requires llm_config and telemetry_provider at startup
-uv run python -m cogniverse_agents.routing.optimization_orchestrator
+# 3. Run DSPy optimization with teacher/student
+python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default
 
-# 5. Run video ingestion with Modal VLM
+# 4. Run video ingestion with Modal VLM
 modal deploy scripts/modal_vlm_service.py
 uv run python scripts/run_ingestion.py \
     --video_dir path/to/your/videos \
@@ -339,7 +329,7 @@ uv run python scripts/run_ingestion.py \
 ```yaml
 # What works today:
 VLM: Modal (Qwen2-VL-7B via scripts/modal_vlm_service.py)
-LLM Inference: Modal (vLLM via modal_inference_service.py)
+LLM Inference: Modal (vLLM on a separate Modal inference service)
 Embeddings: Local (ColPali, VideoPrism computed locally)
 DSPy Student: Modal (SmolLM3-3B on general-inference-service)
 DSPy Teacher: API (Claude/GPT-4)

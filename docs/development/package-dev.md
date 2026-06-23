@@ -79,7 +79,6 @@ cogniverse/
 │   │   └── cogniverse_agents/
 │   │       ├── __init__.py
 │   │       ├── orchestrator_agent.py   # A2A orchestrator
-│   │       ├── orchestrator_agent.py  # A2A orchestration entry point
 │   │       ├── search_agent.py            # Search agent
 │   │       ├── approval/       # Approval workflow
 │   │       ├── inference/      # Inference logic
@@ -464,7 +463,7 @@ telemetry = TelemetryManager(config=TelemetryConfig())
 # GatewayAgent classifies queries using GLiNER (no config needed for defaults)
 from cogniverse_agents.gateway_agent import GatewayDeps
 gateway_deps = GatewayDeps()
-gateway = GatewayAgent(deps=gateway_deps, config_manager=config_manager)
+gateway = GatewayAgent(deps=gateway_deps)
 ```
 
 ---

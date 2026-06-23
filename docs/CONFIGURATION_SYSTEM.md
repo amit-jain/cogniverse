@@ -22,8 +22,8 @@ See [System Architecture](architecture/overview.md) for the complete package str
 The configuration system spans:
 
 - **SDK Layer**: ConfigStore interface, type definitions
-- **Foundation Layer**: Base config classes, serialization
-- **Core Layer**: ConfigManager for system-wide configuration
+- **Foundation Layer**: Base config classes, ConfigManager, serialization
+- **Core Layer**: Tenant and schema registries that consume ConfigManager
 - **Implementation Layer**: VespaConfigStore (default backend)
 
 ## Configuration Scopes
@@ -72,8 +72,8 @@ Observability settings:
 
 | Variable | Purpose |
 |----------|---------|
-| `TELEMETRY_HTTP_ENDPOINT` | Phoenix HTTP endpoint (renamed from `PHOENIX_ENDPOINT`) |
-| `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint (renamed from `OTLP_ENDPOINT`) |
+| `TELEMETRY_HTTP_ENDPOINT` | Phoenix HTTP endpoint |
+| `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint |
 
 ### Messaging Gateway Configuration
 
@@ -544,7 +544,7 @@ with dspy.context(lm=lm):
     result = module(query="machine learning videos")
 ```
 
-- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`, `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
+- `LLMEndpointConfig`: Dataclass with `model` (required), `api_base`, `api_key`, `temperature`, `max_tokens`, `extra_body` (provider-specific request params, e.g., `{"think": False}` for qwen3), `request_timeout` (default `120.0`), `num_retries` (default `1`). Provider is encoded in the model string using litellm's provider prefix (e.g., `"openai/google/gemma-4-e4b-it"` for vLLM/Ollama via OpenAI-compat wire, `"anthropic/claude-3-5-sonnet-20241022"` for Anthropic SaaS). The chart always emits `openai/` for in-cluster backends; `api_base` selects the actual destination.
 - `LLMConfig`: Holds `primary`, `teacher`, and `overrides` dict. `resolve(component_name)` returns the override if present, else `primary`
 - `create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM`: Factory that creates a DSPy LM from endpoint config. All DSPy LM creation goes through this factory. When `api_base` is set and `api_key` is `None`, the factory fills the placeholder key `not-required` — the OpenAI client refuses to construct without one, while self-hosted OAI-compat servers (vLLM, Ollama) ignore its value. Endpoints that enforce auth need an explicit `api_key`.
 
@@ -577,6 +577,7 @@ print(f"Backend Port: {backend_config.port}")
 from cogniverse_foundation.config.unified_config import BackendConfig
 
 new_config = BackendConfig(
+    tenant_id="acme",
     backend_type="vespa",
     url="http://vespa-cluster",
     port=8080
@@ -860,37 +861,6 @@ def apply_template(manager, template_name: str, **overrides):
 apply_template(manager, "production", llm_model="claude-3-opus")
 ```
 
-## Migration Guide
-
-### From Environment Variables
-
-```python
-# Old: Environment variables
-import os
-llm_model = os.getenv("LLM_MODEL", "gpt-4")
-backend_url = os.getenv("BACKEND_URL", "http://localhost:8080")
-
-# New: ConfigManager (SystemConfig is global — no tenant_id argument)
-from cogniverse_foundation.config.utils import create_default_config_manager
-manager = create_default_config_manager()
-config = manager.get_system_config()
-llm_model = config.llm_model
-backend_url = config.backend_url
-```
-
-### From Static Config Files
-
-```python
-# Old: Static YAML/JSON
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
-
-# New: Dynamic configuration
-manager = create_default_config_manager()
-config = manager.get_system_config()
-# Hot reload supported automatically
-```
-
 ## Troubleshooting
 
 ### Configuration Not Found
@@ -967,15 +937,14 @@ except ConnectionError as e:
 
 ### Foundation Layer (cogniverse-foundation)
 
-- Implements base ConfigStore interface
+- Implements ConfigManager and base ConfigStore interface
 - Provides common configuration utilities
 - Handles serialization/deserialization
 
 ### Core Layer (cogniverse-core)
 
-- Implements ConfigManager for system-wide configuration
-- Orchestrates configuration across all components
-- Manages tenant isolation and versioning
+- Tenant and schema registries that consume ConfigManager
+- Profile validation and backend factory
 
 ## Related Documentation
 

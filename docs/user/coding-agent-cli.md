@@ -14,7 +14,7 @@ cogniverse code
 
 | Option | Default | Description |
 |---|---|---|
-| `--tenant` | `$COGNIVERSE_TENANT_ID` or `default` | Tenant identifier |
+| `--tenant` | `$COGNIVERSE_TENANT_ID` (required) | Tenant identifier — must be passed or set in the env var |
 | `-l`, `--language` | `python` | Primary programming language |
 | `-n`, `--iterations` | `5` | Max plan-code-execute iterations per task |
 | `-c`, `--codebase` | _(none)_ | Indexed codebase path for context search |
@@ -81,20 +81,11 @@ cogniverse index ./src --type code
 | Option | Default | Description |
 |---|---|---|
 | `<path>` | _required_ | Directory to index |
-| `--type` | `code` | Content type: `code` or `docs` |
-| `--tenant` | `$COGNIVERSE_TENANT_ID` or `default` | Tenant identifier |
+| `--type` | `code` | Content type: `code` (only `code` is currently implemented) |
+| `--tenant` | `$COGNIVERSE_TENANT_ID` (required) | Tenant identifier |
 | `--profile` | _(auto from type)_ | Override Vespa profile |
 
-The `docs` type is a catch-all for any non-code file — it auto-routes per extension to the right Vespa profile:
-
-| Extension | Content profile |
-|---|---|
-| `.md` `.txt` `.rst` `.html` `.pdf` | `document_text_semantic` |
-| `.mp4` `.mov` `.mkv` `.avi` `.webm` | `video_colpali_smol500_mv_frame` |
-| `.jpg` `.jpeg` `.png` `.webp` `.gif` | `image_colpali_mv` |
-| `.wav` `.mp3` `.m4a` `.flac` | `audio_clap_semantic` |
-
-Code files always go to `code_lateon_mv` (tree-sitter AST chunking, LateOn-Code multi-vector embeddings).
+Code files go to `code_lateon_mv` (tree-sitter AST chunking, LateOn-Code multi-vector embeddings). The `--type docs` and `--type video` choices are accepted by the CLI but not yet implemented — the command prints a warning and returns without indexing.
 
 **Knowledge graph extraction** — in addition to content indexing, `cogniverse index` extracts a knowledge graph of entities and relationships from code and text files and writes it to a separate schema. Query it with `cogniverse graph`. See [Knowledge Graph](knowledge-graph.md) for full details.
 
@@ -172,9 +163,9 @@ Host mode is a single-machine setup — one host, one gateway, one developer. Th
 
 **Cert rotation:** OpenShell regenerates certs if the gateway is destroyed and restarted. Run `cogniverse sandbox sync` to copy the new certs into the cluster, then restart the runtime pod.
 
-### Sandbox session pool (D.5)
+### Sandbox session pool
 
-`SandboxManager.exec_in_sandbox` now reuses one OpenShell session per
+`SandboxManager.exec_in_sandbox` reuses one OpenShell session per
 `agent_type` across calls. The pool is enabled by default and prunes
 sessions that have been idle longer than `max_idle_seconds`. Behaviour:
 
@@ -191,11 +182,11 @@ sessions that have been idle longer than `max_idle_seconds`. Behaviour:
 | `COGNIVERSE_SANDBOX_POOL_SIZE` | `8` | Maximum pooled sessions (one per agent_type). |
 | `COGNIVERSE_SANDBOX_POOL_IDLE_S` | `60` | Seconds an entry can sit idle before eviction. |
 
-The pool emits the same D.4 telemetry spans (`sandbox.create_session`,
+The pool emits the same telemetry spans (`sandbox.create_session`,
 `sandbox.wait_ready`, `sandbox.delete`) on its lifecycle events, so the
 trace shape stays observable — they just fire less often when reuse hits.
 
-### Sandbox lifecycle telemetry (D.4)
+### Sandbox lifecycle telemetry
 
 Every call to `SandboxManager.exec_in_sandbox` emits a parent
 `sandbox.exec_in_sandbox` span plus child spans for each lifecycle phase
@@ -217,7 +208,7 @@ These spans become children of whichever agent span is active when
 `exec_in_sandbox` is called, so Phoenix shows the sandbox call inline
 with the rest of the agent's processing trace.
 
-### Application-layer egress enforcement (D.1)
+### Application-layer egress enforcement
 
 In addition to kernel-layer NetworkPolicy enforcement (in-cluster mode), the
 runtime enforces each agent's `network_policies.egress` allow-list at the
@@ -267,7 +258,7 @@ The Phoenix dashboard reads these spans for the gateway-status tile. The probe
 runs as part of the FastAPI lifespan; `stop()` is awaited at shutdown so the
 runtime can exit cleanly.
 
-### mTLS cert rotation (D.6)
+### mTLS cert rotation
 
 Production clusters that rotate the OpenShell client certs (cert-manager,
 Vault PKI, manual `openshell auth refresh`) need cogniverse to pick up the
@@ -326,7 +317,7 @@ Resolution order (first non-empty wins):
 
 1. `COGNIVERSE_SANDBOX_POLICY` env var — `required` / `optional` / `disabled`.
 2. `config["sandbox"]["policy"]` from `configs/config.json` (or per-tenant config).
-3. Legacy `COGNIVERSE_SANDBOX_ENABLED` + presence of `OPENSHELL_GATEWAY_ENDPOINT` → maps to `optional` (true) or `disabled` (false). Kept for backwards compatibility; new code should use `policy` directly.
+3. `COGNIVERSE_SANDBOX_ENABLED` + presence of `OPENSHELL_GATEWAY_ENDPOINT` → maps to `optional` (true) or `disabled` (false).
 
 Default when none are set: `optional`.
 

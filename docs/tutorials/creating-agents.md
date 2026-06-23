@@ -551,13 +551,12 @@ from cogniverse_core.common.agent_models import AgentEndpoint
 registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
 
 # Register agent endpoint (not the class)
-# A2A agents use "/tasks/send" endpoint (overrides AgentEndpoint default of "/process")
 agent = AgentEndpoint(
     name="summarization_agent",
     url="http://localhost:8003",
     capabilities=["text_summarization", "key_point_extraction"],
     health_endpoint="/health",
-    process_endpoint="/tasks/send"  # A2A protocol uses /tasks/send instead of /process
+    process_endpoint="/process"
 )
 registry.register_agent(agent)
 
@@ -569,6 +568,25 @@ agents = registry.list_agents()
 agent_endpoint = registry.get_agent("summarization_agent")
 # -> AgentEndpoint(name="summarization_agent", url="http://localhost:8003", ...)
 ```
+
+Agents running as standalone services can also self-register via the runtime HTTP API at startup:
+
+```python
+import httpx
+
+httpx.post(
+    "http://runtime-host/agents/register",
+    json={
+        "name": "summarization_agent",
+        "url": "http://localhost:8003",
+        "capabilities": ["text_summarization", "key_point_extraction"],
+        "health_endpoint": "/health",
+        "process_endpoint": "/tasks/send",
+    },
+)
+```
+
+The runtime dispatches to agents via `POST /agents/{agent_name}/process`.
 
 ---
 

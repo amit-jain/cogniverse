@@ -230,10 +230,12 @@ Cogniverse automatically routes queries to the optimal execution agent via the G
 import asyncio
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 async def main():
+    config_manager = create_default_config_manager()
     registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
     result = await orchestrator._process_impl(
         OrchestratorInput(
@@ -242,7 +244,7 @@ async def main():
         )
     )
 
-    print(result["summary"])
+    print(result.execution_summary)
 
 asyncio.run(main())
 ```
@@ -325,6 +327,7 @@ memory.initialize(
     llm_model="openai/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8101/v1",
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -603,26 +606,26 @@ video_colqwen_omni_mv_chunk_30s      | 0.85   | 0.82    | 0.78
 Set up multiple tenants with isolated data:
 
 ```python
-from cogniverse_foundation.config.unified_config import SystemConfig
+# Multi-tenancy is handled at the request level, not via separate config objects.
+# SystemConfig is global infrastructure config (one per deployment).
+# Tenant isolation is achieved by passing tenant_id per request:
 
-# Configure tenant A
-config_a = SystemConfig(
-    tenant_id="acme_corp",
-    backend_url="http://localhost",
-    backend_port=8080
-)
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from pathlib import Path
 
-# Configure tenant B
-config_b = SystemConfig(
-    tenant_id="startup_inc",
-    backend_url="http://localhost",
-    backend_port=8080
-)
+config_manager = create_default_config_manager()
+schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# Each tenant gets isolated:
-# - Vespa schemas: video_frames_acme_corp, video_frames_startup_inc
-# - Phoenix projects: acme_corp_project, startup_inc_project
-# - Memory: separate Mem0 instances
+deps = SearchAgentDeps(profile="video_colpali_smol500_mv_frame")
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
+
+# Each tenant_id produces isolated results:
+# - Vespa documents are filtered by tenant: video_frames_acme_corp
+# - Memory: separate Mem0 namespaces
+results_acme = agent.search_by_text(query="tutorial", tenant_id="acme_corp", top_k=10)
+results_startup = agent.search_by_text(query="tutorial", tenant_id="startup_inc", top_k=10)
 ```
 
 **Tenant Lifecycle:**
@@ -1202,9 +1205,11 @@ results = agent.search_by_text(
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
+config_manager = create_default_config_manager()
 registry = AgentRegistry(tenant_id="your_org:production", config_manager=config_manager)
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
 # Orchestrator plans preprocessing + execution agents and returns OrchestratorOutput
 result = await orchestrator._process_impl(
@@ -1215,6 +1220,7 @@ result = await orchestrator._process_impl(
 # Enrichment (enhanced_query, entities, relationships, query_variants) is threaded
 # from preprocessing agent outputs onto execution agent inputs via AgentTask fields
 # by OrchestratorAgent._merge_enrichment — not returned as a top-level field.
+print(result.execution_summary)
 ```
 
 #### Mem0MemoryManager
@@ -1239,6 +1245,7 @@ memory.initialize(
     llm_model="openai/google/gemma-4-e4b-it",
     embedding_model="ollama/nomic-embed-text",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8101/v1",
     config_manager=config_manager,
     schema_loader=schema_loader,
 )

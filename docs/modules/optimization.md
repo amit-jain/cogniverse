@@ -32,7 +32,7 @@ libs/synthetic/                     # Synthetic data generation system
 │   ├── generators/                # Optimizer-specific generators
 │   │   ├── base.py               # Base generator classes
 │   │   ├── profile.py            # ProfileSelectionAgent training data
-│   │   ├── routing.py            # RoutingOptimizer training data
+│   │   ├── routing.py            # RoutingGenerator: routing training data
 │   │   └── workflow.py           # WorkflowIntelligence training data
 │   ├── profile_selector.py       # LLM-based profile selection
 │   ├── backend_querier.py        # Vespa content sampling
@@ -231,88 +231,7 @@ DSPy prompt optimizer for agent modules (SIMBA, MIPROv2, GEPA, BootstrapFewShot)
 
 ---
 
-### 4. **RoutingOptimizer**
-
-Base optimizer for routing strategies with auto-tuning.
-
-**Key Methods:**
-
-```python
-def track_performance(
-    query: str,
-    predicted: RoutingDecision,
-    actual: RoutingDecision | None = None,
-    user_feedback: dict[str, Any] | None = None
-):
-    """
-    Track routing performance for single query
-
-    Triggers optimization if conditions met:
-    - Time since last optimization > interval
-    - Samples >= min_samples_for_optimization
-    - Performance degradation detected
-    """
-
-async def optimize(self):
-    """
-    Run optimization process (to be overridden)
-
-    Base implementation:
-    - Calculates current metrics
-    - Updates baseline if improved
-    - Exports metrics to file
-    """
-
-def _calculate_current_metrics(self) -> OptimizationMetrics:
-    """
-    Calculate performance metrics from history:
-    - Accuracy, precision, recall, F1 score
-    - Average latency
-    - Confidence correlation (alignment with success)
-    - Error rate
-    """
-```
-
-**Configuration (OptimizationConfig):**
-```python
-@dataclass
-class OptimizationConfig:
-    # Triggers
-    min_samples_for_optimization: int = 100
-    optimization_interval_seconds: int = 3600  # 1 hour
-    performance_degradation_threshold: float = 0.1  # 10% drop
-
-    # Thresholds
-    min_accuracy: float = 0.8
-    min_precision: float = 0.75
-    min_recall: float = 0.75
-    max_acceptable_latency_ms: float = 100
-
-    # Learning
-    learning_rate: float = 0.1
-    momentum: float = 0.9
-    weight_decay: float = 0.01
-
-    # DSPy
-    dspy_enabled: bool = True
-    dspy_max_bootstrapped_demos: int = 10
-    dspy_max_labeled_demos: int = 50
-    dspy_metric: str = "f1"
-
-    # GLiNER
-    gliner_threshold_optimization: bool = True
-    gliner_label_optimization: bool = True
-    gliner_threshold_step: float = 0.05
-
-    # Storage
-    max_history_size: int = 10000
-```
-
-**File:** `libs/agents/cogniverse_agents/routing/optimizer.py`
-
----
-
-### 5. **Signature Variants**
+### 4. **Signature Variants**
 
 Per-tenant named-variant registry for DSPy signatures. Each agent has at least a `"default"` variant; tenants opt into variants like `"with_jurisdiction"` via `TenantConfig.metadata['signature_variants'][agent_type]`. The artefact manager keys prompts / demos / experiments on `(tenant_id, agent_type, variant_id)` so each variant has its own compiled artefacts.
 
@@ -419,7 +338,7 @@ Returns `{summary: ..., backup_versions: {prompts: int?, demos: int?}}` — pass
 
 ### 8. **`--mode cleanup` (memory + logs + temp + config vacuum)**
 
-Daily-cleanup workflow body (per-tenant when `--tenant-id` is set, global sweep when omitted). Replaces the legacy standalone `daily-cleanup` CronWorkflow that the chart didn't previously cover.
+Daily-cleanup workflow body (per-tenant when `--tenant-id` is set, global sweep when omitted).
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_cleanup`
 
@@ -447,7 +366,7 @@ Result dict shape: `{log_retention_days, memory_retention_days, memory_cleanup: 
 
 ### 9. **`--mode monthly-reports`**
 
-Generates usage + performance JSON for the prior period (default 30 days). Replaces the legacy kubectl-applied `monthly-reports` prototype that wrote empty stubs.
+Generates usage + performance JSON for the prior period (default 30 days).
 
 **File:** `libs/runtime/cogniverse_runtime/optimization_cli.py::run_monthly_reports`
 
@@ -1184,7 +1103,7 @@ LLM configuration is centralized in the `llm_config` section of `config.json`:
 }
 ```
 
-All agents and optimizers resolve their LLM config from this section via `LLMConfig.from_dict()` and `create_dspy_lm()`. The old `"optimization"`, `"inference"`, and `"llm"` config sections have been removed.
+All agents and optimizers resolve their LLM config from this section via `LLMConfig.from_dict()` and `create_dspy_lm()`.
 
 ### DSPyAgentPromptOptimizer
 

@@ -45,7 +45,7 @@ libs/runtime/cogniverse_runtime/ingestion/
         ├── embedding_generator.py      # Base classes and interfaces
         ├── embedding_generator_impl.py # Backend-agnostic embedding implementation
         ├── embedding_generator_factory.py # Factory for creating generators
-        ├── document_builders.py        # Vespa document construction
+        ├── token_pooling.py            # Token-level pooling utilities
         └── backend_factory.py          # Backend client creation
 ```
 
@@ -763,6 +763,7 @@ def __init__(
     schema_name: str | None = None,
     debug_mode: bool = False,
     event_queue: Optional[EventQueue] = None,
+    max_concurrent: int = 3,
 )
 ```
 
@@ -776,6 +777,7 @@ def __init__(
 - `schema_name`: Profile name (e.g., "video_colpali_smol500_mv_frame")
 - `debug_mode`: Enable detailed logging
 - `event_queue`: Optional EventQueue for real-time progress notifications
+- `max_concurrent`: Maximum concurrent video processing tasks (default: 3)
 
 **Key Methods**:
 
@@ -801,7 +803,7 @@ result = await pipeline.process_video_async(Path("video.mp4"))
 # }
 ```
 
-#### `async process_videos_concurrent(video_files: list[Path], max_concurrent: int | None = None) -> dict[str, Any]`
+#### `async process_videos_concurrent(video_files: list[Path] | list[str] | list[Path | str], max_concurrent: int | None = None) -> dict[str, Any]`
 
 Process multiple videos concurrently with resource control. When
 `max_concurrent` is omitted it falls back to the pipeline's configured value

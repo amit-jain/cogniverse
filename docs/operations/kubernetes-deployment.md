@@ -267,7 +267,7 @@ Argo Workflows works perfectly on K3s for local testing of batch processing work
 cogniverse up
 
 # Access Argo UI locally
-kubectl port-forward -n argo svc/argo-server 2746:2746
+kubectl port-forward -n cogniverse svc/cogniverse-argo-workflows-server 2746:2746
 open http://localhost:2746
 
 # Submit a workflow (e.g., video ingestion)

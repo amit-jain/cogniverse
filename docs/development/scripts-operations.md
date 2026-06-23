@@ -51,14 +51,11 @@ scripts/
 ├── Ingestion & Processing
 │   ├── run_ingestion.py              # Main video ingestion pipeline
 │   ├── test_ingestion.py             # Test ingestion with validation
-│   ├── ingest_documents.py           # Document ingestion
-│   ├── ingest_images.py              # Image ingestion
-│   └── ingest_audio.py               # Audio ingestion
+│   └── backfill_source_url.py        # Backfill source URLs on existing documents
 │
 ├── Deployment & Setup
 │   ├── deploy_json_schema.py         # Deploy single JSON schema
-│   ├── deploy_memory_schema.py       # Deploy memory schema
-│   ├── setup_system.py               # System initialization
+│   ├── provision_tenant.py           # Cold-bootstrap tenant resources (memory/telemetry)
 │   ├── setup_ollama.py               # Ollama model setup
 │   ├── setup_gliner.py               # GLiNER setup
 │   └── setup_video_processing.py    # Video processing setup
@@ -68,25 +65,33 @@ scripts/
 │
 ├── Optimization & Experiments
 │   ├── run_experiments_with_visualization.py  # Phoenix experiments
-│   ├── optimize_system.py            # System-wide optimization
 │   └── auto_optimization_trigger.py  # Automated optimization trigger
-│   (optimization_cli module replaces deleted run_module_optimization.py)
 │
 ├── Dataset Management
 │   ├── manage_datasets.py            # Dataset CRUD operations
+│   ├── manage_golden_datasets.py     # Golden dataset management
 │   ├── create_golden_dataset_from_traces.py  # Golden dataset from traces
-│   ├── bootstrap_dataset_from_traces.py      # Bootstrap from traces
-│   ├── generate_dataset_from_videos.py       # Dataset from videos
-│   ├── create_sample_dataset.py      # Sample dataset creation
-│   └── interactive_dataset_builder.py  # Interactive builder UI
+│   └── seed_bright_corpus.py         # Seed corpus data
+│
+├── Reporting & Analysis
+│   ├── generate_integrated_evaluation_report.py  # Integrated evaluation report
+│   ├── generate_tabbed_html_report.py    # Tabbed HTML report generation
+│   ├── generate_langextract_training_data.py  # Training data for LangExtract
+│   ├── view_integrated_results.py    # View integrated results
+│   └── vlm_caption_bakeoff.py        # VLM caption comparison
 │
 ├── Dashboard & UI
-│   └── atlas_viewer.py               # Standalone embedding atlas viewer
+│   ├── atlas_viewer.py               # Standalone embedding atlas viewer
+│   └── simple_atlas.py               # Simplified atlas viewer
 │
-└── Utilities & Analysis
-    ├── analyze_traces.py             # Phoenix trace analysis
+└── Utilities & Operations
+    ├── discover_tenants.py           # Tenant discovery
     ├── export_backend_embeddings.py  # Backend embedding export (tenant-aware)
-    └── manage_phoenix_data.py        # Phoenix data management
+    ├── manage_phoenix_data.py        # Phoenix data management
+    ├── modal_vlm_service.py          # Modal VLM service
+    ├── prune_config_metadata.py      # Config metadata pruning
+    ├── start_phoenix.py              # Start Phoenix service
+    └── version_bump.py               # Version management
 ```
 
 ---
@@ -404,13 +409,9 @@ python scripts/deploy_json_schema.py \
 
 ### 3. Bulk per-tenant schema deployment (runtime admin API)
 
-**Replaced the legacy `scripts/deploy_all_schemas.py` bulk deploy.**
-Schema deployment is now always per-tenant and always flows through the
+Schema deployment is always per-tenant and always flows through the
 runtime admin API so it goes through `SchemaRegistry.deploy_schema` and
-the hardened `VespaBackend.deploy_schemas` merge path. The script
-previously used a Vespa `schema-removal` validation override to force
-deploys through, which silently dropped peer-tenant schemas — exactly
-the class of bug task #34 eradicated.
+the `VespaBackend.deploy_schemas` merge path.
 
 **In-cluster path:** `charts/cogniverse/templates/init-jobs.yaml`
 iterates `.Values.config.tenants` × `.Values.initJobs.schemaDeployment.profiles`
@@ -475,71 +476,54 @@ for the full operator workflow and JSON shapes.
 
 ---
 
-### 4. setup_system.py
+### 4. provision_tenant.py
 
-**Purpose:** Initialize the system environment, create directories, and setup initial content
+**Purpose:** Cold-bootstrap a tenant's backend resources (Mem0 memory schema and Phoenix telemetry project) without a live runtime. Used by the tenant-provisioning WorkflowTemplate as a pre-step before schema deployment.
 
-**Location:** `scripts/setup_system.py` (258 lines)
+**Location:** `scripts/provision_tenant.py`
 
-**Setup Steps:**
-```python
-def main():
-    # Imports from SDK packages
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-    # 1. Check dependencies
-    required_modules = [
-        ("torch", "PyTorch"),
-        ("transformers", "Transformers"),
-        ("byaldi", "Byaldi"),
-        ("colpali_engine", "ColPali Engine"),
-        ("faster_whisper", "Faster Whisper"),
-        ("PIL", "Pillow"),
-        ("cv2", "OpenCV")
-    ]
-
-    # 2. Create directories
-    create_directories()  # Creates data/videos, data/text, data/indexes, .byaldi
-
-    # 3. Create sample content
-    create_sample_content()  # README files
-    download_sample_videos()  # Test video with imageio
-
-    # 4. Setup video index (calls run_ingestion.py via subprocess)
-    setup_byaldi_index()
-```
-
-**Sample Video Creation:**
-```python
-def download_sample_videos():
-    # Create a simple test video using imageio
-    writer = imageio.get_writer('sample_test_video.mp4', fps=30)
-
-    for i in range(90):  # 3 seconds at 30fps
-        frame = np.zeros((480, 640, 3), dtype=np.uint8)
-        x_pos = int((i / 90) * 500 + 50)
-        frame[200:280, x_pos:x_pos+80] = [255, 0, 0]  # Red square
-
-        # Simulate text
-        if i % 30 < 15:
-            frame[100:120, 50:590] = [255, 255, 255]
-
-        writer.append_data(frame)
-
-    writer.close()
-```
-
-**Next Steps After Setup:**
+**Command Line Arguments:**
 ```bash
-# 1. Start the servers
-./scripts/run_servers.sh
+--tenant-id TENANT   # Tenant identifier (required)
+--step STEP          # Provisioning step: memory|telemetry (required)
+```
 
-# 2. Open browser
-http://localhost:8000
+**Steps:**
 
-# 3. Try example queries
-"Show me videos with moving objects"
-"Find clips from the test video"
+- `memory` — Creates the tenant's Mem0 memory schema via `lazy_init_memory`
+- `telemetry` — Emits a probe span via `TelemetryManager.span(...)` to create the Phoenix project
+
+**Usage:**
+```bash
+# Initialize memory schema for tenant
+uv run python scripts/provision_tenant.py \
+  --tenant-id acme:production \
+  --step memory
+
+# Initialize Phoenix telemetry project for tenant
+uv run python scripts/provision_tenant.py \
+  --tenant-id acme:production \
+  --step telemetry
+```
+
+**Implementation:**
+```python
+def init_memory(tenant_id: str) -> None:
+    from cogniverse_core.memory.manager import Mem0MemoryManager
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from cogniverse_runtime.memory_init import lazy_init_memory
+
+    config_manager = create_default_config_manager()
+    mgr = Mem0MemoryManager(tenant_id)
+    if not lazy_init_memory(mgr, tenant_id, config_manager, auto_create_schema=True):
+        raise RuntimeError(f"Memory initialization failed for tenant '{tenant_id}'")
+
+def init_telemetry(tenant_id: str) -> None:
+    from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+    tm = get_telemetry_manager()
+    with tm.span("provision.probe", tenant_id=tenant_id, component="search_service"):
+        pass
 ```
 
 ---

@@ -109,12 +109,14 @@ The easiest way to ingest videos is via the CLI script:
 ```bash
 # Ingest a single directory of videos
 uv run python scripts/run_ingestion.py \
+  --tenant-id quickstart \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame
 
 # Ingest with multiple profiles for richer retrieval
 uv run python scripts/run_ingestion.py \
+  --tenant-id quickstart \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
@@ -122,6 +124,7 @@ uv run python scripts/run_ingestion.py \
 
 # Test mode — limited frames for faster iteration
 uv run python scripts/run_ingestion.py \
+  --tenant-id quickstart \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame \
@@ -230,7 +233,7 @@ The quality monitor runs as a sidecar, continuously evaluating all agents and tr
 # Run directly
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
-  --runtime-url http://localhost:8000 \
+  --runtime-url http://localhost:28000 \
   --phoenix-url http://localhost:6006
 
 # Enabled by default in Helm (runtime.qualityMonitor.enabled: true)
@@ -289,13 +292,13 @@ cogniverse/
 JAX_PLATFORM_NAME=cpu uv run pytest tests/ -v
 
 # Lint code
-uv run make lint-all
+make lint-all
 
 # Format code
 uv run ruff format .
 
 # Run ingestion
-uv run python scripts/run_ingestion.py --video_dir data/videos --backend vespa --profile video_colpali_smol500_mv_frame
+uv run python scripts/run_ingestion.py --tenant-id quickstart --video_dir data/videos --backend vespa --profile video_colpali_smol500_mv_frame
 
 # View Phoenix traces
 open http://localhost:6006

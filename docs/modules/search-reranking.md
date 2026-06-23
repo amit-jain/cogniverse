@@ -33,7 +33,6 @@ The Search & Reranking Module provides intelligent post-retrieval result optimiz
 ```text
 libs/agents/cogniverse_agents/search/
 ├── __init__.py
-├── base.py                    # Base interfaces (SearchResult, SearchBackend)
 ├── service.py                 # Unified search service
 ├── multi_modal_reranker.py    # Heuristic multi-modal reranking (MultiModalReranker)
 ├── learned_reranker.py        # LiteLLM neural reranking
@@ -134,7 +133,7 @@ flowchart TB
 
 ## Core Components
 
-### 1. SearchResult (base.py:11-49)
+### 1. SearchResult (cogniverse_sdk/document.py:229)
 
 ```python
 class SearchResult:
@@ -170,45 +169,49 @@ class SearchResult:
 
 ---
 
-### 2. SearchBackend (base.py:52-104)
+### 2. SearchBackend (cogniverse_sdk/interfaces/backend.py:109)
 
 ```python
 class SearchBackend(ABC):
     """Abstract base class for search backends"""
 
     @abstractmethod
+    def initialize(self, config: Dict[str, Any]) -> None:
+        """Initialize the search backend with configuration."""
+
+    @abstractmethod
     def search(
         self,
         query_embeddings: Optional[np.ndarray],
-        query_text: str,
+        query_text: Optional[str],
         top_k: int = 10,
         filters: Optional[Dict[str, Any]] = None,
         ranking_strategy: Optional[str] = None
-    ) -> List[SearchResult]:
+    ) -> List[Dict[str, Any]]:
         """
-        Search for documents matching the query
+        Execute a search query.
 
         Args:
-            query_embeddings: Optional embeddings (generated if None)
-            query_text: Original query text
+            query_embeddings: Optional query embeddings for vector search
+            query_text: Optional text query for keyword search
             top_k: Number of results to return
-            filters: Optional filters (date range, etc.)
-            ranking_strategy: Ranking strategy override
+            filters: Optional filters to apply
+            ranking_strategy: Optional ranking strategy to use
 
         Returns:
-            List of SearchResult objects
+            List of search results with scores and metadata
         """
 ```
 
 **Key Methods:**
 
-- `get_document(document_id: str) -> Optional[Document]`: Retrieve specific document
+- `initialize(config: Dict[str, Any]) -> None`: Initialize the backend with configuration
 
-- `export_embeddings(schema: str, max_documents: Optional[int], filters: Optional[Dict[str, Any]], include_embeddings: bool = True) -> List[Dict[str, Any]]`: Export embeddings for analysis
+- `get_document(document_id: str) -> Optional[Document]`: Retrieve specific document
 
 ---
 
-### 3. SearchService (service.py:14-276)
+### 3. SearchService (service.py:18-305)
 
 ```python
 class SearchService:
@@ -217,18 +220,14 @@ class SearchService:
     def __init__(
         self,
         config: Dict[str, Any],
-        profile: str,
-        tenant_id: str = "default",
         config_manager=None,
         schema_loader=None,
     ):
         """
-        Initialize search service
+        Initialize search service (profile-agnostic).
 
         Args:
-            config: Configuration dictionary with backend_url, etc.
-            profile: Video processing profile (frame_based_colpali, etc.)
-            tenant_id: Tenant identifier for multi-tenancy
+            config: Configuration dictionary (full config.json content)
             config_manager: ConfigManager instance (REQUIRED - raises ValueError if None)
             schema_loader: SchemaLoader instance (REQUIRED - raises ValueError if None)
         """
@@ -238,10 +237,8 @@ class SearchService:
             raise ValueError("schema_loader is required")
 
         self.config = config
-        self.profile = profile
-        self.tenant_id = tenant_id
-        self._init_query_encoder()   # Initialize encoder from profile
-        self._init_search_backend()  # Initialize Vespa backend
+        self.config_manager = config_manager
+        self.schema_loader = schema_loader
 ```
 
 **Key Methods:**
@@ -250,20 +247,25 @@ class SearchService:
 def search(
     self,
     query: str,
+    profile: str,
+    tenant_id: str,
     top_k: int = 10,
     filters: Optional[Dict[str, Any]] = None,
     ranking_strategy: Optional[str] = None,
-    tenant_id: Optional[str] = None
 ) -> List[SearchResult]:
     """
-    Search with multi-tenant telemetry
+    Search for videos matching the query.
 
-    Workflow:
-    1. Create search span with tenant isolation
-    2. Generate query embeddings with encode span
-    3. Call backend with backend_search span
-    4. Add result details to spans
-    5. Return ranked SearchResult list
+    Args:
+        query: Text query
+        profile: Backend profile to use (e.g. "frame_based_colpali")
+        tenant_id: Tenant identifier
+        top_k: Number of results to return
+        filters: Optional filters (date range, etc.)
+        ranking_strategy: Optional ranking strategy override
+
+    Returns:
+        List of SearchResult objects
     """
 ```
 
@@ -277,7 +279,7 @@ def search(
 
 ---
 
-### 4. MultiModalReranker (multi_modal_reranker.py:53-395)
+### 4. MultiModalReranker (multi_modal_reranker.py:21-383)
 
 ```python
 class MultiModalReranker:
@@ -372,7 +374,7 @@ class LearnedReranker:
     def __init__(
         self,
         model: Optional[str] = None,
-        tenant_id: str = "default",
+        tenant_id: str = None,
         config_manager: "ConfigManager" = None
     ):
         """
@@ -434,7 +436,7 @@ async def rerank(
 
 ---
 
-### 6. HybridReranker (hybrid_reranker.py:29-274)
+### 6. HybridReranker (hybrid_reranker.py:26-286)
 
 ```python
 class HybridReranker:
@@ -517,24 +519,29 @@ consensus_score = (h_score * l_score) ** 0.5
 
 ### 7. Strategy Selection (search router)
 
-Strategy routing is performed by the search router
-(`libs/runtime/cogniverse_runtime/routers/search.py`), which reads the
-configured reranking strategy and instantiates the matching reranker
-directly. There is no separate facade class — the router picks one of the
-three rerankers per request.
+Strategy routing is performed by `rerank_service.py`, which exposes two
+functions: `build_reranker()` constructs the live reranker for a named
+strategy, and `rerank_result_dicts()` is the async entry point the search
+router calls. There is no separate facade class.
 
 ```python
-# libs/runtime/cogniverse_runtime/routers/search.py
-if strategy == "learned":
-    reranker = LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
-elif strategy == "hybrid":
-    reranker = HybridReranker(tenant_id=tenant_id, config_manager=config_manager)
-elif strategy == "multi_modal":
-    reranker = MultiModalReranker()  # heuristic base, no config needed
-else:
-    raise HTTPException(status_code=400, detail=f"Unknown strategy: {strategy}")
+# libs/agents/cogniverse_agents/search/rerank_service.py
 
-reranked = reranker.rerank(query=query, results=results)
+def build_reranker(strategy: str, tenant_id: str, config_manager=None):
+    if strategy == "learned":
+        return LearnedReranker(tenant_id=tenant_id, config_manager=config_manager)
+    if strategy == "hybrid":
+        return HybridReranker(tenant_id=tenant_id, config_manager=config_manager)
+    if strategy == "multi_modal":
+        return MultiModalReranker()  # heuristic, no config required
+    raise ValueError(f"Unknown strategy: {strategy}")
+
+# The search router calls rerank_result_dicts(); ValueError from
+# build_reranker surfaces as a 400 response.
+reranked_dicts = await rerank_result_dicts(
+    query=query, results=result_dicts, strategy=strategy,
+    tenant_id=tenant_id, config_manager=config_manager
+)
 ```
 
 **Routing logic:**
@@ -652,7 +659,6 @@ schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
 service = SearchService(
     config,
-    profile="frame_based_colpali",
     config_manager=config_manager,
     schema_loader=schema_loader
 )
@@ -660,8 +666,9 @@ service = SearchService(
 # Perform search
 results = service.search(
     query="Show me videos about quantum computing",
+    profile="frame_based_colpali",
+    tenant_id="user_123",
     top_k=10,
-    tenant_id="user_123"
 )
 
 # Access results
@@ -675,10 +682,8 @@ for result in results:
 
 ```python
 from datetime import datetime
-from cogniverse_agents.search.multi_modal_reranker import (
-    MultiModalReranker,
-    QueryModality
-)
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.types import QueryModality
 
 # Initialize reranker
 reranker = MultiModalReranker(
@@ -969,15 +974,12 @@ except Exception as e:
 
 **Example Test**:
 ```python
-from cogniverse_agents.search.multi_modal_reranker import (
-    MultiModalReranker,
-    QueryModality,
-    RerankerSearchResult  # Dataclass for reranking operations
-)
+from cogniverse_agents.search.multi_modal_reranker import MultiModalReranker
+from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
 
 # Note: There are TWO distinct result classes:
 # 1. cogniverse_agents.search.base.SearchResult (uses Document object, for API responses)
-# 2. cogniverse_agents.search.multi_modal_reranker.RerankerSearchResult (dataclass, for reranking)
+# 2. cogniverse_agents.search.types.RerankerSearchResult (dataclass, for reranking)
 
 def test_cross_modal_scoring():
     """Test cross-modal scoring logic (see tests/routing/unit/test_multi_modal_reranker.py)"""
@@ -1021,11 +1023,11 @@ def test_cross_modal_scoring():
 @pytest.mark.asyncio
 async def test_hybrid_weighted_ensemble():
     # Setup
-    search_service = SearchService(config, "frame_based_colpali")
+    search_service = SearchService(config, config_manager=config_manager, schema_loader=schema_loader)
     hybrid_reranker = HybridReranker(strategy="weighted_ensemble")
 
     # Initial search
-    results = search_service.search("quantum computing", top_k=50)
+    results = search_service.search("quantum computing", profile="frame_based_colpali", tenant_id="default", top_k=50)
 
     # Rerank
     reranked = await hybrid_reranker.rerank_hybrid(

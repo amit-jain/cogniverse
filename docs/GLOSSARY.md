@@ -263,7 +263,7 @@ Enum in `cogniverse_runtime/sandbox_manager.py` with three values: `REQUIRED` (r
 Vespa document schema defining fields and indexing. Tenant-specific schemas use `_tenant_id` suffix.
 
 ### SignatureVariant
-Named variant of an agent's DSPy input/output signature (`cogniverse_agents/optimizer/signature_variants.py`). Registered in `SignatureVariantRegistry`; tenant selects via `TenantConfig.metadata["signature_variants"][agent_type]`. Artifact manager keys per `(tenant, agent, variant)`. Default variant uses the bare agent_type key for back-compat.
+Named variant of an agent's DSPy input/output signature (`cogniverse_agents/optimizer/signature_variants.py`). Registered in `SignatureVariantRegistry`; tenant selects via `TenantConfig.metadata["signature_variants"][agent_type]`. Artifact manager keys per `(tenant, agent, variant)`. Default variant id is `"default"` (`DEFAULT_VARIANT_ID`).
 
 ### Session
 Multi-turn conversation context. Tracked via `session_id` in telemetry for conversation-aware evaluation.
@@ -300,7 +300,7 @@ Struct derived at memory-write time from `KnowledgeSchema.default_trust` and `De
 Isolated organization in multi-tenant system. All data and config is tenant-scoped via `tenant_id`.
 
 ### RoutingTier
-Routing tier levels within `GatewayAgent`: `FAST_PATH` (GLiNER for common patterns, <100ms), `SLOW_PATH` (LLM + DSPy for complex queries), `LANGEXTRACT` (structured extraction), `FALLBACK` (keyword-based). Balances latency vs quality.
+Conceptual classification of query-routing decisions within `GatewayAgent`: fast-path (GLiNER entity detection, <100ms), slow-path (LLM + DSPy for complex queries), and fallback (keyword-based). Not a named enum in the codebase; routing outcomes are expressed as complexity scores on `GatewayOutput`.
 
 ### Trace
 End-to-end record of a request through the system. Contains multiple spans in a tree structure.

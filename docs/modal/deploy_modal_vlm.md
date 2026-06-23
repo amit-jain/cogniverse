@@ -113,7 +113,7 @@ For our elephant_dream_clip test (719 frames):
 
 For high-volume processing, modify these settings in `scripts/modal_vlm_service.py`:
 
-**Increase concurrent requests** (line 91):
+**Increase concurrent requests** (`@modal.concurrent` decorator on `VLMModel`):
 ```python
 @modal.concurrent(max_inputs=100)  # Default is 50
 ```
@@ -124,7 +124,7 @@ For high-volume processing, modify these settings in `scripts/modal_vlm_service.
 GPU_TYPE=a100 modal deploy scripts/modal_vlm_service.py
 ```
 
-**Keep service warm longer** (line 87):
+**Keep service warm longer** (`@app.cls` decorator on `VLMModel`):
 ```python
 @app.cls(
     gpu=GPU_CONFIG,

@@ -87,7 +87,7 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 ### Design Principles
 
 - **Tenant-Agnostic at Startup**: Agents boot without `tenant_id` — it arrives per-request in A2A task payload
-- **Memory-Enabled**: Integration with Mem0 via MemoryAwareMixin (from core)
+- **Memory-Enabled**: Integration with Mem0 via `MemoryAwareMixin` from `cogniverse_agents`
 - **Base Class Inheritance**: Extend A2AAgent[InputT, OutputT, DepsT] from cogniverse_core with type-safe generics
 - **DSPy 3.0 Integration**: A2A protocol + DSPy modules for optimization
 - **Streaming Support**: OpenAI-style `stream=True` parameter for progressive results
@@ -235,123 +235,95 @@ flowchart LR
 #### Class Definition
 
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
+from cogniverse_core.agents.a2a_agent import A2AAgent
+from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
+from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 
-from typing import Optional, List, Dict, Any
-from cogniverse_foundation.config.manager import ConfigManager
-from cogniverse_agents.search.service import SearchService
-
-class SearchAgent:
+class SearchAgent(
+    RLMAwareMixin,
+    MemoryAwareMixin,
+    A2AAgent[SearchInput, SearchOutput, SearchAgentDeps],
+):
     """
-    Profile-agnostic video search agent.
-
-    Single instance serves all profiles and tenants.
-    Profile and tenant_id arrive per-request via search() method.
+    Type-safe generic multi-modal search agent with full A2A protocol support.
     """
 
     def __init__(
         self,
-        config_manager: "ConfigManager" = None,  # REQUIRED
-        schema_loader=None,                       # REQUIRED
+        deps: SearchAgentDeps,
+        schema_loader=None,   # REQUIRED
+        config_manager=None,
+        port: int = 8002,
     ):
         """
-        Initialize video search agent (profile-agnostic, tenant-agnostic).
+        Initialize generic search agent with typed dependencies.
 
         Args:
-            config_manager: ConfigManager instance (REQUIRED)
+            deps: SearchAgentDeps with backend configuration
             schema_loader: SchemaLoader instance (REQUIRED)
+            config_manager: ConfigManager instance (optional, creates default if None)
+            port: A2A server port
 
         Raises:
-            ValueError: If config_manager or schema_loader is None
+            ValueError: If schema_loader is None
         """
-        if config_manager is None:
-            raise ValueError("config_manager is required")
-        if schema_loader is None:
-            raise ValueError("schema_loader is required")
-
-        self.config_manager = config_manager
-        self.config = get_config(tenant_id="your_org:production", config_manager=config_manager)
-        self.schema_loader = schema_loader
-
-        # Default profile from config (used when caller doesn't specify)
-        self.default_profile = (
-            self.config.get("active_video_profile") or "video_colpali_smol500_mv_frame"
-        )
-
-        # Single profile-agnostic search service
-        self.search_service = SearchService(
-            self.config,
-            config_manager=config_manager,
-            schema_loader=schema_loader,
-        )
+        ...
 ```
 
 #### Key Methods
 
-**`search(query, profile=None, tenant_id="your_org:production", top_k=10, start_date=None, end_date=None) -> List[SearchResult]`**
+**`search_by_text(query, *, tenant_id, modality="video", top_k=10, **kwargs) -> List[Dict]`**
 
-Text-to-video search. **This method is synchronous** (not async). Profile and tenant_id are per-request.
+Text search. **This method is synchronous** (not async). `tenant_id` is required per-request.
 
 ```python
-def search(
+def search_by_text(
     self,
     query: str,
-    profile: Optional[str] = None,      # Per-request (defaults to config active_video_profile)
-    tenant_id: str = "default",          # Per-request
+    *,
+    tenant_id: str,             # Required per-request
+    modality: str = "video",
     top_k: int = 10,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-) -> List[SearchResult]:
+    **kwargs,
+) -> List[Dict[str, Any]]:
     """
-    Search videos by text query.
+    Search content using text query.
 
     Args:
-        query: Text query string
-        profile: Profile to use (defaults to config active_video_profile)
-        tenant_id: Tenant identifier for schema isolation
+        query: Text search query
+        tenant_id: Tenant identifier (required)
+        modality: Content modality to search (video/image/text/audio/document)
         top_k: Number of results to return
-        start_date: Optional start date filter (YYYY-MM-DD)
-        end_date: Optional end date filter (YYYY-MM-DD)
+        **kwargs: Additional search parameters (ranking, etc.)
 
     Returns:
-        List of SearchResult objects with scores
+        List of search results
     """
-    effective_profile = profile or self.default_profile
-    return self.search_service.search(
-        query=query,
-        profile=effective_profile,
-        tenant_id=tenant_id,
-        top_k=top_k,
-        filters={"start_date": start_date, "end_date": end_date},
-    )
+    ...
 ```
 
 #### Usage Example
 
 ```python
-from cogniverse_foundation.config.utils import create_default_config_manager
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_foundation.config.utils import create_default_config_manager
 from pathlib import Path
 
-# Initialize dependencies (required)
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+deps = SearchAgentDeps()
 
-# Create agent — profile-agnostic, tenant-agnostic
-agent = SearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-)
+# Create agent — schema_loader is required
+agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=config_manager)
 
-# Search (synchronous) — profile and tenant_id are per-request
-results = agent.search("cooking tutorial", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
-
-# With date filters (profile defaults to config active_video_profile if omitted)
-recent_results = agent.search(
-    query="machine learning",
+# Search (synchronous) — tenant_id required per-request
+results = agent.search_by_text(
+    query="cooking tutorial",
     tenant_id="acme",
-    top_k=20,
-    start_date="2024-01-01",
-    end_date="2024-12-31",
+    modality="video",
+    top_k=10,
 )
 ```
 
@@ -376,31 +348,33 @@ with open("query_video.mp4", "rb") as f:
     video_bytes = f.read()
 
 results = search_agent._search_by_video(
-    video_data=video_bytes,      # Raw video file bytes
+    video_data=video_bytes,
     filename="query_video.mp4",
+    tenant_id="acme",
     modality="video",
-    top_k=10
+    top_k=10,
 )
-# Internally uses content_processor.process_video_file() to extract embeddings
 ```
 
 #### Multi-Tenant Search Flow
 
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
 config_manager = create_default_config_manager()
+deps = SearchAgentDeps()
 
-# ONE agent serves ALL tenants — profile and tenant_id are per-request
-agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
+# ONE agent serves ALL tenants — tenant_id is per-request
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
 # Tenant A: acme
-results_acme = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="acme")
+results_acme = agent.search_by_text("cooking videos", tenant_id="acme")
 # Searches schema: video_colpali_smol500_mv_frame_acme
 # Only acme's videos returned
 
 # Tenant B: startup (same agent instance)
-results_startup = agent.search("cooking videos", profile="video_colpali_smol500_mv_frame", tenant_id="startup")
+results_startup = agent.search_by_text("cooking videos", tenant_id="startup")
 # Searches schema: video_colpali_smol500_mv_frame_startup
 # Only startup's videos returned
 
@@ -1276,23 +1250,13 @@ class OrchestratorInput(AgentInput):
 class OrchestratorOutput(AgentOutput):
     """Type-safe output from orchestration."""
     query: str = Field(..., description="Original query")
+    workflow_id: str = Field("", description="Unique workflow identifier")
     plan_steps: List[Dict[str, Any]] = Field(default_factory=list, description="Orchestration plan steps")
     parallel_groups: List[List[int]] = Field(default_factory=list, description="Parallel execution groups")
     plan_reasoning: str = Field("", description="Plan reasoning")
     agent_results: Dict[str, Any] = Field(default_factory=dict, description="Results from each agent")
     final_output: Dict[str, Any] = Field(default_factory=dict, description="Aggregated final output")
     execution_summary: str = Field("", description="Summary of execution")
-    # Structured side-channel metadata. ``final_output["iterative_loop"]``
-    # is mirrored under ``metadata["iterative_loop"]`` so eval harnesses
-    # can read the loop trajectory without depending on the fusion-shaped
-    # ``final_output`` envelope. The ``iterative_loop`` dict now carries:
-    #   * ``top_hits`` — top-5 ranked evidence ({source_doc_id,
-    #     segment_id, ts_start, ts_end, score, video_id})
-    #   * ``missing_aspects`` — gate's missing_aspects list
-    #   * ``final_answer_id`` — "{source_doc_id}::{segment_id}" of top-1
-    #     or "" when there are no hits
-    # ...alongside the existing ``iterations_executed``, ``exit_reason``,
-    # ``evidence_count``, ``final_gate``, ``partial_due_to_*``, ``trace_id``.
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Side-channel structured metadata")
 
 class OrchestratorDeps(AgentDeps):
@@ -1924,11 +1888,12 @@ from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 deps = SearchAgentDeps()  # tenant_id is per-request, not in deps
 search_agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=config_manager)
 
-# Use search_by_text for text queries (tenant_id passed at search time)
+# Use search_by_text for text queries (tenant_id required)
 results = search_agent.search_by_text(
     query="robots playing soccer",
+    tenant_id="acme",
     modality="video",
-    top_k=20
+    top_k=20,
 )
 ```
 
@@ -2092,10 +2057,11 @@ class DocumentAgent(MemoryAwareMixin, A2AAgent[DocumentSearchInput, DocumentSear
 
 **Usage:**
 ```python
-from cogniverse_agents.document_agent import DocumentAgent, DocumentSearchInput
+from cogniverse_agents.document_agent import DocumentAgent, DocumentAgentDeps, DocumentSearchInput
 
-agent = DocumentAgent(config)
-result = await agent.run(DocumentSearchInput(
+deps = DocumentAgentDeps()
+agent = DocumentAgent(deps=deps)
+result = await agent._process_impl(DocumentSearchInput(
     query="quarterly financial report",
     strategy="hybrid",
     limit=10
@@ -2358,36 +2324,40 @@ Refactored video search agent using the unified search service architecture. Pro
 **Constructor:**
 ```python
 SearchAgent(
-    config_manager: ConfigManager = None,  # REQUIRED
-    schema_loader=None,                    # REQUIRED
+    deps: SearchAgentDeps,
+    schema_loader=None,     # REQUIRED
+    config_manager=None,
+    port: int = 8002,
 )
 ```
 
 **Methods:**
 ```python
-def search(
+def search_by_text(
     query: str,
-    tenant_id: str,                      # Required — no default
-    profile: Optional[str] = None,       # Per-request (defaults to config active_video_profile)
+    *,
+    tenant_id: str,             # Required per-request
+    modality: str = "video",
     top_k: int = 10,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-) -> List[SearchResult]
+    **kwargs,
+) -> List[Dict[str, Any]]
 ```
 
 **Usage:**
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
+deps = SearchAgentDeps()
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
-results = agent.search("cooking tutorial", tenant_id="acme", profile="video_colpali_smol500_mv_frame", top_k=10)
+results = agent.search_by_text("cooking tutorial", tenant_id="acme", top_k=10)
 for result in results:
-    print(f"{result.document.id} - Score: {result.score}")
+    print(result)
 ```
 
 ---
@@ -2476,7 +2446,7 @@ class A2AAgent(AgentBase[InputT, OutputT, DepsT]):
 
 ### MemoryAwareMixin
 
-**Location**: `libs/core/cogniverse_agents.memory_aware_mixin.py`
+**Location**: `libs/agents/cogniverse_agents/memory_aware_mixin.py`
 
 Provides memory integration for all agents:
 
@@ -2495,14 +2465,16 @@ class MemoryAwareMixin:
         self,
         agent_name: str,
         tenant_id: str,
-        backend_host: str,           # Required — no default
-        backend_port: int,           # Required — no default
+        embedder_base_url: str,      # Required — OpenAI-compatible /v1/embeddings endpoint
+        *,
         llm_model: str,              # Required — no default
-        embedding_model: str,        # Required — no default
-        llm_base_url: str,           # Required — no default
-        config_manager,              # Required for schema deployment
-        schema_loader,               # Required for schema templates
-        provider: str = "ollama",
+        backend_host: str = "localhost",
+        backend_port: int = 8080,
+        embedding_model: str = "lightonai/DenseOn",
+        llm_base_url: str = "http://localhost:11434",
+        llm_api_key: str = "not-required",
+        config_manager=None,
+        schema_loader=None,
         backend_config_port: Optional[int] = None,
         auto_create_schema: bool = True,
     ) -> bool:
@@ -2872,7 +2844,7 @@ When `GatewayAgent` classifies the query as `simple`:
 1. **GatewayAgent** detects clear entities/modality via GLiNER (<100ms, no LLM)
 2. `_execute_downstream_agent` dispatches directly to the execution agent
 3. `conversation_history` is threaded through, enabling query rewrite on multi-turn conversations
-4. Response includes the agent output with `recommended_agent`, `confidence`, and `reasoning` from `OrchestratorOutput`
+4. Response includes the agent output with `plan_steps`, `agent_results`, and `execution_summary` from `OrchestratorOutput`
 
 ### Orchestration Path (Multi-Agent)
 
@@ -2970,31 +2942,31 @@ result = await orchestrator._process_impl(
     )
 )
 
-print(f"Recommended agent: {result.recommended_agent}")
-print(f"Enhanced query: {result.enhanced_query}")
-print(f"Confidence: {result.confidence}")
+print(f"Plan steps: {len(result.plan_steps)}")
+print(f"Agents executed: {list(result.agent_results.keys())}")
+print(f"Summary: {result.execution_summary}")
 ```
 
 ### Example 2: Video Search
 
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize agent (profile-agnostic, tenant-agnostic)
 config_manager = create_default_config_manager()
-agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
+deps = SearchAgentDeps()
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
-# Search (synchronous) — profile and tenant_id per-request
-results = agent.search(
+# Search (synchronous) — tenant_id required per-request
+results = agent.search_by_text(
     query="Python programming tutorial",
-    profile="video_colpali_smol500_mv_frame",
     tenant_id="acme",
-    top_k=5
+    modality="video",
+    top_k=5,
 )
 
 for result in results:
-    print(f"Video: {result.document.title}")
-    print(f"Score: {result.score}")
+    print(result)
 ```
 
 ### Example 3: Multi-Agent Orchestration
@@ -3028,29 +3000,30 @@ print(f"Summary: {result.execution_summary}")
 ### Example 4: Memory-Aware Search
 
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize agent (profile-agnostic)
 config_manager = create_default_config_manager()
-agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
+deps = SearchAgentDeps()
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
-# Initialize memory manager separately
+# Initialize memory manager separately — embedder_base_url is required
 memory = Mem0MemoryManager(tenant_id="acme")
-# All parameters are required (no defaults)
 memory.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="google/gemma-4-e4b-it",
-    embedding_model="nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:29010/v1",
     config_manager=config_manager,
     schema_loader=schema_loader,
     base_schema_name="agent_memories",
 )
 
 # First search — tenant_id is required
-results1 = agent.search(query="cooking tutorials", tenant_id="acme", top_k=5)
+results1 = agent.search_by_text(query="cooking tutorials", tenant_id="acme", top_k=5)
 
 # Store in memory for future context
 # add_memory takes: content (str), tenant_id, agent_name, optional metadata
@@ -3062,7 +3035,7 @@ memory.add_memory(
 )
 
 # Second search (memory context retrieved separately)
-results2 = agent.search(query="advanced cooking techniques", tenant_id="acme", top_k=5)
+results2 = agent.search_by_text(query="advanced cooking techniques", tenant_id="acme", top_k=5)
 ```
 
 ### Example 5: Streaming Results
@@ -3229,10 +3202,10 @@ rlm_opts = RLMOptions(
 
 ```python
 from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
 rlm = RLMInference(
-    backend="openai",
-    model="gpt-4o",
+    llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
     max_iterations=10,      # Maximum REPL iterations
     max_llm_calls=30,
     timeout_seconds=300,
@@ -3886,10 +3859,11 @@ RLM operations can be long-running (up to 5 minutes). Use `InstrumentedRLM` with
 
 ```python
 from cogniverse_agents.inference import InstrumentedRLM, RLMCancelledError
-from cogniverse_core.events import EventQueue
+from cogniverse_core.events import get_queue_manager
 
 # Create event queue for real-time progress
-event_queue = EventQueue(tenant_id="tenant_1")
+manager = get_queue_manager()
+event_queue = await manager.create_queue("task_123", "tenant_1")
 
 # InstrumentedRLM emits events automatically
 rlm = InstrumentedRLM(
@@ -3931,13 +3905,14 @@ except RLMCancelledError as e:
 
 ```python
 from cogniverse_agents.inference import RLMInference
-from cogniverse_core.events import EventQueue
+from cogniverse_core.events import get_queue_manager
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-event_queue = EventQueue(tenant_id="tenant_1")
+manager = get_queue_manager()
+event_queue = await manager.create_queue("task_123", "tenant_1")
 
 rlm = RLMInference(
-    backend="openai",
-    model="gpt-4o",
+    llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
     max_iterations=10,
     event_queue=event_queue,  # Enables InstrumentedRLM
     task_id="task_123",
@@ -4021,22 +3996,25 @@ class TestVideoSearchAgentIntegration:
     @pytest.fixture
     def agent(self, tenant_id):
         """Create agent with real Vespa connection"""
+        from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
         from cogniverse_foundation.config.utils import create_default_config_manager
 
         config_manager = create_default_config_manager()
 
-        # Create agent (profile-agnostic, tenant-agnostic)
+        # Create agent — schema_loader is required
         agent = SearchAgent(
+            deps=SearchAgentDeps(),
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
         return agent
 
     def test_search_end_to_end(self, agent):
-        """Test complete search flow — profile and tenant_id per-request"""
-        results = agent.search(  # synchronous
+        """Test complete search flow — tenant_id required per-request"""
+        results = agent.search_by_text(  # synchronous
             query="test query",
-            top_k=5
+            tenant_id="test_tenant_integration",
+            top_k=5,
         )
 
         assert isinstance(results, list)
@@ -4211,14 +4189,16 @@ agent = OrchestratorAgent()  # TypeError: missing deps
 ### 2. Initialize Config Manager for SearchAgent
 
 ```python
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# SearchAgent requires config_manager + schema_loader
+# SearchAgent requires schema_loader; config_manager is optional
 config_manager = create_default_config_manager()
-agent = SearchAgent(deps=SearchAgentDeps(tenant_id=tenant_id), config_manager=config_manager, schema_loader=schema_loader)
+deps = SearchAgentDeps()
+agent = SearchAgent(deps=deps, config_manager=config_manager, schema_loader=schema_loader)
 
-# Search is synchronous — profile and tenant_id per-request
-results = agent.search("query", profile="video_colpali_smol500_mv_frame", tenant_id="acme", top_k=10)
+# Search is synchronous — tenant_id required per-request
+results = agent.search_by_text("query", tenant_id="acme", top_k=10)
 ```
 
 ### 3. Use Telemetry for Observability
@@ -4358,7 +4338,8 @@ from cogniverse_foundation.config.manager import ConfigManager
 
 # Create checkpoint storage (Phoenix span-based)
 storage = WorkflowCheckpointStorage(
-    project_name="workflow_checkpoints",
+    grpc_endpoint="localhost:4317",
+    http_endpoint="http://localhost:6006",
     tenant_id="acme"
 )
 
@@ -4465,7 +4446,11 @@ from cogniverse_agents.orchestrator.checkpoint_types import CheckpointConfig
 from cogniverse_agents.orchestrator.checkpoint_storage import WorkflowCheckpointStorage
 
 # Setup
-storage = WorkflowCheckpointStorage(project_name="checkpoints", tenant_id="acme")
+storage = WorkflowCheckpointStorage(
+    grpc_endpoint="localhost:4317",
+    http_endpoint="http://localhost:6006",
+    tenant_id="acme",
+)
 config = CheckpointConfig(enabled=True)
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
@@ -4764,10 +4749,11 @@ print(f"Latency: {result.latency_ms:.0f}ms")
 **With EventQueue for Progress Tracking:**
 
 ```python
-from cogniverse_core.events import EventQueue
+from cogniverse_core.events import get_queue_manager
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-event_queue = EventQueue(tenant_id="acme")
+manager = get_queue_manager()
+event_queue = await manager.create_queue("rlm_task_001", "acme")
 
 rlm = RLMInference(
     llm_config=LLMEndpointConfig(model="openai/gpt-4o"),

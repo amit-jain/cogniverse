@@ -56,7 +56,7 @@ uv sync --refresh
 python --version  # Should be 3.12+
 
 # Install specific Python version
-uv python install 3.11
+uv python install 3.12
 uv sync
 ```
 
@@ -267,8 +267,8 @@ cogniverse up
 # Should be: cogniverse-{tenant_id}-{project_name}
 
 # Verify telemetry is enabled
-from cogniverse_foundation.telemetry.manager import TelemetryManager
-telemetry = TelemetryManager()
+from cogniverse_foundation.telemetry import get_telemetry_manager
+telemetry = get_telemetry_manager()
 print(telemetry.get_stats())
 
 # Force flush spans
@@ -295,7 +295,7 @@ Failed to export spans: Connection refused to localhost:4317
 # Check OTLP endpoint is running
 curl http://localhost:4317/v1/traces
 
-# Set the OTLP endpoint env var (renamed from OTLP_ENDPOINT)
+# Set the OTLP gRPC endpoint env var
 export TELEMETRY_OTLP_ENDPOINT="localhost:4317"
 
 # Or use the HTTP endpoint for Phoenix
@@ -344,8 +344,8 @@ RuntimeError: CUDA out of memory
 # Use CPU instead
 JAX_PLATFORM_NAME=cpu uv run python script.py
 
-# Or reduce batch size
-uv run python scripts/run_ingestion.py --batch_size 1
+# Or limit frames per video
+uv run python scripts/run_ingestion.py --tenant-id <tenant> --video_dir <dir> --max-frames 1
 
 # Clear GPU memory
 python -c "import torch; torch.cuda.empty_cache()"
@@ -444,9 +444,10 @@ from cogniverse_agents.search_agent import SearchInput
 
 # All required fields must be provided
 input = SearchInput(
-    query="test",  # Required
-    modality="video",  # Has default value
-    top_k=10  # Has default value
+    query="test",       # Required
+    tenant_id="acme",   # Required
+    modality="video",   # Has default value
+    top_k=10            # Has default value
 )
 ```
 

@@ -54,7 +54,7 @@ libs/core/cogniverse_core/
 │   ├── manager.py                   # Mem0MemoryManager
 │   ├── backend_config.py            # Backend config for Mem0
 │   └── backend_vector_store.py      # Backend vector store adapter
-└── config/                           # Backward compatibility shim
+└── config/                           # Config re-export shim
     └── __init__.py                  # Re-exports from foundation
 
 # Configuration is provided by:
@@ -174,7 +174,7 @@ flowchart LR
 
 ### SystemConfig
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:29-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:161-`
 
 **Purpose:** System-level configuration for global settings
 
@@ -200,19 +200,7 @@ class SystemConfig:
     backend_port: int = 8080
     application_name: str = "cogniverse"
 
-    # Inference-service routing (per-model endpoint resolution)
-    # ``colpali_inference_url`` overrides the ColPali endpoint when the
-    # remote ColPali sidecar lives at a non-default URL.
-    # ``inference_service_urls`` maps logical service names
-    # (e.g. ``"videoprism_jax"``, ``"denseon"``, ``"vllm_asr"``) to URLs
-    # so a profile can target the right per-model sidecar.
-    colpali_inference_url: str = ""
-    inference_service_urls: Dict[str, str] = field(default_factory=dict)
-
     # LLM configuration
-    # Bare model id (e.g. "google/gemma-4-e4b-it"). The chart writes the
-    # full litellm-prefixed id (openai/<model>) into config.json; this
-    # field carries the bare name for topology-display purposes only.
     llm_model: str = "google/gemma-4-e4b-it"
     llm_engine: str = "vllm"
     base_url: str = "http://localhost:8101/v1"
@@ -228,6 +216,24 @@ class SystemConfig:
     # Agent Registry - structured config for all agents
     agents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     agent_registry_url: str = "http://localhost:8000"
+
+    # Inference-service routing (per-model endpoint resolution)
+    colpali_inference_url: str = ""
+    inference_service_urls: Dict[str, str] = field(default_factory=dict)
+
+    # Orchestrator iterative-retrieval-loop tuning
+    iter_retrieval_max_iter: int = 3
+    iter_retrieval_token_budget: int = 8000
+    iter_retrieval_wall_clock_ms: int = 30000
+
+    # Cross-pod routing and durability (empty = in-pod InboundQueueRegistry)
+    redis_url: str = ""
+
+    # Finetuning adapter resolver local cache directory
+    adapter_cache_dir: str = ""
+
+    # MinIO object-store endpoint for the ingestion upload path
+    minio_endpoint: str = ""
 
     # Metadata
     environment: str = "development"
@@ -261,7 +267,7 @@ loaded_config = SystemConfig.from_dict(config_dict)
 
 ### RoutingConfigUnified
 
-**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:136-`
+**Location:** `libs/foundation/cogniverse_foundation/config/unified_config.py:325-`
 
 **Purpose:** Per-tenant routing configuration
 
@@ -274,7 +280,7 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 ```python
 @dataclass
 class RoutingConfigUnified:
-    tenant_id: str = "default"
+    tenant_id: Optional[str] = None  # required — __post_init__ raises ValueError if None
 
     # Routing strategy
     routing_mode: str = "tiered"  # tiered, ensemble, hybrid
@@ -427,21 +433,24 @@ def initialize(
     llm_model: str,
     embedding_model: str,
     llm_base_url: str,
+    embedder_base_url: str,
     config_manager,
     schema_loader,
+    llm_api_key: str = "not-required",
     backend_config_port: Optional[int] = None,
     base_schema_name: str = "agent_memories",
     auto_create_schema: bool = True,
+    knowledge_registry: Optional[object] = None,
 ) -> None:
     """
     Initialize Mem0 with backend using tenant-specific schema.
 
     Configuration:
-    - LLM: Configured via llm_model param (e.g. "ollama/llama3.2")
-    - Embedder: Configured via embedding_model param (e.g. "nomic-embed-text", 768-dim)
+    - LLM: Configured via llm_model param (e.g. "openai/google/gemma-4-e4b-it")
+    - Embedder: Configured via embedding_model + embedder_base_url (DenseOn served via sidecar)
     - Vector Store: Vespa with schema-per-tenant
 
-    All params are required - no defaults for LLM/embedding configuration.
+    All positional params are required.
 
     Example:
         manager = Mem0MemoryManager(tenant_id="acme")
@@ -451,6 +460,7 @@ def initialize(
             llm_model=config["memory"]["llm_model"],
             embedding_model=config["memory"]["embedding_model"],
             llm_base_url=config["memory"]["llm_base_url"],
+            embedder_base_url=config["memory"]["embedder_base_url"],
             config_manager=config_manager,
             schema_loader=schema_loader,
         )
@@ -1167,6 +1177,7 @@ memory.initialize(
     llm_model=config["memory"]["llm_model"],
     embedding_model=config["memory"]["embedding_model"],
     llm_base_url=config["memory"]["llm_base_url"],
+    embedder_base_url=config["memory"]["embedder_base_url"],
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -1333,7 +1344,13 @@ def get_memory_manager(tenant_id: str) -> Mem0MemoryManager:
     manager = Mem0MemoryManager(tenant_id=tenant_id)
     manager.initialize(
         backend_host=config.backend_url,
-        backend_port=config.backend_port
+        backend_port=config.backend_port,
+        llm_model=config.llm_model,
+        embedding_model=config.embedding_model,
+        llm_base_url=config.llm_base_url,
+        embedder_base_url=config.embedder_base_url,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
     return manager
 
@@ -1359,7 +1376,16 @@ class MemoryPolicy:
         return True
 
 memory = Mem0MemoryManager(tenant_id="acme")
-memory.initialize()
+memory.initialize(
+    backend_host=config.backend_url,
+    backend_port=config.backend_port,
+    llm_model=config.llm_model,
+    embedding_model=config.embedding_model,
+    llm_base_url=config.llm_base_url,
+    embedder_base_url=config.embedder_base_url,
+    config_manager=config_manager,
+    schema_loader=schema_loader,
+)
 
 policy = MemoryPolicy()
 content = "User prefers technical content"
@@ -1380,7 +1406,16 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 async def cleanup_old_memories(tenant_id: str, agent_name: str, days: int = 90):
     """Remove memories older than specified days"""
     memory = Mem0MemoryManager(tenant_id=tenant_id)
-    memory.initialize()
+    memory.initialize(
+        backend_host=config.backend_url,
+        backend_port=config.backend_port,
+        llm_model=config.llm_model,
+        embedding_model=config.embedding_model,
+        llm_base_url=config.llm_base_url,
+        embedder_base_url=config.embedder_base_url,
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
 
     cutoff_date = datetime.now() - timedelta(days=days)
 
@@ -1432,7 +1467,12 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 
 # Add memory for tenant 1
 memory1 = Mem0MemoryManager(tenant_id="acme")
-memory1.initialize()
+memory1.initialize(
+    backend_host="http://localhost", backend_port=8080,
+    llm_model=config.llm_model, embedding_model=config.embedding_model,
+    llm_base_url=config.llm_base_url, embedder_base_url=config.embedder_base_url,
+    config_manager=config_manager, schema_loader=schema_loader,
+)
 memory1.add_memory(
     content="Secret information for ACME",
     tenant_id="acme",
@@ -1441,7 +1481,12 @@ memory1.add_memory(
 
 # Try to search from tenant 2
 memory2 = Mem0MemoryManager(tenant_id="globex")
-memory2.initialize()
+memory2.initialize(
+    backend_host="http://localhost", backend_port=8080,
+    llm_model=config.llm_model, embedding_model=config.embedding_model,
+    llm_base_url=config.llm_base_url, embedder_base_url=config.embedder_base_url,
+    config_manager=config_manager, schema_loader=schema_loader,
+)
 results = memory2.search_memory(
     query="secret information",
     tenant_id="globex",
@@ -1492,7 +1537,16 @@ async def test_mem0_memory_integration():
     agent_name = "test-agent"
 
     manager = Mem0MemoryManager(tenant_id=tenant_id)
-    manager.initialize()
+    manager.initialize(
+        backend_host="http://localhost",
+        backend_port=8080,
+        llm_model=config["memory"]["llm_model"],
+        embedding_model=config["memory"]["embedding_model"],
+        llm_base_url=config["memory"]["llm_base_url"],
+        embedder_base_url=config["memory"]["embedder_base_url"],
+        config_manager=config_manager,
+        schema_loader=schema_loader,
+    )
 
     # Add memory
     memory_id = manager.add_memory(

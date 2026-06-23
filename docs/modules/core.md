@@ -85,6 +85,8 @@ cogniverse_core/
 │   ├── queue.py                 # EventQueue and QueueManager protocols
 │   └── backends/                # Backend implementations
 │       └── memory.py            # In-memory EventQueue backend
+├── query/                       # Query encoding utilities
+│   └── encoders.py              # Query encoder implementations
 ├── factories/                   # Factory classes
 │   └── backend_factory.py       # Backend factory for creating backend instances
 ├── interfaces/                  # Protocol interfaces

@@ -60,6 +60,8 @@ from cogniverse_foundation.config.utils import get_config  # Lazy import
 ```text
 libs/vespa/cogniverse_vespa/
 ├── __init__.py
+├── _vespa_factory.py               # Internal: Vespa app factory (make_vespa_app)
+├── _yql.py                         # Internal: YQL escaping utilities (yql_quote)
 ├── backend.py                      # Backend abstraction
 ├── config/
 │   ├── __init__.py
@@ -79,15 +81,15 @@ libs/vespa/cogniverse_vespa/
 └── vespa_schema_manager.py         # Multi-tenant schema management
 ```
 
-**Total Files**: 13 Python modules (excluding `__init__.py`), including 2 subdirectories: config/, registry/
+**Total Files**: 15 Python modules (excluding `__init__.py`), including 2 subdirectories: config/, registry/ (plus 2 private modules: `_vespa_factory.py`, `_yql.py`)
 
 **Key Files**:
 
-- `vespa_schema_manager.py`: 1081 lines - Core tenant management
+- `vespa_schema_manager.py`: 1093 lines - Core tenant management
 - `json_schema_parser.py`: 189 lines - Schema parsing
-- `ingestion_client.py`: 543 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1501 lines - Search backend with connection pooling
-- `backend.py`: 1524 lines - Unified backend abstraction
+- `ingestion_client.py`: 595 lines - PyVespa wrapper for ingestion
+- `search_backend.py`: 1511 lines - Search backend with connection pooling
+- `backend.py`: 1577 lines - Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
@@ -272,7 +274,7 @@ profile = BackendProfileConfig(
 - `model_loader`: Loader class key (`colpali`, `colqwen`, `videoprism`, `colbert`)
 - `pipeline_config`: Video processing pipeline settings
 - `strategies`: Processing strategy classes and params
-- `embedding_type`: Type of embeddings (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`, `multi_vector`, `multi_vector`)
+- `embedding_type`: Type of embeddings (`multi_vector` or `single_vector`)
 - `schema_config`: Schema-specific metadata (dimensions, patches, etc.)
 
 #### BackendConfig Dataclass
@@ -585,7 +587,7 @@ flowchart TB
 A **profile** is a complete content processing configuration that defines:
 1. **Model Loader**: Which loader class to use (`colpali`, `colqwen`, `videoprism`, `colbert`) — the `model_loader` config key
 2. **Embedding Model**: Which model to use (ColPali, VideoPrism, ColQwen, ColBERT)
-3. **Embedding Type**: Processing mode (`multi_vector`, `multi_vector`, `multi_vector`, `single_vector`, `multi_vector`, `multi_vector`)
+3. **Embedding Type**: Processing mode (`multi_vector` or `single_vector`)
 4. **Processing Pipeline**: Keyframe extraction, transcription, description generation
 5. **Segmentation Strategy**: Frame-based, chunk-based, direct video, document segments, or audio segments
 6. **Vespa Schema**: Which schema structure to use (`document_text`, `audio_content`, or video schemas)
@@ -779,7 +781,7 @@ flowchart TD
 
 #### Implementation Details
 
-**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (lines 585-864)
+**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 562)
 
 **Profile Resolution Logic** (inline in search() method):
 ```python
@@ -826,9 +828,11 @@ requested_strategy = query_dict.get("strategy")
 
 **Tenant Schema Scoping** (inline construction):
 ```python
-# Schema name construction
+# tenant_id is extracted from query_dict (REQUIRED), then canonicalized
+tenant_id = query_dict.get("tenant_id")  # raises ValueError if missing
+safe_tenant_id = canonical_tenant_id(tenant_id).replace(":", "_")
 base_schema_name = profile_config.get("schema_name", profile_name)
-schema_name = f"{base_schema_name}_{self.tenant_id}"
+schema_name = f"{base_schema_name}_{safe_tenant_id}"
 # Example: "video_colpali_smol500_mv_frame_acme"
 ```
 
@@ -905,7 +909,7 @@ flowchart TB
     GetPool --> CheckHealthy{"<span style='color:#000'>Healthy<br/>connections<br/>available?</span>"}
 
     CheckHealthy -->|Yes| SelectConn["<span style='color:#000'>Select Connection<br/>Round-Robin</span>"]
-    CheckHealthy -->|No| Error["<span style='color:#000'>Raise NoHealthyConnectionsError</span>"]
+    CheckHealthy -->|No| Error["<span style='color:#000'>Raise TimeoutError: No connections available</span>"]
 
     SelectConn --> ExecuteQuery["<span style='color:#000'>Execute Query</span>"]
 
@@ -949,7 +953,7 @@ flowchart TB
 
 ### Connection Pool Implementation
 
-**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 45-256)
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 89-256)
 
 #### ConnectionPoolConfig Class
 
@@ -984,7 +988,7 @@ class VespaConnection:
     def __init__(self, url: str, connection_id: str):
         self.url = url
         self.connection_id = connection_id
-        self.vespa = Vespa(url=url)  # Created internally, not passed in
+        self.vespa = make_vespa_app(url=url)  # Created internally via make_vespa_app, not passed in
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
@@ -1110,22 +1114,13 @@ class ConnectionPool:
 
 ```python
 class VespaSearchBackend:
-    def __init__(self, config: Dict[str, Any]):
-        self.url = config.get("url", "http://localhost:8080")
-        self._pool_config = ConnectionPoolConfig(
-            max_connections=config.get("max_connections", 10),
-            min_connections=config.get("min_connections", 2),
-            health_check_interval=config.get("health_check_interval", 60.0),
-        )
-        # Single connection pool (connections are URL-based, not schema-based)
-        self._pool: Optional[ConnectionPool] = None
-
-    def _get_connection_pool(self) -> ConnectionPool:
-        """Get or create connection pool."""
-        if self._pool is None:
-            # Health checks start automatically in __init__
-            self._pool = ConnectionPool(self.url, self._pool_config)
-        return self._pool
+    def __init__(self, config: Dict[str, Any], ...):
+        self.backend_url = config.get("url", "http://localhost")
+        self.backend_port = config.get("port", 8080)
+        full_url = f"{self.backend_url}:{self.backend_port}"
+        pool_config = ConnectionPoolConfig()
+        # Single connection pool (URL-based, not schema-based)
+        self.pool = ConnectionPool(full_url, pool_config)
 
     def search(
         self,
@@ -1133,28 +1128,23 @@ class VespaSearchBackend:
     ) -> List[SearchResult]:
         """Execute search using pooled connection.
 
-        Note: tenant_id is set at construction time (from config dict),
-        not passed per-call. The schema is tenant-scoped automatically.
+        tenant_id is REQUIRED in query_dict and is used for schema scoping
+        per-call. Profile and strategy are resolved from query_dict at call time.
         """
+        # tenant_id is REQUIRED in query_dict; raises ValueError if missing
+        tenant_id = query_dict.get("tenant_id")
         # Resolve profile and strategy from query_dict
-        # (tenant_id is already on self.tenant_id, set during __init__)
         profile = self._resolve_profile_for_query(query_dict)
         strategy = self._resolve_strategy_for_profile(profile, query_dict)
 
         # Get connection from pool (context manager pattern)
-        pool = self._get_connection_pool()
-
-        with pool.get_connection() as conn:
-            # Execute query via Vespa client
+        with self.pool.get_connection() as conn:
             results = conn.query(
                 yql=self._build_yql(query_dict, strategy),
                 ranking=strategy,
                 hits=query_dict.get("top_k", 10)
             )
             return results
-
-        # Note: Connection health is managed automatically by the pool's
-        # background health check thread started in __init__
 ```
 
 ### Health Metrics
@@ -2405,12 +2395,10 @@ the `"backend"` provider, so any Mem0 config with `vector_store.provider:
 
 ### Why through the Backend interface
 
-A direct Vespa client (the previous `VespaVectorStore` in
-`cogniverse_vespa/memory_store.py`) bypassed every Backend-level concern:
-the SDK's typed `Document`, the per-tenant schema scoping, the egress
-policy that the dispatcher's `make_http_client(agent_type)` enforces, and
-the telemetry spans backends emit on every call. Going through `Backend`
-inherits all of those for free.
+Routing through `Backend` inherits the SDK's typed `Document`, the per-tenant
+schema scoping, the egress policy that the dispatcher's
+`make_http_client(agent_type)` enforces, and the telemetry spans backends emit
+on every call — all for free.
 
 ### Capabilities
 
@@ -2429,8 +2417,8 @@ from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 # Mem0MemoryManager._register_backend_provider() registers "backend".
 # Direct construction is only used in tests.
 store = BackendVectorStore(
-    backend=vespa_backend,           # an SDK Backend implementation
     collection_name="agent_memories_acme",
+    backend_client=vespa_backend,    # an SDK Backend implementation
     embedding_model_dims=768,
 )
 

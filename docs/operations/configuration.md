@@ -83,6 +83,46 @@ system_config = SystemConfig(
 
 - Environment settings
 
+### 1a. LLM Endpoint Configuration
+
+`LLMEndpointConfig` and `LLMConfig` from `cogniverse_foundation.config.unified_config` wire the LLM for every agent and optimizer.
+
+```python
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig, LLMConfig
+
+# Primary (student) LLM — used at runtime by all agents
+primary = LLMEndpointConfig(
+    model="openai/google/gemma-4-e4b-it",
+    api_base="http://localhost:11434/v1",   # in-cluster vLLM or Ollama
+    temperature=0.1,
+    max_tokens=1000,
+    request_timeout=120.0,   # fail-fast timeout in seconds (default: 120.0)
+    num_retries=1,            # total attempts per call (default: 1)
+)
+
+# Teacher LLM — used only during DSPy MIPROv2 optimization
+teacher = LLMEndpointConfig(
+    model="openai/cyankiwi/Qwen3.6-27B-AWQ-INT4",
+    api_base="http://localhost:29011/v1",
+    request_timeout=120.0,
+    num_retries=1,
+)
+
+llm_config = LLMConfig(primary=primary, teacher=teacher)
+```
+
+**Key fields:**
+
+| Field | Default | Purpose |
+|---|---|---|
+| `model` | (required) | LiteLLM model string with provider prefix (`openai/<model>`, `anthropic/<model>`, etc.) |
+| `api_base` | `None` | Endpoint URL. `None` = LiteLLM default routing. |
+| `temperature` | `0.1` | Sampling temperature. |
+| `max_tokens` | `1000` | Max completion tokens. |
+| `request_timeout` | `120.0` | Seconds before litellm raises a timeout. Set low to fail fast on a down endpoint. |
+| `num_retries` | `1` | Total call attempts (1 = no retries). DSPy default is higher; this constrains it for fast-fail behavior. |
+| `seed` | `None` | vLLM sampling seed for deterministic output in tests. |
+
 ### 1b. Agent Registry Configuration
 
 The `agents` section in `config.json` defines agent URLs for A2A discovery via `AgentRegistry`:
