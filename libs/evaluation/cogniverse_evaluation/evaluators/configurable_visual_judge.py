@@ -162,7 +162,7 @@ class ConfigurableVisualJudge(Evaluator):
         """Resolve a result's video to a local path via the MediaLocator.
 
         Prefers ``source_url`` (the canonical URI written at ingest time);
-        falls back to a legacy local-directory probe with a WARNING log so
+        falls back to a local-directory probe with a WARNING log so
         already-ingested corpora without ``source_url`` keep working.
         """
         path = resolve_video_from_result(result, self.locator)

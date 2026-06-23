@@ -82,7 +82,7 @@ class TelemetryManager:
         self, tenant_id: str, project_name: Optional[str] = None
     ) -> Optional[Tracer]:
         """
-        Get tracer for a specific tenant project (LEGACY - use span() instead).
+        Get tracer for a specific tenant project (prefer ``span()``).
 
         Args:
             tenant_id: Tenant identifier for project isolation
@@ -478,7 +478,7 @@ class TelemetryManager:
         )
 
     def _create_tenant_provider(self, tenant_id: str) -> TracerProvider:
-        """Create and configure TracerProvider for a tenant (legacy method)."""
+        """Create and configure TracerProvider for a tenant."""
         return self._create_tenant_provider_for_project(
             tenant_id, self.config.service_name
         )

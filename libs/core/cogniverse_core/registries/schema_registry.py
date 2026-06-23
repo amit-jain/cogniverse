@@ -397,7 +397,7 @@ class SchemaRegistry:
 
         # Check if already deployed (unless force=True). A tracking record
         # alone is not proof the CURRENT name is live: records written
-        # before tenant-id canonicalization carry the legacy single-suffix
+        # before tenant-id canonicalization carry the single-suffix
         # name, and skipping here would return a name Vespa never deployed.
         if not force and self.schema_exists(tenant_id, base_schema_name):
             tracked = self._schemas[(tenant_id, base_schema_name)]
@@ -408,7 +408,7 @@ class SchemaRegistry:
                 )
                 return tenant_schema_name
             logger.info(
-                f"Schema tracking for tenant '{tenant_id}' carries legacy "
+                f"Schema tracking for tenant '{tenant_id}' carries an outdated "
                 f"name '{tracked.full_schema_name}'; redeploying as "
                 f"'{tenant_schema_name}'"
             )

@@ -581,7 +581,7 @@ class ProcessingStrategySet:
                 return {"descriptions": cached}
             # The segmentation step writes its output under ``keyframes``
             # (frame-strategy) or ``chunks`` (chunk-strategy); fall back
-            # to the legacy ``segments`` key for any future shape. VLM
+            # to the ``segments`` key for any future shape. VLM
             # needs the rich metadata dict with ``video_id`` + per-frame
             # entries, not just a bare list.
             frames_metadata = (

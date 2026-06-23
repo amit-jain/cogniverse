@@ -342,7 +342,7 @@ class ConfigUtils:
         if key in telemetry_keys:
             return telemetry_keys[key]()
 
-        # Check JSON config for other keys (fallback for legacy keys)
+        # Check JSON config for other keys
         self._load_json_config()
         if key in self._json_config:
             return self._json_config[key]

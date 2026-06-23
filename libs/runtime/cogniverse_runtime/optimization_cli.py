@@ -390,7 +390,7 @@ def _vacuum_config_metadata(*, keep_versions: int) -> dict:
     Per-write pruning in ``VespaConfigStore.set_config`` keeps fresh
     writes bounded, but a backlog can accumulate when ``keep_versions``
     is bumped or when a backend write path skipped the prune (e.g. an
-    older runtime image). One-off sweep here brings legacy rows down
+    older runtime image). One-off sweep here brings stale rows down
     to ``keep_versions`` per config_id and returns the count dropped
     so the workflow log proves the work happened.
     """
@@ -416,7 +416,7 @@ async def run_cleanup(
     """Daily-cleanup workflow body: memory + logs + temp + config vacuum.
 
     Per-tenant Mem0 cleanup is schema-driven (per-kind TTLs in the
-    KnowledgeRegistry). The other three steps absorbed from the legacy
+    KnowledgeRegistry). The other three steps absorbed the
     standalone ``daily-cleanup`` CronWorkflow that the chart didn't
     previously cover:
 

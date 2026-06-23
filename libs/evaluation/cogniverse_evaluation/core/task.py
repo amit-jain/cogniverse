@@ -108,7 +108,7 @@ def evaluation_task(
             )
             samples.append(sample)
     else:
-        # Legacy dict format with "examples" key
+        # Dict format with an "examples" key
         if not dataset_data or not dataset_data.get("examples"):
             raise ValueError(f"Dataset '{dataset_name}' not found or empty")
 

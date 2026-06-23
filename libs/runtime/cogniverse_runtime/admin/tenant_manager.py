@@ -740,7 +740,7 @@ def _discover_orphan_schema_targets(
     the canonical suffix. The bare tenant suffix is deliberately NOT matched:
     it is short enough to be a false suffix of another tenant's schema
     (``base_a_pr`` ends in ``_pr``), which would over-delete across tenants.
-    Registered bare-form legacy schemas are still covered by the registry
+    Registered bare-form schemas are still covered by the registry
     lookup above; unregistered orphans are handled by /admin/reconcile-orphans.
     """
     canonical_suffix = "_" + canonical_tid.replace(":", "_")
