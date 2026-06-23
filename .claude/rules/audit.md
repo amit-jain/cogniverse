@@ -186,6 +186,21 @@ grep -rnP 'if \w+_(url|endpoint):' libs/ --include="*.py" -A3 | grep -B2 -A2 "_r
 # int(v) (search_agent _epoch_ms; memory _compute_age_seconds before the fix).
 # For each hit, confirm a *1000 / //1000 / >1e11 magnitude check within ~3 lines.
 grep -rnP 'return int\((v|ts|value|timestamp|raw|created_at)\)\s*$' libs/ --include="*.py"
+
+# datetime.utcnow() (8th audit, messaging/auth.py) — always NAIVE, distinct
+# from datetime.now() because it LOOKS tz-correct but isn't. A naive utcnow()
+# compared against a fromisoformat()-parsed value raises TypeError the moment a
+# tz-aware value is stored; a surrounding bare except then fail-closes (a valid
+# token is rejected). Replace with datetime.now(timezone.utc) on both sides.
+grep -rnP "datetime\.utcnow\(\)" libs/ --include="*.py"
+
+# (1,dim)->dict tensor conversion guarded only by ndim==2 without a shape[0]==1
+# flatten, where a sibling input branch flattens (8th audit: search_backend
+# qt/qtb vs the q branch). A single-vector encoder emitting (1,dim) on a dense
+# _sv_ schema input becomes a nested {"0": [...]} dict -> Vespa 400. For each
+# hit, check whether the bound schema input is dense (needs flat) or
+# multi-vector (needs the dict).
+grep -rnP '\{str\(\w+\): \w+\.tolist\(\)' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
