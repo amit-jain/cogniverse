@@ -152,7 +152,6 @@ class SandboxManager:
         self,
         policy_dir: Path | None = None,
         cluster: str | None = None,
-        enabled: bool | None = None,
         policy: SandboxPolicy | str | None = None,
     ):
         """Initialize the sandbox manager.
@@ -161,16 +160,12 @@ class SandboxManager:
             policy_dir: Directory containing per-agent policy YAMLs.
                 Defaults to ``configs/agent_policies/``.
             cluster: OpenShell cluster name (None = active).
-            enabled: ``True`` maps to ``policy=optional``,
-                ``False`` to ``policy=disabled``. Prefer ``policy`` for
-                explicit configuration; this kwarg remains for tests
-                and shorthand callers.
-            policy: Explicit policy knob; takes precedence over
-                ``enabled`` when both are passed.
+            policy: Sandbox policy knob (disabled / optional / required);
+                defaults to ``optional`` (degrade-with-warning).
         """
         self._policy_dir = self._resolve_policy_dir(policy_dir)
         self._cluster = cluster
-        self._policy = self._resolve_policy(policy=policy, enabled=enabled)
+        self._policy = self._resolve_policy(policy)
         # Maintain ``_enabled`` as the legacy "should we try at all" flag —
         # external callers (tests, dispatcher hot-path) read .enabled.
         self._enabled = self._policy is not SandboxPolicy.DISABLED
@@ -214,22 +209,14 @@ class SandboxManager:
         return _DEFAULT_POLICY_DIR
 
     @staticmethod
-    def _resolve_policy(
-        policy: SandboxPolicy | str | None, enabled: bool | None
-    ) -> SandboxPolicy:
-        """Translate the (policy, enabled) inputs into a single SandboxPolicy.
-
-        ``policy`` wins when both are provided. When neither is provided,
-        default to ``OPTIONAL`` (degrade-with-warning). The legacy ``enabled``
-        kwarg keeps existing call sites working: True → optional, False → disabled.
-        """
-        if policy is not None:
-            if isinstance(policy, str):
-                policy = SandboxPolicy(policy.lower())
-            return policy
-        if enabled is None:
+    def _resolve_policy(policy: SandboxPolicy | str | None) -> SandboxPolicy:
+        """Resolve the policy input into a SandboxPolicy, defaulting to
+        ``OPTIONAL`` (degrade-with-warning) when none is given."""
+        if policy is None:
             return SandboxPolicy.OPTIONAL
-        return SandboxPolicy.OPTIONAL if enabled else SandboxPolicy.DISABLED
+        if isinstance(policy, str):
+            return SandboxPolicy(policy.lower())
+        return policy
 
     def _load_policies(self) -> None:
         """Load per-agent policy YAML files from the policy directory."""

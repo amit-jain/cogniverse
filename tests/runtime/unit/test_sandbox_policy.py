@@ -2,8 +2,8 @@
 
 Integration coverage (real OpenShell gateway) lives in
 tests/agents/integration/test_sandbox_integration.py — these unit tests
-exercise the policy interpretation, the legacy ``enabled`` alias, and the
-fast-fail path when policy=required without a reachable gateway.
+exercise the policy interpretation and the fast-fail path when
+policy=required without a reachable gateway.
 """
 
 from __future__ import annotations
@@ -20,43 +20,21 @@ from cogniverse_runtime.sandbox_manager import (
 
 
 class TestSandboxPolicyResolution:
-    def test_policy_explicit_wins_over_enabled(self):
-        policy = SandboxManager._resolve_policy(
-            policy=SandboxPolicy.REQUIRED, enabled=False
-        )
-        assert policy is SandboxPolicy.REQUIRED
-
     def test_policy_string_value_accepted(self):
-        policy = SandboxManager._resolve_policy(policy="required", enabled=None)
+        policy = SandboxManager._resolve_policy(policy="required")
         assert policy is SandboxPolicy.REQUIRED
 
     def test_policy_string_case_insensitive(self):
         assert (
-            SandboxManager._resolve_policy(policy="OPTIONAL", enabled=None)
-            is SandboxPolicy.OPTIONAL
+            SandboxManager._resolve_policy(policy="OPTIONAL") is SandboxPolicy.OPTIONAL
         )
 
-    def test_legacy_enabled_true_maps_to_optional(self):
-        assert (
-            SandboxManager._resolve_policy(policy=None, enabled=True)
-            is SandboxPolicy.OPTIONAL
-        )
-
-    def test_legacy_enabled_false_maps_to_disabled(self):
-        assert (
-            SandboxManager._resolve_policy(policy=None, enabled=False)
-            is SandboxPolicy.DISABLED
-        )
-
-    def test_default_when_neither_provided(self):
-        assert (
-            SandboxManager._resolve_policy(policy=None, enabled=None)
-            is SandboxPolicy.OPTIONAL
-        )
+    def test_default_when_no_policy_provided(self):
+        assert SandboxManager._resolve_policy(policy=None) is SandboxPolicy.OPTIONAL
 
     def test_invalid_policy_string_raises(self):
         with pytest.raises(ValueError):
-            SandboxManager._resolve_policy(policy="bogus", enabled=None)
+            SandboxManager._resolve_policy(policy="bogus")
 
 
 class TestPolicyDisabledShortCircuits:

@@ -12,7 +12,7 @@ import subprocess
 
 import pytest
 
-from cogniverse_runtime.sandbox_manager import SandboxManager
+from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy
 
 GATEWAY_NAME = "cogniverse-test-gw"
 GATEWAY_PORT = 19090
@@ -339,7 +339,7 @@ class TestSandboxManagerIntegration:
     def test_manager_connects_and_reports_available(self, openshell_gateway):
         manager = SandboxManager(
             policy_dir="configs/agent_policies",
-            enabled=True,
+            policy=SandboxPolicy.OPTIONAL,
         )
         assert manager.available, "SandboxManager should detect running gateway"
         assert len(manager._policies) >= 4
@@ -348,7 +348,7 @@ class TestSandboxManagerIntegration:
     def test_run_in_sandbox_via_manager(self, openshell_gateway):
         manager = SandboxManager(
             policy_dir="configs/agent_policies",
-            enabled=True,
+            policy=SandboxPolicy.OPTIONAL,
         )
         assert manager.available
 
@@ -363,7 +363,9 @@ class TestSandboxManagerIntegration:
         manager.close()
 
     def test_policy_egress_rules(self, openshell_gateway):
-        manager = SandboxManager(policy_dir="configs/agent_policies", enabled=False)
+        manager = SandboxManager(
+            policy_dir="configs/agent_policies", policy=SandboxPolicy.DISABLED
+        )
         manager._load_policies()
 
         search_policy = manager.get_policy("search_agent")
