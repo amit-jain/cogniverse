@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from mem0.vector_stores.base import VectorStoreBase
 
+from cogniverse_core.memory._timestamps import epoch_to_iso_utc, to_epoch_seconds
+
 logger = logging.getLogger(__name__)
 
 
@@ -210,17 +212,9 @@ class BackendVectorStore(VectorStoreBase):
             metadata = _extract_caller_metadata(payload)
             created_at = payload.get("created_at")
 
-            # Convert created_at to Unix timestamp
-            if isinstance(created_at, str):
-                from datetime import datetime
-
-                try:
-                    dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                    created_at = int(dt.timestamp())
-                except Exception:
-                    created_at = int(time.time())
-            elif created_at is None:
-                created_at = int(time.time())
+            # Normalize created_at to UTC epoch seconds (ms→s, naive ISO→UTC)
+            normalized = to_epoch_seconds(created_at)
+            created_at = normalized if normalized is not None else int(time.time())
 
             # Create Document object
             doc_metadata = {
@@ -230,7 +224,9 @@ class BackendVectorStore(VectorStoreBase):
             }
             # Promote subject_key to a top-level field so list() can filter on
             # it server-side (it also stays in metadata_ for round-trip reads).
-            subject_key = metadata.get("subject_key") if isinstance(metadata, dict) else None
+            subject_key = (
+                metadata.get("subject_key") if isinstance(metadata, dict) else None
+            )
             if subject_key:
                 doc_metadata["subject_key"] = subject_key
             if metadata:
@@ -328,9 +324,7 @@ class BackendVectorStore(VectorStoreBase):
                 doc = search_result.document
                 created_at = doc.metadata.get("created_at")
                 if isinstance(created_at, (int, float)):
-                    from datetime import datetime
-
-                    created_at = datetime.fromtimestamp(created_at).isoformat()
+                    created_at = epoch_to_iso_utc(created_at)
 
                 mem0_results.append(
                     BackendSearchResult(
@@ -448,9 +442,7 @@ class BackendVectorStore(VectorStoreBase):
 
             created_at = doc.metadata.get("created_at")
             if isinstance(created_at, (int, float)):
-                from datetime import datetime
-
-                created_at = datetime.fromtimestamp(created_at).isoformat()
+                created_at = epoch_to_iso_utc(created_at)
             elif created_at is not None and not isinstance(created_at, str):
                 created_at = str(created_at)
 

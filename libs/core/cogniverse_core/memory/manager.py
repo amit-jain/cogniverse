@@ -21,6 +21,7 @@ os.environ["MEM0_TELEMETRY"] = "False"
 from mem0 import Memory
 
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+from cogniverse_core.memory._timestamps import to_epoch_seconds
 from cogniverse_foundation.caching import TenantLRUCache
 
 logger = logging.getLogger(__name__)
@@ -1308,20 +1309,8 @@ class Mem0MemoryManager:
 
     @staticmethod
     def _compute_age_seconds(memory: Dict[str, Any], now_epoch: int) -> Optional[int]:
-        created_at = memory.get("created_at")
-        if not created_at:
-            return None
-        if isinstance(created_at, str):
-            from datetime import datetime as _dt
-
-            try:
-                dt = _dt.fromisoformat(created_at.replace("Z", "+00:00"))
-                created_epoch = int(dt.timestamp())
-            except (ValueError, TypeError):
-                return None
-        elif isinstance(created_at, (int, float)):
-            created_epoch = int(created_at)
-        else:
+        created_epoch = to_epoch_seconds(memory.get("created_at"))
+        if created_epoch is None:
             return None
         return max(0, now_epoch - created_epoch)
 
