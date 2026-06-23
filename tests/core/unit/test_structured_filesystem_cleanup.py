@@ -71,3 +71,24 @@ async def test_no_startup_cleanup_leaves_expired_file_until_accessed(tmp_path):
     # No startup sweep — the expired file remains until its key is accessed.
     assert cache_path.exists() is True
     assert backend._needs_cleanup is False
+
+
+@pytest.mark.asyncio
+async def test_keyframe_image_round_trips_raw_for_any_frame_id(tmp_path):
+    """A keyframe image must survive the cache as raw bytes regardless of frame_id.
+
+    Regression: set() wrote raw bytes only for frame_0..9999 (range(10000)) and
+    pickled higher indices, while get() returns raw for any .jpg path — so frames
+    past ~5 min of 30fps video came back as pickled bytes and failed to decode.
+    """
+    backend = StructuredFilesystemBackend(
+        StructuredFilesystemConfig(base_path=str(tmp_path), cleanup_on_startup=False)
+    )
+    raw = b"\xff\xd8\xff\xe0opaque-image-bytes\xff\xd9"
+    for frame_id in (5000, 15000, 123456):
+        key = f"prof:video:vid123:keyframes:frame_{frame_id}"
+        assert await backend.set(key, raw) is True
+        assert await backend.get(key) == raw, f"frame_{frame_id} did not round-trip"
+        path = backend._key_to_path(key)
+        assert path.suffix == ".jpg"
+        assert path.read_bytes() == raw  # raw on disk, not a pickle envelope
