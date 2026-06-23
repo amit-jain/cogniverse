@@ -162,19 +162,6 @@ class VideoIngestionPipelineBuilder:
 
         return pipeline
 
-    def build_pipeline(self, config_dict: dict[str, Any]) -> VideoIngestionPipeline:
-        """Build pipeline from configuration dictionary (backward compatibility)."""
-        if "video_dir" in config_dict:
-            self.with_video_dir(config_dict["video_dir"])
-        if "media_root_uri" in config_dict:
-            self.with_media_root_uri(config_dict["media_root_uri"])
-        if "backend" in config_dict:
-            self.with_backend(config_dict["backend"])
-        if "max_frames_per_video" in config_dict:
-            self.with_max_frames(config_dict["max_frames_per_video"])
-
-        return self.build()
-
 
 class PipelineConfigBuilder:
     """Builder for PipelineConfig with fluent interface."""
