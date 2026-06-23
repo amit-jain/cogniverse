@@ -7,9 +7,7 @@ online evaluator to drive flag-for-review + auto-optimization-trigger
 behaviour.
 
 Routing-system configuration itself lives in
-``cogniverse_foundation.config.unified_config.RoutingConfigUnified``;
-the legacy ``RoutingConfig`` dataclass that previously also lived
-here was deleted as a dead duplicate.
+``cogniverse_foundation.config.unified_config.RoutingConfigUnified``.
 """
 
 import json

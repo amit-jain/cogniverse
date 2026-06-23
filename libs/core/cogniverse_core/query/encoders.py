@@ -156,7 +156,7 @@ class ColPaliFamilyQueryEncoder(QueryEncoder):
         return self.embedding_dim
 
 
-def ColPaliQueryEncoder(  # noqa: N802 — preserve legacy class-style name
+def ColPaliQueryEncoder(  # noqa: N802 — factory exposed under a class-style name
     model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b",
     *,
     inference_service_url: Optional[str] = None,
@@ -169,7 +169,7 @@ def ColPaliQueryEncoder(  # noqa: N802 — preserve legacy class-style name
     )
 
 
-def ColQwenQueryEncoder(  # noqa: N802 — preserve legacy class-style name
+def ColQwenQueryEncoder(  # noqa: N802 — factory exposed under a class-style name
     model_name: str = "vidore/colqwen-omni-v0.1",
     *,
     inference_service_url: Optional[str] = None,

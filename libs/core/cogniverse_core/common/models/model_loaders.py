@@ -396,11 +396,8 @@ class RemoteColPaliLoader(ModelLoader):
     endpoint with the ``token_embed`` pooling task. Returns per-token
     embeddings (shape ``[num_patches, 320]`` for tomoro-colqwen3-embed-4b).
 
-    The legacy ``deploy/colpali`` FastAPI sidecar is replaced by this
-    path. ``RemoteInferenceClient.process_images_vllm`` constructs the
-    OpenAI-compat payload; the older ``process_images`` method kept on
-    the client is for any deployment still pointed at the legacy
-    sidecar but is no longer the default.
+    ``RemoteInferenceClient.process_images_vllm`` constructs the
+    OpenAI-compat payload.
     """
 
     def __init__(
@@ -630,7 +627,7 @@ class RemoteColBERTLoader(ModelLoader):
 
 class RemoteWhisperLoader(ModelLoader):
     """Remote Whisper ASR loader against a vLLM /v1/audio/transcriptions
-    endpoint. Replaces the legacy ``deploy/whisper`` FastAPI sidecar.
+    endpoint.
 
     The wrapper exposes ``.transcribe(audio_path, language=...)`` so it
     drops into AudioTranscriptionStrategy in place of an in-process
