@@ -84,160 +84,87 @@ def query_agent_with_real_lm(real_dspy_lm):
 
 
 @pytest.fixture
-def orchestrator_with_real_agents(real_dspy_lm):
-    """OrchestratorAgent with real DSPy planning + real in-process agent dispatch.
-
-    Creates real agent instances and patches httpx to dispatch to their
-    _process_impl() directly — same pattern as test_orchestrator_with_search.py.
-    """
-    from unittest.mock import Mock, patch
+def orchestrator_with_real_agents(vespa_with_schema, dspy_lm):
+    """OrchestratorAgent wired to real in-process agents via an in-memory ASGI
+    app. httpx is patched to ASGITransport so the orchestrator's POSTs flow
+    through the real /agents/{name}/process route + AgentTask validation + the
+    runtime dispatcher, exactly like production (no _process_impl bypass)."""
+    from pathlib import Path
+    from unittest.mock import patch
 
     import dspy
+    import httpx
+    from fastapi import FastAPI
 
-    from cogniverse_agents.entity_extraction_agent import (
-        EntityExtractionAgent,
-        EntityExtractionDeps,
-        EntityExtractionInput,
-    )
-    from cogniverse_agents.profile_selection_agent import (
-        ProfileSelectionAgent,
-        ProfileSelectionDeps,
-        ProfileSelectionInput,
-    )
-    from cogniverse_agents.query_enhancement_agent import (
-        QueryEnhancementAgent,
-        QueryEnhancementDeps,
-        QueryEnhancementInput,
-    )
     from cogniverse_core.common.agent_models import AgentEndpoint
+    from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_runtime.routers import agents as agents_router
 
-    # Real agent instances — preprocessing agents that don't need Vespa.
-    # search and summarizer are in the registry but not in agents_by_url —
-    # they fall through to the generic success response in dispatch_to_agent.
-    agents_by_url = {
-        "http://localhost:8010": (
-            EntityExtractionAgent(deps=EntityExtractionDeps()),
-            EntityExtractionInput,
-        ),
-        "http://localhost:8011": (
-            ProfileSelectionAgent(deps=ProfileSelectionDeps()),
-            ProfileSelectionInput,
-        ),
-        "http://localhost:8012": (
-            QueryEnhancementAgent(deps=QueryEnhancementDeps()),
-            QueryEnhancementInput,
-        ),
-    }
-
-    agent_endpoints = {
-        "entity_extraction": AgentEndpoint(
-            name="entity_extraction",
-            url="http://localhost:8010",
-            capabilities=["entity_extraction"],
-        ),
-        "profile_selection": AgentEndpoint(
-            name="profile_selection",
-            url="http://localhost:8011",
-            capabilities=["profile_selection"],
-        ),
-        "query_enhancement": AgentEndpoint(
-            name="query_enhancement",
-            url="http://localhost:8012",
-            capabilities=["query_enhancement"],
-        ),
-        "search": AgentEndpoint(
-            name="search",
-            url="http://localhost:8013",
-            capabilities=["search"],
-        ),
-        "summarizer": AgentEndpoint(
-            name="summarizer",
-            url="http://localhost:8014",
-            capabilities=["summarization"],
-        ),
-    }
-
-    registry = Mock()
-    registry.get_agent = Mock(side_effect=lambda name: agent_endpoints.get(name))
-    registry.find_agents_by_capability = Mock(
-        side_effect=lambda cap: [
-            ep for ep in agent_endpoints.values() if cap in ep.capabilities
-        ]
+    config_manager = vespa_with_schema["manager"].config_manager
+    schema_loader = FilesystemSchemaLoader(
+        base_path=Path("tests/system/resources/schemas")
     )
-    registry.list_agents = Mock(return_value=list(agent_endpoints.keys()))
-    registry.agents = agent_endpoints
+    registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
 
-    # Real SystemConfig (not a Mock) — the iterative-retrieval loop reads
-    # int caps from ``config_manager.get_system_config().iter_retrieval_*``
-    # and ``range(Mock)`` raises TypeError. A real SystemConfig with test
-    # defaults keeps the loop's int-arithmetic paths exercised.
-    from cogniverse_foundation.config.manager import ConfigManager
-    from cogniverse_foundation.config.unified_config import SystemConfig
+    asgi_base = "http://asgi.test"
+    for name, caps in [
+        ("entity_extraction", ["entity_extraction"]),
+        ("profile_selection", ["profile_selection"]),
+        ("query_enhancement", ["query_enhancement"]),
+        ("search", ["search"]),
+    ]:
+        registry.register_agent(
+            AgentEndpoint(
+                name=name,
+                url=asgi_base,
+                capabilities=caps,
+                process_endpoint=f"/agents/{name}/process",
+            )
+        )
 
-    _stub_sys_cfg = SystemConfig(
-        iter_retrieval_max_iter=3,
-        iter_retrieval_token_budget=10000,
-        iter_retrieval_wall_clock_ms=10000,
-    )
-    _stub_config_manager = Mock(spec=ConfigManager)
-    _stub_config_manager.get_system_config = Mock(return_value=_stub_sys_cfg)
-
+    dspy.configure(lm=dspy_lm)
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
         registry=registry,
-        config_manager=_stub_config_manager,
+        config_manager=config_manager,
         port=8015,
     )
 
-    # Patch httpx to dispatch to real in-process agents
-    async def dispatch_to_agent(url, json=None, **kwargs):
-        agent_base_url = url.rsplit("/", 1)[0]
-        entry = agents_by_url.get(agent_base_url)
-        query = json.get("query", "") if json else ""
+    app = FastAPI()
+    app.include_router(agents_router.router, prefix="/agents", tags=["agents"])
+    agents_router.set_agent_registry(registry)
+    agents_router.set_agent_dependencies(config_manager, schema_loader)
 
-        resp = Mock()
-        resp.status_code = 200
-        resp.raise_for_status = Mock()
+    transport = httpx.ASGITransport(app=app)
 
-        if entry is None:
-            # Agent not available in-process (e.g. search needs Vespa)
-            resp.json.return_value = {
-                "status": "success",
-                "result": f"processed: {query[:50]}",
-            }
-            return resp
-
-        agent, input_cls = entry
-        try:
-            agent_input = input_cls(query=query)
-            with dspy.context(lm=real_dspy_lm):
-                result = await agent._process_impl(agent_input)
-            result_dict = (
-                result.model_dump()
-                if hasattr(result, "model_dump")
-                else {"result": str(result)}
-            )
-            resp.json.return_value = {"status": "success", **result_dict}
-        except Exception as e:
-            resp.json.return_value = {"status": "error", "message": str(e)}
-
-        return resp
-
-    from unittest.mock import AsyncMock
-
-    client = AsyncMock()
-    client.post = dispatch_to_agent
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
+    class _ASGIAsyncClient(httpx.AsyncClient):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("transport", transport)
+            kwargs.setdefault("base_url", asgi_base)
+            super().__init__(*args, **kwargs)
 
     patcher = patch(
-        "cogniverse_agents.orchestrator_agent.httpx.AsyncClient",
-        return_value=client,
+        "cogniverse_agents.orchestrator_agent.httpx.AsyncClient", _ASGIAsyncClient
     )
     patcher.start()
 
-    yield orchestrator
+    test_agents = [
+        "entity_extraction",
+        "query_enhancement",
+        "profile_selection",
+        "search",
+    ]
+    original_forward = orchestrator.dspy_module.forward
 
+    def restricted_forward(query, available_agents=None, **kwargs):
+        return original_forward(
+            query=query, available_agents=", ".join(test_agents), **kwargs
+        )
+
+    orchestrator.dspy_module.forward = restricted_forward
+
+    yield orchestrator
     patcher.stop()
 
 
