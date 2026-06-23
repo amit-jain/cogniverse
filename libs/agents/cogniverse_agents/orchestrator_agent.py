@@ -1963,7 +1963,43 @@ class OrchestratorAgent(
             )
             return []
 
+        self._emit_kg_traversal_span(
+            tenant_id=tenant_id,
+            node_name=str(seed_subject),
+            anchor=anchor,
+            result=result,
+        )
         return self._extract_evidence_from_results({"kg_traversal_agent": result})
+
+    def _emit_kg_traversal_span(
+        self,
+        *,
+        tenant_id: str,
+        node_name: str,
+        anchor: Dict[str, Any],
+        result: Dict[str, Any],
+    ) -> None:
+        """Emit a ``KnowledgeGraphTraversalAgent.traverse`` span carrying the
+        seed subject, the evidence time window, and the traversed node ids."""
+        if not (hasattr(self, "telemetry_manager") and self.telemetry_manager):
+            return
+        try:
+            node_ids = [
+                n.get("name") for n in (result.get("nodes") or []) if n.get("name")
+            ]
+            with self.telemetry_manager.span(
+                name="KnowledgeGraphTraversalAgent.traverse",
+                tenant_id=tenant_id,
+                attributes={
+                    "node_name": node_name,
+                    "filter_ts_start": float(anchor["ts_start"]),
+                    "filter_ts_end": float(anchor["ts_end"]),
+                    "result_node_ids": json.dumps(node_ids),
+                },
+            ):
+                pass
+        except Exception as exc:
+            logger.debug("Failed to emit kg traversal span: %s", exc)
 
     def _emit_retrieval_iteration_span(
         self,
