@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from cogniverse_runtime.routers import tenant
+from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 
 @pytest.fixture(autouse=True)
@@ -85,6 +86,7 @@ class TestSetInstructions:
         assert call_kwargs["service"] == "tenant_instructions"
         assert call_kwargs["config_key"] == "system_prompt"
         assert call_kwargs["config_value"]["text"] == "Always respond in bullet points."
+        assert call_kwargs["scope"] == ConfigScope.SYSTEM
 
     def test_returns_text_and_updated_at(self, tenant_client):
         client, _ = tenant_client
@@ -158,6 +160,7 @@ class TestDeleteInstructions:
         cm.set_config_value.assert_called_once()
         call_kwargs = cm.set_config_value.call_args.kwargs
         assert call_kwargs["config_value"]["text"] == ""
+        assert call_kwargs["scope"] == ConfigScope.SYSTEM
 
 
 @pytest.mark.unit
