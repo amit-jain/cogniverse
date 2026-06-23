@@ -24,3 +24,10 @@ def test_pool_factor_1_or_none_is_identity():
 def test_single_token_passthrough():
     emb = np.ones((1, 320), dtype=np.float32)
     np.testing.assert_array_equal(pool_document_tokens(emb, pool_factor=3), emb)
+
+
+def test_one_dimensional_input_passthrough():
+    # A 1D (dim,) vector has shape[0]==dim (>1), so it slipped past the
+    # single-token guard and crashed the pooler; it must return unchanged.
+    emb = np.ones(320, dtype=np.float32)
+    np.testing.assert_array_equal(pool_document_tokens(emb, pool_factor=3), emb)
