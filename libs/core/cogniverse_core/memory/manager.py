@@ -168,7 +168,7 @@ class Mem0MemoryManager:
         # knowledge schema registry. When set (via initialize),
         # add_memory enforces schema.provenance_required and auto-attaches
         # an initial trust score derived from the provenance + schema's
-        # default_trust. Unset = back-compat (no enforcement, no trust).
+        # default_trust. Unset = no enforcement, no trust.
         self._knowledge_registry: Optional[object] = None
 
         self._initialized = True

@@ -79,7 +79,7 @@ class ConfigUtils:
         Returns:
             Path to config.json if found, None otherwise
         """
-        # Check COGNIVERSE_CONFIG env var first (backward compatibility)
+        # Check the COGNIVERSE_CONFIG env var first
         env_path = os.environ.get("COGNIVERSE_CONFIG")
         if env_path:
             path = Path(env_path)
