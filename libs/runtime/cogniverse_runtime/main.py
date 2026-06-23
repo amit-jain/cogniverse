@@ -279,7 +279,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Policy resolution order (first non-empty wins):
     #   1. COGNIVERSE_SANDBOX_POLICY env var (required|optional|disabled)
     #   2. config["sandbox"]["policy"]
-    #   3. Legacy COGNIVERSE_SANDBOX_ENABLED + OPENSHELL_GATEWAY_ENDPOINT
+    #   3. COGNIVERSE_SANDBOX_ENABLED + OPENSHELL_GATEWAY_ENDPOINT
     #      → maps to optional / disabled.
     # Default: optional (degrade with warning if gateway is missing).
     from cogniverse_runtime.sandbox_manager import SandboxManager, SandboxPolicy

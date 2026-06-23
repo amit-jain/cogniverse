@@ -65,7 +65,7 @@ class MemoryAwareMixin:
         self._memory_initialized: bool = False
         # opt-in federated read. When set, get_relevant_context
         # pulls from both tenant and the org trunk and dedups by
-        # subject_key. Off by default to keep legacy agents unchanged.
+        # subject_key. Off by default (tenant-only reads).
         self._memory_federation_enabled: bool = False
         # Per-request session id + dispatched artefact overlay live in
         # module-level ContextVars (see top of file), not instance attrs, so a
@@ -236,7 +236,7 @@ class MemoryAwareMixin:
     def get_dispatched_prompts(self) -> Optional[Dict[str, str]]:
         """Return the dispatcher-supplied prompts for this request, if any.
 
-        Returns None when no overlay was supplied (legacy path). Agents
+        Returns None when no overlay was supplied. Agents
         that want to honor canary / variant selection call this before
         their own ``_load_artifact()`` and prefer the overlay when set.
         """
@@ -299,7 +299,7 @@ class MemoryAwareMixin:
                 return None
 
             # apply trust ranking and per-schema reconciliation when
-            # a knowledge registry is wired into the manager. Legacy code
+            # a knowledge registry is wired into the manager. Code
             # paths that don't set ``_knowledge_registry`` see no behaviour
             # change (the helpers no-op on missing trust/contradiction).
             results = self._apply_trust_and_reconcile(results)
@@ -406,7 +406,7 @@ class MemoryAwareMixin:
 
         Behaviour matrix:
           * No knowledge_registry on the underlying manager → return
-            ``results`` unchanged (legacy behaviour).
+            ``results`` unchanged.
           * Hits without trust → still ranked, but their trust defaults
             to 0.5 inside ``rank_with_trust`` so they sort fairly.
           * Hits with the same subject_key but distinct content → grouped
