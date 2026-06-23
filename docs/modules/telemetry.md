@@ -42,29 +42,7 @@ libs/foundation/cogniverse_foundation/telemetry/
 - `TelemetryManager`: Singleton manager for multi-tenant tracer providers
 - Context helpers for common operations (search, encode, backend)
 
-### 2. Core Layer Re-exports (cogniverse-core)
-
-The `cogniverse-core` package re-exports telemetry symbols from cogniverse-foundation, making them accessible via both import paths:
-
-```python
-# libs/core/cogniverse_core/telemetry/__init__.py
-from cogniverse_foundation.telemetry import (
-    TelemetryConfig,
-    TelemetryManager,
-    config,
-    context,
-    get_telemetry_manager,
-    manager,
-    providers,
-    registry,
-)
-```
-
-**What's Re-exported:**
-- `TelemetryManager`, `TelemetryConfig`, `get_telemetry_manager`
-- Submodules: `config`, `context`, `manager`, `providers`, `registry`
-
-### 3. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
+### 2. Dashboard Layer: Profile Routing Metrics (cogniverse-dashboard)
 ```text
 libs/dashboard/cogniverse_dashboard/tabs/
 └── profile_metrics.py       # render_profile_metrics_tab() — per-modality observability
@@ -72,7 +50,7 @@ libs/dashboard/cogniverse_dashboard/tabs/
 
 **Purpose:** Per-modality runtime observability surfaced in the dashboard. Reads `cogniverse.profile_selection` spans from Phoenix and aggregates them by the `profile_selection.modality` attribute that `ProfileSelectionAgent` emits on every dispatch.
 
-### 4. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
+### 3. Plugin Layer: Phoenix Telemetry Provider (cogniverse-telemetry-phoenix)
 ```text
 libs/telemetry-phoenix/cogniverse_telemetry_phoenix/
 ├── __init__.py              # Package initialization & exports
