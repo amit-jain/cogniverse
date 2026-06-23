@@ -688,7 +688,7 @@ class AgentDispatcher:
         if deps_cls is None:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path "
-                f"(no Deps class in {module_path} — agent uses legacy mixin pattern)"
+                f"(no Deps class in {module_path})"
             )
 
         # Instantiate with default deps. If the deps schema accepts a
@@ -734,7 +734,7 @@ class AgentDispatcher:
         if input_cls is None:
             raise ValueError(
                 f"Agent '{agent_name}' has no supported execution path "
-                f"(no Input class in {module_path} — agent uses legacy mixin pattern)"
+                f"(no Input class in {module_path})"
             )
 
         # Build input — pass query + tenant_id + any extra context fields
