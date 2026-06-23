@@ -10,7 +10,10 @@ Requires Docker to be running. Uses the ``phoenix_container`` and
 
 import pytest
 
-from cogniverse_agents.optimizer.artifact_manager import ArtifactManager
+from cogniverse_agents.optimizer.artifact_manager import (
+    ArtifactManager,
+    ExperimentMetrics,
+)
 from tests.agents.integration.conftest import skip_if_no_lm
 from tests.fixtures.llm import make_dspy_lm
 
@@ -77,27 +80,13 @@ class TestArtifactManagerRoundTrip:
 
     @pytest.mark.asyncio
     async def test_optimization_metrics_round_trip(self, real_provider):
-        """log_optimization_run persists metrics and load_optimization_run
-        reads them back. Earlier ``log_run`` was a no-op stub on
-        PhoenixProvider — anything written through it disappeared, so
-        every prior optimization run lost its metrics. This test
-        verifies the new save_blob-backed implementation actually
-        round-trips.
+        """save_experiment persists a typed record and load_latest_experiment
+        reads it back, round-tripping both the typed scalar fields and the
+        free-form extra_metrics.
         """
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test")
 
-        # The typed schema accepts named scalar fields directly
-        # (baseline_score / candidate_score / improvement / promoted /
-        # train_examples / optimizer) and stows everything else under
-        # extra_metrics. Mix both shapes so the round-trip is exercised
-        # for typed AND untyped keys in one go.
-        original_metrics = {
-            "optimizer": "MIPROv2",
-            "baseline_score": 0.5,
-            "candidate_score": 1.0,
-            "improvement": 0.5,
-            "promoted": True,
-            "train_examples": 24,
+        extra = {
             "per_modality_accuracy": {
                 "modality": 1.0,
                 "generation": 1.0,
@@ -105,74 +94,75 @@ class TestArtifactManagerRoundTrip:
             },
             "judge_substring_hits": 17,
         }
-
-        dataset_id = await mgr.log_optimization_run("router", original_metrics)
+        dataset_id = await mgr.save_experiment(
+            ExperimentMetrics(
+                tenant_id=mgr._tenant_id,
+                agent_type="router",
+                run_id="run-roundtrip-1",
+                timestamp="2026-01-01T00:00:00+00:00",
+                optimizer="MIPROv2",
+                baseline_score=0.5,
+                candidate_score=1.0,
+                improvement=0.5,
+                promoted=True,
+                train_examples=24,
+                extra_metrics=extra,
+            )
+        )
         assert dataset_id
 
-        loaded = await mgr.load_optimization_run("router")
+        loaded = await mgr.load_latest_experiment("router")
         assert loaded is not None, (
-            "log_optimization_run claimed it persisted but "
-            "load_optimization_run reads nothing — the write went "
-            "nowhere (regressed back to the no-op stub?)"
+            "save_experiment claimed it persisted but load_latest_experiment "
+            "reads nothing — the write went nowhere"
         )
-        assert loaded["agent_type"] == "router"
-        # ArtifactManager canonicalizes a bare org id (``roundtrip-test``)
-        # to the ``org:tenant`` form (``roundtrip-test:roundtrip-test``)
-        # so its dataset names match what a dispatcher's
-        # ``require_tenant_id`` produces. The stored ``tenant_id`` field
-        # therefore comes back in canonical form regardless of which
-        # form the caller passed.
-        assert loaded["tenant_id"] == "roundtrip-test:roundtrip-test"
-        assert "timestamp" in loaded
-
-        # Every key the caller wrote round-trips with its exact value.
-        loaded_metrics = loaded["metrics"]
-        for key, expected in original_metrics.items():
-            assert key in loaded_metrics, (
-                f"user-supplied metrics key {key!r} dropped on round-trip; "
-                f"loaded keys: {sorted(loaded_metrics.keys())}"
-            )
-            assert loaded_metrics[key] == expected, (
-                f"user-supplied metrics value for {key!r} mutated on "
-                f"round-trip; expected {expected!r}, got {loaded_metrics[key]!r}"
-            )
+        assert loaded.agent_type == "router"
+        # ArtifactManager canonicalizes a bare org id (``roundtrip-test``) to
+        # the ``org:tenant`` form, so the stored tenant_id comes back canonical.
+        assert loaded.tenant_id == mgr._tenant_id
+        assert loaded.optimizer == "MIPROv2"
+        assert loaded.baseline_score == 0.5
+        assert loaded.candidate_score == 1.0
+        assert loaded.improvement == 0.5
+        assert loaded.promoted is True
+        assert loaded.train_examples == 24
+        assert loaded.extra_metrics == extra
 
     @pytest.mark.asyncio
-    async def test_unspecified_typed_fields_surface_as_schema_defaults(
+    async def test_unspecified_optional_fields_surface_as_defaults(
         self, real_provider
     ):
-        """Caller writes ZERO typed fields → every typed slot comes back as
-        the schema's documented sentinel (None for the numeric fields,
-        False for promoted, "unknown" for optimizer). Pins the sentinel
-        contract so a future change that silently drops them on read or
-        substitutes a different sentinel can't sneak through.
+        """A record that sets only the required fields comes back with the
+        optional typed slots at their documented defaults (None for the
+        numeric fields, False for promoted), while extra_metrics round-trips.
         """
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test-defaults")
 
-        await mgr.log_optimization_run(
-            "router",
-            {"per_modality_accuracy": {"overall": 1.0}},
+        await mgr.save_experiment(
+            ExperimentMetrics(
+                tenant_id=mgr._tenant_id,
+                agent_type="router",
+                run_id="run-defaults-1",
+                timestamp="2026-01-01T00:00:00+00:00",
+                optimizer="BootstrapFewShot",
+                extra_metrics={"per_modality_accuracy": {"overall": 1.0}},
+            )
         )
 
-        loaded = await mgr.load_optimization_run("router")
+        loaded = await mgr.load_latest_experiment("router")
         assert loaded is not None
-        loaded_metrics = loaded["metrics"]
-
-        assert loaded_metrics["optimizer"] == "unknown"
-        assert loaded_metrics["promoted"] is False
-        assert loaded_metrics["baseline_score"] is None
-        assert loaded_metrics["candidate_score"] is None
-        assert loaded_metrics["improvement"] is None
-        assert loaded_metrics["train_examples"] is None
-
-        # The free-form key still round-trips alongside the defaulted typed slots.
-        assert loaded_metrics["per_modality_accuracy"] == {"overall": 1.0}
+        assert loaded.promoted is False
+        assert loaded.baseline_score is None
+        assert loaded.candidate_score is None
+        assert loaded.improvement is None
+        assert loaded.train_examples is None
+        assert loaded.extra_metrics["per_modality_accuracy"] == {"overall": 1.0}
 
     @pytest.mark.asyncio
-    async def test_load_optimization_run_missing_returns_none(self, real_provider):
-        """No prior log_optimization_run for this agent → None."""
+    async def test_load_latest_experiment_missing_returns_none(self, real_provider):
+        """No prior experiment for this agent → None."""
         mgr = ArtifactManager(real_provider, tenant_id="roundtrip-test-2")
-        loaded = await mgr.load_optimization_run("never-saved-agent")
+        loaded = await mgr.load_latest_experiment("never-saved-agent")
         assert loaded is None
 
 

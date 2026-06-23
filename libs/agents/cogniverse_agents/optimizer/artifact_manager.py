@@ -1230,68 +1230,6 @@ class ArtifactManager:
                 return await self._provider.datasets.get_dataset(name=latest)
         return None
 
-    # Back-compat shim: existing callers (optimization_cli) still use
-    # log_optimization_run. Route through save_experiment so the new typed
-    # ledger is the source of truth and the save_blob workaround is gone.
-    async def log_optimization_run(
-        self, agent_type: str, metrics: Dict[str, Any]
-    ) -> str:
-        """[Deprecated] Use ``save_experiment(ExperimentMetrics(...))`` directly.
-
-        Translates a free-form metrics dict into a typed ``ExperimentMetrics``
-        and forwards to ``save_experiment``. Kept so existing optimization_cli
-        invocations keep working while callers migrate.
-        """
-        run_id = str(metrics.get("run_id") or _generate_run_id())
-        record = ExperimentMetrics(
-            tenant_id=self._tenant_id,
-            agent_type=agent_type,
-            run_id=run_id,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            optimizer=str(metrics.get("optimizer") or "unknown"),
-            baseline_score=_optional_float(metrics.get("baseline_score")),
-            candidate_score=_optional_float(metrics.get("candidate_score")),
-            improvement=_optional_float(metrics.get("improvement")),
-            promoted=bool(metrics.get("promoted", False)),
-            train_examples=_optional_int(metrics.get("train_examples")),
-            extra_metrics={
-                k: v
-                for k, v in metrics.items()
-                if k
-                not in {
-                    "run_id",
-                    "optimizer",
-                    "baseline_score",
-                    "candidate_score",
-                    "improvement",
-                    "promoted",
-                    "train_examples",
-                }
-            },
-        )
-        return await self.save_experiment(record)
-
-    async def load_optimization_run(self, agent_type: str) -> Optional[Dict[str, Any]]:
-        """[Deprecated] Use ``load_latest_experiment`` for the typed result."""
-        latest = await self.load_latest_experiment(agent_type)
-        if latest is None:
-            return None
-        return {
-            "metrics": {
-                "optimizer": latest.optimizer,
-                "baseline_score": latest.baseline_score,
-                "candidate_score": latest.candidate_score,
-                "improvement": latest.improvement,
-                "promoted": latest.promoted,
-                "train_examples": latest.train_examples,
-                **latest.extra_metrics,
-            },
-            "tenant_id": latest.tenant_id,
-            "agent_type": latest.agent_type,
-            "timestamp": latest.timestamp,
-            "run_id": latest.run_id,
-        }
-
 
 def _generate_run_id() -> str:
     """Cheap monotonic-ish run id without pulling in extra deps."""
