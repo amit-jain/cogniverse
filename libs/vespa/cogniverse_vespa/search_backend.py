@@ -35,8 +35,26 @@ from cogniverse_sdk.document import (
 from cogniverse_sdk.interfaces.backend import SearchBackend
 from cogniverse_vespa._vespa_factory import make_vespa_app
 from cogniverse_vespa._yql import yql_quote
+from cogniverse_vespa.embedding_processor import _is_single_vector_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _format_query_vector_param(arr: np.ndarray, schema_name: str):
+    """Format a query embedding for a Vespa query-tensor input.
+
+    Single-vector schemas bind a dense ``tensor(v[dim])``; multi-vector schemas
+    bind a ``{token: vector}`` mapping. A ``(1, dim)`` array is a single vector
+    either way, so flatten it for the dense case and only dict-ify a genuine
+    multi-row input.
+    """
+    if _is_single_vector_schema(schema_name):
+        if arr.ndim == 2:
+            arr = arr[0]
+        return arr.tolist()
+    if arr.ndim == 2:
+        return {str(i): v.tolist() for i, v in enumerate(arr)}
+    return arr.tolist()
 
 
 def _yql_scalar(value: object, field: str) -> str:
@@ -1006,15 +1024,9 @@ class VespaSearchBackend(SearchBackend):
                     logger.debug(
                         f"[{correlation_id}] Adding float embeddings for {vespa_param_name}"
                     )
-                    # For multi-vector models, convert to dict format as per Vespa docs
-                    # Keys must be strings for JSON serialization (httpr requirement)
-                    if query_embeddings.ndim == 2:
-                        query_params[vespa_param_name] = {
-                            str(index): vector.tolist()
-                            for index, vector in enumerate(query_embeddings)
-                        }
-                    else:
-                        query_params[vespa_param_name] = query_embeddings.tolist()
+                    query_params[vespa_param_name] = _format_query_vector_param(
+                        query_embeddings, schema_name
+                    )
 
                 elif input_name == "qtb" and "int8" in input_type:
                     logger.debug(
@@ -1026,21 +1038,9 @@ class VespaSearchBackend(SearchBackend):
                     logger.debug(
                         f"[{correlation_id}] Binary embeddings shape: {binary_embeddings.shape}, dtype: {binary_embeddings.dtype}"
                     )
-                    # For multi-vector models, convert to dict format as per Vespa docs
-                    # Keys must be strings for JSON serialization (httpr requirement)
-                    if binary_embeddings.ndim == 2:
-                        query_params[vespa_param_name] = {
-                            str(index): vector.tolist()
-                            for index, vector in enumerate(binary_embeddings)
-                        }
-                        logger.debug(
-                            f"[{correlation_id}] Binary embeddings (2D) first vector (first 5): {binary_embeddings[0][:5].tolist()}"
-                        )
-                    else:
-                        query_params[vespa_param_name] = binary_embeddings.tolist()
-                        logger.debug(
-                            f"[{correlation_id}] Binary embeddings (1D) first 5 values: {binary_embeddings[:5].tolist()}"
-                        )
+                    query_params[vespa_param_name] = _format_query_vector_param(
+                        binary_embeddings, schema_name
+                    )
 
                 elif input_name == "q":
                     logger.debug(
