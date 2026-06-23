@@ -10,6 +10,7 @@ These helpers apply the same magnitude guard and assume UTC for naive input.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -26,6 +27,8 @@ def to_epoch_seconds(value: Any) -> Optional[int]:
         return None
     if isinstance(value, (int, float)):
         ts = float(value)
+        if not math.isfinite(ts):  # inf would never exit the loop below; nan int()s raise
+            return None
         while ts > _MAX_S_EPOCH:  # collapse ms/us/ns magnitudes down to seconds
             ts /= 1000.0
         return int(ts)

@@ -65,3 +65,10 @@ def test_epoch_to_iso_utc_survives_absurd_magnitude():
     # A value far beyond ms used to reach datetime.fromtimestamp and raise
     # OSError/OverflowError (swallowed on the read path); now it collapses.
     assert epoch_to_iso_utc(_S * 10**9) == "2023-11-14T22:13:20+00:00"
+
+
+def test_to_epoch_seconds_returns_none_for_non_finite():
+    # inf would spin the ms-collapse loop forever; nan/-inf int() raises.
+    assert to_epoch_seconds(float("inf")) is None
+    assert to_epoch_seconds(float("-inf")) is None
+    assert to_epoch_seconds(float("nan")) is None
