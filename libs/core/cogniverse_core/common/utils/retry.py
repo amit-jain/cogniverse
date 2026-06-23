@@ -136,7 +136,6 @@ class RetryableOperation:
     ):
         self.config = config or RetryConfig()
         self.correlation_id = correlation_id or "default"
-        self._attempt = 0
 
     def __enter__(self):
         return self
@@ -149,7 +148,6 @@ class RetryableOperation:
         last_exception = None
 
         for attempt in range(1, self.config.max_attempts + 1):
-            self._attempt = attempt
 
             try:
                 return operation()
