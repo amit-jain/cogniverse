@@ -179,6 +179,13 @@ grep -rnP '"(wait|wait_timeout|force|limit|timeout_s)"\s*:' tests/ --include="*.
 # inside KG extraction; ConnectError destroyed entities+claims already
 # extracted). Look for conditional `if <feature>_url:` calls without try.
 grep -rnP 'if \w+_(url|endpoint):' libs/ --include="*.py" -A3 | grep -B2 -A2 "_run_\|_pipeline(" | grep -v "try:"
+
+# Epoch value passed through as int() with NO seconds-vs-milliseconds magnitude
+# guard nearby — the write side hardened ms-vs-s (_validate_ms/_validate_s) but
+# read/filter sites reuse the same isinstance((int,float)) shape with a bare
+# int(v) (search_agent _epoch_ms; memory _compute_age_seconds before the fix).
+# For each hit, confirm a *1000 / //1000 / >1e11 magnitude check within ~3 lines.
+grep -rnP 'return int\((v|ts|value|timestamp|raw|created_at)\)\s*$' libs/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
