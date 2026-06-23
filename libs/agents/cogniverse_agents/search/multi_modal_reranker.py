@@ -7,9 +7,15 @@ modality-query alignment.
 """
 
 import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from cogniverse_agents.search.types import QueryModality, RerankerSearchResult
+
+
+def _as_utc_aware(dt: datetime) -> datetime:
+    """Attach UTC to a naive datetime so naive and aware timestamps compare."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 class MultiModalReranker:
@@ -199,22 +205,25 @@ class MultiModalReranker:
             return 0.5
 
         start_time, end_time = time_range
+        start_time = _as_utc_aware(start_time)
+        end_time = _as_utc_aware(end_time)
+        ts = _as_utc_aware(result.timestamp)
 
         # Check if result falls within time range
-        if start_time <= result.timestamp <= end_time:
+        if start_time <= ts <= end_time:
             # Calculate how centered the result is in the range
             range_duration = (end_time - start_time).total_seconds()
             if range_duration > 0:
-                offset_from_start = (result.timestamp - start_time).total_seconds()
+                offset_from_start = (ts - start_time).total_seconds()
                 centrality = 1.0 - abs(0.5 - (offset_from_start / range_duration)) * 2
                 return 0.7 + (centrality * 0.3)  # 0.7-1.0 range
             return 1.0
 
         # Result outside range - penalize based on distance
-        if result.timestamp < start_time:
-            days_before = (start_time - result.timestamp).days
+        if ts < start_time:
+            days_before = (start_time - ts).days
         else:
-            days_before = (result.timestamp - end_time).days
+            days_before = (ts - end_time).days
 
         # Exponential decay
         if days_before < 30:
