@@ -16,7 +16,12 @@ def pool_document_tokens(embeddings: np.ndarray, pool_factor: int | None) -> np.
     ``pool_factor`` None/<=1, or a single-token input, returns the input
     unchanged. Output rows are L2-normalized (MaxSim-compatible).
     """
-    if pool_factor is None or pool_factor <= 1 or embeddings.shape[0] <= 1:
+    if (
+        pool_factor is None
+        or pool_factor <= 1
+        or embeddings.ndim < 2
+        or embeddings.shape[0] <= 1
+    ):
         return embeddings
     import torch
     from colpali_engine.compression.token_pooling import HierarchicalTokenPooler
