@@ -546,7 +546,7 @@ class VideoIngestionPipeline:
             filename = kf.get("filename") or (
                 Path(kf["path"]).name
                 if kf.get("path")
-                else f"{video_path.stem}_keyframe_{kf['frame_id']:04d}.jpg"
+                else f"{video_path.stem}_keyframe_{int(kf['frame_id']):04d}.jpg"
             )
             target = keyframes_dir / filename
             cv2.imwrite(str(target), image)
