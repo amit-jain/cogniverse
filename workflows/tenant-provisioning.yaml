@@ -62,22 +62,6 @@ spec:
             exit 1
           fi
 
-          # Check if tenant already exists
-          cd /app
-          TENANT_EXISTS=$(uv run python -c "
-          from cogniverse_vespa import VespaBackend
-          from cogniverse_foundation.config import SystemConfig
-          config = SystemConfig(tenant_id='{{workflow.parameters.tenant-id}}')
-          backend = VespaBackend(config)
-          # Check if any schemas exist for this tenant
-          print('exists')  # Placeholder - add actual check
-          " 2>/dev/null || echo "new")
-
-          if [ "$TENANT_EXISTS" = "exists" ]; then
-            echo "ERROR: Tenant {{workflow.parameters.tenant-id}} already exists"
-            exit 1
-          fi
-
           echo "Tenant validation passed"
       resources:
         requests:
@@ -149,22 +133,10 @@ spec:
           PROJECT_NAME="{{workflow.parameters.tenant-id}}_project"
           echo "Project name: $PROJECT_NAME"
 
-          # Phoenix projects are created automatically on first trace
-          # We'll send a test trace to initialize the project
           cd /app
-          uv run python -c "
-          from cogniverse_foundation.config import SystemConfig
-          from cogniverse_foundation.telemetry import TelemetryManager
-
-          config = SystemConfig(
-              tenant_id='{{workflow.parameters.tenant-id}}',
-              phoenix_enabled=True,
-              phoenix_project_name='$PROJECT_NAME'
-          )
-
-          telemetry = TelemetryManager(config)
-          print(f'Phoenix project {PROJECT_NAME} initialized')
-          "
+          uv run python scripts/provision_tenant.py \
+            --step telemetry \
+            --tenant-id "{{workflow.parameters.tenant-id}}"
 
           echo "Phoenix project created"
       env:
@@ -227,28 +199,16 @@ spec:
           echo "Initializing memory system for tenant..."
 
           cd /app
-          uv run python -c "
-          from cogniverse_foundation.config import SystemConfig
-          from cogniverse_core.memory.manager import Mem0MemoryManager
-
-          config = SystemConfig(
-              tenant_id='{{workflow.parameters.tenant-id}}',
-              vespa_url='http://cogniverse-vespa:8080',
-              vespa_config_port=19071
-          )
-
-          memory = Mem0MemoryManager(config)
-          memory.initialize()
-
-          print('Memory system initialized for tenant {{workflow.parameters.tenant-id}}')
-          "
+          uv run python scripts/provision_tenant.py \
+            --step memory \
+            --tenant-id "{{workflow.parameters.tenant-id}}"
 
           echo "Memory system ready"
       env:
-      - name: VESPA_URL
-        value: "http://cogniverse-vespa:8080"
-      - name: VESPA_CONFIG_PORT
-        value: "19071"
+      - name: BACKEND_URL
+        value: "http://cogniverse-vespa"
+      - name: BACKEND_PORT
+        value: "8080"
       resources:
         requests:
           memory: "2Gi"
