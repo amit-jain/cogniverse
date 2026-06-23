@@ -275,9 +275,7 @@ class StructuredFilesystemBackend(CacheBackend):
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Write data
-            if isinstance(value, bytes) and key.endswith(
-                tuple(f":frame_{i}" for i in range(10000))
-            ):
+            if isinstance(value, bytes) and file_path.suffix == ".jpg":
                 # This is image data
                 async with aiofiles.open(file_path, "wb") as f:
                     await f.write(value)
