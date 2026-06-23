@@ -24,7 +24,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional, Protocol, Union, runtime_checkable
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskState(str, Enum):
@@ -59,8 +59,7 @@ class BaseEvent(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     event_type: EventType
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class StatusEvent(BaseEvent):
@@ -75,8 +74,7 @@ class StatusEvent(BaseEvent):
     phase: Optional[str] = Field(None, description="Current execution phase")
     message: Optional[str] = Field(None, description="Human-readable status message")
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class ProgressEvent(BaseEvent):

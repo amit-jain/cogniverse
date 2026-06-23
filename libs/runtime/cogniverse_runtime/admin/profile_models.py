@@ -6,7 +6,7 @@ Request/response models for backend profile CRUD operations.
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Valid embedding types - must match ProfileValidator.VALID_EMBEDDING_TYPES
 EmbeddingType = Literal["multi_vector", "single_vector"]
@@ -62,8 +62,8 @@ class ProfileCreateRequest(BaseModel):
         default=False, description="Deploy schema to Vespa immediately after creation"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "profile_name": "custom_colpali_high_quality",
                 "tenant_id": "acme",
@@ -98,6 +98,7 @@ class ProfileCreateRequest(BaseModel):
                 "deploy_schema": True,
             }
         }
+    )
 
 
 class ProfileCreateResponse(BaseModel):
@@ -170,14 +171,15 @@ class ProfileUpdateRequest(BaseModel):
         None, description="Updated model-specific parameters"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "tenant_id": "acme",
                 "pipeline_config": {"keyframe_fps": 30.0},
                 "description": "Updated description",
             }
         }
+    )
 
 
 class ProfileUpdateResponse(BaseModel):

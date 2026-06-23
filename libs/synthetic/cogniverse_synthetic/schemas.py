@@ -8,7 +8,7 @@ Each schema corresponds to the training data format expected by an optimizer.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ProfileSelectionExampleSchema(BaseModel):
@@ -44,8 +44,8 @@ class ProfileSelectionExampleSchema(BaseModel):
         ..., description="Query complexity: simple, medium, complex"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "find a clip about transformer architecture",
                 "available_profiles": (
@@ -62,6 +62,7 @@ class ProfileSelectionExampleSchema(BaseModel):
                 "complexity": "medium",
             }
         }
+    )
 
 
 class RoutingExperienceSchema(BaseModel):
@@ -101,8 +102,8 @@ class RoutingExperienceSchema(BaseModel):
         default_factory=dict, description="Additional metadata"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "query": "find TensorFlow tutorials on neural networks",
                 "entities": [
@@ -124,6 +125,7 @@ class RoutingExperienceSchema(BaseModel):
                 "user_satisfaction": 0.9,
             }
         }
+    )
 
 
 class WorkflowExecutionSchema(BaseModel):
@@ -162,8 +164,8 @@ class WorkflowExecutionSchema(BaseModel):
         default_factory=dict, description="Additional metadata"
     )
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "workflow_id": "synthetic_workflow_001",
                 "query": "summarize machine learning video and create report",
@@ -181,6 +183,7 @@ class WorkflowExecutionSchema(BaseModel):
                 "user_satisfaction": 0.9,
             }
         }
+    )
 
 
 class SyntheticDataRequest(BaseModel):
@@ -208,8 +211,8 @@ class SyntheticDataRequest(BaseModel):
     )
     tenant_id: str = Field(..., description="Tenant identifier (required)")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "optimizer": "profile",
                 "count": 100,
@@ -219,6 +222,7 @@ class SyntheticDataRequest(BaseModel):
                 "tenant_id": "acme:production",
             }
         }
+    )
 
 
 class SyntheticDataResponse(BaseModel):
@@ -234,8 +238,8 @@ class SyntheticDataResponse(BaseModel):
     data: List[Dict[str, Any]] = Field(..., description="Generated synthetic data")
     metadata: Dict[str, Any] = Field(..., description="Generation metadata")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "optimizer": "profile",
                 "schema_name": "ProfileSelectionExampleSchema",
@@ -253,3 +257,4 @@ class SyntheticDataResponse(BaseModel):
                 },
             }
         }
+    )

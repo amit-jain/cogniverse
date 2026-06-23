@@ -6,7 +6,7 @@ Minimal backend-agnostic configuration for mem0 vector store integration.
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BackendConfig(BaseModel):
@@ -29,5 +29,6 @@ class BackendConfig(BaseModel):
         ..., description="Base schema/profile name (without tenant suffix)"
     )
 
-    class Config:
-        arbitrary_types_allowed = True  # Allow backend_client (non-pydantic)
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True  # Allow backend_client (non-pydantic)
+    )
