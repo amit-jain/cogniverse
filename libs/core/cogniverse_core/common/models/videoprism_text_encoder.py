@@ -565,15 +565,6 @@ class VideoPrismTextEncoder:
                 ),
             }
 
-    def load(self):
-        """Compatibility method for v1 interface - model loading is handled internally"""
-        # In v2, model loading happens lazily on first use
-        # This method exists for backward compatibility
-        logger.info(
-            f"[{self.correlation_id}] Load called (no-op in v2, loading happens lazily)"
-        )
-        return self
-
     def clear_cache(self):
         """Clear the embedding cache"""
         if hasattr(self, "_cached_encode"):

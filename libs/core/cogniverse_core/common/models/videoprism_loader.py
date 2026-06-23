@@ -584,8 +584,7 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
             self.text_encoder = VideoPrismTextEncoder(
                 self.model_name, self.embedding_dim
             )
-            self.text_encoder.load()
-            logger.info("Text encoder loaded successfully")
+            logger.info("Text encoder ready (model loads lazily on first use)")
         except Exception as e:
             logger.error(f"Failed to load text encoder: {e}")
             self.text_encoder = None
