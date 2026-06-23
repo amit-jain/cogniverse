@@ -338,9 +338,9 @@ spec:
         # argo-workflows subchart exposes its server as ``{release}-argo-workflows-server``
         # in the same namespace when server.enabled=true; the dashboard path
         # requires that flag.
-        - name: ARGO_API_URL
+        - name: WORKFLOW_API_URL
           value: "http://{{ .Release.Name }}-argo-workflows-server.{{ .Release.Namespace }}.svc.cluster.local:2746"
-        - name: ARGO_NAMESPACE
+        - name: WORKFLOW_NAMESPACE
           value: {{ .Release.Namespace | quote }}
         # Workflow pods must run under the runtime SA, which the chart RBAC
         # binds to the ``workflowtaskresults`` permission Argo Emissary needs
@@ -349,6 +349,10 @@ spec:
         # succeeded.
         - name: RUNTIME_SERVICE_ACCOUNT
           value: {{ include "cogniverse.serviceAccountName" . | quote }}
+        - name: JOB_WORKFLOW_TEMPLATE
+          value: {{ include "cogniverse.fullname" . }}-job-runner
+        - name: OPTIMIZATION_WORKFLOW_TEMPLATE
+          value: {{ include "cogniverse.fullname" . }}-optimization-runner
         {{- end }}
         # Generic inference-service URL map. Profiles pick a service by key
         # via their ``inference_service`` field; the runtime resolves the URL

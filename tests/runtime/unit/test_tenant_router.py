@@ -25,26 +25,33 @@ def reset_config_manager():
     tenant._config_manager = original
 
 
-@pytest.fixture(autouse=True)
-def reset_argo_module_state():
-    """Reset Argo module-level state between tests.
+from cogniverse_runtime.config_loader import WorkflowSettings, get_workflow_settings
 
-    `set_argo_config` stores api_url/namespace/service_account in module
-    globals; without a reset, one test's snapshot bleeds into the next."""
-    snapshot = (
-        tenant._argo_api_url,
-        tenant._argo_namespace,
-        tenant._runtime_service_account,
+
+def _configure_workflow(
+    api_url=None,
+    namespace="cogniverse",
+    service_account="default",
+    job_template="cogniverse-job-runner",
+    optimization_template="cogniverse-optimization-runner",
+):
+    """Set the cached workflow settings the tenant router reads."""
+    get_workflow_settings._instance = WorkflowSettings(
+        api_url=api_url,
+        namespace=namespace,
+        service_account=service_account,
+        job_template=job_template,
+        optimization_template=optimization_template,
     )
-    tenant._argo_api_url = None
-    tenant._argo_namespace = "cogniverse"
-    tenant._runtime_service_account = "default"
+
+
+@pytest.fixture(autouse=True)
+def reset_workflow_settings():
+    """Reset workflow settings between tests; default has templates set."""
+    _configure_workflow()
     yield
-    (
-        tenant._argo_api_url,
-        tenant._argo_namespace,
-        tenant._runtime_service_account,
-    ) = snapshot
+    if hasattr(get_workflow_settings, "_instance"):
+        del get_workflow_settings._instance
 
 
 @pytest.fixture
@@ -591,44 +598,40 @@ class TestCreateJob:
         assert stored["job_id"] == job_id
 
     def test_no_argo_url_skips_workflow_submit(self, tenant_client):
-        """When _argo_api_url is None (default), no HTTP call is made."""
+        """When no workflow api_url is configured, no HTTP call is made."""
         client, cm = tenant_client
-        original = tenant._argo_api_url
-        tenant._argo_api_url = None
-        try:
-            resp = client.post(
-                "/acme/jobs",
-                json={"name": "test", "schedule": "0 9 * * 1", "query": "test query"},
-            )
-            assert resp.status_code == 200
-        finally:
-            tenant._argo_api_url = original
+        _configure_workflow(api_url=None)
+        resp = client.post(
+            "/acme/jobs",
+            json={"name": "test", "schedule": "0 9 * * 1", "query": "test query"},
+        )
+        assert resp.status_code == 200
 
     def test_argo_url_set_submits_cron_workflow(self, tenant_client):
-        """When _argo_api_url is configured, _submit_cron_workflow is called."""
+        """When the workflow api_url is configured, _submit_cron_workflow runs."""
         client, cm = tenant_client
-        original = tenant._argo_api_url
-        tenant._argo_api_url = "http://argo-server:2746"
-        try:
-            with patch(
-                "cogniverse_runtime.routers.tenant._submit_cron_workflow",
-                new_callable=AsyncMock,
-            ) as mock_submit:
-                resp = client.post(
-                    "/acme/jobs",
-                    json={
-                        "name": "test",
-                        "schedule": "0 9 * * 1",
-                        "query": "test query",
-                    },
-                )
-                assert resp.status_code == 200
-                mock_submit.assert_awaited_once()
-                manifest = mock_submit.call_args[0][0]
-                assert manifest["kind"] == "CronWorkflow"
-                assert manifest["spec"]["schedule"] == "0 9 * * 1"
-        finally:
-            tenant._argo_api_url = original
+        _configure_workflow(api_url="http://argo-server:2746")
+        with patch(
+            "cogniverse_runtime.routers.tenant._submit_cron_workflow",
+            new_callable=AsyncMock,
+        ) as mock_submit:
+            resp = client.post(
+                "/acme/jobs",
+                json={
+                    "name": "test",
+                    "schedule": "0 9 * * 1",
+                    "query": "test query",
+                },
+            )
+            assert resp.status_code == 200
+            mock_submit.assert_awaited_once()
+            manifest = mock_submit.call_args[0][0]
+            assert manifest["kind"] == "CronWorkflow"
+            assert manifest["spec"]["schedule"] == "0 9 * * 1"
+            assert (
+                manifest["spec"]["workflowSpec"]["workflowTemplateRef"]["name"]
+                == "cogniverse-job-runner"
+            )
 
 
 @pytest.mark.unit
@@ -897,150 +900,66 @@ class TestJobExecutorRoundTrip:
 
 @pytest.mark.unit
 @pytest.mark.ci_fast
-class TestArgoEnvironmentWiring:
-    """verify the runtime startup actually wires Argo.
+class TestWorkflowSettingsFromEnvironment:
+    """``WorkflowSettings.from_environment`` reads the deployment env vars; the
+    tenant router reads them via ``get_workflow_settings`` to submit jobs."""
 
-    Before this fix ``set_argo_config()`` was defined but never called from
-    ``main.py``, so ``tenant._argo_api_url`` stayed ``None`` and POST /jobs
-    silently dropped the CronWorkflow submission. These tests pin the
-    helper that the lifespan calls and the round-trip from env var → POST
-    /jobs → submitted manifest.
-    """
+    def test_reads_api_url_and_namespace(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_API_URL", "http://argo-server:2746")
+        monkeypatch.setenv("WORKFLOW_NAMESPACE", "production")
+        s = WorkflowSettings.from_environment()
+        assert s.api_url == "http://argo-server:2746"
+        assert s.namespace == "production"
 
-    @pytest.fixture(autouse=True)
-    def reset_argo_state(self):
-        """Snapshot and restore tenant._argo_api_url around each test."""
-        original_url = tenant._argo_api_url
-        original_ns = tenant._argo_namespace
-        yield
-        tenant._argo_api_url = original_url
-        tenant._argo_namespace = original_ns
+    def test_api_url_none_when_missing(self, monkeypatch):
+        monkeypatch.delenv("WORKFLOW_API_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_NAMESPACE", raising=False)
+        s = WorkflowSettings.from_environment()
+        assert s.api_url is None
+        assert s.namespace == "cogniverse"
 
-    def test_helper_sets_argo_url_when_env_var_present(self, monkeypatch):
-        """When ARGO_API_URL is set, the helper must populate the module
-        state via set_argo_config()."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
+    def test_empty_string_api_url_is_none(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_API_URL", "")
+        assert WorkflowSettings.from_environment().api_url is None
 
-        tenant._argo_api_url = None
-        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
-        monkeypatch.setenv("ARGO_NAMESPACE", "production")
-
-        _wire_argo_from_environment()
-
-        assert tenant._argo_api_url == "http://argo-server:2746"
-        assert tenant._argo_namespace == "production"
-
-    def test_helper_leaves_argo_url_none_when_env_var_missing(self, monkeypatch):
-        """When ARGO_API_URL is unset, the helper must explicitly set
-        _argo_api_url to None — not raise — so that POST /jobs degrades
-        gracefully (persist without scheduling)."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
-        tenant._argo_api_url = "stale-value"
-        monkeypatch.delenv("ARGO_API_URL", raising=False)
-        monkeypatch.delenv("ARGO_NAMESPACE", raising=False)
-
-        _wire_argo_from_environment()
-
-        assert tenant._argo_api_url is None
-        assert tenant._argo_namespace == "cogniverse"
-
-    def test_helper_treats_empty_string_as_unset(self, monkeypatch):
-        """Helm sometimes injects empty strings for unset values; the
-        helper must coerce empty → None so the conditional in create_job
-        still skips submission."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
-        monkeypatch.setenv("ARGO_API_URL", "")
-
-        _wire_argo_from_environment()
-
-        assert tenant._argo_api_url is None
-
-    def test_helper_reads_service_account_from_env(self, monkeypatch):
-        """``_wire_argo_from_environment`` reads ``RUNTIME_SERVICE_ACCOUNT``
-        so the SA the chart RBAC-bound to ``workflowtaskresults`` lands on
-        the submitted Workflow's ``spec.serviceAccountName``."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
-        monkeypatch.setenv("ARGO_API_URL", "http://argo:2746")
+    def test_reads_service_account_and_templates(self, monkeypatch):
         monkeypatch.setenv("RUNTIME_SERVICE_ACCOUNT", "cogniverse-runner")
+        monkeypatch.setenv("JOB_WORKFLOW_TEMPLATE", "cv-job")
+        monkeypatch.setenv("OPTIMIZATION_WORKFLOW_TEMPLATE", "cv-opt")
+        s = WorkflowSettings.from_environment()
+        assert s.service_account == "cogniverse-runner"
+        assert s.job_template == "cv-job"
+        assert s.optimization_template == "cv-opt"
 
-        _wire_argo_from_environment()
-
-        assert tenant._runtime_service_account == "cogniverse-runner"
-
-    def test_helper_defaults_service_account_when_missing(self, monkeypatch):
-        """Without RUNTIME_SERVICE_ACCOUNT set, the default 'default' is
-        used so local dev still works. Production Helm values always set
-        it; defaulting is for dev/tests."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
-        monkeypatch.setenv("ARGO_API_URL", "http://argo:2746")
+    def test_service_account_defaults_when_missing(self, monkeypatch):
         monkeypatch.delenv("RUNTIME_SERVICE_ACCOUNT", raising=False)
+        assert WorkflowSettings.from_environment().service_account == "default"
 
-        _wire_argo_from_environment()
-
-        assert tenant._runtime_service_account == "default"
-
-    def test_round_trip_env_var_set_then_post_submits_workflow(
-        self, monkeypatch, tenant_client
-    ):
-        """End-to-end round trip: set ARGO_API_URL, run the wire helper,
-        POST /jobs, assert that the CronWorkflow submission was actually
-        attempted. This is the test that would have caught the original
-        bug — without the wire-up call, _argo_api_url would stay None and
-        _submit_cron_workflow would never be reached."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
+    def test_round_trip_configured_then_post_submits(self, tenant_client):
         client, _cm = tenant_client
-        monkeypatch.setenv("ARGO_API_URL", "http://argo-server:2746")
-
-        _wire_argo_from_environment()
-        assert tenant._argo_api_url == "http://argo-server:2746"
-
+        _configure_workflow(api_url="http://argo-server:2746")
         with patch(
             "cogniverse_runtime.routers.tenant._submit_cron_workflow",
             new_callable=AsyncMock,
         ) as mock_submit:
             resp = client.post(
                 "/acme/jobs",
-                json={
-                    "name": "daily_news",
-                    "schedule": "0 8 * * *",
-                    "query": "latest AI papers",
-                },
+                json={"name": "n", "schedule": "0 8 * * *", "query": "q"},
             )
             assert resp.status_code == 200
             mock_submit.assert_awaited_once()
-            manifest = mock_submit.call_args[0][0]
-            assert manifest["kind"] == "CronWorkflow"
-            assert manifest["spec"]["schedule"] == "0 8 * * *"
+            assert mock_submit.call_args[0][0]["kind"] == "CronWorkflow"
 
-    def test_round_trip_env_var_unset_then_post_skips_workflow(
-        self, monkeypatch, tenant_client
-    ):
-        """Symmetric round trip: when ARGO_API_URL is missing, POST /jobs
-        must still succeed (persist) but NOT call _submit_cron_workflow."""
-        from cogniverse_runtime.main import _wire_argo_from_environment
-
+    def test_round_trip_unconfigured_then_post_skips(self, tenant_client):
         client, _cm = tenant_client
-        monkeypatch.delenv("ARGO_API_URL", raising=False)
-
-        _wire_argo_from_environment()
-        assert tenant._argo_api_url is None
-
+        _configure_workflow(api_url=None)
         with patch(
             "cogniverse_runtime.routers.tenant._submit_cron_workflow",
             new_callable=AsyncMock,
         ) as mock_submit:
             resp = client.post(
                 "/acme/jobs",
-                json={
-                    "name": "daily_news",
-                    "schedule": "0 8 * * *",
-                    "query": "latest AI papers",
-                },
+                json={"name": "n", "schedule": "0 8 * * *", "query": "q"},
             )
             assert resp.status_code == 200
             mock_submit.assert_not_awaited()
@@ -1050,7 +969,7 @@ class TestArgoEnvironmentWiring:
 def argo_configured_client(mock_config_manager):
     """TestClient with Argo configured so /optimize endpoints are live."""
     tenant.set_config_manager(mock_config_manager)
-    tenant.set_argo_config(
+    _configure_workflow(
         api_url="http://argo.test:2746",
         namespace="cogniverse",
     )
@@ -1060,7 +979,7 @@ def argo_configured_client(mock_config_manager):
         with TestClient(app, raise_server_exceptions=False) as client:
             yield client
     finally:
-        tenant.set_argo_config(api_url=None, namespace="cogniverse")
+        _configure_workflow(api_url=None, namespace="cogniverse")
 
 
 @pytest.mark.unit
@@ -1069,7 +988,7 @@ class TestBuildOptimizationWorkflowManifest:
     """Manifest builder produces a runnable one-off Workflow spec."""
 
     def test_manifest_shape_and_ttl(self):
-        tenant.set_argo_config(
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
         )
@@ -1078,7 +997,7 @@ class TestBuildOptimizationWorkflowManifest:
                 tenant_id="acme", mode="simba", namespace="cogniverse"
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
 
         assert manifest["apiVersion"] == "argoproj.io/v1alpha1"
         assert manifest["kind"] == "Workflow"
@@ -1099,7 +1018,7 @@ class TestBuildOptimizationWorkflowManifest:
         """Workflow pods must run under the configured runtime SA so Argo
         Emissary has RBAC to post ``workflowtaskresults``. Without it Argo
         marks otherwise-successful Workflows as ``Error``."""
-        tenant.set_argo_config(
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
             service_account="cogniverse",
@@ -1109,25 +1028,24 @@ class TestBuildOptimizationWorkflowManifest:
                 tenant_id="acme", mode="simba", namespace="cogniverse"
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
 
         assert manifest["spec"]["serviceAccountName"] == "cogniverse"
 
     def test_manifest_falls_back_to_default_sa_when_unconfigured(self):
         """Local/dev/unit-test callers that never set the SA get a sane
         fallback — the Workflow still serialises."""
-        # Reset to module defaults explicitly.
-        tenant._runtime_service_account = "default"
-        tenant.set_argo_config(
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
+            service_account="default",
         )
         try:
             manifest = tenant._build_optimization_workflow_manifest(
                 tenant_id="acme", mode="simba", namespace="cogniverse"
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
 
         assert manifest["spec"]["serviceAccountName"] == "default"
 
@@ -1135,7 +1053,7 @@ class TestBuildOptimizationWorkflowManifest:
         """K8s labels reject ``:`` (and other chars common in tenant IDs).
         The tenant label must be sanitized, while the CLI arg preserves
         the raw ID so the optimizer loads the right tenant config."""
-        tenant.set_argo_config(
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
         )
@@ -1146,7 +1064,7 @@ class TestBuildOptimizationWorkflowManifest:
                 namespace="cogniverse",
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
 
         label = manifest["metadata"]["labels"]["cogniverse.ai/tenant"]
         assert ":" not in label
@@ -1169,7 +1087,7 @@ class TestBuildOptimizationWorkflowManifest:
         """The runtime delegates container spec to the cluster-installed
         WorkflowTemplate. What the runtime owns is the Workflow's identity
         (name, labels, TTL, SA) and the arguments passed to the template."""
-        tenant.set_argo_config(
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
         )
@@ -1178,7 +1096,7 @@ class TestBuildOptimizationWorkflowManifest:
                 tenant_id="acme:prod", mode="gateway-thresholds", namespace="ns1"
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
 
         spec = manifest["spec"]
         assert spec["workflowTemplateRef"] == {
@@ -1196,11 +1114,9 @@ class TestBuildOptimizationWorkflowManifest:
             "lookback-hours": "48",
         }
 
-    def test_manifest_template_ref_is_constant(self):
-        """The WorkflowTemplate name is the contract between the chart and
-        the runtime — hardcoded string, not a module global, so a typo in
-        one side fails unit-test parity with the other."""
-        tenant.set_argo_config(
+    def test_manifest_template_ref_uses_configured_name(self):
+        """The manifest references the workflow template name from settings."""
+        _configure_workflow(
             api_url="http://argo.test:2746",
             namespace="cogniverse",
         )
@@ -1209,7 +1125,7 @@ class TestBuildOptimizationWorkflowManifest:
                 tenant_id="t", mode="profile", namespace="cogniverse"
             )
         finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
+            _configure_workflow(api_url=None, namespace="cogniverse")
         # Must match the WorkflowTemplate metadata.name produced by
         # charts/cogniverse/templates/optimization-workflow-template.yaml
         # (which uses include "cogniverse.fullname" = release name).
@@ -1272,7 +1188,7 @@ class TestPostManualOptimize:
 
     def test_503_when_argo_not_configured(self, mock_config_manager):
         tenant.set_config_manager(mock_config_manager)
-        tenant.set_argo_config(api_url=None, namespace="cogniverse")
+        _configure_workflow(api_url=None, namespace="cogniverse")
         app = FastAPI()
         app.include_router(tenant.router)
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -1623,43 +1539,6 @@ class TestRetryManualOptimize:
         assert resp.status_code == 404
 
 
-@pytest.mark.unit
-@pytest.mark.ci_fast
-class TestSetArgoConfig:
-    """set_argo_config stores api_url / namespace / service_account; default
-    for service_account is preserved across calls that omit it."""
-
-    def test_updates_all_fields(self):
-        tenant.set_argo_config(
-            api_url="http://x:1",
-            namespace="ns",
-            service_account="runner",
-        )
-        try:
-            assert tenant._argo_api_url == "http://x:1"
-            assert tenant._argo_namespace == "ns"
-            assert tenant._runtime_service_account == "runner"
-        finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
-
-    def test_omitting_service_account_preserves_prior_snapshot(self):
-        """Calling set_argo_config without service_account keeps the previously
-        snapshotted value — guards against clearing the SA on a later
-        argo-disable call."""
-        tenant.set_argo_config(
-            api_url="http://x:1",
-            namespace="ns",
-            service_account="runner-keep",
-        )
-        try:
-            tenant.set_argo_config(api_url="http://y:2", namespace="ns2")
-            assert tenant._runtime_service_account == "runner-keep"
-            assert tenant._argo_api_url == "http://y:2"
-            assert tenant._argo_namespace == "ns2"
-        finally:
-            tenant.set_argo_config(api_url=None, namespace="cogniverse")
-
-
 _RFC1123_NAME = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
@@ -1691,9 +1570,12 @@ class TestCronWorkflowName:
         assert meta["name"] == tenant._cron_workflow_name("acme:production", "abc123")
         # The tenant label must also be sanitized (no colon).
         assert ":" not in meta["labels"]["tenant"]
-        # The raw tenant_id is still threaded to the job via the CLI arg.
-        args = manifest["spec"]["workflowSpec"]["templates"][0]["container"]["args"]
-        assert "acme:production" in args
+        # The raw tenant_id is threaded to the job via the workflow parameter.
+        params = {
+            p["name"]: p["value"]
+            for p in manifest["spec"]["workflowSpec"]["arguments"]["parameters"]
+        }
+        assert params["tenant-id"] == "acme:production"
 
     def test_create_and_delete_derive_identical_name(self):
         # Both paths go through the same helper, so a created CronWorkflow can

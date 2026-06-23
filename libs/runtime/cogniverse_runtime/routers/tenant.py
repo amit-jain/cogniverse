@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_runtime.config_loader import get_workflow_settings
 from cogniverse_sdk.interfaces.config_store import ConfigScope
 
 logger = logging.getLogger(__name__)
@@ -27,42 +28,11 @@ router = APIRouter()
 # Module-level config manager — set by main.py at startup
 _config_manager: Optional[ConfigManager] = None
 
-# Optional Argo API URL — set by main.py if Argo is available
-_argo_api_url: Optional[str] = None
-_argo_namespace: str = "cogniverse"
-
-# ServiceAccount the spawned Workflow pod runs as. Must have RBAC for
-# ``workflowtaskresults.argoproj.io`` (Argo Emissary writes results after the
-# main container exits). Falls back to ``default`` only for local/unit tests;
-# the chart wires the real SA name at startup.
-_runtime_service_account: str = "default"
-
 
 def set_config_manager(config_manager: ConfigManager) -> None:
     """Inject ConfigManager (called from main.py lifespan)."""
     global _config_manager
     _config_manager = config_manager
-
-
-def set_argo_config(
-    api_url: Optional[str],
-    namespace: str = "cogniverse",
-    service_account: Optional[str] = None,
-) -> None:
-    """Inject Argo API URL + runtime SA name (called from main.py lifespan).
-
-    ``service_account`` is the SA the submitted Workflow pods run as —
-    must be RBAC-bound to write ``workflowtaskresults`` (the Emissary
-    posts results after the main container exits, otherwise Argo marks
-    the Workflow ``Error`` even though the real work succeeded). The
-    container image and env var wiring live in the chart-installed
-    ``WorkflowTemplate`` and don't need to be snapshotted here.
-    """
-    global _argo_api_url, _argo_namespace, _runtime_service_account
-    _argo_api_url = api_url
-    _argo_namespace = namespace
-    if service_account:
-        _runtime_service_account = service_account
 
 
 def _require_config_manager() -> ConfigManager:
@@ -423,7 +393,12 @@ _JOBS_SERVICE = "tenant_jobs"
 def _build_cron_workflow(
     tenant_id: str, job_id: str, schedule: str, namespace: str
 ) -> dict:
-    """Build an Argo CronWorkflow manifest for the given job."""
+    """Build an Argo CronWorkflow that runs the job via the job WorkflowTemplate."""
+    if not get_workflow_settings().job_template:
+        raise HTTPException(
+            status_code=503,
+            detail="Job WorkflowTemplate is not configured; cannot schedule jobs.",
+        )
     return {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "CronWorkflow",
@@ -440,28 +415,14 @@ def _build_cron_workflow(
             "schedule": schedule,
             "concurrencyPolicy": "Forbid",
             "workflowSpec": {
-                "entrypoint": "run-job",
-                "templates": [
-                    {
-                        "name": "run-job",
-                        "container": {
-                            "image": "cogniverse-runtime:latest",
-                            "command": [
-                                "python",
-                                "-m",
-                                "cogniverse_runtime.job_executor",
-                            ],
-                            "args": [
-                                "--job-id",
-                                job_id,
-                                "--tenant-id",
-                                tenant_id,
-                                "--runtime-url",
-                                "http://cogniverse-runtime:28000",
-                            ],
-                        },
-                    }
-                ],
+                "serviceAccountName": get_workflow_settings().service_account,
+                "workflowTemplateRef": {"name": get_workflow_settings().job_template},
+                "arguments": {
+                    "parameters": [
+                        {"name": "job-id", "value": job_id},
+                        {"name": "tenant-id", "value": tenant_id},
+                    ],
+                },
             },
         },
     }
@@ -478,7 +439,7 @@ async def _submit_cron_workflow(manifest: dict) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{_argo_api_url}/api/v1/cron-workflows/{namespace}",
+                f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}",
                 # Argo's CreateCronWorkflowRequest wraps the manifest.
                 json={"namespace": namespace, "cronWorkflow": manifest},
                 headers=_argo_auth_headers(),
@@ -518,7 +479,7 @@ async def _delete_cron_workflow(name: str, namespace: str) -> None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.delete(
-                f"{_argo_api_url}/api/v1/cron-workflows/{namespace}/{name}",
+                f"{get_workflow_settings().api_url}/api/v1/cron-workflows/{namespace}/{name}",
                 headers=_argo_auth_headers(),
             )
     except Exception as exc:
@@ -595,19 +556,15 @@ def _cron_workflow_name(tenant_id: str, job_id: str) -> str:
     )
 
 
-_OPTIMIZATION_WORKFLOW_TEMPLATE_NAME = "cogniverse-optimization-runner"
-
-
 def _build_optimization_workflow_manifest(
     tenant_id: str, mode: str, namespace: str
 ) -> dict:
-    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``.
-
-    References the cluster-installed ``WorkflowTemplate`` so the container
-    spec, env var wiring and per-tenant mutex live in one chart file; the
-    scheduled CronWorkflows reference the same template. This prevents
-    the runtime-built and chart-built manifests from drifting.
-    """
+    """Build a one-off Argo Workflow that runs ``optimization_cli --mode``."""
+    if not get_workflow_settings().optimization_template:
+        raise HTTPException(
+            status_code=503,
+            detail="Optimization WorkflowTemplate is not configured.",
+        )
     return {
         "apiVersion": "argoproj.io/v1alpha1",
         "kind": "Workflow",
@@ -626,7 +583,7 @@ def _build_optimization_workflow_manifest(
             # The default namespace SA lacks that permission in typical
             # installs; bind the Workflow to the runtime SA which the chart
             # RBAC grants.
-            "serviceAccountName": _runtime_service_account,
+            "serviceAccountName": get_workflow_settings().service_account,
             # Auto-delete completed workflows after 1 hour so the
             # namespace doesn't fill with dashboard-triggered runs.
             "ttlStrategy": {
@@ -635,7 +592,7 @@ def _build_optimization_workflow_manifest(
                 "secondsAfterFailure": 3600,
             },
             "workflowTemplateRef": {
-                "name": _OPTIMIZATION_WORKFLOW_TEMPLATE_NAME,
+                "name": get_workflow_settings().optimization_template,
             },
             "arguments": {
                 "parameters": [
@@ -654,7 +611,7 @@ async def _submit_workflow(manifest: dict) -> dict:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{_argo_api_url}/api/v1/workflows/{namespace}",
+                f"{get_workflow_settings().api_url}/api/v1/workflows/{namespace}",
                 json={"workflow": manifest},
                 headers=_argo_auth_headers(),
             )
@@ -733,7 +690,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
     in a fresh pod. Mirrors what the scheduled ``agent-optimization``
     CronWorkflow runs weekly — just on demand instead of on a schedule.
     """
-    if _argo_api_url is None:
+    if get_workflow_settings().api_url is None:
         raise HTTPException(
             status_code=503,
             detail="Argo is not configured on this deployment.",
@@ -748,7 +705,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
         )
 
     manifest = _build_optimization_workflow_manifest(
-        tenant_id, body.mode, _argo_namespace
+        tenant_id, body.mode, get_workflow_settings().namespace
     )
     response = await _submit_workflow(manifest)
 
@@ -761,7 +718,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
         )
     return ManualOptimizeResponse(
         workflow_name=workflow_name,
-        namespace=_argo_namespace,
+        namespace=get_workflow_settings().namespace,
         mode=body.mode,
         status_url=f"/admin/tenant/{tenant_id}/optimize/runs/{workflow_name}",
     )
@@ -773,7 +730,7 @@ async def run_manual_optimization(tenant_id: str, body: ManualOptimizeRequest):
 )
 async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
     """Return current phase + timestamps for a dashboard-triggered run."""
-    if _argo_api_url is None:
+    if get_workflow_settings().api_url is None:
         raise HTTPException(
             status_code=503,
             detail="Argo is not configured on this deployment.",
@@ -781,7 +738,7 @@ async def get_manual_optimization_status(tenant_id: str, workflow_name: str):
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{_argo_api_url}/api/v1/workflows/{_argo_namespace}/{workflow_name}",
+                f"{get_workflow_settings().api_url}/api/v1/workflows/{get_workflow_settings().namespace}/{workflow_name}",
                 headers=_argo_auth_headers(),
             )
     except httpx.HTTPError as exc:
@@ -814,14 +771,14 @@ async def _argo_workflow_action(
     unwrap the response body. Centralised so cancel and retry share the
     same error-handling shape: 404 if the Workflow doesn't exist, 502 on
     any other Argo error, raw JSON on success."""
-    if _argo_api_url is None:
+    if get_workflow_settings().api_url is None:
         raise HTTPException(
             status_code=503,
             detail="Argo is not configured on this deployment.",
         )
     url = (
-        f"{_argo_api_url}/api/v1/workflows/"
-        f"{_argo_namespace}/{workflow_name}/{action_path}"
+        f"{get_workflow_settings().api_url}/api/v1/workflows/"
+        f"{get_workflow_settings().namespace}/{workflow_name}/{action_path}"
     )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -918,9 +875,9 @@ async def create_job(tenant_id: str, body: JobCreateRequest):
     # used to be swallowed, leaving the ConfigStore row visible but no
     # schedule firing. Now we let _submit_cron_workflow propagate, and only
     # persist the job once the cluster has accepted it.
-    if _argo_api_url:
+    if get_workflow_settings().api_url:
         manifest = _build_cron_workflow(
-            tenant_id, job_id, body.schedule, _argo_namespace
+            tenant_id, job_id, body.schedule, get_workflow_settings().namespace
         )
         await _submit_cron_workflow(manifest)
 
@@ -996,9 +953,9 @@ async def delete_job(tenant_id: str, job_id: str):
 
     # Stop the schedule on the cluster before tombstoning the config — a
     # config-only delete leaves the CronWorkflow firing indefinitely.
-    if _argo_api_url:
+    if get_workflow_settings().api_url:
         await _delete_cron_workflow(
-            _cron_workflow_name(tenant_id, job_id), _argo_namespace
+            _cron_workflow_name(tenant_id, job_id), get_workflow_settings().namespace
         )
 
     cm.set_config_value(
