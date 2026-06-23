@@ -162,7 +162,7 @@ class StrategyConfig:
                 seg = self._infer_segmentation(profile_name, profile)
                 return "single_vector", seg
 
-        # 3. Infer from profile name (legacy)
+        # 3. Infer from profile name
         if profile_name.startswith("single__"):
             seg = self._infer_segmentation(profile_name, profile)
             return "single_vector", seg
@@ -193,7 +193,7 @@ class StrategyConfig:
             # Single-vector with chunks (VideoPrism LVT)
             return "single_vector", "chunks"
 
-        # 5. Check process_type in profile (legacy)
+        # 5. Check process_type in profile
         process_type = profile.get("process_type", "")
         if process_type.startswith("direct_video"):
             return "direct_video", "windows"

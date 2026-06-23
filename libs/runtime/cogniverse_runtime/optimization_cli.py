@@ -2084,7 +2084,7 @@ def run_egress_netpol(
         per_agent_rules.append((agent_name, egress_rules))
 
     # Second pass: emit either one union policy (unified mode) or one
-    # policy per agent (legacy per-agent mode).
+    # policy per agent (per-agent mode).
     if unified_pod_selector:
         # De-duplicate egress rules across agents — two agents that both
         # need DNS or both need vespa shouldn't produce duplicate yaml
@@ -2395,8 +2395,8 @@ def build_parser() -> argparse.ArgumentParser:
             "default unified-runtime topology where all agents run in "
             "the same pod. Example: "
             "`--unified-pod-selector app.kubernetes.io/component=runtime`. "
-            "When omitted, emits one NetworkPolicy per agent (legacy "
-            "per-agent-pod topology)."
+            "When omitted, emits one NetworkPolicy per agent "
+            "(per-agent-pod topology)."
         ),
     )
     parser.add_argument(

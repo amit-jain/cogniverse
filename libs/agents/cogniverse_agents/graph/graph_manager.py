@@ -144,7 +144,7 @@ class GraphManager:
         When ``trace`` is non-empty, the encoder receives ``query + " " + trace``
         as joint input — the agentic CoT-rationale embedding pattern from
         Chen+Ma (AgentIR, arXiv 2410.09713) that exposes signal humans never
-        give the retriever. ``trace=""`` preserves the legacy single-query path.
+        give the retriever. ``trace=""`` falls back to the single-query path.
         """
         effective_query = f"{query} {trace}".strip() if trace else query
         try:
