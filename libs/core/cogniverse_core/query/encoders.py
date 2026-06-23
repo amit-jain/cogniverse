@@ -105,9 +105,7 @@ class ColPaliFamilyQueryEncoder(QueryEncoder):
         inference_service_url: Optional[str] = None,
     ):
         self.model_name = model_name
-        self._model_loader = model_loader
         self._remote_client = None
-        self._remote_url = inference_service_url
 
         if inference_service_url:
             from cogniverse_core.common.models.model_loaders import (
