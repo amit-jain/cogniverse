@@ -158,7 +158,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_enhanced_agent_initialization(
         self,
@@ -196,7 +196,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_search_by_text(
         self,
@@ -249,7 +249,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_search_by_video(
         self,
@@ -310,7 +310,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_by_image(
         self,
         mock_get_config,
@@ -370,7 +370,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_text(
         self,
         mock_get_config,
@@ -420,7 +420,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_video(
         self,
         mock_get_config,
@@ -479,7 +479,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_image(
         self,
         mock_get_config,
@@ -538,7 +538,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_with_mixed_parts(
         self,
         mock_get_config,
@@ -605,7 +605,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_empty_messages(
         self,
         mock_get_config,
@@ -638,7 +638,7 @@ class TestSearchAgent:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_process_enhanced_task_no_valid_parts(
         self,
         mock_get_config,
@@ -690,7 +690,7 @@ class TestSearchAgentEdgeCases:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_vespa_client_initialization_failure(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
@@ -722,7 +722,7 @@ class TestSearchAgentEdgeCases:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_query_encoder_initialization_failure(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
@@ -751,7 +751,7 @@ class TestSearchAgentEdgeCases:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_failure_handling(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
@@ -781,7 +781,7 @@ class TestSearchAgentEdgeCases:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_search_by_text_omits_strategy_when_no_ranking(
         self, mock_get_config, mock_registry, mock_encoder_factory
     ):
@@ -833,7 +833,7 @@ class TestSearchAgentAdvancedFeatures:
         }
 
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
+            patch("cogniverse_foundation.config.utils.get_config") as mock_get_config,
             patch(
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
@@ -985,7 +985,7 @@ class TestSearchAgentAdvancedFeatures:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_search_input_accepts_enrichment_fields(
         self, mock_get_config, mock_registry, mock_encoder_factory
@@ -1057,7 +1057,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_basic(
         self,
@@ -1105,7 +1105,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_formula(
         self,
@@ -1157,7 +1157,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_sorting(
         self,
@@ -1201,7 +1201,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
     async def test_process_ensemble_mode_detection(
         self,
@@ -1245,7 +1245,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
     async def test_process_single_profile_mode(
         self,
@@ -1283,7 +1283,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_top_k_limit(
         self,
@@ -1321,7 +1321,7 @@ class TestSearchAgentEnsembleSearch:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.ci_fast
     def test_fuse_results_rrf_empty_profiles(
         self,
@@ -1371,7 +1371,7 @@ class TestMultiQueryFusion:
         }
 
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
+            patch("cogniverse_foundation.config.utils.get_config") as mock_get_config,
             patch(
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
@@ -1711,7 +1711,7 @@ class TestEnsembleVsFusionPaths:
         }
 
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_get_config,
+            patch("cogniverse_foundation.config.utils.get_config") as mock_get_config,
             patch(
                 "cogniverse_agents.search_agent.get_backend_registry"
             ) as mock_registry,
@@ -1987,7 +1987,7 @@ class TestDspyConfidenceGate:
 
     @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
     @patch("cogniverse_agents.search_agent.get_backend_registry")
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     @pytest.mark.asyncio
     async def test_label_confidence_applies_enhanced_query(
         self, mock_get_config, mock_registry, mock_encoder_factory

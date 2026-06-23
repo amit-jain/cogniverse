@@ -23,7 +23,7 @@ class TestTextAnalysisAgent:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_initialization(
         self,
         mock_get_config,
@@ -65,7 +65,7 @@ class TestTextAnalysisAgent:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_text(
         self,
         mock_get_config,
@@ -114,7 +114,7 @@ class TestTextAnalysisAgent:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_text_uses_per_tenant_lm(
         self,
         mock_get_config,
@@ -156,7 +156,7 @@ class TestTextAnalysisAgent:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_get_agent_factory(
         self,
         mock_get_config,
@@ -236,7 +236,7 @@ class TestTextAnalysisEndpoints:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_endpoint(
         self,
         mock_get_config,
@@ -279,7 +279,7 @@ class TestTextAnalysisEndpoints:
                 assert data["analysis"]["confidence"] == 0.95
                 mock_analyze.assert_called_once_with("Test text to analyze", "summary")
 
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_endpoint_without_tenant_id_fails(self, mock_get_config):
         """Test that /analyze endpoint requires tenant_id parameter"""
         mock_config = {
@@ -310,7 +310,7 @@ class TestTextAnalysisEndpoints:
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
     )
-    @patch("cogniverse_core.config.utils.get_config")
+    @patch("cogniverse_foundation.config.utils.get_config")
     def test_analyze_endpoint_error_handling(
         self,
         mock_get_config,

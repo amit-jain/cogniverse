@@ -380,7 +380,7 @@ telemetry = TelemetryManager()
 
 # 3. Update core package (core layer) for business logic
 cd ../core
-# Edit cogniverse_core/config/unified_config.py
+# Edit cogniverse_foundation/config/unified_config.py
 # Add new configuration field for tenant memory settings
 
 # 4. Update agents package (implementation layer) to use new config
@@ -1114,7 +1114,7 @@ from cogniverse_agents.search_agent import SearchAgent
 **Avoid Circular Dependencies:**
 ```python
 # ❌ BAD: Circular dependency
-# libs/core/cogniverse_core/config.py
+# libs/foundation/cogniverse_foundation/config/unified_config.py
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent  # ❌ core depends on agents
 
 # ✅ GOOD: One-way dependency

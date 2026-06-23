@@ -62,7 +62,7 @@ class TestVisualEvaluatorPlugin:
         state.input = {"query": "test query"}
         state.outputs = {}
 
-        with patch("cogniverse_core.config.utils.get_config") as mock_config:
+        with patch("cogniverse_foundation.config.utils.get_config") as mock_config:
             mock_config.return_value = {"evaluators": {}}
 
             score = await scorer(state, None)
@@ -89,7 +89,7 @@ class TestVisualEvaluatorPlugin:
         }
 
         with (
-            patch("cogniverse_core.config.utils.get_config") as mock_config,
+            patch("cogniverse_foundation.config.utils.get_config") as mock_config,
             patch(
                 "cogniverse_evaluation.evaluators.configurable_visual_judge.ConfigurableVisualJudge"
             ) as mock_judge_class,

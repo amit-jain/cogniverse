@@ -50,14 +50,12 @@ libs/core/cogniverse_core/
 │   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
 │   ├── models/                      # Model loaders (VideoPrism, etc.)
 │   └── utils/                       # Utility functions
-├── memory/                           # Memory management
-│   ├── manager.py                   # Mem0MemoryManager
-│   ├── backend_config.py            # Backend config for Mem0
-│   └── backend_vector_store.py      # Backend vector store adapter
-└── config/                           # Config re-export shim
-    └── __init__.py                  # Re-exports from foundation
+└── memory/                           # Memory management
+    ├── manager.py                   # Mem0MemoryManager
+    ├── backend_config.py            # Backend config for Mem0
+    └── backend_vector_store.py      # Backend vector store adapter
 
-# Configuration is provided by:
+# Configuration lives in cogniverse-foundation:
 libs/foundation/cogniverse_foundation/config/
     ├── unified_config.py            # SystemConfig, RoutingConfigUnified
     ├── agent_config.py              # AgentConfig, ModuleConfig, OptimizerConfig
@@ -1626,7 +1624,7 @@ For related modules:
 
 1. **SDK Package Structure**
    - Common utilities in `libs/core/cogniverse_core/common/`
-   - Configuration in `libs/core/cogniverse_core/config/`
+   - Configuration in `libs/foundation/cogniverse_foundation/config/`
    - Import from `cogniverse_core` package
 
 2. **Multi-Tenant Configuration**
