@@ -1181,7 +1181,7 @@ After optimization, artifacts are persisted to the telemetry store via `Artifact
 
 - `dspy-prompts-{tenant_id}-router` — Optimized system prompts for the router module
 - `dspy-demos-{tenant_id}-router` — Few-shot demonstration examples
-- `dspy-metrics-{tenant_id}-{agent_type}` — Optimization run metrics (persisted via `save_blob` into DatasetStore; use `load_optimization_run` to read back)
+- `dspy-experiments-{tenant_id}-{agent_type}` — Optimization run metrics as typed `ExperimentMetrics` rows (one per run via `save_experiment`; read the latest with `load_latest_experiment`)
 
 **Stored prompt artifact structure (retrieved from DatasetStore):**
 

@@ -276,8 +276,8 @@ boot fails loud.
 
 ```mermaid
 flowchart TD
-    Init["<span style='color:#000'>SandboxManager(policy=?, enabled=?)</span>"]
-    Resolve["<span style='color:#000'>_resolve_policy(policy, enabled)<br/>policy wins; else enabled=True->OPTIONAL,<br/>enabled=False->DISABLED; default OPTIONAL</span>"]
+    Init["<span style='color:#000'>SandboxManager(policy=?)</span>"]
+    Resolve["<span style='color:#000'>_resolve_policy(policy)<br/>policy or default OPTIONAL</span>"]
 
     Decision{"<span style='color:#000'>SandboxPolicy</span>"}
 
