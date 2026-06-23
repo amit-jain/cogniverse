@@ -44,6 +44,8 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     kwargs: dict = {
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
+        "timeout": config.request_timeout,
+        "num_retries": config.num_retries,
     }
 
     if config.api_base is not None:
