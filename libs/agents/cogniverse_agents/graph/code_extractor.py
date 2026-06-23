@@ -131,7 +131,6 @@ class _TreeWalker:
         module_name: str,
     ) -> None:
         self._source = source
-        self._language = language
         self._tenant_id = tenant_id
         self._source_doc_id = source_doc_id
         self._module_name = module_name
