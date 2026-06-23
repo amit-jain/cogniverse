@@ -381,14 +381,11 @@ class TemporalReasoningAgent(
         for r in rows:
             meta = _read_metadata(r)
             # attach_to_metadata stores provenance under
-            # metadata["provenance"]["written_at"]; some callers may
-            # also stamp it at the top level.
+            # metadata["provenance"]["written_at"].
             written_at: Any = None
             prov = meta.get("provenance")
             if isinstance(prov, dict):
                 written_at = prov.get("written_at")
-            if not written_at:
-                written_at = meta.get("written_at")
             ts = _parse_iso(written_at)
             if ts is None:
                 undated.append(r)
