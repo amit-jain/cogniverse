@@ -53,10 +53,13 @@ libs/dashboard/cogniverse_dashboard/
     ├── approval_queue.py         # Approval queue management
     ├── backend_profile.py        # Backend profile configuration
     ├── config_management.py      # Configuration CRUD UI
+    ├── embedding_atlas.py        # Embedding atlas visualization
     ├── evaluation.py             # Experiment evaluation
     ├── memory_management.py      # Memory inspection UI
     ├── optimization.py           # Optimization framework
     ├── orchestration_annotation.py  # Multi-agent workflow UI
+    ├── profile_metrics.py        # Backend profile metrics
+    ├── rlm_ab_compare.py         # RLM A/B comparison
     ├── routing_evaluation.py     # Routing analysis UI
     └── tenant_management.py      # Tenant management UI
 ```
@@ -990,13 +993,15 @@ def get_vespa_client():
     """Singleton Vespa client"""
     # Import from vespa package (implementation layer)
     from cogniverse_vespa.search_backend import VespaSearchBackend
-    from cogniverse_foundation.config.utils import create_default_config_manager, get_config
+    from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+    from cogniverse_foundation.config.utils import create_default_config_manager
+    from pathlib import Path
     config_manager = create_default_config_manager()
-    config = get_config(tenant_id="your_org:production", config_manager=config_manager)
+    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     return VespaSearchBackend(
-        backend_url=config.get("backend_url", "http://localhost"),
-        backend_port=config.get("backend_port", 8080)
-        # Schema is determined at query time, not initialization
+        config={"url": "http://localhost", "port": 8080, "profiles": {}},
+        config_manager=config_manager,
+        schema_loader=schema_loader,
     )
 
 # Manual cache invalidation

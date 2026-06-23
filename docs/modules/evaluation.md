@@ -79,7 +79,7 @@ The Evaluation Module provides **comprehensive experiment tracking and performan
 
 1. **ExperimentTracker**
    - Inspect AI-based evaluation framework
-   - Compatible with legacy run_experiments_with_visualization.py
+   - Compatible with run_experiments_with_visualization.py
    - Phoenix integration for trace visualization
    - Quality and LLM evaluator plugins
    - Dataset management and golden datasets
@@ -265,7 +265,7 @@ flowchart TB
 
 - Phoenix integration for visualization
 
-- Compatible with legacy experiment system
+- Compatible with run_experiments_with_visualization.py output format
 
 ---
 
@@ -640,7 +640,7 @@ output_dir: Path                       # Results directory
 enable_quality_evaluators: bool        # Adds the visual quality scorer to the Inspect scorer set (get_configured_scorers via get_visual_scorers)
 enable_llm_evaluators: bool           # Adds the visual_judge scorer to the Inspect scorer set
 evaluator_name: str                    # Evaluator to use
-llm_model: str                         # LLM model for evaluators
+llm_model: str | None                  # LLM model for evaluators (required when enable_llm_evaluators=True)
 llm_base_url: str | None              # Base URL for LLM API
 provider: EvaluationProvider           # Evaluation provider
 tenant_id: str                         # Tenant identifier
@@ -666,7 +666,7 @@ Get experiment configurations from strategy registry.
 
 **Example:**
 ```python
-tracker = ExperimentTracker()
+tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Get configurations for specific profiles
 configs = tracker.get_experiment_configurations(
@@ -719,7 +719,7 @@ Run a single experiment using the Inspect AI framework (synchronous).
 
 **Example:**
 ```python
-tracker = ExperimentTracker()
+tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Synchronous — do NOT use await or asyncio.run()
 result = tracker.run_experiment(
@@ -761,7 +761,7 @@ Create or retrieve a dataset for experiments.
 
 **Example:**
 ```python
-tracker = ExperimentTracker()
+tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Create from CSV
 dataset_name = tracker.create_or_get_dataset(
@@ -790,7 +790,7 @@ Run all configured experiments.
 
 **Example:**
 ```python
-tracker = ExperimentTracker()
+tracker = ExperimentTracker(tenant_id="your_org:production")
 
 # Configure experiments
 tracker.get_experiment_configurations(profiles=["frame_based_colpali"])
@@ -898,8 +898,7 @@ Extract and evaluate a single routing decision.
 from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 # Get telemetry provider
-registry = TelemetryRegistry()
-provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
 evaluator = RoutingEvaluator(provider=provider)
 
@@ -941,8 +940,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 async def calculate_routing_metrics():
     # Get telemetry provider
-    registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 
@@ -983,8 +981,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
 async def get_routing_spans():
     # Get telemetry provider
-    registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 
@@ -1014,9 +1011,8 @@ asyncio.run(get_routing_spans())
 
 **Key Attributes:**
 ```python
-telemetry_url: str           # Phoenix endpoint
-client: px.Client          # Phoenix client
-_cache: dict               # Internal cache
+telemetry_url: str                  # Phoenix endpoint
+client: _PhoenixSyncClient          # Phoenix sync client
 ```
 
 **TraceMetrics Dataclass:**
@@ -1204,7 +1200,7 @@ Retrieve recent spans from Phoenix.
 
 **Example:**
 ```python
-evaluator = SpanEvaluator()
+evaluator = SpanEvaluator(tenant_id="your_org:production")
 
 # Get last 6 hours of search spans
 spans_df = await evaluator.get_recent_spans(
@@ -1238,7 +1234,7 @@ Evaluate spans using specified evaluators.
 
 **Example:**
 ```python
-evaluator = SpanEvaluator()
+evaluator = SpanEvaluator(tenant_id="your_org:production")
 
 # Get spans
 spans_df = await evaluator.get_recent_spans(hours=24)
@@ -1262,7 +1258,7 @@ Upload evaluation results as annotations.
 
 **Example:**
 ```python
-evaluator = SpanEvaluator()
+evaluator = SpanEvaluator(tenant_id="your_org:production")
 
 # Evaluate spans
 spans_df = await evaluator.get_recent_spans()
@@ -1490,6 +1486,7 @@ from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
 # Initialize tracker
 tracker = ExperimentTracker(
+    tenant_id="your_org:production",
     experiment_project_name="my_experiments",
     enable_quality_evaluators=True,
     enable_llm_evaluators=False
@@ -1570,8 +1567,7 @@ from datetime import datetime, timedelta
 async def evaluate_routing_decisions():
     """Evaluate routing decision quality."""
     # Get telemetry provider
-    registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
     # Initialize evaluator for routing project
     evaluator = RoutingEvaluator(
@@ -1763,7 +1759,7 @@ from cogniverse_evaluation.span_evaluator import SpanEvaluator
 
 async def evaluate_historical_spans():
     """Evaluate spans from the past week."""
-    evaluator = SpanEvaluator()
+    evaluator = SpanEvaluator(tenant_id="your_org:production")
 
     # Get spans from last week
     spans_df = await evaluator.get_recent_spans(
@@ -1872,8 +1868,7 @@ async def production_monitoring_pipeline():
 
     # Get telemetry provider
     from cogniverse_foundation.telemetry.registry import TelemetryRegistry
-    registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
     routing_eval = RoutingEvaluator(provider=provider)
     routing_spans = await routing_eval.query_routing_spans(
@@ -1916,7 +1911,7 @@ async def production_monitoring_pipeline():
 
     # 3. Span quality evaluation
     print("\n[3/3] Evaluating Search Quality...")
-    span_eval = SpanEvaluator()
+    span_eval = SpanEvaluator(tenant_id="your_org:production")
     spans_df = await span_eval.get_recent_spans(hours=6, limit=500)
     eval_results = await span_eval.evaluate_spans(
         spans_df,
@@ -2393,7 +2388,7 @@ result = evaluator.evaluate(
 ```python
 def test_experiment_configurations():
     """Verify experiment configuration retrieval."""
-    tracker = ExperimentTracker()
+    tracker = ExperimentTracker(tenant_id="test_org:test")
     configs = tracker.get_experiment_configurations(
         profiles=["test_profile"]
     )
@@ -2408,8 +2403,7 @@ def test_routing_metrics_calculation():
     from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 
     # Get telemetry provider
-    registry = TelemetryRegistry()
-    provider = registry.get_telemetry_provider(name="phoenix", tenant_id="your_org:production")
+    provider = TelemetryRegistry.get(name="phoenix", tenant_id="your_org:production")
 
     evaluator = RoutingEvaluator(provider=provider)
 

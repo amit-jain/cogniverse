@@ -82,7 +82,7 @@ sequenceDiagram
     Agent->>Agent: Ready to process tasks
 
     Note over Runtime,Registry: Agent Discovery
-    Runtime->>Registry: GET /capabilities/{capability}
+    Runtime->>Registry: GET /by-capability/{capability}
     Registry->>Registry: Query capability mapping
     Registry-->>Runtime: {status, capability, agents: [{name, url, health_status}]}
 
@@ -95,7 +95,7 @@ sequenceDiagram
 ### Key Points
 
 - **Self-Registration**: Agents using `A2AEndpointsMixin` can register themselves by calling `register_with_registry(registry_url)` which sends a POST request to the registry's `/register` endpoint
-- **Capability-Based Discovery**: Runtime discovers agents by querying the registry endpoint `/capabilities/{capability}` (e.g., `/capabilities/search`, `/capabilities/profile_selection`)
+- **Capability-Based Discovery**: Runtime discovers agents by querying the registry endpoint `GET /by-capability/{capability}` (e.g., `/by-capability/search`, `/by-capability/profile_selection`)
 - **Health Monitoring**: Registry periodically checks agent health via their `/health` endpoints
 - **Dynamic Updates**: Agents can re-register to update capabilities by sending updated registration data
 
@@ -120,7 +120,7 @@ sequenceDiagram
     Note over Orch: PLANNING PHASE (Parallel Execution)
 
     par Profile Selection
-        Orch->>Registry: GET /capabilities/profile_selection
+        Orch->>Registry: GET /by-capability/profile_selection
         Registry-->>Orch: [ProfileSelectionAgent @ http://localhost:8011]
 
         Orch->>Prof: POST /tasks/send<br/>{query, available_profiles}
@@ -129,7 +129,7 @@ sequenceDiagram
         Prof->>Prof: Match to profile strengths
         Prof-->>Orch: {selected_profile: "colpali",<br/>confidence: 0.85, alternatives: [...], modality: "video"}
     and Entity Extraction
-        Orch->>Registry: GET /capabilities/entity_extraction
+        Orch->>Registry: GET /by-capability/entity_extraction
         Registry-->>Orch: [EntityExtractionAgent @ http://localhost:8010]
 
         Orch->>Entity: POST /tasks/send<br/>{query}
@@ -142,7 +142,7 @@ sequenceDiagram
 
     Note over Orch: ACTION PHASE
 
-    Orch->>Registry: GET /capabilities/search
+    Orch->>Registry: GET /by-capability/search
     Registry-->>Orch: [SearchAgent @ http://localhost:8002]
 
     alt Ensemble Mode (profiles specified)
@@ -457,7 +457,7 @@ sequenceDiagram
     participant Registry as AgentRegistry
     participant Agent as Target Agent
 
-    Orch->>Registry: GET /capabilities/search
+    Orch->>Registry: GET /by-capability/search
     Registry-->>Orch: [SearchAgent @ http://localhost:8002]
 
     Orch->>Agent: POST /tasks/send {query}
@@ -468,7 +468,7 @@ sequenceDiagram
     else Agent Timeout
         Agent--xOrch: Timeout (5s)
         Orch->>Registry: Mark agent unhealthy
-        Orch->>Registry: GET /capabilities/search (retry)
+        Orch->>Registry: GET /by-capability/search (retry)
         Registry-->>Orch: [SearchAgent (alternate) @ http://localhost:8002]
         Orch->>Agent: POST /tasks/send {query} (retry)
     else Agent Error

@@ -228,7 +228,6 @@ class TestSearchAgent:
         """Create test agent instance."""
         # Both config_manager and schema_loader are required for SearchAgent
         deps = SearchAgentDeps(
-            tenant_id="test-tenant",
             backend_url="http://localhost",
             backend_port=8080
         )
@@ -422,7 +421,6 @@ class TestSearchAgentWithMocks:
     def test_search_calls_backend(self, mock_backend, config_manager, schema_loader):
         """Test that search calls backend with correct params."""
         deps = SearchAgentDeps(
-            tenant_id="test-tenant",
             backend_url="http://localhost",
             backend_port=8080
         )
@@ -443,7 +441,6 @@ class TestSearchAgentWithMocks:
         mock_backend.search.side_effect = ConnectionError("Backend down")
 
         deps = SearchAgentDeps(
-            tenant_id="test-tenant",
             backend_url="http://localhost",
             backend_port=8080
         )
@@ -474,7 +471,6 @@ class TestWithPatching:
         mock_registry.return_value.get_backend.return_value = mock_backend
 
         deps = SearchAgentDeps(
-            tenant_id="test-tenant",
             backend_url="http://localhost",
             backend_port=8080
         )

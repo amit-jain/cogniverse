@@ -34,10 +34,10 @@ path). The chart renders one Deployment + Service per enabled service.
 | Chart key | `inference.vllm_llm_student` (and the `llm.*` block when `engine: vllm`) |
 | Model | `google/gemma-4-e4b-it` |
 | Image (CPU) | `vllm/vllm-openai-cpu:latest` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.20.0` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | NodePort | 29010 |
 | Default state | enabled |
-| ROCm GPU memory | `--gpu-memory-utilization 0.40` (≈25 GiB on 62 GiB unified memory) |
+| ROCm GPU memory | `--gpu-memory-utilization 0.30` (≈19 GiB on 62 GiB unified memory) |
 
 The student is the primary chat LLM used by every agent for
 DSPy/litellm calls. The Helm template (`cogniverse.primaryLLMModel` in
@@ -53,7 +53,7 @@ is determined by `api_base`, not the prefix.
 | Chart key | `inference.vllm_llm_teacher` |
 | Model | `cyankiwi/Qwen3.6-27B-AWQ-INT4` (AWQ-INT4, ~14 GiB) |
 | Image (CPU) | `vllm/vllm-openai-cpu:latest` (official) |
-| Image (ROCm) | `vllm/vllm-openai-rocm:v0.20.0` (official) |
+| Image (ROCm) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | NodePort | 29011 |
 | Default state | **`replicaCount: 0`** — scale-to-zero |
 | `--max-model-len` | 262144 |
@@ -112,7 +112,7 @@ host-running Ollama).
 | Chart key | `inference.vllm_colpali` |
 | Model | `TomoroAI/tomoro-colqwen3-embed-4b` |
 | Image (CPU / k3s default) | **`cogniverse/colpali:dev` (CUSTOM, built from `deploy/colpali/`)** |
-| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.20.0` (official) |
+| Image (ROCm 7.12+) | `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | Engine flag | `colpali_native` (CPU) or `vllm_token_embed` (ROCm) |
 | NodePort | 29001 |
 | Default state | enabled |
@@ -175,10 +175,8 @@ serves the per-token `/pooling` contract. The
 `--hf-overrides '{"architectures": ["ColBERTModernBertModel"]}'` flag
 forces the multi-vector architecture; without it vLLM serves a plain
 dense ModernBert and the per-token outputs LateOn retrieval needs vanish.
-The chart key keeps the historical `colbert_pylate` name; the custom
-PyLate FastAPI sidecar it once referred to has been retired. Query vs
-document is distinguished client-side by a `[Q] `/`[D] ` prefix, never an
-`is_query` field.
+Query vs document is distinguished client-side by a `[Q] `/`[D] ` prefix,
+never an `is_query` field.
 
 ### Code search (ColBERT variant)
 
@@ -215,7 +213,7 @@ reshape), matching DenseOn's dense-retrieval semantics.
 |---|---|
 | Chart key | `inference.vllm_asr` |
 | Model | `openai/whisper-large-v3-turbo` |
-| Image | `vllm/vllm-openai-cpu:latest` / `vllm/vllm-openai-rocm:v0.20.0` (official) |
+| Image | `vllm/vllm-openai-cpu:latest` / `vllm/vllm-openai-rocm:v0.23.0` (official) |
 | Engine | `vllm_transcription` |
 | NodePort | 29005 |
 | Default state | enabled |

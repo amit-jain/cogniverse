@@ -25,12 +25,12 @@ cogniverse up  # Deploys k3d cluster with all services
 
 # This installs:
 # - K3s (lightweight Kubernetes)
-# - Argo Workflows controller
+# - Argo Workflows controller (as the argo-workflows subchart, in the cogniverse namespace)
 # - Cogniverse with Helm
 # - All workflow templates
 
-# Access Argo UI
-kubectl port-forward -n argo svc/argo-server 2746:2746
+# Access Argo UI (the subchart deploys argo-workflows-server in the cogniverse namespace)
+kubectl port-forward -n cogniverse svc/cogniverse-argo-workflows-server 2746:2746
 open http://localhost:2746
 ```
 
@@ -61,17 +61,36 @@ argo version
 
 ### Setup Workflow Templates
 
+The chart installs `WorkflowTemplate` and `CronWorkflow` resources automatically via Helm. The chart-managed templates are:
+
+- `{release}-job-runner` — runs `cogniverse_runtime.job_executor` for tenant batch jobs (`charts/cogniverse/templates/job-workflow-template.yaml`)
+- `{release}-optimization-runner` — runs `optimization_cli --mode <mode>` for scheduled and on-demand optimization (`charts/cogniverse/templates/optimization-workflow-template.yaml`)
+
+Standalone workflow files for ad-hoc use live in `workflows/`:
+
 ```bash
-# Apply workflow templates
+# Apply standalone workflow templates (ad-hoc use only)
 kubectl apply -f workflows/video-ingestion.yaml
-kubectl apply -f workflows/batch-optimization.yaml
 kubectl apply -f workflows/tenant-provisioning.yaml
 kubectl apply -f workflows/scheduled-maintenance.yaml
-kubectl apply -f workflows/scheduled-optimization.yaml
 
 # Verify templates
 argo template list -n cogniverse
 ```
+
+### Runtime env vars wired by the chart
+
+When `argo.enabled=true` the chart writes these env vars into every runtime pod:
+
+| Variable | Value |
+|---|---|
+| `WORKFLOW_API_URL` | `http://{release}-argo-workflows-server.{namespace}.svc.cluster.local:2746` |
+| `WORKFLOW_NAMESPACE` | release namespace |
+| `RUNTIME_SERVICE_ACCOUNT` | chart service account name |
+| `JOB_WORKFLOW_TEMPLATE` | `{release}-job-runner` |
+| `OPTIMIZATION_WORKFLOW_TEMPLATE` | `{release}-optimization-runner` |
+
+The runtime reads them via `get_workflow_settings()` in `libs/runtime/cogniverse_runtime/config_loader.py`.
 
 ---
 
@@ -90,7 +109,7 @@ Bulk ingestion of videos with multi-profile support.
 ### Submit Workflow
 
 ```bash
-# Basic ingestion
+# Basic ingestion (using the standalone workflows/ template)
 argo submit workflows/video-ingestion.yaml \
   -n cogniverse \
   --parameter video-dir="/data/videos" \
@@ -140,25 +159,26 @@ Run DSPy optimization experiments at scale.
 
 ### Submit Workflow
 
-```bash
-# Basic DSPy optimization
-argo submit workflows/batch-optimization.yaml \
-  -n cogniverse \
-  --parameter tenant-id="acme_corp" \
-  --parameter optimizer-category="dspy" \
-  --parameter optimizer-type="GEPA" \
-  --parameter dataset-name="golden_eval_v1"
+Optimization runs via the chart-installed `{release}-optimization-runner` WorkflowTemplate, referenced by the chart's `CronWorkflow` resources and by the runtime's `POST /admin/tenant/{id}/optimize` endpoint. To trigger manually:
 
-# Advanced DSPy optimization
-argo submit workflows/batch-optimization.yaml \
-  -n cogniverse \
-  --parameter tenant-id="acme_corp" \
-  --parameter optimizer-category="dspy" \
-  --parameter optimizer-type="GEPA" \
-  --parameter dataset-name="golden_eval_v1" \
-  --parameter profiles="video_colpali_smol500_mv_frame" \
-  --parameter max-iterations="200" \
-  --parameter learning-rate="0.001"
+```bash
+# Submit via the chart WorkflowTemplate (uses workflowTemplateRef)
+argo submit -n cogniverse \
+  --from wftmpl/cogniverse-optimization-runner \
+  -p mode=distill \
+  -p tenant-id="acme_corp" \
+  -p lookback-hours=48
+
+# Available modes: gateway-thresholds, simba, workflow, profile,
+#                  entity-extraction, synthetic, distill, cleanup, monthly-reports
+```
+
+For on-demand optimization via the runtime API:
+
+```bash
+curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "gateway-thresholds"}'
 ```
 
 ### Check Results
@@ -177,44 +197,57 @@ argo get <workflow-name> -n cogniverse -o json | \
 ## Tenant Provisioning Workflow
 
 ### Purpose
-Automated setup of new tenants with complete isolation.
+Cold-bootstrap of a new tenant's backend resources (memory schema and telemetry project) without a live runtime.
 
-### Workflow Steps
-1. **Validate Tenant**: Check tenant ID format
-2. **Create Namespace**: K8s namespace for tenant
-3. **Deploy Schemas**: Vespa schemas for all profiles
-4. **Create Phoenix Project**: Isolated telemetry
-5. **Setup Resource Quotas**: CPU/memory/storage limits
-6. **Create Storage**: Persistent volume claims
-7. **Initialize Memory**: Mem0 memory system
-8. **Verify Tenant**: Confirm all resources
-9. **Notify Completion**: Send notification
+### How it works
+
+The standalone `workflows/tenant-provisioning.yaml` WorkflowTemplate calls `scripts/provision_tenant.py` for the cold-bootstrap steps that talk directly to Vespa and Phoenix. Schema deployment is handled separately via the runtime admin API (or `scripts/deploy_json_schema.py` for dev).
+
+`provision_tenant.py` supports two `--step` values:
+
+| Step | What it does |
+|---|---|
+| `memory` | Creates the tenant's Mem0 memory schema via `Mem0MemoryManager` + `lazy_init_memory` |
+| `telemetry` | Emits a probe span so the tenant's Phoenix project is created |
 
 ### Submit Workflow
 
 ```bash
-# Provision new tenant
+# Apply the standalone provisioning template
+kubectl apply -f workflows/tenant-provisioning.yaml
+
+# Run the workflow for a new tenant
 argo submit workflows/tenant-provisioning.yaml \
   -n cogniverse \
-  --parameter tenant-id="newcorp_inc" \
-  --parameter tenant-name="NewCorp Inc" \
-  --parameter profiles="video_colpali_smol500_mv_frame,video_videoprism_base_mv_chunk_30s" \
-  --parameter storage-quota="200Gi" \
-  --parameter cpu-quota="20" \
-  --parameter memory-quota="40Gi"
+  --parameter tenant-id="newcorp_inc"
 ```
 
-### Verify Tenant
+### Run provisioning steps directly
 
 ```bash
-# Check namespace
-kubectl get namespace cogniverse-newcorp_inc
+# Initialize memory schema
+uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step memory
 
-# Check schemas
-curl "http://cogniverse-vespa:8080/search/?yql=select+*+from+video_colpali_smol500_mv_frame_newcorp_inc+where+true+limit+0"
+# Create telemetry project
+uv run python scripts/provision_tenant.py --tenant-id newcorp_inc --step telemetry
+```
 
-# Check resource quota
-kubectl get resourcequota -n cogniverse-newcorp_inc
+### Register the tenant and deploy schemas
+
+Schema deployment is a separate step via the runtime admin API:
+
+```bash
+RUNTIME_URL=http://localhost:9000
+
+# Register tenant
+curl -sfX POST "$RUNTIME_URL/admin/tenants" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "newcorp_inc"}'
+
+# Deploy profile schemas
+curl -sfX POST "$RUNTIME_URL/admin/profiles/video_colpali_smol500_mv_frame/deploy" \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "newcorp_inc"}'
 ```
 
 ---
@@ -400,26 +433,20 @@ The workflows support two optimizer categories:
 
 ### Manual Workflow Submission
 
-Submit optimization workflows on-demand:
+Submit optimization workflows on-demand via the chart WorkflowTemplate or the runtime API:
 
 ```bash
-# Submit module optimization
-argo submit workflows/batch-optimization.yaml \
-  -n cogniverse \
-  --parameter tenant-id="acme_corp" \
-  --parameter optimizer-category="routing" \
-  --parameter optimizer-type="modality" \
-  --parameter max-iterations="100" \
-  --parameter use-synthetic-data="true"
+# Submit via the chart WorkflowTemplate directly
+argo submit -n cogniverse \
+  --from wftmpl/cogniverse-optimization-runner \
+  -p mode=simba \
+  -p tenant-id="acme_corp" \
+  -p lookback-hours=48
 
-# Submit DSPy optimization
-argo submit workflows/batch-optimization.yaml \
-  -n cogniverse \
-  --parameter tenant-id="acme_corp" \
-  --parameter optimizer-category="dspy" \
-  --parameter optimizer-type="GEPA" \
-  --parameter dataset-name="golden_eval_v1" \
-  --parameter max-iterations="100"
+# Or via the runtime API (creates and tracks the Argo Workflow for you)
+curl -X POST http://localhost:8000/admin/tenant/acme_corp/optimize \
+  -H 'Content-Type: application/json' \
+  -d '{"mode": "simba"}'
 ```
 
 ### Monitoring Optimization Workflows

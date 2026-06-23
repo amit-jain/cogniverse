@@ -70,7 +70,7 @@ flowchart TB
 
 Stores approval data as telemetry spans with annotations for status updates.
 
-**Initialization** (Breaking Change from v1.0):
+**Initialization**:
 
 ```python
 from cogniverse_agents.approval import ApprovalStorageImpl

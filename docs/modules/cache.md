@@ -113,7 +113,7 @@ flowchart TB
         P2["<span style='color:#000'>Priority: 2</span>"]
     end
 
-    T1["<span style='color:#000'>TIER 1: IN-MEMORY<br/>• LRU Cache (modality_cache.py)<br/>• Max 1000 items<br/>• <1ms latency<br/>Eviction: LRU<br/>TTL: None</span>"]
+    T1["<span style='color:#000'>TIER 1: IN-MEMORY<br/>• TenantLRUCache (cogniverse_foundation/caching)<br/>• Max 1000 items<br/>• <1ms latency<br/>Eviction: LRU<br/>TTL: None</span>"]
     T2["<span style='color:#000'>TIER 2: FILESYSTEM<br/>• Structured FS<br/>• Human-readable<br/>• ~5-10ms latency<br/>Eviction: TTL<br/>TTL: 7 days</span>"]
     T3["<span style='color:#000'>TIER 3: REMOTE<br/>• S3/MinIO (implemented)<br/>• Redis (planned)<br/>• ~50-100ms<br/>Eviction: TTL<br/>TTL: configurable</span>"]
 
@@ -142,7 +142,7 @@ flowchart TB
 
 - CacheManager supports multiple backends (architecture ready)
 
-- Two backends implemented: in-memory LRU (`LRUCache` in `modality_cache.py`) and `structured_filesystem`
+- Two backends currently implemented: `structured_filesystem` (L1 local) and `s3` (L2 shared/durable)
 
 - Backends checked in priority order (lower = higher priority)
 
@@ -157,7 +157,7 @@ flowchart TB
 ```mermaid
 flowchart TB
     START["<span style='color:#000'>CACHE GET OPERATION<br/>cache.get video:abc123:keyframes</span>"]
-    T1["<span style='color:#000'>TIER 1: In-Memory Cache Priority 0<br/>• LRUCache (modality_cache.py)<br/>• Latency: <1ms</span>"]
+    T1["<span style='color:#000'>TIER 1: Filesystem Cache Priority 0<br/>• StructuredFilesystemBackend<br/>• Latency: ~5-10ms</span>"]
     T1_MISS["<span style='color:#000'>NOT FOUND</span>"]
     T2["<span style='color:#000'>TIER 2: Filesystem Cache Priority 1<br/>• Check ~/.cache/cogniverse/pipeline/<br/>• Deserialize from pickle/json/msgpack<br/>• Check TTL expiration<br/>• Latency: ~5-10ms</span>"]
     T2_HIT["<span style='color:#000'>FOUND ✓</span>"]
@@ -266,15 +266,15 @@ flowchart TB
     style SEGF0 fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-**Cache Key Examples:**
+**Cache Key Examples** (video ID is a 16-char SHA-256 hex digest of the canonical URI):
 
-- `"profile:video:abc123:keyframes"` → `profile/keyframes/abc123/metadata.pkl`
+- `"profile:video:a3f2e9d8c7b6a5f4:keyframes"` → `profile/keyframes/a3f2e9d8c7b6a5f4/metadata.pkl`
 
-- `"profile:video:abc123:keyframes:frame_42"` → `profile/keyframes/abc123/frame_42.jpg`
+- `"profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"` → `profile/keyframes/a3f2e9d8c7b6a5f4/frame_42.jpg`
 
-- `"profile:video:abc123:transcript:model=base:lang=auto"` → `profile/transcripts/abc123.pkl`
+- `"profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"` → `profile/transcripts/a3f2e9d8c7b6a5f4.pkl`
 
-- `"profile:video:abc123:segment_frames:segment_id=0:start_time=0.0:end_time=6.0:frame_1"` → `profile/segments/abc123/segment_0_start_0.0_end_6.0/frame_1.jpg`
+- `"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"` → `profile/segments/a3f2e9d8c7b6a5f4/.../frame_1.jpg`
 
 **Design Benefits:**
 
@@ -330,7 +330,7 @@ flowchart TB
 
 ## Core Components
 
-### 1. CacheBackend (base.py:13-60)
+### 1. CacheBackend (base.py:13-63)
 
 **Purpose:** Abstract base class defining the cache backend interface.
 
@@ -513,7 +513,7 @@ print(f"Cleaned up {cleaned} expired entries")
 
 ---
 
-### 2. CacheManager (base.py:86-251)
+### 2. CacheManager (base.py:90-254)
 
 **Purpose:** Manages multiple cache backends with tiered caching logic.
 
@@ -727,7 +727,7 @@ await self.backends[0].set(key, value, self.config.default_ttl)
 
 ---
 
-### 3. CacheBackendRegistry (registry.py:10-44)
+### 3. CacheBackendRegistry (registry.py:11-48)
 
 **Purpose:** Plugin registry for cache backend types.
 
@@ -808,7 +808,7 @@ backends = CacheBackendRegistry.list_backends()
 
 ## Cache Backends
 
-### StructuredFilesystemBackend (backends/structured_filesystem.py:35-534)
+### StructuredFilesystemBackend (backends/structured_filesystem.py:35-554)
 
 **Purpose:** Filesystem cache with human-readable directory structure.
 
@@ -838,24 +838,24 @@ class StructuredFilesystemConfig:
 
 - Automatic cleanup of expired entries
 
-**Path Mapping Examples:**
+**Path Mapping Examples** (the video ID segment is a 16-char SHA-256 hex digest when generated via `PipelineArtifactCache`):
 
 ```python
 # Keyframe metadata
-"profile:video:abc123:keyframes"
-→ ~/.cache/cogniverse/pipeline/profile/keyframes/abc123/metadata.pkl
+"profile:video:a3f2e9d8c7b6a5f4:keyframes"
+→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/metadata.pkl
 
 # Individual keyframe
-"profile:video:abc123:keyframes:frame_42"
-→ ~/.cache/cogniverse/pipeline/profile/keyframes/abc123/frame_42.jpg
+"profile:video:a3f2e9d8c7b6a5f4:keyframes:frame_42"
+→ ~/.cache/cogniverse/pipeline/profile/keyframes/a3f2e9d8c7b6a5f4/frame_42.jpg
 
-# Transcript
-"profile:video:abc123:transcript:model=base:lang=auto"
-→ ~/.cache/cogniverse/pipeline/profile/transcripts/abc123.pkl
+# Transcript (kwargs sorted alphabetically)
+"profile:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base"
+→ ~/.cache/cogniverse/pipeline/profile/transcripts/a3f2e9d8c7b6a5f4.pkl
 
 # Segment frame
-"profile:video:abc123:segment_frames:segment_id=0:start_time=0.0:end_time=6.0:frame_1"
-→ ~/.cache/cogniverse/pipeline/profile/segments/abc123/segment_0_start_0.0_end_6.0/frame_1.jpg
+"profile:video:a3f2e9d8c7b6a5f4:segment_frames:...:frame_1"
+→ ~/.cache/cogniverse/pipeline/profile/segments/a3f2e9d8c7b6a5f4/.../frame_1.jpg
 ```
 
 **Metadata Files:**
@@ -1064,7 +1064,7 @@ change until then.
 
 ## Specialized Caches
 
-### 1. PipelineArtifactCache (pipeline_cache.py:47-420)
+### 1. PipelineArtifactCache (pipeline_cache.py:46-422)
 
 **Purpose:** Comprehensive caching for video processing pipeline artifacts.
 
@@ -1106,16 +1106,16 @@ Generate base cache key for a video.
 
 **Process:**
 
-1. Extract video filename (stem)
+1. Canonicalize the URI: bare paths become `file://<absolute>`, URI strings passed through unchanged
 
-2. Optionally add profile prefix
+2. SHA-256 hash the canonical URI (first 16 hex chars) to avoid collisions between same-basename videos on different mounts
 
-3. Format: `{profile}:video:{video_name}` or `video:{video_name}`
+3. Format: `{profile}:video:{digest}` or `video:{digest}`
 
 **Example:**
 ```python
 key = pipeline_cache._generate_video_key("/path/to/robot_soccer.mp4")
-# → "video_colpali_mv:video:robot_soccer"
+# → "video_colpali_mv:video:a3f2e9d8c7b6a5f4"  (16-char SHA-256 digest)
 ```
 
 ---
@@ -1136,13 +1136,13 @@ Generate cache key for specific artifact.
 **Example:**
 ```python
 artifact_key = pipeline_cache._generate_artifact_key(
-    "video:robot_soccer",
+    "video:a3f2e9d8c7b6a5f4",  # video_key from _generate_video_key
     "keyframes",
     strategy="similarity",
     threshold=0.999,
     max_frames=3000
 )
-# → "video:robot_soccer:keyframes:max_frames=3000:strategy=similarity:threshold=0.999"
+# → "video:a3f2e9d8c7b6a5f4:keyframes:max_frames=3000:strategy=similarity:threshold=0.999"
 ```
 
 ---

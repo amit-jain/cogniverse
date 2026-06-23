@@ -37,7 +37,7 @@ sequenceDiagram
     Registry-->>Agent: schema (contradiction_policy)
     Agent->>Agent: policy = policy_override or schema.contradiction_policy
 
-    Note over Detector: Upstream snapshot — detector previously emitted the ConflictSet<br/>by grouping candidates by metadata.subject_key + _content_signature
+    Note over Detector: Detector emits the ConflictSet<br/>by grouping candidates by metadata.subject_key + _content_signature
     Detector-->>Caller: ConflictSet(subject_key, conflicting_memory_ids, detected_at)
 
     loop For each mid in conflict_member_ids
@@ -265,8 +265,9 @@ flowchart TD
 
 `SandboxManager.__init__`
 (`libs/runtime/cogniverse_runtime/sandbox_manager.py`) resolves a
-`SandboxPolicy` (with the deprecated `enabled` kwarg mapped to
-`OPTIONAL`/`DISABLED`) and either short-circuits on `DISABLED` or
+`SandboxPolicy` (the `enabled` bool shorthand maps `True` to `OPTIONAL`,
+`False` to `DISABLED`; `policy` takes precedence when both are given) and
+either short-circuits on `DISABLED` or
 calls `_connect()`, which TCP-probes
 `OPENSHELL_GATEWAY_ENDPOINT` via `_probe_gateway_endpoint`. When the
 resolved policy is `REQUIRED` and `_available` is still False after
@@ -276,7 +277,7 @@ boot fails loud.
 ```mermaid
 flowchart TD
     Init["<span style='color:#000'>SandboxManager(policy=?, enabled=?)</span>"]
-    Resolve["<span style='color:#000'>_resolve_policy(policy, enabled)<br/>policy wins; else enabled True->OPTIONAL,<br/>False->DISABLED; default OPTIONAL</span>"]
+    Resolve["<span style='color:#000'>_resolve_policy(policy, enabled)<br/>policy wins; else enabled=True->OPTIONAL,<br/>enabled=False->DISABLED; default OPTIONAL</span>"]
 
     Decision{"<span style='color:#000'>SandboxPolicy</span>"}
 

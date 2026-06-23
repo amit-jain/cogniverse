@@ -16,13 +16,13 @@ The caching system provides a unified interface for caching across all component
 ```mermaid
 flowchart TD
     PAC["<span style='color:#000'><b>PipelineArtifactCache</b><br/>Video Processing</span>"] --> CM["<span style='color:#000'><b>CacheManager</b><br/>Multi-Backend Orchestration</span>"]
-    CM --> SFS["<span style='color:#000'><b>StructuredFilesystemBackend</b><br/>Local Storage</span>"]
-    CM --> Future["<span style='color:#000'><b>Future Backends</b><br/>Redis, S3, GCS</span>"]
+    CM --> SFS["<span style='color:#000'><b>StructuredFilesystemBackend</b><br/>Local Storage (priority 0)</span>"]
+    CM --> S3["<span style='color:#000'><b>S3CacheBackend</b><br/>S3/MinIO (priority 1)</span>"]
 
     style PAC fill:#ce93d8,stroke:#7b1fa2,color:#000
     style CM fill:#ce93d8,stroke:#7b1fa2,color:#000
     style SFS fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Future fill:#b0bec5,stroke:#546e7a,color:#000
+    style S3 fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
 ## Cache Backend Interface
@@ -225,6 +225,55 @@ backend = StructuredFilesystemBackend(config)
 # TTL enforcement and cleanup on startup
 ```
 
+## S3 Cache Backend
+
+The S3/MinIO backend stores artifacts remotely and is registered under the key `"s3"`:
+
+```python
+from cogniverse_core.common.cache.backends.s3 import S3CacheBackend, S3CacheBackendConfig
+
+config = S3CacheBackendConfig(
+    backend_type="s3",
+    # endpoint/access_key/secret_key default to MINIO_* env vars when None
+    endpoint=None,          # falls back to MINIO_ENDPOINT
+    access_key=None,        # falls back to MINIO_ACCESS_KEY
+    secret_key=None,        # falls back to MINIO_SECRET_KEY
+    bucket="cogniverse-pipeline-cache",
+    key_prefix="pipeline/",
+    priority=1,
+    enabled=True,
+)
+
+backend = S3CacheBackend(config)
+# Uses asyncio.to_thread for async I/O; envelope metadata stored in S3
+# object Metadata["cache-meta"] as JSON.
+```
+
+To use S3 as a second tier alongside the local filesystem:
+
+```yaml
+pipeline_cache:
+  enabled: true
+  default_ttl: 604800
+  enable_compression: true
+  serialization_format: pickle
+
+  backends:
+    - backend_type: structured_filesystem
+      priority: 0
+      enabled: true
+      base_path: /var/cache/cogniverse
+      enable_ttl: true
+      cleanup_on_startup: true
+
+    - backend_type: s3
+      priority: 1
+      enabled: true
+      # endpoint, access_key, secret_key read from MINIO_* env vars
+      bucket: cogniverse-pipeline-cache
+      key_prefix: pipeline/
+```
+
 ## Usage in Ingestion Pipeline
 
 ```python
@@ -324,9 +373,28 @@ stats = await manager.get_stats()
 4. **Enable TTL enforcement**: Set `enable_ttl: true` and `cleanup_on_startup: true` to prevent disk exhaustion
 5. **Use compression**: Enable for large artifacts like embeddings
 
+## Backend Registry
+
+The `CacheBackendRegistry` dispatches on `backend_type` using each backend's `CONFIG_CLASS` class variable:
+
+```python
+from cogniverse_core.common.cache import CacheBackendRegistry
+
+registry = CacheBackendRegistry()
+# Registered backend types:
+#   "structured_filesystem" → StructuredFilesystemBackend (CONFIG_CLASS = StructuredFilesystemConfig)
+#   "s3"                    → S3CacheBackend              (CONFIG_CLASS = S3CacheBackendConfig)
+
+backend = registry.create({"backend_type": "s3", "bucket": "my-bucket"})
+```
+
+Extra keys in the config dict are filtered to only the fields declared in `CONFIG_CLASS`, preventing `TypeError` on unexpected keys.
+
 ## Key Locations
 
-- `libs/core/cogniverse_core/common/cache/base.py` - CacheBackend ABC, CacheManager
-- `libs/core/cogniverse_core/common/cache/pipeline_cache.py` - PipelineArtifactCache
-- `libs/core/cogniverse_core/common/cache/backends/` - Backend implementations
+- `libs/core/cogniverse_core/common/cache/base.py` - `CacheBackend` ABC, `CacheManager`, `BackendConfig`
+- `libs/core/cogniverse_core/common/cache/registry.py` - `CacheBackendRegistry` (CONFIG_CLASS dispatch)
+- `libs/core/cogniverse_core/common/cache/pipeline_cache.py` - `PipelineArtifactCache`, `VideoArtifacts`
+- `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py` - `StructuredFilesystemBackend`
+- `libs/core/cogniverse_core/common/cache/backends/s3.py` - `S3CacheBackend`
 - `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` - Pipeline integration

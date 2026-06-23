@@ -207,9 +207,14 @@ The server uses modular routers for different functionality:
 | `ingestion` | `/ingestion` | Video upload and processing |
 | `agents` | `/agents` | Agent registry and in-process execution |
 | `admin` | `/admin` | Tenant and profile management |
-| `knowledge` | `/admin/tenants/{tenant_id}/knowledge` | Direct HTTP routes to knowledge-system agents (audit, citations, KG, federation, synthesis, temporal) |
+| `knowledge` | `/admin` | Direct HTTP routes to knowledge-system agents (audit, citations, KG, federation, synthesis, temporal) |
+| `tenant_manager` | `/admin` | Tenant creation and management tooling |
 | `events` | `/events` | SSE streaming for real-time notifications |
 | `synthetic` | `/synthetic` | Synthetic data generation (from `cogniverse_synthetic`) |
+| `wiki` | `/wiki` | Per-tenant wiki knowledge page storage and search |
+| `graph` | `/graph` | Knowledge graph upsert, search, neighbors, and path queries |
+| `tenant` | `/admin/tenant` | Per-tenant self-service: instructions, memories, scheduled jobs, optimization |
+| `debug` | `/admin/debug` | Runtime diagnostics (gated behind `COGNIVERSE_DEBUG_MEM`) |
 
 ```python
 # Router registration in main.py
@@ -218,8 +223,14 @@ app.include_router(agents.router, prefix="/agents", tags=["agents"])
 app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(ingestion.router, prefix="/ingestion", tags=["ingestion"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
+app.include_router(knowledge.router, prefix="/admin", tags=["knowledge-agents"])
+app.include_router(tenant_manager.router, prefix="/admin", tags=["tenant-management"])
 app.include_router(events.router, prefix="/events", tags=["events"])
 app.include_router(synthetic_router, tags=["synthetic-data"])
+app.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
+app.include_router(graph.router, prefix="/graph", tags=["graph"])
+app.include_router(tenant.router, prefix="/admin/tenant", tags=["tenant-extensibility"])
+app.include_router(debug.router, prefix="/admin/debug", tags=["debug"])
 ```
 
 ---
@@ -793,7 +804,16 @@ export DEBUG_PIPELINE="false"
 # Server configuration
 export RUNTIME_HOST="0.0.0.0"
 export RUNTIME_PORT="8000"
+
+# Workflow engine (Argo Workflows)
+export WORKFLOW_API_URL="https://argo.example.com"       # Argo API URL; unset disables cron/optimization submission
+export WORKFLOW_NAMESPACE="cogniverse"                   # k8s namespace (default: cogniverse)
+export RUNTIME_SERVICE_ACCOUNT="default"                 # service account for job pods (default: default)
+export JOB_WORKFLOW_TEMPLATE="tenant-cron-job"           # WorkflowTemplate name for tenant cron jobs
+export OPTIMIZATION_WORKFLOW_TEMPLATE="optimization-job" # WorkflowTemplate name for optimization runs
 ```
+
+Workflow settings are read once at startup via `get_workflow_settings()` (returns a cached `WorkflowSettings` dataclass). The tenant router uses these to submit cron and optimization jobs via Argo `workflowTemplateRef`; no pod spec or image is owned by the runtime.
 
 ---
 

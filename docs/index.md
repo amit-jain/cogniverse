@@ -61,7 +61,7 @@ flowchart TD
 - **Multi-Modal Processing** — Video, audio, images, documents with unified embeddings
 - **Agent Orchestration** — A2A protocol with OrchestratorAgent entry point, agent discovery via AgentRegistry
 - **Knowledge Management Layer** — Schema-driven memory with provenance tracking, contradiction detection, trust ranking, federation (org trunk + tenant overlays), pinning, and schema-driven lifecycle cleanup
-- **9 Knowledge Agents** — MultiDocumentSynthesis, KGTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation
+- **9 Knowledge Agents** — MultiDocumentSynthesis, KnowledgeGraphTraversal, CrossTenantComparison, ContradictionReconciliation, CitationTracing, TemporalReasoning, FederatedQuery, KnowledgeSummarization, AuditExplanation
 - **Self-Optimization** — Continuous learning via GEPA, MIPRO, and synthetic data; regression-reject gate; per-tenant canary promotion; rollback
 - **LLM Fine-Tuning** — End-to-end pipeline from telemetry to LoRA adapters
 - **Memory** — Schema-governed context persistence with trust-ranked retrieval and per-schema lifecycle policies

@@ -257,6 +257,54 @@ telemetry_config = TelemetryConfig(
 )
 ```
 
+**LLMEndpointConfig** - Single LLM endpoint wiring:
+```python
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+endpoint = LLMEndpointConfig(
+    model="openai/gpt-4o",          # always provider-prefixed (DSPy/LiteLLM convention)
+    api_base="http://localhost:8101/v1",
+    api_key=None,                    # None for local OAI-compat servers
+    temperature=0.1,
+    max_tokens=1000,
+    request_timeout=120.0,           # seconds before giving up on a slow endpoint
+    num_retries=1,
+    seed=42                          # optional; enables bit-stable output on vLLM
+)
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `model` | required | Provider-prefixed model string, e.g. `"openai/gpt-4o"` |
+| `api_base` | `None` | Override endpoint URL |
+| `api_key` | `None` | `None` for keyless local servers |
+| `temperature` | `0.1` | Sampling temperature |
+| `max_tokens` | `1000` | Max output tokens |
+| `request_timeout` | `120.0` | Per-request timeout in seconds |
+| `num_retries` | `1` | Retry count on transient errors |
+| `seed` | `None` | vLLM sampling seed for reproducibility |
+| `adapter_path` | `None` | LoRA/fine-tuned artifact path |
+| `extra_body` | `None` | Provider-specific request params |
+
+**LLMConfig** - Multi-role LLM configuration:
+```python
+from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
+
+llm_config = LLMConfig(
+    primary=LLMEndpointConfig(model="openai/gpt-4o", api_base="http://localhost:8101/v1"),
+    teacher=LLMEndpointConfig(model="openai/gpt-4o-mini", api_base="http://localhost:8101/v1"),
+    overrides={
+        # Per-component partial overrides merged onto primary at resolve time
+        "summarizer_agent": {"max_tokens": 2000},
+    }
+)
+
+# Resolve the effective config for a component
+resolved = llm_config.resolve("summarizer_agent")
+```
+
+`primary` is the global default for all DSPy modules and also the student model during optimization. `teacher` is used by DSPy optimizers (MIPROv2, GEPA). `overrides` holds per-component partial dicts — only differing fields need to be specified; `resolve(component)` merges them onto `primary`.
+
 ### Configuration Scopes
 
 Configurations are organized by scope for isolation:

@@ -18,10 +18,10 @@ Profiles are **tenant-scoped**, allowing each tenant to have isolated configurat
 
 1. Launch the dashboard:
    ```bash
-   uv run streamlit run libs/dashboard/cogniverse_dashboard/tabs/config_management.py --server.port 8501
+   uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 8501
    ```
 
-2. Navigate to the **Backend Profiles** tab (5th tab)
+2. Navigate to the **⚙️ Configuration** tab, then select the **🔧 Backend Profiles** sub-tab (5th sub-tab)
 
 3. Select your **Tenant ID** from the dropdown (or enter a new one)
 
@@ -56,9 +56,7 @@ The create form will appear with the following fields:
   - Or simple name (e.g., `videoprism-base`)
 
 - **Embedding Type**: Processing approach
-  - `multi_vector`: Extract frames, embed individually
-  - `multi_vector`: Split video into chunks, embed each
-  - `multi_vector`: Direct video segment embedding
+  - `multi_vector`: Multi-vector embedding (frames or chunks)
   - `single_vector`: Single embedding for entire video
 
 **Strategy Configuration (Optional):**
@@ -332,10 +330,7 @@ curl -X POST http://localhost:8000/admin/profiles \
     "type": "video",
     "schema_name": "video_colpali_smol500_mv_frame",
     "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
-    "embedding_type": "multi_vector",
-    "pipeline_config": {},
-    "strategies": {},
-    "schema_config": {}
+    "embedding_type": "multi_vector"
   }'
 ```
 

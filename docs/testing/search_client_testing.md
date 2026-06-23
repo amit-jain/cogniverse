@@ -109,3 +109,17 @@ for result in results:
 # (see test_ranking_strategies_real.py for how to encode a query
 # through the vLLM sidecar via RemoteColPaliLoader.process_queries).
 ```
+
+## Query tensor format
+
+`VespaSearchBackend` formats query embeddings for Vespa via `_format_query_vector_param`
+(defined in `cogniverse_vespa/search_backend.py`):
+
+- **Single-vector schemas** (LVT sv_chunk): numpy array flattened to a dense list —
+  `tensor(v[dim])` binding. A `(1, dim)` array is flattened before serialisation.
+- **Multi-vector schemas** (ColPali, VideoPrism mv_chunk): numpy array converted to a
+  `{str(token_index): vector_list}` dict — `tensor<bfloat16>(patch{}, v[dim])` binding.
+
+Schema arity is determined by `_is_single_vector_schema(schema_name)` from
+`cogniverse_vespa.embedding_processor`. Pass the raw numpy array from your encoder;
+the formatting is handled internally.

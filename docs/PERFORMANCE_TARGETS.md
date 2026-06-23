@@ -60,7 +60,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ## Optimization System Performance
 
-> **Note**: GEPA (Experience-Guided Policy Adaptation) optimizer is available via `dspy.teleprompt.GEPA` and automatically selected by `DSPyAgentOptimizerPipeline` when dataset size >= 200 examples.
+> **Note**: GEPA optimizer is registered as `OptimizerType.GEPA` in `libs/foundation/cogniverse_foundation/config/agent_config.py`. Optimizer selection is configured per-tenant; `DSPyAgentOptimizerPipeline` does not auto-select based on dataset size.
 
 ### DSPy Optimizer Performance
 | Optimizer | Training Time | Memory | Convergence |
@@ -71,14 +71,14 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 | **GEPA** | < 45 min | 12GB | 50-150 iterations |
 | **SIMBA** | < 30 min | 8GB | 30-80 iterations |
 
-> **Note**: Available optimizers include: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 (via `libs/core/cogniverse_core/registries/dspy_registry.py`), plus GEPA and SIMBA (via `dspy.teleprompt`).
+> **Note**: Available optimizers include: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 (via `libs/core/cogniverse_core/common/dspy_module_registry.py`), plus GEPA and SIMBA (configured via `libs/foundation/cogniverse_foundation/config/agent_config.py`).
 
 ### Query Enhancement Performance
 | Component | Training Time | Memory | Description |
 |-----------|--------------|--------|-------------|
-| **QueryEnhancementAgent** | < 30 min | 8GB | Query enhancement via ComposableQueryAnalysisModule (A2A agent) |
+| **QueryEnhancementAgent** | < 30 min | 8GB | Query enhancement via QueryEnhancementModule (A2A agent) |
 
-> **Note**: SIMBA optimization runs as an Argo batch job (not inline). Real-time enhancement is handled by `QueryEnhancementAgent` (`libs/agents/cogniverse_agents/query_enhancement_agent.py`) using `ComposableQueryAnalysisModule`.
+> **Note**: SIMBA optimization runs as an Argo batch job (not inline). Real-time enhancement is handled by `QueryEnhancementAgent` (`libs/agents/cogniverse_agents/query_enhancement_agent.py`) using `QueryEnhancementModule`.
 
 ### Target Optimization Impact
 > **Note**: The following are target improvements for when optimization is fully deployed:
@@ -232,7 +232,7 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 
 ### Load Testing
 
-Load testing suite: `tests/routing/integration/test_production_load.py` — covers 100 QPS throughput, concurrent request handling, sustained load, and latency percentile validation.
+Load testing suite: `tests/routing/integration/` — covers integration scenarios for routing, connectivity, and feature integration. Production-load throughput and latency percentile tests are not yet implemented.
 
 ### Performance Benchmarks
 

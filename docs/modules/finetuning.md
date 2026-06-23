@@ -2015,14 +2015,6 @@ Validation split and early stopping are **automatic** and cannot be disabled whe
 
 ---
 
-## Version History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0.0 | 2025-11-24 | Initial release with SFT, DPO, embedding fine-tuning |
-
----
-
 ## References
 
 ### Papers

@@ -219,20 +219,6 @@ config = TelemetryConfig(
 telemetry = TelemetryManager(config)
 ```
 
-#### Configuration
-
-Configure telemetry programmatically via `TelemetryConfig` instantiation:
-
-```python
-config = TelemetryConfig(
-    enabled=True,
-    level=TelemetryLevel.DETAILED,
-    otlp_enabled=True,
-    otlp_endpoint="localhost:4317",
-    batch_config=BatchExportConfig(use_sync_export=True)  # For tests
-)
-```
-
 ### 2. TelemetryConfig
 
 **File:** `libs/foundation/cogniverse_foundation/telemetry/config.py`
@@ -661,7 +647,7 @@ export TELEMETRY_SYNC_EXPORT=true
 # Or force flush manually (in Python)
 # telemetry.force_flush(timeout_millis=10000)
 
-# Check OTLP collector endpoint (env var renamed from OTLP_ENDPOINT)
+# Check OTLP collector endpoint
 export TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
 # Verify telemetry backend is running (e.g., Phoenix)

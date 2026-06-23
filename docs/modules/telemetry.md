@@ -11,7 +11,7 @@
 
 **Architecture Note:** Cogniverse uses a **plugin-based telemetry architecture** with three layers:
 1. **Foundation Layer** (`cogniverse-foundation`): Telemetry provider interfaces, infrastructure, manager, and configuration
-2. **Core Layer** (`cogniverse-core`): Re-exports from foundation for backward compatibility
+2. **Core Layer** (`cogniverse-core`): Re-exports telemetry symbols from cogniverse-foundation
 3. **Plugin Layer** (`cogniverse-telemetry-phoenix`): Phoenix-specific implementation auto-discovered via Python entry points
 
 This design enables clean separation between telemetry infrastructure and provider-specific implementations, allowing easy swapping of telemetry backends (Phoenix, Datadog, New Relic, etc.).
@@ -44,7 +44,7 @@ libs/foundation/cogniverse_foundation/telemetry/
 
 ### 2. Core Layer Re-exports (cogniverse-core)
 
-The `cogniverse-core` package provides backward compatibility by re-exporting telemetry from foundation:
+The `cogniverse-core` package re-exports telemetry symbols from cogniverse-foundation, making them accessible via both import paths:
 
 ```python
 # libs/core/cogniverse_core/telemetry/__init__.py

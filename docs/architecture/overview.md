@@ -374,7 +374,7 @@ All search clients are tenant-aware:
 
 #### **Telemetry Isolation** (`libs/foundation/cogniverse_foundation/telemetry/manager.py`)
 
-- Telemetry projects per tenant: `{tenant_id}_orchestrator_agent`
+- Telemetry projects per tenant: `cogniverse-{tenant_id}-{service}` (e.g., `cogniverse-acme-orchestrator_agent`)
 - Separate spans and traces per tenant
 - Full observability isolation
 

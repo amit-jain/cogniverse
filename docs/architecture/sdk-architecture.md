@@ -29,7 +29,7 @@ Cogniverse is structured as a **UV workspace monorepo** with a layered architect
 
 ### Key Statistics
 
-- **Total Packages**: 11 packages in layered architecture
+- **Total Packages**: 13 packages in layered architecture
 - **Workspace Location**: `libs/` directory
 - **Python Version**: >= 3.11 (sdk) or >= 3.12 (all others)
 - **Build System**: Hatchling for all packages
@@ -45,17 +45,19 @@ Foundation Layer:
 Core Layer:
 ├── core/          # Core functionality and base classes
 ├── evaluation/    # Provider-agnostic evaluation framework
+├── synthetic/     # Synthetic data generation (for optimizer training)
 └── telemetry-phoenix/ # Phoenix telemetry provider (plugin)
 
 Implementation Layer:
 ├── agents/        # Agent implementations
-├── vespa/         # Vespa backend integration
-└── synthetic/     # Synthetic data generation
+└── vespa/         # Vespa backend integration
 
 Application Layer:
 ├── runtime/       # FastAPI server and ingestion
 ├── dashboard/     # Streamlit analytics UI
-└── finetuning/    # LLM/embedding fine-tuning infrastructure
+├── finetuning/    # LLM/embedding fine-tuning infrastructure
+├── messaging/     # Telegram messaging gateway
+└── cli/           # cogniverse CLI (up, status, index, graph, etc.)
 ```
 
 ---
@@ -315,9 +317,42 @@ phoenix = "cogniverse_telemetry_phoenix.evaluation.evaluation_provider:PhoenixEv
 
 ---
 
+#### Package 6: cogniverse-synthetic
+
+**Purpose**: Synthetic data generation for optimizer training.
+
+**Package Name**: `cogniverse-synthetic` (installable)
+**Import Name**: `cogniverse_synthetic` (Python import)
+**Layer**: Core
+
+#### Module Structure
+
+```text
+cogniverse_synthetic/
+├── __init__.py
+├── *.py           # API, service, DSPy modules/signatures, profile selector, registry
+├── approval/      # Confidence extraction, feedback handling
+├── generators/    # Modality, routing, cross-modal, workflow generators
+└── utils/         # Agent inference, pattern extraction
+```
+
+> See `libs/synthetic/cogniverse_synthetic/` for complete structure
+> Dependencies: `libs/synthetic/pyproject.toml`
+
+#### Key Responsibilities
+
+- **Synthetic Data Generation**: Generate training data for DSPy optimizers via modality, routing, cross-modal, and workflow generators
+- **Profile Selection**: LLM-based profile selection using DSPy modules
+- **Content Sampling**: Sample real content from backends for synthetic generation
+- **Approval Workflow**: Confidence extraction and feedback handling for data quality
+- **REST API**: FastAPI service for synthetic data generation
+- **Training Data Quality**: Generate diverse, representative training examples for routing optimization
+
+---
+
 ### Implementation Layer
 
-#### Package 6: cogniverse-agents
+#### Package 7: cogniverse-agents
 
 **Purpose**: Agent implementations including routing, video search, and orchestration.
 
@@ -361,7 +396,7 @@ cogniverse_agents/
 
 ---
 
-#### Package 7: cogniverse-vespa
+#### Package 8: cogniverse-vespa
 
 **Purpose**: Vespa backend implementation with multi-tenant schema management.
 
@@ -390,39 +425,6 @@ cogniverse_vespa/
 - **Tenant Isolation**: Schema-per-tenant pattern implementation
 - **Embedding Processing**: Strategy-aware embedding processing
 - **Plugin Architecture**: Adapter store via entry points
-
----
-
-#### Package 8: cogniverse-synthetic
-
-**Purpose**: Synthetic data generation for optimizer training.
-
-**Package Name**: `cogniverse-synthetic` (installable)
-**Import Name**: `cogniverse_synthetic` (Python import)
-**Layer**: Implementation
-
-#### Module Structure
-
-```text
-cogniverse_synthetic/
-├── __init__.py
-├── *.py           # API, service, DSPy modules/signatures, profile selector, registry
-├── approval/      # Confidence extraction, feedback handling
-├── generators/    # Modality, routing, cross-modal, workflow generators
-└── utils/         # Agent inference, pattern extraction
-```
-
-> See `libs/synthetic/cogniverse_synthetic/` for complete structure
-> Dependencies: `libs/synthetic/pyproject.toml`
-
-#### Key Responsibilities
-
-- **Synthetic Data Generation**: Generate training data for DSPy optimizers via modality, routing, cross-modal, and workflow generators
-- **Profile Selection**: LLM-based profile selection using DSPy modules
-- **Content Sampling**: Sample real content from backends for synthetic generation
-- **Approval Workflow**: Confidence extraction and feedback handling for data quality
-- **REST API**: FastAPI service for synthetic data generation
-- **Training Data Quality**: Generate diverse, representative training examples for routing optimization
 
 ---
 
@@ -556,6 +558,67 @@ print(f"Adapter saved to: {result.adapter_path}")
 
 ---
 
+#### Package 12: cogniverse-messaging
+
+**Purpose**: Telegram messaging gateway with invite-based authentication and multi-tenant routing.
+
+**Package Name**: `cogniverse-messaging` (installable)
+**Import Name**: `cogniverse_messaging` (Python import)
+**Layer**: Application
+
+#### Module Structure
+
+```text
+cogniverse_messaging/
+├── __init__.py
+├── gateway.py          # MessagingGateway (polling or webhook)
+├── auth.py             # InviteTokenManager, UserTenantMapper
+├── command_router.py   # /search, /summarize, /report, /research, /code, /wiki commands
+├── conversation.py     # Conversation history via Mem0
+├── runtime_client.py   # Async client for runtime API
+└── telegram_handler.py # Response formatting
+```
+
+> See `libs/messaging/cogniverse_messaging/` for complete structure
+> Dependencies: `libs/messaging/pyproject.toml`
+
+#### Key Responsibilities
+
+- **Telegram Gateway**: Polling and webhook modes for Telegram bot integration
+- **Invite Auth**: Token-based invite system mapping users to tenants
+- **Command Routing**: Parse and dispatch slash commands and plain-text/media messages
+- **Conversation Memory**: Multi-turn conversation history via Mem0
+- **Runtime Dispatch**: Async HTTP client for forwarding requests to the runtime API
+
+---
+
+#### Package 13: cogniverse-cli
+
+**Purpose**: Command-line interface for managing Cogniverse deployments.
+
+**Package Name**: `cogniverse-cli` (installable)
+**Import Name**: `cogniverse_cli` (Python import)
+**Layer**: Application
+
+#### Module Structure
+
+```text
+cogniverse_cli/
+├── __init__.py
+└── main.py    # cogniverse CLI entry point (up, status, code, index, graph, etc.)
+```
+
+> See `libs/cli/cogniverse_cli/` for complete structure
+> Dependencies: `libs/cli/pyproject.toml`
+
+#### Key Responsibilities
+
+- **Deployment Management**: `up`, `status` commands for cluster lifecycle
+- **Content Operations**: `index`, `graph` commands for data management
+- **Developer Tooling**: `code` and other developer-facing commands
+
+---
+
 ## Dependency Management
 
 ### Dependency Graph
@@ -571,10 +634,12 @@ flowchart TD
     core["<span style='color:#000'><b>cogniverse-core</b><br/>Base classes & registries</span>"]
     phoenix["<span style='color:#000'><b>cogniverse-telemetry-phoenix</b><br/>Plugin (entry points)</span>"]
 
+    %% Core Layer (continued)
+    synthetic["<span style='color:#000'><b>cogniverse-synthetic</b><br/>Synthetic data</span>"]
+
     %% Implementation Layer
     agents["<span style='color:#000'><b>cogniverse-agents</b><br/>Agent implementations</span>"]
     vespa["<span style='color:#000'><b>cogniverse-vespa</b><br/>Vespa backend</span>"]
-    synthetic["<span style='color:#000'><b>cogniverse-synthetic</b><br/>Synthetic data</span>"]
 
     %% Application Layer
     runtime["<span style='color:#000'><b>cogniverse-runtime</b><br/>FastAPI server</span>"]
@@ -592,6 +657,8 @@ flowchart TD
     core --> evaluation
     phoenix --> core
     phoenix --> evaluation
+    synthetic --> sdk
+    synthetic --> foundation
 
     %% Implementation Layer dependencies
     agents --> sdk
@@ -599,8 +666,6 @@ flowchart TD
     agents --> synthetic
     vespa --> sdk
     vespa --> core
-    synthetic --> sdk
-    synthetic --> foundation
 
     %% Application Layer dependencies
     runtime --> sdk
@@ -624,8 +689,8 @@ flowchart TD
     classDef appStyle fill:#ffcc80,stroke:#ef6c00,color:#000
 
     class sdk,foundation foundationStyle
-    class evaluation,core,phoenix coreStyle
-    class agents,vespa,synthetic implStyle
+    class evaluation,core,phoenix,synthetic coreStyle
+    class agents,vespa implStyle
     class runtime,dashboard,finetuning appStyle
 ```
 
@@ -636,7 +701,8 @@ flowchart TD
 - **Evaluation depends on Foundation + SDK**: Provider-agnostic evaluation framework
 - **Core depends on SDK + Foundation + Evaluation**: Central package with base classes
 - **Telemetry-Phoenix is a Plugin**: Depends on Core + Evaluation, auto-discovered via entry points
-- **Implementation Layer depends on Core**: Agents, Vespa, Synthetic build on Core
+- **Synthetic is Core, not Implementation**: Depends only on SDK + Foundation; consumed by agents and finetuning in the Implementation and Application layers
+- **Implementation Layer depends on Core**: Agents and Vespa build on Core
 - **Application Layer depends on lower layers**: Runtime, Dashboard, Finetuning use Implementation packages
 - **No Circular Dependencies**: Clean layered hierarchy with dependencies flowing upward
 - **Optional Dependencies**: Runtime can work without agents/vespa (runtime -.-> vespa/agents shows optional)
@@ -1436,18 +1502,20 @@ Cogniverse SDK uses a **UV workspace** with a layered architecture for multi-mod
 3. **cogniverse-core**: Core functionality (base agent classes, registries, memory with Mem0, caching, tenant utilities)
 4. **cogniverse-evaluation**: Provider-agnostic evaluation framework (core tasks, scorers, metrics, providers)
 5. **cogniverse-telemetry-phoenix**: Phoenix telemetry provider (plugin with entry points for auto-discovery)
+6. **cogniverse-synthetic**: Synthetic data generation (routing, modality, workflow generators with DSPy)
 
 **Implementation Layer:**
 
-6. **cogniverse-agents**: Agent implementations (routing, video, document, audio, image agents with A2A protocol)
-7. **cogniverse-vespa**: Vespa backend (tenant schema management, ranking strategies, multi-tenant isolation)
-8. **cogniverse-synthetic**: Synthetic data generation (routing, modality, workflow generators with DSPy)
+7. **cogniverse-agents**: Agent implementations (routing, video, document, audio, image agents with A2A protocol)
+8. **cogniverse-vespa**: Vespa backend (tenant schema management, ranking strategies, multi-tenant isolation)
 
 **Application Layer:**
 
 9. **cogniverse-runtime**: FastAPI server (multi-modal ingestion, tenant management, JWT authentication)
 10. **cogniverse-dashboard**: Streamlit UI (analytics, Phoenix experiments, UMAP visualization)
 11. **cogniverse-finetuning**: LLM/embedding fine-tuning infrastructure (LoRA/PEFT, DPO, contrastive learning, Modal GPU integration)
+12. **cogniverse-messaging**: Telegram messaging gateway (invite auth, command routing, Mem0 conversation history)
+13. **cogniverse-cli**: cogniverse CLI (`up`, `status`, `index`, `graph`, `code` commands)
 
 **Key Characteristics**:
 

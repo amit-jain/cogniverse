@@ -518,7 +518,6 @@ def search_agent_example(config_manager, schema_loader):
 
     # Create typed dependencies
     deps = SearchAgentDeps(
-        tenant_id="test_tenant",
         backend_url="http://localhost",
         backend_port=8080,
     )

@@ -261,7 +261,7 @@ from cogniverse_foundation.config.unified_config import SystemConfig
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent
 from cogniverse_vespa.backend import VespaBackend
 
-# ❌ Bad: Old src-style imports (deprecated)
+# ❌ Bad: Old src-style imports (not valid in uv workspace)
 from src.agents.orchestrator_agent import OrchestratorAgent  # ❌ Will fail
 ```
 

@@ -148,10 +148,11 @@ Selects optimal backend profiles for data generation:
 from cogniverse_synthetic.profile_selector import ProfileSelector
 
 selector = ProfileSelector(llm_client=llm)  # or None for rule-based
+# available_profiles is a Dict[str, Dict] of profile_name -> profile_config
 profiles, reasoning = await selector.select_profiles(
     optimizer_name="modality",
     optimizer_task="Per-modality routing optimization",
-    available_profiles=backend_config["video_processing_profiles"],
+    available_profiles=backend_config.profiles,  # BackendConfig.profiles: Dict[str, BackendProfileConfig]
     max_profiles=3
 )
 # Returns: (["video_colpali_smol500_mv_frame", ...], "reasoning...")
@@ -186,9 +187,9 @@ backend = BackendRegistry.get_search_backend(
 # Initialize backend querier with config and field mappings
 from cogniverse_foundation.config.unified_config import BackendConfig, FieldMappingConfig
 
-# Load or create backend configuration
-backend_config = BackendConfig()  # Uses defaults, or load from config manager
-field_mappings = FieldMappingConfig()  # Uses defaults, or load from config manager
+# BackendConfig requires tenant_id
+backend_config = BackendConfig(tenant_id="your_org:production")
+field_mappings = FieldMappingConfig()  # no required args
 
 querier = BackendQuerier(
     backend=backend,
@@ -394,9 +395,9 @@ backend = BackendRegistry.get_search_backend(
 # Initialize service
 from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-# Load or create configuration
-backend_config = BackendConfig()  # Uses defaults, or load from config manager
-generator_config = SyntheticGeneratorConfig()  # Uses defaults, or load from config manager
+# Both BackendConfig and SyntheticGeneratorConfig require tenant_id
+backend_config = BackendConfig(tenant_id="your_org:production")
+generator_config = SyntheticGeneratorConfig(tenant_id="your_org:production")
 
 service = SyntheticDataService(
     backend=backend,                # Backend interface (Vespa, Pinecone, etc.)
@@ -452,9 +453,9 @@ backend = BackendRegistry.get_search_backend(
 # Configure service with backend and configuration
 from cogniverse_foundation.config.unified_config import BackendConfig, SyntheticGeneratorConfig
 
-# Load or create configuration
-backend_config_obj = BackendConfig()  # Uses defaults, or load from config manager
-generator_config_obj = SyntheticGeneratorConfig()  # Uses defaults, or load from config manager
+# Both BackendConfig and SyntheticGeneratorConfig require tenant_id
+backend_config_obj = BackendConfig(tenant_id="your_org:production")
+generator_config_obj = SyntheticGeneratorConfig(tenant_id="your_org:production")
 
 # Option 1: Use configure_service to set global instance
 configure_service(
@@ -548,11 +549,11 @@ response = await service.generate(request)
 from cogniverse_sdk.interfaces.workflow_store import WorkflowExecution
 executions = [WorkflowExecution(**ex) for ex in response.data]
 
-# Record workflow executions and optimize
-workflow_intel = WorkflowIntelligence(tenant_id="your_org:production")
-for execution in executions:
-    workflow_intel.record_execution(execution)
-result = await workflow_intel.optimize_from_ground_truth()  # Uses recorded executions
+# WorkflowIntelligence requires a TelemetryProvider — obtain it via TelemetryManager
+# (the runtime wires this automatically; call via cogniverse_runtime.optimization_cli
+# --mode workflow rather than constructing WorkflowIntelligence directly)
+# Example using the optimization CLI:
+#   python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id your_org:production
 ```
 
 ## Configuration
@@ -744,8 +745,10 @@ libs/
 
 # Tests are located at project root:
 tests/
-├── synthetic/integration/          # Synthetic package integration tests (1 test file)
-└── routing/unit/synthetic/         # Synthetic unit tests (6 test files + conftest.py)
+├── synthetic/
+│   ├── integration/                # Integration tests (test_profile_synthetic_service.py, etc.)
+│   └── unit/                       # Unit tests (test_profile_generator.py, etc.)
+└── routing/unit/synthetic/         # Routing-focused synthetic unit tests (6 test files + conftest.py)
 ```
 
 ## Related Documentation
