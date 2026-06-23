@@ -140,7 +140,7 @@ Shared functionality across the platform:
 - `validate_tenant_id`: Validate tenant ID format
 - `get_tenant_storage_path`: Build tenant-scoped storage paths
 
-### Telemetry (`cogniverse_core.telemetry`)
+### Telemetry (`cogniverse_foundation.telemetry`)
 
 Telemetry and observability integration:
 - OpenTelemetry span creation
