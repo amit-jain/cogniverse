@@ -1,10 +1,8 @@
 """Memory timestamp normalization — ms-vs-seconds magnitude + tz-aware parsing.
 
-Regressions these pin (audit Class D):
-  * a millisecond ``created_at`` made ``_compute_age_seconds`` clamp to 0 (the
-    memory never aged out) and raised inside ``datetime.fromtimestamp`` on the
-    read path (swallowed → ``search`` returned []);
-  * a naive ISO ``created_at`` was read in the host's local tz, not UTC.
+A millisecond ``created_at`` must not clamp ``_compute_age_seconds`` to 0 or
+raise inside ``datetime.fromtimestamp`` on the read path, and a naive ISO
+``created_at`` must be read as UTC, not the host's local tz.
 """
 
 from __future__ import annotations
