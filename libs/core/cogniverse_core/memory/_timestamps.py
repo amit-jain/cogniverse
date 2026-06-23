@@ -26,7 +26,7 @@ def to_epoch_seconds(value: Any) -> Optional[int]:
         return None
     if isinstance(value, (int, float)):
         ts = float(value)
-        if ts > _MAX_S_EPOCH:  # value is in milliseconds
+        while ts > _MAX_S_EPOCH:  # collapse ms/us/ns magnitudes down to seconds
             ts /= 1000.0
         return int(ts)
     if isinstance(value, str):

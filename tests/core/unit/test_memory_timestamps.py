@@ -54,3 +54,14 @@ def test_compute_age_seconds_normalizes_milliseconds():
     assert Mem0MemoryManager._compute_age_seconds({"created_at": _MS}, now) == 100
     assert Mem0MemoryManager._compute_age_seconds({"created_at": _S}, now) == 100
     assert Mem0MemoryManager._compute_age_seconds({"created_at": None}, now) is None
+
+
+def test_to_epoch_seconds_collapses_microsecond_and_nanosecond_magnitudes():
+    assert to_epoch_seconds(_MS * 1000) == _S  # microseconds -> seconds
+    assert to_epoch_seconds(_S * 10**9) == _S  # nanoseconds -> seconds
+
+
+def test_epoch_to_iso_utc_survives_absurd_magnitude():
+    # A value far beyond ms used to reach datetime.fromtimestamp and raise
+    # OSError/OverflowError (swallowed on the read path); now it collapses.
+    assert epoch_to_iso_utc(_S * 10**9) == "2023-11-14T22:13:20+00:00"
