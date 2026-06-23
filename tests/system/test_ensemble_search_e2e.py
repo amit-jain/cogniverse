@@ -1,15 +1,17 @@
 """
 END-TO-END SYSTEM TEST for Ensemble Search with RRF Fusion.
 
-This test validates the COMPLETE ensemble search pipeline:
+This test validates the ensemble search RRF-fusion plumbing end to end:
 1. Deploy 2-3 different Vespa schemas (different embedding dimensions)
 2. Ingest real test video data with real embeddings into each profile
-3. Load real query encoder models (lightweight versions)
-4. Execute real parallel searches against real Vespa
-5. Validate RRF fusion with actual search results
-6. Measure true end-to-end latency (<700ms target)
+3. Stub the query encoders — encoder/retrieval quality is out of scope here;
+   the parallel-search + RRF-fusion plumbing is what's under test
+4. Execute parallel searches against real Vespa
+5. Validate RRF fusion combines per-profile results
+6. Measure end-to-end latency (<700ms target)
 7. Test error scenarios with real failures
-8. Validate result quality and overlap
+8. Validate RRF fusion ranking and result overlap (via scripted per-profile
+   results), not retrieval relevance
 
 This is a SYSTEM TEST, not an integration test.
 """
@@ -380,9 +382,8 @@ class TestEnsembleSearchEndToEnd:
     @pytest.mark.asyncio
     async def test_e2e_ensemble_result_quality(self, ensemble_search_agent):
         """
-        E2E TEST: Validate RRF fusion produces high-quality results
-
-        Tests that documents appearing in multiple profiles rank higher
+        Validate RRF fusion ranks docs appearing in multiple profiles higher,
+        using scripted per-profile results (not retrieval relevance).
         """
         agent, profiles = ensemble_search_agent
 
