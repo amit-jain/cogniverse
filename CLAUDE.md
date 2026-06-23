@@ -135,6 +135,16 @@ Hard rule: any production-code deletion requires explicit user approval. "Named 
 - Never ask permission to do what these instructions already require. If the rules say to write tests, write them. If the rules say to update docs, update them. Follow the instructions — do not ask "should I also do X?" when X is already mandated here.
 - Each implementation step is not complete until: (1) code compiles, (2) tests for that code exist and pass, (3) docs referencing the changed API are updated. All three in the same step.
 
+### Non-Negotiable Output & Communication Rules
+
+These have been violated repeatedly despite explicit instruction. They are absolute.
+
+**1. Never deflect ownership.** The words "not mine", "not my change", "pre-existing", "wasn't introduced by me", or "infrastructure" (as an excuse) are banned. Own every problem surfaced during the work — failures, latent bugs, audit findings, anything — including issues that predate the session. Investigate and fix it, then verify. State who authored an artifact ONLY when an operation requires it (e.g. which branch to delete), as a plain fact, never to distance from a problem. If unsure whether something is the user's, ask — do not assert it away.
+
+**2. No process/tracking jargon in the work product.** Never write "audit", "Class A/B/C/D/E", "Phase N", severity tiers ("CRIT/HIGH/MED/LOW"), finding IDs (C1/H28), "cycle N", or "deferred to ..." in ANY file, comment, test docstring, commit message, or PR/MR description. Describe what the change is and how the code behaves, plainly. A test docstring states what it pins; a PR body states what changed and why technically. Before every commit AND every push AND every PR, grep the diff for these tokens and strip them.
+
+**3. Do not create a branch and PR for every small fix.** Batch related changes onto one branch. Do not push or open/close PRs or delete remote branches without explicit approval.
+
 ## Agent Directives
 
 The governing loop for all work: **gather context → take action → verify work → repeat.**
