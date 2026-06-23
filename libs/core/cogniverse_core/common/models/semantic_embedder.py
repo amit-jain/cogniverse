@@ -75,7 +75,6 @@ class LocalSentenceTransformerEmbedder(SemanticEmbedder):
 
         logger.info("Loading local semantic model: %s", model_name)
         self._model = SentenceTransformer(model_name)
-        self._model_name = model_name
 
     def encode(self, texts: TextsT, is_query: bool = False, **kwargs) -> np.ndarray:
         # SentenceTransformer reads the model's own prompts from
