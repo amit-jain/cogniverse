@@ -1046,7 +1046,10 @@ class VespaSearchBackend(SearchBackend):
                     logger.debug(
                         f"[{correlation_id}] Adding generic embeddings for {vespa_param_name}"
                     )
-                    query_params[vespa_param_name] = query_embeddings.tolist()
+                    emb = query_embeddings
+                    if emb.ndim == 2 and emb.shape[0] == 1:
+                        emb = emb[0]
+                    query_params[vespa_param_name] = emb.tolist()
 
                 else:
                     # Unknown input name - this shouldn't happen with proper configuration

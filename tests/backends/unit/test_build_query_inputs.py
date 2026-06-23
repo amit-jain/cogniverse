@@ -74,3 +74,30 @@ def test_hybrid_acoustic_binds_acoustic_query_and_text(
     assert params["input.query(acoustic_query)"] == vec.tolist()
     assert params["userQuery"] == "ocean waves"
     assert "nearestNeighbor(acoustic_embedding, acoustic_query)" in params["yql"]
+
+
+def test_generic_q_input_flattens_single_row_2d(
+    backend: VespaSearchBackend,
+) -> None:
+    """A single-vector encoder returning (1, dim) bound to the generic ``q``
+    input must emit a flat dim-length list, not a nested [[...]] the
+    tensor<float>(x[dim]) input rejects."""
+    rank_config = {"inputs": {"q": "tensor<float>(v[128])"}}
+    vec = np.zeros((1, 128), dtype=np.float32)
+    vec[0, 0] = 1.0
+
+    params = backend._build_query(
+        query_text="hello",
+        query_embeddings=vec,
+        rank_config=rank_config,
+        ranking_profile="default",
+        schema_name="video_colpali",
+        limit=10,
+        filters={},
+        correlation_id="t",
+    )
+
+    bound = params["input.query(q)"]
+    assert len(bound) == 128
+    assert not isinstance(bound[0], list)
+    assert bound == vec[0].tolist()
