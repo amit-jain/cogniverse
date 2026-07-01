@@ -200,6 +200,7 @@ class MultiDocumentSynthesisAgent(
         # Fall back to the system primary LM via config_manager when no
         # explicit llm_config was passed.
         self._llm_config = resolve_llm_config(llm_config, config_manager)
+        self._config_manager = config_manager
         self._dspy_module = dspy.ChainOfThought(_SynthesisSignature)
 
     def synthesize(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
@@ -384,9 +385,18 @@ class MultiDocumentSynthesisAgent(
     def _synthesise_without_rlm(self, query: str, documents_block: str) -> str:
         """Single LM call via DSPy ChainOfThought."""
         if self._llm_config is not None:
-            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+            from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+            from cogniverse_foundation.config.gateway_routing import (
+                routed_lm_context_for,
+            )
 
-            with dspy.context(lm=create_dspy_lm(self._llm_config)):
+            tenant_id = getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID
+            with routed_lm_context_for(
+                self._config_manager,
+                tenant_id,
+                "multi_document_synthesis_agent",
+                endpoint=self._llm_config,
+            ):
                 result = self._dspy_module(query=query, documents=documents_block)
         else:
             # Use ambient dspy.settings.lm if no per-agent override.
