@@ -3389,6 +3389,13 @@ The `judge` parameter is optional. Without it the comparison still tracks
 latency / tokens / `was_fallback`, just not quality. With it, every arm's
 answer gets scored and `comparison.judge_delta` reports `with_rlm − without`.
 
+When constructed with `tenant_id` and `config_manager`, both arms route their
+endpoint through the gateway (task `rlm_inference`). Routing is resolved once
+and shared by both arms, so the gateway returns the same model for each — the
+comparison still isolates the RLM machinery, now measured against the
+production (routed) path. `optimization_cli.run_ab_compare` passes both, so the
+dashboard's A/B tile reflects what production actually runs.
+
 ### Deep synthesis workflow (B.7)
 
 Opt-in entry point for queries that need recursive multi-agent

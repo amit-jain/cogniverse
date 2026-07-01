@@ -1856,6 +1856,8 @@ async def run_ab_compare(
         judge=judge,
         rlm_max_iterations=rlm_max_iterations,
         rlm_max_llm_calls=rlm_max_llm_calls,
+        tenant_id=tenant_id,
+        config_manager=config_manager,
     )
 
     tracer = trace.get_tracer("cogniverse.ab_compare")

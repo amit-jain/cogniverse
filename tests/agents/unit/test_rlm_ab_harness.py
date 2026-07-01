@@ -219,6 +219,7 @@ class TestRlmArmEventRouting:
 
         runner = object.__new__(RLMABRunner)
         runner._llm_config = object()
+        runner._routed_llm_config = runner._llm_config
         runner._rlm_max_iterations = 10
         runner._rlm_max_llm_calls = 30
         runner._timeout_seconds = 300
@@ -230,3 +231,57 @@ class TestRlmArmEventRouting:
 
         assert captured["task_id"] == "task-xyz"
         assert captured["tenant_id"] == "acme:acme"
+
+
+class TestABRunnerGatewayRouting:
+    """Both arms route through the gateway when a config_manager + tenant is set."""
+
+    def _patch_enabled(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+
+        gateway = GatewayRoutingConfig(
+            enabled=True,
+            gateway_base_url="http://gateway:8080/v1",
+            tenant_tiers={"acme:prod": "pro"},
+            default_tier="free",
+            agent_tasks={"rlm_inference": "reason"},
+            default_task="general",
+        )
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = gateway
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+
+    def test_both_arms_share_one_routed_endpoint(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        self._patch_enabled(monkeypatch)
+        runner = RLMABRunner(
+            llm_config=LLMEndpointConfig(
+                model="openai/gpt-4o", api_base="http://direct"
+            ),
+            tenant_id="acme:prod",
+            config_manager=MagicMock(),
+        )
+        # Resolved once; the identical routed endpoint drives both arms so the
+        # gateway returns the same model for each.
+        routed = runner._routed_llm_config
+        assert routed.api_base == "http://gateway:8080/v1"
+        assert routed.model == "openai/gpt-4o"
+        assert routed.extra_headers == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "reason",
+        }
+
+    def test_no_config_manager_keeps_direct_endpoint(self):
+        runner = RLMABRunner(
+            llm_config=LLMEndpointConfig(
+                model="openai/gpt-4o", api_base="http://direct"
+            ),
+            tenant_id="acme:prod",
+        )
+        assert runner._routed_llm_config.api_base == "http://direct"
+        assert runner._routed_llm_config.extra_headers is None
