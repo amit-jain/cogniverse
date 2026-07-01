@@ -1,0 +1,52 @@
+# Local semantic-router spike for cogniverse gateway routing.
+#
+#   docker compose -f deploy/semantic-router-spike/docker-compose.yml up
+#
+# Brings up: a stub OpenAI-compatible backend, the vLLM Semantic Router
+# ext_proc service, and Envoy in front on :8801. Point cogniverse (or the
+# e2e test) at http://localhost:8801/v1.
+#
+# The SR image tag is pinned below — keep config.yaml in sync with it.
+
+name: cogniverse-sr-spike
+
+services:
+  stub-upstream:
+    image: python:3.12-slim
+    command: ["python", "/app/stub_upstream.py"]
+    environment:
+      BACKEND_TAG: stub
+      PORT: "8000"
+    volumes:
+      - ./stub_upstream.py:/app/stub_upstream.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  semantic-router:
+    # Pin to a released tag; verify config.yaml matches this version's schema.
+    image: ghcr.io/vllm-project/semantic-router:latest
+    environment:
+      # SR reads its config from this path inside the container.
+      CONFIG_FILE: /app/config/config.yaml
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+    ports:
+      - "50051:50051"   # ext_proc gRPC
+      - "9190:9190"     # Prometheus metrics
+    depends_on:
+      stub-upstream:
+        condition: service_healthy
+
+  envoy:
+    image: envoyproxy/envoy:v1.31-latest
+    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "sr-spike"]
+    volumes:
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "8801:8801"     # OpenAI-compatible entry point
+      - "19000:19000"   # Envoy admin
+    depends_on:
+      - semantic-router

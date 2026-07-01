@@ -1,0 +1,113 @@
+# Semantic Router config for the cogniverse local spike.
+#
+# Targets the vLLM Semantic Router config schema documented for the
+# v0.2 "Athena" / v0.3 "Themis" releases (providers + routing + global).
+# Pin the SR image in docker-compose.yml to a matching tag. If SR refuses
+# to start, the schema for `routing:` almost certainly drifted in your
+# pulled version — diff against `config/config.yaml` in the SR repo at that
+# tag and re-port the two models + the tier/task decisions below. The
+# providers/global blocks are the stable parts.
+#
+# Both catalog models point at the SAME stub upstream on purpose: the spike
+# proves the router's DECISION (which model name + whether reasoning), which
+# the stub reflects back — so we don't need per-model Envoy clusters.
+
+version: "1.0"
+
+providers:
+  defaults:
+    # Fallback when no decision matches.
+    default_model: basic-chat
+    default_reasoning_effort: low
+    # How SR toggles "thinking" for each model family. The stub reads
+    # chat_template_kwargs.enable_thinking / .thinking to report reasoning.
+    reasoning_families:
+      qwen3:
+        type: chat_template_kwargs
+        parameter: enable_thinking
+
+  models:
+    # Cheap tier — reasoning off by default.
+    - name: basic-chat
+      reasoning_family: qwen3
+      provider_model_id: basic-chat
+      api_format: openai
+      backend_refs:
+        - name: stub-basic
+          endpoint: stub-upstream:8000
+          protocol: http
+          weight: 100
+          type: chat
+    # Strong tier — reasoning-capable.
+    - name: pro-reasoning
+      reasoning_family: qwen3
+      provider_model_id: pro-reasoning
+      api_format: openai
+      backend_refs:
+        - name: stub-pro
+          endpoint: stub-upstream:8000
+          protocol: http
+          weight: 100
+          type: chat
+
+routing:
+  # --- version-sensitive block: verify against your SR tag -----------------
+  # Signals SR extracts per request. We branch on the two headers cogniverse
+  # emits (see GatewayRoutingConfig): the tenant tier and the task label.
+  signals:
+    headers:
+      - name: tier
+        header: x-authz-user-groups
+      - name: task
+        header: x-vsr-task
+
+  # Decisions map signal matches to a candidate model set + reasoning flags.
+  # First match wins; falls back to providers.defaults.default_model.
+  decisions:
+    - name: pro-planning
+      rules:
+        all:
+          - signal: tier
+            equals: pro
+          - signal: task
+            equals: orchestrator_plan
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: true
+          reasoning_effort: high
+    - name: pro-default
+      rules:
+        all:
+          - signal: tier
+            equals: pro
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: false
+    - name: free-default
+      rules:
+        all:
+          - signal: tier
+            equals: free
+      modelRefs:
+        - model: basic-chat
+          use_reasoning: false
+  # -------------------------------------------------------------------------
+
+  model_selection:
+    method: static
+
+global:
+  stores:
+    semantic_cache:
+      enabled: true
+      backend: memory
+      similarity_threshold: 0.92
+      ttl_seconds: 600
+  # Safety classifiers ship with the SR image (~1.5GB, downloaded on first
+  # run). Leave enabled to exercise the PII/jailbreak decision plugins.
+  model_catalog:
+    system:
+      prompt_guard:
+        enabled: true
+      pii_classifier:
+        enabled: true
