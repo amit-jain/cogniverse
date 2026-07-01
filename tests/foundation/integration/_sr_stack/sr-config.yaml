@@ -1,33 +1,20 @@
-# Semantic Router config for the cogniverse local semantic-router stack.
-#
-# Targets the vLLM Semantic Router config schema documented for the
-# v0.2 "Athena" / v0.3 "Themis" releases (providers + routing + global).
-# Pin the SR image in docker-compose.yml to a matching tag. If SR refuses
-# to start, the schema for `routing:` almost certainly drifted in your
-# pulled version — diff against `config/config.yaml` in the SR repo at that
-# tag and re-port the two models + the tier/task decisions below. The
-# providers/global blocks are the stable parts.
-#
-# Both catalog models point at the SAME stub upstream on purpose: this stack
-# proves the router's DECISION (which model name + whether reasoning), which
-# the stub reflects back — so we don't need per-model Envoy clusters.
+version: v0.3
 
-version: "1.0"
+listeners:
+  - name: http
+    address: 0.0.0.0
+    port: 8899
+    timeout: 300
 
 providers:
   defaults:
-    # Fallback when no decision matches.
     default_model: basic-chat
     default_reasoning_effort: low
-    # How SR toggles "thinking" for each model family. The stub reads
-    # chat_template_kwargs.enable_thinking / .thinking to report reasoning.
     reasoning_families:
       qwen3:
         type: chat_template_kwargs
         parameter: enable_thinking
-
   models:
-    # Cheap tier — reasoning off by default.
     - name: basic-chat
       reasoning_family: qwen3
       provider_model_id: basic-chat
@@ -38,7 +25,6 @@ providers:
           protocol: http
           weight: 100
           type: chat
-    # Strong tier — reasoning-capable.
     - name: pro-reasoning
       reasoning_family: qwen3
       provider_model_id: pro-reasoning
@@ -51,63 +37,118 @@ providers:
           type: chat
 
 routing:
-  # --- version-sensitive block: verify against your SR tag -----------------
-  # Signals SR extracts per request. We branch on the two headers cogniverse
-  # emits (see SemanticRouterConfig): the tenant tier and the task label.
+  modelCards:
+    - name: basic-chat
+      capabilities: [chat]
+      modality: ar
+    - name: pro-reasoning
+      capabilities: [chat, reasoning]
+      modality: ar
   signals:
-    headers:
-      - name: tier
-        header: x-authz-user-groups
-      - name: task
-        header: x-vsr-task
-
-  # Decisions map signal matches to a candidate model set + reasoning flags.
-  # First match wins; falls back to providers.defaults.default_model.
+    role_bindings:
+      - name: pro-users
+        role: pro_tier
+        subjects:
+          - kind: Group
+            name: pro
+      - name: free-users
+        role: free_tier
+        subjects:
+          - kind: Group
+            name: free
+    keywords:
+      - name: technical
+        operator: OR
+        keywords:
+          - algorithm
+          - complexity
+          - recursive
+          - distributed
+          - consensus
+          - optimize
+          - architecture
+          - theorem
+          - proof
+          - throughput
+    domains:
+      - name: technical
+        mmlu_categories: [computer science, engineering, math, physics]
   decisions:
-    - name: pro-planning
+    - name: pro-technical-keyword
+      priority: 300
       rules:
-        all:
-          - signal: tier
-            equals: pro
-          - signal: task
-            equals: orchestrator_plan
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
+          - type: keyword
+            name: technical
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-          reasoning_effort: high
-    - name: pro-default
+    - name: pro-technical-domain
+      priority: 250
       rules:
-        all:
-          - signal: tier
-            equals: pro
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
+          - type: domain
+            name: technical
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: true
+    - name: pro-default
+      priority: 200
+      rules:
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
     - name: free-default
+      priority: 100
       rules:
-        all:
-          - signal: tier
-            equals: free
+        operator: AND
+        conditions:
+          - type: authz
+            name: free_tier
       modelRefs:
         - model: basic-chat
           use_reasoning: false
-  # -------------------------------------------------------------------------
-
-  model_selection:
-    method: static
 
 global:
+  services:
+    authz:
+      fail_open: false
+      identity:
+        user_id_header: x-authz-user-id
+        user_groups_header: x-authz-user-groups
+    response_api:
+      enabled: false
+    router_replay:
+      enabled: false
+    observability:
+      tracing:
+        enabled: false
   stores:
     semantic_cache:
-      enabled: true
-      backend: memory
-      similarity_threshold: 0.92
-      ttl_seconds: 600
-  # Safety classifiers ship with the SR image (~1.5GB, downloaded on first
-  # run). Leave enabled to exercise the PII/jailbreak decision plugins.
+      enabled: false
   model_catalog:
+    embeddings:
+      semantic:
+        use_cpu: true
     system:
-      prompt_guard:
-        enabled: true
-      pii_classifier:
-        enabled: true
+      domain_classifier: models/mmbert32k-intent-classifier-merged
+    modules:
+      classifier:
+        domain:
+          model_ref: domain_classifier
+          model_id: models/mmbert32k-intent-classifier-merged
+          threshold: 0.5
+          use_cpu: true
+          use_mmbert_32k: true
+          category_mapping_path: models/mmbert32k-intent-classifier-merged/category_mapping.json
+          fallback_category: other

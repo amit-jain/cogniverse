@@ -134,27 +134,25 @@ def test_semantic_router_pods_running():
     assert _kubectl_names("semantic-router-envoy"), "no Running envoy pod"
 
 
-def _route(sr_envoy_url: str, tier: str, task: str):
+def _route(sr_envoy_url: str, tenant_id: str, tier: str):
     """Build the routed LM exactly as an agent would and return the dspy.LM."""
     endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
     config = SemanticRouterConfig(
         enabled=True,
         semantic_router_url=sr_envoy_url,
-        tenant_tiers={"pro-tenant": tier},
-        agent_tasks={"orchestrator_agent": task},
+        tenant_tiers={tenant_id: tier},
     )
     routed = apply_semantic_routing(
         endpoint=endpoint,
         config=config,
-        tenant_id="pro-tenant",
-        agent_name="orchestrator_agent",
+        tenant_id=tenant_id,
     )
-    # The routed endpoint must carry the gateway api_base + the two signal
-    # headers the router keys on — this is the contract the agents rely on.
+    # The routed endpoint must carry the gateway api_base + the two authz
+    # headers the router requires — this is the contract the agents rely on.
     assert routed.api_base == sr_envoy_url
     assert routed.extra_headers == {
+        "x-authz-user-id": tenant_id,
         "x-authz-user-groups": tier,
-        "x-vsr-task": task,
     }
     lm = create_dspy_lm(routed)
     lm.cache = False
@@ -164,7 +162,7 @@ def _route(sr_envoy_url: str, tier: str, task: str):
 def test_completion_routes_through_deployed_semantic_router(sr_envoy_url):
     """A real completion sent through the deployed Envoy -> SR -> LLM returns
     a non-empty answer, proving the whole routed path is live."""
-    lm = _route(sr_envoy_url, tier="pro", task="orchestrator_plan")
+    lm = _route(sr_envoy_url, tenant_id="pro-tenant", tier="pro")
     out = lm("Reply with the single word: pong")
     text = out[0] if isinstance(out, list) else out
     assert isinstance(text, str) and text.strip(), (

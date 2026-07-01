@@ -1726,28 +1726,30 @@ semanticRouter:
         memory: "512Mi"
   router:
     image:
-      repository: ghcr.io/vllm-project/semantic-router
+      repository: ghcr.io/vllm-project/semantic-router/vllm-sr
       tag: "latest"
       pullPolicy: IfNotPresent
     grpcPort: 50051
     metricsPort: 9190
-    # Header-driven routing needs neither classifier; leaving them off avoids
-    # the ~1.5GB model download on first start.
-    promptGuard: false
-    piiClassifier: false
+    # Persistent cache for the router's classifier bundle (~GB) so it downloads
+    # once and survives restarts/rollouts. emptyDir when disabled.
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: "10Gi"
     resources:
       requests:
         cpu: "250m"
-        memory: "512Mi"
+        memory: "1Gi"
       limits:
         cpu: "2"
-        memory: "2Gi"
-  # cogniverse-side signal maps: which tenant -> tier, which agent -> task.
-  # The tier/task -> model decisions live in the router's own shipped config.
+        memory: "4Gi"
+  # cogniverse-side tenant -> tier map (sent as the x-authz-user-groups header).
+  # The tier -> allowed-model-set gating and the content-based model/reasoning
+  # selection live in the router's own shipped config.
   routing:
     tenantTiers: {}
-    agentTasks:
-      orchestrator_agent: orchestrator_plan
 
 # ===========================================
 # MinIO — S3-compatible object store

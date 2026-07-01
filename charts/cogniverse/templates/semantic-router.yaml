@@ -49,21 +49,31 @@ spec:
       - name: semantic-router
         image: "{{ .Values.semanticRouter.router.image.repository }}:{{ .Values.semanticRouter.router.image.tag }}"
         imagePullPolicy: {{ .Values.semanticRouter.router.image.pullPolicy }}
+        # The entrypoint reads its config from the CMD arg (default
+        # /app/config.yaml); override it to the mounted file.
+        args: ["/app/config.yaml"]
         env:
-        - name: CONFIG_FILE
-          value: /app/config/config.yaml
+        - name: HF_HOME
+          value: /models-cache
         ports:
         - name: grpc
           containerPort: {{ int .Values.semanticRouter.router.grpcPort }}
         - name: metrics
           containerPort: {{ int .Values.semanticRouter.router.metricsPort }}
+        # First boot downloads the classifier bundle (~GB) into the cache PVC;
+        # the startup probe gives it up to ~15m before liveness/readiness apply.
+        startupProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          periodSeconds: 10
+          failureThreshold: 90
         readinessProbe:
           httpGet:
             path: /metrics
             port: metrics
-          initialDelaySeconds: 15
           periodSeconds: 10
-          failureThreshold: 30
+          failureThreshold: 6
         livenessProbe:
           tcpSocket:
             port: grpc
@@ -73,13 +83,41 @@ spec:
           {{- toYaml .Values.semanticRouter.router.resources | nindent 10 }}
         volumeMounts:
         - name: router-config
-          mountPath: /app/config/config.yaml
+          mountPath: /app/config.yaml
           subPath: config.yaml
           readOnly: true
+        - name: models-cache
+          mountPath: /models-cache
       volumes:
       - name: router-config
         configMap:
           name: {{ $fullName }}-semantic-router-config
+      - name: models-cache
+        {{- if .Values.semanticRouter.router.persistence.enabled }}
+        persistentVolumeClaim:
+          claimName: {{ $fullName }}-semantic-router-models
+        {{- else }}
+        emptyDir: {}
+        {{- end }}
+{{- if .Values.semanticRouter.router.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-semantic-router-models
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router
+spec:
+  accessModes:
+    - {{ .Values.semanticRouter.router.persistence.accessMode }}
+  {{- if .Values.semanticRouter.router.persistence.storageClass }}
+  storageClassName: {{ .Values.semanticRouter.router.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.semanticRouter.router.persistence.size }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service

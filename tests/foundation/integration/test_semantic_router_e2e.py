@@ -5,11 +5,18 @@ This exercises the actual system boundary: cogniverse's own
 completions through Envoy -> vLLM Semantic Router -> a reflecting stub backend.
 It does NOT mock the router — the assertions read what the stub reflects back
 about the request the router actually forwarded, so they prove the router's
-decisions (model choice, reasoning toggle, header forwarding) end to end.
+decisions (tenant-tier gating, content-driven model + reasoning selection,
+header forwarding) end to end.
 
 The ``semantic_router_stack`` fixture (``conftest.py``) launches and tears down
 the whole stack itself via ``docker run`` — no compose file, no manual startup.
-When the Docker daemon is absent the fixture skips the module cleanly.
+
+Routing model: cogniverse sends the tenant identity (x-authz-user-id) + tier
+(x-authz-user-groups); the router gates the model set by tier (authz) and
+classifies the prompt's domain to pick the model + reasoning:
+  * free tier              -> basic-chat, no reasoning
+  * pro tier + technical   -> pro-reasoning, reasoning ON
+  * pro tier + non-technical -> pro-reasoning, reasoning OFF
 """
 
 from __future__ import annotations
@@ -38,61 +45,55 @@ def _semantic_router_config(base_url: str) -> SemanticRouterConfig:
         semantic_router_url=base_url,
         tenant_tiers={"pro-tenant": "pro", "free-tenant": "free"},
         default_tier="free",
-        agent_tasks={
-            "orchestrator_agent": "orchestrator_plan",
-            "query_enhancement_agent": "enhance",
-        },
-        default_task="general",
     )
 
 
-def _call(base_url: str, tenant_id: str, agent_name: str, prompt: str) -> dict:
-    """Route a real completion through the semantic router and return the stub's reflection."""
+def _call(base_url: str, tenant_id: str, prompt: str) -> dict:
+    """Route a real completion through the router; return the stub's reflection."""
     endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
     routed = apply_semantic_routing(
         endpoint=endpoint,
         config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
-        agent_name=agent_name,
     )
     lm = create_dspy_lm(routed)
     lm.cache = False
     out = lm(prompt)
-    content = out[0] if isinstance(out, list) else out
+    item = out[0] if isinstance(out, list) else out
+    # In reasoning mode dspy returns a dict ({"text", "reasoning"}) rather than
+    # a bare string; the stub's reflection payload is the message content.
+    content = (
+        item.get("text") or item.get("content") if isinstance(item, dict) else item
+    )
     return json.loads(content)
 
 
-def test_completion_survives_the_proxy(sr_base_url):
-    sentinel = "router-roundtrip-sentinel-42"
-    reflected = _call(sr_base_url, "free-tenant", "query_enhancement_agent", sentinel)
-    assert reflected["echo"] == sentinel
-    assert reflected["backend_tag"] == "stub"
+_TECHNICAL = (
+    "Write a recursive algorithm to balance a binary search tree and "
+    "analyze its worst-case time complexity"
+)
 
 
-def test_routing_headers_reach_the_backend(sr_base_url):
-    reflected = _call(
-        sr_base_url, "pro-tenant", "query_enhancement_agent", "header check"
-    )
+def test_both_authz_headers_reach_the_router(sr_base_url):
+    reflected = _call(sr_base_url, "pro-tenant", "hello there")
     headers = reflected["routing_headers"]
+    assert headers["x-authz-user-id"] == "pro-tenant"
     assert headers["x-authz-user-groups"] == "pro"
-    assert headers["x-vsr-task"] == "enhance"
 
 
-def test_free_tier_routes_to_basic_model(sr_base_url):
-    reflected = _call(sr_base_url, "free-tenant", "search_agent", "cheap please")
+def test_free_tier_routes_to_basic_model_without_reasoning(sr_base_url):
+    reflected = _call(sr_base_url, "free-tenant", _TECHNICAL)
     assert reflected["served_model"] == "basic-chat"
     assert reflected["reasoning"] is False
 
 
-def test_pro_planning_routes_to_reasoning_model(sr_base_url):
-    reflected = _call(sr_base_url, "pro-tenant", "orchestrator_agent", "plan this")
+def test_pro_tier_technical_routes_to_reasoning_model(sr_base_url):
+    reflected = _call(sr_base_url, "pro-tenant", _TECHNICAL)
     assert reflected["served_model"] == "pro-reasoning"
     assert reflected["reasoning"] is True
 
 
-def test_pro_non_planning_task_keeps_reasoning_off(sr_base_url):
-    reflected = _call(
-        sr_base_url, "pro-tenant", "query_enhancement_agent", "just rewrite"
-    )
+def test_pro_tier_non_technical_keeps_reasoning_off(sr_base_url):
+    reflected = _call(sr_base_url, "pro-tenant", "what's a fun weekend activity?")
     assert reflected["served_model"] == "pro-reasoning"
     assert reflected["reasoning"] is False
