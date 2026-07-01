@@ -168,6 +168,59 @@ class TenantConfig:
 
 
 @dataclass
+class GatewayRoutingConfig:
+    """Opt-in routing of LLM calls through an OpenAI-compatible gateway.
+
+    When ``enabled``, LLM endpoint configs are rewritten to target
+    ``gateway_base_url`` (e.g. an Envoy front-end for a semantic router)
+    instead of the model backend, and two routing-metadata headers are
+    attached per request: a tenant tier (``tier_header``, resolved from
+    ``tenant_tiers`` with ``default_tier`` as fallback) and a task label
+    (``task_header``, resolved from ``agent_tasks`` with ``default_task``
+    as fallback). The gateway keys on these to select the backend model
+    and reasoning mode. The application helper lives in
+    ``cogniverse_foundation.config.gateway_routing``.
+
+    Disabled by default: with ``enabled=False`` the endpoint config is
+    passed through untouched, so the direct-to-backend path is unchanged.
+    """
+
+    enabled: bool = False
+    gateway_base_url: str = ""
+    tenant_tiers: Dict[str, str] = field(default_factory=dict)
+    default_tier: str = "default"
+    agent_tasks: Dict[str, str] = field(default_factory=dict)
+    default_task: str = "default"
+    tier_header: str = "x-authz-user-groups"
+    task_header: str = "x-vsr-task"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "gateway_base_url": self.gateway_base_url,
+            "tenant_tiers": dict(self.tenant_tiers),
+            "default_tier": self.default_tier,
+            "agent_tasks": dict(self.agent_tasks),
+            "default_task": self.default_task,
+            "tier_header": self.tier_header,
+            "task_header": self.task_header,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "GatewayRoutingConfig":
+        return cls(
+            enabled=bool(data.get("enabled", False)),
+            gateway_base_url=data.get("gateway_base_url", ""),
+            tenant_tiers=dict(data.get("tenant_tiers") or {}),
+            default_tier=data.get("default_tier", "default"),
+            agent_tasks=dict(data.get("agent_tasks") or {}),
+            default_task=data.get("default_task", "default"),
+            tier_header=data.get("tier_header", "x-authz-user-groups"),
+            task_header=data.get("task_header", "x-vsr-task"),
+        )
+
+
+@dataclass
 class SystemConfig:
     """System-level infrastructure configuration.
 
@@ -197,6 +250,11 @@ class SystemConfig:
     llm_engine: str = "vllm"
     base_url: str = "http://localhost:8101/v1"
     llm_api_key: Optional[str] = None
+
+    # Opt-in routing of LLM calls through an OpenAI-compatible gateway
+    # (e.g. an Envoy front-end for a semantic router). Disabled by
+    # default — see GatewayRoutingConfig.
+    gateway_routing: GatewayRoutingConfig = field(default_factory=GatewayRoutingConfig)
 
     # Phoenix/Telemetry
     telemetry_url: str = "http://localhost:6006"
@@ -274,6 +332,7 @@ class SystemConfig:
             "llm_engine": self.llm_engine,
             "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
+            "gateway_routing": self.gateway_routing.to_dict(),
             "telemetry_url": self.telemetry_url,
             "telemetry_collector_endpoint": self.telemetry_collector_endpoint,
             "video_processing_profiles": self.video_processing_profiles,
@@ -307,6 +366,9 @@ class SystemConfig:
             llm_engine=data.get("llm_engine", "vllm"),
             base_url=data.get("base_url", "http://localhost:8101/v1"),
             llm_api_key=data.get("llm_api_key"),
+            gateway_routing=GatewayRoutingConfig.from_dict(
+                data.get("gateway_routing") or {}
+            ),
             telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
             telemetry_collector_endpoint=data.get(
                 "telemetry_collector_endpoint", "localhost:4317"
