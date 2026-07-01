@@ -63,6 +63,47 @@ from cogniverse_synthetic.api import router as synthetic_router
 logger = logging.getLogger(__name__)
 
 
+def _semantic_router_config_from_env():
+    """Build a ``SemanticRouterConfig`` from deployment env vars, or ``None``.
+
+    The chart sets ``SEMANTIC_ROUTER_ENABLED`` + ``SEMANTIC_ROUTER_URL`` (and
+    optional ``SEMANTIC_ROUTER_TENANT_TIERS`` / ``SEMANTIC_ROUTER_AGENT_TASKS``
+    JSON-object maps) so a deployed runtime boots routing every agent's LLM
+    call through the in-cluster semantic router. Returns ``None`` when routing
+    is off (flag unset/false) or no URL is set — leaving the direct-to-backend
+    path untouched. Extracted so it can be unit-tested without the FastAPI
+    lifespan.
+    """
+    enabled = os.environ.get("SEMANTIC_ROUTER_ENABLED", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    url = os.environ.get("SEMANTIC_ROUTER_URL", "").strip()
+    if not (enabled and url):
+        return None
+
+    from cogniverse_foundation.config.unified_config import SemanticRouterConfig
+
+    def _json_map(name: str) -> dict:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return {}
+        try:
+            value = json.loads(raw)
+        except (ValueError, TypeError):
+            logger.warning("Invalid %s (expected a JSON object); ignoring", name)
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    return SemanticRouterConfig(
+        enabled=True,
+        semantic_router_url=url,
+        tenant_tiers=_json_map("SEMANTIC_ROUTER_TENANT_TIERS"),
+        agent_tasks=_json_map("SEMANTIC_ROUTER_AGENT_TASKS"),
+    )
+
+
 def _probe_phoenix_reachability() -> None:
     """Verify the TelemetryManager can actually emit a span at startup.
 
@@ -491,6 +532,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # route. The route reads from SystemConfig (no env access).
     if os.environ.get("MINIO_ENDPOINT"):
         system_config.minio_endpoint = os.environ["MINIO_ENDPOINT"]
+        updated = True
+    # Semantic router: the chart turns routing on by default and points the
+    # runtime at the in-cluster router Service. Absent env (local/dev), routing
+    # stays disabled and agents call the backend directly.
+    sr_config = _semantic_router_config_from_env()
+    if sr_config is not None and sr_config != system_config.semantic_router:
+        system_config.semantic_router = sr_config
         updated = True
     if updated:
         config_manager.set_system_config(system_config)
