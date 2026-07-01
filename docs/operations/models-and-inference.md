@@ -138,8 +138,16 @@ config, tenant_id, agent_name)` returns a copy of the endpoint config with
 The resolved tier/task win on a key collision with any pre-existing
 `extra_headers`. The whole block round-trips through
 `SystemConfig.to_dict()`/`from_dict()`, so it lives in `config.json` under
-`gateway_routing`. A local semantic-router stack to exercise this end to
-end lives in `deploy/semantic-router-local/` (see its `README.md`).
+`gateway_routing`.
+
+Agents built on `DynamicDSPyMixin` apply this automatically when they
+construct their DSPy LM: the mixin reads the block via
+`ConfigUtils.get_gateway_routing()` and routes the endpoint through the
+gateway when enabled (using the agent's `tenant_id` and `agent_name`).
+Enabling the block therefore reroutes agent LLM traffic with no per-agent
+code change; leaving it disabled is a no-op. A local semantic-router stack
+to exercise this end to end lives in `deploy/semantic-router-local/` (see
+its `README.md`).
 
 ---
 

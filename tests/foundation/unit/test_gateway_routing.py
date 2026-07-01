@@ -10,6 +10,8 @@ pin exact values on the objects the code produces.
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from cogniverse_foundation.config.gateway_routing import (
@@ -22,6 +24,7 @@ from cogniverse_foundation.config.unified_config import (
     LLMEndpointConfig,
     SystemConfig,
 )
+from cogniverse_foundation.config.utils import ConfigUtils
 
 DIRECT = "http://vllm-student:8101/v1"
 GATEWAY = "http://semantic-router-envoy:8801/v1"
@@ -196,3 +199,30 @@ class TestGatewayRoutingConfigSerialization:
         assert rt.gateway_routing.gateway_base_url == GATEWAY
         assert rt.gateway_routing.tenant_tiers == {"acme:prod": "pro"}
         assert rt.gateway_routing.default_tier == "free"
+
+
+class TestConfigUtilsGatewayRouting:
+    """ConfigUtils exposes SystemConfig.gateway_routing to the LM-build path."""
+
+    def _config_utils(self, system_config) -> ConfigUtils:
+        manager = MagicMock()
+        manager.get_system_config.return_value = system_config
+        return ConfigUtils("acme:prod", config_manager=manager)
+
+    def test_returns_the_system_config_block(self):
+        gateway = _enabled_config()
+        cu = self._config_utils(SystemConfig(gateway_routing=gateway))
+        result = cu.get_gateway_routing()
+        assert result is gateway
+        assert result.enabled is True
+        assert result.gateway_base_url == GATEWAY
+
+    def test_default_system_config_is_disabled(self):
+        cu = self._config_utils(SystemConfig())
+        assert cu.get_gateway_routing().enabled is False
+
+    def test_missing_field_falls_back_to_disabled_default(self):
+        cu = self._config_utils(object())  # no gateway_routing attribute
+        result = cu.get_gateway_routing()
+        assert isinstance(result, GatewayRoutingConfig)
+        assert result.enabled is False

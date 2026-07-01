@@ -15,7 +15,11 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerConfig,
     OptimizerType,
 )
-from cogniverse_foundation.config.unified_config import LLMConfig, LLMEndpointConfig
+from cogniverse_foundation.config.unified_config import (
+    GatewayRoutingConfig,
+    LLMConfig,
+    LLMEndpointConfig,
+)
 
 
 class TestSignature(dspy.Signature):
@@ -144,6 +148,57 @@ class TestDynamicDSPyMixin:
                 mock_lm.call_args[1]["api_base"]
                 == "http://cogniverse-vllm-llm-student:8000/v1"
             )
+
+    def test_gateway_routing_applied_when_enabled(self, agent_config):
+        """When SystemConfig.gateway_routing is enabled, the mixin builds the
+        LM against the gateway api_base with the resolved tier/task headers."""
+        agent_config.agent_name = "query_enhancement_agent"
+        primary = LLMEndpointConfig(
+            model="openai/student", api_base="http://vllm:8101/v1"
+        )
+        sysconf = MagicMock()
+        sysconf.get_llm_config.return_value = LLMConfig(
+            primary=primary, teacher=primary
+        )
+        sysconf.get_gateway_routing.return_value = GatewayRoutingConfig(
+            enabled=True,
+            gateway_base_url="http://envoy:8801/v1",
+            tenant_tiers={"acme:prod": "pro"},
+            default_tier="free",
+            agent_tasks={"query_enhancement_agent": "enhance"},
+            default_task="general",
+        )
+        agent = TestAgent.__new__(TestAgent)
+        agent.system_config = sysconf
+        agent.tenant_id = "acme:prod"
+
+        agent.initialize_dynamic_dspy(agent_config)
+
+        assert agent._dspy_lm.kwargs["api_base"] == "http://envoy:8801/v1"
+        assert agent._dspy_lm.kwargs["extra_headers"] == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "enhance",
+        }
+
+    def test_gateway_routing_noop_when_disabled(self, agent_config):
+        """Disabled gateway routing leaves the LM on the direct backend with no
+        routing headers — the default path is unchanged."""
+        primary = LLMEndpointConfig(
+            model="openai/student", api_base="http://vllm:8101/v1"
+        )
+        sysconf = MagicMock()
+        sysconf.get_llm_config.return_value = LLMConfig(
+            primary=primary, teacher=primary
+        )
+        sysconf.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        agent = TestAgent.__new__(TestAgent)
+        agent.system_config = sysconf
+        agent.tenant_id = "acme:prod"
+
+        agent.initialize_dynamic_dspy(agent_config)
+
+        assert agent._dspy_lm.kwargs["api_base"] == "http://vllm:8101/v1"
+        assert "extra_headers" not in agent._dspy_lm.kwargs
 
     def test_register_signature(self, agent_config):
         """Test signature registration"""

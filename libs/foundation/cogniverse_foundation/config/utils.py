@@ -13,6 +13,7 @@ from cogniverse_foundation.config.manager import ConfigManager
 from cogniverse_foundation.config.unified_config import (
     BackendConfig,
     BackendProfileConfig,
+    GatewayRoutingConfig,
     LLMConfig,
 )
 
@@ -241,6 +242,16 @@ class ConfigUtils:
                 "This section is required for centralized LLM configuration."
             )
         return LLMConfig.from_dict(llm_config_data)
+
+    def get_gateway_routing(self) -> GatewayRoutingConfig:
+        """Return the opt-in LLM gateway-routing config (global SystemConfig).
+
+        Falls back to a disabled default when the field is absent, so callers
+        can apply it unconditionally.
+        """
+        self._ensure_system_config()
+        gateway = getattr(self._system_config, "gateway_routing", None)
+        return gateway if gateway is not None else GatewayRoutingConfig()
 
     def _primary_llm_field(self, field: str, fallback: Any) -> Any:
         """Resolve an LM field from config.json's ``llm_config.primary`` — the
