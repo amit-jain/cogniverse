@@ -839,9 +839,9 @@ class AgentDispatcher:
                 CodingDeps,
                 CodingInput,
             )
-            from cogniverse_foundation.config.gateway_routing import (
+            from cogniverse_foundation.config.semantic_router import (
                 create_routed_lm,
-                resolve_gateway_config,
+                resolve_semantic_router_config,
             )
             from cogniverse_foundation.config.utils import get_config
 
@@ -850,7 +850,7 @@ class AgentDispatcher:
             )
             coding_lm = create_routed_lm(
                 config.get_llm_config().resolve("coding_agent"),
-                resolve_gateway_config(config),
+                resolve_semantic_router_config(config),
                 tenant_id,
                 "coding_agent",
             )
@@ -1665,16 +1665,16 @@ class AgentDispatcher:
             CodingDeps,
             CodingInput,
         )
-        from cogniverse_foundation.config.gateway_routing import (
+        from cogniverse_foundation.config.semantic_router import (
             create_routed_lm,
-            resolve_gateway_config,
+            resolve_semantic_router_config,
         )
         from cogniverse_foundation.config.utils import get_config
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
         coding_lm = create_routed_lm(
             config.get_llm_config().resolve("coding_agent"),
-            resolve_gateway_config(config),
+            resolve_semantic_router_config(config),
             tenant_id,
             "coding_agent",
         )

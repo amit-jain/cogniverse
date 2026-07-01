@@ -171,8 +171,8 @@ class ClaimExtractor:
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
         self._llm_config = llm_config
-        # Needed to resolve gateway routing per request; None keeps the direct
-        # (non-gateway) path.
+        # Needed to resolve semantic routing per request; None keeps the direct
+        # (direct) path.
         self._config_manager = config_manager
 
     def extract(
@@ -221,7 +221,7 @@ class ClaimExtractor:
         # ``entity_hints`` is the heuristic antecedent (usually a Person).
         text_for_lm = _resolve_leading_pronoun(text, entity_hints)
         if self._llm_config is not None:
-            from cogniverse_foundation.config.gateway_routing import (
+            from cogniverse_foundation.config.semantic_router import (
                 routed_lm_context_for,
             )
 

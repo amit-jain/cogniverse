@@ -386,7 +386,7 @@ class MultiDocumentSynthesisAgent(
         """Single LM call via DSPy ChainOfThought."""
         if self._llm_config is not None:
             from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
-            from cogniverse_foundation.config.gateway_routing import (
+            from cogniverse_foundation.config.semantic_router import (
                 routed_lm_context_for,
             )
 

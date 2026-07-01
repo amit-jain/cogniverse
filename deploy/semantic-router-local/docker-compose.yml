@@ -1,4 +1,4 @@
-# Local local semantic-router stack for cogniverse gateway routing.
+# Local local semantic-router stack for cogniverse semantic routing.
 #
 #   docker compose -f deploy/semantic-router-local/docker-compose.yml up
 #

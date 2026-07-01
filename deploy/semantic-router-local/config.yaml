@@ -53,7 +53,7 @@ providers:
 routing:
   # --- version-sensitive block: verify against your SR tag -----------------
   # Signals SR extracts per request. We branch on the two headers cogniverse
-  # emits (see GatewayRoutingConfig): the tenant tier and the task label.
+  # emits (see SemanticRouterConfig): the tenant tier and the task label.
   signals:
     headers:
       - name: tier

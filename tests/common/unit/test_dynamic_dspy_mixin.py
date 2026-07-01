@@ -16,9 +16,9 @@ from cogniverse_foundation.config.agent_config import (
     OptimizerType,
 )
 from cogniverse_foundation.config.unified_config import (
-    GatewayRoutingConfig,
     LLMConfig,
     LLMEndpointConfig,
+    SemanticRouterConfig,
 )
 
 
@@ -149,9 +149,9 @@ class TestDynamicDSPyMixin:
                 == "http://cogniverse-vllm-llm-student:8000/v1"
             )
 
-    def test_gateway_routing_applied_when_enabled(self, agent_config):
-        """When SystemConfig.gateway_routing is enabled, the mixin builds the
-        LM against the gateway api_base with the resolved tier/task headers."""
+    def test_semantic_router_applied_when_enabled(self, agent_config):
+        """When SystemConfig.semantic_router is enabled, the mixin builds the
+        LM against the semantic router api_base with the resolved tier/task headers."""
         agent_config.agent_name = "query_enhancement_agent"
         primary = LLMEndpointConfig(
             model="openai/student", api_base="http://vllm:8101/v1"
@@ -160,9 +160,9 @@ class TestDynamicDSPyMixin:
         sysconf.get_llm_config.return_value = LLMConfig(
             primary=primary, teacher=primary
         )
-        sysconf.get_gateway_routing.return_value = GatewayRoutingConfig(
+        sysconf.get_semantic_router.return_value = SemanticRouterConfig(
             enabled=True,
-            gateway_base_url="http://envoy:8801/v1",
+            semantic_router_url="http://envoy:8801/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
             agent_tasks={"query_enhancement_agent": "enhance"},
@@ -180,8 +180,8 @@ class TestDynamicDSPyMixin:
             "x-vsr-task": "enhance",
         }
 
-    def test_gateway_routing_noop_when_disabled(self, agent_config):
-        """Disabled gateway routing leaves the LM on the direct backend with no
+    def test_semantic_router_noop_when_disabled(self, agent_config):
+        """Disabled router routing leaves the LM on the direct backend with no
         routing headers — the default path is unchanged."""
         primary = LLMEndpointConfig(
             model="openai/student", api_base="http://vllm:8101/v1"
@@ -190,7 +190,7 @@ class TestDynamicDSPyMixin:
         sysconf.get_llm_config.return_value = LLMConfig(
             primary=primary, teacher=primary
         )
-        sysconf.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        sysconf.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
         agent = TestAgent.__new__(TestAgent)
         agent.system_config = sysconf
         agent.tenant_id = "acme:prod"

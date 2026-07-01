@@ -19,7 +19,7 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
-from cogniverse_foundation.config.gateway_routing import routed_lm_context_for
+from cogniverse_foundation.config.semantic_router import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
@@ -245,7 +245,7 @@ class SummarizerAgent(
         """Resolve the summarizer LLM endpoint from centralized llm_config.
 
         The LM itself is built per request in ``routed_lm_context_for`` so it
-        can be routed through the gateway for the request tenant.
+        can be routed through the semantic router for the request tenant.
         """
         from cogniverse_foundation.config.utils import get_config
 

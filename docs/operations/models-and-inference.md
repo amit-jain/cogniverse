@@ -101,34 +101,34 @@ deploy nothing and route runtime LLM calls to a host-side or
 third-party endpoint (e.g. `http://host.k3d.internal:11434` for a
 host-running Ollama).
 
-### Optional: route through an OpenAI-compatible gateway
+### Optional: route through an OpenAI-compatible semantic router
 
-Point `api_base` at a gateway (for example an Envoy front-end for a
+Point `api_base` at a semantic router (for example an Envoy front-end for a
 semantic router) instead of the model backend. Per-request routing
 metadata is attached with `LLMEndpointConfig.extra_headers`, which
 `create_dspy_lm()` forwards to litellm as `extra_headers` on every call —
 e.g. `{"x-authz-user-groups": "pro", "x-vsr-task": "orchestrator_plan"}`
-so the gateway can pick the backend model and reasoning mode. The header
+so the semantic router can pick the backend model and reasoning mode. The header
 dict is sent verbatim; the factory does not interpret it, and an
 empty/`None` dict adds no headers to the request. `extra_headers`
 round-trips through `to_dict()`/`from_dict()`, so it can be set in
 `config.json` under `llm_config.primary` alongside `model` and `api_base`.
 
-#### Config-driven gateway routing (`GatewayRoutingConfig`)
+#### Config-driven semantic routing (`SemanticRouterConfig`)
 
 Setting `extra_headers` by hand is fine for a single endpoint, but the
 per-tenant/per-task metadata is derived automatically by
-`SystemConfig.gateway_routing` (a `GatewayRoutingConfig`). It is
+`SystemConfig.semantic_router` (a `SemanticRouterConfig`). It is
 **disabled by default**; when enabled, the helper
-`cogniverse_foundation.config.gateway_routing.apply_gateway_routing(endpoint,
+`cogniverse_foundation.config.semantic_router.apply_semantic_routing(endpoint,
 config, tenant_id, agent_name)` returns a copy of the endpoint config with
-`api_base` rewritten to the gateway and the resolved headers merged onto
+`api_base` rewritten to the semantic router and the resolved headers merged onto
 `extra_headers`:
 
 | Field | Meaning |
 |---|---|
 | `enabled` | Master switch. `False` ⇒ endpoint passes through untouched. |
-| `gateway_base_url` | The gateway's OpenAI-compatible endpoint (e.g. `http://semantic-router-envoy:8801/v1`). Enabled with an empty value raises. |
+| `semantic_router_url` | The semantic router's OpenAI-compatible endpoint (e.g. `http://semantic-router-envoy:8801/v1`). Enabled with an empty value raises. |
 | `tenant_tiers` | `tenant_id → tier` map; unknown tenants fall back to `default_tier`. |
 | `default_tier` | Tier for tenants not in `tenant_tiers`. |
 | `agent_tasks` | `agent_name → task label` map; unknown agents fall back to `default_task`. |
@@ -138,11 +138,11 @@ config, tenant_id, agent_name)` returns a copy of the endpoint config with
 The resolved tier/task win on a key collision with any pre-existing
 `extra_headers`. The whole block round-trips through
 `SystemConfig.to_dict()`/`from_dict()`, so it lives in `config.json` under
-`gateway_routing`.
+`semantic_router`.
 
-Agents build a gateway-aware LM through one shared helper,
-`gateway_routing.create_routed_lm(endpoint, config, tenant_id, agent_name)`
-(`apply_gateway_routing` + `create_dspy_lm`); `resolve_gateway_config(...)`
+Agents build a semantic-router-aware LM through one shared helper,
+`semantic_router.create_routed_lm(endpoint, config, tenant_id, agent_name)`
+(`apply_semantic_routing` + `create_dspy_lm`); `resolve_semantic_router_config(...)`
 reads the block from a `ConfigUtils`-like accessor with a guard against
 mocked/absent config. `DynamicDSPyMixin` uses these at LM-construction time,
 and the per-request paths (the orchestrator and the direct-build execution

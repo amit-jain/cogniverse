@@ -18,8 +18,8 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorOutput,
 )
 from cogniverse_foundation.config.unified_config import (
-    GatewayRoutingConfig,
     LLMEndpointConfig,
+    SemanticRouterConfig,
     SystemConfig,
 )
 
@@ -1242,8 +1242,8 @@ class TestOrchestratorArtifactLoading:
         mock_wi.load_historical_data.assert_awaited_once()
 
 
-class TestOrchestratorGatewayRouting:
-    """The orchestrator routes its per-request DSPy LM through the gateway."""
+class TestOrchestratorSemanticRouting:
+    """The orchestrator routes its per-request DSPy LM through the semantic router."""
 
     def _agent_with_config(self, cfg):
         agent = OrchestratorAgent.__new__(OrchestratorAgent)
@@ -1254,21 +1254,21 @@ class TestOrchestratorGatewayRouting:
         patcher.start()
         return agent, patcher
 
-    def test_disabled_gateway_yields_nullcontext(self):
+    def test_disabled_semantic_router_yields_nullcontext(self):
         cfg = MagicMock()
-        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
         agent, patcher = self._agent_with_config(cfg)
         try:
-            ctx = agent._gateway_lm_context("acme:prod")
+            ctx = agent._semantic_router_lm_context("acme:prod")
             assert isinstance(ctx, nullcontext)
         finally:
             patcher.stop()
 
-    def test_enabled_gateway_routes_the_active_lm(self):
+    def test_enabled_semantic_router_routes_the_active_lm(self):
         cfg = MagicMock()
-        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(
             enabled=True,
-            gateway_base_url="http://envoy:8801/v1",
+            semantic_router_url="http://envoy:8801/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
             agent_tasks={"orchestrator_agent": "orchestrator_plan"},
@@ -1279,7 +1279,7 @@ class TestOrchestratorGatewayRouting:
         )
         agent, patcher = self._agent_with_config(cfg)
         try:
-            with agent._gateway_lm_context("acme:prod"):
+            with agent._semantic_router_lm_context("acme:prod"):
                 active = dspy.settings.lm
             assert active.kwargs["api_base"] == "http://envoy:8801/v1"
             assert active.kwargs["extra_headers"] == {
@@ -1291,9 +1291,11 @@ class TestOrchestratorGatewayRouting:
 
     def test_resolution_error_falls_back_to_nullcontext(self):
         cfg = MagicMock()
-        cfg.get_gateway_routing.side_effect = RuntimeError("config store down")
+        cfg.get_semantic_router.side_effect = RuntimeError("config store down")
         agent, patcher = self._agent_with_config(cfg)
         try:
-            assert isinstance(agent._gateway_lm_context("acme:prod"), nullcontext)
+            assert isinstance(
+                agent._semantic_router_lm_context("acme:prod"), nullcontext
+            )
         finally:
             patcher.stop()

@@ -918,17 +918,17 @@ class OrchestratorAgent(
 
         sem = _get_orchestration_semaphore()
         async with sem:
-            with self._gateway_lm_context(tenant_id):
+            with self._semantic_router_lm_context(tenant_id):
                 return await self._process_impl_locked(
                     input, workflow_id, query, tenant_id, session_id
                 )
 
-    def _gateway_lm_context(self, tenant_id: str):
+    def _semantic_router_lm_context(self, tenant_id: str):
         """Per-request LM routing for the orchestrator's DSPy calls.
 
         The orchestrator serves every tenant from one instance and relies on
-        the global ``dspy.settings.lm``, so per-tenant gateway routing has to
-        happen per request. When ``gateway_routing`` is enabled this returns a
+        the global ``dspy.settings.lm``, so per-tenant semantic routing has to
+        happen per request. When ``semantic_router`` is enabled this returns a
         ``dspy.context(lm=...)`` whose LM is built from the request tenant and
         the ``orchestrator_agent`` endpoint; the context wraps the whole
         ``_process_impl_locked`` body so the planner, the retrieval-loop gate,
@@ -938,7 +938,7 @@ class OrchestratorAgent(
         Disabled (the default) or on any resolution error it returns a
         ``nullcontext`` — the global LM path, byte-for-byte unchanged.
         """
-        from cogniverse_foundation.config.gateway_routing import (
+        from cogniverse_foundation.config.semantic_router import (
             routed_lm_context_for,
         )
 

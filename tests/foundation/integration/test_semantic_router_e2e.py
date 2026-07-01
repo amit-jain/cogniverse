@@ -1,7 +1,7 @@
-"""Real-boundary e2e for gateway routing through a live semantic router.
+"""Real-boundary e2e for router routing through a live semantic router.
 
 This exercises the actual system boundary: cogniverse's own
-``apply_gateway_routing`` + ``create_dspy_lm`` path, sending real chat
+``apply_semantic_routing`` + ``create_dspy_lm`` path, sending real chat
 completions through Envoy -> vLLM Semantic Router -> a stub backend. It does
 NOT mock the router — the assertions read what the stub reflects back about
 the request the router actually forwarded, so they prove the router's
@@ -15,7 +15,7 @@ Bring the stack up first (needs Docker — see
 then run::
 
     SR_ENVOY_URL=http://localhost:8801/v1 uv run pytest \
-        tests/foundation/integration/test_gateway_routing_sr_e2e.py -v
+        tests/foundation/integration/test_semantic_router_sr_e2e.py -v
 
 When ``SR_ENVOY_URL`` is unreachable (e.g. CI without Docker) the whole
 module skips — it is a real-service suite, not a unit test.
@@ -30,11 +30,11 @@ from urllib.parse import urlparse
 
 import pytest
 
-from cogniverse_foundation.config.gateway_routing import apply_gateway_routing
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.semantic_router import apply_semantic_routing
 from cogniverse_foundation.config.unified_config import (
-    GatewayRoutingConfig,
     LLMEndpointConfig,
+    SemanticRouterConfig,
 )
 
 SR_ENVOY_URL = os.environ.get("SR_ENVOY_URL", "http://localhost:8801/v1")
@@ -64,10 +64,10 @@ def sr_base_url() -> str:
     return SR_ENVOY_URL
 
 
-def _gateway_config(base_url: str) -> GatewayRoutingConfig:
-    return GatewayRoutingConfig(
+def _semantic_router_config(base_url: str) -> SemanticRouterConfig:
+    return SemanticRouterConfig(
         enabled=True,
-        gateway_base_url=base_url,
+        semantic_router_url=base_url,
         tenant_tiers={"pro-tenant": "pro", "free-tenant": "free"},
         default_tier="free",
         agent_tasks={
@@ -79,11 +79,11 @@ def _gateway_config(base_url: str) -> GatewayRoutingConfig:
 
 
 def _call(base_url: str, tenant_id: str, agent_name: str, prompt: str) -> dict:
-    """Route a real completion through the gateway and return the stub's reflection."""
+    """Route a real completion through the semantic router and return the stub's reflection."""
     endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
-    routed = apply_gateway_routing(
+    routed = apply_semantic_routing(
         endpoint=endpoint,
-        config=_gateway_config(base_url),
+        config=_semantic_router_config(base_url),
         tenant_id=tenant_id,
         agent_name=agent_name,
     )
@@ -95,7 +95,7 @@ def _call(base_url: str, tenant_id: str, agent_name: str, prompt: str) -> dict:
 
 
 def test_completion_survives_the_proxy(sr_base_url):
-    sentinel = "gateway-roundtrip-sentinel-42"
+    sentinel = "router-roundtrip-sentinel-42"
     reflected = _call(sr_base_url, "free-tenant", "query_enhancement_agent", sentinel)
     assert reflected["echo"] == sentinel
     assert reflected["backend_tag"] == "stub"

@@ -1,9 +1,9 @@
 # Semantic Router (local stack)
 
-A self-contained stack to exercise cogniverse's opt-in **gateway routing**
+A self-contained stack to exercise cogniverse's opt-in **semantic routing**
 against a real [vLLM Semantic Router](https://github.com/vllm-project/semantic-router)
 in the request path — the real-boundary counterpart to the in-process unit
-tests in `tests/foundation/unit/test_gateway_routing.py`.
+tests in `tests/foundation/unit/test_semantic_router.py`.
 
 ```
 cogniverse (create_dspy_lm, extra_headers)
@@ -31,7 +31,7 @@ docker compose -f deploy/semantic-router-local/docker-compose.yml up
 
 # in another shell:
 SR_ENVOY_URL=http://localhost:8801/v1 \
-  uv run pytest tests/foundation/integration/test_gateway_routing_sr_e2e.py -v
+  uv run pytest tests/foundation/integration/test_semantic_router_sr_e2e.py -v
 ```
 
 The test skips automatically when `SR_ENVOY_URL` is unreachable, so it is a
@@ -49,13 +49,13 @@ no-op in CI without Docker.
 
 ## Wiring cogniverse to it
 
-Set `gateway_routing` in the cogniverse `config.json` `system` config
+Set `semantic_router` in the cogniverse `config.json` `system` config
 (disabled by default):
 
 ```json
-"gateway_routing": {
+"semantic_router": {
   "enabled": true,
-  "gateway_base_url": "http://localhost:8801/v1",
+  "semantic_router_url": "http://localhost:8801/v1",
   "tenant_tiers": { "pro-tenant": "pro", "free-tenant": "free" },
   "default_tier": "free",
   "agent_tasks": { "orchestrator_agent": "orchestrator_plan" },
@@ -63,10 +63,10 @@ Set `gateway_routing` in the cogniverse `config.json` `system` config
 }
 ```
 
-`apply_gateway_routing(endpoint, config.gateway_routing, tenant_id, agent_name)`
+`apply_semantic_routing(endpoint, config.semantic_router, tenant_id, agent_name)`
 then rewrites `api_base` to Envoy and attaches the tier/task headers before
 `create_dspy_lm`. See `docs/operations/models-and-inference.md` →
-"Config-driven gateway routing".
+"Config-driven semantic routing".
 
 ## Caveats (read before debugging)
 

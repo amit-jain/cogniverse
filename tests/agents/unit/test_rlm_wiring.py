@@ -14,18 +14,18 @@ import pytest
 from cogniverse_agents.mixins.rlm_aware_mixin import RLMAwareMixin
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import (
-    GatewayRoutingConfig,
     LLMEndpointConfig,
+    SemanticRouterConfig,
 )
 
-_GATEWAY = "http://gateway:8080/v1"
+_SR_URL = "http://semantic-router:8080/v1"
 _DIRECT = "http://direct"
 
 
-def _enabled_gateway() -> GatewayRoutingConfig:
-    return GatewayRoutingConfig(
+def _enabled_semantic_router() -> SemanticRouterConfig:
+    return SemanticRouterConfig(
         enabled=True,
-        gateway_base_url=_GATEWAY,
+        semantic_router_url=_SR_URL,
         tenant_tiers={"acme:prod": "pro", "beta:prod": "free"},
         default_tier="free",
         agent_tasks={"rlm_inference": "reason"},
@@ -35,7 +35,7 @@ def _enabled_gateway() -> GatewayRoutingConfig:
 
 def _patch_enabled_get_config(monkeypatch) -> None:
     cfg = MagicMock()
-    cfg.get_gateway_routing.return_value = _enabled_gateway()
+    cfg.get_semantic_router.return_value = _enabled_semantic_router()
     monkeypatch.setattr(
         "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
     )
@@ -92,19 +92,19 @@ class _MixinHost(RLMAwareMixin):
 
 
 class TestRLMAwareMixinRouting:
-    """get_rlm routes the RLM endpoint through the gateway for the host tenant."""
+    """get_rlm routes the RLM endpoint through the semantic router for the host tenant."""
 
     def _endpoint(self):
         return LLMEndpointConfig(model="openai/gpt-4o", api_base=_DIRECT)
 
-    def test_enabled_routes_cached_rlm_through_gateway(self, monkeypatch):
+    def test_enabled_routes_cached_rlm_through_semantic_router(self, monkeypatch):
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
         _patch_enabled_get_config(monkeypatch)
         host = _MixinHost("acme:prod", MagicMock())
 
         rlm = host.get_rlm(self._endpoint())
 
-        assert rlm.llm_config.api_base == _GATEWAY
+        assert rlm.llm_config.api_base == _SR_URL
         assert rlm.model == "openai/gpt-4o"
         assert rlm.llm_config.extra_headers == {
             "x-authz-user-groups": "pro",
@@ -115,7 +115,7 @@ class TestRLMAwareMixinRouting:
     def test_disabled_keeps_direct_endpoint(self, monkeypatch):
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
         cfg = MagicMock()
-        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        cfg.get_semantic_router.return_value = SemanticRouterConfig(enabled=False)
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
@@ -190,7 +190,7 @@ class TestHostAgentsThreadConfigManagerToRLM:
             LLMEndpointConfig(model="openai/gpt-4o", api_base=_DIRECT),
             tenant_id="acme:prod",
         )
-        assert rlm.llm_config.api_base == _GATEWAY
+        assert rlm.llm_config.api_base == _SR_URL
         assert rlm.llm_config.extra_headers == {
             "x-authz-user-groups": "pro",
             "x-vsr-task": "reason",
@@ -198,9 +198,9 @@ class TestHostAgentsThreadConfigManagerToRLM:
 
 
 class TestWikiManagerRLMRouting:
-    """_merge_with_rlm routes its endpoint through the gateway for the tenant."""
+    """_merge_with_rlm routes its endpoint through the semantic router for the tenant."""
 
-    def test_merge_routes_rlm_through_gateway(self, monkeypatch):
+    def test_merge_routes_rlm_through_semantic_router(self, monkeypatch):
         from cogniverse_agents.wiki.wiki_manager import WikiManager
 
         captured = {}
@@ -229,7 +229,7 @@ class TestWikiManagerRLMRouting:
         out = wm._merge_with_rlm("old text", "new text", "Acme Corp")
 
         assert out == "MERGED-SUMMARY"
-        assert captured["llm_config"].api_base == _GATEWAY
+        assert captured["llm_config"].api_base == _SR_URL
         assert captured["llm_config"].extra_headers == {
             "x-authz-user-groups": "pro",
             "x-vsr-task": "reason",
