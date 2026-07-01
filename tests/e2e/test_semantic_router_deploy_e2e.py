@@ -1,24 +1,23 @@
-"""Real semantic-router e2e — drives cogniverse's own routing path against
-the gateway that ``cogniverse up`` deploys into the cluster.
+"""Deployment e2e: real routing through the `cogniverse up`-deployed semantic router.
 
-The chart deploys Envoy + the vLLM Semantic Router in front of the LLM
-backend; the runtime routes every agent's LLM call through it. This test
-exercises the actual deployed boundary: it builds a routed endpoint with
-``apply_semantic_routing`` + ``create_dspy_lm`` (exactly as the agents do),
-points it at the deployed Envoy, and sends a real completion — proving the
-Envoy -> ext_proc(SR) -> LLM path works end to end in the cluster
-(``failure_mode_allow: false`` means a broken SR would fail the call).
+This does NOT just check that a completion comes back — it asserts the actual
+routing DECISION the router made, read from the router's own Prometheus counter
+``llm_decision_match_total{decision_name=...}``. Sending a request as a given
+tenant tier + content through the deployed Envoy must increment exactly the
+decision the router should pick:
 
-Requires:
-- ``cogniverse up`` running with ``semanticRouter.enabled=true`` (the default).
-- ``kubectl`` reachable in PATH.
+  * free tier              -> ``free-default``          (basic model)
+  * pro tier + technical   -> ``pro-technical-keyword`` (reasoning model)
+  * pro tier + non-technical -> ``pro-default``         (no reasoning)
 
-Service exposure: the Envoy Service is ClusterIP (no NodePort), so the
-fixture opens a session-scoped ``kubectl port-forward`` to a local port.
+Requires ``cogniverse up`` with ``semanticRouter.enabled=true`` (the default)
+and ``kubectl`` in PATH. Both the Envoy entry and the router's metrics port are
+ClusterIP, so the fixture opens ``kubectl port-forward`` for each.
 """
 
 from __future__ import annotations
 
+import re
 import shutil
 import socket
 import subprocess
@@ -39,7 +38,7 @@ pytestmark = [pytest.mark.e2e, skip_if_no_runtime]
 
 _NAMESPACE = "cogniverse"
 _ENVOY_SVC = "cogniverse-semantic-router-envoy"
-_ENVOY_PORT = 8801
+_ROUTER_SVC = "cogniverse-semantic-router"
 
 
 def _free_port() -> int:
@@ -48,8 +47,18 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _kubectl_names(component: str) -> list[str]:
-    result = subprocess.run(
+def _svc_present(name: str) -> bool:
+    r = subprocess.run(
+        ["kubectl", "-n", _NAMESPACE, "get", "svc", name, "-o", "name"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    return r.returncode == 0
+
+
+def _running_pods(component: str) -> list[str]:
+    r = subprocess.run(
         [
             "kubectl",
             "-n",
@@ -66,148 +75,149 @@ def _kubectl_names(component: str) -> list[str]:
         text=True,
         timeout=15,
     )
-    if result.returncode != 0:
-        return []
-    return [line for line in result.stdout.splitlines() if line.strip()]
-
-
-@pytest.fixture(scope="session")
-def sr_envoy_url():
-    """Port-forward ``svc/cogniverse-semantic-router-envoy`` so the test can
-    route completions through the deployed gateway. Skips when kubectl is
-    missing or the service isn't deployed."""
-    if shutil.which("kubectl") is None:
-        pytest.skip("kubectl not in PATH; cannot reach the deployed semantic router")
-
-    probe = subprocess.run(
-        ["kubectl", "-n", _NAMESPACE, "get", "svc", _ENVOY_SVC, "-o", "name"],
-        capture_output=True,
-        text=True,
-        timeout=10,
+    return (
+        [ln for ln in r.stdout.splitlines() if ln.strip()] if r.returncode == 0 else []
     )
-    if probe.returncode != 0:
-        pytest.skip(
-            f"{_ENVOY_SVC} service not present in '{_NAMESPACE}' namespace; "
-            "deploy with `cogniverse up` first"
-        )
 
-    local_port = _free_port()
+
+def _port_forward(svc: str, remote_port: int, ready_path: str | None):
+    """kubectl port-forward svc/<svc> <local>:<remote>; wait until reachable."""
+    local = _free_port()
     proc = subprocess.Popen(
         [
             "kubectl",
             "-n",
             _NAMESPACE,
             "port-forward",
-            f"svc/{_ENVOY_SVC}",
-            f"{local_port}:{_ENVOY_PORT}",
+            f"svc/{svc}",
+            f"{local}:{remote_port}",
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    try:
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", local_port), timeout=2):
-                    break
-            except OSError:
-                time.sleep(1)
-        else:
-            proc.terminate()
-            pytest.fail(
-                f"port-forward to {_ENVOY_SVC} not reachable on :{local_port} in 30s"
-            )
-        yield f"http://127.0.0.1:{local_port}/v1"
-    finally:
-        proc.terminate()
+    deadline = time.time() + 30
+    while time.time() < deadline:
         try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            with socket.create_connection(("127.0.0.1", local), timeout=2):
+                if ready_path is None:
+                    return proc, local
+                if (
+                    httpx.get(
+                        f"http://127.0.0.1:{local}{ready_path}", timeout=2
+                    ).status_code
+                    < 500
+                ):
+                    return proc, local
+        except (OSError, httpx.HTTPError):
+            pass
+        time.sleep(1)
+    proc.terminate()
+    pytest.fail(f"port-forward to {svc}:{remote_port} not reachable in 30s")
 
 
-def test_semantic_router_pods_running():
-    """Both gateway pods (the router and its Envoy data plane) must be up."""
+@pytest.fixture(scope="session")
+def sr_endpoints():
+    """Port-forward the deployed Envoy entry + router metrics; yield both URLs."""
     if shutil.which("kubectl") is None:
-        pytest.skip("kubectl not in PATH")
-    assert _kubectl_names("semantic-router"), "no Running semantic-router pod"
-    assert _kubectl_names("semantic-router-envoy"), "no Running envoy pod"
+        pytest.skip("kubectl not in PATH; cannot reach the deployed semantic router")
+    for svc in (_ENVOY_SVC, _ROUTER_SVC):
+        if not _svc_present(svc):
+            pytest.skip(f"{svc} not deployed in '{_NAMESPACE}'; run `cogniverse up`")
+
+    envoy_proc, envoy_port = _port_forward(_ENVOY_SVC, 8801, None)
+    metrics_proc, metrics_port = _port_forward(_ROUTER_SVC, 9190, "/metrics")
+    try:
+        yield {
+            "envoy_url": f"http://127.0.0.1:{envoy_port}/v1",
+            "metrics_url": f"http://127.0.0.1:{metrics_port}/metrics",
+        }
+    finally:
+        for p in (envoy_proc, metrics_proc):
+            p.terminate()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
 
 
-def _route(sr_envoy_url: str, tenant_id: str, tier: str):
-    """Build the routed LM exactly as an agent would and return the dspy.LM."""
-    endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
-    config = SemanticRouterConfig(
-        enabled=True,
-        semantic_router_url=sr_envoy_url,
-        tenant_tiers={tenant_id: tier},
+def _decision_count(metrics_url: str, decision_name: str) -> int:
+    """Read llm_decision_match_total for one decision (0 if not yet present)."""
+    body = httpx.get(metrics_url, timeout=5).text
+    m = re.search(
+        rf'^llm_decision_match_total\{{decision_name="{re.escape(decision_name)}"\}}\s+([0-9.]+)',
+        body,
+        re.MULTILINE,
     )
+    return int(float(m.group(1))) if m else 0
+
+
+def _route_completion(envoy_url: str, tenant_id: str, tier: str, prompt: str) -> str:
+    """Route a real completion through the deployed router; return the answer text."""
+    endpoint = LLMEndpointConfig(model="openai/auto", api_base="http://unused:1/v1")
     routed = apply_semantic_routing(
         endpoint=endpoint,
-        config=config,
+        config=SemanticRouterConfig(
+            enabled=True,
+            semantic_router_url=envoy_url,
+            tenant_tiers={tenant_id: tier},
+        ),
         tenant_id=tenant_id,
     )
-    # The routed endpoint must carry the gateway api_base + the two authz
-    # headers the router requires — this is the contract the agents rely on.
-    assert routed.api_base == sr_envoy_url
     assert routed.extra_headers == {
         "x-authz-user-id": tenant_id,
         "x-authz-user-groups": tier,
     }
     lm = create_dspy_lm(routed)
     lm.cache = False
-    return lm
+    out = lm(prompt)
+    item = out[0] if isinstance(out, list) else out
+    if isinstance(item, dict):
+        return item.get("text") or item.get("content") or ""
+    return item
 
 
-def test_completion_routes_through_deployed_semantic_router(sr_envoy_url):
-    """A real completion sent through the deployed Envoy -> SR -> LLM returns
-    a non-empty answer, proving the whole routed path is live."""
-    lm = _route(sr_envoy_url, tenant_id="pro-tenant", tier="pro")
-    out = lm("Reply with the single word: pong")
-    text = out[0] if isinstance(out, list) else out
-    assert isinstance(text, str) and text.strip(), (
-        "deployed semantic router returned no completion — the "
-        "Envoy -> ext_proc -> LLM path is broken"
-    )
-
-
-def test_router_metrics_reachable():
-    """The router exposes Prometheus metrics — a cheap liveness signal that
-    the ext_proc service (not just Envoy) is actually up."""
+def test_semantic_router_pods_running():
     if shutil.which("kubectl") is None:
         pytest.skip("kubectl not in PATH")
-    if not _kubectl_names("semantic-router"):
-        pytest.skip("semantic-router pod not running")
-    local_port = _free_port()
-    proc = subprocess.Popen(
-        [
-            "kubectl",
-            "-n",
-            _NAMESPACE,
-            "port-forward",
-            "svc/cogniverse-semantic-router",
-            f"{local_port}:9190",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    assert _running_pods("semantic-router"), "no Running semantic-router pod"
+    assert _running_pods("semantic-router-envoy"), "no Running envoy pod"
+
+
+# (tenant_id, tier, prompt, expected decision the router must match)
+_CASES = [
+    ("free-tenant", "free", "hello there", "free-default"),
+    (
+        "pro-tenant",
+        "pro",
+        "design a recursive algorithm and analyze its time complexity",
+        "pro-technical-keyword",
+    ),
+    ("pro-tenant", "pro", "what is a good movie to watch tonight?", "pro-default"),
+]
+
+
+@pytest.mark.parametrize("tenant_id,tier,prompt,expected_decision", _CASES)
+def test_tier_and_content_route_to_expected_decision(
+    sr_endpoints, tenant_id, tier, prompt, expected_decision
+):
+    """A real request as this tenant+content must increment exactly the
+    decision the router is supposed to pick — proving tier gating + content
+    routing work end to end against the deployed stack."""
+    metrics_url = sr_endpoints["metrics_url"]
+    before = _decision_count(metrics_url, expected_decision)
+
+    answer = _route_completion(sr_endpoints["envoy_url"], tenant_id, tier, prompt)
+    assert answer.strip(), "deployed router returned no completion"
+
+    # Metrics update asynchronously; poll briefly for the counter to move.
+    deadline = time.time() + 20
+    after = before
+    while time.time() < deadline:
+        after = _decision_count(metrics_url, expected_decision)
+        if after > before:
+            break
+        time.sleep(2)
+    assert after > before, (
+        f"router did not match decision {expected_decision!r} for tenant "
+        f"{tenant_id!r} (tier={tier!r}); counter stayed at {before}"
     )
-    try:
-        deadline = time.time() + 30
-        last_status = None
-        while time.time() < deadline:
-            try:
-                last_status = httpx.get(
-                    f"http://127.0.0.1:{local_port}/metrics", timeout=2.0
-                ).status_code
-                if last_status == 200:
-                    break
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError):
-                pass
-            time.sleep(1)
-        assert last_status == 200, f"router /metrics not 200 (got {last_status})"
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
