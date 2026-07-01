@@ -934,25 +934,13 @@ class OrchestratorAgent(
         Disabled (the default) or on any resolution error it returns a
         ``nullcontext`` — the global LM path, byte-for-byte unchanged.
         """
-        from contextlib import nullcontext
-
         from cogniverse_foundation.config.gateway_routing import (
-            create_routed_lm,
-            resolve_gateway_config,
+            routed_lm_context_for,
         )
-        from cogniverse_foundation.config.utils import get_config
 
-        try:
-            cfg = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-            gateway = resolve_gateway_config(cfg)
-            if not gateway.enabled:
-                return nullcontext()
-            endpoint = cfg.get_llm_config().resolve("orchestrator_agent")
-            lm = create_routed_lm(endpoint, gateway, tenant_id, "orchestrator_agent")
-            return dspy.context(lm=lm)
-        except Exception:  # noqa: BLE001 — never block orchestration on routing
-            logger.debug("gateway routing unavailable for orchestrator; global LM")
-            return nullcontext()
+        return routed_lm_context_for(
+            self._config_manager, tenant_id, "orchestrator_agent"
+        )
 
     async def _process_impl_locked(
         self,
