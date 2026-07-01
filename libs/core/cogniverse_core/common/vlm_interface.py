@@ -43,23 +43,23 @@ class VLMInterface:
         self._initialize_vlm_client()
 
     def _initialize_vlm_client(self):
-        """Initialize the DSPy LM, routed through the gateway when enabled.
+        """Initialize the DSPy LM, routed through the semantic router when enabled.
 
         VLMInterface is per-tenant (the tenant is fixed at construction), so
         the endpoint is routed once here for that tenant — same shape as
         DynamicDSPyMixin.
         """
-        from cogniverse_foundation.config.gateway_routing import (
-            apply_gateway_routing,
-            resolve_gateway_config,
-        )
         from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.semantic_router import (
+            apply_semantic_routing,
+            resolve_semantic_router_config,
+        )
 
         llm_config = self.config.get_llm_config()
         endpoint_config = llm_config.resolve("vlm_interface")
-        endpoint_config = apply_gateway_routing(
+        endpoint_config = apply_semantic_routing(
             endpoint_config,
-            resolve_gateway_config(self.config),
+            resolve_semantic_router_config(self.config),
             getattr(self.config, "tenant_id", "") or "",
             "vlm_interface",
         )

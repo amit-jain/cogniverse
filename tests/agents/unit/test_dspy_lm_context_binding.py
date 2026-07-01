@@ -83,11 +83,11 @@ class TestKnowledgeSummarizationLMContext:
 
         # Place an ambient LM globally; the wrap must override it. The
         # non-RLM path binds its LM via routed_lm_context_for, which builds
-        # it through gateway_routing's own create_dspy_lm binding — patch
+        # it through semantic_router's own create_dspy_lm binding — patch
         # there (routing is disabled by default, so it takes the direct path).
         with dspy.context(lm=ambient_lm):
             with patch(
-                "cogniverse_foundation.config.gateway_routing.create_dspy_lm",
+                "cogniverse_foundation.config.semantic_router.create_dspy_lm",
                 return_value=sentinel_lm,
             ) as mock_factory:
                 result = agent._summarise_without_rlm(title="t", block="b")
@@ -126,7 +126,7 @@ class TestKnowledgeSummarizationLMContext:
         agent._dspy_module = raise_on_call
 
         with patch(
-            "cogniverse_foundation.config.gateway_routing.create_dspy_lm",
+            "cogniverse_foundation.config.semantic_router.create_dspy_lm",
             return_value=MagicMock(),
         ):
             result = agent._summarise_without_rlm(title="t", block="some content here")

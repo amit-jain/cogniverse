@@ -16,11 +16,11 @@ from cogniverse_foundation.config.agent_config import (
     ModuleConfig,
     OptimizerConfig,
 )
-from cogniverse_foundation.config.gateway_routing import (
-    apply_gateway_routing,
-    resolve_gateway_config,
-)
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
+from cogniverse_foundation.config.semantic_router import (
+    apply_semantic_routing,
+    resolve_semantic_router_config,
+)
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
@@ -102,7 +102,7 @@ class DynamicDSPyMixin:
             max_tokens=config.llm_max_tokens or 1000,
         )
 
-        endpoint_config = self._route_through_gateway(
+        endpoint_config = self._route_through_semantic_router(
             endpoint_config, config.agent_name
         )
 
@@ -111,23 +111,23 @@ class DynamicDSPyMixin:
             f"Created DSPy LM: {endpoint_config.model} @ {endpoint_config.api_base}"
         )
 
-    def _route_through_gateway(
+    def _route_through_semantic_router(
         self, endpoint: LLMEndpointConfig, agent_name: str
     ) -> LLMEndpointConfig:
-        """Route the LM endpoint through the gateway when it is enabled.
+        """Route the LM endpoint through the semantic router when it is enabled.
 
-        Reads ``SystemConfig.gateway_routing`` via ``self.system_config``'s
-        ``get_gateway_routing`` accessor. Disabled (the default) or unavailable
+        Reads ``SystemConfig.semantic_router`` via ``self.system_config``'s
+        ``get_semantic_router`` accessor. Disabled (the default) or unavailable
         returns the endpoint unchanged — the direct-to-backend path. When
-        enabled, ``api_base`` is rewritten to the gateway and the tenant-tier /
+        enabled, ``api_base`` is rewritten to the semantic router and the tenant-tier /
         task headers are attached.
 
-        ``resolve_gateway_config`` guards against a stray/mocked accessor
+        ``resolve_semantic_router_config`` guards against a stray/mocked accessor
         (whose auto attributes look truthy) spuriously rewriting the endpoint.
         """
         system_config = getattr(self, "system_config", None)
-        gateway = resolve_gateway_config(system_config)
-        if not gateway.enabled:
+        router = resolve_semantic_router_config(system_config)
+        if not router.enabled:
             return endpoint
 
         tenant_id = (
@@ -135,9 +135,9 @@ class DynamicDSPyMixin:
             or getattr(system_config, "tenant_id", "")
             or ""
         )
-        return apply_gateway_routing(
+        return apply_semantic_routing(
             endpoint=endpoint,
-            config=gateway,
+            config=router,
             tenant_id=tenant_id,
             agent_name=agent_name,
         )

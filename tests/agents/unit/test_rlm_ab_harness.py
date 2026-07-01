@@ -233,24 +233,24 @@ class TestRlmArmEventRouting:
         assert captured["tenant_id"] == "acme:acme"
 
 
-class TestABRunnerGatewayRouting:
-    """Both arms route through the gateway when a config_manager + tenant is set."""
+class TestABRunnerSemanticRouting:
+    """Both arms route through the semantic router when a config_manager + tenant is set."""
 
     def _patch_enabled(self, monkeypatch):
         from unittest.mock import MagicMock
 
-        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+        from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
-        gateway = GatewayRoutingConfig(
+        router = SemanticRouterConfig(
             enabled=True,
-            gateway_base_url="http://gateway:8080/v1",
+            semantic_router_url="http://semantic-router:8080/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
             agent_tasks={"rlm_inference": "reason"},
             default_task="general",
         )
         cfg = MagicMock()
-        cfg.get_gateway_routing.return_value = gateway
+        cfg.get_semantic_router.return_value = router
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
@@ -267,9 +267,9 @@ class TestABRunnerGatewayRouting:
             config_manager=MagicMock(),
         )
         # Resolved once; the identical routed endpoint drives both arms so the
-        # gateway returns the same model for each.
+        # router returns the same model for each.
         routed = runner._routed_llm_config
-        assert routed.api_base == "http://gateway:8080/v1"
+        assert routed.api_base == "http://semantic-router:8080/v1"
         assert routed.model == "openai/gpt-4o"
         assert routed.extra_headers == {
             "x-authz-user-groups": "pro",

@@ -40,7 +40,7 @@ class LLMEndpointConfig:
     extra_body: Optional[Dict[str, Any]] = None  # Provider-specific request params
     # Static HTTP headers attached to every request sent to ``api_base``.
     # Forwarded to dspy.LM/litellm as ``extra_headers``. Used to pass
-    # per-endpoint routing metadata to an OpenAI-compatible gateway sitting
+    # per-endpoint routing metadata to an OpenAI-compatible semantic router sitting
     # in front of the backend (e.g. a semantic router keying on a tenant
     # tier via ``x-authz-user-groups`` or a task label via ``x-vsr-task``).
     # The dict is sent verbatim; the factory does not interpret it.
@@ -168,25 +168,25 @@ class TenantConfig:
 
 
 @dataclass
-class GatewayRoutingConfig:
-    """Opt-in routing of LLM calls through an OpenAI-compatible gateway.
+class SemanticRouterConfig:
+    """Opt-in routing of LLM calls through an OpenAI-compatible semantic router.
 
     When ``enabled``, LLM endpoint configs are rewritten to target
-    ``gateway_base_url`` (e.g. an Envoy front-end for a semantic router)
+    ``semantic_router_url`` (e.g. an Envoy front-end for a semantic router)
     instead of the model backend, and two routing-metadata headers are
     attached per request: a tenant tier (``tier_header``, resolved from
     ``tenant_tiers`` with ``default_tier`` as fallback) and a task label
     (``task_header``, resolved from ``agent_tasks`` with ``default_task``
-    as fallback). The gateway keys on these to select the backend model
+    as fallback). The semantic router keys on these to select the backend model
     and reasoning mode. The application helper lives in
-    ``cogniverse_foundation.config.gateway_routing``.
+    ``cogniverse_foundation.config.semantic_router``.
 
     Disabled by default: with ``enabled=False`` the endpoint config is
     passed through untouched, so the direct-to-backend path is unchanged.
     """
 
     enabled: bool = False
-    gateway_base_url: str = ""
+    semantic_router_url: str = ""
     tenant_tiers: Dict[str, str] = field(default_factory=dict)
     default_tier: str = "default"
     agent_tasks: Dict[str, str] = field(default_factory=dict)
@@ -197,7 +197,7 @@ class GatewayRoutingConfig:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "enabled": self.enabled,
-            "gateway_base_url": self.gateway_base_url,
+            "semantic_router_url": self.semantic_router_url,
             "tenant_tiers": dict(self.tenant_tiers),
             "default_tier": self.default_tier,
             "agent_tasks": dict(self.agent_tasks),
@@ -207,10 +207,10 @@ class GatewayRoutingConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "GatewayRoutingConfig":
+    def from_dict(cls, data: Dict[str, Any]) -> "SemanticRouterConfig":
         return cls(
             enabled=bool(data.get("enabled", False)),
-            gateway_base_url=data.get("gateway_base_url", ""),
+            semantic_router_url=data.get("semantic_router_url", ""),
             tenant_tiers=dict(data.get("tenant_tiers") or {}),
             default_tier=data.get("default_tier", "default"),
             agent_tasks=dict(data.get("agent_tasks") or {}),
@@ -251,10 +251,10 @@ class SystemConfig:
     base_url: str = "http://localhost:8101/v1"
     llm_api_key: Optional[str] = None
 
-    # Opt-in routing of LLM calls through an OpenAI-compatible gateway
+    # Opt-in routing of LLM calls through an OpenAI-compatible semantic router
     # (e.g. an Envoy front-end for a semantic router). Disabled by
-    # default — see GatewayRoutingConfig.
-    gateway_routing: GatewayRoutingConfig = field(default_factory=GatewayRoutingConfig)
+    # default — see SemanticRouterConfig.
+    semantic_router: SemanticRouterConfig = field(default_factory=SemanticRouterConfig)
 
     # Phoenix/Telemetry
     telemetry_url: str = "http://localhost:6006"
@@ -332,7 +332,7 @@ class SystemConfig:
             "llm_engine": self.llm_engine,
             "base_url": self.base_url,
             "llm_api_key": "***" if self.llm_api_key else None,
-            "gateway_routing": self.gateway_routing.to_dict(),
+            "semantic_router": self.semantic_router.to_dict(),
             "telemetry_url": self.telemetry_url,
             "telemetry_collector_endpoint": self.telemetry_collector_endpoint,
             "video_processing_profiles": self.video_processing_profiles,
@@ -366,8 +366,8 @@ class SystemConfig:
             llm_engine=data.get("llm_engine", "vllm"),
             base_url=data.get("base_url", "http://localhost:8101/v1"),
             llm_api_key=data.get("llm_api_key"),
-            gateway_routing=GatewayRoutingConfig.from_dict(
-                data.get("gateway_routing") or {}
+            semantic_router=SemanticRouterConfig.from_dict(
+                data.get("semantic_router") or {}
             ),
             telemetry_url=data.get("telemetry_url", "http://localhost:6006"),
             telemetry_collector_endpoint=data.get(

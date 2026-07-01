@@ -221,27 +221,29 @@ class TestBuildHelper:
         wf = orchestrator._build_deep_synthesis_workflow()
         assert isinstance(wf, DeepSynthesisWorkflow)
 
-    async def test_build_routes_rlm_through_gateway_when_enabled(self, monkeypatch):
-        """When gateway routing is enabled, the deep-synthesis RLM's endpoint is
-        rewritten to the gateway with the tenant tier + the ``rlm_inference``
+    async def test_build_routes_rlm_through_semantic_router_when_enabled(
+        self, monkeypatch
+    ):
+        """When router routing is enabled, the deep-synthesis RLM's endpoint is
+        rewritten to the semantic router with the tenant tier + the ``rlm_inference``
         task header — the direct backend endpoint is never used."""
         monkeypatch.setenv("COGNIVERSE_RLM_SKIP_DENO_CHECK", "1")
-        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+        from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
-        gateway = GatewayRoutingConfig(
+        router = SemanticRouterConfig(
             enabled=True,
-            gateway_base_url="http://gateway:9099/v1",
+            semantic_router_url="http://semantic-router:9099/v1",
             tenant_tiers={"b7_gw_tenant": "pro"},
             default_tier="free",
             agent_tasks={"rlm_inference": "reason"},
             default_task="general",
         )
-        # route_rlm_endpoint resolves the gateway config via
-        # resolve_gateway_config; force it enabled so the real config
-        # manager's resolved endpoint is routed through the gateway.
+        # route_rlm_endpoint resolves the semantic router config via
+        # resolve_semantic_router_config; force it enabled so the real config
+        # manager's resolved endpoint is routed through the semantic router.
         monkeypatch.setattr(
-            "cogniverse_foundation.config.gateway_routing.resolve_gateway_config",
-            lambda _cfg: gateway,
+            "cogniverse_foundation.config.semantic_router.resolve_semantic_router_config",
+            lambda _cfg: router,
         )
         cm = create_default_config_manager()
         registry = AgentRegistry(tenant_id="b7_gw_tenant", config_manager=cm)
@@ -252,7 +254,7 @@ class TestBuildHelper:
         )
         wf = orchestrator._build_deep_synthesis_workflow()
         assert isinstance(wf, DeepSynthesisWorkflow)
-        assert wf._rlm.llm_config.api_base == "http://gateway:9099/v1"
+        assert wf._rlm.llm_config.api_base == "http://semantic-router:9099/v1"
         assert wf._rlm.llm_config.extra_headers == {
             "x-authz-user-groups": "pro",
             "x-vsr-task": "reason",

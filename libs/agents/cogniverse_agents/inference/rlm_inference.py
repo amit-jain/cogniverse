@@ -466,9 +466,9 @@ def route_rlm_endpoint(
     config_manager,
     tenant_id: str,
 ) -> LLMEndpointConfig:
-    """Return ``endpoint`` routed through the gateway for ``tenant_id``, or as-is.
+    """Return ``endpoint`` routed through the semantic router for ``tenant_id``, or as-is.
 
-    Applies gateway routing (task ``rlm_inference``) when a ``config_manager``
+    Applies semantic routing (task ``rlm_inference``) when a ``config_manager``
     and ``tenant_id`` are supplied and routing is enabled for that tenant. The
     single place every RLM construction site routes its endpoint, so the caps /
     event-queue plumbing stays independent of the routing decision. Returns the
@@ -477,17 +477,17 @@ def route_rlm_endpoint(
     """
     if config_manager is None or not tenant_id:
         return endpoint
-    from cogniverse_foundation.config.gateway_routing import (
-        apply_gateway_routing,
-        resolve_gateway_config,
+    from cogniverse_foundation.config.semantic_router import (
+        apply_semantic_routing,
+        resolve_semantic_router_config,
     )
     from cogniverse_foundation.config.utils import get_config
 
     try:
-        gateway = resolve_gateway_config(
+        router = resolve_semantic_router_config(
             get_config(tenant_id=tenant_id, config_manager=config_manager)
         )
-        return apply_gateway_routing(endpoint, gateway, tenant_id, "rlm_inference")
+        return apply_semantic_routing(endpoint, router, tenant_id, "rlm_inference")
     except Exception:  # noqa: BLE001 — never block RLM build on routing
         return endpoint
 
@@ -507,7 +507,7 @@ def build_rlm_from_options(
     ``_summarise_with_rlm`` setup was otherwise identical.
 
     When ``config_manager`` and ``tenant_id`` are supplied, the resolved
-    endpoint is routed through the gateway for that tenant (task
+    endpoint is routed through the semantic router for that tenant (task
     ``rlm_inference``); the RLM's own LM is then built from the routed
     endpoint. Omitting them keeps the direct-to-backend path.
     """
