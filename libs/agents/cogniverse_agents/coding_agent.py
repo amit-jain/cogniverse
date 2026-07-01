@@ -151,6 +151,7 @@ class CodingAgent(
         config: A2AAgentConfig | None = None,
         search_fn: Any = None,
         sandbox_manager: Any = None,
+        config_manager=None,
     ):
         from cogniverse_core.common.tenant_utils import require_tenant_id
 
@@ -168,6 +169,9 @@ class CodingAgent(
 
         self._search_fn = search_fn
         self._sandbox_manager = sandbox_manager or deps.sandbox_manager
+        # Enables the RLM path (RLMAwareMixin) to route its LM through the
+        # gateway for this tenant.
+        self._config_manager = config_manager
         self._planner = dspy.ChainOfThought(TaskPlanningSignature)
         self._generator = dspy.ChainOfThought(CodeGenerationSignature)
         self._evaluator = dspy.ChainOfThought(OutputEvaluationSignature)
