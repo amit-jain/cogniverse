@@ -129,20 +129,24 @@ def routed_lm_context_for(
     config_manager: object,
     tenant_id: str,
     agent_name: str,
-    fallback_lm: "Optional[dspy.LM]" = None,
+    endpoint: Optional[LLMEndpointConfig] = None,
 ):
-    """Return a ``dspy.context`` routing ``agent_name``'s LM through the gateway
-    for ``tenant_id`` when ``gateway_routing`` is enabled.
+    """Return a ``dspy.context`` binding ``agent_name``'s LM for a request,
+    routed through the gateway when ``gateway_routing`` is enabled.
 
-    For agents that build their DSPy LM once (tenant-agnostic instances) but
-    must route per request: wrap the DSPy call in this context. The endpoint is
-    re-resolved from the request tenant's config so the routed model/headers
-    reflect that tenant.
+    The single entry point every agent uses to make its per-request DSPy call
+    gateway-aware. There is exactly one input for the LM — the agent's
+    ``endpoint`` (an ``LLMEndpointConfig``):
 
-    When routing is disabled or unresolvable it falls back to ``fallback_lm``
-    (the agent's own pre-built LM) via ``dspy.context``; when ``fallback_lm`` is
-    ``None`` it returns a ``nullcontext`` so the global ``dspy.settings.lm``
-    stays in effect. Either way the disabled path is behavior-preserving.
+    - Enabled: the endpoint is routed through the gateway (api_base + tier/task
+      headers) for ``tenant_id``, preserving the endpoint's model/adapter.
+    - Disabled: the LM is built directly from the same endpoint — this is the
+      plain direct-to-backend path, not a fallback.
+
+    When ``endpoint`` is omitted the endpoint is resolved from config for
+    ``agent_name`` on the enabled path, and the ambient ``dspy.settings.lm`` is
+    left in place on the direct path (for callers that rely on the global LM,
+    e.g. the orchestrator).
     """
     from contextlib import nullcontext
 
@@ -150,19 +154,23 @@ def routed_lm_context_for(
 
     from cogniverse_foundation.config.utils import get_config
 
-    def _fallback():
-        return (
-            dspy.context(lm=fallback_lm) if fallback_lm is not None else nullcontext()
-        )
+    def _direct():
+        # Gateway off or config unreachable: the endpoint's own LM, or the
+        # ambient dspy.settings.lm when the agent supplied no endpoint.
+        if endpoint is not None:
+            return dspy.context(lm=create_dspy_lm(endpoint))
+        return nullcontext()
 
     try:
         cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
         gateway = resolve_gateway_config(cfg)
         if not gateway.enabled:
-            return _fallback()
-        endpoint = cfg.get_llm_config().resolve(agent_name)
-        return dspy.context(
-            lm=create_routed_lm(endpoint, gateway, tenant_id, agent_name)
+            return _direct()
+        ep = (
+            endpoint
+            if endpoint is not None
+            else cfg.get_llm_config().resolve(agent_name)
         )
+        return dspy.context(lm=create_routed_lm(ep, gateway, tenant_id, agent_name))
     except Exception:  # noqa: BLE001 — never block a request on routing config
-        return _fallback()
+        return _direct()

@@ -16,6 +16,12 @@ from cogniverse_agents.summarizer_agent import (
     VLMInterface,
 )
 from cogniverse_core.common.tenant_utils import TEST_TENANT_ID
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+# Endpoint the agent routes per request when _initialize_vlm_client is mocked.
+_GATEWAY_TEST_ENDPOINT = LLMEndpointConfig(
+    model="openai/test-model", api_base="http://localhost:11434/v1"
+)
 
 
 @pytest.mark.unit
@@ -188,7 +194,7 @@ class TestSummarizerAgent:
         mock_vlm_class.return_value = Mock()
 
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
-        agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
+        agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         # Mock DSPy summarization module to avoid needing a real LM
         mock_prediction = Mock()
@@ -250,7 +256,7 @@ class TestSummarizerAgentCoreFunctionality:
             mock_vlm_class.return_value = mock_vlm
 
             agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
-            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
             agent.vlm = mock_vlm
             return agent
 
@@ -616,7 +622,7 @@ class TestEmitProgressStreaming:
 
         mock_vlm_class.return_value = Mock()
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
-        agent._dspy_lm = Mock()
+        agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         mock_prediction = Mock()
         mock_prediction.summary = "Test summary."
@@ -652,7 +658,7 @@ class TestEmitProgressStreaming:
 
         mock_vlm_class.return_value = Mock()
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
-        agent._dspy_lm = Mock()
+        agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         mock_prediction = Mock()
         mock_prediction.summary = "Test summary."
@@ -693,7 +699,7 @@ class TestEmitProgressStreaming:
 
         mock_vlm_class.return_value = Mock()
         agent = SummarizerAgent(deps=SummarizerDeps(), config_manager=Mock())
-        agent._dspy_lm = Mock()
+        agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         agent._thinking_phase = AsyncMock(side_effect=RuntimeError("LM not configured"))
 
