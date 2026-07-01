@@ -752,7 +752,10 @@ class OrchestratorAgent(
                 DeepSynthesisConfig,
                 DeepSynthesisWorkflow,
             )
-            from cogniverse_agents.inference.rlm_inference import RLMInference
+            from cogniverse_agents.inference.rlm_inference import (
+                RLMInference,
+                route_rlm_endpoint,
+            )
             from cogniverse_foundation.config.utils import get_config
         except Exception as exc:
             logger.debug("Deep synthesis prerequisites missing: %s", exc)
@@ -766,7 +769,8 @@ class OrchestratorAgent(
             logger.debug("Could not resolve LLM config for deep synthesis: %s", exc)
             return None
 
-        rlm = RLMInference(llm_config=llm_primary)
+        llm_primary = route_rlm_endpoint(llm_primary, self._config_manager, tenant_id)
+        rlm = RLMInference(llm_config=llm_primary, tenant_id=tenant_id)
 
         async def _dispatcher(query: str, sub_agent_name: str) -> str:
             """Send a sub-query to a registered sub-agent over the
