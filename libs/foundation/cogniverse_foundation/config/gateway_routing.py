@@ -123,3 +123,46 @@ def create_routed_lm(
         agent_name=agent_name,
     )
     return create_dspy_lm(routed)
+
+
+def routed_lm_context_for(
+    config_manager: object,
+    tenant_id: str,
+    agent_name: str,
+    fallback_lm: "Optional[dspy.LM]" = None,
+):
+    """Return a ``dspy.context`` routing ``agent_name``'s LM through the gateway
+    for ``tenant_id`` when ``gateway_routing`` is enabled.
+
+    For agents that build their DSPy LM once (tenant-agnostic instances) but
+    must route per request: wrap the DSPy call in this context. The endpoint is
+    re-resolved from the request tenant's config so the routed model/headers
+    reflect that tenant.
+
+    When routing is disabled or unresolvable it falls back to ``fallback_lm``
+    (the agent's own pre-built LM) via ``dspy.context``; when ``fallback_lm`` is
+    ``None`` it returns a ``nullcontext`` so the global ``dspy.settings.lm``
+    stays in effect. Either way the disabled path is behavior-preserving.
+    """
+    from contextlib import nullcontext
+
+    import dspy
+
+    from cogniverse_foundation.config.utils import get_config
+
+    def _fallback():
+        return (
+            dspy.context(lm=fallback_lm) if fallback_lm is not None else nullcontext()
+        )
+
+    try:
+        cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
+        gateway = resolve_gateway_config(cfg)
+        if not gateway.enabled:
+            return _fallback()
+        endpoint = cfg.get_llm_config().resolve(agent_name)
+        return dspy.context(
+            lm=create_routed_lm(endpoint, gateway, tenant_id, agent_name)
+        )
+    except Exception:  # noqa: BLE001 — never block a request on routing config
+        return _fallback()

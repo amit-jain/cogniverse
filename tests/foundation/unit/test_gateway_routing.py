@@ -10,8 +10,10 @@ pin exact values on the objects the code produces.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from unittest.mock import MagicMock
 
+import dspy
 import pytest
 
 from cogniverse_foundation.config.gateway_routing import (
@@ -19,6 +21,7 @@ from cogniverse_foundation.config.gateway_routing import (
     create_routed_lm,
     resolve_gateway_config,
     resolve_gateway_headers,
+    routed_lm_context_for,
 )
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import (
@@ -280,3 +283,59 @@ class TestCreateRoutedLM:
         )
         assert lm.kwargs["api_base"] == DIRECT
         assert "extra_headers" not in lm.kwargs
+
+
+class TestRoutedLMContextFor:
+    """Per-request routing context for tenant-agnostic agents."""
+
+    def _patch_get_config(self, monkeypatch, cfg):
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+
+    def test_disabled_without_fallback_is_nullcontext(self, monkeypatch):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        self._patch_get_config(monkeypatch, cfg)
+        ctx = routed_lm_context_for(MagicMock(), "acme:prod", "summarizer_agent")
+        assert isinstance(ctx, nullcontext)
+
+    def test_disabled_with_fallback_uses_the_fallback_lm(self, monkeypatch):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        self._patch_get_config(monkeypatch, cfg)
+        fallback = create_dspy_lm(
+            LLMEndpointConfig(model="openai/local", api_base=DIRECT)
+        )
+        with routed_lm_context_for(
+            MagicMock(), "acme:prod", "summarizer_agent", fallback_lm=fallback
+        ):
+            assert dspy.settings.lm is fallback
+
+    def test_enabled_routes_through_gateway(self, monkeypatch):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = _enabled_config()
+        cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+            model="openai/s", api_base=DIRECT
+        )
+        self._patch_get_config(monkeypatch, cfg)
+        with routed_lm_context_for(MagicMock(), "acme:prod", "query_enhancement_agent"):
+            lm = dspy.settings.lm
+        assert lm.kwargs["api_base"] == GATEWAY
+        assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "enhance",
+        }
+
+    def test_error_falls_back_to_fallback_lm(self, monkeypatch):
+        def boom(**kw):
+            raise RuntimeError("config store down")
+
+        monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", boom)
+        fallback = create_dspy_lm(
+            LLMEndpointConfig(model="openai/local", api_base=DIRECT)
+        )
+        with routed_lm_context_for(
+            MagicMock(), "acme:prod", "summarizer_agent", fallback_lm=fallback
+        ):
+            assert dspy.settings.lm is fallback
