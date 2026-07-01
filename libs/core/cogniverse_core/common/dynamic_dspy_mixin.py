@@ -16,8 +16,12 @@ from cogniverse_foundation.config.agent_config import (
     ModuleConfig,
     OptimizerConfig,
 )
+from cogniverse_foundation.config.gateway_routing import apply_gateway_routing
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_foundation.config.unified_config import (
+    GatewayRoutingConfig,
+    LLMEndpointConfig,
+)
 from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
 
 logger = logging.getLogger(__name__)
@@ -98,8 +102,52 @@ class DynamicDSPyMixin:
             max_tokens=config.llm_max_tokens or 1000,
         )
 
+        endpoint_config = self._route_through_gateway(
+            endpoint_config, config.agent_name
+        )
+
         self._dspy_lm = create_dspy_lm(endpoint_config)
-        logger.info(f"Created DSPy LM: {endpoint_config.model}")
+        logger.info(
+            f"Created DSPy LM: {endpoint_config.model} @ {endpoint_config.api_base}"
+        )
+
+    def _route_through_gateway(
+        self, endpoint: LLMEndpointConfig, agent_name: str
+    ) -> LLMEndpointConfig:
+        """Route the LM endpoint through the gateway when it is enabled.
+
+        Reads ``SystemConfig.gateway_routing`` via ``self.system_config``'s
+        ``get_gateway_routing`` accessor. Disabled (the default) or unavailable
+        returns the endpoint unchanged — the direct-to-backend path. When
+        enabled, ``api_base`` is rewritten to the gateway and the tenant-tier /
+        task headers are attached.
+
+        The ``isinstance`` guard keeps a stray/mocked accessor (whose auto
+        attributes look truthy) from spuriously rewriting the endpoint.
+        """
+        system_config = getattr(self, "system_config", None)
+        accessor = getattr(system_config, "get_gateway_routing", None)
+        if not callable(accessor):
+            return endpoint
+        try:
+            gateway = accessor()
+        except Exception:  # noqa: BLE001 — never block LM init on gateway config
+            logger.debug("gateway_routing unavailable; using direct endpoint")
+            return endpoint
+        if not isinstance(gateway, GatewayRoutingConfig) or not gateway.enabled:
+            return endpoint
+
+        tenant_id = (
+            getattr(self, "tenant_id", None)
+            or getattr(system_config, "tenant_id", "")
+            or ""
+        )
+        return apply_gateway_routing(
+            endpoint=endpoint,
+            config=gateway,
+            tenant_id=tenant_id,
+            agent_name=agent_name,
+        )
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):
         """
