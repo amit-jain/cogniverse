@@ -19,12 +19,16 @@ so the direct-to-backend path is byte-for-byte identical.
 from __future__ import annotations
 
 import copy
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import (
     GatewayRoutingConfig,
     LLMEndpointConfig,
 )
+
+if TYPE_CHECKING:
+    import dspy
 
 
 def resolve_gateway_headers(
@@ -77,3 +81,45 @@ def apply_gateway_routing(
     routed.api_base = config.gateway_base_url
     routed.extra_headers = merged
     return routed
+
+
+def resolve_gateway_config(config_accessor: object) -> GatewayRoutingConfig:
+    """Best-effort ``GatewayRoutingConfig`` from an object exposing
+    ``get_gateway_routing()`` (e.g. ``ConfigUtils``).
+
+    Returns a disabled default when the accessor is absent, raises, or yields a
+    non-``GatewayRoutingConfig`` value. The ``isinstance`` guard keeps a mocked
+    accessor (whose auto attributes look truthy) from being treated as enabled.
+    """
+    accessor = getattr(config_accessor, "get_gateway_routing", None)
+    if not callable(accessor):
+        return GatewayRoutingConfig()
+    try:
+        gateway = accessor()
+    except Exception:  # noqa: BLE001 — never block LM construction on config
+        return GatewayRoutingConfig()
+    return (
+        gateway if isinstance(gateway, GatewayRoutingConfig) else GatewayRoutingConfig()
+    )
+
+
+def create_routed_lm(
+    endpoint: LLMEndpointConfig,
+    config: GatewayRoutingConfig,
+    tenant_id: str,
+    agent_name: str,
+) -> "dspy.LM":
+    """Build a ``dspy.LM`` for ``(tenant_id, agent_name)`` routed through the
+    gateway when ``config.enabled``.
+
+    Composes ``apply_gateway_routing`` + ``create_dspy_lm`` — the single way an
+    agent should build a gateway-aware LM. When routing is disabled the LM
+    targets the endpoint's own ``api_base`` unchanged.
+    """
+    routed = apply_gateway_routing(
+        endpoint=endpoint,
+        config=config,
+        tenant_id=tenant_id,
+        agent_name=agent_name,
+    )
+    return create_dspy_lm(routed)
