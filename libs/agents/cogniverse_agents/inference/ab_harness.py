@@ -27,7 +27,11 @@ import dspy
 if TYPE_CHECKING:
     from cogniverse_core.events import EventQueue
 
-from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
+from cogniverse_agents.inference.rlm_inference import (
+    RLMInference,
+    RLMResult,
+    route_rlm_endpoint,
+)
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -113,7 +117,14 @@ class RLMABRunner:
         rlm_max_llm_calls: ``RLMInference.max_llm_calls`` for the RLM arm.
         event_queue: Optional EventQueue forwarded to RLMInference for
             real-time progress events on the RLM arm.
-        tenant_id: Required when ``event_queue`` is provided.
+        tenant_id: Required when ``event_queue`` is provided. Also the tenant
+            whose gateway routing applies when ``config_manager`` is supplied.
+        config_manager: When supplied (with ``tenant_id``), both arms route
+            their endpoint through the gateway for that tenant. Routing is
+            resolved ONCE and shared by both arms, so the gateway selects the
+            same model for each — the comparison still isolates the RLM
+            machinery, now against the production (routed) path. Omitting it
+            keeps the direct-to-backend path.
     """
 
     def __init__(
@@ -125,6 +136,7 @@ class RLMABRunner:
         rlm_max_llm_calls: int = 30,
         event_queue: "Optional[EventQueue]" = None,
         tenant_id: Optional[str] = None,
+        config_manager=None,
     ) -> None:
         self._llm_config = llm_config
         self._judge = judge
@@ -133,6 +145,13 @@ class RLMABRunner:
         self._rlm_max_llm_calls = rlm_max_llm_calls
         self._event_queue = event_queue
         self._tenant_id = tenant_id
+        self._config_manager = config_manager
+        # Route once; both arms share the identical endpoint so the gateway
+        # returns the same model for each — RLM-vs-no-RLM stays the only
+        # variable. Direct path when routing is off/uninformed.
+        self._routed_llm_config = route_rlm_endpoint(
+            llm_config, config_manager, tenant_id or ""
+        )
 
     def run(
         self,
@@ -185,7 +204,7 @@ class RLMABRunner:
         from dspy.utils.usage_tracker import track_usage
 
         full_query = f"{system_prompt}\n\n{query}" if system_prompt else query
-        lm = create_dspy_lm(self._llm_config)
+        lm = create_dspy_lm(self._routed_llm_config)
         predict = dspy.Predict("context, query -> answer")
 
         start = time.time()
@@ -219,7 +238,7 @@ class RLMABRunner:
     ) -> ABArmResult:
         """RLM arm via RLMInference — the recursive baseline."""
         rlm = RLMInference(
-            llm_config=self._llm_config,
+            llm_config=self._routed_llm_config,
             max_iterations=self._rlm_max_iterations,
             max_llm_calls=self._rlm_max_llm_calls,
             timeout_seconds=self._timeout_seconds,
