@@ -38,6 +38,13 @@ class LLMEndpointConfig:
     max_tokens: int = 1000
     adapter_path: Optional[str] = None  # LoRA/fine-tuned artifact path
     extra_body: Optional[Dict[str, Any]] = None  # Provider-specific request params
+    # Static HTTP headers attached to every request sent to ``api_base``.
+    # Forwarded to dspy.LM/litellm as ``extra_headers``. Used to pass
+    # per-endpoint routing metadata to an OpenAI-compatible gateway sitting
+    # in front of the backend (e.g. a semantic router keying on a tenant
+    # tier via ``x-authz-user-groups`` or a task label via ``x-vsr-task``).
+    # The dict is sent verbatim; the factory does not interpret it.
+    extra_headers: Optional[Dict[str, str]] = None
     # vLLM sampling seed. When set, gets forwarded into extra_body so vLLM's
     # OpenAI-compat layer honors it on each request. With ``temperature=0``
     # + a fixed ``seed``, the LM produces bit-stable output across runs
@@ -61,6 +68,8 @@ class LLMEndpointConfig:
             result["adapter_path"] = self.adapter_path
         if self.extra_body is not None:
             result["extra_body"] = self.extra_body
+        if self.extra_headers is not None:
+            result["extra_headers"] = self.extra_headers
         if self.seed is not None:
             result["seed"] = self.seed
         result["request_timeout"] = self.request_timeout
@@ -78,6 +87,7 @@ class LLMEndpointConfig:
             max_tokens=data.get("max_tokens", 1000),
             adapter_path=data.get("adapter_path"),
             extra_body=data.get("extra_body"),
+            extra_headers=data.get("extra_headers"),
             seed=data.get("seed"),
             request_timeout=data.get("request_timeout", 120.0),
             num_retries=data.get("num_retries", 1),
