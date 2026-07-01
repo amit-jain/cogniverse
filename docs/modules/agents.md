@@ -3288,6 +3288,15 @@ class SearchAgent(RLMAwareMixin, MemoryAwareMixin, A2AAgent[...]):
             )
 ```
 
+`get_rlm` routes the RLM endpoint through the gateway (task `rlm_inference`)
+for the host's tenant before building the LM. It reads the host's
+`config_manager` (SearchAgent exposes `config_manager`; CodingAgent,
+DeepResearchAgent, and DetailedReportAgent store `_config_manager`) and the
+resolved tenant; when either is absent or routing is disabled the endpoint is
+used unchanged. The non-event cache keys on the routed identity (model +
+`api_base` + headers), so a tenant change invalidates a stale routed instance.
+`WikiManager._merge_with_rlm` routes the same way via its own `config_manager`.
+
 ### A/B Testing with RLM
 
 RLM is **query-level configurable** to enable A/B testing:

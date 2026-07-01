@@ -163,8 +163,11 @@ class TestDispatchPathsWireMemory:
         monkeypatch.setattr(
             "cogniverse_foundation.config.utils.get_config", lambda **k: MagicMock()
         )
+        # coding_lm is built via create_routed_lm, which resolves create_dspy_lm
+        # through gateway_routing's own binding — patch it there so no real
+        # dspy.LM is constructed from the stubbed config.
         monkeypatch.setattr(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            "cogniverse_foundation.config.gateway_routing.create_dspy_lm",
             lambda *a, **k: MagicMock(),
         )
         monkeypatch.setattr(

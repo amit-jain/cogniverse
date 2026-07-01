@@ -124,6 +124,7 @@ class DeepResearchAgent(
         deps: DeepResearchDeps,
         config: A2AAgentConfig | None = None,
         search_fn: Any = None,
+        config_manager=None,
     ):
         if config is None:
             config = A2AAgentConfig(
@@ -134,6 +135,9 @@ class DeepResearchAgent(
         super().__init__(deps=deps, config=config)
 
         self._search_fn = search_fn
+        # Enables the RLM path (RLMAwareMixin) to route its LM through the
+        # gateway for this tenant.
+        self._config_manager = config_manager
         self._decomposer = dspy.ChainOfThought(TaskDecompositionSignature)
         self._evaluator = dspy.ChainOfThought(EvidenceEvaluationSignature)
         self._synthesizer = dspy.ChainOfThought(SynthesisSignature)

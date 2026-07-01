@@ -648,6 +648,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     tenant_id, "wiki_pages"
                 ),
                 llm_endpoint_config=config.get_llm_config().primary,
+                config_manager=config_manager,
             )
             _wiki_managers[tenant_id] = mgr
             return mgr

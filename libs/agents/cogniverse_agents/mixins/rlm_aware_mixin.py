@@ -12,7 +12,11 @@ Features:
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from cogniverse_agents.inference.rlm_inference import RLMInference, RLMResult
+from cogniverse_agents.inference.rlm_inference import (
+    RLMInference,
+    RLMResult,
+    route_rlm_endpoint,
+)
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -78,6 +82,18 @@ class RLMAwareMixin:
             )
         return tid
 
+    def _config_manager_for_rlm(self):
+        """Best-effort ``config_manager`` for gateway routing.
+
+        Host agents store the manager under different names — SearchAgent
+        exposes ``config_manager`` (set by the tenant-aware base), the others
+        ``_config_manager`` — so read whichever is present. When neither is,
+        ``route_rlm_endpoint`` degrades to the direct endpoint.
+        """
+        return getattr(self, "_config_manager", None) or getattr(
+            self, "config_manager", None
+        )
+
     def get_rlm(
         self,
         llm_config: LLMEndpointConfig,
@@ -102,11 +118,20 @@ class RLMAwareMixin:
         Returns:
             RLMInference instance (with InstrumentedRLM if event_queue provided)
         """
+        # Route the endpoint through the gateway for this tenant before
+        # building the LM (task ``rlm_inference``). Best-effort: with no
+        # tenant, no config_manager, or routing disabled the endpoint is
+        # returned unchanged — the direct-to-backend path.
+        routing_tenant = tenant_id or getattr(self, "tenant_id", "") or ""
+        routed = route_rlm_endpoint(
+            llm_config, self._config_manager_for_rlm(), routing_tenant
+        )
+
         # Always create new instance when event_queue is provided
         # (event_queue/task_id may change per request)
         if event_queue:
             return RLMInference(
-                llm_config=llm_config,
+                llm_config=routed,
                 max_iterations=max_iterations,
                 max_llm_calls=max_llm_calls,
                 timeout_seconds=timeout_seconds,
@@ -115,19 +140,27 @@ class RLMAwareMixin:
                 tenant_id=self._resolve_tenant_id_for_rlm(tenant_id),
             )
 
-        # Create cached instance if config changed (no event_queue)
+        # Create cached instance if the routed config or caps changed. The
+        # cache keys on the ROUTED identity (model + api_base + headers) so a
+        # tenant change — which rewrites api_base/headers — invalidates a
+        # stale routed LM instead of reusing another tenant's gateway target.
+        cached = self._rlm_instance
+        cached_cfg = cached.llm_config if cached is not None else None
         if (
-            self._rlm_instance is None
-            or self._rlm_instance.model != llm_config.model
-            or self._rlm_instance.max_iterations != max_iterations
-            or self._rlm_instance.max_llm_calls != max_llm_calls
-            or self._rlm_instance.timeout_seconds != timeout_seconds
+            cached is None
+            or cached_cfg.model != routed.model
+            or cached_cfg.api_base != routed.api_base
+            or cached_cfg.extra_headers != routed.extra_headers
+            or cached.max_iterations != max_iterations
+            or cached.max_llm_calls != max_llm_calls
+            or cached.timeout_seconds != timeout_seconds
         ):
             self._rlm_instance = RLMInference(
-                llm_config=llm_config,
+                llm_config=routed,
                 max_iterations=max_iterations,
                 max_llm_calls=max_llm_calls,
                 timeout_seconds=timeout_seconds,
+                tenant_id=routing_tenant or None,
             )
         return self._rlm_instance
 

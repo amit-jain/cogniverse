@@ -889,6 +889,7 @@ class AgentDispatcher:
                 deps=deps,
                 search_fn=search_fn,
                 sandbox_manager=self._sandbox_manager,
+                config_manager=self._config_manager,
             )
             agent._dspy_lm = coding_lm  # type: ignore[attr-defined]
             typed_input = CodingInput(task=query, tenant_id=tenant_id)
@@ -1634,7 +1635,9 @@ class AgentDispatcher:
             result = await self._execute_search_task(query, tenant_id, top_k=10)
             return result.get("results", [])
 
-        agent = DeepResearchAgent(deps=deps, search_fn=search_fn)
+        agent = DeepResearchAgent(
+            deps=deps, search_fn=search_fn, config_manager=self._config_manager
+        )
         await asyncio.to_thread(
             self._init_agent_memory, agent, "deep_research_agent", tenant_id
         )
@@ -1716,6 +1719,7 @@ class AgentDispatcher:
             deps=deps,
             search_fn=search_fn,
             sandbox_manager=self._sandbox_manager,
+            config_manager=self._config_manager,
         )
         # Auto-init memory so the coding agent receives learned strategies
         # and tenant memories in inject_context_into_prompt.

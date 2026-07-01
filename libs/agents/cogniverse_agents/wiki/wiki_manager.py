@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import requests
 
-from cogniverse_agents.inference.rlm_inference import RLMInference
+from cogniverse_agents.inference.rlm_inference import RLMInference, route_rlm_endpoint
 from cogniverse_agents.wiki.wiki_schema import WikiIndex, WikiPage, generate_slug
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
@@ -31,6 +31,7 @@ class WikiManager:
         tenant_id: str,
         schema_name: str,
         llm_endpoint_config: Optional[LLMEndpointConfig] = None,
+        config_manager=None,
     ) -> None:
         """
         Args:
@@ -47,6 +48,9 @@ class WikiManager:
                 ``_merge_with_rlm``. Sourced from runtime ``llm_config.primary``
                 — required when the topic-page merge path is exercised. Tests
                 that don't trigger that path can omit it.
+            config_manager: When supplied, the RLM merge endpoint is routed
+                through the gateway for ``tenant_id`` (task ``rlm_inference``).
+                Omitting it keeps the direct-to-backend path.
         """
         if ":" in schema_name:
             raise ValueError(
@@ -58,6 +62,7 @@ class WikiManager:
         self._tenant_id = tenant_id
         self._schema_name = schema_name
         self._llm_endpoint_config = llm_endpoint_config
+        self._config_manager = config_manager
 
     # ------------------------------------------------------------------
     # Public API
@@ -427,7 +432,10 @@ class WikiManager:
                 "config.get_llm_config().primary."
             )
         try:
-            rlm = RLMInference(llm_config=self._llm_endpoint_config)
+            routed = route_rlm_endpoint(
+                self._llm_endpoint_config, self._config_manager, self._tenant_id
+            )
+            rlm = RLMInference(llm_config=routed, tenant_id=self._tenant_id)
             result = rlm.process(query=query, context=combined_context)
             return result.answer
         except Exception:
