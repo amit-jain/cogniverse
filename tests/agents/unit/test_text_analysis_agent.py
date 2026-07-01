@@ -232,6 +232,24 @@ class TestTextAnalysisEndpoints:
         """Clear agent cache before each test"""
         _agent_instances.clear()
 
+    @pytest.fixture(autouse=True)
+    def _wire_in_memory_config(self, config_manager_memory, monkeypatch):
+        """Point the app lifespan at an in-memory ConfigManager.
+
+        The real ``create_default_config_manager()`` builds a VespaConfigStore,
+        so under ``TestClient`` a ``POST /analyze`` reaches
+        ``get_agent -> TextAnalysisAgent.__init__ -> config_manager
+        .get_agent_config(...)`` and blocks on a Vespa HTTP call that never
+        answers in a unit-test sandbox. These tests must manage their own
+        infrastructure, so the lifespan wires the in-memory manager instead.
+        """
+        import cogniverse_agents.text_analysis_agent as ta_module
+
+        monkeypatch.setattr(
+            ta_module, "create_default_config_manager", lambda: config_manager_memory
+        )
+        monkeypatch.setattr(ta_module, "_config_manager", None)
+
     @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
     @patch(
         "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
