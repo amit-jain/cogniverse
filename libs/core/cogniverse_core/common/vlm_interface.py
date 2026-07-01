@@ -61,7 +61,6 @@ class VLMInterface:
             endpoint_config,
             resolve_semantic_router_config(self.config),
             getattr(self.config, "tenant_id", "") or "",
-            "vlm_interface",
         )
 
         self._dspy_lm = create_dspy_lm(endpoint_config)

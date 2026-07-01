@@ -165,8 +165,6 @@ class TestDynamicDSPyMixin:
             semantic_router_url="http://envoy:8801/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
-            agent_tasks={"query_enhancement_agent": "enhance"},
-            default_task="general",
         )
         agent = TestAgent.__new__(TestAgent)
         agent.system_config = sysconf
@@ -176,8 +174,8 @@ class TestDynamicDSPyMixin:
 
         assert agent._dspy_lm.kwargs["api_base"] == "http://envoy:8801/v1"
         assert agent._dspy_lm.kwargs["extra_headers"] == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
     def test_semantic_router_noop_when_disabled(self, agent_config):

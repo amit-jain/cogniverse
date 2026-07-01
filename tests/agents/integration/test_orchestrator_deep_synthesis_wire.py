@@ -235,8 +235,6 @@ class TestBuildHelper:
             semantic_router_url="http://semantic-router:9099/v1",
             tenant_tiers={"b7_gw_tenant": "pro"},
             default_tier="free",
-            agent_tasks={"rlm_inference": "reason"},
-            default_task="general",
         )
         # route_rlm_endpoint resolves the semantic router config via
         # resolve_semantic_router_config; force it enabled so the real config
@@ -256,8 +254,8 @@ class TestBuildHelper:
         assert isinstance(wf, DeepSynthesisWorkflow)
         assert wf._rlm.llm_config.api_base == "http://semantic-router:9099/v1"
         assert wf._rlm.llm_config.extra_headers == {
+            "x-authz-user-id": "b7_gw_tenant",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
         # tenant_id is threaded onto the RLM for event scoping.
         assert wf._rlm._tenant_id == "b7_gw_tenant"

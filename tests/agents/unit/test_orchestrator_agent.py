@@ -1271,8 +1271,6 @@ class TestOrchestratorSemanticRouting:
             semantic_router_url="http://envoy:8801/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
-            agent_tasks={"orchestrator_agent": "orchestrator_plan"},
-            default_task="general",
         )
         cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
             model="openai/planner", api_base="http://vllm:8101/v1"
@@ -1283,19 +1281,20 @@ class TestOrchestratorSemanticRouting:
                 active = dspy.settings.lm
             assert active.kwargs["api_base"] == "http://envoy:8801/v1"
             assert active.kwargs["extra_headers"] == {
+                "x-authz-user-id": "acme:prod",
                 "x-authz-user-groups": "pro",
-                "x-vsr-task": "orchestrator_plan",
             }
         finally:
             patcher.stop()
 
-    def test_resolution_error_falls_back_to_nullcontext(self):
+    def test_resolution_error_propagates(self):
+        # No silent fallback: a broken config store surfaces rather than
+        # quietly leaving the orchestrator on the ambient LM.
         cfg = MagicMock()
         cfg.get_semantic_router.side_effect = RuntimeError("config store down")
         agent, patcher = self._agent_with_config(cfg)
         try:
-            assert isinstance(
-                agent._semantic_router_lm_context("acme:prod"), nullcontext
-            )
+            with pytest.raises(RuntimeError, match="config store down"):
+                agent._semantic_router_lm_context("acme:prod")
         finally:
             patcher.stop()

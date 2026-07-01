@@ -1,11 +1,15 @@
-"""Unit tests for opt-in LLM router routing.
+"""Unit tests for opt-in LLM semantic routing.
 
-These exercise only code we own: the tier/task header resolver, the
+These exercise only code we own: the tenant-tier header resolver, the
 ``apply_semantic_routing`` transform, and config serialization. They do NOT
 stand up a router — a real semantic-router/Envoy round-trip is a separate
 Docker-backed integration suite. Asserting against a stubbed boundary here
 would only re-prove internal wiring, so these stay honestly unit-level and
 pin exact values on the objects the code produces.
+
+Routing keys on the tenant tier only (the router classifies request content
+itself); there is no per-agent task header. And a broken config store raises
+rather than silently routing direct.
 """
 
 from __future__ import annotations
@@ -41,8 +45,6 @@ def _enabled_config(**overrides) -> SemanticRouterConfig:
         semantic_router_url=SR_URL,
         tenant_tiers={"acme:prod": "pro"},
         default_tier="free",
-        agent_tasks={"query_enhancement_agent": "enhance"},
-        default_task="general",
     )
     base.update(overrides)
     return SemanticRouterConfig(**base)
@@ -51,36 +53,27 @@ def _enabled_config(**overrides) -> SemanticRouterConfig:
 class TestResolveSemanticRouterHeaders:
     def test_returns_none_when_disabled(self):
         cfg = SemanticRouterConfig(enabled=False)
-        assert resolve_semantic_router_headers(cfg, "acme:prod", "search_agent") is None
+        assert resolve_semantic_router_headers(cfg, "acme:prod") is None
 
-    def test_known_tenant_and_agent_map_to_exact_headers(self):
+    def test_known_tenant_maps_to_exact_tier_header(self):
         cfg = _enabled_config()
-        assert resolve_semantic_router_headers(
-            cfg, "acme:prod", "query_enhancement_agent"
-        ) == {
+        assert resolve_semantic_router_headers(cfg, "acme:prod") == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
     def test_unknown_tenant_falls_back_to_default_tier(self):
         cfg = _enabled_config()
-        headers = resolve_semantic_router_headers(
-            cfg, "unregistered:tenant", "search_agent"
-        )
-        assert headers["x-authz-user-groups"] == "free"
+        assert resolve_semantic_router_headers(cfg, "unregistered:tenant") == {
+            "x-authz-user-id": "unregistered:tenant",
+            "x-authz-user-groups": "free",
+        }
 
-    def test_unknown_agent_falls_back_to_default_task(self):
-        cfg = _enabled_config()
-        headers = resolve_semantic_router_headers(cfg, "acme:prod", "brand_new_agent")
-        assert headers["x-vsr-task"] == "general"
-
-    def test_custom_header_names_are_honored(self):
-        cfg = _enabled_config(tier_header="x-tenant-tier", task_header="x-task")
-        assert resolve_semantic_router_headers(
-            cfg, "acme:prod", "query_enhancement_agent"
-        ) == {
+    def test_custom_tier_header_name_is_honored(self):
+        cfg = _enabled_config(tier_header="x-tenant-tier")
+        assert resolve_semantic_router_headers(cfg, "acme:prod") == {
+            "x-authz-user-id": "acme:prod",
             "x-tenant-tier": "pro",
-            "x-task": "enhance",
         }
 
 
@@ -89,28 +82,22 @@ class TestApplySemanticRouting:
         cfg = SemanticRouterConfig(enabled=False)
         endpoint = LLMEndpointConfig(model="openai/m", api_base=DIRECT)
         routed = apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="acme:prod",
-            agent_name="search_agent",
+            endpoint=endpoint, config=cfg, tenant_id="acme:prod"
         )
         assert routed is endpoint
         assert routed.api_base == DIRECT
         assert routed.extra_headers is None
 
-    def test_enabled_rewrites_api_base_and_attaches_exact_headers(self):
+    def test_enabled_rewrites_api_base_and_attaches_tier_header(self):
         cfg = _enabled_config()
         endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
         routed = apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="acme:prod",
-            agent_name="query_enhancement_agent",
+            endpoint=endpoint, config=cfg, tenant_id="acme:prod"
         )
         assert routed.api_base == SR_URL
         assert routed.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
     def test_merges_onto_preexisting_extra_headers(self):
@@ -121,71 +108,52 @@ class TestApplySemanticRouting:
             extra_headers={"x-trace-id": "abc123"},
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="acme:prod",
-            agent_name="query_enhancement_agent",
+            endpoint=endpoint, config=cfg, tenant_id="acme:prod"
         )
         assert routed.extra_headers == {
             "x-trace-id": "abc123",
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
-    def test_semantic_router_headers_win_on_key_collision(self):
+    def test_tier_header_wins_on_key_collision(self):
         cfg = _enabled_config()
         endpoint = LLMEndpointConfig(
             model="openai/router-auto",
             api_base=DIRECT,
-            extra_headers={"x-vsr-task": "stale"},
+            extra_headers={"x-authz-user-groups": "stale"},
         )
         routed = apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="acme:prod",
-            agent_name="query_enhancement_agent",
+            endpoint=endpoint, config=cfg, tenant_id="acme:prod"
         )
-        assert routed.extra_headers["x-vsr-task"] == "enhance"
+        assert routed.extra_headers["x-authz-user-groups"] == "pro"
 
     def test_does_not_mutate_the_input_endpoint(self):
         cfg = _enabled_config()
         endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
-        apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="acme:prod",
-            agent_name="query_enhancement_agent",
-        )
+        apply_semantic_routing(endpoint=endpoint, config=cfg, tenant_id="acme:prod")
         assert endpoint.api_base == DIRECT
         assert endpoint.extra_headers is None
 
     def test_enabled_without_semantic_router_url_raises(self):
         cfg = _enabled_config(semantic_router_url="")
         endpoint = LLMEndpointConfig(model="openai/m", api_base=DIRECT)
-        with pytest.raises(ValueError, match="semantic_router_url is empty"):
-            apply_semantic_routing(
-                endpoint=endpoint,
-                config=cfg,
-                tenant_id="acme:prod",
-                agent_name="search_agent",
-            )
+        with pytest.raises(ValueError, match="semantic_router_url is"):
+            apply_semantic_routing(endpoint=endpoint, config=cfg, tenant_id="acme:prod")
 
     def test_apply_then_factory_wires_semantic_router_onto_dspy_lm(self):
         # Ties the transform to the factory: the constructed dspy.LM must carry
-        # exactly the semantic router api_base and the resolved routing headers.
+        # exactly the semantic router api_base and the resolved tier header.
         cfg = _enabled_config()
         endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
         routed = apply_semantic_routing(
-            endpoint=endpoint,
-            config=cfg,
-            tenant_id="unregistered:tenant",
-            agent_name="query_enhancement_agent",
+            endpoint=endpoint, config=cfg, tenant_id="unregistered:tenant"
         )
         lm = create_dspy_lm(routed)
         assert lm.kwargs["api_base"] == SR_URL
         assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-id": "unregistered:tenant",
             "x-authz-user-groups": "free",
-            "x-vsr-task": "enhance",
         }
 
 
@@ -196,9 +164,7 @@ class TestSemanticRouterConfigSerialization:
         assert (rt.enabled, rt.semantic_router_url) == (True, SR_URL)
         assert rt.tenant_tiers == {"acme:prod": "pro"}
         assert rt.default_tier == "free"
-        assert rt.agent_tasks == {"query_enhancement_agent": "enhance"}
-        assert rt.default_task == "general"
-        assert (rt.tier_header, rt.task_header) == ("x-authz-user-groups", "x-vsr-task")
+        assert rt.tier_header == "x-authz-user-groups"
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
         assert SystemConfig().semantic_router.enabled is False
@@ -232,12 +198,6 @@ class TestConfigUtilsSemanticRouting:
         cu = self._config_utils(SystemConfig())
         assert cu.get_semantic_router().enabled is False
 
-    def test_missing_field_falls_back_to_disabled_default(self):
-        cu = self._config_utils(object())  # no semantic_router attribute
-        result = cu.get_semantic_router()
-        assert isinstance(result, SemanticRouterConfig)
-        assert result.enabled is False
-
 
 class TestResolveSemanticRouterConfig:
     def test_absent_accessor_returns_disabled_default(self):
@@ -258,25 +218,24 @@ class TestResolveSemanticRouterConfig:
         assert isinstance(result, SemanticRouterConfig)
         assert result.enabled is False
 
-    def test_raising_accessor_returns_disabled_default(self):
+    def test_raising_accessor_propagates(self):
+        # No silent fallback: a broken config store must surface, not disable.
         accessor = MagicMock()
         accessor.get_semantic_router.side_effect = RuntimeError("boom")
-        assert resolve_semantic_router_config(accessor).enabled is False
+        with pytest.raises(RuntimeError, match="boom"):
+            resolve_semantic_router_config(accessor)
 
 
 class TestCreateRoutedLM:
-    def test_enabled_builds_lm_on_semantic_router_with_headers(self):
+    def test_enabled_builds_lm_on_semantic_router_with_tier_header(self):
         endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
         lm = create_routed_lm(
-            endpoint=endpoint,
-            config=_enabled_config(),
-            tenant_id="acme:prod",
-            agent_name="query_enhancement_agent",
+            endpoint=endpoint, config=_enabled_config(), tenant_id="acme:prod"
         )
         assert lm.kwargs["api_base"] == SR_URL
         assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
     def test_disabled_builds_lm_on_direct_endpoint(self):
@@ -285,7 +244,6 @@ class TestCreateRoutedLM:
             endpoint=endpoint,
             config=SemanticRouterConfig(enabled=False),
             tenant_id="acme:prod",
-            agent_name="search_agent",
         )
         assert lm.kwargs["api_base"] == DIRECT
         assert "extra_headers" not in lm.kwargs
@@ -318,22 +276,22 @@ class TestRoutedLMContextFor:
             lm = dspy.settings.lm
         assert lm.kwargs["api_base"] == SR_URL
         assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "enhance",
         }
 
-    def test_error_with_endpoint_builds_from_that_endpoint(self, monkeypatch):
+    def test_config_error_propagates(self, monkeypatch):
+        # No silent fallback: a broken config store surfaces, even with an
+        # endpoint in hand — it does NOT quietly build a direct LM.
         def boom(**kw):
             raise RuntimeError("config store down")
 
         monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", boom)
         endpoint = LLMEndpointConfig(model="openai/local", api_base=DIRECT)
-        with routed_lm_context_for(
-            MagicMock(), "acme:prod", "summarizer_agent", endpoint=endpoint
-        ):
-            lm = dspy.settings.lm
-        assert lm.model == "openai/local"
-        assert lm.kwargs["api_base"] == DIRECT
+        with pytest.raises(RuntimeError, match="config store down"):
+            routed_lm_context_for(
+                MagicMock(), "acme:prod", "summarizer_agent", endpoint=endpoint
+            )
 
     def test_enabled_routes_the_given_endpoint(self, monkeypatch):
         # endpoint param: route the agent's own endpoint (preserving its model)

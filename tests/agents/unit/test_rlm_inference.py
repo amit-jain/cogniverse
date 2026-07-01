@@ -536,8 +536,6 @@ class TestBuildRlmFromOptions:
             semantic_router_url="http://semantic-router:8080/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
-            agent_tasks={"rlm_inference": "reason"},
-            default_task="general",
         )
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = router
@@ -556,8 +554,8 @@ class TestBuildRlmFromOptions:
         assert rlm.model == "openai/gpt-4o"
         # Tenant tier + the fixed "rlm_inference" task become the routing headers.
         assert rlm.llm_config.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
         # tenant_id is threaded onto the RLMInference for event scoping.
         assert rlm._tenant_id == "acme:prod"
@@ -622,8 +620,6 @@ class TestRouteRlmEndpoint:
             semantic_router_url="http://semantic-router:8080/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
-            agent_tasks={"rlm_inference": "reason"},
-            default_task="general",
         )
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = router
@@ -638,12 +634,14 @@ class TestRouteRlmEndpoint:
         assert out.api_base == "http://semantic-router:8080/v1"
         assert out.model == "openai/gpt-4o"
         assert out.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
 
-    def test_unreachable_config_returns_endpoint_unchanged(self, monkeypatch):
+    def test_unreachable_config_propagates(self, monkeypatch):
         from unittest.mock import MagicMock
+
+        import pytest
 
         from cogniverse_agents.inference.rlm_inference import route_rlm_endpoint
 
@@ -652,7 +650,9 @@ class TestRouteRlmEndpoint:
 
         monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", boom)
         endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
-        out = route_rlm_endpoint(
-            endpoint, config_manager=MagicMock(), tenant_id="acme:prod"
-        )
-        assert out is endpoint
+        # No silent fallback: a broken config store surfaces, it does not
+        # quietly build the RLM against the un-routed endpoint.
+        with pytest.raises(RuntimeError, match="config store down"):
+            route_rlm_endpoint(
+                endpoint, config_manager=MagicMock(), tenant_id="acme:prod"
+            )

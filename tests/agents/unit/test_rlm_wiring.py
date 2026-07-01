@@ -28,8 +28,6 @@ def _enabled_semantic_router() -> SemanticRouterConfig:
         semantic_router_url=_SR_URL,
         tenant_tiers={"acme:prod": "pro", "beta:prod": "free"},
         default_tier="free",
-        agent_tasks={"rlm_inference": "reason"},
-        default_task="general",
     )
 
 
@@ -107,8 +105,8 @@ class TestRLMAwareMixinRouting:
         assert rlm.llm_config.api_base == _SR_URL
         assert rlm.model == "openai/gpt-4o"
         assert rlm.llm_config.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
         assert rlm._tenant_id == "acme:prod"
 
@@ -192,8 +190,8 @@ class TestHostAgentsThreadConfigManagerToRLM:
         )
         assert rlm.llm_config.api_base == _SR_URL
         assert rlm.llm_config.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
 
 
@@ -231,8 +229,8 @@ class TestWikiManagerRLMRouting:
         assert out == "MERGED-SUMMARY"
         assert captured["llm_config"].api_base == _SR_URL
         assert captured["llm_config"].extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
         assert captured["tenant_id"] == "acme:prod"
 
