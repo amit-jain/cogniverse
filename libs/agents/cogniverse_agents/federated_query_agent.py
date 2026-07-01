@@ -174,6 +174,7 @@ class FederatedQueryAgent(
         # explicit llm_config was passed; gives the constructor param a real
         # consumer instead of being a dead injection point.
         self._llm_config = resolve_llm_config(llm_config, config_manager)
+        self._config_manager = config_manager
         self._graph_managers: Dict[str, "GraphManager"] = {}
 
     def set_graph_managers(self, graph_managers: Dict[str, "GraphManager"]) -> None:
@@ -324,6 +325,11 @@ class FederatedQueryAgent(
     ) -> str:
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
-        rlm = build_rlm_from_options(self._llm_config, rlm_options)
+        rlm = build_rlm_from_options(
+            self._llm_config,
+            rlm_options,
+            config_manager=getattr(self, "_config_manager", None),
+            tenant_id=getattr(self, "_memory_tenant_id", None) or "",
+        )
         result = await asyncio.to_thread(rlm.process, query=query, context=block)
         return result.answer

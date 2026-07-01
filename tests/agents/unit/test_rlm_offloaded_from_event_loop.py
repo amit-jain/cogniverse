@@ -45,7 +45,7 @@ async def test_with_rlm_offloads_blocking_process(cls, method_name, args, monkey
 
     monkeypatch.setattr(
         "cogniverse_agents.inference.rlm_inference.build_rlm_from_options",
-        lambda llm_config, rlm_options: _FakeRLM(),
+        lambda llm_config, rlm_options, **kwargs: _FakeRLM(),
     )
 
     agent = cls.__new__(cls)

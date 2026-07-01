@@ -524,3 +524,69 @@ class TestBuildRlmFromOptions:
         assert rlm.max_iterations == 9
         assert rlm.max_llm_calls == 4
         assert rlm.timeout_seconds == 11
+
+    def test_enabled_gateway_routes_the_rlm_endpoint(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+
+        gateway = GatewayRoutingConfig(
+            enabled=True,
+            gateway_base_url="http://gateway:8080/v1",
+            tenant_tiers={"acme:prod": "pro"},
+            default_tier="free",
+            agent_tasks={"rlm_inference": "reason"},
+            default_task="general",
+        )
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = gateway
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        opts = RLMOptions(backend="openai", max_iterations=5, max_llm_calls=2)
+        rlm = build_rlm_from_options(
+            endpoint, opts, config_manager=MagicMock(), tenant_id="acme:prod"
+        )
+
+        # Endpoint is rewritten to target the gateway; model preserved.
+        assert rlm.llm_config.api_base == "http://gateway:8080/v1"
+        assert rlm.model == "openai/gpt-4o"
+        # Tenant tier + the fixed "rlm_inference" task become the routing headers.
+        assert rlm.llm_config.extra_headers == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "reason",
+        }
+        # tenant_id is threaded onto the RLMInference for event scoping.
+        assert rlm._tenant_id == "acme:prod"
+        # Per-request caps untouched by routing.
+        assert rlm.max_iterations == 5
+        assert rlm.max_llm_calls == 2
+
+    def test_disabled_gateway_keeps_direct_endpoint(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
+        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        rlm = build_rlm_from_options(
+            endpoint,
+            RLMOptions(backend="openai"),
+            config_manager=MagicMock(),
+            tenant_id="acme:prod",
+        )
+
+        # Disabled routing leaves the endpoint pointing at its own backend.
+        assert rlm.llm_config.api_base == "http://direct"
+        assert rlm.llm_config.extra_headers is None
+        # tenant_id is still threaded even when routing is off.
+        assert rlm._tenant_id == "acme:prod"
