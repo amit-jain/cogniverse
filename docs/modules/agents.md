@@ -3245,6 +3245,24 @@ rlm = build_rlm_from_options(
 result = rlm.process(query=query, context=block)
 ```
 
+`route_rlm_endpoint(endpoint, config_manager, tenant_id)` (same module) is the
+underlying primitive `build_rlm_from_options` uses to route an endpoint through
+the gateway (task `rlm_inference`); it returns the endpoint unchanged when
+`config_manager`/`tenant_id` are absent, routing is disabled, or the config is
+unreachable. Call sites that construct `RLMInference` directly rather than via
+`build_rlm_from_options` — e.g. the orchestrator's deep-synthesis workflow —
+route their resolved endpoint through it before construction:
+
+```python
+from cogniverse_agents.inference.rlm_inference import (
+    RLMInference,
+    route_rlm_endpoint,
+)
+
+llm_primary = route_rlm_endpoint(llm_primary, self._config_manager, tenant_id)
+rlm = RLMInference(llm_config=llm_primary, tenant_id=tenant_id)
+```
+
 #### RLMAwareMixin (Agent Integration)
 
 Agents inherit from `RLMAwareMixin` to gain RLM capabilities:

@@ -590,3 +590,69 @@ class TestBuildRlmFromOptions:
         assert rlm.llm_config.extra_headers is None
         # tenant_id is still threaded even when routing is off.
         assert rlm._tenant_id == "acme:prod"
+
+
+class TestRouteRlmEndpoint:
+    """The shared primitive that routes any RLM endpoint through the gateway."""
+
+    def test_none_config_manager_returns_endpoint_unchanged(self):
+        from cogniverse_agents.inference.rlm_inference import route_rlm_endpoint
+
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        out = route_rlm_endpoint(endpoint, config_manager=None, tenant_id="acme:prod")
+        assert out is endpoint
+
+    def test_empty_tenant_returns_endpoint_unchanged(self):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import route_rlm_endpoint
+
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        out = route_rlm_endpoint(endpoint, config_manager=MagicMock(), tenant_id="")
+        assert out is endpoint
+
+    def test_enabled_rewrites_to_gateway_with_rlm_task(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import route_rlm_endpoint
+        from cogniverse_foundation.config.unified_config import GatewayRoutingConfig
+
+        gateway = GatewayRoutingConfig(
+            enabled=True,
+            gateway_base_url="http://gateway:8080/v1",
+            tenant_tiers={"acme:prod": "pro"},
+            default_tier="free",
+            agent_tasks={"rlm_inference": "reason"},
+            default_task="general",
+        )
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = gateway
+        monkeypatch.setattr(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        out = route_rlm_endpoint(
+            endpoint, config_manager=MagicMock(), tenant_id="acme:prod"
+        )
+        assert out.api_base == "http://gateway:8080/v1"
+        assert out.model == "openai/gpt-4o"
+        assert out.extra_headers == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "reason",
+        }
+
+    def test_unreachable_config_returns_endpoint_unchanged(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_agents.inference.rlm_inference import route_rlm_endpoint
+
+        def boom(**kw):
+            raise RuntimeError("config store down")
+
+        monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", boom)
+        endpoint = LLMEndpointConfig(model="openai/gpt-4o", api_base="http://direct")
+        out = route_rlm_endpoint(
+            endpoint, config_manager=MagicMock(), tenant_id="acme:prod"
+        )
+        assert out is endpoint
