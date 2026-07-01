@@ -16,6 +16,8 @@ import pytest
 
 from cogniverse_foundation.config.gateway_routing import (
     apply_gateway_routing,
+    create_routed_lm,
+    resolve_gateway_config,
     resolve_gateway_headers,
 )
 from cogniverse_foundation.config.llm_factory import create_dspy_lm
@@ -226,3 +228,55 @@ class TestConfigUtilsGatewayRouting:
         result = cu.get_gateway_routing()
         assert isinstance(result, GatewayRoutingConfig)
         assert result.enabled is False
+
+
+class TestResolveGatewayConfig:
+    def test_absent_accessor_returns_disabled_default(self):
+        result = resolve_gateway_config(object())
+        assert isinstance(result, GatewayRoutingConfig)
+        assert result.enabled is False
+
+    def test_valid_accessor_returns_the_config(self):
+        gateway = _enabled_config()
+        accessor = MagicMock()
+        accessor.get_gateway_routing.return_value = gateway
+        assert resolve_gateway_config(accessor) is gateway
+
+    def test_mocked_accessor_value_is_rejected(self):
+        # A bare MagicMock's get_gateway_routing() returns a MagicMock whose
+        # .enabled is truthy; the isinstance guard must reject it.
+        result = resolve_gateway_config(MagicMock())
+        assert isinstance(result, GatewayRoutingConfig)
+        assert result.enabled is False
+
+    def test_raising_accessor_returns_disabled_default(self):
+        accessor = MagicMock()
+        accessor.get_gateway_routing.side_effect = RuntimeError("boom")
+        assert resolve_gateway_config(accessor).enabled is False
+
+
+class TestCreateRoutedLM:
+    def test_enabled_builds_lm_on_gateway_with_headers(self):
+        endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
+        lm = create_routed_lm(
+            endpoint=endpoint,
+            config=_enabled_config(),
+            tenant_id="acme:prod",
+            agent_name="query_enhancement_agent",
+        )
+        assert lm.kwargs["api_base"] == GATEWAY
+        assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "enhance",
+        }
+
+    def test_disabled_builds_lm_on_direct_endpoint(self):
+        endpoint = LLMEndpointConfig(model="openai/m", api_base=DIRECT)
+        lm = create_routed_lm(
+            endpoint=endpoint,
+            config=GatewayRoutingConfig(enabled=False),
+            tenant_id="acme:prod",
+            agent_name="search_agent",
+        )
+        assert lm.kwargs["api_base"] == DIRECT
+        assert "extra_headers" not in lm.kwargs
