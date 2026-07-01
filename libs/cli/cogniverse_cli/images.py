@@ -161,6 +161,13 @@ def _read_third_party_images(values_file: Path, skip_llm: bool = False) -> list[
     _add_image(values.get("vespa", {}).get("image"))
     _add_image(values.get("phoenix", {}).get("image"))
 
+    # Semantic-router gateway (Envoy + the SR image) — part of the default
+    # stack, so its images must be pre-pulled or first boot ErrImagePulls.
+    semantic_router = values.get("semanticRouter", {}) or {}
+    if semantic_router.get("enabled") is not False:
+        _add_image(semantic_router.get("envoy", {}).get("image"))
+        _add_image(semantic_router.get("router", {}).get("image"))
+
     if not skip_llm:
         _add_image(values.get("llm", {}).get("builtin", {}).get("image"))
 
