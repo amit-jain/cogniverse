@@ -839,13 +839,21 @@ class AgentDispatcher:
                 CodingDeps,
                 CodingInput,
             )
-            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+            from cogniverse_foundation.config.gateway_routing import (
+                create_routed_lm,
+                resolve_gateway_config,
+            )
             from cogniverse_foundation.config.utils import get_config
 
             config = get_config(
                 tenant_id=tenant_id, config_manager=self._config_manager
             )
-            coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
+            coding_lm = create_routed_lm(
+                config.get_llm_config().resolve("coding_agent"),
+                resolve_gateway_config(config),
+                tenant_id,
+                "coding_agent",
+            )
 
             deps = CodingDeps(
                 tenant_id=tenant_id,
@@ -1654,11 +1662,19 @@ class AgentDispatcher:
             CodingDeps,
             CodingInput,
         )
-        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        from cogniverse_foundation.config.gateway_routing import (
+            create_routed_lm,
+            resolve_gateway_config,
+        )
         from cogniverse_foundation.config.utils import get_config
 
         config = get_config(tenant_id=tenant_id, config_manager=self._config_manager)
-        coding_lm = create_dspy_lm(config.get_llm_config().resolve("coding_agent"))
+        coding_lm = create_routed_lm(
+            config.get_llm_config().resolve("coding_agent"),
+            resolve_gateway_config(config),
+            tenant_id,
+            "coding_agent",
+        )
 
         deps = CodingDeps(
             tenant_id=tenant_id,

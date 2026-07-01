@@ -608,6 +608,7 @@ async def _extract_graph_per_segment_inner(
     claim_extractor = ClaimExtractor(
         artifact_manager=_lookup_artifact_manager(tenant_id, config_manager),
         llm_config=_resolve_tenant_llm_config(tenant_id, config_manager),
+        config_manager=config_manager,
     )
     doc_ext = DocExtractor(claim_extractor=claim_extractor)
 

@@ -220,6 +220,7 @@ async def knowledge_summarize(
         deps=KnowledgeSummarizationDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
+        config_manager=_get_config_manager(),
     )
     _bind_graph(agent, tenant_id)
     out = await agent._process_impl(

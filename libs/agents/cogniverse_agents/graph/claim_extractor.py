@@ -161,6 +161,7 @@ class ClaimExtractor:
         artifact_manager: Optional[Any] = None,
         rlm_promotion_chars: int = RLM_PROMOTION_TOKENS,
         llm_config: Optional[Any] = None,
+        config_manager: Optional[Any] = None,
     ) -> None:
         self._artifact_manager = artifact_manager
         self._rlm_promotion_chars = rlm_promotion_chars
@@ -170,6 +171,9 @@ class ClaimExtractor:
         # bound from this config. None means the call falls through to the
         # ambient ``dspy.settings.lm`` (the worker-startup default).
         self._llm_config = llm_config
+        # Needed to resolve gateway routing per request; None keeps the direct
+        # (non-gateway) path.
+        self._config_manager = config_manager
 
     def extract(
         self,
@@ -217,9 +221,16 @@ class ClaimExtractor:
         # ``entity_hints`` is the heuristic antecedent (usually a Person).
         text_for_lm = _resolve_leading_pronoun(text, entity_hints)
         if self._llm_config is not None:
-            from cogniverse_foundation.config.llm_factory import create_dspy_lm
+            from cogniverse_foundation.config.gateway_routing import (
+                routed_lm_context_for,
+            )
 
-            with dspy.context(lm=create_dspy_lm(self._llm_config)):
+            with routed_lm_context_for(
+                self._config_manager,
+                tenant_id,
+                "claim_extractor",
+                endpoint=self._llm_config,
+            ):
                 return module(
                     text_segment=text_for_lm,
                     entity_hints=entity_hints,
