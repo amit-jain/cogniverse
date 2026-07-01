@@ -1,4 +1,4 @@
-# Envoy data plane for the semantic-router spike.
+# Envoy data plane for the local semantic-router stack.
 #
 # Clients hit Envoy on :8801. Envoy calls the semantic-router ext_proc
 # service (gRPC :50051) for a routing decision on every request, then

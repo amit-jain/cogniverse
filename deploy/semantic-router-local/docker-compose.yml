@@ -1,6 +1,6 @@
-# Local semantic-router spike for cogniverse gateway routing.
+# Local local semantic-router stack for cogniverse gateway routing.
 #
-#   docker compose -f deploy/semantic-router-spike/docker-compose.yml up
+#   docker compose -f deploy/semantic-router-local/docker-compose.yml up
 #
 # Brings up: a stub OpenAI-compatible backend, the vLLM Semantic Router
 # ext_proc service, and Envoy in front on :8801. Point cogniverse (or the
@@ -8,7 +8,7 @@
 #
 # The SR image tag is pinned below — keep config.yaml in sync with it.
 
-name: cogniverse-sr-spike
+name: cogniverse-sr-local
 
 services:
   stub-upstream:
@@ -42,7 +42,7 @@ services:
 
   envoy:
     image: envoyproxy/envoy:v1.31-latest
-    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "sr-spike"]
+    command: ["-c", "/etc/envoy/envoy.yaml", "--service-cluster", "sr-local"]
     volumes:
       - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
     ports:

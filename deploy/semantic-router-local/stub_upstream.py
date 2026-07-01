@@ -1,6 +1,6 @@
-"""Minimal OpenAI-compatible stub backend for the semantic-router spike.
+"""Minimal OpenAI-compatible stub backend for the local semantic-router stack.
 
-Stands in for a real vLLM chat backend so the spike's assertions can be
+Stands in for a real vLLM chat backend so the stack's assertions can be
 exact and offline. It answers ``POST /v1/chat/completions`` and reflects
 back, in the assistant message content (as JSON), everything the semantic
 router decided and forwarded:
@@ -32,7 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 BACKEND_TAG = os.environ.get("BACKEND_TAG", "stub")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Header names the spike uses to carry routing metadata to the backend.
+# Header names the stack uses to carry routing metadata to the backend.
 _ROUTING_HEADER_PREFIXES = ("x-vsr-", "x-authz-", "x-tenant-", "x-task")
 
 
