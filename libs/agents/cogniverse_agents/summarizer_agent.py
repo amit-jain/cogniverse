@@ -19,6 +19,7 @@ from cogniverse_core.agents.a2a_agent import A2AAgent, A2AAgentConfig
 from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
+from cogniverse_foundation.config.gateway_routing import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,12 @@ class SummarizerAgent(
         logger.info(f"Analyzing {len(request.search_results)} search results")
         _summarize_start = time.monotonic()
 
-        with dspy.context(lm=self._dspy_lm):
+        with routed_lm_context_for(
+            self._config_manager,
+            getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID,
+            "summarizer_agent",
+            fallback_lm=self._dspy_lm,
+        ):
             try:
                 self.emit_progress("thinking", "Analyzing content...")
                 thinking_phase = await self._thinking_phase(request)

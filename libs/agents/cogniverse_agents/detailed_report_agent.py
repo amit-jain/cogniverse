@@ -22,6 +22,7 @@ from cogniverse_core.agents.base import AgentDeps, AgentInput, AgentOutput
 from cogniverse_core.agents.rlm_options import RLMOptions
 from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_core.common.vlm_interface import VLMInterface
+from cogniverse_foundation.config.gateway_routing import routed_lm_context_for
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,12 @@ class DetailedReportAgent(
         """
         logger.info(f"Generating detailed report for: '{request.query}'")
 
-        with dspy.context(lm=self._dspy_lm):
+        with routed_lm_context_for(
+            self._config_manager,
+            getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID,
+            "detailed_report_agent",
+            fallback_lm=self._dspy_lm,
+        ):
             try:
                 # Thinking pass: comprehensive analysis
                 self.emit_progress("thinking", "Analyzing content...")
