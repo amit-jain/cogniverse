@@ -1,0 +1,94 @@
+# Semantic Router config for the in-cluster gateway (rendered via `tpl`).
+#
+# Header-driven routing: cogniverse emits the tenant tier (x-authz-user-groups)
+# and the task label (x-vsr-task); the router maps those signals to a model +
+# reasoning mode. Both catalog models resolve to the chart's in-cluster LLM
+# backend by default — add distinct backend_refs when you deploy more models.
+version: "1.0"
+
+providers:
+  defaults:
+    default_model: basic-chat
+    default_reasoning_effort: low
+    reasoning_families:
+      qwen3:
+        type: chat_template_kwargs
+        parameter: enable_thinking
+
+  models:
+    - name: basic-chat
+      reasoning_family: qwen3
+      provider_model_id: {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+      api_format: openai
+      backend_refs:
+        - name: llm-basic
+          endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
+          protocol: http
+          weight: 100
+          type: chat
+    - name: pro-reasoning
+      reasoning_family: qwen3
+      provider_model_id: {{ include "cogniverse.primaryLLMModelBare" . | quote }}
+      api_format: openai
+      backend_refs:
+        - name: llm-pro
+          endpoint: {{ include "cogniverse.srUpstreamHost" . }}:{{ int (include "cogniverse.srUpstreamPort" .) }}
+          protocol: http
+          weight: 100
+          type: chat
+
+routing:
+  signals:
+    headers:
+      - name: tier
+        header: x-authz-user-groups
+      - name: task
+        header: x-vsr-task
+
+  decisions:
+    - name: pro-planning
+      rules:
+        all:
+          - signal: tier
+            equals: pro
+          - signal: task
+            equals: orchestrator_plan
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: true
+          reasoning_effort: high
+    - name: pro-default
+      rules:
+        all:
+          - signal: tier
+            equals: pro
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: false
+    - name: free-default
+      rules:
+        all:
+          - signal: tier
+            equals: free
+      modelRefs:
+        - model: basic-chat
+          use_reasoning: false
+
+  model_selection:
+    method: static
+
+global:
+  stores:
+    semantic_cache:
+      enabled: true
+      backend: memory
+      similarity_threshold: 0.92
+      ttl_seconds: 600
+  # Safety classifiers ship with the SR image (~1.5GB download on first run).
+  # Off by default — cogniverse routing is header-driven and needs neither.
+  model_catalog:
+    system:
+      prompt_guard:
+        enabled: {{ .Values.semanticRouter.router.promptGuard }}
+      pii_classifier:
+        enabled: {{ .Values.semanticRouter.router.piiClassifier }}

@@ -1,0 +1,184 @@
+{{- if .Values.semanticRouter.enabled }}
+{{- $fullName := include "cogniverse.fullname" . -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-semantic-router-config
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router
+data:
+  config.yaml: |-
+    {{ tpl (.Files.Get "files/semantic-router/config.yaml") . | nindent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-semantic-router-envoy
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router-envoy
+data:
+  envoy.yaml: |-
+    {{ tpl (.Files.Get "files/semantic-router/envoy.yaml") . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-semantic-router
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: semantic-router
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: semantic-router
+    spec:
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: semantic-router
+        image: "{{ .Values.semanticRouter.router.image.repository }}:{{ .Values.semanticRouter.router.image.tag }}"
+        imagePullPolicy: {{ .Values.semanticRouter.router.image.pullPolicy }}
+        env:
+        - name: CONFIG_FILE
+          value: /app/config/config.yaml
+        ports:
+        - name: grpc
+          containerPort: {{ int .Values.semanticRouter.router.grpcPort }}
+        - name: metrics
+          containerPort: {{ int .Values.semanticRouter.router.metricsPort }}
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: metrics
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          tcpSocket:
+            port: grpc
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          {{- toYaml .Values.semanticRouter.router.resources | nindent 10 }}
+        volumeMounts:
+        - name: router-config
+          mountPath: /app/config/config.yaml
+          subPath: config.yaml
+          readOnly: true
+      volumes:
+      - name: router-config
+        configMap:
+          name: {{ $fullName }}-semantic-router-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-semantic-router
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router
+spec:
+  type: ClusterIP
+  ports:
+  - port: {{ int .Values.semanticRouter.router.grpcPort }}
+    targetPort: grpc
+    protocol: TCP
+    name: grpc
+  - port: {{ int .Values.semanticRouter.router.metricsPort }}
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-semantic-router-envoy
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router-envoy
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "cogniverse.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: semantic-router-envoy
+  template:
+    metadata:
+      labels:
+        {{- include "cogniverse.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: semantic-router-envoy
+    spec:
+      serviceAccountName: {{ include "cogniverse.serviceAccountName" . }}
+      containers:
+      - name: envoy
+        image: "{{ .Values.semanticRouter.envoy.image.repository }}:{{ .Values.semanticRouter.envoy.image.tag }}"
+        imagePullPolicy: {{ .Values.semanticRouter.envoy.image.pullPolicy }}
+        args:
+        - "-c"
+        - "/etc/envoy/envoy.yaml"
+        - "--service-cluster"
+        - "cogniverse-sr"
+        ports:
+        - name: http
+          containerPort: {{ int .Values.semanticRouter.envoy.service.port }}
+        - name: admin
+          containerPort: {{ int .Values.semanticRouter.envoy.adminPort }}
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: admin
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /ready
+            port: admin
+          initialDelaySeconds: 20
+          periodSeconds: 30
+        resources:
+          {{- toYaml .Values.semanticRouter.envoy.resources | nindent 10 }}
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy/envoy.yaml
+          subPath: envoy.yaml
+          readOnly: true
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: {{ $fullName }}-semantic-router-envoy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-semantic-router-envoy
+  labels:
+    {{- include "cogniverse.labels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router-envoy
+spec:
+  type: {{ .Values.semanticRouter.envoy.service.type }}
+  ports:
+  - port: {{ int .Values.semanticRouter.envoy.service.port }}
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "cogniverse.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: semantic-router-envoy
+{{- end }}
