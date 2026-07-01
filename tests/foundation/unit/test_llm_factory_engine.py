@@ -60,6 +60,48 @@ class TestModelPassthrough:
         assert "api_base" not in lm.kwargs
         assert "api_key" not in lm.kwargs
         assert "extra_body" not in lm.kwargs
+        assert "extra_headers" not in lm.kwargs
+
+    def test_extra_headers_wired_onto_dspy_lm(self):
+        # Routing metadata for an OpenAI-compatible gateway (e.g. a semantic
+        # router) is carried as static HTTP headers. The factory must forward
+        # the exact dict litellm will put on the wire — nothing added, dropped,
+        # or reshaped.
+        endpoint = LLMEndpointConfig(
+            model="openai/router-auto",
+            api_base="http://semantic-router-envoy:8801/v1",
+            extra_headers={
+                "x-authz-user-groups": "pro",
+                "x-vsr-task": "query_enhancement",
+            },
+        )
+        lm = create_dspy_lm(endpoint)
+        assert lm.kwargs["extra_headers"] == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "query_enhancement",
+        }
+
+    def test_extra_headers_and_extra_body_coexist(self):
+        # Both channels must survive together — headers drive gateway routing,
+        # extra_body carries sampling params — with neither clobbering the other.
+        endpoint = LLMEndpointConfig(
+            model="openai/router-auto",
+            api_base="http://envoy:8801/v1",
+            extra_body={"reasoning": "auto"},
+            extra_headers={"x-authz-user-groups": "free"},
+            seed=7,
+        )
+        lm = create_dspy_lm(endpoint)
+        assert lm.kwargs["extra_headers"] == {"x-authz-user-groups": "free"}
+        assert lm.kwargs["extra_body"] == {"reasoning": "auto", "seed": 7}
+
+    def test_empty_extra_headers_omitted_from_wire(self):
+        # An empty dict must not become an empty header block on the request.
+        endpoint = LLMEndpointConfig(
+            model="openai/m", api_base="http://x:8000/v1", extra_headers={}
+        )
+        lm = create_dspy_lm(endpoint)
+        assert "extra_headers" not in lm.kwargs
 
     def test_keyless_api_base_gets_placeholder_key(self):
         # Self-hosted OAI-compat endpoints ignore the key, but the OpenAI
@@ -120,6 +162,26 @@ class TestLLMEndpointConfigSerialization:
         )
         assert rt.extra_body == {"reasoning": "auto"}
         assert rt.seed == 7
+
+    def test_extra_headers_survive_round_trip(self):
+        cfg = LLMEndpointConfig(
+            model="openai/router-auto",
+            extra_headers={"x-authz-user-groups": "pro", "x-vsr-task": "plan"},
+        )
+        assert cfg.to_dict()["extra_headers"] == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "plan",
+        }
+        rt = LLMEndpointConfig.from_dict(cfg.to_dict())
+        assert rt.extra_headers == {
+            "x-authz-user-groups": "pro",
+            "x-vsr-task": "plan",
+        }
+
+    def test_extra_headers_omitted_from_dict_when_none(self):
+        cfg = LLMEndpointConfig(model="openai/m")
+        assert "extra_headers" not in cfg.to_dict()
+        assert LLMEndpointConfig.from_dict(cfg.to_dict()).extra_headers is None
 
 
 class TestFastFailTimeout:

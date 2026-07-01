@@ -70,6 +70,12 @@ def create_dspy_lm(config: LLMEndpointConfig) -> dspy.LM:
     if extra_body:
         kwargs["extra_body"] = extra_body
 
+    # Static per-endpoint HTTP headers (e.g. routing metadata for a gateway
+    # in front of the backend). litellm sends these on every request. An
+    # empty/None dict is omitted so no header block hits the wire.
+    if config.extra_headers:
+        kwargs["extra_headers"] = dict(config.extra_headers)
+
     logger.info(
         "Creating dspy.LM: model=%s api_base=%s temperature=%s max_tokens=%s seed=%s",
         config.model,

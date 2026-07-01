@@ -101,6 +101,19 @@ deploy nothing and route runtime LLM calls to a host-side or
 third-party endpoint (e.g. `http://host.k3d.internal:11434` for a
 host-running Ollama).
 
+### Optional: route through an OpenAI-compatible gateway
+
+Point `api_base` at a gateway (for example an Envoy front-end for a
+semantic router) instead of the model backend. Per-request routing
+metadata is attached with `LLMEndpointConfig.extra_headers`, which
+`create_dspy_lm()` forwards to litellm as `extra_headers` on every call —
+e.g. `{"x-authz-user-groups": "pro", "x-vsr-task": "orchestrator_plan"}`
+so the gateway can pick the backend model and reasoning mode. The header
+dict is sent verbatim; the factory does not interpret it, and an
+empty/`None` dict adds no headers to the request. `extra_headers`
+round-trips through `to_dict()`/`from_dict()`, so it can be set in
+`config.json` under `llm_config.primary` alongside `model` and `api_base`.
+
 ---
 
 ## Visual embeddings
