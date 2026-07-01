@@ -274,30 +274,18 @@ this from SEMANTIC_ROUTER_URL and rewrites each agent's api_base to it.
 {{- printf "http://%s-semantic-router-envoy:%d/v1" (include "cogniverse.fullname" .) (int .Values.semanticRouter.envoy.service.port) -}}
 {{- end -}}
 
-{{/*
-The LLM backend the semantic router forwards to, as host and port (no scheme,
-no /v1) for Envoy socket_address / SR backend_refs. In-cluster this is the
-``-llm`` service; external mode parses ``llm.external.url``.
-*/}}
-{{- define "cogniverse.srUpstreamHost" -}}
-{{- $engine := .Values.llm.engine | default "ollama" -}}
-{{- if or .Values.llm.external.enabled (eq $engine "external") -}}
-{{- .Values.llm.external.url | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" | splitList ":" | first -}}
-{{- else -}}
-{{- printf "%s-llm" (include "cogniverse.fullname" .) -}}
+{{/* SR upstream host/port — the runtime's own LLM endpoint, scheme + /v1 stripped. */}}
+{{- define "cogniverse.srUpstreamHostPort" -}}
+{{- include "cogniverse.primaryLLMEndpoint" . | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" -}}
 {{- end -}}
+
+{{- define "cogniverse.srUpstreamHost" -}}
+{{- index (include "cogniverse.srUpstreamHostPort" . | splitList ":") 0 -}}
 {{- end -}}
 
 {{- define "cogniverse.srUpstreamPort" -}}
-{{- $engine := .Values.llm.engine | default "ollama" -}}
-{{- if or .Values.llm.external.enabled (eq $engine "external") -}}
-{{- $hp := .Values.llm.external.url | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" | splitList ":" -}}
+{{- $hp := include "cogniverse.srUpstreamHostPort" . | splitList ":" -}}
 {{- if gt (len $hp) 1 }}{{ index $hp 1 }}{{ else }}80{{ end -}}
-{{- else if eq $engine "vllm" -}}
-{{- .Values.llm.vllm.service.port -}}
-{{- else -}}
-{{- .Values.llm.ollama.service.port -}}
-{{- end -}}
 {{- end -}}
 
 {{/*
