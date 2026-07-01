@@ -136,9 +136,12 @@ config, tenant_id, agent_name)` returns a copy of the endpoint config with
 | `tier_header` / `task_header` | Header names carrying the tier/task (default `x-authz-user-groups` / `x-vsr-task`). |
 
 The resolved tier/task win on a key collision with any pre-existing
-`extra_headers`. The whole block round-trips through
-`SystemConfig.to_dict()`/`from_dict()`, so it lives in `config.json` under
-`semantic_router`.
+`extra_headers`. The block is part of `SystemConfig`, which the runtime reads
+from the config store (Vespa) — **not** from `config.json`. A deployed runtime
+receives it from the chart via the `SEMANTIC_ROUTER_ENABLED` /
+`SEMANTIC_ROUTER_URL` / `SEMANTIC_ROUTER_TENANT_TIERS` /
+`SEMANTIC_ROUTER_AGENT_TASKS` env vars, which `main.py` folds into
+`SystemConfig.semantic_router` at boot.
 
 Agents build a semantic-router-aware LM through one shared helper,
 `semantic_router.create_routed_lm(endpoint, config, tenant_id, agent_name)`
@@ -146,11 +149,15 @@ Agents build a semantic-router-aware LM through one shared helper,
 reads the block from a `ConfigUtils`-like accessor with a guard against
 mocked/absent config. `DynamicDSPyMixin` uses these at LM-construction time,
 and the per-request paths (the orchestrator and the direct-build execution
-agents) build their LM the same way with the request's `tenant_id`, so
-enabling the block reroutes agent LLM traffic with no per-agent code change;
-leaving it disabled is a no-op. A local semantic-router stack to exercise
-this end to end lives in `deploy/semantic-router-local/` (see its
-`README.md`).
+agents) build their LM the same way with the request's `tenant_id`.
+
+The `SemanticRouterConfig` dataclass defaults to disabled, so unconfigured
+library use is a no-op. `cogniverse up`, however, deploys the semantic router
+(Envoy + the vLLM Semantic Router, `semanticRouter.enabled: true`) as part of
+the standard stack and turns routing on by default — every agent's LLM call
+goes through it. Opt out with `cogniverse up ... --set semanticRouter.enabled=false`.
+`tests/e2e/test_semantic_router_e2e.py` drives cogniverse's routing path
+against the deployed gateway end to end.
 
 ---
 
