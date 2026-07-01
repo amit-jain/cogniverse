@@ -474,7 +474,12 @@ class KnowledgeSummarizationAgent(
     ) -> str:
         from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
-        rlm = build_rlm_from_options(self._llm_config, rlm_options)
+        rlm = build_rlm_from_options(
+            self._llm_config,
+            rlm_options,
+            config_manager=getattr(self, "_config_manager", None),
+            tenant_id=getattr(self, "_memory_tenant_id", None) or "",
+        )
         result = rlm.process(
             query=f"Summarise the following knowledge under the title: {title}",
             context=block,

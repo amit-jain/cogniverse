@@ -117,13 +117,15 @@ async def test_memories_bucketed_by_window():
     )
 
     # Inject metadata via the boundary-spy pattern so written_at survives.
+    # Real memories carry written_at under the provenance payload that
+    # attach_to_metadata writes (metadata["provenance"]["written_at"]).
     rows = [
         {
             "id": f"q1_{i}",
             "memory": f"Q1 fact {i}",
             "metadata": {
                 "subject_key": "policy:refunds",
-                "written_at": "2026-02-15T00:00:00Z",
+                "provenance": {"written_at": "2026-02-15T00:00:00Z"},
             },
         }
         for i in range(2)
@@ -134,7 +136,7 @@ async def test_memories_bucketed_by_window():
             "memory": "Q2 fact A",
             "metadata": {
                 "subject_key": "policy:refunds",
-                "written_at": "2026-05-15T00:00:00Z",
+                "provenance": {"written_at": "2026-05-15T00:00:00Z"},
             },
         }
     )

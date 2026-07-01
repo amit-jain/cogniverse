@@ -26,7 +26,9 @@ def _row(
 ):
     meta: Dict[str, Any] = {"kind": "external_doc", "subject_key": subject_key}
     if written_at is not None:
-        meta["written_at"] = written_at
+        # Real memories carry written_at under the provenance payload that
+        # attach_to_metadata writes (metadata["provenance"]["written_at"]).
+        meta["provenance"] = {"written_at": written_at}
     return {"id": mid, "memory": content, "metadata": meta}
 
 

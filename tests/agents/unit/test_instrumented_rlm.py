@@ -190,20 +190,18 @@ class TestRLMInferenceWithEventQueue:
         assert rlm_inference._tenant_id == "tenant_1"
 
     def test_get_rlm_without_event_queue(self):
-        """_get_rlm returns standard RLM without event_queue."""
+        """_get_rlm returns a TolerantRLM (not InstrumentedRLM) without event_queue."""
+        from cogniverse_agents.inference.tolerant_interpreter import TolerantRLM
+
         rlm_inference = RLMInference(
             llm_config=LLMEndpointConfig(model="openai/gpt-4o"),
         )
 
-        with patch("cogniverse_agents.inference.rlm_inference.dspy") as mock_dspy:
-            mock_lm = MagicMock()
-            mock_dspy.LM.return_value = mock_lm
-            mock_dspy.RLM.return_value = MagicMock()
+        rlm = rlm_inference._get_rlm()
 
-            rlm_inference._get_rlm()
-
-            # Should use standard dspy.RLM
-            mock_dspy.RLM.assert_called_once()
+        # Non-instrumented path uses the tolerant interpreter, not InstrumentedRLM.
+        assert isinstance(rlm, TolerantRLM)
+        assert not isinstance(rlm, InstrumentedRLM)
 
     def test_get_rlm_with_event_queue(self):
         """_get_rlm returns InstrumentedRLM with event_queue."""

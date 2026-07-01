@@ -3221,18 +3221,27 @@ print(f"Depth: {result.depth_reached}, Calls: {result.total_calls}")
 print(f"Latency: {result.latency_ms}ms")
 ```
 
-`build_rlm_from_options(llm_config, rlm_options)` (same module) is the shared
-constructor used by the KG summariser agents (`FederatedQueryAgent`,
-`TemporalReasoningAgent`, `KnowledgeGraphTraversalAgent`,
-`KnowledgeSummarizationAgent`, `MultiDocumentSynthesisAgent`). It resolves the
-endpoint config — falling back to an `RLMOptions`-derived default model when
-the agent has none wired — and applies the option's iteration / call / timeout
-caps:
+`build_rlm_from_options(llm_config, rlm_options, *, config_manager=None,
+tenant_id="")` (same module) is the shared constructor used by the KG
+summariser agents (`FederatedQueryAgent`, `TemporalReasoningAgent`,
+`KnowledgeGraphTraversalAgent`, `KnowledgeSummarizationAgent`,
+`MultiDocumentSynthesisAgent`). It resolves the endpoint config — falling back
+to an `RLMOptions`-derived default model when the agent has none wired — and
+applies the option's iteration / call / timeout caps. When `config_manager` and
+`tenant_id` are supplied and gateway routing is enabled for that tenant, the
+resolved endpoint is routed through the gateway (task `rlm_inference`) before
+the RLM's LM is built; `tenant_id` is also threaded onto the `RLMInference` for
+event scoping. Omitting them keeps the direct-to-backend path:
 
 ```python
 from cogniverse_agents.inference.rlm_inference import build_rlm_from_options
 
-rlm = build_rlm_from_options(self._llm_config, rlm_options)
+rlm = build_rlm_from_options(
+    self._llm_config,
+    rlm_options,
+    config_manager=self._config_manager,
+    tenant_id=self._memory_tenant_id or "",
+)
 result = rlm.process(query=query, context=block)
 ```
 

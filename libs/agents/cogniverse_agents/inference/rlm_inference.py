@@ -464,6 +464,9 @@ class RLMInference:
 def build_rlm_from_options(
     llm_config: Optional[LLMEndpointConfig],
     rlm_options: "RLMOptions",
+    *,
+    config_manager=None,
+    tenant_id: str = "",
 ) -> RLMInference:
     """Build an ``RLMInference`` from an agent's LLM config + per-request options.
 
@@ -471,6 +474,11 @@ def build_rlm_from_options(
     default model when the agent has none wired) and applies the option's
     iteration / call / timeout caps. Shared by the KG summariser agents whose
     ``_summarise_with_rlm`` setup was otherwise identical.
+
+    When ``config_manager`` and ``tenant_id`` are supplied, the resolved
+    endpoint is routed through the gateway for that tenant (task
+    ``rlm_inference``); the RLM's own LM is then built from the routed
+    endpoint. Omitting them keeps the direct-to-backend path.
     """
     resolved = llm_config or LLMEndpointConfig(
         model=(
@@ -479,9 +487,26 @@ def build_rlm_from_options(
             else f"{rlm_options.backend}/gpt-4o"
         )
     )
+    if config_manager is not None and tenant_id:
+        from cogniverse_foundation.config.gateway_routing import (
+            apply_gateway_routing,
+            resolve_gateway_config,
+        )
+        from cogniverse_foundation.config.utils import get_config
+
+        try:
+            gateway = resolve_gateway_config(
+                get_config(tenant_id=tenant_id, config_manager=config_manager)
+            )
+            resolved = apply_gateway_routing(
+                resolved, gateway, tenant_id, "rlm_inference"
+            )
+        except Exception:  # noqa: BLE001 — never block RLM build on routing
+            pass
     return RLMInference(
         llm_config=resolved,
         max_iterations=rlm_options.max_iterations,
         max_llm_calls=rlm_options.max_llm_calls,
         timeout_seconds=rlm_options.timeout_seconds,
+        tenant_id=tenant_id or None,
     )
