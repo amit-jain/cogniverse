@@ -1,6 +1,7 @@
 """Unit tests for OrchestratorAgent"""
 
-from unittest.mock import AsyncMock, Mock, patch
+from contextlib import nullcontext
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import dspy
 import pytest
@@ -16,7 +17,11 @@ from cogniverse_agents.orchestrator_agent import (
     OrchestratorInput,
     OrchestratorOutput,
 )
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import (
+    GatewayRoutingConfig,
+    LLMEndpointConfig,
+    SystemConfig,
+)
 
 
 def _plan_executes_to_completion(plan) -> bool:
@@ -1235,3 +1240,60 @@ class TestOrchestratorArtifactLoading:
         # The load was attempted (failure path exercised), and the raise was
         # swallowed rather than propagating.
         mock_wi.load_historical_data.assert_awaited_once()
+
+
+class TestOrchestratorGatewayRouting:
+    """The orchestrator routes its per-request DSPy LM through the gateway."""
+
+    def _agent_with_config(self, cfg):
+        agent = OrchestratorAgent.__new__(OrchestratorAgent)
+        agent._config_manager = MagicMock()
+        patcher = patch(
+            "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
+        )
+        patcher.start()
+        return agent, patcher
+
+    def test_disabled_gateway_yields_nullcontext(self):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        agent, patcher = self._agent_with_config(cfg)
+        try:
+            ctx = agent._gateway_lm_context("acme:prod")
+            assert isinstance(ctx, nullcontext)
+        finally:
+            patcher.stop()
+
+    def test_enabled_gateway_routes_the_active_lm(self):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(
+            enabled=True,
+            gateway_base_url="http://envoy:8801/v1",
+            tenant_tiers={"acme:prod": "pro"},
+            default_tier="free",
+            agent_tasks={"orchestrator_agent": "orchestrator_plan"},
+            default_task="general",
+        )
+        cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+            model="openai/planner", api_base="http://vllm:8101/v1"
+        )
+        agent, patcher = self._agent_with_config(cfg)
+        try:
+            with agent._gateway_lm_context("acme:prod"):
+                active = dspy.settings.lm
+            assert active.kwargs["api_base"] == "http://envoy:8801/v1"
+            assert active.kwargs["extra_headers"] == {
+                "x-authz-user-groups": "pro",
+                "x-vsr-task": "orchestrator_plan",
+            }
+        finally:
+            patcher.stop()
+
+    def test_resolution_error_falls_back_to_nullcontext(self):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.side_effect = RuntimeError("config store down")
+        agent, patcher = self._agent_with_config(cfg)
+        try:
+            assert isinstance(agent._gateway_lm_context("acme:prod"), nullcontext)
+        finally:
+            patcher.stop()
