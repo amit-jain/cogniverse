@@ -315,8 +315,6 @@ spec:
           value: {{ include "cogniverse.semanticRouterUrl" . | quote }}
         - name: SEMANTIC_ROUTER_TENANT_TIERS
           value: {{ .Values.semanticRouter.routing.tenantTiers | toJson | quote }}
-        - name: SEMANTIC_ROUTER_AGENT_TASKS
-          value: {{ .Values.semanticRouter.routing.agentTasks | toJson | quote }}
         {{- end }}
         - name: INFERENCE_HEALTH_BOOT_DEADLINE_SECONDS
           value: {{ default 120 .Values.runtime.inferenceHealthBootDeadlineSeconds | quote }}

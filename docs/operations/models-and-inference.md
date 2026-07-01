@@ -101,63 +101,69 @@ deploy nothing and route runtime LLM calls to a host-side or
 third-party endpoint (e.g. `http://host.k3d.internal:11434` for a
 host-running Ollama).
 
-### Optional: route through an OpenAI-compatible semantic router
+### Route through the vLLM Semantic Router
 
-Point `api_base` at a semantic router (for example an Envoy front-end for a
-semantic router) instead of the model backend. Per-request routing
-metadata is attached with `LLMEndpointConfig.extra_headers`, which
-`create_dspy_lm()` forwards to litellm as `extra_headers` on every call —
-e.g. `{"x-authz-user-groups": "pro", "x-vsr-task": "orchestrator_plan"}`
-so the semantic router can pick the backend model and reasoning mode. The header
-dict is sent verbatim; the factory does not interpret it, and an
-empty/`None` dict adds no headers to the request. `extra_headers`
-round-trips through `to_dict()`/`from_dict()`, so it can be set in
-`config.json` under `llm_config.primary` alongside `model` and `api_base`.
+`cogniverse up` deploys the vLLM Semantic Router (Envoy front-end + the router)
+in front of the LLM backend, and the runtime routes every agent's LLM call
+through it. The division of labor:
 
-#### Config-driven semantic routing (`SemanticRouterConfig`)
+- **cogniverse** sends only *who* the tenant is — the tenant identity
+  (`x-authz-user-id` = `tenant_id`) and its tier (`x-authz-user-groups`,
+  resolved from `tenant_tiers`). It does **not** classify the request.
+- **the router** gates the tenant's allowed model set by tier (its authz
+  signal — which requires the identity header and refuses to evaluate role
+  bindings without it) and classifies the request content itself
+  (domain/complexity) to pick the model + reasoning mode.
 
-Setting `extra_headers` by hand is fine for a single endpoint, but the
-per-tenant/per-task metadata is derived automatically by
-`SystemConfig.semantic_router` (a `SemanticRouterConfig`). It is
-**disabled by default**; when enabled, the helper
+The router's own policy — model catalog, tier→role bindings, and the
+content-driven decisions — lives in the chart at
+`charts/cogniverse/files/semantic-router/config.yaml` (v0.3 schema). The default
+ships a `pro`/`free` tier split and a "technical domain → reasoning model"
+decision; extend the `providers.models` / `routing.decisions` there as you add
+models.
+
+#### `SemanticRouterConfig` — the cogniverse side
+
+`SystemConfig.semantic_router` (a `SemanticRouterConfig`) controls what
+cogniverse sends. The helper
 `cogniverse_foundation.config.semantic_router.apply_semantic_routing(endpoint,
-config, tenant_id, agent_name)` returns a copy of the endpoint config with
-`api_base` rewritten to the semantic router and the resolved headers merged onto
-`extra_headers`:
+config, tenant_id)` returns a copy of the endpoint config with `api_base`
+rewritten to the router and the two authz headers merged onto `extra_headers`:
 
 | Field | Meaning |
 |---|---|
 | `enabled` | Master switch. `False` ⇒ endpoint passes through untouched. |
-| `semantic_router_url` | The semantic router's OpenAI-compatible endpoint (e.g. `http://semantic-router-envoy:8801/v1`). Enabled with an empty value raises. |
+| `semantic_router_url` | The router's OpenAI-compatible endpoint. Enabled with an empty value raises. |
 | `tenant_tiers` | `tenant_id → tier` map; unknown tenants fall back to `default_tier`. |
 | `default_tier` | Tier for tenants not in `tenant_tiers`. |
-| `agent_tasks` | `agent_name → task label` map; unknown agents fall back to `default_task`. |
-| `default_task` | Task label for agents not in `agent_tasks`. |
-| `tier_header` / `task_header` | Header names carrying the tier/task (default `x-authz-user-groups` / `x-vsr-task`). |
+| `tier_header` / `user_id_header` | Header names for the tier / identity (default `x-authz-user-groups` / `x-authz-user-id`). |
 
-The resolved tier/task win on a key collision with any pre-existing
+The resolved headers win on a key collision with any pre-existing
 `extra_headers`. The block is part of `SystemConfig`, which the runtime reads
 from the config store (Vespa) — **not** from `config.json`. A deployed runtime
 receives it from the chart via the `SEMANTIC_ROUTER_ENABLED` /
-`SEMANTIC_ROUTER_URL` / `SEMANTIC_ROUTER_TENANT_TIERS` /
-`SEMANTIC_ROUTER_AGENT_TASKS` env vars, which `main.py` folds into
-`SystemConfig.semantic_router` at boot.
+`SEMANTIC_ROUTER_URL` / `SEMANTIC_ROUTER_TENANT_TIERS` env vars, which
+`main.py` folds into `SystemConfig.semantic_router` at boot (a malformed tier
+map raises rather than silently emptying).
 
-Agents build a semantic-router-aware LM through one shared helper,
-`semantic_router.create_routed_lm(endpoint, config, tenant_id, agent_name)`
+Agents build a router-aware LM through one shared helper,
+`semantic_router.create_routed_lm(endpoint, config, tenant_id)`
 (`apply_semantic_routing` + `create_dspy_lm`); `resolve_semantic_router_config(...)`
-reads the block from a `ConfigUtils`-like accessor with a guard against
-mocked/absent config. `DynamicDSPyMixin` uses these at LM-construction time,
-and the per-request paths (the orchestrator and the direct-build execution
-agents) build their LM the same way with the request's `tenant_id`.
+reads the block from a `ConfigUtils`-like accessor (a broken config store
+raises — no silent bypass). `DynamicDSPyMixin` uses these at LM-construction
+time, and the per-request paths (the orchestrator and the direct-build
+execution agents) build their LM the same way with the request's `tenant_id`.
 
 The `SemanticRouterConfig` dataclass defaults to disabled, so unconfigured
-library use is a no-op. `cogniverse up`, however, deploys the semantic router
-(Envoy + the vLLM Semantic Router, `semanticRouter.enabled: true`) as part of
-the standard stack and turns routing on by default — every agent's LLM call
-goes through it. Opt out with `cogniverse up ... --set semanticRouter.enabled=false`.
-`tests/e2e/test_semantic_router_e2e.py` drives cogniverse's routing path
-against the deployed gateway end to end.
+library use is a no-op — but `cogniverse up` turns routing on by default
+(`semanticRouter.enabled: true`). Opt out with
+`cogniverse up ... --set semanticRouter.enabled=false`. The router downloads
+its classifier bundle on first boot into a model-cache PVC, so allow the
+startup probe time. Coverage:
+`tests/foundation/integration/test_semantic_router_e2e.py` self-launches the
+real router+Envoy+stub via `docker run` and asserts the tier/content decisions;
+`tests/e2e/test_semantic_router_deploy_e2e.py` drives the routed path against
+the `cogniverse up`-deployed gateway.
 
 ---
 

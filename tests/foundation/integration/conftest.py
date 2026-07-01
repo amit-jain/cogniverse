@@ -1,4 +1,4 @@
-"""Self-managed semantic-router stack for gateway-routing integration tests.
+"""Self-managed semantic-router stack for semantic-routing integration tests.
 
 Launches Envoy + vLLM Semantic Router + a reflecting stub upstream as three
 docker containers on a private network and tears them down afterwards. This is
@@ -25,11 +25,9 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.utils.markers import is_docker_available
-
 _STACK_DIR = Path(__file__).resolve().parent / "_sr_stack"
 _ENVOY_IMAGE = "envoyproxy/envoy:v1.31-latest"
-_SR_IMAGE = "ghcr.io/vllm-project/semantic-router:latest"
+_SR_IMAGE = "ghcr.io/vllm-project/semantic-router/vllm-sr:latest"
 _STUB_IMAGE = "python:3.12-slim"
 
 
@@ -60,9 +58,6 @@ def _docker(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
 @pytest.fixture(scope="module")
 def semantic_router_stack():
     """Yield ``{"base_url", "host_port"}`` for a live Envoy->SR->stub chain."""
-    if not is_docker_available() or not _docker_daemon_up():
-        pytest.skip("Docker daemon unavailable; semantic-router stack cannot launch")
-
     uid = f"{os.getpid()}-{int(time.time() * 1000)}"
     net = f"cog-sr-net-{uid}"
     stub = f"cog-sr-stub-{uid}"
@@ -80,7 +75,7 @@ def semantic_router_stack():
     try:
         r = _docker("network", "create", net)
         if r.returncode != 0:
-            pytest.skip(f"cannot create docker network: {r.stderr.strip()}")
+            pytest.fail(f"cannot create docker network: {r.stderr.strip()}")
         created.append(("network", net))
 
         # Reflecting OpenAI-compatible stub backend.
@@ -103,8 +98,10 @@ def semantic_router_stack():
             pytest.fail(f"stub upstream failed to start: {r.stderr}")
         created.append(("container", stub))
 
-        # Semantic router (ext_proc gRPC on :50051). Pulls ~1.5GB classifiers
-        # on first run, hence the generous readiness deadline below.
+        # Semantic router (ext_proc gRPC on :50051). The image entrypoint reads
+        # its config from the CMD arg, defaulting to /app/config.yaml; mount
+        # there (CONFIG_FILE env is not honored). Downloads its classifier
+        # bundle on first run, hence the generous readiness deadline below.
         r = _docker(
             "run",
             "-d",
@@ -114,10 +111,8 @@ def semantic_router_stack():
             net,
             "--network-alias",
             "semantic-router",
-            "-e",
-            "CONFIG_FILE=/app/config/config.yaml",
             "-v",
-            f"{_STACK_DIR / 'sr-config.yaml'}:/app/config/config.yaml:ro",
+            f"{_STACK_DIR / 'sr-config.yaml'}:/app/config.yaml:ro",
             _SR_IMAGE,
             timeout=300,
         )
@@ -145,25 +140,39 @@ def semantic_router_stack():
             pytest.fail(f"envoy failed to start: {r.stderr}")
         created.append(("container", envoy))
 
-        # Poll the full chain until the stub answers through Envoy + ext_proc.
-        deadline = time.time() + 300
-        last_err = "no response"
+        # Wait for the router's classifier runtime to finish loading. It serves
+        # a placeholder classifier while downloading its bundle (~GB on first
+        # run); requests routed during that window skip signal evaluation and
+        # fall through to the tier default — so polling Envoy's /v1/models (up
+        # far earlier) would race the tests. ``startup_complete`` marks the real
+        # classifier ready.
+        deadline = time.time() + 600
         while time.time() < deadline:
-            try:
-                resp = requests.get(
-                    f"http://localhost:{host_port}/v1/models", timeout=3
-                )
-                if resp.status_code == 200:
-                    break
-            except requests.RequestException as exc:
-                last_err = str(exc)
+            out = _docker("logs", router)
+            if "startup_complete" in (out.stdout + out.stderr):
+                break
             time.sleep(3)
         else:
             logs = _docker("logs", "--tail", "40", router).stdout
             pytest.fail(
-                f"semantic-router stack not ready in 300s (last: {last_err})\n"
+                f"semantic-router classifier runtime not ready in 600s\n"
                 f"router logs:\n{logs}"
             )
+
+        # Then confirm the Envoy -> ext_proc -> stub path answers end to end.
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            try:
+                if (
+                    requests.get(
+                        f"http://localhost:{host_port}/v1/models", timeout=3
+                    ).status_code
+                    < 500
+                ):
+                    break
+            except requests.RequestException:
+                pass
+            time.sleep(3)
 
         yield {"base_url": base_url, "host_port": host_port}
     finally:

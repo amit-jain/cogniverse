@@ -1,10 +1,17 @@
 # Semantic Router config for the in-cluster gateway (rendered via `tpl`).
 #
-# Header-driven routing: cogniverse emits the tenant tier (x-authz-user-groups)
-# and the task label (x-vsr-task); the router maps those signals to a model +
+# The router gates the tenant's allowed model set by tier (the authz signal
+# reads x-authz-user-id + x-authz-user-groups that cogniverse sends), then
+# classifies request content itself (domain classifier) to pick the model +
 # reasoning mode. Both catalog models resolve to the chart's in-cluster LLM
 # backend by default — add distinct backend_refs when you deploy more models.
-version: "1.0"
+version: v0.3
+
+listeners:
+  - name: http
+    address: 0.0.0.0
+    port: 8899
+    timeout: 300
 
 providers:
   defaults:
@@ -14,7 +21,6 @@ providers:
       qwen3:
         type: chat_template_kwargs
         parameter: enable_thinking
-
   models:
     - name: basic-chat
       reasoning_family: qwen3
@@ -38,57 +44,120 @@ providers:
           type: chat
 
 routing:
+  modelCards:
+    - name: basic-chat
+      capabilities: [chat]
+      modality: ar
+    - name: pro-reasoning
+      capabilities: [chat, reasoning]
+      modality: ar
   signals:
-    headers:
-      - name: tier
-        header: x-authz-user-groups
-      - name: task
-        header: x-vsr-task
-
+    role_bindings:
+      - name: pro-users
+        role: pro_tier
+        subjects:
+          - kind: Group
+            name: pro
+      - name: free-users
+        role: free_tier
+        subjects:
+          - kind: Group
+            name: free
+    keywords:
+      - name: technical
+        operator: OR
+        keywords:
+          - algorithm
+          - complexity
+          - recursive
+          - distributed
+          - consensus
+          - optimize
+          - architecture
+          - theorem
+          - proof
+          - throughput
+    domains:
+      - name: technical
+        mmlu_categories: [computer science, engineering, math, physics]
   decisions:
-    - name: pro-planning
+    # Deterministic keyword trigger for reasoning; the domain classifier
+    # (below) catches technical prompts the keyword list misses.
+    - name: pro-technical-keyword
+      priority: 300
       rules:
-        all:
-          - signal: tier
-            equals: pro
-          - signal: task
-            equals: orchestrator_plan
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
+          - type: keyword
+            name: technical
       modelRefs:
         - model: pro-reasoning
           use_reasoning: true
-          reasoning_effort: high
-    - name: pro-default
+    - name: pro-technical-domain
+      priority: 250
       rules:
-        all:
-          - signal: tier
-            equals: pro
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
+          - type: domain
+            name: technical
+      modelRefs:
+        - model: pro-reasoning
+          use_reasoning: true
+    - name: pro-default
+      priority: 200
+      rules:
+        operator: AND
+        conditions:
+          - type: authz
+            name: pro_tier
       modelRefs:
         - model: pro-reasoning
           use_reasoning: false
     - name: free-default
+      priority: 100
       rules:
-        all:
-          - signal: tier
-            equals: free
+        operator: AND
+        conditions:
+          - type: authz
+            name: free_tier
       modelRefs:
         - model: basic-chat
           use_reasoning: false
 
-  model_selection:
-    method: static
-
 global:
+  services:
+    authz:
+      fail_open: false
+      identity:
+        user_id_header: x-authz-user-id
+        user_groups_header: x-authz-user-groups
+    response_api:
+      enabled: false
+    router_replay:
+      enabled: false
+    observability:
+      tracing:
+        enabled: false
   stores:
     semantic_cache:
-      enabled: true
-      backend: memory
-      similarity_threshold: 0.92
-      ttl_seconds: 600
-  # Safety classifiers ship with the SR image (~1.5GB download on first run).
-  # Off by default — cogniverse routing is header-driven and needs neither.
+      enabled: false
   model_catalog:
+    embeddings:
+      semantic:
+        use_cpu: true
     system:
-      prompt_guard:
-        enabled: {{ .Values.semanticRouter.router.promptGuard }}
-      pii_classifier:
-        enabled: {{ .Values.semanticRouter.router.piiClassifier }}
+      domain_classifier: models/mmbert32k-intent-classifier-merged
+    modules:
+      classifier:
+        domain:
+          model_ref: domain_classifier
+          model_id: models/mmbert32k-intent-classifier-merged
+          threshold: 0.5
+          use_cpu: true
+          use_mmbert_32k: true
+          category_mapping_path: models/mmbert32k-intent-classifier-merged/category_mapping.json
+          fallback_category: other
