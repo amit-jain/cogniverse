@@ -114,6 +114,33 @@ empty/`None` dict adds no headers to the request. `extra_headers`
 round-trips through `to_dict()`/`from_dict()`, so it can be set in
 `config.json` under `llm_config.primary` alongside `model` and `api_base`.
 
+#### Config-driven gateway routing (`GatewayRoutingConfig`)
+
+Setting `extra_headers` by hand is fine for a single endpoint, but the
+per-tenant/per-task metadata is derived automatically by
+`SystemConfig.gateway_routing` (a `GatewayRoutingConfig`). It is
+**disabled by default**; when enabled, the helper
+`cogniverse_foundation.config.gateway_routing.apply_gateway_routing(endpoint,
+config, tenant_id, agent_name)` returns a copy of the endpoint config with
+`api_base` rewritten to the gateway and the resolved headers merged onto
+`extra_headers`:
+
+| Field | Meaning |
+|---|---|
+| `enabled` | Master switch. `False` ⇒ endpoint passes through untouched. |
+| `gateway_base_url` | The gateway's OpenAI-compatible endpoint (e.g. `http://semantic-router-envoy:8801/v1`). Enabled with an empty value raises. |
+| `tenant_tiers` | `tenant_id → tier` map; unknown tenants fall back to `default_tier`. |
+| `default_tier` | Tier for tenants not in `tenant_tiers`. |
+| `agent_tasks` | `agent_name → task label` map; unknown agents fall back to `default_task`. |
+| `default_task` | Task label for agents not in `agent_tasks`. |
+| `tier_header` / `task_header` | Header names carrying the tier/task (default `x-authz-user-groups` / `x-vsr-task`). |
+
+The resolved tier/task win on a key collision with any pre-existing
+`extra_headers`. The whole block round-trips through
+`SystemConfig.to_dict()`/`from_dict()`, so it lives in `config.json` under
+`gateway_routing`. A local semantic-router stack to exercise this end to
+end lives in `deploy/semantic-router-spike/` (see its `README.md`).
+
 ---
 
 ## Visual embeddings
