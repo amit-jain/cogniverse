@@ -246,8 +246,6 @@ class TestABRunnerSemanticRouting:
             semantic_router_url="http://semantic-router:8080/v1",
             tenant_tiers={"acme:prod": "pro"},
             default_tier="free",
-            agent_tasks={"rlm_inference": "reason"},
-            default_task="general",
         )
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = router
@@ -272,8 +270,8 @@ class TestABRunnerSemanticRouting:
         assert routed.api_base == "http://semantic-router:8080/v1"
         assert routed.model == "openai/gpt-4o"
         assert routed.extra_headers == {
+            "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
-            "x-vsr-task": "reason",
         }
 
     def test_no_config_manager_keeps_direct_endpoint(self):

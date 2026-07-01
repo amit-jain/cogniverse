@@ -67,12 +67,15 @@ def _semantic_router_config_from_env():
     """Build a ``SemanticRouterConfig`` from deployment env vars, or ``None``.
 
     The chart sets ``SEMANTIC_ROUTER_ENABLED`` + ``SEMANTIC_ROUTER_URL`` (and
-    optional ``SEMANTIC_ROUTER_TENANT_TIERS`` / ``SEMANTIC_ROUTER_AGENT_TASKS``
-    JSON-object maps) so a deployed runtime boots routing every agent's LLM
-    call through the in-cluster semantic router. Returns ``None`` when routing
-    is off (flag unset/false) or no URL is set — leaving the direct-to-backend
-    path untouched. Extracted so it can be unit-tested without the FastAPI
-    lifespan.
+    an optional ``SEMANTIC_ROUTER_TENANT_TIERS`` JSON-object map) so a deployed
+    runtime boots routing every agent's LLM call through the in-cluster
+    semantic router. Returns ``None`` when routing is off (flag unset/false) or
+    no URL is set — leaving the direct-to-backend path untouched. Extracted so
+    it can be unit-tested without the FastAPI lifespan.
+
+    A malformed ``SEMANTIC_ROUTER_TENANT_TIERS`` raises: a misconfigured
+    deployment must fail at boot, not silently route every tenant to the
+    default tier.
     """
     enabled = os.environ.get("SEMANTIC_ROUTER_ENABLED", "").lower() in (
         "1",
@@ -85,22 +88,21 @@ def _semantic_router_config_from_env():
 
     from cogniverse_foundation.config.unified_config import SemanticRouterConfig
 
-    def _json_map(name: str) -> dict:
-        raw = os.environ.get(name, "").strip()
-        if not raw:
-            return {}
-        try:
-            value = json.loads(raw)
-        except (ValueError, TypeError):
-            logger.warning("Invalid %s (expected a JSON object); ignoring", name)
-            return {}
-        return value if isinstance(value, dict) else {}
+    raw_tiers = os.environ.get("SEMANTIC_ROUTER_TENANT_TIERS", "").strip()
+    if raw_tiers:
+        tenant_tiers = json.loads(raw_tiers)
+        if not isinstance(tenant_tiers, dict):
+            raise ValueError(
+                "SEMANTIC_ROUTER_TENANT_TIERS must be a JSON object mapping "
+                f"tenant_id -> tier; got {type(tenant_tiers).__name__}"
+            )
+    else:
+        tenant_tiers = {}
 
     return SemanticRouterConfig(
         enabled=True,
         semantic_router_url=url,
-        tenant_tiers=_json_map("SEMANTIC_ROUTER_TENANT_TIERS"),
-        agent_tasks=_json_map("SEMANTIC_ROUTER_AGENT_TASKS"),
+        tenant_tiers=tenant_tiers,
     )
 
 

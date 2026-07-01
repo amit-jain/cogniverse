@@ -102,9 +102,7 @@ class DynamicDSPyMixin:
             max_tokens=config.llm_max_tokens or 1000,
         )
 
-        endpoint_config = self._route_through_semantic_router(
-            endpoint_config, config.agent_name
-        )
+        endpoint_config = self._route_through_semantic_router(endpoint_config)
 
         self._dspy_lm = create_dspy_lm(endpoint_config)
         logger.info(
@@ -112,15 +110,15 @@ class DynamicDSPyMixin:
         )
 
     def _route_through_semantic_router(
-        self, endpoint: LLMEndpointConfig, agent_name: str
+        self, endpoint: LLMEndpointConfig
     ) -> LLMEndpointConfig:
         """Route the LM endpoint through the semantic router when it is enabled.
 
         Reads ``SystemConfig.semantic_router`` via ``self.system_config``'s
-        ``get_semantic_router`` accessor. Disabled (the default) or unavailable
-        returns the endpoint unchanged — the direct-to-backend path. When
-        enabled, ``api_base`` is rewritten to the semantic router and the tenant-tier /
-        task headers are attached.
+        ``get_semantic_router`` accessor. Disabled (the default) returns the
+        endpoint unchanged — the direct-to-backend path. When enabled,
+        ``api_base`` is rewritten to the semantic router and the tenant-tier
+        header is attached.
 
         ``resolve_semantic_router_config`` guards against a stray/mocked accessor
         (whose auto attributes look truthy) spuriously rewriting the endpoint.
@@ -139,7 +137,6 @@ class DynamicDSPyMixin:
             endpoint=endpoint,
             config=router,
             tenant_id=tenant_id,
-            agent_name=agent_name,
         )
 
     def register_signature(self, name: str, signature: Type[dspy.Signature]):

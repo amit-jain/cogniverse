@@ -169,16 +169,18 @@ class TenantConfig:
 
 @dataclass
 class SemanticRouterConfig:
-    """Opt-in routing of LLM calls through an OpenAI-compatible semantic router.
+    """Opt-in routing of LLM calls through the vLLM Semantic Router.
 
     When ``enabled``, LLM endpoint configs are rewritten to target
-    ``semantic_router_url`` (e.g. an Envoy front-end for a semantic router)
-    instead of the model backend, and two routing-metadata headers are
-    attached per request: a tenant tier (``tier_header``, resolved from
-    ``tenant_tiers`` with ``default_tier`` as fallback) and a task label
-    (``task_header``, resolved from ``agent_tasks`` with ``default_task``
-    as fallback). The semantic router keys on these to select the backend model
-    and reasoning mode. The application helper lives in
+    ``semantic_router_url`` (the Envoy front-end for the semantic router)
+    instead of the model backend, and two authz headers are attached per
+    request: the tenant identity (``user_id_header``, the ``tenant_id``) and
+    the tenant tier (``tier_header``, resolved from ``tenant_tiers`` with
+    ``default_tier`` as fallback). The router's authz signal requires the
+    identity header and refuses to evaluate role bindings without it (no silent
+    bypass), then gates the tenant's allowed model set by tier and classifies
+    the request content itself (domain/complexity) to pick the model +
+    reasoning mode. The application helper lives in
     ``cogniverse_foundation.config.semantic_router``.
 
     Disabled by default: with ``enabled=False`` the endpoint config is
@@ -189,10 +191,8 @@ class SemanticRouterConfig:
     semantic_router_url: str = ""
     tenant_tiers: Dict[str, str] = field(default_factory=dict)
     default_tier: str = "default"
-    agent_tasks: Dict[str, str] = field(default_factory=dict)
-    default_task: str = "default"
     tier_header: str = "x-authz-user-groups"
-    task_header: str = "x-vsr-task"
+    user_id_header: str = "x-authz-user-id"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -200,10 +200,8 @@ class SemanticRouterConfig:
             "semantic_router_url": self.semantic_router_url,
             "tenant_tiers": dict(self.tenant_tiers),
             "default_tier": self.default_tier,
-            "agent_tasks": dict(self.agent_tasks),
-            "default_task": self.default_task,
             "tier_header": self.tier_header,
-            "task_header": self.task_header,
+            "user_id_header": self.user_id_header,
         }
 
     @classmethod
@@ -213,10 +211,8 @@ class SemanticRouterConfig:
             semantic_router_url=data.get("semantic_router_url", ""),
             tenant_tiers=dict(data.get("tenant_tiers") or {}),
             default_tier=data.get("default_tier", "default"),
-            agent_tasks=dict(data.get("agent_tasks") or {}),
-            default_task=data.get("default_task", "default"),
             tier_header=data.get("tier_header", "x-authz-user-groups"),
-            task_header=data.get("task_header", "x-vsr-task"),
+            user_id_header=data.get("user_id_header", "x-authz-user-id"),
         )
 
 

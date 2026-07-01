@@ -852,7 +852,6 @@ class AgentDispatcher:
                 config.get_llm_config().resolve("coding_agent"),
                 resolve_semantic_router_config(config),
                 tenant_id,
-                "coding_agent",
             )
 
             deps = CodingDeps(
@@ -1676,7 +1675,6 @@ class AgentDispatcher:
             config.get_llm_config().resolve("coding_agent"),
             resolve_semantic_router_config(config),
             tenant_id,
-            "coding_agent",
         )
 
         deps = CodingDeps(

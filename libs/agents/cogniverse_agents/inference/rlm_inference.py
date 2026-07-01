@@ -466,14 +466,14 @@ def route_rlm_endpoint(
     config_manager,
     tenant_id: str,
 ) -> LLMEndpointConfig:
-    """Return ``endpoint`` routed through the semantic router for ``tenant_id``, or as-is.
+    """Return ``endpoint`` routed through the semantic router for ``tenant_id``.
 
-    Applies semantic routing (task ``rlm_inference``) when a ``config_manager``
-    and ``tenant_id`` are supplied and routing is enabled for that tenant. The
-    single place every RLM construction site routes its endpoint, so the caps /
-    event-queue plumbing stays independent of the routing decision. Returns the
-    endpoint unchanged when routing is off, uninformed (no config_manager /
-    tenant), or the config is unreachable — the direct-to-backend path.
+    Applies semantic routing when a ``config_manager`` and ``tenant_id`` are
+    supplied and routing is enabled for that tenant — the single place every
+    RLM construction site routes its endpoint, so the caps / event-queue
+    plumbing stays independent of the routing decision. Returns the endpoint
+    unchanged only when routing is genuinely uninformed (no config_manager or
+    tenant); a broken config store raises rather than silently going direct.
     """
     if config_manager is None or not tenant_id:
         return endpoint
@@ -483,13 +483,10 @@ def route_rlm_endpoint(
     )
     from cogniverse_foundation.config.utils import get_config
 
-    try:
-        router = resolve_semantic_router_config(
-            get_config(tenant_id=tenant_id, config_manager=config_manager)
-        )
-        return apply_semantic_routing(endpoint, router, tenant_id, "rlm_inference")
-    except Exception:  # noqa: BLE001 — never block RLM build on routing
-        return endpoint
+    router = resolve_semantic_router_config(
+        get_config(tenant_id=tenant_id, config_manager=config_manager)
+    )
+    return apply_semantic_routing(endpoint, router, tenant_id)
 
 
 def build_rlm_from_options(
