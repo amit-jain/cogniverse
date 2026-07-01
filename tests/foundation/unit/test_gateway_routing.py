@@ -293,24 +293,13 @@ class TestRoutedLMContextFor:
             "cogniverse_foundation.config.utils.get_config", lambda **kw: cfg
         )
 
-    def test_disabled_without_fallback_is_nullcontext(self, monkeypatch):
+    def test_no_endpoint_disabled_is_nullcontext(self, monkeypatch):
+        # No endpoint supplied (orchestrator case) + disabled => ambient LM.
         cfg = MagicMock()
         cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
         self._patch_get_config(monkeypatch, cfg)
-        ctx = routed_lm_context_for(MagicMock(), "acme:prod", "summarizer_agent")
+        ctx = routed_lm_context_for(MagicMock(), "acme:prod", "orchestrator_agent")
         assert isinstance(ctx, nullcontext)
-
-    def test_disabled_with_fallback_uses_the_fallback_lm(self, monkeypatch):
-        cfg = MagicMock()
-        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
-        self._patch_get_config(monkeypatch, cfg)
-        fallback = create_dspy_lm(
-            LLMEndpointConfig(model="openai/local", api_base=DIRECT)
-        )
-        with routed_lm_context_for(
-            MagicMock(), "acme:prod", "summarizer_agent", fallback_lm=fallback
-        ):
-            assert dspy.settings.lm is fallback
 
     def test_enabled_routes_through_gateway(self, monkeypatch):
         cfg = MagicMock()
@@ -327,15 +316,46 @@ class TestRoutedLMContextFor:
             "x-vsr-task": "enhance",
         }
 
-    def test_error_falls_back_to_fallback_lm(self, monkeypatch):
+    def test_error_with_endpoint_builds_from_that_endpoint(self, monkeypatch):
         def boom(**kw):
             raise RuntimeError("config store down")
 
         monkeypatch.setattr("cogniverse_foundation.config.utils.get_config", boom)
-        fallback = create_dspy_lm(
-            LLMEndpointConfig(model="openai/local", api_base=DIRECT)
-        )
+        endpoint = LLMEndpointConfig(model="openai/local", api_base=DIRECT)
         with routed_lm_context_for(
-            MagicMock(), "acme:prod", "summarizer_agent", fallback_lm=fallback
+            MagicMock(), "acme:prod", "summarizer_agent", endpoint=endpoint
         ):
-            assert dspy.settings.lm is fallback
+            lm = dspy.settings.lm
+        assert lm.model == "openai/local"
+        assert lm.kwargs["api_base"] == DIRECT
+
+    def test_enabled_routes_the_given_endpoint(self, monkeypatch):
+        # endpoint param: route the agent's own endpoint (preserving its model)
+        # rather than re-resolving from config.
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = _enabled_config()
+        self._patch_get_config(monkeypatch, cfg)
+        endpoint = LLMEndpointConfig(model="openai/tuned", api_base=DIRECT)
+        with routed_lm_context_for(
+            MagicMock(), "acme:prod", "knowledge_summarization_agent", endpoint=endpoint
+        ):
+            lm = dspy.settings.lm
+        assert lm.model == "openai/tuned"  # model preserved
+        assert lm.kwargs["api_base"] == GATEWAY  # routed
+        cfg.get_llm_config.assert_not_called()  # endpoint used, no re-resolve
+
+    def test_disabled_with_endpoint_builds_from_that_endpoint(self, monkeypatch):
+        cfg = MagicMock()
+        cfg.get_gateway_routing.return_value = GatewayRoutingConfig(enabled=False)
+        self._patch_get_config(monkeypatch, cfg)
+        endpoint = LLMEndpointConfig(model="openai/tuned", api_base=DIRECT)
+        with routed_lm_context_for(
+            MagicMock(),
+            "acme:prod",
+            "multi_document_synthesis_agent",
+            endpoint=endpoint,
+        ):
+            lm = dspy.settings.lm
+        assert lm.model == "openai/tuned"
+        assert lm.kwargs["api_base"] == DIRECT  # not routed
+        assert "extra_headers" not in lm.kwargs

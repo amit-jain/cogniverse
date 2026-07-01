@@ -260,19 +260,21 @@ class DetailedReportAgent(
         logger.info("DetailedReportAgent initialized (tenant-agnostic)")
 
     def _initialize_vlm_client(self):
-        """Initialize DSPy LM from centralized llm_config."""
-        from cogniverse_foundation.config.llm_factory import create_dspy_lm
+        """Resolve the report LLM endpoint from centralized llm_config.
+
+        The LM itself is built per request in ``routed_lm_context_for`` so it
+        can be routed through the gateway for the request tenant.
+        """
         from cogniverse_foundation.config.utils import get_config
 
         system_config = get_config(
             tenant_id=SYSTEM_TENANT_ID, config_manager=self._config_manager
         )
         llm_config = system_config.get_llm_config()
-        endpoint_config = llm_config.resolve("detailed_report_agent")
-
-        self._dspy_lm = create_dspy_lm(endpoint_config)
+        self._llm_config = llm_config.resolve("detailed_report_agent")
         logger.info(
-            f"Created DSPy LM: {endpoint_config.model} at {endpoint_config.api_base}"
+            f"Resolved detailed-report LLM endpoint: {self._llm_config.model} "
+            f"at {self._llm_config.api_base}"
         )
 
     async def _generate_report(self, request: ReportRequest) -> ReportResult:
@@ -291,7 +293,7 @@ class DetailedReportAgent(
             self._config_manager,
             getattr(self, "_memory_tenant_id", None) or SYSTEM_TENANT_ID,
             "detailed_report_agent",
-            fallback_lm=self._dspy_lm,
+            endpoint=self._llm_config,
         ):
             try:
                 # Thinking pass: comprehensive analysis

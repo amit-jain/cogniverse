@@ -12,7 +12,13 @@ from cogniverse_agents.detailed_report_agent import (
     ThinkingPhase,
     VLMInterface,
 )
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
+
+# Endpoint the agent routes per request when _initialize_vlm_client is mocked.
+_GATEWAY_TEST_ENDPOINT = LLMEndpointConfig(
+    model="openai/test-model", api_base="http://localhost:11434/v1"
+)
 
 
 @pytest.fixture
@@ -254,7 +260,7 @@ class TestDetailedReportAgent:
             agent = DetailedReportAgent(
                 deps=DetailedReportDeps(), config_manager=Mock()
             )
-            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         # Pin the only LLM-dependent step so the assertion proves the DSPy
         # output is carried verbatim into the result (was unstubbed, so the
@@ -293,7 +299,7 @@ class TestDetailedReportAgent:
             agent = DetailedReportAgent(
                 deps=DetailedReportDeps(), config_manager=Mock()
             )
-            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         # Empty search results should still generate a report
         request = ReportRequest(
@@ -325,7 +331,7 @@ class TestDetailedReportAgentEdgeCases:
             agent = DetailedReportAgent(
                 deps=DetailedReportDeps(), config_manager=Mock()
             )
-            agent._dspy_lm = Mock()
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
 
         request = ReportRequest(
             query="test query",
@@ -371,7 +377,7 @@ class TestDetailedReportAgentCoreFunctionality:
             agent = DetailedReportAgent(
                 deps=DetailedReportDeps(), config_manager=Mock()
             )
-            agent._dspy_lm = Mock()  # _initialize_vlm_client is mocked, set LM manually
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
             agent.vlm = mock_vlm
             return agent
 
