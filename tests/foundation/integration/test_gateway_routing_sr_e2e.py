@@ -8,9 +8,9 @@ the request the router actually forwarded, so they prove the router's
 decisions (model choice, reasoning toggle, header forwarding) end to end.
 
 Bring the stack up first (needs Docker — see
-``deploy/semantic-router-spike/README.md``)::
+``deploy/semantic-router-local/README.md``)::
 
-    docker compose -f deploy/semantic-router-spike/docker-compose.yml up
+    docker compose -f deploy/semantic-router-local/docker-compose.yml up
 
 then run::
 
@@ -56,7 +56,7 @@ def sr_base_url() -> str:
     if not _reachable(SR_ENVOY_URL):
         pytest.skip(
             f"semantic-router stack not reachable at {SR_ENVOY_URL}; "
-            "start deploy/semantic-router-spike/docker-compose.yml to run this suite"
+            "start deploy/semantic-router-local/docker-compose.yml to run this suite"
         )
     # localhost must bypass any outbound HTTPS proxy the environment sets.
     os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
@@ -95,7 +95,7 @@ def _call(base_url: str, tenant_id: str, agent_name: str, prompt: str) -> dict:
 
 
 def test_completion_survives_the_proxy(sr_base_url):
-    sentinel = "spike-roundtrip-sentinel-42"
+    sentinel = "gateway-roundtrip-sentinel-42"
     reflected = _call(sr_base_url, "free-tenant", "query_enhancement_agent", sentinel)
     assert reflected["echo"] == sentinel
     assert reflected["backend_tag"] == "stub"

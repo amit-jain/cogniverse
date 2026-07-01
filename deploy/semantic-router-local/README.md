@@ -1,4 +1,4 @@
-# Semantic Router spike (local)
+# Semantic Router (local stack)
 
 A self-contained stack to exercise cogniverse's opt-in **gateway routing**
 against a real [vLLM Semantic Router](https://github.com/vllm-project/semantic-router)
@@ -17,7 +17,7 @@ cogniverse (create_dspy_lm, extra_headers)
 ```
 
 Both catalog models (`basic-chat`, `pro-reasoning`) point at the **same**
-stub backend on purpose: the spike proves the router's *decision* (which
+stub backend on purpose: this stack proves the router's *decision* (which
 model name and whether reasoning), which the stub reflects back — so no
 per-model Envoy clusters or a real GPU/vLLM are needed.
 
@@ -26,7 +26,7 @@ per-model Envoy clusters or a real GPU/vLLM are needed.
 Requires Docker + Docker Compose.
 
 ```bash
-docker compose -f deploy/semantic-router-spike/docker-compose.yml up
+docker compose -f deploy/semantic-router-local/docker-compose.yml up
 # first run pulls the SR image + ~1.5GB of classifier models
 
 # in another shell:
@@ -77,7 +77,7 @@ then rewrites `api_base` to Envoy and attaches the tier/task headers before
   diff against `config/config.yaml` in the SR repo at your pinned tag and
   re-port the two models plus the tier/task decisions. `providers` and
   `global` are stable.
-- **Tier by header vs. auth.** This spike sends the tier as a plain header
+- **Tier by header vs. auth.** This stack sends the tier as a plain header
   and has SR branch on it — fine for a trusted local box. In production the
   tier signal should come from a credential SR resolves itself (Authorino /
   ext_authz → `x-authz-user-groups`), not a client-supplied header.

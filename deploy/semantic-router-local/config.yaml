@@ -1,4 +1,4 @@
-# Semantic Router config for the cogniverse local spike.
+# Semantic Router config for the cogniverse local semantic-router stack.
 #
 # Targets the vLLM Semantic Router config schema documented for the
 # v0.2 "Athena" / v0.3 "Themis" releases (providers + routing + global).
@@ -8,7 +8,7 @@
 # tag and re-port the two models + the tier/task decisions below. The
 # providers/global blocks are the stable parts.
 #
-# Both catalog models point at the SAME stub upstream on purpose: the spike
+# Both catalog models point at the SAME stub upstream on purpose: this stack
 # proves the router's DECISION (which model name + whether reasoning), which
 # the stub reflects back — so we don't need per-model Envoy clusters.
 

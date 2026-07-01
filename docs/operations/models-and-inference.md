@@ -139,7 +139,7 @@ The resolved tier/task win on a key collision with any pre-existing
 `extra_headers`. The whole block round-trips through
 `SystemConfig.to_dict()`/`from_dict()`, so it lives in `config.json` under
 `gateway_routing`. A local semantic-router stack to exercise this end to
-end lives in `deploy/semantic-router-spike/` (see its `README.md`).
+end lives in `deploy/semantic-router-local/` (see its `README.md`).
 
 ---
 
