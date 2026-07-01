@@ -1700,6 +1700,56 @@ redis:
     periodSeconds: 10
 
 # ===========================================
+# Semantic router — per-tenant LLM model routing
+# ===========================================
+# Deploys Envoy + the vLLM Semantic Router in front of the LLM backend. The
+# runtime routes every agent's LLM call through it, tagged with the tenant
+# tier (x-authz-user-groups) and task (x-vsr-task); the router picks the model
+# and reasoning mode. One switch — part of the default stack, like redis/vespa.
+semanticRouter:
+  enabled: true
+  envoy:
+    image:
+      repository: envoyproxy/envoy
+      tag: "v1.31-latest"
+      pullPolicy: IfNotPresent
+    adminPort: 19000
+    service:
+      type: ClusterIP
+      port: 8801
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "1"
+        memory: "512Mi"
+  router:
+    image:
+      repository: ghcr.io/vllm-project/semantic-router
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    grpcPort: 50051
+    metricsPort: 9190
+    # Header-driven routing needs neither classifier; leaving them off avoids
+    # the ~1.5GB model download on first start.
+    promptGuard: false
+    piiClassifier: false
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+  # cogniverse-side signal maps: which tenant -> tier, which agent -> task.
+  # The tier/task -> model decisions live in the router's own shipped config.
+  routing:
+    tenantTiers: {}
+    agentTasks:
+      orchestrator_agent: orchestrator_plan
+
+# ===========================================
 # MinIO — S3-compatible object store
 # ===========================================
 # Default ``s3://`` source for ingestion. Files land in MinIO either by

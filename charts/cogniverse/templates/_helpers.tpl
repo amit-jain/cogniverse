@@ -266,6 +266,41 @@ worker tasks) reaches the in-cluster service rather than localhost.
 {{- end -}}
 
 {{/*
+Semantic-router entry URL — the Envoy data plane the runtime routes its
+agent LLM calls through when ``semanticRouter.enabled``. The runtime reads
+this from SEMANTIC_ROUTER_URL and rewrites each agent's api_base to it.
+*/}}
+{{- define "cogniverse.semanticRouterUrl" -}}
+{{- printf "http://%s-semantic-router-envoy:%d/v1" (include "cogniverse.fullname" .) (int .Values.semanticRouter.envoy.service.port) -}}
+{{- end -}}
+
+{{/*
+The LLM backend the semantic router forwards to, as host and port (no scheme,
+no /v1) for Envoy socket_address / SR backend_refs. In-cluster this is the
+``-llm`` service; external mode parses ``llm.external.url``.
+*/}}
+{{- define "cogniverse.srUpstreamHost" -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if or .Values.llm.external.enabled (eq $engine "external") -}}
+{{- .Values.llm.external.url | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" | splitList ":" | first -}}
+{{- else -}}
+{{- printf "%s-llm" (include "cogniverse.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "cogniverse.srUpstreamPort" -}}
+{{- $engine := .Values.llm.engine | default "ollama" -}}
+{{- if or .Values.llm.external.enabled (eq $engine "external") -}}
+{{- $hp := .Values.llm.external.url | trimPrefix "http://" | trimPrefix "https://" | trimSuffix "/" | trimSuffix "/v1" | trimSuffix "/" | splitList ":" -}}
+{{- if gt (len $hp) 1 }}{{ index $hp 1 }}{{ else }}80{{ end -}}
+{{- else if eq $engine "vllm" -}}
+{{- .Values.llm.vllm.service.port -}}
+{{- else -}}
+{{- .Values.llm.ollama.service.port -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Return the proper Docker Image Registry Secret Names
 */}}
 {{- define "cogniverse.imagePullSecrets" -}}
