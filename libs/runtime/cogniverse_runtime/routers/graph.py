@@ -6,6 +6,7 @@ startup, and per-tenant managers are built from it. All operations are
 tenant-scoped.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -186,7 +187,7 @@ async def upsert(request: UpsertRequest) -> UpsertResponse:
         nodes=nodes,
         edges=edges,
     )
-    counts = mgr.upsert(result)
+    counts = await asyncio.to_thread(mgr.upsert, result)
     return UpsertResponse(status="upserted", **counts)
 
 
@@ -205,7 +206,7 @@ async def search_nodes(
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
-    nodes = mgr.search_nodes(q, top_k=top_k)
+    nodes = await asyncio.to_thread(mgr.search_nodes, q, top_k=top_k)
     return NodeSearchResponse(nodes=nodes, count=len(nodes))
 
 
@@ -224,7 +225,7 @@ async def get_neighbors(
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
-    result = mgr.get_neighbors(node, depth=depth)
+    result = await asyncio.to_thread(mgr.get_neighbors, node, depth=depth)
     return NeighborsResponse(**result)
 
 
@@ -244,7 +245,7 @@ async def get_path(
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
-    path = mgr.get_path(source, target, max_depth=max_depth)
+    path = await asyncio.to_thread(mgr.get_path, source, target, max_depth=max_depth)
     return PathResponse(
         source=source,
         target=target,
@@ -264,5 +265,5 @@ async def get_stats(tenant_id: str) -> StatsResponse:
     tenant_id = canonical_tenant_id(tenant_id)
     await assert_tenant_exists(tenant_id)
     mgr = get_graph_manager(tenant_id)
-    stats = mgr.get_stats()
+    stats = await asyncio.to_thread(mgr.get_stats)
     return StatsResponse(tenant_id=tenant_id, **stats)

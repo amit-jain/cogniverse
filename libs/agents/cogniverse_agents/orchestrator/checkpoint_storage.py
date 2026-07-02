@@ -14,8 +14,8 @@ A2A Integration:
   status events, enabling real-time notifications without duplicate code paths.
 """
 
+import asyncio
 import logging
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -181,8 +181,9 @@ class WorkflowCheckpointStorage:
                 f"(phase {checkpoint.current_phase}, status: {checkpoint.checkpoint_status.value})"
             )
 
-        # Force flush to ensure span is exported
-        self._force_flush()
+        # Force flush to ensure span is exported — the exporter blocks up
+        # to 5s, so run it off the event loop.
+        await asyncio.to_thread(self._force_flush)
 
         # Emit A2A event if EventQueue is configured
         await self._emit_checkpoint_event(checkpoint)
@@ -280,14 +281,14 @@ class WorkflowCheckpointStorage:
 
                 if spans_df.empty:
                     if attempt < len(retry_delays) - 1:
-                        time.sleep(delay)
+                        await asyncio.sleep(delay)
                         continue
                     return None
 
                 # Filter for checkpoint spans of this workflow
                 if "attributes.workflow_id" not in spans_df.columns:
                     if attempt < len(retry_delays) - 1:
-                        time.sleep(delay)
+                        await asyncio.sleep(delay)
                         continue
                     return None
 
@@ -298,7 +299,7 @@ class WorkflowCheckpointStorage:
 
                 if workflow_checkpoints.empty:
                     if attempt < len(retry_delays) - 1:
-                        time.sleep(delay)
+                        await asyncio.sleep(delay)
                         continue
                     return None
 
@@ -312,7 +313,7 @@ class WorkflowCheckpointStorage:
                     return latest_active
 
                 if attempt < len(retry_delays) - 1:
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
 
             return None
 

@@ -1,5 +1,6 @@
 """Search endpoints - unified interface for search operations."""
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional, Union
@@ -152,8 +153,10 @@ async def search(
                         # Emit status event
                         yield f"data: {json.dumps({'type': 'status', 'message': 'Searching...', 'query': request.query})}\n\n"
 
-                        # Execute search
-                        results = search_service.search(
+                        # Execute search off the event loop — encoder
+                        # inference + Vespa HTTP are synchronous.
+                        results = await asyncio.to_thread(
+                            search_service.search,
                             query=request.query,
                             profile=profile,
                             tenant_id=tenant_id,
@@ -189,8 +192,10 @@ async def search(
                 return StreamingResponse(generate(), media_type="text/event-stream")
 
             else:
-                # Non-streaming response
-                results = search_service.search(
+                # Non-streaming response; search runs sync (encoder + Vespa
+                # HTTP), so keep it off the event loop.
+                results = await asyncio.to_thread(
+                    search_service.search,
                     query=request.query,
                     profile=profile,
                     tenant_id=tenant_id,

@@ -2085,3 +2085,80 @@ class TestEnsembleEncodingConcurrency:
         )
 
         assert results == []
+
+
+@pytest.mark.unit
+class TestProcessImplEventLoopOffload:
+    """The default (non-ensemble) search paths must run their synchronous
+    encode+Vespa work off the event loop."""
+
+    @patch("cogniverse_agents.search_agent.QueryEncoderFactory")
+    @patch("cogniverse_agents.search_agent.get_backend_registry")
+    @patch("cogniverse_foundation.config.utils.get_config")
+    @pytest.mark.asyncio
+    async def test_text_search_runs_off_the_event_loop(
+        self,
+        mock_get_config,
+        mock_registry,
+        mock_encoder_factory,
+    ):
+        """_process_impl must execute _search_by_text on a worker thread and
+        keep the event loop ticking while the 0.3s synchronous search runs."""
+        import asyncio
+        import threading
+        import time
+
+        mock_get_config.return_value = {
+            "active_video_profile": "video_colpali_smol500_mv_frame",
+            "video_processing_profiles": {
+                "video_colpali_smol500_mv_frame": {
+                    "embedding_model": "m",
+                    "embedding_type": "multi_vector",
+                }
+            },
+        }
+        mock_registry.return_value.get_search_backend.return_value = Mock()
+        mock_encoder_factory.create_encoder.return_value = Mock()
+
+        agent = SearchAgent(
+            deps=SearchAgentDeps(),
+            schema_loader=mock_schema_loader,
+        )
+
+        seen = {}
+
+        def slow_sync_search(**kwargs):
+            seen["thread"] = threading.current_thread()
+            time.sleep(0.3)
+            return []
+
+        agent._search_by_text = slow_sync_search
+
+        ticks = 0
+
+        async def _heartbeat():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.02)
+                ticks += 1
+
+        hb = asyncio.create_task(_heartbeat())
+        try:
+            result = await agent._process_impl(
+                SearchInput(
+                    query="test query",
+                    enhanced_query="test query",
+                    tenant_id="test:unit",
+                    top_k=5,
+                )
+            )
+        finally:
+            hb.cancel()
+
+        assert result.results == []
+        assert seen["thread"] is not threading.main_thread(), (
+            "_search_by_text ran on the event-loop thread — it must be "
+            "offloaded via asyncio.to_thread"
+        )
+        # 0.3s blocked loop would allow ~0-2 ticks; offloaded allows ~15.
+        assert ticks >= 4, f"event loop stalled during text search: only {ticks} ticks"

@@ -6,6 +6,7 @@ These strategies work with the pluggable ProcessorManager.
 Supports video, image, audio, document, and code content types.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -207,7 +208,8 @@ class VLMDescriptionStrategy(BaseStrategy):
                 f"initialised in ProcessorManager for profile "
                 f"{getattr(pipeline_context, 'schema_name', 'unknown')!r}."
             )
-        return processor.generate_descriptions(segments)
+        # Sync VLM HTTP call (multi-hour timeout) — keep off the event loop.
+        return await asyncio.to_thread(processor.generate_descriptions, segments)
 
 
 class NoDescriptionStrategy(BaseStrategy):
