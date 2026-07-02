@@ -105,7 +105,11 @@ host-running Ollama).
 
 `cogniverse up` deploys the vLLM Semantic Router (Envoy front-end + the router)
 in front of the LLM backend, and the runtime routes every agent's LLM call
-through it. The division of labor:
+through it. The router forwards to the same in-cluster LLM the runtime would
+otherwise call directly — the chart's `srUpstream*` helpers derive the upstream
+host/port from `primaryLLMEndpoint`, so it tracks the `llm.engine` in use
+(ollama → the `-llm` service, vllm → the `-vllm-llm-student` service, external →
+the configured URL). The division of labor:
 
 - **cogniverse** sends only *who* the tenant is — the tenant identity
   (`x-authz-user-id` = `tenant_id`) and its tier (`x-authz-user-groups`,
@@ -162,8 +166,11 @@ its classifier bundle on first boot into a model-cache PVC, so allow the
 startup probe time. Coverage:
 `tests/foundation/integration/test_semantic_router_e2e.py` self-launches the
 real router+Envoy+stub via `docker run` and asserts the tier/content decisions;
-`tests/e2e/test_semantic_router_deploy_e2e.py` drives the routed path against
-the `cogniverse up`-deployed gateway.
+`tests/e2e/deployment/test_semantic_router_deploy_e2e.py` rides the
+`deployed_stack` fixture (its own isolated k3d cluster running the full chart)
+and asserts the routing *decision* per tenant tier + content against the
+deployed router's `llm_decision_match_total` metric; `tests/charts/test_semantic_router_chart.py`
+pins the rendered upstream endpoint and served model per `llm.engine`.
 
 ---
 
