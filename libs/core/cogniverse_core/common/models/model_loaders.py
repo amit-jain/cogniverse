@@ -184,21 +184,24 @@ class RemoteInferenceClient:
         )
     )
     def process_images_vllm(self, images: list, **kwargs) -> Dict[str, Any]:
-        """POST one image at a time to vLLM's ``/pooling`` endpoint and
-        return per-token multi-vector embeddings.
+        """POST images to vLLM's ``/pooling`` endpoint (one request per image,
+        issued concurrently) and return per-token multi-vector embeddings.
 
         vLLM 0.20+ doesn't register ``/v1/embeddings`` for ColPali's
         architecture — it stays on ``/pooling`` regardless of runner
         flags — and only the chat-style ``messages`` shape accepts
-        image_url content (the ``input`` shape fails validation).
+        image_url content (the ``input`` shape fails validation). The
+        endpoint takes one image per request, so concurrent requests are
+        the batching mechanism: vLLM's continuous batching coalesces them
+        into shared forward passes server-side.
         """
         import base64
         import io
+        from concurrent.futures import ThreadPoolExecutor
 
         from PIL import Image
 
-        per_image: list[np.ndarray] = []
-        for img in images:
+        def encode_and_post(img) -> Dict[str, Any]:
             if isinstance(img, (str, Path)):
                 with Image.open(img) as pil_img:
                     buf = io.BytesIO()
@@ -231,9 +234,16 @@ class RemoteInferenceClient:
                 timeout=1800,
             )
             response.raise_for_status()
-            result = response.json()
-            tokens = result.get("data", [{}])[0].get("data", [])
-            per_image.append(np.array(tokens))
+            return response.json()
+
+        if len(images) <= 1:
+            results = [encode_and_post(img) for img in images]
+        else:
+            with ThreadPoolExecutor(max_workers=min(8, len(images))) as pool:
+                results = list(pool.map(encode_and_post, images))
+
+        per_image = [np.array(r.get("data", [{}])[0].get("data", [])) for r in results]
+        result = results[-1] if results else {}
 
         embeddings = (
             per_image[0] if len(per_image) == 1 else np.array(per_image, dtype=object)

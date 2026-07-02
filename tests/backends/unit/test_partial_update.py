@@ -184,3 +184,101 @@ class TestYqlQuote:
         from cogniverse_vespa._yql import yql_quote
 
         assert yql_quote(42) == '"42"'
+
+
+@pytest.mark.unit
+class TestVisibilitySweep:
+    """The post-feed visibility wait must probe docs in sweeps over one
+    keep-alive session — one backoff sleep per sweep, per-batch deadline —
+    instead of a fresh connection and its own sleep loop per document."""
+
+    def _backend(self, docs_visible_after: dict) -> tuple:
+        """Build a VespaBackend whose feed succeeds for every doc, plus a
+        fake requests module recording probes. ``docs_visible_after[doc_id]``
+        is how many 404s the probe returns before the doc turns 200."""
+        from unittest.mock import MagicMock
+
+        backend = object.__new__(VespaBackend)
+        backend.config = {"wait_for_indexing": True, "indexing_timeout": 30.0}
+        backend._url = "http://localhost"
+        backend._port = 8080
+        backend._tenant_id = None
+
+        client = MagicMock()
+        client.namespace = "content"
+        client.process.side_effect = lambda doc, operation_type: {
+            "put": doc.id,
+            "fields": {},
+        }
+        client._feed_prepared_batch.return_value = (len(docs_visible_after), [])
+        backend._get_or_create_ingestion_client = MagicMock(return_value=client)
+
+        probes: list[str] = []
+        remaining_404s = dict(docs_visible_after)
+
+        class _Resp:
+            def __init__(self, status_code):
+                self.status_code = status_code
+                self.text = ""
+
+        class _Session:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def get(self, url, timeout=None):
+                doc_id = url.rsplit("/", 1)[-1]
+                probes.append(doc_id)
+                if remaining_404s.get(doc_id, 0) > 0:
+                    remaining_404s[doc_id] -= 1
+                    return _Resp(404)
+                return _Resp(200)
+
+        return backend, _Session, probes
+
+    def _docs(self, *ids):
+        from unittest.mock import MagicMock
+
+        docs = []
+        for doc_id in ids:
+            d = MagicMock()
+            d.id = doc_id
+            docs.append(d)
+        return docs
+
+    def test_all_visible_probes_each_doc_exactly_once_without_sleeping(
+        self, monkeypatch
+    ):
+        import time
+
+        import requests
+
+        backend, session_cls, probes = self._backend({"d1": 0, "d2": 0, "d3": 0})
+        monkeypatch.setattr(requests, "Session", session_cls)
+        sleeps: list[float] = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+
+        result = backend.ingest_documents(self._docs("d1", "d2", "d3"), "schema_x")
+
+        assert result["success_count"] == 3
+        assert sorted(probes) == ["d1", "d2", "d3"]
+        assert sleeps == []
+
+    def test_lagging_doc_sleeps_per_sweep_not_per_doc(self, monkeypatch):
+        import time
+
+        import requests
+
+        backend, session_cls, probes = self._backend({"d1": 0, "d2": 0, "d3": 2})
+        monkeypatch.setattr(requests, "Session", session_cls)
+        sleeps: list[float] = []
+        monkeypatch.setattr(time, "sleep", lambda s: sleeps.append(s))
+
+        backend.ingest_documents(self._docs("d1", "d2", "d3"), "schema_x")
+
+        # Sweep 1 probes all three (d3 404s); sweeps 2-3 probe only d3.
+        assert probes == ["d1", "d2", "d3", "d3", "d3"]
+        # Two backoffs total — shared by the sweep, not one loop per doc.
+        assert sleeps == [0.5, 0.5]

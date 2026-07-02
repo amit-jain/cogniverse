@@ -4,7 +4,6 @@ Vespa Embedding Processor - Handles Vespa-specific format conversion
 """
 
 import logging
-import struct
 from binascii import hexlify
 from typing import Any, Dict, Optional
 
@@ -172,11 +171,15 @@ class VespaEmbeddingProcessor:
             self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return embeddings[0].tolist()
 
-        embedding_dict = {}
-        for patch_idx in range(len(embeddings)):
-            hex_string = self._numpy_to_hex_bfloat16(embeddings[patch_idx])
-            embedding_dict[str(patch_idx)] = hex_string
-        return embedding_dict
+        # One vectorized bfloat16 conversion for the whole matrix, then slice
+        # the hex string per patch row.
+        arr = np.ascontiguousarray(embeddings, dtype=np.float32)
+        full_hex = (arr.view(np.uint32) >> 16).astype(">u2").tobytes().hex().upper()
+        row_len = arr.shape[1] * 4
+        return {
+            str(patch_idx): full_hex[patch_idx * row_len : (patch_idx + 1) * row_len]
+            for patch_idx in range(arr.shape[0])
+        }
 
     def _convert_to_binary_dict(self, embeddings: np.ndarray) -> Any:
         """Convert numpy array to binary format
@@ -215,13 +218,12 @@ class VespaEmbeddingProcessor:
         return embedding_dict
 
     def _numpy_to_hex_bfloat16(self, array: np.ndarray) -> str:
-        """Convert numpy array to hex-encoded bfloat16 format"""
-        arr_f32 = np.asarray(array, dtype=np.float32).flatten()
+        """Convert numpy array to hex-encoded bfloat16 format.
 
-        def float_to_bfloat16_hex(f: float) -> str:
-            packed_float = struct.pack("=f", f)
-            bfloat16_bits = struct.unpack("=H", packed_float[2:])[0]
-            return format(bfloat16_bits, "04X")
-
-        hex_list = [float_to_bfloat16_hex(float(val)) for val in arr_f32]
-        return "".join(hex_list)
+        Truncates each float32 to its high 16 bits (bfloat16) and emits the
+        big-endian hex digits, vectorized — the per-float struct.pack loop
+        cost ~50ms per 1024x128 document.
+        """
+        arr_f32 = np.ascontiguousarray(array, dtype=np.float32).reshape(-1)
+        bf16 = (arr_f32.view(np.uint32) >> 16).astype(">u2")
+        return bf16.tobytes().hex().upper()

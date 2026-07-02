@@ -1740,3 +1740,121 @@ class TestVlmDescriptionMapping:
         assert sum(len(c) for c in calls) == 120
         assert result.documents_processed == 120
         assert result.documents_fed == 120
+
+
+@pytest.mark.unit
+@pytest.mark.ci_safe
+class TestRemoteFrameBatching:
+    """Consecutive frame segments served by a RemoteInferenceClient must be
+    encoded in batched process_images calls, preserving segment order and
+    per-segment error containment."""
+
+    @pytest.fixture
+    def frame_config(self):
+        return {
+            "schema_name": "test_schema",
+            "embedding_model": "test_model",
+            "storage_mode": "multi_doc",
+            "embedding_type": "multi_vector",
+            "model_loader": "colpali",
+        }
+
+    def _generator_with_remote(self, frame_config, calls):
+        """Build a generator whose processor is a real RemoteInferenceClient
+        with process_images stubbed to record batch sizes."""
+        from cogniverse_core.common.models.model_loaders import (
+            RemoteInferenceClient,
+        )
+
+        generator = EmbeddingGeneratorImpl(frame_config, Mock(), Mock())
+        client = RemoteInferenceClient(endpoint_url="http://unused:1")
+
+        def fake_process_images(images, **kwargs):
+            calls.append(len(images))
+            per_image = [
+                np.full((4, 16), fill_value=len(calls) * 100 + i, dtype=np.float32)
+                for i in range(len(images))
+            ]
+            embeddings = (
+                per_image[0]
+                if len(per_image) == 1
+                else np.array(per_image, dtype=object)
+            )
+            return {"embeddings": embeddings}
+
+        client.process_images = fake_process_images
+        generator.model = client
+        generator.processor = client
+        return generator
+
+    def _frame_segments(self, tmp_path, count):
+        from PIL import Image as PILImage
+
+        segments = []
+        for i in range(count):
+            p = tmp_path / f"frame_{i}.png"
+            PILImage.new("RGB", (2, 2), color=(i, 0, 0)).save(p)
+            segments.append({"frame_path": str(p), "frame_id": i})
+        return segments
+
+    def test_consecutive_frames_share_one_remote_call(self, frame_config, tmp_path):
+        calls: list[int] = []
+        generator = self._generator_with_remote(frame_config, calls)
+        segments = self._frame_segments(tmp_path, 8)
+
+        results = list(generator._iter_segment_embeddings(segments, Path("v.mp4"), {}))
+
+        assert calls == [8], f"expected one batched call, got batches {calls}"
+        assert [idx for idx, _, _ in results] == list(range(8))
+        for i, (_, seg, emb) in enumerate(results):
+            assert seg["frame_id"] == i
+            assert isinstance(emb, np.ndarray)
+            assert emb.shape == (4, 16)
+            assert emb.dtype == np.float32
+            # Row i of the single batch carries value 100 + i.
+            assert float(emb[0, 0]) == 100.0 + i
+
+    def test_mixed_segments_batch_only_frame_runs(self, frame_config, tmp_path):
+        calls: list[int] = []
+        generator = self._generator_with_remote(frame_config, calls)
+        frames = self._frame_segments(tmp_path, 3)
+        time_seg = {"start_time": 0.0, "end_time": 5.0}
+        segments = [frames[0], frames[1], time_seg, frames[2]]
+
+        sentinel = np.ones((2, 16), dtype=np.float32)
+        generator._generate_segment_embeddings = Mock(return_value=sentinel)
+
+        results = list(generator._iter_segment_embeddings(segments, Path("v.mp4"), {}))
+
+        # Two frame runs → two remote calls of sizes 2 and 1; the time
+        # segment goes through the single-segment path in position.
+        assert calls == [2, 1]
+        assert [idx for idx, _, _ in results] == [0, 1, 2, 3]
+        assert results[2][2] is sentinel
+        generator._generate_segment_embeddings.assert_called_once_with(
+            time_seg, Path("v.mp4"), {}
+        )
+
+    def test_failed_batch_falls_back_to_single_frames(self, frame_config, tmp_path):
+        calls: list[int] = []
+        generator = self._generator_with_remote(frame_config, calls)
+        segments = self._frame_segments(tmp_path, 3)
+
+        original = generator.processor.process_images
+
+        def flaky_process_images(images, **kwargs):
+            if len(images) > 1:
+                calls.append(len(images))
+                raise ConnectionError("batch endpoint hiccup")
+            return original(images, **kwargs)
+
+        generator.processor.process_images = flaky_process_images
+
+        results = list(generator._iter_segment_embeddings(segments, Path("v.mp4"), {}))
+
+        # One failed batch of 3, then three single-frame retries.
+        assert calls == [3, 1, 1, 1]
+        assert [idx for idx, _, _ in results] == [0, 1, 2]
+        for _, _, emb in results:
+            assert isinstance(emb, np.ndarray)
+            assert emb.shape == (4, 16)

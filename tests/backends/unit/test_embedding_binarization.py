@@ -174,3 +174,53 @@ class TestSchemaNameAuthority:
         out = sv._convert_to_float_dict(np.random.rand(1, 768).astype(np.float32))
         assert isinstance(out, list)
         assert len(out) == 768
+
+
+# ── bfloat16 hex encoding ───────────────────────────────────────────────
+
+
+def _scalar_bfloat16_hex(row: np.ndarray) -> str:
+    """Independent per-float reference: truncate float32 to its high 16 bits
+    (bfloat16) and format big-endian uppercase hex."""
+    import struct
+
+    out = []
+    for f in np.asarray(row, dtype=np.float32).flatten():
+        bits = struct.unpack("=H", struct.pack("=f", float(f))[2:])[0]
+        out.append(format(bits, "04X"))
+    return "".join(out)
+
+
+def test_bfloat16_hex_matches_scalar_reference_bit_for_bit(processor):
+    """The vectorized bfloat16 hex encode must be byte-identical to the
+    per-float struct.pack reference across ordinary, denormal, zero,
+    negative, and extreme values."""
+    rng = np.random.default_rng(42)
+    rows = np.vstack(
+        [
+            rng.standard_normal(128).astype(np.float32),
+            np.array(
+                [0.0, -0.0, 1.0, -1.0, 3.14159, -2.71828, 1e-40, -1e-40]
+                + [65504.0, -65504.0, 1e30, -1e30, 0.5, -0.5, 2.0, -2.0]
+                + [0.1] * 112,
+                dtype=np.float32,
+            ),
+        ]
+    )
+    for row in rows:
+        assert processor._numpy_to_hex_bfloat16(row) == _scalar_bfloat16_hex(row)
+
+
+def test_float_dict_rows_match_scalar_reference(processor):
+    """The multi-patch float dict must contain one bit-identical bfloat16 hex
+    string per patch row, keyed by the row index."""
+    rng = np.random.default_rng(7)
+    embeddings = rng.standard_normal((5, 16)).astype(np.float32)
+
+    result = processor._convert_to_float_dict(embeddings)
+
+    assert sorted(result.keys()) == ["0", "1", "2", "3", "4"]
+    for idx in range(5):
+        expected = _scalar_bfloat16_hex(embeddings[idx])
+        assert result[str(idx)] == expected
+        assert len(result[str(idx)]) == 16 * 4
