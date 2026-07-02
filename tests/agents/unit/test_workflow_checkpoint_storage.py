@@ -379,3 +379,48 @@ class TestCheckpointConfig:
         assert config.level == CheckpointLevel.TASK
         assert config.project_name == "test_checkpoints"
         assert config.retain_completed_hours == 100
+
+
+class TestGetLatestCheckpointNonBlocking:
+    """Retry backoff in the async checkpoint lookup must yield to the event
+    loop (asyncio.sleep), never block it."""
+
+    async def test_empty_span_retries_use_async_sleep(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        import pandas as pd
+
+        from cogniverse_agents.orchestrator.checkpoint_storage import (
+            WorkflowCheckpointStorage,
+        )
+
+        telemetry_manager = MagicMock()
+        telemetry_manager.config.provider_config = {}
+        provider = MagicMock()
+        provider.traces.get_spans = AsyncMock(return_value=pd.DataFrame())
+        telemetry_manager.get_provider.return_value = provider
+
+        storage = WorkflowCheckpointStorage(
+            grpc_endpoint="grpc://unused:1",
+            http_endpoint="http://unused:1",
+            tenant_id="test:unit",
+            telemetry_manager=telemetry_manager,
+        )
+
+        recorded = []
+        real_sleep = asyncio.sleep
+
+        async def recording_sleep(delay, *args, **kwargs):
+            recorded.append(delay)
+            await real_sleep(0)
+
+        monkeypatch.setattr(asyncio, "sleep", recording_sleep)
+
+        result = await storage.get_latest_checkpoint("wf-123")
+
+        assert result is None
+        # Empty span frames retry through the first two delays, then give up
+        # on the third attempt — all via asyncio.sleep, keeping the loop live.
+        assert recorded == [1, 2]
+        assert provider.traces.get_spans.await_count == 3

@@ -1825,7 +1825,8 @@ class SearchAgent(
             self.emit_progress("retrieval", "Running multi-query fusion...")
             logger.info(f"Multi-query fusion: {len(input.query_variants)} variants")
             search_mode = "multi_query_fusion"
-            results = self._search_multi_query_fusion(
+            results = await asyncio.to_thread(
+                self._search_multi_query_fusion,
                 query_variants=input.query_variants,
                 tenant_id=tenant_id,
                 modality=modality,
@@ -1855,7 +1856,8 @@ class SearchAgent(
             )
         elif input.video_data:
             # Video-based search
-            results = self._search_by_video(
+            results = await asyncio.to_thread(
+                self._search_by_video,
                 video_data=input.video_data,
                 filename=input.video_filename or "video.mp4",
                 tenant_id=tenant_id,
@@ -1864,7 +1866,8 @@ class SearchAgent(
             )
         elif input.image_data:
             # Image-based search
-            results = self._search_by_image(
+            results = await asyncio.to_thread(
+                self._search_by_image,
                 image_data=input.image_data,
                 filename=input.image_filename or "image.jpg",
                 tenant_id=tenant_id,
@@ -1910,7 +1913,8 @@ class SearchAgent(
                     )
 
             self.emit_progress("retrieval", "Searching by text...")
-            results = self._search_by_text(
+            results = await asyncio.to_thread(
+                self._search_by_text,
                 query=search_query,
                 tenant_id=tenant_id,
                 modality=modality,

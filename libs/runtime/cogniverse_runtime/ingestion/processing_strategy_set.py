@@ -225,8 +225,12 @@ class ProcessingStrategySet:
                         f"  ♻️ Keyframes cache hit: {len(cached.get('keyframes', []))} frames"
                     )
                     return {"keyframes": cached}
-                result = processor.extract_keyframes(
-                    video_path, pipeline_context.profile_output_dir
+                # Full cv2 decode of the video — run off the event loop so
+                # the runtime keeps serving requests during extraction.
+                result = await asyncio.to_thread(
+                    processor.extract_keyframes,
+                    video_path,
+                    pipeline_context.profile_output_dir,
                 )
                 num_frames = len(result.get("keyframes", [])) if result else 0
                 pipeline_context.logger.info(f"  🖼️ Extracted {num_frames} keyframes")
@@ -236,8 +240,11 @@ class ProcessingStrategySet:
         elif "chunk" in requirements:
             processor = processor_manager.get_processor("chunk")
             if processor:
-                result = processor.extract_chunks(
-                    video_path, pipeline_context.profile_output_dir
+                # ffmpeg subprocess — keep it off the event loop.
+                result = await asyncio.to_thread(
+                    processor.extract_chunks,
+                    video_path,
+                    pipeline_context.profile_output_dir,
                 )
                 num_chunks = len(result.get("chunks", [])) if result else 0
                 pipeline_context.logger.info(

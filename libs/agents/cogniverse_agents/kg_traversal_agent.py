@@ -23,8 +23,10 @@ graph reader, not a free-text searcher. (MultiDocumentSynthesisAgent covers free
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
@@ -327,8 +329,10 @@ class KnowledgeGraphTraversalAgent(
         edges_by_from: Dict[str, List[Any]] = {}
         if memory_available:
             tenant_id = input.tenant_id or self._memory_tenant_id or ""
-            snapshot = self.memory_manager.get_all_memories(
-                tenant_id=tenant_id, agent_name=getattr(self, "_memory_agent_name", "")
+            snapshot = await asyncio.to_thread(
+                self.memory_manager.get_all_memories,
+                tenant_id=tenant_id,
+                agent_name=getattr(self, "_memory_agent_name", ""),
             )
             nodes_by_subject = self._index_nodes(snapshot)
             edges_by_from = self._index_edges_by_from(snapshot)
@@ -339,12 +343,12 @@ class KnowledgeGraphTraversalAgent(
         relation_counts: Dict[str, int] = {}
         truncated = False
 
-        frontier: List[tuple[str, int]] = [(seed_subject, 0)]
+        frontier: deque[tuple[str, int]] = deque([(seed_subject, 0)])
         while frontier:
             if len(visited_edges) >= input.max_edges:
                 truncated = True
                 break
-            subject, depth = frontier.pop(0)
+            subject, depth = frontier.popleft()
             if subject in seen_subjects:
                 continue
             seen_subjects.add(subject)
@@ -400,7 +404,7 @@ class KnowledgeGraphTraversalAgent(
         # mem0 results are kept, KG results merged in deduplicated.
         if graph_available:
             try:
-                kg = self.traverse(seed_subject)
+                kg = await asyncio.to_thread(self.traverse, seed_subject)
             except Exception as exc:
                 logger.debug(
                     "Vespa-KG complement skipped for %s: %s", seed_subject, exc
@@ -538,5 +542,7 @@ class KnowledgeGraphTraversalAgent(
             config_manager=getattr(self, "_config_manager", None),
             tenant_id=getattr(self, "_memory_tenant_id", None) or "",
         )
-        result = rlm.process(query=query, context=block)
+        # Multi-call RLM LLM loop is synchronous — run it off the event loop
+        # (same treatment as federated_query_agent / temporal_reasoning_agent).
+        result = await asyncio.to_thread(rlm.process, query=query, context=block)
         return result.answer

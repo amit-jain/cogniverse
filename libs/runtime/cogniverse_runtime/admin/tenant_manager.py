@@ -28,6 +28,7 @@ Example Usage:
     DELETE /admin/tenants/acme:production
 """
 
+import asyncio
 import logging
 import time
 from typing import Dict, List, Optional
@@ -680,8 +681,10 @@ async def get_tenant_internal(tenant_full_id: str) -> Optional[Tenant]:
         backend = get_backend()
         canonical = canonical_tenant_id(tenant_full_id)
 
-        fields = backend.get_metadata_document(
-            schema="tenant_metadata", doc_id=canonical
+        # Blocking Vespa GET — run off the event loop; this sits under
+        # assert_tenant_exists on every search/ingestion/graph request.
+        fields = await asyncio.to_thread(
+            backend.get_metadata_document, schema="tenant_metadata", doc_id=canonical
         )
 
         if not fields:

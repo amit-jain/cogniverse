@@ -415,3 +415,89 @@ class TestRerankEndpoint:
         # Reranking reorders but preserves the id set and scores every result.
         assert sorted(r["id"] for r in returned) == ["a", "b", "c"]
         assert all(isinstance(r["score"], (int, float)) for r in returned)
+
+
+# ── event-loop responsiveness ───────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.ci_fast
+class TestSearchEventLoopOffload:
+    async def test_search_keeps_event_loop_responsive(self):
+        """POST /search must not stall the event loop while the synchronous
+        SearchService.search (encoder inference + Vespa HTTP) runs.
+
+        The stub search blocks its thread for 0.4s. A heartbeat coroutine on
+        the same event loop must keep ticking during the request — it can only
+        do so when the route offloads the search to a worker thread.
+        """
+        import asyncio
+        import time
+
+        from httpx import ASGITransport, AsyncClient
+
+        test_app = FastAPI()
+        test_app.include_router(search.router, prefix="/search")
+
+        config_manager = _make_config_manager()
+        schema_loader = _make_mock_schema_loader()
+        test_app.dependency_overrides[search.get_config_manager_dependency] = lambda: (
+            config_manager
+        )
+        test_app.dependency_overrides[search.get_schema_loader_dependency] = lambda: (
+            schema_loader
+        )
+
+        async def _noop_tenant_check(tenant_id: str) -> None:
+            return None
+
+        def _slow_search(**kwargs):
+            time.sleep(0.4)
+            return []
+
+        mock_service = MagicMock()
+        mock_service.search = _slow_search
+
+        ticks = 0
+
+        async def _heartbeat():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(0.02)
+                ticks += 1
+
+        with (
+            patch(
+                "cogniverse_runtime.routers.search.get_telemetry_manager",
+                return_value=_make_noop_telemetry_manager(),
+            ),
+            patch(
+                "cogniverse_runtime.routers.search.assert_tenant_exists",
+                new=_noop_tenant_check,
+            ),
+            patch(
+                "cogniverse_runtime.routers.search.SearchService",
+                return_value=mock_service,
+            ),
+        ):
+            transport = ASGITransport(app=test_app)
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                hb = asyncio.create_task(_heartbeat())
+                try:
+                    resp = await client.post(
+                        "/search/",
+                        json={"query": "sunset", "tenant_id": "test:unit"},
+                    )
+                finally:
+                    hb.cancel()
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["results_count"] == 0
+        # 0.4s blocked loop would allow ~0-2 ticks; offloaded search allows ~20.
+        assert ticks >= 5, (
+            f"event loop stalled during search: only {ticks} heartbeat ticks — "
+            "SearchService.search is running on the event loop instead of a "
+            "worker thread"
+        )
