@@ -242,31 +242,64 @@ def _cluster_exists() -> bool:
 
 @pytest.fixture(scope="session")
 def k3d_cluster():
-    """Create an isolated k3d test cluster with no LB ports + no
-    dev-convenience bind-mounts so the cluster mirrors a fresh
-    production deployment (built images, no /cogniverse-src source
-    mount, no host HF cache, no persistent host data).
+    """Create an isolated k3d test cluster provisioned like ``cogniverse up``.
 
-    Service access goes through ``kubectl port-forward`` to the host
-    ports in ``PORTS`` — see the deployed_stack fixture for the
-    forward setup — which is why ``ports=[]`` skips the loadbalancer
-    mappings (a baked ``-p`` would collide with the forward bind)."""
+    ``values.k3s.yaml`` uses hostStorage (hostPath ``/host-hf-cache`` +
+    ``/host-data``) and schedules GPU inference pods with a
+    ``amd.com/gpu.present`` / ``nvidia.com/gpu.present`` nodeSelector, so the
+    cluster must bind-mount those host paths AND label the node — otherwise the
+    GPU pods stay Pending and the runtime's hf-cache mount fails. ``ports=[]``
+    skips the loadbalancer mappings because service access goes through
+    ``kubectl port-forward`` to the ``PORTS`` in the deployed_stack fixture."""
     if _cluster_exists():
         _cmd(["k3d", "cluster", "delete", CLUSTER_NAME], check=False, timeout=60)
 
+    import os
+
     from cogniverse_cli.cluster import create_cluster
+    from cogniverse_cli.images import detect_torch_backend
+
+    # The hostPath source for /host-hf-cache must exist for the bind-mount.
+    os.makedirs(os.path.expanduser("~/.cache/huggingface"), exist_ok=True)
 
     try:
         create_cluster(
             name=CLUSTER_NAME,
             ports=[],
             workspace_path=None,
-            share_hf_cache=False,
-            share_host_storage=False,
+            share_hf_cache=True,
+            share_host_storage=True,
         )
     except subprocess.CalledProcessError as exc:
         pytest.fail(
             f"k3d cluster creation failed: {(exc.stderr or '').strip()[:300] or exc}"
+        )
+
+    # Label the node so GPU inference pods schedule, as `cogniverse up` does.
+    backend = detect_torch_backend()
+    if backend == "rocm":
+        _cmd(
+            [
+                "kubectl",
+                "label",
+                "node",
+                "--all",
+                "amd.com/gpu.present=true",
+                "--overwrite",
+            ],
+            check=False,
+        )
+    elif backend == "cuda":
+        _cmd(
+            [
+                "kubectl",
+                "label",
+                "node",
+                "--all",
+                "nvidia.com/gpu.present=true",
+                "--overwrite",
+            ],
+            check=False,
         )
 
     yield {
@@ -335,6 +368,47 @@ def deployed_stack(k3d_cluster):
         install_argo_controller(namespace="argo")
     except Exception as e:
         pytest.fail(f"Argo controller install failed: {e}")
+
+    # Sync the HF token into the test namespace before install — gated models
+    # (e.g. inference.vllm_llm_student → google/gemma-4-e4b-it) reference the
+    # hf-token Secret and otherwise crash with CreateContainerConfigError.
+    # cogniverse up does this via sync_hf_token_to_cluster, but that targets
+    # the fixed "cogniverse" namespace, so replicate it into NAMESPACE here.
+    from cogniverse_cli.secrets import HF_TOKEN_SECRET, _read_hf_token
+
+    _hf_token = _read_hf_token()
+    if _hf_token:
+        subprocess.run(
+            ["kubectl", "create", "namespace", NAMESPACE],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        _rendered = subprocess.run(
+            [
+                "kubectl",
+                "create",
+                "secret",
+                "generic",
+                HF_TOKEN_SECRET,
+                "-n",
+                NAMESPACE,
+                f"--from-literal=HF_TOKEN={_hf_token}",
+                "--dry-run=client",
+                "-o",
+                "yaml",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        subprocess.run(
+            ["kubectl", "apply", "-f", "-"],
+            input=_rendered.stdout,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     # Helm timeout bumped to 20m for cold-start clusters — Vespa
     # bundle-load + ZK replay alone is ~5 min, runtime startup adds
