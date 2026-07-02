@@ -2,6 +2,7 @@
 
 import builtins
 
+import numpy as np
 import pytest
 
 from cogniverse_core.common.models.model_loaders import (
@@ -155,3 +156,110 @@ class TestColQwen3RemoteOnlyGuard:
         msg = str(excinfo.value)
         for substr in _REMOTE_ONLY_SUBSTRINGS:
             assert substr in msg
+
+
+class TestProcessImagesVllmConcurrent:
+    """The vLLM pooling client posts one request per image concurrently; the
+    returned embeddings must line up with the input image order regardless of
+    completion order."""
+
+    def _client_with_recorded_posts(self, images):
+        import base64
+        import io
+        import threading
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.common.models.model_loaders import (
+            RemoteInferenceClient,
+        )
+
+        client = RemoteInferenceClient(endpoint_url="http://unused:1")
+
+        # Map each image's PNG b64 (exactly as the client encodes it) to its
+        # input position so the fake response is request-derived — immune to
+        # thread completion order.
+        b64_to_index = {}
+        for i, img in enumerate(images):
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64_to_index[base64.b64encode(buf.getvalue()).decode("utf-8")] = i
+
+        threads = set()
+
+        def fake_post(url, json=None, timeout=None):
+            threads.add(threading.current_thread().name)
+            b64 = json["messages"][0]["content"][0]["image_url"]["url"].split(
+                "base64,", 1
+            )[1]
+            idx = b64_to_index[b64]
+            resp = MagicMock()
+            resp.raise_for_status.return_value = None
+            resp.json.return_value = {
+                "data": [{"data": [[float(idx)] * 4]}],
+                "model": "m",
+                "usage": {},
+            }
+            return resp
+
+        client.session = MagicMock()
+        client.session.post.side_effect = fake_post
+        return client, threads
+
+    def test_batch_results_preserve_input_order(self):
+        from PIL import Image as PILImage
+
+        images = [PILImage.new("RGB", (2, 2), color=(i, 0, 0)) for i in range(6)]
+        client, threads = self._client_with_recorded_posts(images)
+
+        result = client.process_images_vllm(images, model_name="m")
+
+        assert client.session.post.call_count == 6
+        embeddings = result["embeddings"]
+        assert len(embeddings) == 6
+        for i in range(6):
+            assert float(np.asarray(embeddings[i])[0][0]) == float(i)
+        # Multi-image batches must fan out over worker threads.
+        assert len(threads) > 1
+
+    def test_single_image_returns_bare_array(self):
+        from PIL import Image as PILImage
+
+        images = [PILImage.new("RGB", (2, 2), color=(0, 0, 0))]
+        client, _ = self._client_with_recorded_posts(images)
+
+        result = client.process_images_vllm(images, model_name="m")
+
+        assert client.session.post.call_count == 1
+        arr = np.asarray(result["embeddings"])
+        assert arr.shape == (1, 4)
+
+
+class TestVideoPrismVespaFormat:
+    """Multi-vector VideoPrism → Vespa conversion must emit the compact
+    mixed-tensor blocks form (one dense row per patch), not a dict per
+    tensor cell, with values identical to the source array."""
+
+    def test_blocks_form_carries_exact_rows(self):
+        from cogniverse_core.common.models.videoprism_loader import (
+            VideoPrismLoader,
+        )
+
+        loader = object.__new__(VideoPrismLoader)
+        rng = np.random.default_rng(3)
+        embeddings = rng.standard_normal((5, 8)).astype(np.float32)
+
+        float_dict, binary_dict = loader.embeddings_to_vespa_format(embeddings)
+
+        assert set(float_dict.keys()) == {"blocks"}
+        blocks = float_dict["blocks"]
+        assert sorted(blocks.keys(), key=int) == ["0", "1", "2", "3", "4"]
+        for idx in range(5):
+            assert blocks[str(idx)] == embeddings[idx].tolist()
+
+        # Binary side unchanged: one hex string per patch, dim/8 bytes each.
+        assert sorted(binary_dict.keys()) == [f"patch{i}" for i in range(5)]
+        for i in range(5):
+            expected_bits = np.packbits(np.where(embeddings[i] > 0, 1, 0)).astype(
+                np.int8
+            )
+            assert binary_dict[f"patch{i}"] == expected_bits.tobytes().hex()

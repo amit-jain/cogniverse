@@ -341,34 +341,46 @@ class VespaBackend(Backend):
             # queryable. `documentid` is also not a YQL field on most
             # schemas; Document v1 GET keys directly off the doc id and
             # returns 200 vs 404 unambiguously.
+            # Probe all fed docs in sweeps over one keep-alive session: docs
+            # drop out as they become visible, sweeps (not docs) share the
+            # 0.5s backoff, and the timeout bounds the whole batch. The old
+            # per-doc loop paid a fresh TCP connection per probe and up to
+            # ``timeout`` seconds of sleeps per document.
             namespace = getattr(client, "namespace", "content")
-            for doc in documents:
-                if doc.id in [
-                    fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs
-                ]:
-                    continue
-                doc_url = (
+            failed_ids = {
+                fd if isinstance(fd, str) else fd.get("id") for fd in failed_docs
+            }
+            pending = {
+                doc.id: (
                     f"{base_url}/document/v1/{namespace}/{target_schema}/docid/{doc.id}"
                 )
-                deadline = _time.monotonic() + timeout
-                while _time.monotonic() < deadline:
-                    try:
-                        resp = _requests.get(doc_url, timeout=5)
-                        if resp.status_code == 200:
-                            break
-                        if resp.status_code not in (404, 503):
-                            logger.warning(
-                                f"Visibility probe unexpected status "
-                                f"{resp.status_code} for {doc.id}: {resp.text[:200]}"
-                            )
-                            break
-                    except _requests.RequestException:
-                        pass
+                for doc in documents
+                if doc.id not in failed_ids
+            }
+            deadline = _time.monotonic() + timeout
+            with _requests.Session() as session:
+                while pending:
+                    for doc_id, doc_url in list(pending.items()):
+                        try:
+                            resp = session.get(doc_url, timeout=5)
+                            if resp.status_code == 200:
+                                del pending[doc_id]
+                            elif resp.status_code not in (404, 503):
+                                logger.warning(
+                                    f"Visibility probe unexpected status "
+                                    f"{resp.status_code} for {doc_id}: "
+                                    f"{resp.text[:200]}"
+                                )
+                                del pending[doc_id]
+                        except _requests.RequestException:
+                            pass
+                    if not pending or _time.monotonic() >= deadline:
+                        break
                     _time.sleep(0.5)
-                else:
-                    logger.warning(
-                        f"Document {doc.id} fed but not visible after {timeout}s"
-                    )
+            for doc_id in pending:
+                logger.warning(
+                    f"Document {doc_id} fed but not visible after {timeout}s"
+                )
 
         return {
             "success_count": success_count,

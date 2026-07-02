@@ -185,18 +185,15 @@ class VideoPrismLoader:
             f"Converting {num_patches} patches with {embedding_dim} dimensions to Vespa format"
         )
 
-        # Create float embeddings in Vespa tensor cell format
-        float_cells = []
-        for patch_idx in range(num_patches):
-            for v_idx in range(embedding_dim):
-                float_cells.append(
-                    {
-                        "address": {"patch": str(patch_idx), "v": str(v_idx)},
-                        "value": float(embeddings[patch_idx, v_idx]),
-                    }
-                )
-
-        float_embeddings_dict = {"cells": float_cells}
+        # Vespa's compact mixed-tensor form: one dense row per patch index.
+        # The per-cell dict list this replaces allocated num_patches ×
+        # embedding_dim address dicts (~3M objects for 4096×768) per segment.
+        float_embeddings_dict = {
+            "blocks": {
+                str(patch_idx): embeddings[patch_idx].tolist()
+                for patch_idx in range(num_patches)
+            }
+        }
 
         # Generate binary embeddings
         # Binary size should be embedding_dim / 8 (8 bits per byte)

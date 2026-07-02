@@ -266,15 +266,15 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         # Extract transcript text
         transcript_text = self._extract_transcript_text(transcript_data)
 
-        for idx, segment in enumerate(segments):
+        for idx, segment, embeddings in self._iter_segment_embeddings(
+            segments, video_path, video_data
+        ):
             try:
-                # Generate embeddings for this segment
                 self.logger.debug(
                     f"  Processing segment {idx}/{len(segments)}: {segment.get('start_time', 0):.1f}s - {segment.get('end_time', 0):.1f}s"
                 )
-                embeddings = self._generate_segment_embeddings(
-                    segment, video_path, video_data
-                )
+                if isinstance(embeddings, Exception):
+                    raise embeddings
 
                 if embeddings is None:
                     self.logger.debug(
@@ -352,14 +352,15 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
         all_embeddings = []
         errors = []
 
-        for idx, segment in enumerate(segments):
+        for idx, segment, embeddings in self._iter_segment_embeddings(
+            segments, video_path, video_data
+        ):
             try:
                 self.logger.debug(
                     f"  Processing segment {idx}/{len(segments)} for single doc"
                 )
-                embeddings = self._generate_segment_embeddings(
-                    segment, video_path, video_data
-                )
+                if isinstance(embeddings, Exception):
+                    raise embeddings
                 if embeddings is not None:
                     all_embeddings.append(embeddings)
                     self.logger.debug(
@@ -791,6 +792,111 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             self.logger.warning(f"Unknown segment type: {segment.keys()}")
             return None
 
+    # Frames grouped per remote embedding call; their per-image requests run
+    # concurrently and vLLM's continuous batching shares the forward passes.
+    _REMOTE_FRAME_BATCH = 8
+
+    def _generate_frame_embeddings_batch(
+        self, frame_paths: list[Path]
+    ) -> list[np.ndarray | None]:
+        """Encode several frames through the remote client in one call.
+
+        Returns one pooled [T, D] float32 array (or None for an empty
+        response) per input frame, in input order.
+        """
+        images = []
+        for path in frame_paths:
+            with Image.open(path) as image:
+                images.append(image.convert("RGB"))
+        result = self.processor.process_images(images, model_name=self.model_name)
+        images.clear()
+
+        raw = result.get("embeddings", [])
+        # One image returns a single [T, D] array; several return an object
+        # array with one [T, D] row per image.
+        rows = (
+            [np.asarray(raw)] if len(frame_paths) == 1 else [np.asarray(r) for r in raw]
+        )
+        if len(rows) != len(frame_paths):
+            self.logger.error(
+                f"Remote inference returned {len(rows)} embeddings for "
+                f"{len(frame_paths)} frames"
+            )
+            return [None] * len(frame_paths)
+
+        out: list[np.ndarray | None] = []
+        for path, arr in zip(frame_paths, rows):
+            if arr.ndim == 0 or arr.size == 0:
+                self.logger.error(
+                    f"Remote inference returned empty embeddings for {path.name}"
+                )
+                out.append(None)
+                continue
+            # Server may return one multi-vector per image as [1, T, D];
+            # unwrap to [T, D] to match the local path.
+            if arr.ndim == 3 and arr.shape[0] == 1:
+                arr = arr[0]
+            arr = pool_document_tokens(arr, self._token_pool_factor)
+            out.append(arr.astype(np.float32, copy=False))
+        self.logger.info(
+            f"    🖼️ Generated embeddings for {len(frame_paths)} frame(s) (remote)"
+        )
+        return out
+
+    def _iter_segment_embeddings(self, segments, video_path, video_data):
+        """Yield ``(idx, segment, embeddings)`` in segment order.
+
+        Consecutive frame segments served by a remote inference client are
+        encoded in batches of ``_REMOTE_FRAME_BATCH`` so their requests run
+        concurrently. Failures are yielded as the exception instance so the
+        consuming loop's per-segment error handling applies unchanged.
+        """
+        from cogniverse_core.common.models.model_loaders import (
+            RemoteInferenceClient,
+        )
+
+        i, n = 0, len(segments)
+        while i < n:
+            segment = segments[i]
+            if "frame_path" in segment:
+                if not self.model:
+                    self._load_model()
+                if isinstance(self.processor, RemoteInferenceClient):
+                    batch = []
+                    while (
+                        i + len(batch) < n
+                        and len(batch) < self._REMOTE_FRAME_BATCH
+                        and "frame_path" in segments[i + len(batch)]
+                    ):
+                        batch.append(segments[i + len(batch)])
+                    try:
+                        embs: list = self._generate_frame_embeddings_batch(
+                            [Path(s["frame_path"]) for s in batch]
+                        )
+                    except Exception:
+                        # Batch failed as a unit — retry frames one at a time
+                        # so a single bad frame doesn't take out neighbours.
+                        embs = []
+                        for s in batch:
+                            try:
+                                embs.append(
+                                    self._generate_frame_embeddings(
+                                        Path(s["frame_path"])
+                                    )
+                                )
+                            except Exception as exc:
+                                embs.append(exc)
+                    for offset, (s, emb) in enumerate(zip(batch, embs)):
+                        yield i + offset, s, emb
+                    i += len(batch)
+                    continue
+            try:
+                emb = self._generate_segment_embeddings(segment, video_path, video_data)
+            except Exception as exc:
+                emb = exc
+            yield i, segment, emb
+            i += 1
+
     def _generate_frame_embeddings(self, frame_path: Path) -> np.ndarray | None:
         """Generate embeddings for a single frame."""
         if not self.model:
@@ -812,30 +918,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             )
 
             if isinstance(self.processor, RemoteInferenceClient):
-                with Image.open(frame_path) as image:
-                    image = image.convert("RGB")
-                    result = self.processor.process_images(
-                        [image], model_name=self.model_name
-                    )
-                embeddings_arr = np.asarray(result.get("embeddings", []))
-                if embeddings_arr.ndim == 0 or embeddings_arr.size == 0:
-                    self.logger.error(
-                        f"Remote inference returned empty embeddings for {frame_path.name}"
-                    )
-                    return None
-                # Server returns one multi-vector per image: shape [B, T, D].
-                # The local path below feeds a single image and returns
-                # shape [T, D], so unwrap the batch dim to match.
-                if embeddings_arr.ndim == 3 and embeddings_arr.shape[0] == 1:
-                    embeddings_arr = embeddings_arr[0]
-                embeddings_arr = pool_document_tokens(
-                    embeddings_arr, self._token_pool_factor
-                )
-                self.logger.info(
-                    f"    🖼️ Generated embeddings for frame {frame_path.name} "
-                    f"(remote): shape={embeddings_arr.shape}"
-                )
-                return embeddings_arr.astype(np.float32, copy=False)
+                return self._generate_frame_embeddings_batch([frame_path])[0]
 
             # Context manager releases the decoded PIL buffer (~6 MB at 1080p)
             # as soon as process_images copies pixel_values into a tensor.
