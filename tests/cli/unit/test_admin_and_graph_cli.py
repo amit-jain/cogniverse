@@ -221,8 +221,9 @@ class TestGraphUpsertPayloadContract:
         edge field the route's EdgeDoc requires must be present, or the
         whole upsert 422s and `cogniverse index` silently reports zero
         graph nodes."""
-        from cogniverse_agents.graph.code_extractor import CodeExtractor
         from cogniverse_cli.index import _build_graph_payload
+
+        from cogniverse_agents.graph.code_extractor import CodeExtractor
         from cogniverse_runtime.routers.graph import EdgeDoc, NodeDoc
 
         f = tmp_path / "utils.py"

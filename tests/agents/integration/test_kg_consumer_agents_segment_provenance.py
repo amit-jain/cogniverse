@@ -554,7 +554,9 @@ class TestKGConsumerAgentsSegmentProvenance:
         from cogniverse_runtime.routers.knowledge import _bind_graph
 
         monkeypatch.setattr(
-            graph_router, "get_graph_manager", lambda tid: ingested_curie_graph
+            graph_router,
+            "get_graph_manager",
+            lambda tid, deploy=False: ingested_curie_graph,
         )
         agent = TemporalReasoningAgent(deps=TemporalReasoningDeps())
         assert agent._graph_manager is None

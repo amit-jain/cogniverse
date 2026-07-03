@@ -168,28 +168,28 @@ class AuditExplanationAgent(
             Confidence: <confidence>
         """
         graph_manager = self._require_graph_manager("explain")
-        for edge_fields in graph_manager._visit(doc_type="edge", top_k=2000):
-            doc_id = str(edge_fields.get("doc_id") or "")
-            suffix = doc_id.split("_")[-1] if doc_id else ""
-            if suffix != answer_id and not doc_id.endswith(f"_{answer_id}"):
-                continue
-            subject = str(edge_fields.get("source_node_id") or "")
-            predicate = str(edge_fields.get("relation") or "")
-            obj = str(edge_fields.get("target_node_id") or "")
-            ts_start = float(edge_fields.get("ts_start") or 0.0)
-            ts_end = float(edge_fields.get("ts_end") or 0.0)
-            modality = str(edge_fields.get("modality") or "")
-            source_doc = str(edge_fields.get("source_doc_id") or "")
-            evidence = str(edge_fields.get("evidence_span") or "")
-            confidence = float(edge_fields.get("confidence") or 0.0)
-            text = (
-                f"Claim: {subject} {predicate} {obj}.\n"
-                f"Source: {source_doc} [{ts_start}s-{ts_end}s] ({modality})\n"
-                f'Evidence: "{evidence}"\n'
-                f"Confidence: {confidence}"
-            )
-            return {"text": text}
-        raise KeyError(f"No edge found for answer_id={answer_id!r}")
+        # answer_id is the Edge edge_id, so the doc resolves with a direct
+        # point GET — scanning up to 2000 edges and string-matching doc_id
+        # suffixes cost O(graph size) per explanation.
+        edge_fields = graph_manager.get_edge_by_id(answer_id)
+        if edge_fields is None:
+            raise KeyError(f"No edge found for answer_id={answer_id!r}")
+        subject = str(edge_fields.get("source_node_id") or "")
+        predicate = str(edge_fields.get("relation") or "")
+        obj = str(edge_fields.get("target_node_id") or "")
+        ts_start = float(edge_fields.get("ts_start") or 0.0)
+        ts_end = float(edge_fields.get("ts_end") or 0.0)
+        modality = str(edge_fields.get("modality") or "")
+        source_doc = str(edge_fields.get("source_doc_id") or "")
+        evidence = str(edge_fields.get("evidence_span") or "")
+        confidence = float(edge_fields.get("confidence") or 0.0)
+        text = (
+            f"Claim: {subject} {predicate} {obj}.\n"
+            f"Source: {source_doc} [{ts_start}s-{ts_end}s] ({modality})\n"
+            f'Evidence: "{evidence}"\n'
+            f"Confidence: {confidence}"
+        )
+        return {"text": text}
 
     async def _process_impl(
         self, input: AuditExplanationInput

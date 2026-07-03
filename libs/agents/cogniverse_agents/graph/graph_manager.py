@@ -419,31 +419,55 @@ class GraphManager:
         payload = edge.to_vespa_document()
         return self._feed_with_retry(feed_url, payload, edge.doc_id, "edge")
 
+    def _search_filtered(
+        self, conditions: List[str], top_k: int
+    ) -> List[Dict[str, Any]]:
+        """Run an unranked indexed query and return hit fields.
+
+        All filtered fields are fast-search attributes, so this is a
+        dictionary lookup — the Document-v1 visit-with-selection this
+        replaces scanned the tenant's whole graph corpus per call.
+        """
+        url = f"{self._backend._url}:{self._backend._port}"
+        body = {
+            "yql": (
+                f"select * from {self._schema_name} where {' and '.join(conditions)}"
+            ),
+            "hits": top_k,
+            # The default query profile caps hits at 400; graph fetches ask
+            # for up to 2000, so raise the native limits per request.
+            "maxHits": top_k,
+            "maxOffset": top_k,
+            "ranking": "unranked",
+        }
+        resp = self._http.post(f"{url}/search/", json=body, timeout=15)
+        if not resp.ok:
+            logger.error(
+                "Graph query failed (%s): %s", resp.status_code, resp.text[:200]
+            )
+            return []
+        data = resp.json()
+        return [c.get("fields", {}) for c in data.get("root", {}).get("children", [])]
+
     def _visit(
         self,
         doc_type: str,
         top_k: int = 100,
         name_contains: Optional[str] = None,
+        source_doc_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Visit all documents of a given doc_type via Document v1 visit API."""
-        url = f"{self._backend._url}:{self._backend._port}"
-        visit_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid"
-        params = {
-            "wantedDocumentCount": str(top_k),
-            "selection": (
-                f"{self._schema_name}.doc_type=={yql_quote(doc_type)} and "
-                f"{self._schema_name}.tenant_id=={yql_quote(self._tenant_id)}"
-            ),
-        }
+        """Fetch documents of a given doc_type for this tenant, optionally
+        scoped server-side to one ``source_doc_id``."""
+        conditions = [
+            f"doc_type contains {yql_quote(doc_type)}",
+            f"tenant_id contains {yql_quote(self._tenant_id)}",
+        ]
+        if source_doc_id:
+            conditions.append(f"source_doc_id contains {yql_quote(source_doc_id)}")
         try:
-            resp = self._http.get(visit_url, params=params, timeout=15)
-            if not resp.ok:
-                return []
-            data = resp.json()
-            hits = data.get("documents", [])
-            return [h.get("fields", h) for h in hits]
+            return self._search_filtered(conditions, top_k)
         except Exception:
-            logger.exception("Visit failed for doc_type=%s", doc_type)
+            logger.exception("Graph query failed for doc_type=%s", doc_type)
             return []
 
     def _visit_edges(
@@ -451,32 +475,19 @@ class GraphManager:
         source_node_id: Optional[str] = None,
         target_node_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Visit edges filtered by source or target node id."""
-        url = f"{self._backend._url}:{self._backend._port}"
-        visit_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid"
-        selection_parts = [
-            f'{self._schema_name}.doc_type=="edge"',
-            f"{self._schema_name}.tenant_id=={yql_quote(self._tenant_id)}",
+        """Fetch edges filtered by source or target node id."""
+        conditions = [
+            'doc_type contains "edge"',
+            f"tenant_id contains {yql_quote(self._tenant_id)}",
         ]
         if source_node_id:
-            selection_parts.append(
-                f"{self._schema_name}.source_node_id=={yql_quote(source_node_id)}"
-            )
+            conditions.append(f"source_node_id contains {yql_quote(source_node_id)}")
         if target_node_id:
-            selection_parts.append(
-                f"{self._schema_name}.target_node_id=={yql_quote(target_node_id)}"
-            )
-        params = {
-            "wantedDocumentCount": "100",
-            "selection": " and ".join(selection_parts),
-        }
+            conditions.append(f"target_node_id contains {yql_quote(target_node_id)}")
         try:
-            resp = self._http.get(visit_url, params=params, timeout=15)
-            if not resp.ok:
-                return []
-            data = resp.json()
-            return [d.get("fields", d) for d in data.get("documents", [])]
+            return self._search_filtered(conditions, top_k=100)
         except Exception:
+            logger.exception("Edge query failed")
             return []
 
     def get_edge_by_id(self, edge_id: str) -> Optional[Dict[str, Any]]:
