@@ -83,7 +83,10 @@ class PhoenixTraceStore(TraceStore):
             project: Project name (full name like "cogniverse-tenant-service")
             start_time: Optional start time filter
             end_time: Optional end time filter
-            filters: Optional Phoenix-specific filters
+            filters: Optional server-side filters. ``{"name": <span name>}``
+                becomes a SpanQuery predicate so only matching spans cross
+                the wire — pulling the whole project window and filtering
+                client-side costs the full frame per call.
             limit: Maximum number of spans to return
 
         Returns:
@@ -105,7 +108,15 @@ class PhoenixTraceStore(TraceStore):
                 end_time = end_time.replace(tzinfo=timezone.utc)
 
             # Pass time filters directly to Phoenix API for efficient server-side filtering
+            query = None
+            if filters and filters.get("name"):
+                from phoenix.client.types.spans import SpanQuery
+
+                span_name = str(filters["name"]).replace("'", "\\'")
+                query = SpanQuery().where(f"name == '{span_name}'")
+
             spans_df = await client.spans.get_spans_dataframe(
+                query=query,
                 project_identifier=project,
                 start_time=start_time,
                 end_time=end_time,

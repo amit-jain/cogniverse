@@ -82,3 +82,57 @@ class TestPerLoopClientMemoization:
 
         d = asyncio.run(second_loop())
         assert d is not a, "a fresh event loop must get its own client"
+
+
+class TestGetSpansServerSideNameFilter:
+    """A ``{"name": ...}`` filter must become a SpanQuery predicate sent to
+    Phoenix — client-side name filtering pulled the project's whole span
+    frame per call and burned the limit on unrelated span types."""
+
+    @pytest.mark.asyncio
+    async def test_name_filter_builds_spanquery_predicate(self, monkeypatch):
+        import pandas as pd
+
+        from cogniverse_telemetry_phoenix import provider as provider_mod
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint="http://unused:1",
+            tenant_id="t",
+            project_template="p-{tenant_id}",
+        )
+        client = MagicMock()
+        client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
+        monkeypatch.setattr(
+            provider_mod, "_client_for_current_loop", lambda endpoint: client
+        )
+
+        await store.get_spans(project="proj", filters={"name": "workflow_checkpoint"})
+
+        kwargs = client.spans.get_spans_dataframe.await_args.kwargs
+        query = kwargs["query"]
+        assert query is not None, "name filter must produce a SpanQuery"
+        # The predicate rides inside the serialized query payload.
+        assert "workflow_checkpoint" in str(query.to_dict())
+
+    @pytest.mark.asyncio
+    async def test_no_filters_sends_no_query(self, monkeypatch):
+        import pandas as pd
+
+        from cogniverse_telemetry_phoenix import provider as provider_mod
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint="http://unused:1",
+            tenant_id="t",
+            project_template="p-{tenant_id}",
+        )
+        client = MagicMock()
+        client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
+        monkeypatch.setattr(
+            provider_mod, "_client_for_current_loop", lambda endpoint: client
+        )
+
+        await store.get_spans(project="proj")
+
+        assert client.spans.get_spans_dataframe.await_args.kwargs["query"] is None
