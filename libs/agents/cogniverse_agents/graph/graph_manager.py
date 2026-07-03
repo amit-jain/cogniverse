@@ -77,6 +77,9 @@ class GraphManager:
         self._backend = backend
         self._tenant_id = tenant_id
         self._schema_name = schema_name
+        # One keep-alive session for all graph HTTP — the module-level
+        # requests helpers paid TCP setup per node/edge feed and per query.
+        self._http = requests.Session()
         self._code_extractor = CodeExtractor()
         self._doc_extractor = DocExtractor()
 
@@ -174,7 +177,7 @@ class GraphManager:
         }
         url = f"{self._backend._url}:{self._backend._port}/search/"
         try:
-            resp = requests.post(url, json=body, timeout=10)
+            resp = self._http.post(url, json=body, timeout=10)
             if not resp.ok:
                 raise RuntimeError(f"search returned {resp.status_code}: {resp.text}")
             data = resp.json()
@@ -369,7 +372,7 @@ class GraphManager:
         backoff = 2.0
         for attempt in range(8):
             try:
-                resp = requests.post(feed_url, json=payload, timeout=10)
+                resp = self._http.post(feed_url, json=payload, timeout=10)
             except Exception:
                 logger.exception("Failed to feed graph %s %s", kind, doc_id)
                 return False
@@ -433,7 +436,7 @@ class GraphManager:
             ),
         }
         try:
-            resp = requests.get(visit_url, params=params, timeout=15)
+            resp = self._http.get(visit_url, params=params, timeout=15)
             if not resp.ok:
                 return []
             data = resp.json()
@@ -468,7 +471,7 @@ class GraphManager:
             "selection": " and ".join(selection_parts),
         }
         try:
-            resp = requests.get(visit_url, params=params, timeout=15)
+            resp = self._http.get(visit_url, params=params, timeout=15)
             if not resp.ok:
                 return []
             data = resp.json()
@@ -488,7 +491,7 @@ class GraphManager:
         url = f"{self._backend._url}:{self._backend._port}"
         get_url = f"{url}/document/v1/graph_content/{self._schema_name}/docid/{doc_id}"
         try:
-            resp = requests.get(get_url, timeout=15)
+            resp = self._http.get(get_url, timeout=15)
             if resp.status_code == 404 or not resp.ok:
                 return None
             data = resp.json()

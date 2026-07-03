@@ -11,19 +11,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from cogniverse_agents.graph import graph_manager as gm_module
 from cogniverse_agents.graph.graph_manager import GraphManager
 
 TENANT = 'ac"me'
 SCHEMA = "kg_test"
 
 
-def _bare_manager() -> GraphManager:
+def _bare_manager(session=None) -> GraphManager:
     """Build a GraphManager without running the model-loading __init__."""
+    import requests
+
     mgr = object.__new__(GraphManager)
     mgr._backend = SimpleNamespace(_url="http://vespa", _port=8080)
     mgr._tenant_id = TENANT
     mgr._schema_name = SCHEMA
+    mgr._http = session if session is not None else requests.Session()
     return mgr
 
 
@@ -35,21 +37,30 @@ class _FakeResponse:
         return {"documents": [], "root": {"children": []}}
 
 
-@pytest.fixture
-def captured_get(monkeypatch):
-    calls = {}
+class _FakeSession:
+    """Recorder standing in for the manager's keep-alive requests.Session."""
 
-    def fake_get(url, params=None, timeout=None):
-        calls["url"] = url
-        calls["params"] = params
+    def __init__(self, calls):
+        self._calls = calls
+
+    def get(self, url, params=None, timeout=None):
+        self._calls["url"] = url
+        self._calls["params"] = params
         return _FakeResponse()
 
-    monkeypatch.setattr(gm_module.requests, "get", fake_get)
-    return calls
+    def post(self, url, json=None, timeout=None):
+        self._calls["url"] = url
+        self._calls["json"] = json
+        return _FakeResponse()
+
+
+@pytest.fixture
+def captured_get():
+    return {}
 
 
 def test_visit_escapes_tenant_quote(captured_get):
-    _bare_manager()._visit(doc_type="node")
+    _bare_manager(_FakeSession(captured_get))._visit(doc_type="node")
     selection = captured_get["params"]["selection"]
     assert selection == f'{SCHEMA}.doc_type=="node" and {SCHEMA}.tenant_id=="ac\\"me"'
     # the malformed (unescaped) form must never reach Vespa
@@ -57,7 +68,7 @@ def test_visit_escapes_tenant_quote(captured_get):
 
 
 def test_visit_edges_escapes_tenant_and_node_ids(captured_get):
-    _bare_manager()._visit_edges(source_node_id='no"de')
+    _bare_manager(_FakeSession(captured_get))._visit_edges(source_node_id='no"de')
     selection = captured_get["params"]["selection"]
     assert f'{SCHEMA}.tenant_id=="ac\\"me"' in selection
     assert f'{SCHEMA}.source_node_id=="no\\"de"' in selection
@@ -67,18 +78,12 @@ def test_visit_edges_escapes_tenant_and_node_ids(captured_get):
 def test_search_nodes_escapes_tenant_quote_in_yql(monkeypatch):
     captured = {}
 
-    def fake_post(url, json=None, timeout=None):
-        captured["body"] = json
-        return _FakeResponse()
-
-    monkeypatch.setattr(gm_module.requests, "post", fake_post)
-
-    mgr = _bare_manager()
+    mgr = _bare_manager(_FakeSession(captured))
     monkeypatch.setattr(
         mgr, "_encode_query_blocks", lambda q: ([{"0": "x"}], [{"0": "y"}])
     )
     mgr.search_nodes("find things")
 
-    yql = captured["body"]["yql"]
+    yql = captured["json"]["yql"]
     assert 'tenant_id contains "ac\\"me"' in yql
     assert 'tenant_id contains "ac"me"' not in yql
