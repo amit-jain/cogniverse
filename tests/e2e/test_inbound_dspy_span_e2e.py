@@ -131,14 +131,21 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
     Polls up to ``timeout_s`` for OTLP ingest. Returns a list of
     spans (each a dict with name + attributes).
     """
+    from datetime import datetime, timedelta, timezone
+
     from phoenix.client import Client
 
     px = Client(base_url=PHOENIX_BASE)
+    # The shared instrumentation project accumulates spans across every
+    # run on the cluster; without a time window the unsorted `limit`
+    # slice can consist entirely of historic spans and hide this run's.
+    window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
             spans = px.spans.get_spans_dataframe(
                 project_identifier="cogniverse-dspy-instrumentation",
+                start_time=window_start,
                 limit=500,
             )
         except Exception:

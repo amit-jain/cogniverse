@@ -71,7 +71,10 @@ def _run_process(session_id: str, query: str, constraint: str | None) -> dict:
 
         def _bg() -> None:
             try:
-                with httpx.Client(timeout=360.0) as c:
+                # Two parallel 120s-wall-clock loops on the ~12 tok/s LM
+                # queue behind each other; the last iteration's LM call can
+                # overshoot the loop budget, so allow well past 2x120s.
+                with httpx.Client(timeout=480.0) as c:
                     r = c.post(
                         f"{RUNTIME_BASE}/agents/orchestrator_agent/process",
                         json={
@@ -92,17 +95,22 @@ def _run_process(session_id: str, query: str, constraint: str | None) -> dict:
         if constraint is not None:
             deadline = time.time() + 60
             while time.time() < deadline:
-                with httpx.Client(timeout=2.0) as c:
-                    sr = c.get(
-                        f"{RUNTIME_BASE}/agents/orchestrator/sessions/{sid}",
-                        params={"tenant_id": _TENANT},
-                    )
+                # A single poll may time out while the runtime grinds
+                # concurrent LM calls — keep polling until the deadline.
+                try:
+                    with httpx.Client(timeout=10.0) as c:
+                        sr = c.get(
+                            f"{RUNTIME_BASE}/agents/orchestrator/sessions/{sid}",
+                            params={"tenant_id": _TENANT},
+                        )
+                except httpx.TimeoutException:
+                    continue
                 if sr.status_code == 200:
                     break
                 time.sleep(0.05)
             else:
                 raise AssertionError(f"session {sid} never active")
-            with httpx.Client(timeout=10.0) as c:
+            with httpx.Client(timeout=30.0) as c:
                 c.post(
                     f"{RUNTIME_BASE}/agents/orchestrator/message",
                     json={
@@ -114,7 +122,8 @@ def _run_process(session_id: str, query: str, constraint: str | None) -> dict:
                     },
                 )
 
-        t.join(timeout=360)
+        t.join(timeout=540)
+        assert not t.is_alive(), f"/process for {sid} still running after 540s"
         assert not err, f"/process raised: {err[0]!r}"
         return holder["result"]
 

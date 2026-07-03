@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import subprocess
 from typing import Iterator
 
@@ -35,10 +36,26 @@ def _gateway_running() -> bool:
         text=True,
         timeout=10,
     )
-    return res.returncode == 0 and "Gateway endpoint" in res.stdout
+    if res.returncode != 0 or "Gateway endpoint" not in res.stdout:
+        return False
+    # `gateway info` reads stored metadata, which survives the gateway
+    # process dying — verify something is actually listening.
+    try:
+        with socket.create_connection(("127.0.0.1", _GATEWAY_PORT), timeout=5):
+            return True
+    except OSError:
+        return False
 
 
 def _start_gateway_with_retry(max_attempts: int = 3) -> None:
+    # A dead gateway leaves its registration behind and `start` then reuses
+    # it without launching a listener — clear it so start is a real start.
+    subprocess.run(
+        ["uv", "run", "openshell", "gateway", "destroy", "--name", _GATEWAY_NAME],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
     last_err = ""
     for _ in range(max_attempts):
         res = subprocess.run(

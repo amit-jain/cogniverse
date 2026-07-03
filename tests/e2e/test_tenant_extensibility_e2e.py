@@ -393,7 +393,10 @@ class TestJobExecution:
 
     def test_gateway_agent_processes_search_query(self):
         """Routing agent receives a search query and routes to search_agent."""
-        with httpx.Client(base_url=RUNTIME, timeout=120.0) as client:
+        # LM-bound: the gateway's routed call can queue behind long
+        # generations on the ~12 tok/s LM — same 900s budget the other
+        # LM-bound tests in this file use.
+        with httpx.Client(base_url=RUNTIME, timeout=900.0) as client:
             resp = client.post(
                 "/agents/gateway_agent/process",
                 json={

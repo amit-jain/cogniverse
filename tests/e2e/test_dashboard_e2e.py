@@ -13,6 +13,7 @@ Requires:
 """
 
 import re
+import time
 
 import httpx
 import pytest
@@ -386,10 +387,17 @@ class TestMultiModalChat:
         # Streamlit st.rerun() after each message re-renders the page; the first
         # message may scroll out of the visible DOM.  The sidebar "messages: N"
         # counter is the authoritative proof that both turns were received.
-        body_text = page.inner_text("body").lower()
+        # The counter renders at the END of the script run, after the send
+        # block's LLM call — under load that run outlives networkidle, so poll
+        # for the counter instead of asserting on one immediate snapshot.
+        deadline = time.monotonic() + LLM_TIMEOUT / 1000
+        msg_match = None
+        while msg_match is None and time.monotonic() < deadline:
+            body_text = page.inner_text("body").lower()
+            msg_match = re.search(r"messages:\s*(\d+)", body_text)
+            if msg_match is None:
+                page.wait_for_timeout(2_000)
 
-        # Sidebar message counter must show >= 2 (both turns processed)
-        msg_match = re.search(r"messages:\s*(\d+)", body_text)
         assert msg_match is not None, (
             "Sidebar must show a 'messages: N' counter after multi-turn chat"
         )

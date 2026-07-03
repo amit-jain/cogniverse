@@ -467,18 +467,23 @@ def _single_process_attempt(session_id: str, constraint: str | None) -> dict:
     if constraint is not None:
         deadline = time.time() + 60
         while time.time() < deadline:
-            with httpx.Client(timeout=2.0) as c:
-                sr = c.get(
-                    f"{RUNTIME_BASE}/agents/orchestrator/sessions/{session_id}",
-                    params={"tenant_id": tenant_id},
-                )
+            # A single poll may time out while the runtime grinds
+            # concurrent LM calls — keep polling until the deadline.
+            try:
+                with httpx.Client(timeout=10.0) as c:
+                    sr = c.get(
+                        f"{RUNTIME_BASE}/agents/orchestrator/sessions/{session_id}",
+                        params={"tenant_id": tenant_id},
+                    )
+            except httpx.TimeoutException:
+                continue
             if sr.status_code == 200:
                 break
             time.sleep(0.05)
         else:
             t.join(timeout=360)
             raise AssertionError(f"session {session_id} never went active within 60 s")
-        with httpx.Client(timeout=10.0) as c:
+        with httpx.Client(timeout=30.0) as c:
             mr = c.post(
                 f"{RUNTIME_BASE}/agents/orchestrator/message",
                 json={
@@ -834,12 +839,30 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     )
     # Find the actual session_id used by the successful attempt by
     # querying Phoenix for retrieval_iteration spans tagged with the
-    # base session_id OR any of its retry-suffix variants.
+    # base session_id OR any of its retry-suffix variants. The tenant
+    # project accumulates spans from every run on the cluster, so scope
+    # the query to this test's time window — an unscoped limit=500 slice
+    # can consist entirely of other runs' spans, and the bigger scan can
+    # blow the client's 5s default timeout while the runtime is loaded.
+    from datetime import datetime, timedelta, timezone
+
+    _window_start = datetime.now(timezone.utc) - timedelta(minutes=30)
+
+    def _tenant_spans(px_client):
+        for retry in range(3):
+            try:
+                return px_client.spans.get_spans_dataframe(
+                    project_identifier="cogniverse-flywheel_org:production",
+                    start_time=_window_start,
+                    limit=500,
+                )
+            except Exception:
+                if retry == 2:
+                    raise
+                time.sleep(2)
+
     px_initial = Client(base_url="http://localhost:26006")
-    spans_for_match = px_initial.spans.get_spans_dataframe(
-        project_identifier="cogniverse-flywheel_org:production",
-        limit=500,
-    )
+    spans_for_match = _tenant_spans(px_initial)
     # Match session_ids that start with the base; pick the one with
     # ``inbound_constraints_applied`` populated (the successful run).
     candidates = spans_for_match[
@@ -864,10 +887,7 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
     iter_spans = None
     deadline = time.time() + 30
     while time.time() < deadline:
-        spans = px.spans.get_spans_dataframe(
-            project_identifier="cogniverse-flywheel_org:production",
-            limit=500,
-        )
+        spans = _tenant_spans(px)
         matching = spans[spans["attributes.session_id"] == session_id]
         iter_spans = matching[matching["name"] == "retrieval_iteration"]
         if len(iter_spans) >= expected_iter_count:
