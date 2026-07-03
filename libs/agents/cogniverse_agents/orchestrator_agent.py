@@ -688,11 +688,12 @@ class OrchestratorAgent(
             backend_url = bootstrap.backend_url
             backend_port = bootstrap.backend_port
 
-            # Extract provider from model string (e.g., "openai/gpt-4o" -> "openai")
-            provider = (
-                resolved.model.split("/")[0] if "/" in resolved.model else "local"
-            )
+            # Strip the provider prefix: Mem0's openai provider wants the
+            # bare model name; the OAI-compatible endpoint does its own
+            # routing (same as agent_dispatcher._init_agent_memory).
             llm_model = resolved.model
+            if "/" in llm_model:
+                llm_model = llm_model.split("/", 1)[1]
             llm_base_url = resolved.api_base or "http://localhost:11434"
 
             sys_cfg = self._config_manager.get_system_config()
@@ -724,7 +725,6 @@ class OrchestratorAgent(
                 embedder_base_url=denseon_url,
                 config_manager=self._config_manager,
                 schema_loader=schema_loader,
-                provider=provider,
             )
             self._memory_initialized_tenants.add(tenant_id)
         except Exception as e:
