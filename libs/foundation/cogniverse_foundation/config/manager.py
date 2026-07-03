@@ -3,8 +3,10 @@ Centralized configuration manager with multi-tenant support.
 Provides unified interface for all configuration operations with caching.
 """
 
+import copy
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -50,6 +52,7 @@ class ConfigManager:
         self,
         store: ConfigStore,
         profile_change_listener: Optional[ProfileChangeListener] = None,
+        scoped_config_cache_ttl_s: float = 5.0,
     ):
         """
         Initialize configuration manager with required ConfigStore.
@@ -65,6 +68,12 @@ class ConfigManager:
                 `BackendRegistry.add_profile_to_backends`. Kept as a
                 callback rather than a direct import so the foundation
                 layer doesn't depend on core.
+            scoped_config_cache_ttl_s: How long per-tenant scoped configs
+                (routing/telemetry/backend) are served from memory before
+                the store is consulted again. Same-manager setters
+                invalidate immediately; the TTL bounds staleness for
+                writes made by OTHER processes (another pod's admin API).
+                Set to 0 to disable.
 
         Raises:
             ValueError: If store is None
@@ -81,10 +90,16 @@ class ConfigManager:
         # backend (Vespa query timeout in tests where Vespa isn't
         # reachable burns ~20s per test). The cache is busted by
         # `set_system_config` so live updates still propagate.
-        # Per-tenant configs (routing/telemetry/backend) aren't cached
-        # here — they're rarely re-fetched in production, and unit tests
-        # avoid the round-trip entirely via the conftest singleton mock.
         self._system_config_cache: Optional[SystemConfig] = None
+        # Per-tenant scoped configs (routing/telemetry/backend) are read on
+        # every request via ConfigUtils' ensure cascade — each read was a
+        # separate store round-trip (a YQL query against Vespa). Cache the
+        # raw config_value per (scope, tenant, service, key) under a short
+        # TTL; entries are deep-copied on the way out so callers can't
+        # mutate shared state.
+        self._scoped_config_cache_ttl_s = scoped_config_cache_ttl_s
+        self._scoped_config_cache: Dict[tuple, tuple[float, Optional[dict]]] = {}
+        self._scoped_config_lock = threading.Lock()
 
         logger.info(
             "ConfigManager initialized with %s, profile_change_listener=%s",
@@ -263,6 +278,41 @@ class ConfigManager:
 
         return configs
 
+    # ========== Scoped-config cache ==========
+
+    def _cached_config_value(
+        self, scope: ConfigScope, tenant_id: str, service: str, config_key: str
+    ) -> Optional[dict]:
+        """Return the raw ``config_value`` for a scoped config, served from
+        the TTL cache when fresh. ``None`` (config absent) is cached too, so
+        tenants without overrides don't re-query the store per request."""
+        key = (scope, tenant_id, service, config_key)
+        now = time.monotonic()
+        with self._scoped_config_lock:
+            hit = self._scoped_config_cache.get(key)
+            if hit is not None and now - hit[0] < self._scoped_config_cache_ttl_s:
+                return copy.deepcopy(hit[1])
+        entry = self.store.get_config(
+            tenant_id=tenant_id,
+            scope=scope,
+            service=service,
+            config_key=config_key,
+        )
+        value = entry.config_value if entry is not None else None
+        with self._scoped_config_lock:
+            self._scoped_config_cache[key] = (now, value)
+        return copy.deepcopy(value)
+
+    def _invalidate_scoped_config(self, scope: ConfigScope, tenant_id: str) -> None:
+        """Drop cached entries for a (scope, tenant) after a write."""
+        with self._scoped_config_lock:
+            for key in [
+                k
+                for k in self._scoped_config_cache
+                if k[0] == scope and k[1] == tenant_id
+            ]:
+                del self._scoped_config_cache[key]
+
     # ========== Routing Configuration ==========
 
     def get_routing_config(
@@ -281,20 +331,17 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.get_routing_config"
         )
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.ROUTING,
-            service=service,
-            config_key="routing_config",
+        value = self._cached_config_value(
+            ConfigScope.ROUTING, tenant_id, service, "routing_config"
         )
 
-        if entry is None:
-            logger.warning(
+        if value is None:
+            logger.debug(
                 f"No routing config found for {tenant_id}:{service}, using defaults"
             )
             return RoutingConfigUnified(tenant_id=tenant_id)
 
-        return RoutingConfigUnified.from_dict(entry.config_value)
+        return RoutingConfigUnified.from_dict(value)
 
     def set_routing_config(
         self,
@@ -329,6 +376,7 @@ class ConfigManager:
             config_key="routing_config",
             config_value=routing_config.to_dict(),
         )
+        self._invalidate_scoped_config(ConfigScope.ROUTING, routing_config.tenant_id)
 
         logger.info(f"Set routing config for {routing_config.tenant_id}:{service}")
         return routing_config
@@ -352,20 +400,17 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.get_telemetry_config"
         )
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.TELEMETRY,
-            service=service,
-            config_key="telemetry_config",
+        value = self._cached_config_value(
+            ConfigScope.TELEMETRY, tenant_id, service, "telemetry_config"
         )
 
-        if entry is None:
-            logger.warning(
+        if value is None:
+            logger.debug(
                 f"No telemetry config found for {tenant_id}:{service}, using defaults"
             )
             return TelemetryConfig()
 
-        return TelemetryConfig.from_dict(entry.config_value)
+        return TelemetryConfig.from_dict(value)
 
     def set_telemetry_config(
         self,
@@ -394,6 +439,7 @@ class ConfigManager:
             config_key="telemetry_config",
             config_value=telemetry_config.to_dict(),
         )
+        self._invalidate_scoped_config(ConfigScope.TELEMETRY, tenant_id)
 
         logger.info(f"Set telemetry config for {tenant_id}:{service}")
         return telemetry_config
@@ -416,21 +462,18 @@ class ConfigManager:
         tenant_id = require_tenant_id(
             tenant_id, source="ConfigManager.get_backend_config"
         )
-        entry = self.store.get_config(
-            tenant_id=tenant_id,
-            scope=ConfigScope.BACKEND,
-            service=service,
-            config_key="backend_config",
+        value = self._cached_config_value(
+            ConfigScope.BACKEND, tenant_id, service, "backend_config"
         )
 
-        if entry is None:
+        if value is None:
             # Return empty backend config - system config will be merged in ConfigUtils
             logger.debug(
                 f"No backend config found for {tenant_id}:{service}, using empty config"
             )
             return BackendConfig(tenant_id=tenant_id)
 
-        return BackendConfig.from_dict(entry.config_value)
+        return BackendConfig.from_dict(value)
 
     def set_backend_config(
         self,
@@ -465,6 +508,7 @@ class ConfigManager:
             config_key="backend_config",
             config_value=backend_config.to_dict(),
         )
+        self._invalidate_scoped_config(ConfigScope.BACKEND, backend_config.tenant_id)
 
         logger.info(f"Set backend config for {backend_config.tenant_id}:{service}")
         return backend_config
