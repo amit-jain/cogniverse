@@ -64,8 +64,10 @@ def apply_semantic_routing(
 
     When ``config.enabled`` is False the input ``endpoint`` is returned as-is
     (same object). When enabled, a deep copy is returned with ``api_base`` set
-    to ``config.semantic_router_url`` and the resolved tier header merged onto
-    ``extra_headers``.
+    to ``config.semantic_router_url``, ``model`` set to ``config.routed_model``
+    (the router resolves models by its own catalog names / auto alias and
+    rejects raw provider model ids with a 400), and the resolved tier header
+    merged onto ``extra_headers``.
 
     Raises ``ValueError`` if routing is enabled but ``semantic_router_url`` is
     empty — a misconfiguration that would otherwise silently send LLM traffic
@@ -85,6 +87,7 @@ def apply_semantic_routing(
 
     routed = copy.deepcopy(endpoint)
     routed.api_base = config.semantic_router_url
+    routed.model = config.routed_model
     routed.extra_headers = merged
     return routed
 
@@ -143,7 +146,8 @@ def routed_lm_context_for(
     ``endpoint`` (an ``LLMEndpointConfig``):
 
     - Enabled: the endpoint is routed through the semantic router (api_base +
-      tenant-tier header) for ``tenant_id``, preserving the endpoint's model.
+      tenant-tier header) for ``tenant_id``; the model becomes the router's
+      auto alias and the router picks the concrete model itself.
     - Disabled: the LM is built directly from the same endpoint — the plain
       direct-to-backend path, not a fallback.
 

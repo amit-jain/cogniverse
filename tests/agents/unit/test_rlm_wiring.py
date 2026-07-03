@@ -103,7 +103,7 @@ class TestRLMAwareMixinRouting:
         rlm = host.get_rlm(self._endpoint())
 
         assert rlm.llm_config.api_base == _SR_URL
-        assert rlm.model == "openai/gpt-4o"
+        assert rlm.model == "openai/auto"
         assert rlm.llm_config.extra_headers == {
             "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",

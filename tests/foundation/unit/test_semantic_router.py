@@ -90,7 +90,9 @@ class TestApplySemanticRouting:
 
     def test_enabled_rewrites_api_base_and_attaches_tier_header(self):
         cfg = _enabled_config()
-        endpoint = LLMEndpointConfig(model="openai/router-auto", api_base=DIRECT)
+        endpoint = LLMEndpointConfig(
+            model="openai/some-provider-model", api_base=DIRECT
+        )
         routed = apply_semantic_routing(
             endpoint=endpoint, config=cfg, tenant_id="acme:prod"
         )
@@ -99,6 +101,20 @@ class TestApplySemanticRouting:
             "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
         }
+
+    def test_enabled_replaces_model_with_router_auto_alias(self):
+        # The router resolves models by its own catalog names / auto alias and
+        # 400s on raw provider model ids — the routed request must not carry
+        # the endpoint's model.
+        cfg = _enabled_config()
+        endpoint = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it", api_base=DIRECT
+        )
+        routed = apply_semantic_routing(
+            endpoint=endpoint, config=cfg, tenant_id="acme:prod"
+        )
+        assert routed.model == "openai/auto"
+        assert endpoint.model == "openai/google/gemma-4-e4b-it"
 
     def test_merges_onto_preexisting_extra_headers(self):
         cfg = _enabled_config()
@@ -165,6 +181,7 @@ class TestSemanticRouterConfigSerialization:
         assert rt.tenant_tiers == {"acme:prod": "pro"}
         assert rt.default_tier == "free"
         assert rt.tier_header == "x-authz-user-groups"
+        assert rt.routed_model == "openai/auto"
 
     def test_system_config_default_leaves_semantic_router_disabled(self):
         assert SystemConfig().semantic_router.enabled is False
@@ -294,8 +311,9 @@ class TestRoutedLMContextFor:
             )
 
     def test_enabled_routes_the_given_endpoint(self, monkeypatch):
-        # endpoint param: route the agent's own endpoint (preserving its model)
-        # rather than re-resolving from config.
+        # endpoint param: route the agent's own endpoint rather than
+        # re-resolving from config. The routed request carries the router's
+        # auto alias — the router picks the concrete model.
         cfg = MagicMock()
         cfg.get_semantic_router.return_value = _enabled_config()
         self._patch_get_config(monkeypatch, cfg)
@@ -304,7 +322,7 @@ class TestRoutedLMContextFor:
             MagicMock(), "acme:prod", "knowledge_summarization_agent", endpoint=endpoint
         ):
             lm = dspy.settings.lm
-        assert lm.model == "openai/tuned"  # model preserved
+        assert lm.model == "openai/auto"  # router's auto alias, not the raw id
         assert lm.kwargs["api_base"] == SR_URL  # routed
         cfg.get_llm_config.assert_not_called()  # endpoint used, no re-resolve
 

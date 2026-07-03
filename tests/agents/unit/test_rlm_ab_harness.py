@@ -268,7 +268,7 @@ class TestABRunnerSemanticRouting:
         # router returns the same model for each.
         routed = runner._routed_llm_config
         assert routed.api_base == "http://semantic-router:8080/v1"
-        assert routed.model == "openai/gpt-4o"
+        assert routed.model == "openai/auto"
         assert routed.extra_headers == {
             "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
