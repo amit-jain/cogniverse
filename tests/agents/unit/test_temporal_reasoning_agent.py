@@ -36,7 +36,21 @@ def _factory_for(rows: List[Dict[str, Any]]):
     def _factory(tenant_id: str):
         mm = MagicMock()
         mm.memory = MagicMock()
-        mm.get_all_memories = lambda *, tenant_id=tenant_id, agent_name: list(rows)
+
+        def _get_all(*, tenant_id=tenant_id, agent_name, filters=None):
+            # Mirror the real store: subject_key filters server-side
+            # (pinned against real Vespa in
+            # tests/memory/integration/test_mem0_vespa_integration.py).
+            subject = (filters or {}).get("subject_key")
+            if subject is None:
+                return list(rows)
+            return [
+                r
+                for r in rows
+                if (r.get("metadata") or {}).get("subject_key") == subject
+            ]
+
+        mm.get_all_memories = _get_all
         return mm
 
     return _factory

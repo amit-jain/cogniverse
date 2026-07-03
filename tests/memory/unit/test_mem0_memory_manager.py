@@ -199,6 +199,7 @@ class TestMem0MemoryManager:
         mock_memory.get_all.assert_called_once_with(
             user_id="tenant1",
             agent_id="test_agent",
+            filters=None,
         )
 
     @patch("cogniverse_core.memory.manager.Memory")
@@ -311,3 +312,63 @@ class TestMem0MemoryManager:
     # favor of schema-driven cleanup_with_schema (covered by
     # tests/memory/integration/test_schema_lifecycle_integration.py and
     # tests/memory/integration/test_soft_delete_lifecycle.py).
+
+
+class TestInitializeIdempotent:
+    """Repeat initialize() with identical wiring must not rebuild the Mem0
+    stack — the dispatcher runs initialize_memory per dispatched request on
+    a per-tenant singleton, so every request paid a full Memory.from_config
+    (embedder + LLM + vector-store construction)."""
+
+    @patch("cogniverse_core.registries.backend_registry.get_backend_registry")
+    @patch("cogniverse_core.memory.manager.Memory")
+    def test_same_wiring_builds_memory_once(
+        self, mock_memory_class, mock_get_backend_registry
+    ):
+        from pathlib import Path
+
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+        from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+        from cogniverse_foundation.config.utils import (
+            create_default_config_manager,
+        )
+
+        mock_memory_class.from_config.return_value = MagicMock()
+        mock_backend = MagicMock()
+        mock_backend.get_tenant_schema_name.return_value = "agent_memories_t_idem"
+        mock_backend.deploy_schema.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.get_ingestion_backend.return_value = mock_backend
+        mock_get_backend_registry.return_value = mock_registry
+
+        Mem0MemoryManager._instances.clear()
+        manager = Mem0MemoryManager(tenant_id="t_idem")
+        kwargs = dict(
+            backend_host="localhost",
+            backend_port=8080,
+            llm_model="test-llm",
+            embedding_model="lightonai/DenseOn",
+            llm_base_url="http://localhost:11434/v1",
+            embedder_base_url="http://localhost:8000",
+            base_schema_name="agent_memories",
+            config_manager=create_default_config_manager(),
+            schema_loader=FilesystemSchemaLoader(Path("configs/schemas")),
+        )
+
+        manager.initialize(**kwargs)
+        manager.initialize(**kwargs)
+        manager.initialize(**kwargs)
+        assert mock_memory_class.from_config.call_count == 1
+
+        # Different wiring must rebuild.
+        changed = dict(kwargs, llm_model="another-llm")
+        manager.initialize(**changed)
+        assert mock_memory_class.from_config.call_count == 2
+
+        # A late-supplied knowledge registry still lands on the no-op path.
+        sentinel_registry = MagicMock()
+        manager.initialize(**dict(changed, knowledge_registry=sentinel_registry))
+        assert mock_memory_class.from_config.call_count == 2
+        assert manager._knowledge_registry is sentinel_registry
+
+        Mem0MemoryManager._instances.clear()

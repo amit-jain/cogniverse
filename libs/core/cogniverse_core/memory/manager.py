@@ -221,6 +221,29 @@ class Mem0MemoryManager:
         if not self.tenant_id:
             raise ValueError("tenant_id must be set before initialize()")
 
+        # Idempotency: the dispatcher runs initialize_memory per dispatched
+        # request (via MemoryAwareMixin), and this manager is a per-tenant
+        # singleton — rebuilding Memory.from_config each time reconstructed
+        # the embedder/LLM/vector-store stack for identical wiring.
+        fingerprint = (
+            backend_host,
+            backend_port,
+            llm_model,
+            embedding_model,
+            llm_base_url,
+            embedder_base_url,
+            llm_api_key,
+            backend_config_port,
+            base_schema_name,
+        )
+        if (
+            self.memory is not None
+            and getattr(self, "_init_fingerprint", None) == fingerprint
+        ):
+            if knowledge_registry is not None:
+                self._knowledge_registry = knowledge_registry
+            return
+
         # Get backend instance for memory operations
         from cogniverse_core.registries.backend_registry import get_backend_registry
         from cogniverse_foundation.config.utils import get_config
@@ -419,6 +442,7 @@ class Mem0MemoryManager:
 
         # Initialize Memory
         self.memory = Memory.from_config(self.config)
+        self._init_fingerprint = fingerprint
 
         # stash the optional knowledge registry. When set, add_memory
         # enforces schema.provenance_required and computes initial trust.
@@ -723,8 +747,12 @@ class Mem0MemoryManager:
         # Walk existing conflict_set memories for this subject so we don't
         # write a duplicate every time the same conflict re-surfaces.
         try:
+            # subject_key is a promoted Vespa field — filter server-side
+            # instead of pulling every conflict record per memory write.
             existing_blob = self.memory.get_all(
-                user_id=tenant_id, agent_id=CONFLICT_AGENT_NAME
+                user_id=tenant_id,
+                agent_id=CONFLICT_AGENT_NAME,
+                filters={"subject_key": subject_key},
             )
         except Exception:
             existing_blob = {}
@@ -905,6 +933,7 @@ class Mem0MemoryManager:
         tenant_id: str,
         agent_name: str,
         include_archived: bool = False,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get all memories for an agent.
@@ -915,6 +944,9 @@ class Mem0MemoryManager:
             include_archived: when False (default), soft-deleted memories
                 are excluded. Set True for admin restore tooling that
                 needs to surface them.
+            filters: Optional server-side filters (e.g. ``{"subject_key":
+                ...}``) merged into the store query — prefer these over
+                fetching everything and filtering in Python.
 
         Returns:
             List of all memories
@@ -926,6 +958,7 @@ class Mem0MemoryManager:
             result = self.memory.get_all(
                 user_id=tenant_id,
                 agent_id=agent_name,
+                filters=filters,
             )
 
             # Mem0 get_all returns {"results": [...]}

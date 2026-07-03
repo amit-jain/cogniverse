@@ -43,7 +43,12 @@ def _factory_returning(rows_by_tenant: Dict[str, List[Dict[str, Any]]]):
         mm = MagicMock()
         mm.memory = MagicMock()
         rows = list(rows_by_tenant.get(tenant_id, []))
-        mm.get_all_memories = lambda *, tenant_id=tenant_id, agent_name: list(rows)
+        mm.get_all_memories = lambda *, tenant_id=tenant_id, agent_name, filters=None: [
+            r
+            for r in rows
+            if (filters or {}).get("subject_key") is None
+            or (r.get("metadata") or {}).get("subject_key") == filters["subject_key"]
+        ]
         return mm
 
     return _factory
@@ -402,7 +407,12 @@ async def test_walks_real_graph():
     ]
     fake_mm = MagicMock()
     fake_mm.memory = MagicMock()
-    fake_mm.get_all_memories = lambda *, tenant_id, agent_name: list(rows)
+    fake_mm.get_all_memories = lambda *, tenant_id, agent_name, filters=None: [
+        r
+        for r in rows
+        if (filters or {}).get("subject_key") is None
+        or (r.get("metadata") or {}).get("subject_key") == filters["subject_key"]
+    ]
     agent = KnowledgeGraphTraversalAgent(deps=KGTraversalDeps(tenant_id=TENANT))
     # KGTraversal pulls its memory manager from MemoryAwareMixin slots.
     agent.memory_manager = fake_mm
