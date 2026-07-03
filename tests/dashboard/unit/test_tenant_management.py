@@ -10,7 +10,19 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+
+@pytest.fixture(autouse=True)
+def _restore_patched_module_attr():
+    """The AppTest scripts below monkey-patch a real module attribute
+    in-process; restore it so the fake doesn't leak into later test files."""
+    import cogniverse_dashboard.tabs.tenant_management as _m
+
+    original = _m._api_call
+    yield
+    _m._api_call = original
 
 
 def _create_tenant_app(tmp_path: Path) -> AppTest:

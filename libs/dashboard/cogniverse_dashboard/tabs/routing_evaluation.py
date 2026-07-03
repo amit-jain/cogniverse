@@ -73,24 +73,34 @@ def render_routing_evaluation_tab():
 
     # Time range for query — Phoenix stores spans in UTC, mirror that here so
     # the window is correct on non-UTC hosts (the dashboard runs anywhere).
-    end_time = datetime.now(timezone.utc)
+    # The end is quantized to 30s so reruns within the cache TTL share a key
+    # instead of busting the cache with a fresh datetime.now() each time.
+    end_time = datetime.now(timezone.utc).replace(microsecond=0)
+    end_time = end_time.replace(second=(end_time.second // 30) * 30)
     start_time = end_time - timedelta(hours=lookback_hours)
 
     # Fetch routing spans ONCE for the window; summary/confidence/temporal all
     # reuse this single pull (a failed fetch means the provider is unavailable).
-    with st.spinner("Fetching routing spans from telemetry..."):
-        try:
-            routing_spans = run_async_in_streamlit(
-                evaluator.query_routing_spans(
-                    start_time=start_time, end_time=end_time, limit=1000
-                )
+    # Cached across reruns — Streamlit re-executes this tab on every widget
+    # interaction anywhere in the app, and each miss is a 1000-span pull.
+    @st.cache_data(ttl=30, show_spinner="Fetching routing spans from telemetry...")
+    def _fetch_routing_spans(_ev, project: str, start_iso: str, end_iso: str):
+        return run_async_in_streamlit(
+            _ev.query_routing_spans(
+                start_time=datetime.fromisoformat(start_iso),
+                end_time=datetime.fromisoformat(end_iso),
+                limit=1000,
             )
-        except Exception:
-            st.warning("⚠️ Telemetry provider is not available")
-            st.info(
-                "Check your telemetry configuration and ensure the provider is running"
-            )
-            return
+        )
+
+    try:
+        routing_spans = _fetch_routing_spans(
+            evaluator, project_name, start_time.isoformat(), end_time.isoformat()
+        )
+    except Exception:
+        st.warning("⚠️ Telemetry provider is not available")
+        st.info("Check your telemetry configuration and ensure the provider is running")
+        return
 
     if not routing_spans:
         st.warning(
@@ -497,7 +507,12 @@ def _render_annotation_section(tenant_id: str, project_name: str, lookback_hours
                         st.error(f"❌ Error generating annotations: {e}")
 
     with col3:
-        stats = run_async_in_streamlit(annotation_storage.get_annotation_statistics())
+
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _annotation_stats(_storage, project: str):
+            return run_async_in_streamlit(_storage.get_annotation_statistics())
+
+        stats = _annotation_stats(annotation_storage, project_name)
         st.metric(
             label="Total Annotations",
             value=stats.get("total", 0),

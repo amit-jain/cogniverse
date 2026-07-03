@@ -10,7 +10,20 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+
+@pytest.fixture(autouse=True)
+def _restore_delete_profile_api():
+    """The AppTest scripts below monkey-patch the real module attribute
+    ``backend_profile.delete_profile_via_api`` in-process; without restoring
+    it, every later test file that imports the function gets the fake."""
+    import cogniverse_dashboard.tabs.backend_profile as bp
+
+    original = bp.delete_profile_via_api
+    yield
+    bp.delete_profile_via_api = original
 
 
 def _delete_profile_app(tmp_path: Path) -> AppTest:
