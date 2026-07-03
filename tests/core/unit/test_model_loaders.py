@@ -263,3 +263,59 @@ class TestVideoPrismVespaFormat:
                 np.int8
             )
             assert binary_dict[f"patch{i}"] == expected_bits.tobytes().hex()
+
+
+class TestPerKeyModelLoadLocks:
+    """A cold load of one model must not block cache hits for another —
+    the single global lock previously serialized every lookup behind any
+    in-flight (minutes-long) load."""
+
+    def test_cache_hit_returns_while_other_model_loads(self, monkeypatch):
+        import threading
+        import time
+
+        from cogniverse_core.common.models import model_loaders as ml
+
+        monkeypatch.setattr(ml, "_model_cache", {}, raising=True)
+        monkeypatch.setattr(ml, "_model_key_locks", {}, raising=True)
+
+        # Pre-warm model A in the cache (no parameters attr → fast path).
+        ml._model_cache["model-a"] = ("model_a", "proc_a")
+
+        slow_load_started = threading.Event()
+        release_slow_load = threading.Event()
+
+        class _SlowLoader:
+            def load_model(self):
+                slow_load_started.set()
+                assert release_slow_load.wait(timeout=5), "test deadlock"
+                return "model_b", "proc_b"
+
+        monkeypatch.setattr(
+            ml.ModelLoaderFactory,
+            "create_loader",
+            staticmethod(lambda name, config, logger=None: _SlowLoader()),
+        )
+
+        results = {}
+
+        def load_b():
+            results["b"] = ml.get_or_load_model("model-b", {}, None)
+
+        loader_thread = threading.Thread(target=load_b)
+        loader_thread.start()
+        assert slow_load_started.wait(timeout=5)
+
+        # While B is mid-load, a cache hit for A must return immediately.
+        t0 = time.perf_counter()
+        hit = ml.get_or_load_model("model-a", {}, None)
+        elapsed = time.perf_counter() - t0
+        assert hit == ("model_a", "proc_a")
+        assert elapsed < 1.0, (
+            f"cache hit blocked {elapsed:.2f}s behind an unrelated cold load"
+        )
+
+        release_slow_load.set()
+        loader_thread.join(timeout=5)
+        assert results["b"] == ("model_b", "proc_b")
+        assert ml._model_cache["model-b"] == ("model_b", "proc_b")

@@ -2162,3 +2162,67 @@ class TestProcessImplEventLoopOffload:
         )
         # 0.3s blocked loop would allow ~0-2 ticks; offloaded allows ~15.
         assert ticks >= 4, f"event loop stalled during text search: only {ticks} ticks"
+
+
+@pytest.mark.unit
+class TestEnsembleEncodeDedupe:
+    """Profiles sharing an embedding model must share ONE encode per ensemble
+    search — encoding the identical query per profile paid a full model
+    forward for every profile even when the model was the same."""
+
+    @pytest.mark.asyncio
+    async def test_shared_model_encodes_once(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from cogniverse_core.query import encoders as enc_mod
+
+        encode_calls = []
+        created_encoders = []
+
+        def counting_encode(_query):
+            encode_calls.append(1)
+            return np.zeros((2, 128), dtype=np.float32)
+
+        def fake_create_encoder(profile, model, config=None):
+            created_encoders.append(model)
+            return SimpleNamespace(encode=counting_encode)
+
+        agent = SearchAgent.__new__(SearchAgent)
+        agent.active_profile = "p_active"
+        agent.query_encoder = SimpleNamespace(encode=counting_encode)
+        agent.search_config = {
+            "backend": {
+                "profiles": {
+                    "p_active": {"embedding_model": "m_active"},
+                    "p_shared_1": {"embedding_model": "m_shared"},
+                    "p_shared_2": {"embedding_model": "m_shared"},
+                }
+            }
+        }
+        monkeypatch.setattr(
+            enc_mod.QueryEncoderFactory, "create_encoder", fake_create_encoder
+        )
+        searched_profiles = []
+
+        def fake_search(query_dict):
+            searched_profiles.append(query_dict["profile"])
+            return []
+
+        agent._get_backend = lambda: SimpleNamespace(search=fake_search)
+        agent._build_date_filter = lambda _s, _e: None
+
+        await agent._search_ensemble(
+            "q",
+            tenant_id="t:t",
+            profiles=["p_active", "p_shared_1", "p_shared_2"],
+            modality="video",
+            top_k=5,
+        )
+
+        # Two distinct encode units: the active encoder + m_shared — never
+        # three. Both shared profiles still search.
+        assert len(encode_calls) == 2, (
+            f"expected one encode per distinct model, got {len(encode_calls)}"
+        )
+        assert created_encoders == ["m_shared"]
+        assert sorted(searched_profiles) == ["p_active", "p_shared_1", "p_shared_2"]

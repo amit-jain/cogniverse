@@ -50,7 +50,9 @@ class TestVersionBump:
 
     def test_bump_prerelease(self):
         assert vb.bump_version("1.2.3", "prerelease", "alpha") == "1.2.4-alpha.0"
-        assert vb.bump_version("1.2.4-alpha.0", "prerelease", "alpha") == "1.2.4-alpha.1"
+        assert (
+            vb.bump_version("1.2.4-alpha.0", "prerelease", "alpha") == "1.2.4-alpha.1"
+        )
         assert vb.bump_version("1.2.4-alpha.1", "prerelease", "beta") == "1.2.4-beta.0"
 
 

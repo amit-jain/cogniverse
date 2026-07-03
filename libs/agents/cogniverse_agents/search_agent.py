@@ -801,58 +801,66 @@ class SearchAgent(
 
         import asyncio
 
-        # Pre-compute query embeddings for each profile in parallel
-        async def encode_for_profile(profile_name: str):
-            """Encode query for specific profile"""
-            try:
-                # Get profile config
-                backend_config_data = self.search_config.get("backend", {})
-                profiles_config = backend_config_data.get("profiles", {})
+        # Pre-compute query embeddings once per distinct model. Profiles
+        # sharing an embedding model share one encode (the factory already
+        # caches encoders by model, but encode() previously ran per profile),
+        # and both encoder construction and encode run off the event loop —
+        # a cold encoder construction is a full model load.
+        backend_config_data = self.search_config.get("backend", {})
+        profiles_config = backend_config_data.get("profiles", {})
 
-                if profile_name not in profiles_config:
-                    logger.warning(
-                        f"Profile {profile_name} not found in config, using active profile encoder"
-                    )
-                    return profile_name, self.query_encoder.encode(query)
-
-                # Create encoder for this profile
-                profile_config = profiles_config[profile_name]
-                model_name = profile_config.get(
-                    "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
+        def _encode_unit(profile_name: str) -> str:
+            """Profiles map to the model that encodes for them; unknown
+            profiles and the active profile use the agent's own encoder."""
+            if profile_name not in profiles_config:
+                logger.warning(
+                    f"Profile {profile_name} not found in config, using active profile encoder"
                 )
+                return "__active__"
+            if profile_name == self.active_profile:
+                return "__active__"
+            return profiles_config[profile_name].get(
+                "embedding_model", "TomoroAI/tomoro-colqwen3-embed-4b"
+            )
 
-                # encode() is synchronous, CPU/GPU-blocking work — offload it so
-                # gather actually runs the per-profile encodings concurrently
-                # instead of serially on (and blocking) the event loop.
-                if profile_name == self.active_profile:
-                    embeddings = await asyncio.to_thread(
-                        self.query_encoder.encode, query
-                    )
-                else:
-                    # Create temporary encoder for this profile
+        unit_by_profile = {p: _encode_unit(p) for p in profiles}
+        representative = {}
+        for profile_name, unit in unit_by_profile.items():
+            representative.setdefault(unit, profile_name)
+
+        async def encode_unit(unit: str, profile_name: str):
+            try:
+
+                def _load_and_encode():
+                    if unit == "__active__":
+                        return self.query_encoder.encode(query)
                     from cogniverse_core.query.encoders import QueryEncoderFactory
 
                     encoder = QueryEncoderFactory.create_encoder(
-                        profile_name, model_name, config=self.search_config
+                        profile_name, unit, config=self.search_config
                     )
-                    embeddings = await asyncio.to_thread(encoder.encode, query)
+                    return encoder.encode(query)
 
+                embeddings = await asyncio.to_thread(_load_and_encode)
                 logger.debug(
-                    f"Encoded query for profile {profile_name}: shape {embeddings.shape}"
+                    f"Encoded query for model unit {unit}: shape {embeddings.shape}"
                 )
-                return profile_name, embeddings
-
+                return unit, embeddings
             except Exception as e:
-                logger.error(f"Failed to encode query for profile {profile_name}: {e}")
-                return profile_name, None
+                logger.error(f"Failed to encode query for model unit {unit}: {e}")
+                return unit, None
 
-        # Encode queries in parallel
-        encoding_tasks = [encode_for_profile(p) for p in profiles]
-        profile_embeddings = await asyncio.gather(*encoding_tasks)
+        unit_embeddings = dict(
+            await asyncio.gather(
+                *(encode_unit(u, rep) for u, rep in representative.items())
+            )
+        )
 
-        # Filter successful encodings
+        # Fan the shared embeddings back out to every profile.
         valid_embeddings = {
-            profile: emb for profile, emb in profile_embeddings if emb is not None
+            profile: unit_embeddings[unit]
+            for profile, unit in unit_by_profile.items()
+            if unit_embeddings.get(unit) is not None
         }
 
         if not valid_embeddings:

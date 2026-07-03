@@ -120,6 +120,11 @@ def pylate_server(vllm_sidecar):
             "--hf-overrides",
             '{"architectures": ["ColBERTModernBertModel"]}',
         ],
+        # LateOn's sentence_bert_config.json declares max_seq_length=299 (an
+        # ST truncation default); vLLM's CPU build clamps derived
+        # max_model_len to it and rejects 8192 even though the model's
+        # position table is 8192. The env var is vLLM's documented override.
+        env={"VLLM_ALLOW_LONG_MAX_MODEL_LEN": "1"},
     )
 
 

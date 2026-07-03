@@ -49,11 +49,14 @@ async def test_startup_cleanup_purges_expired_entry_on_first_op(tmp_path):
     assert cache_path.exists()
     assert backend._needs_cleanup is True
 
-    # First async op triggers the deferred startup sweep.
+    # First async op schedules the deferred startup sweep as a background
+    # task — the op itself must not pay the full cache-tree walk.
     await backend.get("unrelated_key")
-
-    assert cache_path.exists() is False
     assert backend._needs_cleanup is False
+
+    # The sweep still purges the expired entry once it completes.
+    await backend._startup_cleanup_task
+    assert cache_path.exists() is False
 
 
 @pytest.mark.asyncio

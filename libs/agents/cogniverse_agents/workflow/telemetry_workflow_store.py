@@ -18,6 +18,7 @@ injected (tests / single-provider contexts) to bypass that resolution.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Dict, List, Type, TypeVar
 
@@ -166,8 +167,13 @@ class TelemetryWorkflowStore(WorkflowStore):
     async def load_templates(self, tenant_id: str) -> List[WorkflowTemplate]:
         am = self._am(tenant_id)
         templates: List[WorkflowTemplate] = []
-        for tid in await self._template_index(tenant_id):
-            blob = await am.load_blob(_BLOB_KIND, _template_key(tid))
+        template_ids = await self._template_index(tenant_id)
+        # One blob per template — the loads are independent round-trips, so
+        # fetch them concurrently instead of serially.
+        blobs = await asyncio.gather(
+            *(am.load_blob(_BLOB_KIND, _template_key(tid)) for tid in template_ids)
+        )
+        for blob in blobs:
             if not blob:
                 continue
             try:

@@ -275,11 +275,15 @@ class MultiDocumentSynthesisAgent(
     ) -> MultiDocSynthesisOutput:
         kg_claim_groups = self._kg_claim_groups()
 
-        # Resolve each DocumentRef to (citation_ref, content).
+        # Resolve each DocumentRef to (citation_ref, content) — resolutions
+        # are independent backend fetches, so run them concurrently instead
+        # of one round-trip at a time.
         refs_resolved: List[DocumentRef] = []
         contents: List[str] = []
-        for ref in input.documents:
-            content = await self._resolve_document(ref)
+        resolved = await asyncio.gather(
+            *(self._resolve_document(ref) for ref in input.documents)
+        )
+        for ref, content in zip(input.documents, resolved):
             if content is None:
                 logger.debug(
                     "Skipping unresolved document ref: memory_id=%s label=%s",

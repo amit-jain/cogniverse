@@ -1023,6 +1023,8 @@ import threading
 
 _model_cache: Dict[str, Tuple[Any, Any]] = {}
 _model_lock = threading.Lock()
+# One lock per cache key so cold loads don't serialize unrelated models.
+_model_key_locks: Dict[str, threading.Lock] = {}
 
 
 def get_or_load_model(
@@ -1041,36 +1043,53 @@ def get_or_load_model(
     if config.get("remote_inference_url"):
         cache_key = f"{model_name}@{config['remote_inference_url']}"
 
-    with _model_lock:
-        if not force_reload and cache_key in _model_cache:
-            cached_model, cached_processor = _model_cache[cache_key]
-            try:
-                if hasattr(cached_model, "parameters"):
-                    param = next(cached_model.parameters(), None)
-                    if param is not None and param.device.type == "meta":
-                        if logger:
-                            logger.warning(
-                                f"Cached model {cache_key} has meta tensors, reloading"
-                            )
-                        del _model_cache[cache_key]
-                    else:
-                        if logger:
-                            logger.info(f"Using cached model: {cache_key}")
-                        return cached_model, cached_processor
-                else:
+    def _cached_entry():
+        """Return the valid cached pair, evicting invalid entries. Caller
+        must hold ``_model_lock``."""
+        if force_reload or cache_key not in _model_cache:
+            return None
+        cached_model, cached_processor = _model_cache[cache_key]
+        try:
+            if hasattr(cached_model, "parameters"):
+                param = next(cached_model.parameters(), None)
+                if param is not None and param.device.type == "meta":
                     if logger:
-                        logger.info(f"Using cached model: {cache_key}")
-                    return cached_model, cached_processor
-            except (StopIteration, RuntimeError):
-                if logger:
-                    logger.warning(f"Cached model {cache_key} invalid, reloading")
-                del _model_cache[cache_key]
+                        logger.warning(
+                            f"Cached model {cache_key} has meta tensors, reloading"
+                        )
+                    del _model_cache[cache_key]
+                    return None
+            if logger:
+                logger.info(f"Using cached model: {cache_key}")
+            return cached_model, cached_processor
+        except (StopIteration, RuntimeError):
+            if logger:
+                logger.warning(f"Cached model {cache_key} invalid, reloading")
+            del _model_cache[cache_key]
+            return None
 
-        # Load model under lock to prevent concurrent from_pretrained calls
+    # Two-level locking: the global lock only guards the cache dict and the
+    # per-key lock registry; the (minutes-long) load itself runs under a
+    # per-key lock so a cold load of one model no longer blocks cache hits
+    # and loads of every other model.
+    with _model_lock:
+        cached = _cached_entry()
+        if cached is not None:
+            return cached
+        key_lock = _model_key_locks.setdefault(cache_key, threading.Lock())
+
+    with key_lock:
+        with _model_lock:
+            cached = _cached_entry()
+            if cached is not None:
+                return cached
+
+        # Load outside the global lock — only same-key callers wait here.
         loader = ModelLoaderFactory.create_loader(model_name, config, logger)
         model, processor = loader.load_model()
 
-        _model_cache[cache_key] = (model, processor)
+        with _model_lock:
+            _model_cache[cache_key] = (model, processor)
         return model, processor
 
 

@@ -70,12 +70,20 @@ class VespaEmbeddingProcessor:
             return self._single_vector
         return _is_single_vector_schema(self.schema_name)
 
-    def process_embeddings(self, raw_embeddings: Any) -> Dict[str, Any]:
+    def process_embeddings(
+        self,
+        raw_embeddings: Any,
+        needs_float: Optional[bool] = None,
+        needs_binary: Optional[bool] = None,
+    ) -> Dict[str, Any]:
         """
         Process raw embeddings into Vespa format
 
         Args:
             raw_embeddings: Can be numpy array, dict of arrays, or already processed
+            needs_float: Whether the schema's strategies read the float form.
+                ``None`` (unknown) produces it.
+            needs_binary: Whether the binary form is read. ``None`` produces it.
 
         Returns:
             Dict with processed embeddings ready for Vespa
@@ -95,21 +103,26 @@ class VespaEmbeddingProcessor:
             if raw_embeddings.ndim == 3 and raw_embeddings.shape[0] == 1:
                 raw_embeddings = raw_embeddings.squeeze(0)
 
+            # Only produce the formats the schema's ranking strategies read
+            # (both when unspecified) — the discarded format previously cost
+            # a full conversion pass per document.
+            def _formats(arr: np.ndarray) -> Dict[str, Any]:
+                out: Dict[str, Any] = {}
+                if needs_float is None or needs_float:
+                    out["embedding"] = self._convert_to_float_dict(arr)
+                if needs_binary is None or needs_binary:
+                    out["embedding_binary"] = self._convert_to_binary_dict(arr)
+                return out
+
             if raw_embeddings.ndim == 2 and raw_embeddings.shape[0] > 0:
                 # Multi-vector or patch embeddings: (num_patches, embedding_dim)
-                return {
-                    "embedding": self._convert_to_float_dict(raw_embeddings),
-                    "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
-                }
+                return _formats(raw_embeddings)
             elif raw_embeddings.ndim == 1:
                 # Global embeddings: pass 1D array directly so _convert_to_float_dict
                 # sees ndim==1, sets is_1d_input=True, and returns a plain float list
                 # for single-vector schemas (e.g. agent_memories tensor<float>(d0[768])).
                 # Pre-reshaping to (1, N) here loses that signal and causes hex encoding.
-                return {
-                    "embedding": self._convert_to_float_dict(raw_embeddings),
-                    "embedding_binary": self._convert_to_binary_dict(raw_embeddings),
-                }
+                return _formats(raw_embeddings)
             else:
                 raise ValueError(
                     f"Unexpected embedding array shape: {raw_embeddings.shape}. "
