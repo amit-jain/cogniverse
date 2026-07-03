@@ -99,3 +99,45 @@ class TestCustomPluginRegistration:
             auto_register_plugins({"evaluation": {"plugins": ["visual_evaluator"]}})
 
         mock_register.assert_called_once()
+
+
+@pytest.mark.unit
+class TestDatasetFetchOncePerSweep:
+    """evaluation_task must reuse the downloaded dataset frame across task
+    builds — an experiment sweep constructs one task per profile x strategy
+    and previously re-downloaded the identical dataset each time."""
+
+    def test_second_task_build_reuses_cached_dataset(self, mock_evaluator_provider):
+        import pandas as pd
+
+        from cogniverse_evaluation.core import task as task_mod
+
+        task_mod._DATASET_FRAMES.clear()
+
+        df = pd.DataFrame(
+            [{"input": {"query": "q1", "expected_videos": "v1"}, "output": {}}]
+        )
+        phoenix_dataset = MagicMock()
+        phoenix_dataset.to_dataframe.return_value = df
+
+        with (
+            patch("phoenix.client.Client") as mock_client_cls,
+            patch("cogniverse_evaluation.core.solvers.create_batch_solver"),
+            patch(
+                "cogniverse_evaluation.core.inspect_scorers.get_configured_scorers",
+                return_value=[],
+            ),
+        ):
+            mock_client_cls.return_value.datasets.get_dataset.return_value = (
+                phoenix_dataset
+            )
+
+            task_mod.evaluation_task(mode="batch", dataset_name="golden_v1")
+            task_mod.evaluation_task(mode="batch", dataset_name="golden_v1")
+
+            assert mock_client_cls.call_count == 1, (
+                "second task build must reuse the cached dataset frame "
+                "instead of re-downloading it"
+            )
+
+        task_mod._DATASET_FRAMES.clear()

@@ -13,6 +13,9 @@ from inspect_ai.model import GenerateConfig
 
 logger = logging.getLogger(__name__)
 
+# Dataset frames cached per (endpoint, dataset_name) — see evaluation_task.
+_DATASET_FRAMES: dict[tuple[str, str], Any] = {}
+
 
 def evaluation_task(
     mode: str,
@@ -54,19 +57,27 @@ def evaluation_task(
         raise ValueError("profiles and strategies required for experiment mode")
 
     # Load dataset from Phoenix using sync client directly
-    # (avoids nested asyncio.run issues when called from async context)
+    # (avoids nested asyncio.run issues when called from async context).
+    # Cached per (endpoint, dataset): an experiment sweep builds one task
+    # per profile x strategy combination, and each used to re-download the
+    # identical dataset.
     import pandas as pd
-    from phoenix.client import Client as PhoenixSyncClient
 
     from cogniverse_evaluation.providers import get_evaluation_provider
 
     provider = get_evaluation_provider()
 
-    sync_client = PhoenixSyncClient(base_url=provider.http_endpoint)
-    phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
-    if phoenix_dataset is None:
-        raise ValueError(f"Dataset '{dataset_name}' not found or empty")
-    dataset_data = phoenix_dataset.to_dataframe()
+    cache_key = (provider.http_endpoint, dataset_name)
+    dataset_data = _DATASET_FRAMES.get(cache_key)
+    if dataset_data is None:
+        from phoenix.client import Client as PhoenixSyncClient
+
+        sync_client = PhoenixSyncClient(base_url=provider.http_endpoint)
+        phoenix_dataset = sync_client.datasets.get_dataset(dataset=dataset_name)
+        if phoenix_dataset is None:
+            raise ValueError(f"Dataset '{dataset_name}' not found or empty")
+        dataset_data = phoenix_dataset.to_dataframe()
+        _DATASET_FRAMES[cache_key] = dataset_data
 
     # PhoenixDatasetStore.get_dataset() returns a DataFrame
     if isinstance(dataset_data, pd.DataFrame):

@@ -856,3 +856,49 @@ class TestHybridGroundTruthStrategyExtended:
             assert result["confidence"] > 0
             assert "hybrid" in result["source"]
             assert result["metadata"]["strategies_tried"] >= 1
+
+
+@pytest.mark.unit
+class TestDatasetGroundTruthFetchOnce:
+    """The dataset strategy must download the Phoenix dataset once per
+    instance and index it by query — the previous version re-downloaded the
+    whole dataset and scanned it linearly for every trace."""
+
+    def _strategy_with_dataset(self, rows):
+        from cogniverse_evaluation.core.ground_truth import (
+            DatasetGroundTruthStrategy,
+        )
+
+        strategy = DatasetGroundTruthStrategy()
+        df = pd.DataFrame(rows)
+        provider = MagicMock()
+        provider.telemetry.datasets.get_dataset = AsyncMock(return_value=df)
+        return strategy, provider
+
+    @pytest.mark.asyncio
+    async def test_dataset_downloaded_once_for_many_traces(self):
+        rows = [
+            {"input": {"query": "q1", "expected_videos": "v1,v2"}, "output": {}},
+            {"input": {"query": "q2", "expected_videos": "v3"}, "output": {}},
+        ]
+        strategy, provider = self._strategy_with_dataset(rows)
+
+        with patch(
+            "cogniverse_evaluation.providers.get_evaluation_provider",
+            return_value=provider,
+        ):
+            results = []
+            for query in ["q1", "q2", "q1", "missing", "q2"]:
+                results.append(
+                    await strategy.extract_ground_truth(
+                        {"query": query, "metadata": {"dataset": "golden"}}
+                    )
+                )
+
+        provider.telemetry.datasets.get_dataset.assert_awaited_once_with("golden")
+        assert results[0]["source"] == "dataset"
+        assert results[0]["expected_items"] == ["v1", "v2"]
+        assert results[1]["expected_items"] == ["v3"]
+        assert results[2]["expected_items"] == ["v1", "v2"]
+        assert results[3]["source"] == "dataset_no_match"
+        assert results[4]["expected_items"] == ["v3"]

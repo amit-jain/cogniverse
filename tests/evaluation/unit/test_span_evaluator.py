@@ -372,8 +372,12 @@ class TestRunEvaluationPipeline:
 class TestUploadEvaluations:
     @pytest.mark.asyncio
     async def test_upload_calls_annotation_api(self, evaluator):
+        """One bulk log_evaluations call per evaluator, never a per-row
+        add_annotation loop — the row loop paid one HTTP round-trip per
+        (span, evaluator) pair on every quality-monitor cycle."""
         mock_annotations = MagicMock()
         mock_annotations.add_annotation = AsyncMock()
+        mock_annotations.log_evaluations = AsyncMock()
         evaluator.provider.telemetry.annotations = mock_annotations
 
         eval_df = pd.DataFrame(
@@ -384,20 +388,22 @@ class TestUploadEvaluations:
                     "label": "relevant",
                     "explanation": "good",
                 },
+                {
+                    "span_id": "s2",
+                    "score": 0.3,
+                    "label": "irrelevant",
+                    "explanation": "off-topic",
+                },
             ]
         )
         await evaluator.upload_evaluations({"relevance": eval_df})
 
-        # add_annotation takes no ``explanation`` kwarg and requires
-        # ``project``; the evaluator's explanation is carried in metadata.
-        mock_annotations.add_annotation.assert_called_once_with(
-            span_id="s1",
-            name="relevance",
-            label="relevant",
-            score=0.8,
-            metadata={"evaluator": "relevance", "explanation": "good"},
-            project="test-project",
-        )
+        mock_annotations.add_annotation.assert_not_called()
+        mock_annotations.log_evaluations.assert_awaited_once()
+        kwargs = mock_annotations.log_evaluations.await_args.kwargs
+        assert kwargs["eval_name"] == "relevance"
+        assert kwargs["project"] == "test-project"
+        pd.testing.assert_frame_equal(kwargs["evaluations_df"], eval_df)
 
     @pytest.mark.asyncio
     async def test_empty_df_skipped(self, evaluator):

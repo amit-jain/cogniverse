@@ -4,7 +4,9 @@ Phoenix telemetry provider implementation.
 Implements all store interfaces using Phoenix AsyncClient.
 """
 
+import asyncio
 import logging
+import weakref
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Generator, List, Optional
@@ -22,6 +24,27 @@ from cogniverse_foundation.telemetry.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+# AsyncClient connection pools bind to the event loop that uses them, so a
+# process-wide singleton breaks callers that run on fresh loops (Streamlit's
+# asyncio.run per interaction). Memoize per (running loop, endpoint) instead:
+# long-lived loops (the runtime, the quality monitor) reuse one client and
+# its TCP pool; the WeakKeyDictionary drops entries when a loop is GC'd.
+_CLIENTS_BY_LOOP: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
+    loop = asyncio.get_running_loop()
+    by_endpoint = _CLIENTS_BY_LOOP.get(loop)
+    if by_endpoint is None:
+        by_endpoint = {}
+        _CLIENTS_BY_LOOP[loop] = by_endpoint
+    client = by_endpoint.get(http_endpoint)
+    if client is None:
+        logger.debug(f"Creating Phoenix AsyncClient for endpoint {http_endpoint}")
+        client = AsyncClient(base_url=http_endpoint)
+        by_endpoint[http_endpoint] = client
+    return client
 
 
 class PhoenixTraceStore(TraceStore):
@@ -42,11 +65,8 @@ class PhoenixTraceStore(TraceStore):
         logger.info(f"🔧 PhoenixTraceStore initialized with endpoint: {http_endpoint}")
 
     def _get_client(self) -> AsyncClient:
-        """Create AsyncClient for current event loop."""
-        logger.info(
-            f"🔍 Creating Phoenix AsyncClient with endpoint: {self.http_endpoint}"
-        )
-        return AsyncClient(base_url=self.http_endpoint)
+        """Return the memoized AsyncClient for the current event loop."""
+        return _client_for_current_loop(self.http_endpoint)
 
     async def get_spans(
         self,
@@ -145,8 +165,8 @@ class PhoenixAnnotationStore(AnnotationStore):
         self.tenant_id = tenant_id
 
     def _get_client(self) -> AsyncClient:
-        """Create AsyncClient for current event loop."""
-        return AsyncClient(base_url=self.http_endpoint)
+        """Return the memoized AsyncClient for the current event loop."""
+        return _client_for_current_loop(self.http_endpoint)
 
     async def add_annotation(
         self,
@@ -273,13 +293,18 @@ class PhoenixAnnotationStore(AnnotationStore):
             # Import SpanEvaluations from Phoenix
             from phoenix.client import Client
 
-            # Upload evaluations as span annotations via sync client
-            sync_client = Client(base_url=self.http_endpoint)
-            sync_client.spans.log_span_annotations_dataframe(
-                dataframe=evaluations_df,
-                annotation_name=eval_name,
-                annotator_kind="CODE",
-            )
+            # Upload evaluations as span annotations via the sync client —
+            # off the event loop, since this runs inside async callers (the
+            # quality-monitor cycle).
+            def _upload() -> None:
+                sync_client = Client(base_url=self.http_endpoint)
+                sync_client.spans.log_span_annotations_dataframe(
+                    dataframe=evaluations_df,
+                    annotation_name=eval_name,
+                    annotator_kind="CODE",
+                )
+
+            await asyncio.to_thread(_upload)
 
             logger.info(
                 f"Uploaded {len(evaluations_df)} evaluations for '{eval_name}' "
@@ -306,8 +331,8 @@ class PhoenixDatasetStore(DatasetStore):
         self.tenant_id = tenant_id
 
     def _get_client(self) -> AsyncClient:
-        """Create AsyncClient for current event loop."""
-        return AsyncClient(base_url=self.http_endpoint)
+        """Return the memoized AsyncClient for the current event loop."""
+        return _client_for_current_loop(self.http_endpoint)
 
     async def create_dataset(
         self, name: str, data: pd.DataFrame, metadata: Optional[Dict[str, Any]] = None
