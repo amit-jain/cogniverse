@@ -211,6 +211,16 @@ _TENANT_EXISTS_CACHE: dict = {}
 _TENANT_EXISTS_TTL_S = 30.0
 
 
+def invalidate_tenant_exists(tenant_id: str) -> None:
+    """Drop a tenant from the existence cache after deletion.
+
+    Without this, a deleted tenant keeps passing assert_tenant_exists for
+    up to the TTL, so search/ingestion requests proceed against schemas
+    that are being torn down instead of getting the 404.
+    """
+    _TENANT_EXISTS_CACHE.pop(canonical_tenant_id(tenant_id), None)
+
+
 async def assert_tenant_exists(tenant_id: str) -> None:
     """
     Raise HTTPException(404) if tenant_id was never registered.
