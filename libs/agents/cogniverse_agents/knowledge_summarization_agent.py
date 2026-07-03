@@ -238,13 +238,15 @@ class KnowledgeSummarizationAgent(
         the predicate/object pairs with ``"; "``.
         """
         graph_manager = self._require_graph_manager("summarize")
-        all_edges = graph_manager._visit(doc_type="edge", top_k=2000)
+        # Scope to this video's edges server-side — pulling every edge and
+        # filtering in Python cost O(graph size) per summarization request.
+        all_edges = graph_manager._visit(
+            doc_type="edge", top_k=2000, source_doc_id=video_id
+        )
         # Group by (subject, segment_id, ts_start, ts_end), preserving the
         # original subject name (from source_node_id) for readability.
         grouped: Dict[tuple, List[Dict[str, Any]]] = {}
         for edge_fields in all_edges:
-            if str(edge_fields.get("source_doc_id") or "") != video_id:
-                continue
             subject = str(edge_fields.get("source_node_id") or "")
             segment_id = str(edge_fields.get("segment_id") or "")
             ts_start = float(edge_fields.get("ts_start") or 0.0)

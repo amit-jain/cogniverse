@@ -61,18 +61,21 @@ def captured_get():
 
 def test_visit_escapes_tenant_quote(captured_get):
     _bare_manager(_FakeSession(captured_get))._visit(doc_type="node")
-    selection = captured_get["params"]["selection"]
-    assert selection == f'{SCHEMA}.doc_type=="node" and {SCHEMA}.tenant_id=="ac\\"me"'
+    yql = captured_get["json"]["yql"]
+    assert yql == (
+        f"select * from {SCHEMA} "
+        'where doc_type contains "node" and tenant_id contains "ac\\"me"'
+    )
     # the malformed (unescaped) form must never reach Vespa
-    assert 'tenant_id=="ac"me"' not in selection
+    assert 'tenant_id contains "ac"me"' not in yql
 
 
 def test_visit_edges_escapes_tenant_and_node_ids(captured_get):
     _bare_manager(_FakeSession(captured_get))._visit_edges(source_node_id='no"de')
-    selection = captured_get["params"]["selection"]
-    assert f'{SCHEMA}.tenant_id=="ac\\"me"' in selection
-    assert f'{SCHEMA}.source_node_id=="no\\"de"' in selection
-    assert 'tenant_id=="ac"me"' not in selection
+    yql = captured_get["json"]["yql"]
+    assert 'tenant_id contains "ac\\"me"' in yql
+    assert 'source_node_id contains "no\\"de"' in yql
+    assert 'tenant_id contains "ac"me"' not in yql
 
 
 def test_search_nodes_escapes_tenant_quote_in_yql(monkeypatch):
