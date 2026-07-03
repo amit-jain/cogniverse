@@ -1043,13 +1043,23 @@ class TestTelemetrySpans:
         # Spans go to tenant-specific project: cogniverse-{tenant_id}
         project_name = f"cogniverse-{TENANT_ID}"
 
+        # Scope to this test's window — an unscoped limit slice over a
+        # project holding a day of spans can consist entirely of other
+        # runs' spans. The method's own 5s timeout default also needs a
+        # budget Phoenix can meet while loaded.
+        from datetime import datetime, timedelta, timezone
+
+        window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+
         deadline = time.time() + 30
         found_span = None
         while time.time() < deadline:
             try:
                 spans_df = phoenix_client.spans.get_spans_dataframe(
                     project_identifier=project_name,
+                    start_time=window_start,
                     limit=50,
+                    timeout=90,
                 )
                 if spans_df is not None and not spans_df.empty:
                     matches = spans_df[
