@@ -325,7 +325,7 @@ class RetrievalMonitor:
         """Export collected traces to file"""
         try:
             client = _PhoenixSyncClient()
-            traces_df = client.spans.get_spans_dataframe()
+            traces_df = client.spans.get_spans_dataframe(timeout=120)
             traces_df.to_parquet(output_path)
             logger.info(f"Exported traces to {output_path}")
         except Exception as e:

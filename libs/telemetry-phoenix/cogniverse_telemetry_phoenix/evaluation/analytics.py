@@ -68,7 +68,13 @@ class PhoenixAnalytics:
 
         # Fetch spans using the new Phoenix API
         try:
-            kwargs = {"start_time": start_time, "end_time": end_time, "limit": limit}
+            kwargs = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "limit": limit,
+                # The method default is 5s; big windows need far more.
+                "timeout": 120,
+            }
             if project_name:
                 kwargs["project_identifier"] = project_name
             spans_df = self.client.spans.get_spans_dataframe(**kwargs)

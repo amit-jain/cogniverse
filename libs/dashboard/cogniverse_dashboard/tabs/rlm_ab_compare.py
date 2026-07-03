@@ -236,6 +236,7 @@ async def load_ab_compare_data(
             start_time=start_time,
             end_time=end_time,
             limit=10000,
+            timeout=120,
         )
     except Exception as exc:
         logger.warning(

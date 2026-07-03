@@ -520,7 +520,6 @@ async def _query_spans_by_name(
 
     Returns a DataFrame of matching spans, or an empty DataFrame if none found.
     """
-    import pandas as pd
 
     from cogniverse_foundation.telemetry.manager import get_telemetry_manager
 
@@ -530,16 +529,28 @@ async def _query_spans_by_name(
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(hours=lookback_hours)
 
-    try:
-        spans_df = await telemetry_provider.traces.get_spans(
-            project=project_name,
-            start_time=start_time,
-            end_time=end_time,
-            limit=10000,
-        )
-    except Exception as e:
-        logger.error("Failed to query spans for %s: %s", span_name, e)
-        return pd.DataFrame()
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            spans_df = await telemetry_provider.traces.get_spans(
+                project=project_name,
+                start_time=start_time,
+                end_time=end_time,
+                limit=10000,
+            )
+            break
+        except Exception as e:
+            last_exc = e
+            logger.warning(
+                "Span query for %s failed (attempt %d/3): %s", span_name, attempt + 1, e
+            )
+            await asyncio.sleep(5)
+    else:
+        # A failed query is not "no spans" — reporting no_data here made a
+        # Phoenix timeout look like an empty optimization window.
+        raise RuntimeError(
+            f"Failed to query {span_name} spans from Phoenix after 3 attempts"
+        ) from last_exc
 
     if spans_df.empty:
         return spans_df

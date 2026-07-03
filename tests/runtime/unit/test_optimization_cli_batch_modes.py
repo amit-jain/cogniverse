@@ -967,3 +967,77 @@ class TestOptimizeAgentPersistence:
         assert captured["kind"] == "model"
         assert captured["key"] == "dspy_compiled_search"
         assert captured["tenant_id"] == "acme:prod"
+
+
+class FailingTraceStore:
+    """Trace store whose get_spans always raises (Phoenix down/slow)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def get_spans(self, **kwargs) -> pd.DataFrame:
+        self.calls += 1
+        raise TimeoutError("phoenix query timed out")
+
+
+class TestQuerySpansFailureIsNotNoData:
+    """A failed Phoenix query must raise, not return an empty frame.
+
+    Flattening the exception to an empty DataFrame made every batch mode
+    report status=no_data during a Phoenix timeout — indistinguishable
+    from a genuinely empty optimization window.
+    """
+
+    @pytest.mark.asyncio
+    async def test_query_failure_raises_after_retries(self, monkeypatch):
+        import asyncio as _asyncio
+
+        from cogniverse_runtime import optimization_cli as cli
+
+        provider = FakeTelemetryProvider()
+        store = FailingTraceStore()
+        provider._trace_store = store
+        manager = FakeTelemetryManager(provider)
+
+        monkeypatch.setattr(_asyncio, "sleep", _instant_sleep)
+        with patch(_PATCH_TELEMETRY, return_value=manager):
+            with pytest.raises(RuntimeError, match="after 3 attempts"):
+                await cli._query_spans_by_name(
+                    provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+                )
+        assert store.calls == 3
+
+    @pytest.mark.asyncio
+    async def test_transient_failure_recovers_on_retry(self, monkeypatch):
+        import asyncio as _asyncio
+
+        from cogniverse_runtime import optimization_cli as cli
+
+        df = pd.DataFrame([{"name": "cogniverse.entity_extraction", "x": 1}])
+
+        class FlakyStore:
+            def __init__(self):
+                self.calls = 0
+
+            async def get_spans(self, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    raise TimeoutError("first attempt times out")
+                return df
+
+        provider = FakeTelemetryProvider()
+        store = FlakyStore()
+        provider._trace_store = store
+        manager = FakeTelemetryManager(provider)
+
+        monkeypatch.setattr(_asyncio, "sleep", _instant_sleep)
+        with patch(_PATCH_TELEMETRY, return_value=manager):
+            out = await cli._query_spans_by_name(
+                provider, "acme:prod", "cogniverse.entity_extraction", 1.0
+            )
+        assert store.calls == 2
+        assert len(out) == 1
+
+
+async def _instant_sleep(_seconds):
+    return None
