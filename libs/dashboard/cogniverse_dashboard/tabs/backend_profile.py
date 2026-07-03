@@ -452,8 +452,13 @@ def render_profile_manager(manager, tenant_id: str, profile_name: str):
     with col3:
         st.metric("Schema", profile.get("schema_name", "N/A"))
     with col4:
-        # Check schema deployment status via API
-        status_result = get_profile_schema_status(profile_name, tenant_id)
+        # Check schema deployment status via API — cached briefly so a slow
+        # or down runtime (10s timeout) doesn't stall every rerun.
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _schema_status(name: str, tenant: str):
+            return get_profile_schema_status(name, tenant)
+
+        status_result = _schema_status(profile_name, tenant_id)
         if status_result["error"]:
             st.metric("Schema Status", "Unknown", help=status_result["error"])
         elif status_result["schema_deployed"]:

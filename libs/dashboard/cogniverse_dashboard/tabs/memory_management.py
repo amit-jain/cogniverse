@@ -36,14 +36,19 @@ def render_memory_management_tab():
     # localhost:8080 — in k3d the backend lives at an in-cluster service).
     config_manager = create_default_config_manager()
     system_config = config_manager.get_system_config()
-    try:
-        import httpx
 
-        vespa_check_url = f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
-        vespa_response = httpx.get(vespa_check_url, timeout=2)
-        vespa_available = vespa_response.status_code == 200
-    except Exception:
-        vespa_available = False
+    @st.cache_data(ttl=30, show_spinner=False)
+    def _vespa_available(check_url: str) -> bool:
+        try:
+            import httpx
+
+            return httpx.get(check_url, timeout=2).status_code == 200
+        except Exception:
+            return False
+
+    vespa_available = _vespa_available(
+        f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"
+    )
 
     if not vespa_available:
         st.warning("⚠️ Vespa backend is not running")
