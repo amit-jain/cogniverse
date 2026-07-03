@@ -1213,9 +1213,37 @@ class Mem0MemoryManager:
         if not self.memory:
             raise RuntimeError("Mem0MemoryManager not initialized")
 
+        # session_id is a promoted Vespa field written at insert time, so
+        # the store returns only this session's rows — walking the tenant's
+        # whole corpus cost O(memory count) per session end. When the
+        # filtered query returns nothing, verify with the full scan: a
+        # tenant schema deployed before the field existed makes the filter
+        # yield an empty result (the store layer flattens the unknown-field
+        # error), and converting those tenants' session cleanup into a
+        # silent no-op is not acceptable. On current schemas the fallback
+        # only runs for genuinely empty sessions, which cost the full scan
+        # before this optimization too.
         deleted_by_kind: Dict[str, int] = {}
-        result = self.memory.get_all(user_id=self.tenant_id)
+        result = self.memory.get_all(
+            user_id=self.tenant_id, filters={"session_id": session_id}
+        )
         memories = result.get("results", []) if isinstance(result, dict) else result
+        if not memories:
+            result = self.memory.get_all(user_id=self.tenant_id)
+            memories = result.get("results", []) if isinstance(result, dict) else result
+            if any(
+                self._read_metadata(m).get("session_id") == session_id
+                for m in memories
+                if isinstance(m, dict)
+            ):
+                logger.warning(
+                    "drop_session(%s): server-side session_id filter returned "
+                    "nothing but a scan found matching rows — the tenant "
+                    "schema for %s likely predates the session_id field; "
+                    "redeploy it to restore filtered cleanup.",
+                    session_id,
+                    self.tenant_id,
+                )
 
         for memory in memories:
             if not isinstance(memory, dict):

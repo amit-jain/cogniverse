@@ -229,6 +229,13 @@ class BackendVectorStore(VectorStoreBase):
             )
             if subject_key:
                 doc_metadata["subject_key"] = subject_key
+            # session_id promoted the same way so drop_session can filter
+            # server-side instead of scanning the tenant's memories.
+            session_id = (
+                metadata.get("session_id") if isinstance(metadata, dict) else None
+            )
+            if session_id:
+                doc_metadata["session_id"] = session_id
             if metadata:
                 doc_metadata["metadata_"] = (
                     json.dumps(metadata) if isinstance(metadata, dict) else metadata
@@ -493,6 +500,10 @@ class BackendVectorStore(VectorStoreBase):
                 if "agent_id" in filters:
                     yql_conditions.append(
                         f"agent_id contains {_yql_quote(filters['agent_id'])}"
+                    )
+                if filters.get("session_id"):
+                    yql_conditions.append(
+                        f"session_id contains {_yql_quote(filters['session_id'])}"
                     )
                 if filters.get("subject_key"):
                     yql_conditions.append(

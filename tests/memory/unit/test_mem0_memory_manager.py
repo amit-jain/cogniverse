@@ -372,3 +372,90 @@ class TestInitializeIdempotent:
         assert manager._knowledge_registry is sentinel_registry
 
         Mem0MemoryManager._instances.clear()
+
+
+class TestDropSessionServerSideFilter:
+    """drop_session filters by the promoted session_id field, and falls back
+    to the full scan when the filter yields nothing — a tenant schema
+    deployed before the field existed flattens the filter to an empty result,
+    and session cleanup must never become a silent no-op."""
+
+    def _manager_with_rows(self, rows, filter_supported=True):
+        from cogniverse_core.memory.manager import Mem0MemoryManager
+
+        Mem0MemoryManager._instances.clear()
+        manager = Mem0MemoryManager(tenant_id="t_drop")
+        manager.tenant_id = "t_drop"
+
+        memory = MagicMock()
+        calls = []
+
+        def _get_all(*, user_id, agent_id=None, filters=None, **kwargs):
+            calls.append(filters)
+            if filters and filters.get("session_id"):
+                if not filter_supported:
+                    return {"results": []}  # old schema: filter flattens empty
+                return {
+                    "results": [
+                        r
+                        for r in rows
+                        if r["metadata"].get("session_id") == filters["session_id"]
+                    ]
+                }
+            return {"results": list(rows)}
+
+        memory.get_all = _get_all
+        memory.delete = MagicMock()
+        manager.memory = memory
+        return manager, memory, calls
+
+    def _registry(self):
+        from cogniverse_core.memory.schema import Retention
+
+        registry = MagicMock()
+        schema = MagicMock()
+        schema.retention = Retention.EPHEMERAL_SESSION
+        registry.get.return_value = schema
+        return registry
+
+    def test_new_schema_deletes_via_filter_without_full_scan(self):
+        rows = [
+            {"id": "a", "metadata": {"session_id": "s1", "kind": "session_scratch"}},
+            {"id": "b", "metadata": {"session_id": "s2", "kind": "session_scratch"}},
+        ]
+        manager, memory, calls = self._manager_with_rows(rows, filter_supported=True)
+
+        deleted = manager.drop_session("s1", self._registry())
+
+        assert deleted == {"session_scratch": 1}
+        memory.delete.assert_called_once_with("a")
+        assert calls == [{"session_id": "s1"}], (
+            "filtered path must not fall back to a full scan when rows match"
+        )
+
+    def test_old_schema_falls_back_to_scan_and_warns(self, caplog):
+        import logging
+
+        rows = [
+            {"id": "a", "metadata": {"session_id": "s1", "kind": "session_scratch"}},
+        ]
+        manager, memory, calls = self._manager_with_rows(rows, filter_supported=False)
+
+        with caplog.at_level(logging.WARNING):
+            deleted = manager.drop_session("s1", self._registry())
+
+        assert deleted == {"session_scratch": 1}
+        memory.delete.assert_called_once_with("a")
+        assert calls == [{"session_id": "s1"}, None]
+        assert any("predates the session_id field" in r.message for r in caplog.records)
+
+    def test_truly_empty_session_deletes_nothing(self):
+        rows = [
+            {"id": "b", "metadata": {"session_id": "s2", "kind": "session_scratch"}},
+        ]
+        manager, memory, calls = self._manager_with_rows(rows, filter_supported=True)
+
+        deleted = manager.drop_session("s1", self._registry())
+
+        assert deleted == {}
+        memory.delete.assert_not_called()

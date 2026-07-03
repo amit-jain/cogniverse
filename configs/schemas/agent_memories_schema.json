@@ -6,54 +6,99 @@
       {
         "name": "id",
         "type": "string",
-        "indexing": ["summary", "attribute"],
-        "attribute": ["fast-search"]
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
       },
       {
         "name": "embedding",
         "type": "tensor<float>(d0[768])",
-        "indexing": ["summary", "attribute", "index"]
+        "indexing": [
+          "summary",
+          "attribute",
+          "index"
+        ]
       },
       {
         "name": "text",
         "type": "string",
-        "indexing": ["summary", "index"],
+        "indexing": [
+          "summary",
+          "index"
+        ],
         "index": "enable-bm25"
       },
       {
         "name": "user_id",
         "type": "string",
-        "indexing": ["summary", "attribute"],
-        "attribute": ["fast-search"]
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
       },
       {
         "name": "agent_id",
         "type": "string",
-        "indexing": ["summary", "attribute"],
-        "attribute": ["fast-search"]
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
       },
       {
         "name": "subject_key",
         "type": "string",
-        "indexing": ["summary", "attribute"],
-        "attribute": ["fast-search"]
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
+      },
+      {
+        "name": "session_id",
+        "type": "string",
+        "indexing": [
+          "summary",
+          "attribute"
+        ],
+        "attribute": [
+          "fast-search"
+        ]
       },
       {
         "name": "metadata_",
         "type": "string",
-        "indexing": ["summary"]
+        "indexing": [
+          "summary"
+        ]
       },
       {
         "name": "created_at",
         "type": "long",
-        "indexing": ["summary", "attribute"]
+        "indexing": [
+          "summary",
+          "attribute"
+        ]
       }
     ]
   },
   "fieldsets": [
     {
       "name": "default",
-      "fields": ["text"]
+      "fields": [
+        "text"
+      ]
     }
   ],
   "rank_profiles": [
