@@ -207,7 +207,9 @@ class KnowledgeSummarizeRequest(BaseModel):
 
 @router.post("/tenants/{tenant_id}/knowledge/summarize")
 async def knowledge_summarize(
-    tenant_id: str, body: KnowledgeSummarizeRequest
+    tenant_id: str,
+    body: KnowledgeSummarizeRequest,
+    config_manager: ConfigManager = Depends(_get_config_manager),
 ) -> Dict[str, Any]:
     """distill a subject slice into a structured summary."""
     from cogniverse_agents.knowledge_summarization_agent import (
@@ -220,7 +222,9 @@ async def knowledge_summarize(
         deps=KnowledgeSummarizationDeps(tenant_id=tenant_id),
         memory_manager_factory=_build_factory,
         registry=_build_default_registry(),
-        config_manager=_get_config_manager(),
+        # Resolved via Depends above — calling _get_config_manager()
+        # directly bypasses app.dependency_overrides and always raises.
+        config_manager=config_manager,
     )
     _bind_graph(agent, tenant_id)
     out = await agent._process_impl(

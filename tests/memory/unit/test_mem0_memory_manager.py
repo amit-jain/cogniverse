@@ -459,3 +459,35 @@ class TestDropSessionServerSideFilter:
 
         assert deleted == {}
         memory.delete.assert_not_called()
+
+
+class TestImportChainWithoutCv2:
+    """The memory embedder import chain must not require opencv.
+
+    Pods without video dependencies (dashboard) import
+    ``cogniverse_core.memory.mem0_embedder``, which pulls
+    ``cogniverse_core.common.models`` — a package whose modules must keep
+    ``cv2`` imports local to the functions that use it.
+    """
+
+    def test_mem0_embedder_imports_with_cv2_blocked(self):
+        import subprocess
+        import sys
+
+        code = (
+            "import sys\n"
+            "class _BlockCv2:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name == 'cv2' or name.startswith('cv2.'):\n"
+            "            raise ImportError('cv2 blocked for this test')\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, _BlockCv2())\n"
+            "import cogniverse_core.common.models\n"
+            "import cogniverse_core.memory.mem0_embedder\n"
+            "print('IMPORT_OK')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+        )
+        assert result.returncode == 0, result.stderr
+        assert "IMPORT_OK" in result.stdout

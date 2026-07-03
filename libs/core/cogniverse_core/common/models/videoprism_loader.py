@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
 import numpy as np
 
 from cogniverse_core.common.utils.retry import RetryConfig, retry_with_backoff
@@ -111,6 +110,10 @@ class VideoPrismLoader:
         Returns:
             JAX array of shape (1, num_frames, 288, 288, 3) normalized to [0, 1]
         """
+        # Local import keeps opencv out of the package import chain — pods
+        # without video deps (dashboard) import this module transitively.
+        import cv2
+
         processed_frames = []
 
         # Process each frame - VideoPrism can handle arbitrary num_frames

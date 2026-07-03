@@ -1298,3 +1298,58 @@ class TestOrchestratorSemanticRouting:
                 agent._semantic_router_lm_context("acme:prod")
         finally:
             patcher.stop()
+
+
+class TestEnsureMemoryForTenant:
+    """Pin the orchestrator -> initialize_memory call contract.
+
+    The lazy per-tenant init swallows every exception ("continue without
+    memory"), so a kwarg that initialize_memory does not accept fails
+    silently for every tenant. autospec binds the real signature, making
+    a signature mismatch fail this test instead of only warning in logs.
+    """
+
+    def _system_config(self) -> SystemConfig:
+        return SystemConfig(inference_service_urls={"denseon": "http://denseon:8000"})
+
+    def test_initializes_memory_with_bare_model_name(self, orchestrator_agent):
+        orchestrator_agent._config_manager.get_system_config = Mock(
+            return_value=self._system_config()
+        )
+        cfg = MagicMock()
+        cfg.get_llm_config.return_value.resolve.return_value = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://vllm-llm:8000/v1",
+        )
+        bootstrap = MagicMock(backend_url="http://vespa", backend_port=8080)
+        with (
+            patch("cogniverse_foundation.config.utils.get_config", return_value=cfg),
+            patch(
+                "cogniverse_foundation.config.bootstrap.BootstrapConfig"
+                ".from_environment",
+                return_value=bootstrap,
+            ),
+            patch.object(OrchestratorAgent, "initialize_memory", autospec=True) as init,
+        ):
+            init.return_value = True
+            orchestrator_agent._ensure_memory_for_tenant("acme:prod")
+
+        assert "acme:prod" in orchestrator_agent._memory_initialized_tenants, (
+            "init must complete without raising — a swallowed TypeError from a "
+            "bad kwarg leaves the tenant uninitialized on every request"
+        )
+        init.assert_called_once()
+        kwargs = init.call_args.kwargs
+        assert kwargs["llm_model"] == "google/gemma-4-e4b-it"
+        assert kwargs["llm_base_url"] == "http://vllm-llm:8000/v1"
+        assert kwargs["embedder_base_url"] == "http://denseon:8000"
+        assert kwargs["tenant_id"] == "acme:prod"
+        assert kwargs["agent_name"] == "orchestrator_agent"
+
+    def test_second_call_for_same_tenant_is_a_noop(self, orchestrator_agent):
+        orchestrator_agent._memory_initialized_tenants.add("acme:prod")
+        with patch.object(
+            OrchestratorAgent, "initialize_memory", autospec=True
+        ) as init:
+            orchestrator_agent._ensure_memory_for_tenant("acme:prod")
+        init.assert_not_called()
