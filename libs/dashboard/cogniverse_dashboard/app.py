@@ -1394,8 +1394,9 @@ if enable_rca and len(tabs) > 6:
         # Run analysis - use filtered traces to match the stats
         with st.spinner("Analyzing failures and performance issues..."):
             # Filter the original TraceMetrics objects — no DataFrame
-            # round-trip via iterrows over up to 10k rows.
-            _rca_kept_ids = set(traces_df["trace_id"])
+            # round-trip via iterrows over up to 10k rows. An empty frame
+            # has no trace_id column at all, so guard before indexing.
+            _rca_kept_ids = set(traces_df["trace_id"]) if not traces_df.empty else set()
             filtered_traces = [t for t in traces if t.trace_id in _rca_kept_ids]
 
             rca_results = rca.analyze_failures(
@@ -2997,11 +2998,6 @@ with main_tabs[15]:
 
     render_rlm_ab_compare_tab()
 
-# Auto-refresh logic
-if st.session_state.auto_refresh:
-    time.sleep(refresh_interval)  # Fixed polling interval for dashboard auto-refresh
-    st.rerun()
-
 # Sidebar message counter (outside tab blocks so it renders on any tab)
 if "chat_messages" in st.session_state and len(st.session_state.chat_messages) > 0:
     st.sidebar.markdown(f"💬 messages: {len(st.session_state.chat_messages)}")
@@ -3009,3 +3005,9 @@ if "chat_messages" in st.session_state and len(st.session_state.chat_messages) >
 # Footer
 st.markdown("---")
 st.caption("🔥 Analytics Dashboard - Cogniverse Evaluation Framework")
+
+# Auto-refresh last: st.rerun() aborts the script run, so anything rendered
+# after this block would never appear while auto-refresh is enabled.
+if st.session_state.auto_refresh:
+    time.sleep(refresh_interval)  # Fixed polling interval for dashboard auto-refresh
+    st.rerun()
