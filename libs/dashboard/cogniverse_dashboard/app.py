@@ -45,7 +45,6 @@ from cogniverse_evaluation.analysis.root_cause_analysis import (
 # PhoenixAnalytics is Phoenix-specific (concrete fetcher of spans);
 # TraceMetrics is the provider-agnostic dataclass and lives at the
 # canonical evaluation-provider location.
-from cogniverse_evaluation.providers import TraceMetrics
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
 from cogniverse_telemetry_phoenix.evaluation.analytics import (
     PhoenixAnalytics as Analytics,
@@ -364,7 +363,10 @@ with st.sidebar:
 
     # Phoenix stores span timestamps in UTC. Streamlit's date_input / time_input
     # return naive Python objects — attach tzinfo=UTC so the window matches.
-    _now_utc = datetime.now(timezone.utc)
+    # Quantized to 30s so the trace-fetch cache key repeats across reruns
+    # instead of being busted by a fresh now() on every widget interaction.
+    _now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+    _now_utc = _now_utc.replace(second=(_now_utc.second // 30) * 30)
     if time_range == "Custom range":
         col1, col2 = st.columns(2)
         with col1:
@@ -698,14 +700,24 @@ agent_status = show_agent_status()
 
 # Analytics Tab
 with main_tabs[0]:
-    # Fetch traces
-    with st.spinner("Fetching traces..."):
-        traces = st.session_state.analytics.get_traces(
-            start_time=start_datetime,
-            end_time=end_datetime,
-            operation_filter=operation_filter if operation_filter else None,
+    # Fetch traces — cached so widget interactions in ANY tab (Streamlit
+    # re-executes the whole script) don't re-pull up to 10k spans. The
+    # quantized end time above keeps the key stable between reruns.
+    @st.cache_data(ttl=30, show_spinner="Fetching traces...")
+    def _fetch_traces(_analytics, start_iso: str, end_iso: str, op_filter):
+        return _analytics.get_traces(
+            start_time=datetime.fromisoformat(start_iso),
+            end_time=datetime.fromisoformat(end_iso),
+            operation_filter=op_filter,
             limit=10000,
         )
+
+    traces = _fetch_traces(
+        st.session_state.analytics,
+        start_datetime.isoformat(),
+        end_datetime.isoformat(),
+        operation_filter if operation_filter else None,
+    )
 
     if not traces:
         st.warning("No traces found for the selected time range and filters.")
@@ -743,10 +755,13 @@ with main_tabs[0]:
     ):
         traces_df = traces_df[traces_df["strategy"].isin(strategy_filter)]
 
-    # Calculate statistics with operation grouping
+    # Calculate statistics with operation grouping. Filter the original
+    # TraceMetrics objects directly — round-tripping 10k rows through the
+    # DataFrame and back via iterrows cost seconds of pure Python per rerun.
     if not traces_df.empty:
+        _kept_ids = set(traces_df["trace_id"])
         stats = st.session_state.analytics.calculate_statistics(
-            [TraceMetrics(**row) for _, row in traces_df.iterrows()],
+            [t for t in traces if t.trace_id in _kept_ids],
             group_by="operation",
         )
     else:
@@ -1378,8 +1393,10 @@ if enable_rca and len(tabs) > 6:
 
         # Run analysis - use filtered traces to match the stats
         with st.spinner("Analyzing failures and performance issues..."):
-            # Convert filtered DataFrame back to TraceMetrics objects
-            filtered_traces = [TraceMetrics(**row) for _, row in traces_df.iterrows()]
+            # Filter the original TraceMetrics objects — no DataFrame
+            # round-trip via iterrows over up to 10k rows.
+            _rca_kept_ids = set(traces_df["trace_id"])
+            filtered_traces = [t for t in traces if t.trace_id in _rca_kept_ids]
 
             rca_results = rca.analyze_failures(
                 filtered_traces,  # Use filtered traces instead of all traces

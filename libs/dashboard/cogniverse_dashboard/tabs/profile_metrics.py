@@ -96,21 +96,30 @@ def render_profile_metrics_tab() -> None:
         st.error(f"Failed to initialise telemetry provider: {exc}")
         return
 
-    end = datetime.now(timezone.utc)
+    # Quantize the window end so reruns within the cache TTL share a key.
+    end = datetime.now(timezone.utc).replace(microsecond=0)
+    end = end.replace(second=(end.second // 30) * 30)
     start = end - timedelta(hours=int(lookback_hours))
 
-    with st.spinner(f"Querying Phoenix project `{project_name}`..."):
-        try:
-            import asyncio
+    @st.cache_data(ttl=30, show_spinner="Querying Phoenix...")
+    def _fetch_spans(_provider, project: str, start_iso: str, end_iso: str):
+        import asyncio
 
-            spans_df = asyncio.run(
-                provider.traces.get_spans(
-                    project=project_name, start_time=start, end_time=end
-                )
+        return asyncio.run(
+            _provider.traces.get_spans(
+                project=project,
+                start_time=datetime.fromisoformat(start_iso),
+                end_time=datetime.fromisoformat(end_iso),
             )
-        except Exception as exc:
-            st.error(f"Phoenix span query failed: {exc}")
-            return
+        )
+
+    try:
+        spans_df = _fetch_spans(
+            provider, project_name, start.isoformat(), end.isoformat()
+        )
+    except Exception as exc:
+        st.error(f"Phoenix span query failed: {exc}")
+        return
 
     if spans_df is None or spans_df.empty:
         st.info(

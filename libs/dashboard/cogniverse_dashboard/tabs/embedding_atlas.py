@@ -82,6 +82,16 @@ def _pick_embedding_file() -> Optional[Path]:
     )
 
 
+@st.cache_data(show_spinner="Loading embeddings...")
+def _load_parquet_with_coords(path_str: str, mtime: float) -> pd.DataFrame:
+    """Read the embedding parquet and ensure UMAP x/y columns, cached on
+    (path, mtime). Streamlit re-executes the whole tab on every widget
+    interaction anywhere in the app — without the cache each rerun re-read
+    the file and refit UMAP (tens of seconds to minutes)."""
+    df = pd.read_parquet(path_str)
+    return _ensure_2d_coords(df)
+
+
 def _ensure_2d_coords(df: pd.DataFrame) -> pd.DataFrame:
     """Compute UMAP x/y columns if not already present. Exporters should
     pre-compute x/y to keep the tab responsive; we do it here as a fallback."""
@@ -173,7 +183,7 @@ def render_embedding_atlas_tab() -> None:
         return
 
     try:
-        df = pd.read_parquet(file_path)
+        df = _load_parquet_with_coords(str(file_path), file_path.stat().st_mtime)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Failed to read {file_path.name}: {exc}")
         return
@@ -181,8 +191,6 @@ def render_embedding_atlas_tab() -> None:
     if df.empty:
         st.warning(f"{file_path.name} contains no rows.")
         return
-
-    df = _ensure_2d_coords(df)
     if "x" not in df.columns or "y" not in df.columns:
         st.error(
             f"{file_path.name} lacks `x`/`y` columns and no `embedding` "

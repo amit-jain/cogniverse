@@ -9,7 +9,19 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
 from streamlit.testing.v1 import AppTest
+
+
+@pytest.fixture(autouse=True)
+def _restore_patched_module_attr():
+    """The AppTest scripts below monkey-patch a real module attribute
+    in-process; restore it so the fake doesn't leak into later test files."""
+    import cogniverse_dashboard.tabs.config_management as _m
+
+    original = _m.save_system_config_edits
+    yield
+    _m.save_system_config_edits = original
 
 
 def _system_config_app(tmp_path: Path) -> AppTest:
