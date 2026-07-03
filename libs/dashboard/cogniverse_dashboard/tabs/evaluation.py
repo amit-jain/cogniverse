@@ -38,6 +38,7 @@ def query_phoenix_graphql(query: str) -> Dict[str, Any]:
         return {}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_phoenix_datasets() -> List[Dict[str, Any]]:
     """Get all datasets from Phoenix GraphQL API"""
     query = """
@@ -139,6 +140,7 @@ def _aggregate_experiment_metrics(experiment_data: Dict[str, Any]) -> None:
             }
 
 
+@st.cache_data(ttl=60, show_spinner="Fetching experiments...")
 def get_all_experiment_data_for_dataset(dataset_id: str) -> Dict[str, Any]:
     """
     Get all experiment data for a dataset by querying Phoenix.

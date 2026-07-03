@@ -59,8 +59,12 @@ def render_config_management_tab():
         st.info(f"Backend: {backend_type}")
 
     with col3:
-        # Health check
-        is_healthy = manager.store.health_check()
+        # Health check — cached so a down store doesn't stall every rerun.
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _store_healthy(_mgr) -> bool:
+            return _mgr.store.health_check()
+
+        is_healthy = _store_healthy(manager)
         if is_healthy:
             st.success("✓ Healthy")
         else:

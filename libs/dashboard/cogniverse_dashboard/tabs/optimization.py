@@ -1564,21 +1564,26 @@ def _render_metrics_dashboard_tab():
         telemetry_manager = get_telemetry_manager()
         provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-        # Test provider connectivity
-        async def check_provider():
-            try:
-                _now = datetime.now(timezone.utc)
-                await provider.traces.get_spans(
-                    start_time=_now - timedelta(minutes=1),
-                    end_time=_now,
-                    project=f"cogniverse-{tenant_id}",
-                    limit=1,
-                )
-                return True
-            except Exception:
-                return False
+        # Test provider connectivity — cached so every rerun doesn't pay a
+        # probe query (Streamlit re-executes this tab per widget interaction).
+        @st.cache_data(ttl=60, show_spinner=False)
+        def _provider_available(_prov, tenant: str) -> bool:
+            async def check_provider():
+                try:
+                    _now = datetime.now(timezone.utc)
+                    await _prov.traces.get_spans(
+                        start_time=_now - timedelta(minutes=1),
+                        end_time=_now,
+                        project=f"cogniverse-{tenant}",
+                        limit=1,
+                    )
+                    return True
+                except Exception:
+                    return False
 
-        provider_available = run_async_in_streamlit(check_provider())
+            return run_async_in_streamlit(check_provider())
+
+        provider_available = _provider_available(provider, tenant_id)
     except Exception:
         provider_available = False
 
@@ -1595,6 +1600,7 @@ def _render_metrics_dashboard_tab():
         )
     with col2:
         if st.button("🔄 Refresh Metrics"):
+            st.cache_data.clear()  # force fresh pulls despite the TTL cache
             st.rerun()
 
     # Query Phoenix for optimization metrics
@@ -1614,19 +1620,28 @@ def _render_metrics_dashboard_tab():
             tenant_id=st.session_state["current_tenant"]
         )
 
-        # Calculate time range
-        end_time = datetime.now(timezone.utc)
+        # Calculate time range, quantized to 30s so cache keys repeat
+        # across reruns.
+        end_time = datetime.now(timezone.utc).replace(microsecond=0)
+        end_time = end_time.replace(second=(end_time.second // 30) * 30)
         start_time = end_time - timedelta(days=lookback_days)
 
-        # Get spans from provider
-        async def _fetch_spans():
-            return await provider.traces.get_spans(
-                project=f"cogniverse-{tenant_id}",
-                start_time=start_time,
-                end_time=end_time,
-            )
+        # Get spans from provider — cached; a miss pulls the full project
+        # window for up to 90 days.
+        @st.cache_data(ttl=30, show_spinner="Fetching spans...")
+        def _fetch_spans_cached(_prov, tenant: str, start_iso: str, end_iso: str):
+            async def _fetch_spans():
+                return await _prov.traces.get_spans(
+                    project=f"cogniverse-{tenant}",
+                    start_time=datetime.fromisoformat(start_iso),
+                    end_time=datetime.fromisoformat(end_iso),
+                )
 
-        spans_df = run_async_in_streamlit(_fetch_spans())
+            return run_async_in_streamlit(_fetch_spans())
+
+        spans_df = _fetch_spans_cached(
+            provider, tenant_id, start_time.isoformat(), end_time.isoformat()
+        )
 
         if spans_df is None or spans_df.empty:
             st.warning(
@@ -1638,14 +1653,23 @@ def _render_metrics_dashboard_tab():
         st.subheader("📊 Routing Optimization Metrics")
 
         routing_evaluator = RoutingEvaluator(provider=provider)
+
         # query_routing_spans is async — it must be awaited via
         # run_async_in_streamlit (as the routing_evaluation tab does). Calling it
         # bare returns a coroutine that is always truthy and then blows up in
         # calculate_metrics' `for span in ...`.
-        routing_spans = run_async_in_streamlit(
-            routing_evaluator.query_routing_spans(
-                start_time=start_time, end_time=end_time, limit=1000
+        @st.cache_data(ttl=30, show_spinner=False)
+        def _fetch_routing_spans(_ev, tenant: str, start_iso: str, end_iso: str):
+            return run_async_in_streamlit(
+                _ev.query_routing_spans(
+                    start_time=datetime.fromisoformat(start_iso),
+                    end_time=datetime.fromisoformat(end_iso),
+                    limit=1000,
+                )
             )
+
+        routing_spans = _fetch_routing_spans(
+            routing_evaluator, tenant_id, start_time.isoformat(), end_time.isoformat()
         )
 
         if routing_spans:
