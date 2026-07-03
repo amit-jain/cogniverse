@@ -1210,6 +1210,16 @@ class TestEmbeddingGeneratorImpl:
 
         assert result is not None
         assert result.shape == (128,)  # Averaged across frames
+
+        # The capture is cached for reuse across the video's segments —
+        # reopening per segment paid container parsing every time. A second
+        # segment must reuse the same capture, and release happens when the
+        # generator finishes the video.
+        mock_cap.isOpened.return_value = True
+        generator._generate_time_segment_embeddings(Path("/video.mp4"), 20.0, 30.0)
+        assert mock_video_capture.call_count == 1, "capture must be reused"
+        mock_cap.release.assert_not_called()
+        generator._release_video_capture()
         mock_cap.release.assert_called_once()
 
     @patch("cv2.VideoCapture")

@@ -165,6 +165,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 result = self._process_multi_documents(video_data, segments)
 
         result.processing_time = time.time() - start_time
+        self._release_video_capture()
         self.logger.info(
             f"Completed {video_id}: {result.documents_processed} processed, "
             f"{result.documents_fed} fed in {result.processing_time:.2f}s"
@@ -425,6 +426,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_processed = 0
         documents_fed = 0
+        # Segments accumulate here and feed as one batch — feeding one
+        # document per call rebuilt the feed client machinery every doc.
+        feed_batch: list[Document] = []
         errors = []
 
         for idx, doc_info in enumerate(segments):
@@ -464,12 +468,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     doc.add_metadata("source_url", video_data["source_url"])
 
                 documents_processed += 1
-                if self._feed_document(doc):
-                    documents_fed += 1
+                feed_batch.append(doc)
 
             except Exception as e:
                 self.logger.error(f"Error processing document {idx}: {e}")
                 errors.append(f"Document {idx}: {str(e)}")
+
+        documents_fed += self._feed_documents(feed_batch)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -497,6 +502,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_processed = 0
         documents_fed = 0
+        # Segments accumulate here and feed as one batch — feeding one
+        # document per call rebuilt the feed client machinery every doc.
+        feed_batch: list[Document] = []
         errors = []
 
         for idx, page in enumerate(segments):
@@ -538,12 +546,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 doc.add_metadata("page_count", page.get("page_count", len(segments)))
 
                 documents_processed += 1
-                if self._feed_document(doc):
-                    documents_fed += 1
+                feed_batch.append(doc)
 
             except Exception as e:
                 self.logger.error(f"Error processing page {idx}: {e}")
                 errors.append(f"Page {idx}: {str(e)}")
+
+        documents_fed += self._feed_documents(feed_batch)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -579,6 +588,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_processed = 0
         documents_fed = 0
+        # Segments accumulate here and feed as one batch — feeding one
+        # document per call rebuilt the feed client machinery every doc.
+        feed_batch: list[Document] = []
         errors = []
 
         for idx, seg in enumerate(segments):
@@ -619,12 +631,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 doc.add_metadata("source_code", text)
 
                 documents_processed += 1
-                if self._feed_document(doc):
-                    documents_fed += 1
+                feed_batch.append(doc)
 
             except Exception as e:
                 self.logger.error(f"Error processing code chunk {idx}: {e}")
                 errors.append(f"Code chunk {idx}: {str(e)}")
+
+        documents_fed += self._feed_documents(feed_batch)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -669,6 +682,9 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
 
         documents_processed = 0
         documents_fed = 0
+        # Segments accumulate here and feed as one batch — feeding one
+        # document per call rebuilt the feed client machinery every doc.
+        feed_batch: list[Document] = []
         errors = []
 
         for idx, audio_info in enumerate(segments):
@@ -736,12 +752,13 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     doc.add_metadata("source_url", video_data["source_url"])
 
                 documents_processed += 1
-                if self._feed_document(doc):
-                    documents_fed += 1
+                feed_batch.append(doc)
 
             except Exception as e:
                 self.logger.error(f"Error processing audio {idx}: {e}")
                 errors.append(f"Audio {idx}: {str(e)}")
+
+        documents_fed += self._feed_documents(feed_batch)
 
         return EmbeddingResult(
             video_id=content_id,
@@ -1093,6 +1110,29 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
             self.logger.error(f"Error generating chunk embeddings: {e}")
             return None
 
+    def _get_video_capture(self, video_path: Path):
+        """Reuse one cv2.VideoCapture across the segments of a video —
+        reopening the file per time segment paid container parsing and seek
+        table setup N times per ingest. Released by ``generate_embeddings``."""
+        import cv2
+
+        cached = getattr(self, "_segment_capture", None)
+        if cached is not None and cached[0] == str(video_path) and cached[1].isOpened():
+            return cached[1]
+        self._release_video_capture()
+        cap = cv2.VideoCapture(str(video_path))
+        self._segment_capture = (str(video_path), cap)
+        return cap
+
+    def _release_video_capture(self) -> None:
+        cached = getattr(self, "_segment_capture", None)
+        if cached is not None:
+            try:
+                cached[1].release()
+            except Exception:
+                pass
+        self._segment_capture = None
+
     def _generate_time_segment_embeddings(
         self, video_path: Path, start_time: float, end_time: float
     ) -> np.ndarray | None:
@@ -1117,7 +1157,7 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                 # Extract frames from time segment for other models
                 import cv2
 
-                cap = cv2.VideoCapture(str(video_path))
+                cap = self._get_video_capture(video_path)
                 fps = cap.get(cv2.CAP_PROP_FPS)
 
                 # Set to start time
@@ -1137,8 +1177,6 @@ class EmbeddingGeneratorImpl(BaseEmbeddingGenerator):
                     if ret:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         frames.append(Image.fromarray(frame_rgb))
-
-                cap.release()
 
                 if not frames:
                     return None

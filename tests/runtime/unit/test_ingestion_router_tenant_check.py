@@ -155,3 +155,40 @@ class TestGraphUpsertRequiresTenant:
             f"{resp.status_code}: {resp.text}"
         )
         assert "not registered" in resp.text.lower()
+
+
+@pytest.mark.unit
+class TestTenantExistenceCache:
+    """assert_tenant_exists caches positive lookups for a short TTL (it runs
+    on every search/ingestion/graph request) but never caches absence, so a
+    freshly created tenant is visible immediately and unknown tenants keep
+    404ing."""
+
+    @pytest.mark.asyncio
+    async def test_positive_result_cached_negative_rechecked(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        from cogniverse_core.common import tenant_utils
+
+        monkeypatch.setattr(tenant_utils, "_TENANT_EXISTS_CACHE", {}, raising=True)
+
+        lookups = AsyncMock(side_effect=[None, object(), object()])
+        import cogniverse_runtime.admin.tenant_manager as tm
+
+        monkeypatch.setattr(tm, "get_tenant_internal", lookups)
+
+        from fastapi import HTTPException
+
+        # Unknown tenant: 404 and NOT cached.
+        with pytest.raises(HTTPException):
+            await tenant_utils.assert_tenant_exists("acme:prod")
+        assert tenant_utils._TENANT_EXISTS_CACHE == {}
+
+        # Tenant now exists (created between calls): visible immediately.
+        await tenant_utils.assert_tenant_exists("acme:prod")
+        assert lookups.await_count == 2
+
+        # Repeat checks within the TTL are served from the cache.
+        await tenant_utils.assert_tenant_exists("acme:prod")
+        await tenant_utils.assert_tenant_exists("acme:prod")
+        assert lookups.await_count == 2

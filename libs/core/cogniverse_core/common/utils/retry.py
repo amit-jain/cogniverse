@@ -148,7 +148,6 @@ class RetryableOperation:
         last_exception = None
 
         for attempt in range(1, self.config.max_attempts + 1):
-
             try:
                 return operation()
 

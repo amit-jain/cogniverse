@@ -111,10 +111,17 @@ class VllmSidecarFactory:
         extra_args: Optional[list[str]] = None,
         image: Optional[str] = None,
         device: str = "cpu",
+        env: Optional[dict[str, str]] = None,
     ) -> str:
         """Return a base URL serving ``model``. Cached by (model, image, args)."""
         image = image or self.image
-        key = (model, image, tuple(extra_args or ()), device)
+        key = (
+            model,
+            image,
+            tuple(extra_args or ()),
+            device,
+            tuple(sorted((env or {}).items())),
+        )
         if key in self._spawned:
             return self._spawned[key].base_url
 
@@ -145,6 +152,8 @@ class VllmSidecarFactory:
             # downstream.
             "--oom-score-adj=500",
         ]
+        for env_key, env_value in (env or {}).items():
+            cmd.extend(["-e", f"{env_key}={env_value}"])
         if device == "rocm":
             # ROCm containers need the kernel fusion + render devices and
             # membership of the render group (gid varies per distro).

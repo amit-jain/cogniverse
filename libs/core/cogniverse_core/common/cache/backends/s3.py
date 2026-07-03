@@ -279,13 +279,14 @@ class S3CacheBackend(CacheBackend):
     async def delete(self, key: str) -> bool:
         s3_key = self._s3_key(key)
         try:
-            existed = await self.exists(key)
+            # S3 delete is idempotent — the HEAD probe this used to make
+            # purely for the stats counter doubled the round-trips (and
+            # tripled them for expired-entry reads, whose get() deletes).
             await asyncio.to_thread(
                 lambda: self._s3().delete_object(Bucket=self.bucket, Key=s3_key)
             )
-            if existed:
-                self._stats["deletes"] += 1
-            return existed
+            self._stats["deletes"] += 1
+            return True
         except Exception as e:
             logger.error("Error deleting cache object %s: %s", s3_key, e)
             return False

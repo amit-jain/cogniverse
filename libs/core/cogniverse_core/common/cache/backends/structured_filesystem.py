@@ -2,6 +2,7 @@
 Structured filesystem cache backend that preserves human-readable paths
 """
 
+import asyncio
 import json
 import logging
 import pickle
@@ -452,16 +453,19 @@ class StructuredFilesystemBackend(CacheBackend):
             logger.error(f"Error writing metadata {meta_path}: {e}")
 
     async def _run_startup_cleanup_if_needed(self) -> None:
-        """Run the one-time startup cleanup on the first async operation.
+        """Kick off the one-time startup cleanup on the first async operation.
 
         ``__init__`` is sync and cannot await, so when ``cleanup_on_startup``
         is enabled it sets a flag that this guard consumes once an event loop
-        is running. The flag is cleared before awaiting so concurrent first
-        calls don't each trigger a sweep.
+        is running. The flag is cleared before scheduling so concurrent first
+        calls don't each trigger a sweep. The sweep itself runs as a
+        background task — it rglobs the whole cache tree (tens of thousands
+        of frame files on a warm video cache), and running it inline made the
+        first cache get of the process pay the full walk before answering.
         """
         if self._needs_cleanup:
             self._needs_cleanup = False
-            await self._cleanup_expired()
+            self._startup_cleanup_task = asyncio.create_task(self._cleanup_expired())
 
     async def _cleanup_expired(self):
         """Clean up expired cache entries"""
@@ -472,9 +476,12 @@ class StructuredFilesystemBackend(CacheBackend):
         checked_count = 0
 
         try:
-            # Find all metadata files
+            # Find all metadata files. The tree walk is sync (pathlib), so
+            # yield periodically to keep the loop responsive during big walks.
             for meta_path in self.base_path.rglob("*.meta"):
                 checked_count += 1
+                if checked_count % 100 == 0:
+                    await asyncio.sleep(0)
 
                 try:
                     async with aiofiles.open(meta_path, "r") as f:

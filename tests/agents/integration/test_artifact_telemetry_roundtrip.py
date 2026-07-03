@@ -129,9 +129,7 @@ class TestArtifactManagerRoundTrip:
         assert loaded.extra_metrics == extra
 
     @pytest.mark.asyncio
-    async def test_unspecified_optional_fields_surface_as_defaults(
-        self, real_provider
-    ):
+    async def test_unspecified_optional_fields_surface_as_defaults(self, real_provider):
         """A record that sets only the required fields comes back with the
         optional typed slots at their documented defaults (None for the
         numeric fields, False for promoted), while extra_metrics round-trips.

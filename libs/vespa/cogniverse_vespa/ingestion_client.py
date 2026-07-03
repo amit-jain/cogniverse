@@ -281,7 +281,9 @@ class VespaPyClient:
             raw_embeddings = doc.embeddings["embedding"]["data"]
 
         all_processed_embeddings = self._embedding_processor.process_embeddings(
-            raw_embeddings
+            raw_embeddings,
+            needs_float=required_embeddings.get("needs_float", None),
+            needs_binary=required_embeddings.get("needs_binary", None),
         )
 
         # Map processed embeddings to the correct field names based on ranking strategies

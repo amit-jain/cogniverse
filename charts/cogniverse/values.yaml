@@ -886,6 +886,11 @@ inference:
       - "8192"
       - "--hf-overrides"
       - '{"architectures": ["ColBERTModernBertModel"]}'
+    # LateOn's sentence_bert_config.json carries max_seq_length=299 (an ST
+    # truncation default); vLLM's CPU build clamps derived max_model_len to
+    # it and refuses 8192 even though the model's position table is 8192.
+    env:
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
     resources:
       limits:
         cpu: "4"
@@ -940,6 +945,11 @@ inference:
       - "8192"
       - "--hf-overrides"
       - '{"architectures": ["ColBERTModernBertModel"]}'
+    # LateOn's sentence_bert_config.json carries max_seq_length=299 (an ST
+    # truncation default); vLLM's CPU build clamps derived max_model_len to
+    # it and refuses 8192 even though the model's position table is 8192.
+    env:
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "1"
     resources:
       limits:
         cpu: "2"

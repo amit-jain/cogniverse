@@ -626,6 +626,13 @@ class DSPyAgentOptimizerPipeline:
             tenant_id: Tenant identifier for artifact isolation.
             telemetry_provider: Provider for dataset/experiment stores.
         """
+        from cogniverse_core.common.tenant_utils import canonical_tenant_id
+
+        # Canonicalize once at the boundary. ArtifactManager canonicalizes
+        # its own tenant_id internally, so a simple-form input ("acme")
+        # otherwise diverges from the ExperimentMetrics rows built below and
+        # trips the manager's cross-tenant write guard.
+        tenant_id = canonical_tenant_id(tenant_id)
         artifact_mgr = ArtifactManager(telemetry_provider, tenant_id)
 
         for module_name, compiled_module in self.compiled_modules.items():

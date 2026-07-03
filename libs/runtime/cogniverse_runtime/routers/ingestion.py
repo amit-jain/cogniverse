@@ -1,5 +1,6 @@
 """Ingestion endpoints - unified interface for content ingestion."""
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,8 +52,24 @@ class IngestionStatus(BaseModel):
     errors: List[str] = []
 
 
-# In-memory job tracking (replace with Redis/DB in production)
+# In-memory job tracking (replace with Redis/DB in production). Bounded:
+# one entry per /ingestion/start job on a long-lived server grows forever,
+# so completed/failed jobs are evicted oldest-first past the cap while
+# in-flight jobs are always kept.
+_MAX_TRACKED_JOBS = 500
 ingestion_jobs: Dict[str, IngestionStatus] = {}
+
+
+def _evict_finished_jobs() -> None:
+    if len(ingestion_jobs) <= _MAX_TRACKED_JOBS:
+        return
+    excess = len(ingestion_jobs) - _MAX_TRACKED_JOBS
+    for job_id in [
+        jid
+        for jid, job in ingestion_jobs.items()
+        if job.status in ("completed", "failed")
+    ][:excess]:
+        del ingestion_jobs[job_id]
 
 
 # FastAPI dependencies - will be overridden in main.py via app.dependency_overrides
@@ -117,6 +134,7 @@ async def start_ingestion(
         job_id = str(uuid.uuid4())
 
         # Initialize job status
+        _evict_finished_jobs()
         ingestion_jobs[job_id] = IngestionStatus(
             job_id=job_id,
             status="started",
@@ -979,37 +997,42 @@ async def _write_backrefs_to_content(
         return
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for segment_id, backrefs in backrefs_by_segment.items():
-            for schema, doc_id in targets.get(segment_id, []):
-                # Vespa Document v1 URL format:
-                #   /document/v1/<namespace>/<doctype>/docid/<id>
-                # Content schemas live under the ``content`` namespace
-                # (the embedding feed writes
-                # ``id:content:<schema>::<id>``), not under the schema
-                # name. Older versions of this function used
-                # ``<schema>/<schema>/docid/<id>`` which silently 404s.
-                url = (
-                    f"{base_url.rstrip('/')}/document/v1/"
-                    f"content/{schema}/docid/{doc_id}"
-                )
-                payload = {
-                    "fields": {
-                        "entity_ids": {"assign": list(backrefs.get("entity_ids", []))},
-                        "relation_ids": {
-                            "assign": list(backrefs.get("relation_ids", []))
-                        },
-                        "claim_ids": {"assign": list(backrefs.get("claim_ids", []))},
-                    }
+        semaphore = asyncio.Semaphore(8)
+
+        async def _patch(segment_id: str, schema: str, doc_id: str) -> None:
+            backrefs = backrefs_by_segment[segment_id]
+            # Vespa Document v1 URL format:
+            #   /document/v1/<namespace>/<doctype>/docid/<id>
+            # Content schemas live under the ``content`` namespace
+            # (the embedding feed writes ``id:content:<schema>::<id>``),
+            # not under the schema name. Older versions of this function
+            # used ``<schema>/<schema>/docid/<id>`` which silently 404s.
+            url = f"{base_url.rstrip('/')}/document/v1/content/{schema}/docid/{doc_id}"
+            payload = {
+                "fields": {
+                    "entity_ids": {"assign": list(backrefs.get("entity_ids", []))},
+                    "relation_ids": {"assign": list(backrefs.get("relation_ids", []))},
+                    "claim_ids": {"assign": list(backrefs.get("claim_ids", []))},
                 }
+            }
+            async with semaphore:
                 resp = await client.put(url, json=payload)
-                if not resp.is_success:
-                    logger.warning(
-                        "Content back-ref PATCH failed for %s/%s (%s): %s",
-                        schema,
-                        doc_id,
-                        resp.status_code,
-                        resp.text[:500],
-                    )
+            if not resp.is_success:
+                logger.warning(
+                    "Content back-ref PATCH failed for %s/%s (%s): %s",
+                    schema,
+                    doc_id,
+                    resp.status_code,
+                    resp.text[:500],
+                )
+
+        await asyncio.gather(
+            *(
+                _patch(segment_id, schema, doc_id)
+                for segment_id in backrefs_by_segment
+                for schema, doc_id in targets.get(segment_id, [])
+            )
+        )
 
 
 async def run_ingestion(

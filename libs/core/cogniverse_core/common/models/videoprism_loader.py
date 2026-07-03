@@ -595,9 +595,9 @@ class VideoPrismGlobalLoader(VideoPrismLoader):
         Returns:
             Numpy array of shape (embedding_dim,) for global embeddings
         """
-        if self.model is None:
-            self.load_model()
-
+        # Text-only path: the text encoder loads its own weights lazily and
+        # does not need the video tower — loading it here cost a multi-GB
+        # JAX model load on the first text query of a search-only process.
         if self.text_encoder is None:
             self.load_text_encoder()
 

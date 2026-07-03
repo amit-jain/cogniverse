@@ -228,6 +228,9 @@ class ConnectionPool:
         self._connections: List[VespaConnection] = []
         self._available: List[VespaConnection] = []
         self._lock = threading.Lock()
+        # Signalled whenever a connection returns to the pool, so waiters
+        # wake immediately instead of polling on a sleep loop.
+        self._returned = threading.Condition(self._lock)
         self._stop_health_check = threading.Event()
 
         self._initialize_connections()
@@ -249,39 +252,35 @@ class ConnectionPool:
     def get_connection(self):
         """Get a connection from the pool"""
         conn = None
-        start_time = time.time()
+        deadline = time.monotonic() + self.config.connection_timeout
 
         try:
-            # Try to get available connection
-            with self._lock:
-                if self._available:
-                    conn = self._available.pop()
-                elif len(self._connections) < self.config.max_connections:
-                    # Create new connection if under limit
-                    conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
-                    self._connections.append(conn)
-                    logger.info(f"Created new connection {conn.connection_id}")
-
-            # Wait for connection if none available
-            while (
-                conn is None
-                and (time.time() - start_time) < self.config.connection_timeout
-            ):
-                time.sleep(0.1)  # Poll for connection availability
-                with self._lock:
+            with self._returned:
+                while conn is None:
                     if self._available:
                         conn = self._available.pop()
-
-            if conn is None:
-                raise TimeoutError("No connections available")
+                    elif len(self._connections) < self.config.max_connections:
+                        # Create new connection if under limit
+                        conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
+                        self._connections.append(conn)
+                        logger.info(f"Created new connection {conn.connection_id}")
+                    else:
+                        # Block until a connection returns — the previous
+                        # 100ms sleep-poll added up to a tick of latency per
+                        # starved query and burned CPU while waiting.
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not self._returned.wait(remaining):
+                            if not self._available:
+                                raise TimeoutError("No connections available")
 
             yield conn
 
         finally:
             # Return connection to pool
             if conn is not None:
-                with self._lock:
+                with self._returned:
                     self._available.append(conn)
+                    self._returned.notify()
 
     def _health_check_loop(self):
         """Periodic health check for all connections"""
@@ -289,14 +288,23 @@ class ConnectionPool:
             try:
                 unhealthy = []
 
+                # Snapshot under the lock, probe outside it — health checks
+                # are network calls, and holding the pool lock through the
+                # sweep blocked every get_connection for its duration.
                 with self._lock:
-                    for conn in self._connections:
-                        if not conn.health_check():
+                    snapshot = list(self._connections)
+
+                for conn in snapshot:
+                    if not conn.health_check():
+                        unhealthy.append(conn)
+                    elif conn.idle_time > self.config.idle_timeout:
+                        # Remove idle connections above minimum
+                        with self._lock:
+                            above_min = (
+                                len(self._connections) > self.config.min_connections
+                            )
+                        if above_min:
                             unhealthy.append(conn)
-                        elif conn.idle_time > self.config.idle_timeout:
-                            # Remove idle connections above minimum
-                            if len(self._connections) > self.config.min_connections:
-                                unhealthy.append(conn)
 
                 # Remove unhealthy connections
                 for conn in unhealthy:
@@ -493,40 +501,40 @@ class VespaSearchBackend(SearchBackend):
         if not document_ids:
             return []
 
-        # Uses Vespa's built-in document URI for matching (works across all schemas)
-        doc_id_conditions = " OR ".join(
-            [f"id contains {yql_quote(doc_id)}" for doc_id in document_ids]
-        )
-        yql = f"select * from {self.schema_name} where {doc_id_conditions}"
-
-        query_params = {"yql": yql, "hits": len(document_ids), "timeout": "10s"}
+        # Document v1 point GETs — an O(1) dictionary lookup per id. The
+        # previous `id contains "<docid>"` YQL substring-matched the internal
+        # document URI, which no index serves, so cost grew with corpus size.
+        def _fetch(handle) -> Dict[str, Document]:
+            results: Dict[str, Document] = {}
+            for doc_id in document_ids:
+                response = handle.get_data(
+                    schema=self.schema_name,
+                    data_id=doc_id,
+                    namespace="content",
+                    raise_on_not_found=False,
+                )
+                if response.status_code != 200:
+                    continue
+                fields = response.json.get("fields", {})
+                doc = Document(
+                    id=doc_id,
+                    content_type=ContentType.VIDEO,
+                    text_content=fields.get("content", ""),
+                    status=ProcessingStatus.COMPLETED,
+                )
+                for key, value in fields.items():
+                    if value is not None:
+                        doc.add_metadata(key, value)
+                results[doc_id] = doc
+            return results
 
         try:
             if self.pool:
                 with self.pool.get_connection() as conn:
-                    response = conn.query(body=query_params)
+                    results_dict = _fetch(conn._sync)
             else:
-                response = self.vespa.query(body=query_params)
-
-            results_dict = {}
-            if response and hasattr(response, "hits"):
-                for hit in response.hits:
-                    fields = hit.get("fields", {})
-                    full_doc_id = hit.get("id", "")
-                    doc_id = full_doc_id.split("::")[-1]
-
-                    doc = Document(
-                        id=doc_id,
-                        content_type=ContentType.VIDEO,
-                        text_content=fields.get("content", ""),
-                        status=ProcessingStatus.COMPLETED,
-                    )
-
-                    for key, value in fields.items():
-                        if value is not None:
-                            doc.add_metadata(key, value)
-
-                    results_dict[doc_id] = doc
+                with self.vespa.syncio() as sync_app:
+                    results_dict = _fetch(sync_app)
 
             return [results_dict.get(doc_id) for doc_id in document_ids]
 

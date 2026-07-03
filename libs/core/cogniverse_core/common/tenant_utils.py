@@ -202,6 +202,15 @@ def require_tenant_id(tenant_id: Optional[str], *, source: str) -> str:
     return canonical_tenant_id(tenant_id)
 
 
+# Tenants confirmed to exist, with the monotonic time of confirmation.
+# Existence is effectively permanent (deletion is a rare admin action), so a
+# short positive-only cache removes a Vespa GET from every request without
+# caching absence — an unknown tenant is re-checked every time, so a freshly
+# created tenant is visible immediately.
+_TENANT_EXISTS_CACHE: dict = {}
+_TENANT_EXISTS_TTL_S = 30.0
+
+
 async def assert_tenant_exists(tenant_id: str) -> None:
     """
     Raise HTTPException(404) if tenant_id was never registered.
@@ -209,18 +218,31 @@ async def assert_tenant_exists(tenant_id: str) -> None:
     Looks up the tenant via TenantManager.get_tenant_internal, which reads
     Vespa's tenant_metadata schema. SYSTEM_TENANT_ID bypasses the check
     (it's a runtime-internal identity that isn't registered as a user
-    tenant).
+    tenant). Positive results are cached for a short TTL — this check sits
+    on every search/ingestion/graph request.
 
     Lazy imports keep this module free of a FastAPI / runtime dependency.
     """
     if tenant_id == SYSTEM_TENANT_ID:
         return
 
+    import time
+
     from fastapi import HTTPException
+
+    canonical = canonical_tenant_id(tenant_id)
+    confirmed_at = _TENANT_EXISTS_CACHE.get(canonical)
+    now = time.monotonic()
+    if confirmed_at is not None and now - confirmed_at < _TENANT_EXISTS_TTL_S:
+        return
 
     from cogniverse_runtime.admin.tenant_manager import get_tenant_internal
 
-    tenant = await get_tenant_internal(canonical_tenant_id(tenant_id))
+    tenant = await get_tenant_internal(canonical)
+    if tenant is not None:
+        _TENANT_EXISTS_CACHE[canonical] = now
+        return
+    _TENANT_EXISTS_CACHE.pop(canonical, None)
     if tenant is None:
         raise HTTPException(
             status_code=404,
