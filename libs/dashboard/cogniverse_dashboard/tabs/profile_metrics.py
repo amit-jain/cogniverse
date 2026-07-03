@@ -110,6 +110,7 @@ def render_profile_metrics_tab() -> None:
                 project=project,
                 start_time=datetime.fromisoformat(start_iso),
                 end_time=datetime.fromisoformat(end_iso),
+                filters={"name": SPAN_NAME_PROFILE_SELECTION},
             )
         )
 

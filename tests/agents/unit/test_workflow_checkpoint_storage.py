@@ -424,3 +424,6 @@ class TestGetLatestCheckpointNonBlocking:
         # on the third attempt — all via asyncio.sleep, keeping the loop live.
         assert recorded == [1, 2]
         assert provider.traces.get_spans.await_count == 3
+        # Only checkpoint spans may cross the wire — never the whole project.
+        for call in provider.traces.get_spans.await_args_list:
+            assert call.kwargs["filters"] == {"name": "workflow_checkpoint"}

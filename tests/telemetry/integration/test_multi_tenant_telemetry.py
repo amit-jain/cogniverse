@@ -517,3 +517,79 @@ class TestPhoenixIntegrationWithRealServer:
         # Cleanup
         manager.shutdown()
         TelemetryManager._instance = None
+
+
+@pytest.mark.integration
+@pytest.mark.telemetry
+class TestGetSpansNameFilterRealPhoenix:
+    """The ``{"name": ...}`` filter on PhoenixTraceStore.get_spans must run
+    server-side against real Phoenix and return exactly the matching spans —
+    client-side name filtering pulled the whole project frame per call and
+    burned the limit budget on unrelated span types."""
+
+    def test_name_filter_returns_only_matching_spans(self, phoenix_container):
+        import asyncio
+
+        TelemetryManager._instance = None
+        phoenix_config = TelemetryConfig(
+            enabled=True,
+            level=TelemetryLevel.VERBOSE,
+            otlp_endpoint=phoenix_container["grpc_endpoint"],
+            provider_config={
+                "http_endpoint": phoenix_container["http_endpoint"],
+                "grpc_endpoint": phoenix_container["grpc_endpoint"],
+            },
+            service_name="integration-test",
+            environment="test",
+            batch_config=BatchExportConfig(use_sync_export=True),
+        )
+        manager = TelemetryManager(phoenix_config)
+        run_id = uuid.uuid4().hex[:8]
+        tenant = f"filter-{run_id}"
+
+        # Two span names in one project: 3 checkpoint-style, 2 other.
+        for i in range(3):
+            with manager.span(
+                name="workflow_checkpoint",
+                tenant_id=tenant,
+                project_name="routing",
+                attributes={"test_run_id": run_id, "i": i},
+            ):
+                pass
+        for i in range(2):
+            with manager.span(
+                name=f"other_op_{run_id}",
+                tenant_id=tenant,
+                project_name="routing",
+                attributes={"test_run_id": run_id, "i": i},
+            ):
+                pass
+
+        assert manager.force_flush(timeout_millis=10000)
+        wait_for_phoenix_processing(delay=2, description="Phoenix processing")
+
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint=phoenix_container["http_endpoint"],
+            tenant_id=tenant,
+            project_template="cogniverse-{tenant_id}-{service}",
+        )
+        project = phoenix_config.get_project_name(tenant, "routing")
+
+        filtered = asyncio.run(
+            store.get_spans(project=project, filters={"name": "workflow_checkpoint"})
+        )
+        unfiltered = asyncio.run(store.get_spans(project=project))
+
+        # Exact server-side semantics: only the requested name comes back.
+        assert set(filtered["name"].unique()) == {"workflow_checkpoint"}
+        assert len(filtered) == 3
+        assert set(unfiltered["name"].unique()) == {
+            "workflow_checkpoint",
+            f"other_op_{run_id}",
+        }
+        assert len(unfiltered) == 5
+
+        manager.shutdown()
+        TelemetryManager._instance = None

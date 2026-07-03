@@ -346,18 +346,20 @@ class RoutingEvaluator:
             RuntimeError: If telemetry query fails
         """
         try:
-            # Query spans from the specific routing optimization project
+            # Query only routing spans — the name predicate runs server-side,
+            # so the limit budget isn't consumed by unrelated span types and
+            # only routing rows cross the wire.
             spans_df = await self.provider.traces.get_spans(
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                filters={"name": "cogniverse.routing"},
                 limit=limit,
             )
 
             if spans_df is None or spans_df.empty:
                 return []
 
-            # Filter to only routing spans (by name)
             routing_spans_df = spans_df[spans_df["name"] == "cogniverse.routing"]
 
             if routing_spans_df.empty:

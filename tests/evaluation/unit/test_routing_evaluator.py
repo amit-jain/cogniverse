@@ -425,6 +425,7 @@ class TestProviderQuery:
             project="cogniverse-default-routing-optimization",
             start_time=start,
             end_time=end,
+            filters={"name": "cogniverse.routing"},
             limit=100,
         )
 

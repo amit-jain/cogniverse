@@ -275,8 +275,11 @@ class WorkflowCheckpointStorage:
             retry_delays = [1, 2, 3]
 
             for attempt, delay in enumerate(retry_delays):
+                # Only checkpoint spans cross the wire — the unfiltered form
+                # re-downloaded the project's entire span frame per attempt.
                 spans_df = await self.provider.traces.get_spans(
-                    project=self.full_project_name
+                    project=self.full_project_name,
+                    filters={"name": "workflow_checkpoint"},
                 )
 
                 if spans_df.empty:
