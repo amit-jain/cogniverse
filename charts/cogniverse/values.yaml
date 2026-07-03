@@ -339,6 +339,13 @@ runtime:
 
   replicaCount: 2
 
+  # Iterative-retrieval budgets (ITER_RETRIEVAL_* env overrides read at
+  # runtime startup). The library's 30s wall-clock default assumes a fast
+  # LM; the in-cluster LLM generates ~12 tok/s, so multi-iteration loops
+  # need a bigger budget to reach max_iter instead of dying on wall_clock.
+  iterRetrieval:
+    wallClockMs: 120000
+
   resources:
     limits:
       cpu: "4"
@@ -1748,10 +1755,13 @@ semanticRouter:
       storageClass: ""
       accessMode: ReadWriteOnce
       size: "10Gi"
+    # requests==limits (Guaranteed QoS): the router's CPU-bound classifiers sit
+    # on every LLM request's critical path — a 250m request let node pressure
+    # throttle classification from ~30ms to seconds and trip proxy deadlines.
     resources:
       requests:
-        cpu: "250m"
-        memory: "1Gi"
+        cpu: "2"
+        memory: "4Gi"
       limits:
         cpu: "2"
         memory: "4Gi"
