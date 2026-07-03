@@ -411,22 +411,16 @@ class SpanEvaluator:
                 continue
 
             try:
-                # Upload evaluations as annotations via provider. The
-                # annotation store derives its own explanation from
-                # name/label, so the evaluator's explanation is carried in
-                # metadata. ``project`` is required by add_annotation.
-                for _, row in eval_df.iterrows():
-                    await self.provider.telemetry.annotations.add_annotation(
-                        span_id=row["span_id"],
-                        name=eval_name,
-                        label=row["label"],
-                        score=row["score"],
-                        metadata={
-                            "evaluator": eval_name,
-                            "explanation": row.get("explanation", ""),
-                        },
-                        project=self.project_name,
-                    )
+                # One bulk upload per evaluator — the dataframe already has
+                # the span_id/score/label/explanation columns the batch API
+                # expects. The previous per-row add_annotation loop paid one
+                # HTTP round-trip per (span, evaluator) pair on every
+                # quality-monitor cycle.
+                await self.provider.telemetry.annotations.log_evaluations(
+                    eval_name=eval_name,
+                    evaluations_df=eval_df,
+                    project=self.project_name,
+                )
 
                 logger.info(f"Uploaded {len(eval_df)} evaluations for {eval_name}")
 

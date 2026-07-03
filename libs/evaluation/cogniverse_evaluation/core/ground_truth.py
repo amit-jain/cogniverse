@@ -558,7 +558,58 @@ class SchemaAwareGroundTruthStrategy(GroundTruthStrategy):
 
 
 class DatasetGroundTruthStrategy(GroundTruthStrategy):
-    """Extract ground truth from pre-defined datasets."""
+    """Extract ground truth from pre-defined datasets.
+
+    The dataset is downloaded once per strategy instance (one solver run)
+    and indexed by query — the previous version re-downloaded the entire
+    dataset from Phoenix and scanned it linearly for every trace.
+    """
+
+    def __init__(self) -> None:
+        self._dataset_indexes: dict[str, dict[str, tuple[dict, dict]]] = {}
+
+    async def _dataset_index(self, dataset_name: str) -> dict[str, tuple[dict, dict]]:
+        """Return ``{query: (input_record, output_record)}`` for the dataset,
+        downloading and indexing it on first use. First occurrence of a query
+        wins, matching the old linear-scan semantics."""
+        index = self._dataset_indexes.get(dataset_name)
+        if index is not None:
+            return index
+
+        from cogniverse_evaluation.providers import get_evaluation_provider
+
+        provider = get_evaluation_provider()
+        dataset_data = await provider.telemetry.datasets.get_dataset(dataset_name)
+
+        # provider.telemetry.datasets.get_dataset returns a DataFrame
+        # (Phoenix to_dataframe). Rows carry a nested ``input`` dict column
+        # and optionally an ``output`` dict column — same shape core.task
+        # consumes.
+        import pandas as pd
+
+        if not isinstance(dataset_data, pd.DataFrame):
+            raise GroundTruthError(
+                f"get_dataset returned {type(dataset_data).__name__}, "
+                "expected a DataFrame"
+            )
+
+        index = {}
+        for _, row in dataset_data.iterrows():
+            if "input" in row.index and isinstance(row["input"], dict):
+                input_record = row["input"]
+            else:
+                input_record = row.to_dict()
+            row_query = input_record.get("query")
+            if row_query is None or row_query in index:
+                continue
+            if "output" in row.index and isinstance(row["output"], dict):
+                output_record = row["output"]
+            else:
+                output_record = {}
+            index[row_query] = (input_record, output_record)
+
+        self._dataset_indexes[dataset_name] = index
+        return index
 
     async def extract_ground_truth(
         self, trace_data: dict[str, Any], backend: Any | None = None
@@ -577,57 +628,10 @@ class DatasetGroundTruthStrategy(GroundTruthStrategy):
             }
 
         try:
-            # Connect to telemetry provider dataset store
-            from cogniverse_evaluation.providers import get_evaluation_provider
-
             try:
-                provider = get_evaluation_provider()
-                # Note: This needs to be called from async context
-                # For now, this is synchronous but should be updated to async
-                import asyncio
-
-                # Handle case where event loop is already running (e.g., in tests)
-                try:
-                    asyncio.get_running_loop()
-                    # If we're here, loop is running - schedule the coroutine as a task
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as pool:
-                        dataset_data = pool.submit(
-                            lambda: asyncio.run(
-                                provider.telemetry.datasets.get_dataset(dataset_name)
-                            )
-                        ).result()
-                except RuntimeError:
-                    # No event loop running, safe to use asyncio.run()
-                    dataset_data = asyncio.run(
-                        provider.telemetry.datasets.get_dataset(dataset_name)
-                    )
-
-                # provider.telemetry.datasets.get_dataset returns a DataFrame
-                # (Phoenix to_dataframe). Rows carry a nested ``input`` dict
-                # column and optionally an ``output`` dict column — same shape
-                # core.task consumes.
-                import pandas as pd
-
-                if not isinstance(dataset_data, pd.DataFrame):
-                    raise GroundTruthError(
-                        f"get_dataset returned {type(dataset_data).__name__}, "
-                        "expected a DataFrame"
-                    )
-
-                for _, row in dataset_data.iterrows():
-                    if "input" in row.index and isinstance(row["input"], dict):
-                        input_record = row["input"]
-                    else:
-                        input_record = row.to_dict()
-                    if input_record.get("query") != query:
-                        continue
-
-                    if "output" in row.index and isinstance(row["output"], dict):
-                        output_record = row["output"]
-                    else:
-                        output_record = {}
+                match = (await self._dataset_index(dataset_name)).get(query)
+                if match is not None:
+                    input_record, output_record = match
 
                     return {
                         "expected_items": _resolve_expected_items(
