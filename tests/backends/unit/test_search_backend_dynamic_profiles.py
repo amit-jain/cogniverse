@@ -364,3 +364,30 @@ class TestFilterConditions:
 
     def test_empty_filters(self):
         assert self._build({}) == ""
+
+
+class TestVespaConnectionSessionReuse:
+    """Pooled connections must query over their persistent VespaSync client —
+    ``Vespa.query()`` builds and tears down a fresh HTTP client per call, so
+    routing through it gives the pool zero socket reuse."""
+
+    def test_query_uses_persistent_sync_client(self):
+        from unittest.mock import MagicMock
+
+        from cogniverse_vespa.search_backend import VespaConnection
+
+        with patch("cogniverse_vespa.search_backend.make_vespa_app") as mk:
+            app = MagicMock()
+            sync = MagicMock()
+            app.syncio.return_value = sync
+            mk.return_value = app
+
+            conn = VespaConnection("http://unused:1", "c1")
+            sync._open_http_client.assert_called_once()
+
+            conn.query(yql="select 1")
+            sync.query.assert_called_once_with(yql="select 1")
+            app.query.assert_not_called()
+
+            conn.close()
+            sync._close_http_client.assert_called_once()

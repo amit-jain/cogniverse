@@ -298,3 +298,39 @@ class TestBackendCaching:
             call_args = mock_backend.search.call_args
             query_dict = call_args[0][0]
             assert query_dict["tenant_id"] == "acme"
+
+
+class TestEncodingDelegatedToBackend:
+    """search() must not run the query encoder eagerly — the backend resolves
+    the ranking strategy and encodes on-demand only when the strategy's rank
+    config needs embeddings. Eager encoding paid a full model forward even
+    for text-only (bm25) strategies."""
+
+    def test_search_never_encodes_and_sends_no_embeddings(self, search_service):
+        mock_encoder = MagicMock()
+        mock_backend = MagicMock()
+        mock_backend.search.return_value = []
+
+        with (
+            patch("cogniverse_agents.search.service.get_backend_registry") as mock_reg,
+            patch.object(search_service, "_get_encoder", return_value=mock_encoder),
+        ):
+            mock_reg.return_value.get_search_backend.return_value = mock_backend
+
+            search_service.search(
+                query="find sunsets",
+                profile="frame_based_colpali",
+                tenant_id="acme",
+                ranking_strategy="bm25_only",
+            )
+
+            mock_encoder.encode.assert_not_called()
+            query_dict = mock_backend.search.call_args[0][0]
+            assert "query_embeddings" not in query_dict
+            # The encoder still reaches the backend for its on-demand path.
+            assert (
+                mock_reg.return_value.get_search_backend.call_args[0][1][
+                    "query_encoder"
+                ]
+                is mock_encoder
+            )

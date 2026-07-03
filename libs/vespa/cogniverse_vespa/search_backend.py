@@ -165,12 +165,24 @@ class SearchMetrics:
 
 
 class VespaConnection:
-    """Managed Vespa connection with health checking"""
+    """Managed Vespa connection with health checking.
+
+    Queries run over a persistent ``VespaSync`` HTTP client so TCP
+    connections are reused across searches — ``Vespa.query()`` itself
+    builds and tears down a fresh client per call, which made the pool
+    reuse app objects but never sockets. The pool hands a connection to
+    one searcher at a time, so the client sees no concurrent use;
+    ``health_check`` (which runs from the pool's background thread,
+    possibly while the connection is checked out) deliberately stays on
+    the per-call client path.
+    """
 
     def __init__(self, url: str, connection_id: str):
         self.url = url
         self.connection_id = connection_id
         self.vespa = make_vespa_app(url=url)
+        self._sync = self.vespa.syncio(connections=4)
+        self._sync._open_http_client()
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
@@ -180,7 +192,14 @@ class VespaConnection:
         """Execute query and update last used time"""
         with self._lock:
             self.last_used = time.time()
-        return self.vespa.query(*args, **kwargs)
+        return self._sync.query(*args, **kwargs)
+
+    def close(self) -> None:
+        """Release the persistent HTTP client."""
+        try:
+            self._sync._close_http_client()
+        except Exception as exc:
+            logger.debug(f"Closing {self.connection_id} client failed: {exc}")
 
     def health_check(self) -> bool:
         """Check connection health"""
@@ -295,6 +314,7 @@ class ConnectionPool:
                 self._connections.remove(conn)
             if conn in self._available:
                 self._available.remove(conn)
+        conn.close()
         logger.info(f"Removed connection {conn.connection_id}")
 
     def close(self):
@@ -304,6 +324,8 @@ class ConnectionPool:
             self._health_check_thread.join(timeout=5)
 
         with self._lock:
+            for conn in self._connections:
+                conn.close()
             self._connections.clear()
             self._available.clear()
 
@@ -782,26 +804,35 @@ class VespaSearchBackend(SearchBackend):
             # Generate embeddings on-demand if needed and not provided
             if requires_embeddings and query_embeddings is None:
                 if self.query_encoder:
-                    logger.info(
-                        f"[{correlation_id}] Generating embeddings on-demand for strategy '{strategy_name}'"
+                    from cogniverse_foundation.telemetry.context import (
+                        add_embedding_details_to_span,
+                        encode_span,
                     )
+
                     logger.info(
-                        f"[{correlation_id}] Query encoder type: {type(self.query_encoder).__name__}"
+                        f"[{correlation_id}] Generating embeddings on-demand "
+                        f"for strategy '{strategy_name}'"
                     )
-                    logger.info(f"[{correlation_id}] Query text: '{query_text}'")
-                    query_embeddings = self.query_encoder.encode(query_text)
-                    logger.info(
-                        f"[{correlation_id}] Generated embeddings shape: {query_embeddings.shape}"
+                    encoder_type = (
+                        type(self.query_encoder)
+                        .__name__.lower()
+                        .replace("queryencoder", "")
                     )
-                    logger.info(
-                        f"[{correlation_id}] Embeddings dtype: {query_embeddings.dtype}"
-                    )
-                    logger.info(
-                        f"[{correlation_id}] Embeddings min/max: {query_embeddings.min():.4f}/{query_embeddings.max():.4f}"
-                    )
-                    logger.info(
-                        f"[{correlation_id}] First 5 values: {query_embeddings.flatten()[:5]}"
-                    )
+                    with encode_span(
+                        tenant_id=tenant_id,
+                        encoder_type=encoder_type,
+                        query_length=len(query_text),
+                        query=query_text,
+                    ) as encode_span_ctx:
+                        query_embeddings = self.query_encoder.encode(query_text)
+                        add_embedding_details_to_span(encode_span_ctx, query_embeddings)
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            f"[{correlation_id}] Embeddings shape="
+                            f"{query_embeddings.shape} dtype={query_embeddings.dtype} "
+                            f"min/max={query_embeddings.min():.4f}/"
+                            f"{query_embeddings.max():.4f}"
+                        )
                 else:
                     logger.warning(
                         f"[{correlation_id}] Strategy '{strategy_name}' requires embeddings but no encoder available"

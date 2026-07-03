@@ -835,62 +835,64 @@ class Mem0MemoryManager:
             logger.error(f"Memory search failed: {e}")
             return []
 
+    # Re-stamps within this window are skipped — the lifecycle scheduler
+    # reads recency at day scale, so per-request writes buy nothing.
+    _LAST_ACCESSED_BUMP_INTERVAL_S = 900
+
     def _bump_last_accessed_for_hits(self, hits: List[Dict[str, Any]]) -> None:
         """Update each hit's ``last_accessed`` ISO timestamp.
 
-        Best-effort: any failure (Mem0 store doesn't expose update,
-        backend rejects the partial-update, network blip) is logged at
-        DEBUG and the search result is still returned. The lifecycle
-        scheduler reads ``last_accessed`` from the metadata; missing or
-        stale values cause it to fall back to ``created_at`` on the next
-        tick.
+        Best-effort: any failure (store doesn't expose update, backend
+        rejects the partial-update, network blip) is logged at DEBUG and
+        the search result is still returned. The lifecycle scheduler reads
+        ``last_accessed`` from the metadata; missing or stale values cause
+        it to fall back to ``created_at`` on the next tick.
 
-        We intentionally route through Mem0's ``update`` rather than
-        Vespa's ``update_document`` — Mem0 owns the schema-name routing
-        and content/metadata serialization; bypassing it would require
-        re-implementing both.
+        Routes through the vector store's partial update (``vector=None``)
+        rather than Mem0's ``Memory.update`` — the latter re-embeds the
+        memory text over HTTP on every call, which made each search pay
+        ``top_k`` embedder round-trips just to stamp a timestamp. The
+        vector store still owns schema-name routing and ``metadata_``
+        serialization, and ``vector=None`` leaves the stored embedding
+        untouched. Hits stamped within the last
+        ``_LAST_ACCESSED_BUMP_INTERVAL_S`` seconds are skipped entirely.
         """
         if not hits:
             return
-        try:
-            from datetime import datetime, timezone
+        from datetime import datetime, timezone
 
-            now_iso = datetime.now(timezone.utc).isoformat()
-        except Exception:
-            return
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         memory = self.memory
-        if memory is None or not hasattr(memory, "update"):
+        store = getattr(memory, "vector_store", None) if memory is not None else None
+        if store is None or not hasattr(store, "update"):
             return
         for hit in hits:
             mid = hit.get("id")
             if not mid:
                 continue
             try:
-                # Build the augmented metadata: copy existing keys, stamp
-                # last_accessed=now. Mem0's update signature accepts
-                # ``metadata`` as a kwarg (mem0/memory/main.py:1101) which
-                # the previous version of this code built but threw away.
                 metadata = hit.get("metadata") or {}
-                if isinstance(metadata, dict):
-                    metadata = dict(metadata)
-                else:
-                    metadata = {}
-                metadata["last_accessed"] = now_iso
-                try:
-                    memory.update(
-                        memory_id=mid,
-                        data=hit.get("memory", ""),
-                        metadata=metadata,
-                    )
-                except TypeError:
-                    # Older Mem0 signature without metadata kwarg — fall
-                    # back to data-only. Recency timestamp won't persist
-                    # but the bump still advances Mem0's updated_at field
-                    # which the scheduler treats as a fallback signal.
+                metadata = dict(metadata) if isinstance(metadata, dict) else {}
+                previous = metadata.get("last_accessed")
+                if isinstance(previous, str):
                     try:
-                        memory.update(memory_id=mid, data=hit.get("memory", ""))
-                    except TypeError:
-                        memory.update(mid)
+                        previous_dt = datetime.fromisoformat(
+                            previous.replace("Z", "+00:00")
+                        )
+                        if previous_dt.tzinfo is None:
+                            previous_dt = previous_dt.replace(tzinfo=timezone.utc)
+                        age = (now - previous_dt).total_seconds()
+                        if age < self._LAST_ACCESSED_BUMP_INTERVAL_S:
+                            continue
+                    except ValueError:
+                        pass
+                metadata["last_accessed"] = now_iso
+                store.update(
+                    vector_id=mid,
+                    vector=None,
+                    payload={"data": hit.get("memory", ""), "metadata": metadata},
+                )
             except Exception as exc:
                 logger.debug(
                     "last_accessed bump failed for memory_id=%s: %s",

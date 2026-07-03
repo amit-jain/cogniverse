@@ -5,10 +5,12 @@ memory because its ``last_accessed`` (or fallback ``updated_at``) never
 moves. The plan's recency-aware retention policies depend on a read
 actually advancing the recency signal.
 
-We assert the wire by spying on ``Mem0.update`` — that's the call
-``_bump_last_accessed_for_hits`` makes per hit. (The Vespa-side
-``last_accessed`` write is a Mem0/backend concern; what this commit
-owns is the dispatcher → bump-helper → mem0.update wire.)
+We assert the wire by spying on the vector store's partial update —
+that's the call ``_bump_last_accessed_for_hits`` makes per hit, with
+``vector=None`` so the stored embedding is preserved and nothing is
+re-embedded. Mem0's ``Memory.update`` must NOT be used here: it
+re-embeds the memory text on every call, which made each search pay
+``top_k`` embedder round-trips just to stamp a timestamp.
 """
 
 from __future__ import annotations
@@ -22,27 +24,38 @@ from cogniverse_core.memory.manager import Mem0MemoryManager
 pytestmark = pytest.mark.integration
 
 
-class _SpyMemory:
-    """Mem0 stand-in that records every search + update call.
+class _SpyVectorStore:
+    """Vector-store stand-in recording partial-update calls."""
 
-    Tracks ``metadata`` passed to update so the test can verify
-    last_accessed actually rides through, not just that update was
-    called. The previous version of the test only recorded
-    ``(memory_id, data)`` and missed the bug where the metadata dict
-    was built then discarded.
+    def __init__(self):
+        self.update_calls: List[Dict[str, Any]] = []
+
+    def update(self, vector_id, vector=None, payload=None):
+        self.update_calls.append(
+            {"vector_id": vector_id, "vector": vector, "payload": payload}
+        )
+
+
+class _SpyMemory:
+    """Mem0 stand-in that records searches, exposes a spy vector store for
+    the bump path, and records any (forbidden) ``Memory.update`` calls —
+    that path re-embeds the memory text per call.
     """
 
     def __init__(self, hits: List[Dict[str, Any]]):
         self._hits = hits
-        self.update_calls: List[Dict[str, Any]] = []
+        self.vector_store = _SpyVectorStore()
+        self.reembedding_update_calls: List[str] = []
+
+    @property
+    def update_calls(self) -> List[Dict[str, Any]]:
+        return self.vector_store.update_calls
 
     def search(self, query, *, user_id, agent_id, limit, filters):
         return {"results": list(self._hits)}
 
     def update(self, memory_id, data=None, metadata=None):
-        self.update_calls.append(
-            {"memory_id": memory_id, "data": data, "metadata": metadata}
-        )
+        self.reembedding_update_calls.append(memory_id)
 
 
 def _fresh_mm(monkeypatch) -> Mem0MemoryManager:
@@ -78,17 +91,26 @@ class TestBumpHelper:
             top_k=5,
         )
         assert len(out) == 3
-        assert sorted(call["memory_id"] for call in spy.update_calls) == [
+        assert spy.reembedding_update_calls == [], (
+            "the bump must go through the vector store's partial update, "
+            "not Memory.update — the latter re-embeds every hit"
+        )
+        assert sorted(call["vector_id"] for call in spy.update_calls) == [
             "a",
             "b",
             "c",
         ]
+        for call in spy.update_calls:
+            assert call["vector"] is None, (
+                "bump must not write an embedding — vector=None keeps the "
+                "stored tensor intact"
+            )
         # every update call must carry a metadata dict with
         # last_accessed populated. The previous bug built the metadata
         # then dropped it on the floor; without this assertion the bump
         # was a no-op against the persistence layer.
         for call in spy.update_calls:
-            md = call["metadata"]
+            md = (call["payload"] or {}).get("metadata")
             assert isinstance(md, dict), (
                 f"metadata must be a dict; got {type(md)!r}. The bump "
                 "helper must pass the augmented metadata so last_accessed "
@@ -117,13 +139,18 @@ class TestBumpHelper:
             top_k=5,
         )
         assert len(spy.update_calls) == 1
-        assert spy.update_calls[0]["memory_id"] == "a"
+        assert spy.update_calls[0]["vector_id"] == "a"
 
     def test_search_succeeds_when_update_raises(self, monkeypatch):
         # Best-effort contract: update failure must not break the search.
+        class _BrokenStore(_SpyVectorStore):
+            def update(self, vector_id, vector=None, payload=None):
+                raise RuntimeError("simulated store update failure")
+
         class _BrokenSpy(_SpyMemory):
-            def update(self, memory_id, data=None, metadata=None):
-                raise RuntimeError("simulated mem0 update failure")
+            def __init__(self, hits):
+                super().__init__(hits)
+                self.vector_store = _BrokenStore()
 
         mm = _fresh_mm(monkeypatch)
         spy = _BrokenSpy([{"id": "a", "memory": "x"}])
@@ -138,6 +165,38 @@ class TestBumpHelper:
         # Search still returns the hit.
         assert len(out) == 1
         assert out[0]["id"] == "a"
+
+    def test_recently_bumped_hit_is_skipped(self, monkeypatch):
+        """A hit stamped within the bump interval must not be re-written —
+        recency needs day-scale fidelity, not a Vespa write per request."""
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(seconds=60)).isoformat()
+        stale = (now - timedelta(hours=2)).isoformat()
+
+        mm = _fresh_mm(monkeypatch)
+        spy = _SpyMemory(
+            [
+                {"id": "fresh", "memory": "x", "metadata": {"last_accessed": recent}},
+                {
+                    "id": "stale",
+                    "memory": "y",
+                    "metadata": {"last_accessed": stale, "topic": "k8s"},
+                },
+            ]
+        )
+        mm.memory = spy
+        mm.search_memory(
+            query="x",
+            tenant_id="p23_tenant",
+            agent_name="p23_agent",
+            top_k=5,
+        )
+        assert [c["vector_id"] for c in spy.update_calls] == ["stale"]
+        md = spy.update_calls[0]["payload"]["metadata"]
+        assert md["topic"] == "k8s", "existing metadata keys must be preserved"
+        assert md["last_accessed"] != stale
 
     def test_no_hits_no_updates(self, monkeypatch):
         mm = _fresh_mm(monkeypatch)
