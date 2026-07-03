@@ -66,7 +66,7 @@ def test_is_pure_delivery(action, expected):
 # ---- _detect_deliveries (semantic match over stubbed embeddings) ---------
 
 
-def _fake_embed(text: str, _url: str) -> list:
+def _fake_embed(text: str, _url: str, *, is_query: bool = False) -> list:
     t = text.lower()
     has_wiki = "wiki" in t
     has_tg = "telegram" in t

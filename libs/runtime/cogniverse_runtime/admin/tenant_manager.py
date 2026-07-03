@@ -812,6 +812,10 @@ async def delete_tenant_internal(tenant_full_id: str) -> Dict:
 
     if tenant:
         backend.delete_metadata_document(schema="tenant_metadata", doc_id=canonical_tid)
+
+    from cogniverse_core.common.tenant_utils import invalidate_tenant_exists
+
+    invalidate_tenant_exists(canonical_tid)
     tenant_full_id = canonical_tid  # for the logger.info + return below
 
     logger.info(f"Deleted tenant {tenant_full_id} with {len(deleted_schemas)} schemas")

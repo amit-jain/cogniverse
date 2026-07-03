@@ -192,3 +192,30 @@ class TestTenantExistenceCache:
         await tenant_utils.assert_tenant_exists("acme:prod")
         await tenant_utils.assert_tenant_exists("acme:prod")
         assert lookups.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_invalidate_after_delete_makes_next_check_404(self, monkeypatch):
+        """Tenant deletion drops the cache entry, so the next check re-reads
+        the store and 404s instead of serving the stale positive for up to
+        the TTL (a deleted tenant's search kept returning its documents)."""
+        from unittest.mock import AsyncMock
+
+        from cogniverse_core.common import tenant_utils
+
+        monkeypatch.setattr(tenant_utils, "_TENANT_EXISTS_CACHE", {}, raising=True)
+
+        lookups = AsyncMock(side_effect=[object(), None])
+        import cogniverse_runtime.admin.tenant_manager as tm
+
+        monkeypatch.setattr(tm, "get_tenant_internal", lookups)
+
+        from fastapi import HTTPException
+
+        await tenant_utils.assert_tenant_exists("acme:prod")
+        assert lookups.await_count == 1
+
+        # Deletion invalidates; the next check must hit the store and 404.
+        tenant_utils.invalidate_tenant_exists("acme:prod")
+        with pytest.raises(HTTPException):
+            await tenant_utils.assert_tenant_exists("acme:prod")
+        assert lookups.await_count == 2

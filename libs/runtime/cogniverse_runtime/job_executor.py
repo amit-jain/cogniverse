@@ -35,15 +35,24 @@ _DELIVERY_DESCRIPTIONS = {
     "telegram": "send notify message telegram chat alert me",
 }
 
-_DELIVERY_THRESHOLD = 0.5
+# Calibrated on DenseOn query/document-prompted embeddings: matching
+# action/destination pairs score ~0.4-0.55, non-matching ~0.0-0.15.
+_DELIVERY_THRESHOLD = 0.3
 _delivery_embeddings: dict = {}
 
 
-def _embed_text(text: str, denseon_url: str) -> list:
-    """Get a 768-dim DenseOn embedding via the OAI-compatible /v1/embeddings."""
+def _embed_text(text: str, denseon_url: str, *, is_query: bool) -> list:
+    """Get a 768-dim DenseOn embedding via the OAI-compatible /v1/embeddings.
+
+    Applies the same sentence-transformers prompt prefixes as
+    RemoteOpenAIEmbedder — stock vLLM /v1/embeddings applies none, and
+    unprompted similarities sit on a different scale than the threshold
+    is calibrated for.
+    """
+    prompt = "query: " if is_query else "document: "
     resp = httpx.post(
         f"{denseon_url.rstrip('/')}/v1/embeddings",
-        json={"model": "lightonai/DenseOn", "input": text},
+        json={"model": "lightonai/DenseOn", "input": f"{prompt}{text}"},
         timeout=30,
     )
     resp.raise_for_status()
@@ -62,7 +71,7 @@ def _ensure_delivery_embeddings(denseon_url: str) -> None:
     if _delivery_embeddings:
         return
     for dest, desc in _DELIVERY_DESCRIPTIONS.items():
-        _delivery_embeddings[dest] = _embed_text(desc, denseon_url)
+        _delivery_embeddings[dest] = _embed_text(desc, denseon_url, is_query=False)
     logger.info(
         "Computed delivery embeddings for %d destinations", len(_delivery_embeddings)
     )
@@ -75,7 +84,7 @@ def _detect_deliveries(action: str, denseon_url: str) -> list:
     ["wiki", "telegram"], or [] for agent-only actions).
     """
     _ensure_delivery_embeddings(denseon_url)
-    action_emb = _embed_text(action, denseon_url)
+    action_emb = _embed_text(action, denseon_url, is_query=True)
 
     matched = []
     for dest, ref_emb in _delivery_embeddings.items():
