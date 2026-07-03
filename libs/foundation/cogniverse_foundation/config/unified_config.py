@@ -193,6 +193,11 @@ class SemanticRouterConfig:
     default_tier: str = "default"
     tier_header: str = "x-authz-user-groups"
     user_id_header: str = "x-authz-user-id"
+    # Model name sent on routed requests (litellm provider prefix + the
+    # router's auto alias). The router resolves models by its own catalog
+    # names and rejects raw provider model ids, so the endpoint's model is
+    # replaced, not forwarded.
+    routed_model: str = "openai/auto"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -202,6 +207,7 @@ class SemanticRouterConfig:
             "default_tier": self.default_tier,
             "tier_header": self.tier_header,
             "user_id_header": self.user_id_header,
+            "routed_model": self.routed_model,
         }
 
     @classmethod
@@ -213,6 +219,7 @@ class SemanticRouterConfig:
             default_tier=data.get("default_tier", "default"),
             tier_header=data.get("tier_header", "x-authz-user-groups"),
             user_id_header=data.get("user_id_header", "x-authz-user-id"),
+            routed_model=data.get("routed_model", "openai/auto"),
         )
 
 

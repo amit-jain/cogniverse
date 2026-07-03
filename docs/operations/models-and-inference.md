@@ -132,7 +132,8 @@ models.
 cogniverse sends. The helper
 `cogniverse_foundation.config.semantic_router.apply_semantic_routing(endpoint,
 config, tenant_id)` returns a copy of the endpoint config with `api_base`
-rewritten to the router and the two authz headers merged onto `extra_headers`:
+rewritten to the router, `model` replaced by the router's auto alias, and the
+two authz headers merged onto `extra_headers`:
 
 | Field | Meaning |
 |---|---|
@@ -141,6 +142,7 @@ rewritten to the router and the two authz headers merged onto `extra_headers`:
 | `tenant_tiers` | `tenant_id → tier` map; unknown tenants fall back to `default_tier`. |
 | `default_tier` | Tier for tenants not in `tenant_tiers`. |
 | `tier_header` / `user_id_header` | Header names for the tier / identity (default `x-authz-user-groups` / `x-authz-user-id`). |
+| `routed_model` | Model sent on routed requests (default `openai/auto`). The router resolves models by its own catalog names / auto alias and rejects raw provider model ids with a 400, so the endpoint's model is replaced, not forwarded. |
 
 The resolved headers win on a key collision with any pre-existing
 `extra_headers`. The block is part of `SystemConfig`, which the runtime reads

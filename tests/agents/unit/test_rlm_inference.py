@@ -549,9 +549,10 @@ class TestBuildRlmFromOptions:
             endpoint, opts, config_manager=MagicMock(), tenant_id="acme:prod"
         )
 
-        # Endpoint is rewritten to target the semantic router; model preserved.
+        # Endpoint is rewritten to target the semantic router; the model
+        # becomes the router's auto alias so the router picks the model.
         assert rlm.llm_config.api_base == "http://semantic-router:8080/v1"
-        assert rlm.model == "openai/gpt-4o"
+        assert rlm.model == "openai/auto"
         # Tenant tier + the fixed "rlm_inference" task become the routing headers.
         assert rlm.llm_config.extra_headers == {
             "x-authz-user-id": "acme:prod",
@@ -632,7 +633,7 @@ class TestRouteRlmEndpoint:
             endpoint, config_manager=MagicMock(), tenant_id="acme:prod"
         )
         assert out.api_base == "http://semantic-router:8080/v1"
-        assert out.model == "openai/gpt-4o"
+        assert out.model == "openai/auto"
         assert out.extra_headers == {
             "x-authz-user-id": "acme:prod",
             "x-authz-user-groups": "pro",
