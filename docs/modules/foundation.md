@@ -124,7 +124,11 @@ flowchart TB
 
 - Multi-tenant configuration with tenant isolation
 - Version history tracking for all configurations
-- LRU caching for performance
+- In-process caching: the system config is cached until `set_system_config`
+  writes; per-tenant scoped configs (routing/telemetry/backend) are served
+  from a short-TTL cache (`scoped_config_cache_ttl_s`, default 5s). Setters
+  on the same manager invalidate immediately — the TTL only bounds staleness
+  for writes made by another process.
 - Pluggable backend persistence via `ConfigStore` interface (VespaConfigStore)
 
 ```python

@@ -3,6 +3,7 @@ Configuration utilities for accessing ConfigManager with dict-like interface.
 Provides get_config() helper that wraps ConfigManager for convenient access.
 """
 
+import copy
 import json
 import logging
 import os
@@ -18,6 +19,9 @@ from cogniverse_foundation.config.unified_config import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Parsed config.json shared across ConfigUtils instances, keyed (path, mtime).
+_JSON_CONFIG_CACHE: dict = {}
 
 
 class ConfigUtils:
@@ -103,7 +107,13 @@ class ConfigUtils:
         return None
 
     def _load_json_config(self):
-        """Load config from auto-discovered JSON file"""
+        """Load config from auto-discovered JSON file.
+
+        Parsed content is shared across ConfigUtils instances via a
+        module-level cache keyed by (path, mtime) — ``get_config`` builds a
+        fresh ConfigUtils per call, so without this every request re-read
+        and re-parsed the same file; the mtime key keeps edits visible.
+        """
         if self._json_config is not None:
             return  # Already loaded
 
@@ -114,9 +124,15 @@ class ConfigUtils:
             return
 
         try:
-            with open(config_path, "r") as f:
-                self._json_config = json.load(f)
-            logger.debug(f"Loaded system config from {config_path}")
+            cache_key = (str(config_path), os.path.getmtime(config_path))
+            cached = _JSON_CONFIG_CACHE.get(cache_key)
+            if cached is None:
+                with open(config_path, "r") as f:
+                    cached = json.load(f)
+                _JSON_CONFIG_CACHE.clear()  # one live file; drop stale mtimes
+                _JSON_CONFIG_CACHE[cache_key] = cached
+                logger.debug(f"Loaded system config from {config_path}")
+            self._json_config = copy.deepcopy(cached)
         except Exception as e:
             logger.error(f"Error loading JSON config from {config_path}: {e}")
             self._json_config = {}
