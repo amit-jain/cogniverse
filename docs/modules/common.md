@@ -219,7 +219,12 @@ class SystemConfig:
     colpali_inference_url: str = ""
     inference_service_urls: Dict[str, str] = field(default_factory=dict)
 
-    # Orchestrator iterative-retrieval-loop tuning
+    # Orchestrator iterative-retrieval-loop tuning. Deployed runtimes can
+    # override via ITER_RETRIEVAL_MAX_ITER / ITER_RETRIEVAL_TOKEN_BUDGET /
+    # ITER_RETRIEVAL_WALL_CLOCK_MS env vars (read once at runtime startup);
+    # the chart sets ITER_RETRIEVAL_WALL_CLOCK_MS from
+    # runtime.iterRetrieval.wallClockMs (default 120000 — the 30s library
+    # default assumes a faster LM than the in-cluster one).
     iter_retrieval_max_iter: int = 3
     iter_retrieval_token_budget: int = 8000
     iter_retrieval_wall_clock_ms: int = 30000

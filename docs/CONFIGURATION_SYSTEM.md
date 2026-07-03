@@ -74,6 +74,8 @@ Observability settings:
 |----------|---------|
 | `TELEMETRY_HTTP_ENDPOINT` | Phoenix HTTP endpoint |
 | `TELEMETRY_OTLP_ENDPOINT` | OTLP collector gRPC endpoint |
+| `OPENINFERENCE_DSPY` | `1` enables OpenInference DSPy instrumentation — LM call spans (full prompt/completion) exported to the `cogniverse-dspy-instrumentation` Phoenix project. Set by the chart on the runtime deployment. |
+| `ITER_RETRIEVAL_MAX_ITER` / `ITER_RETRIEVAL_TOKEN_BUDGET` / `ITER_RETRIEVAL_WALL_CLOCK_MS` | Override `SystemConfig` iterative-retrieval budgets at runtime startup. The chart sets the wall clock from `runtime.iterRetrieval.wallClockMs`. |
 
 ### Messaging Gateway Configuration
 

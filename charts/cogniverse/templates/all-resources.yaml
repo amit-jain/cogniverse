@@ -297,6 +297,15 @@ spec:
           value: "http://{{ $fullName }}-phoenix:{{ .Values.phoenix.service.port }}"
         - name: TELEMETRY_OTLP_ENDPOINT
           value: "{{ $fullName }}-phoenix:4317"
+        # DSPy LM spans (project cogniverse-dspy-instrumentation). Previously
+        # enabled only via a live Deployment patch, which every redeploy
+        # silently dropped.
+        - name: OPENINFERENCE_DSPY
+          value: "1"
+        {{- if .Values.runtime.iterRetrieval.wallClockMs }}
+        - name: ITER_RETRIEVAL_WALL_CLOCK_MS
+          value: {{ .Values.runtime.iterRetrieval.wallClockMs | quote }}
+        {{- end }}
         - name: HF_HOME
           value: "/home/cogniverse/.cache/huggingface"
         - name: TRANSFORMERS_CACHE
