@@ -257,7 +257,12 @@ class TemporalReasoningAgent(
                     "evidence_span": str(edge_fields.get("evidence_span") or ""),
                 }
             )
-        timeline.sort(key=lambda e: (e["ts_start"], e["video_id"], e["segment_id"]))
+        # ``claim`` as the final key makes ties (same segment/timestamps)
+        # deterministic — without it the order depends on backend result
+        # order, which is not a contract.
+        timeline.sort(
+            key=lambda e: (e["ts_start"], e["video_id"], e["segment_id"], e["claim"])
+        )
         return {"timeline": timeline}
 
     async def _process_impl(
@@ -360,7 +365,16 @@ class TemporalReasoningAgent(
         if mm is None or not getattr(mm, "memory", None):
             return []
         try:
-            rows = list(mm.get_all_memories(tenant_id=tenant_id, agent_name=agent_name))
+            # subject_key filters server-side (promoted Vespa field) — the
+            # get-all-then-filter form pulled the tenant's whole memory
+            # corpus per request.
+            rows = list(
+                mm.get_all_memories(
+                    tenant_id=tenant_id,
+                    agent_name=agent_name,
+                    filters={"subject_key": subject_key},
+                )
+            )
         except Exception as exc:
             logger.debug("temporal: get_all_memories failed: %s", exc)
             return []

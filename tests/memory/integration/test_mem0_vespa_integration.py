@@ -656,3 +656,67 @@ class TestMem0ProfileRegistrationIntegration:
             pass
         config_manager.set_profile_change_listener(None)
         BackendRegistry._backend_instances.clear()
+
+
+class TestGetAllMemoriesServerSideFilter:
+    """``get_all_memories(filters={"subject_key": ...})`` must filter in the
+    store (subject_key is a promoted Vespa field), returning exactly the
+    matching rows — the get-all-then-filter form pulled the tenant's whole
+    corpus per request (temporal reasoning, the add_memory conflict check)."""
+
+    def test_subject_key_filter_returns_exact_rows(self, memory_manager):
+        agent = "subject_filter_agent"
+        memory_manager.clear_agent_memory("test_tenant", agent)
+        wait_for_vespa_indexing(delay=1)
+
+        rows = [
+            ("Kubernetes upgrade scheduled for cluster A next week", "infra:k8s"),
+            ("Kubernetes node pool for cluster A uses spot instances", "infra:k8s"),
+            ("Quarterly budget review happens every March", "finance:budget"),
+        ]
+        for content, subject_key in rows:
+            memory_manager.add_memory(
+                content=content,
+                tenant_id="test_tenant",
+                agent_name=agent,
+                metadata={"subject_key": subject_key},
+            )
+        wait_for_vespa_indexing(delay=3, description="subject-keyed documents")
+
+        k8s_rows = memory_manager.get_all_memories(
+            tenant_id="test_tenant",
+            agent_name=agent,
+            filters={"subject_key": "infra:k8s"},
+        )
+        assert len(k8s_rows) >= 1, "expected the k8s rows to come back"
+        for row in k8s_rows:
+            meta = row.get("metadata") or {}
+            assert meta.get("subject_key") == "infra:k8s", (
+                f"server-side filter leaked a foreign subject: {meta}"
+            )
+        assert all(
+            "budget" not in str(row.get("memory", "")).lower() for row in k8s_rows
+        )
+
+        finance_rows = memory_manager.get_all_memories(
+            tenant_id="test_tenant",
+            agent_name=agent,
+            filters={"subject_key": "finance:budget"},
+        )
+        assert len(finance_rows) >= 1
+        assert all(
+            (row.get("metadata") or {}).get("subject_key") == "finance:budget"
+            for row in finance_rows
+        )
+
+        # Unknown subject returns nothing — the filter really runs.
+        assert (
+            memory_manager.get_all_memories(
+                tenant_id="test_tenant",
+                agent_name=agent,
+                filters={"subject_key": "nope:never"},
+            )
+            == []
+        )
+
+        memory_manager.clear_agent_memory("test_tenant", agent)

@@ -167,6 +167,13 @@ def routed_lm_context_for(
             return dspy.context(lm=create_dspy_lm(endpoint))
         return nullcontext()
 
+    # No config manager (standalone agent process without a config store)
+    # means there is nowhere to read semantic_router config from — the
+    # feature cannot be enabled, so the direct path is the defined
+    # behaviour, not a fallback.
+    if config_manager is None:
+        return _direct()
+
     cfg = get_config(tenant_id=tenant_id, config_manager=config_manager)
     router = resolve_semantic_router_config(cfg)
     if not router.enabled:

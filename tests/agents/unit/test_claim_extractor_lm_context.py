@@ -30,8 +30,12 @@ def test_per_tenant_lm_wraps_module_call() -> None:
     extractor._cot_module = _CapturingModule()
 
     with dspy.context(lm=ambient):
+        # Patch where the direct path binds the factory (semantic_router
+        # imports the name at module level) — patching llm_factory only
+        # works if this test happens to trigger semantic_router's first
+        # import, which made the result depend on test order.
         with patch(
-            "cogniverse_foundation.config.llm_factory.create_dspy_lm",
+            "cogniverse_foundation.config.semantic_router.create_dspy_lm",
             return_value=sentinel,
         ):
             extractor._invoke(

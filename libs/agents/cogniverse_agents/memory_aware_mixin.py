@@ -285,15 +285,14 @@ class MemoryAwareMixin:
                 top_k=top_k,
             )
 
-            # federate across tenant + org trunk when enabled. We
-            # ALWAYS use search for the tenant side (so the query's
-            # semantic relevance still ranks results) but fall back to
-            # get_all_memories on the org trunk (Mem0's per-tenant
-            # search filter cannot reach a different user_id). Then
-            # dedup by subject_key with tenant winning, and let
-            # _apply_trust_and_reconcile do its thing on the union.
+            # federate across tenant + org trunk when enabled. Both sides
+            # use semantic search — the trunk via its own per-tenant
+            # manager, so the query's relevance ranks trunk hits too and
+            # only top_k rows cross the wire instead of the whole trunk
+            # corpus. Then dedup by subject_key with tenant winning, and
+            # let _apply_trust_and_reconcile do its thing on the union.
             if getattr(self, "_memory_federation_enabled", False):
-                results = self._federate_with_org_trunk(results, top_k or 5)
+                results = self._federate_with_org_trunk(query, results, top_k or 5)
 
             if not results:
                 return None
@@ -322,11 +321,11 @@ class MemoryAwareMixin:
             return None
 
     def _federate_with_org_trunk(
-        self, tenant_results: List[Dict[str, Any]], top_k: int
+        self, query: str, tenant_results: List[Dict[str, Any]], top_k: int
     ) -> List[Dict[str, Any]]:
         """Merge tenant search hits with org-trunk memories, tenant wins on subject.
 
-        Org trunk fetched via the Mem0MemoryManager singleton for the
+        Org trunk searched via the Mem0MemoryManager singleton for the
         org-trunk tenant_id; that singleton must be initialised
         elsewhere (typically by an admin bootstrap that registers the
         org-trunk schema). When it isn't, the federation falls back to
@@ -359,12 +358,14 @@ class MemoryAwareMixin:
             return tenant_results
 
         try:
-            trunk_rows = trunk_mm.get_all_memories(
+            trunk_rows = trunk_mm.search_memory(
+                query=query,
                 tenant_id=trunk_tenant,
                 agent_name=self._memory_agent_name,
+                top_k=top_k,
             )
         except Exception as exc:
-            logger.debug("Federation: org-trunk get_all failed: %s", exc)
+            logger.debug("Federation: org-trunk search failed: %s", exc)
             return tenant_results
 
         # Tag origin so downstream consumers can
