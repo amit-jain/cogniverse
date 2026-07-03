@@ -183,10 +183,8 @@ class SearchService:
             List of SearchResult objects
         """
         from cogniverse_foundation.telemetry.context import (
-            add_embedding_details_to_span,
             add_search_results_to_span,
             backend_search_span,
-            encode_span,
             search_span,
         )
 
@@ -208,30 +206,14 @@ class SearchService:
             if ranking_strategy:
                 logger.info(f"Using ranking strategy: {ranking_strategy}")
 
-            # Generate embeddings with telemetry
-            query_embeddings = None
-            if query_encoder:
-                encoder_type = (
-                    type(query_encoder).__name__.lower().replace("queryencoder", "")
-                )
-
-                with encode_span(
-                    tenant_id=tenant_id,
-                    encoder_type=encoder_type,
-                    query_length=len(query),
-                    query=query,
-                ) as encode_span_ctx:
-                    query_embeddings = query_encoder.encode(query)
-                    add_embedding_details_to_span(encode_span_ctx, query_embeddings)
-
-            # Add embeddings info to search span
-            if query_embeddings is not None:
-                search_span_ctx.set_attribute("has_embeddings", True)
-                search_span_ctx.set_attribute(
-                    "embedding_shape", str(query_embeddings.shape)
-                )
-            else:
-                search_span_ctx.set_attribute("has_embeddings", False)
+            # Encoding is delegated to the backend: it resolves the ranking
+            # strategy (requested or auto-selected) and runs the encoder
+            # on-demand only when the strategy's rank config declares it
+            # needs embeddings. Encoding eagerly here paid a full model
+            # forward even for text-only strategies (bm25) that never read
+            # the embeddings — and required duplicating the backend's
+            # strategy-resolution logic to avoid.
+            search_span_ctx.set_attribute("has_embeddings", False)
 
             # Call backend
             schema_name = profile_config.get("schema_name")
@@ -241,14 +223,9 @@ class SearchService:
                 schema_name=schema_name,
                 ranking_strategy=ranking_strategy or "default",
                 top_k=top_k,
-                has_embeddings=query_embeddings is not None,
+                has_embeddings=False,
                 query_text=query,
             ) as backend_span_ctx:
-                if query_embeddings is not None:
-                    backend_span_ctx.set_attribute(
-                        "embedding_shape", str(query_embeddings.shape)
-                    )
-
                 query_dict = {
                     "query": query,
                     "type": "video",
@@ -258,8 +235,6 @@ class SearchService:
                     "top_k": top_k,
                     "filters": filters,
                 }
-                if query_embeddings is not None:
-                    query_dict["query_embeddings"] = query_embeddings
                 results = search_backend.search(query_dict)
 
                 add_search_results_to_span(backend_span_ctx, results)
