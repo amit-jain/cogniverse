@@ -41,8 +41,17 @@ def _client_for_current_loop(http_endpoint: str) -> AsyncClient:
         _CLIENTS_BY_LOOP[loop] = by_endpoint
     client = by_endpoint.get(http_endpoint)
     if client is None:
+        import httpx
+
         logger.debug(f"Creating Phoenix AsyncClient for endpoint {http_endpoint}")
-        client = AsyncClient(base_url=http_endpoint)
+        # phoenix.client's own default is httpx's 5s, which large span
+        # queries (limit=10000 on a project with a day of traffic) blow
+        # through routinely — the optimizers then misread the timeout as
+        # "no spans". Wrap an httpx client with a budget sized for those.
+        client = AsyncClient(
+            base_url=http_endpoint,
+            http_client=httpx.AsyncClient(base_url=http_endpoint, timeout=120.0),
+        )
         by_endpoint[http_endpoint] = client
     return client
 
@@ -121,13 +130,16 @@ class PhoenixTraceStore(TraceStore):
                 start_time=start_time,
                 end_time=end_time,
                 limit=limit,
+                # The method's own default is 5s and overrides the client's
+                # timeout — large project windows blow through it routinely.
+                timeout=120,
             )
 
             logger.debug(f"Retrieved {len(spans_df)} spans from project {project}")
             return spans_df
 
         except Exception as e:
-            logger.error(f"Failed to query spans from Phoenix: {e}")
+            logger.error(f"Failed to query spans from Phoenix: {e!r}")
             raise
 
     async def get_span_by_id(

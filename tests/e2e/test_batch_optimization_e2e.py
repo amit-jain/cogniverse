@@ -1096,7 +1096,9 @@ class TestEntityExtractionOptimization:
 
     def test_entity_extraction_produces_model_artifact(self):
         """Run --mode entity-extraction, assert it produces a compiled DSPy model."""
-        result = _run_batch_job("entity-extraction")
+        # ~2 min on an idle cluster (Phoenix span scan + DSPy compile with
+        # real LM calls); leave headroom for a loaded Phoenix/LM.
+        result = _run_batch_job("entity-extraction", timeout=600)
 
         assert result["status"] == "success"
         assert result["spans_found"] > 0
@@ -1105,7 +1107,7 @@ class TestEntityExtractionOptimization:
 
     def test_entity_extraction_artifact_has_learned_demos(self):
         """Entity extraction artifact must have demos with real entity data."""
-        _run_batch_job("entity-extraction")
+        _run_batch_job("entity-extraction", timeout=600)
 
         blob = _load_blob_in_pod("model", "entity_extraction")
         assert blob, "Entity extraction artifact blob is empty"

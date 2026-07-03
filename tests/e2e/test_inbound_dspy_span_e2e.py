@@ -147,6 +147,7 @@ def _query_dspy_lm_spans_with_text(text: str, timeout_s: float = 30.0) -> list:
                 project_identifier="cogniverse-dspy-instrumentation",
                 start_time=window_start,
                 limit=500,
+                timeout=90,
             )
         except Exception:
             time.sleep(0.5)

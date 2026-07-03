@@ -855,6 +855,9 @@ def test_with_constraint_run_emits_retrieval_iteration_spans_for_each_iter():
                     project_identifier="cogniverse-flywheel_org:production",
                     start_time=_window_start,
                     limit=500,
+                    # The method's own default is 5s and Phoenix scans of a
+                    # loaded project routinely exceed it.
+                    timeout=90,
                 )
             except Exception:
                 if retry == 2:
