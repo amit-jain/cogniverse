@@ -268,7 +268,10 @@ def _run_batch_job(
     mode: str,
     tenant_id: str = TENANT_ID,
     lookback_hours: float = LOOKBACK_HOURS,
-    timeout: int = 180,
+    # A job is a Phoenix span scan (tens of seconds on a project holding a
+    # day of traffic) plus a DSPy compile with real LM calls at ~12 tok/s —
+    # ~2 min solo, more when the cluster is loaded.
+    timeout: int = 600,
 ) -> dict:
     """Run a batch optimization job inside the k3d pod and return parsed JSON."""
     result = subprocess.run(

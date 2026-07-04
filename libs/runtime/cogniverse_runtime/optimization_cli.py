@@ -536,6 +536,10 @@ async def _query_spans_by_name(
                 project=project_name,
                 start_time=start_time,
                 end_time=end_time,
+                # Server-side name predicate — pulling the whole project
+                # window and filtering client-side costs a full scan of a
+                # project that accumulates thousands of spans a day.
+                filters={"name": span_name},
                 limit=10000,
             )
             break
