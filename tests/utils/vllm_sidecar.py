@@ -37,6 +37,50 @@ DEFAULT_IMAGE = "vllm/vllm-openai-cpu:v0.23.0"
 DEFAULT_HEALTH_DEADLINE_SECONDS = 600
 HOST_HF_CACHE = os.path.expanduser("~/.cache/huggingface")
 
+# Containers are labelled with the spawning pytest pid so the next session
+# can reap leftovers whose owner died without running fixture teardown
+# (SIGKILL skips the finally). A dead sidecar holds model weights in host
+# RAM — several of these plus a Vespa JVM starved the whole host once.
+OWNER_LABEL = "cogniverse-test-owner-pid"
+
+
+def reap_dead_owner_containers(label: str = OWNER_LABEL) -> None:
+    """Remove containers labelled with an owner pid that no longer exists.
+
+    Also removes already-Exited labelled containers (they only hold disk,
+    but they accumulate forever otherwise). Containers belonging to LIVE
+    pids — concurrent pytest sessions — are never touched.
+    """
+    listing = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label={label}",
+            "--format",
+            '{{.ID}}\t{{.State}}\t{{.Label "' + label + '"}}',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    for line in listing.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        container_id, state, owner_pid = parts
+        owner_alive = owner_pid.isdigit() and os.path.exists(f"/proc/{owner_pid}")
+        if state == "running" and owner_alive:
+            continue
+        subprocess.run(
+            ["docker", "rm", "-f", container_id],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+
 
 def _merge_serve_args(model: str, extra_args: Optional[list[str]]) -> list[str]:
     """``extra_args`` plus serving defaults the deploy chart also applies.
@@ -125,6 +169,10 @@ class VllmSidecarFactory:
         if key in self._spawned:
             return self._spawned[key].base_url
 
+        # Reclaim RAM from sidecars whose owning session was SIGKILLed
+        # before its teardown could run.
+        reap_dead_owner_containers()
+
         container = f"cogniverse-vllm-test-{uuid.uuid4().hex[:8]}"
         port = _free_port()
         cmd = [
@@ -133,6 +181,8 @@ class VllmSidecarFactory:
             "-d",
             "--name",
             container,
+            "--label",
+            f"{OWNER_LABEL}={os.getpid()}",
             "-p",
             f"{port}:8000",
             # CPU vllm reads this for its budget (default 0.1 of host RAM

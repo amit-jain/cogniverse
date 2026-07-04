@@ -66,6 +66,14 @@ def semantic_router_stack():
     host_port = _free_port()
     base_url = f"http://localhost:{host_port}/v1"
 
+    # Reap stack containers whose owning pytest was SIGKILLed before the
+    # finally-teardown could run — an orphaned router holds its classifier
+    # models in host RAM indefinitely.
+    from tests.utils.vllm_sidecar import OWNER_LABEL, reap_dead_owner_containers
+
+    reap_dead_owner_containers()
+    owner_label = f"{OWNER_LABEL}={os.getpid()}"
+
     # localhost must bypass any outbound HTTPS proxy the environment sets.
     prev_no_proxy = (os.environ.get("NO_PROXY"), os.environ.get("no_proxy"))
     os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1")
@@ -84,6 +92,8 @@ def semantic_router_stack():
             "-d",
             "--name",
             stub,
+            "--label",
+            owner_label,
             "--network",
             net,
             "--network-alias",
@@ -107,6 +117,8 @@ def semantic_router_stack():
             "-d",
             "--name",
             router,
+            "--label",
+            owner_label,
             "--network",
             net,
             "--network-alias",
@@ -126,6 +138,8 @@ def semantic_router_stack():
             "-d",
             "--name",
             envoy,
+            "--label",
+            owner_label,
             "--network",
             net,
             "-p",
