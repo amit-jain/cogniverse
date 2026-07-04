@@ -297,8 +297,11 @@ class DetailedReportAgent(
         ):
             try:
                 # Thinking pass: comprehensive analysis
-                self.emit_progress("thinking", "Analyzing content...")
-                thinking_phase = await self._thinking_phase(request)
+                if self.thinking_enabled:
+                    self.emit_progress("thinking", "Analyzing content...")
+                    thinking_phase = await self._thinking_phase(request)
+                else:
+                    thinking_phase = self._empty_thinking_phase(request)
 
                 # Visual analysis (if enabled)
                 self.emit_progress("visual_analysis", "Performing visual analysis...")
@@ -312,6 +315,9 @@ class DetailedReportAgent(
                 )
                 executive_summary = await self._generate_executive_summary(
                     request, thinking_phase
+                )
+                executive_summary = self._enforce_max_length(
+                    executive_summary, self.max_report_length
                 )
 
                 # Detailed findings
@@ -352,7 +358,10 @@ class DetailedReportAgent(
                         "results_analyzed": len(request.search_results),
                         "report_type": request.report_type,
                         "visual_analysis_enabled": request.include_visual_analysis,
-                        "technical_analysis_enabled": request.include_technical_details,
+                        "technical_analysis_enabled": (
+                            request.include_technical_details
+                            and self.technical_analysis_enabled
+                        ),
                         "recommendations_enabled": request.include_recommendations,
                     },
                 )
@@ -417,6 +426,38 @@ class DetailedReportAgent(
             gaps_and_limitations=gaps_and_limitations,
             reasoning=reasoning,
         )
+
+    def _empty_thinking_phase(self, request: ReportRequest) -> ThinkingPhase:
+        """Neutral thinking phase used when the thinking pass is disabled."""
+        return ThinkingPhase(
+            content_analysis={
+                "total_results": len(request.search_results),
+                "content_types": {},
+                "duration_distribution": {"short": 0, "medium": 0, "long": 0},
+                "quality_metrics": {"high": 0, "medium": 0, "low": 0},
+                "avg_relevance": 0.0,
+            },
+            visual_assessment={
+                "has_visual_content": False,
+                "visual_elements": {"thumbnails": 0, "keyframes": 0, "images": 0},
+                "visual_coverage": 0,
+                "visual_analysis_feasible": False,
+            },
+            technical_findings=[],
+            patterns_identified=[],
+            gaps_and_limitations=[],
+            reasoning="",
+        )
+
+    @staticmethod
+    def _enforce_max_length(text: str, max_length: int) -> str:
+        """Truncate text at the last word boundary within max_length."""
+        if len(text) <= max_length:
+            return text
+        cut = text[:max_length]
+        boundary = cut.rfind(" ")
+        cut = cut[:boundary] if boundary > 0 else cut[: max_length - 1]
+        return cut.rstrip() + "…"
 
     def _analyze_content_structure(
         self, results: List[Dict[str, Any]]
@@ -706,7 +747,7 @@ technical accuracy, and actionable insights. Visual analysis {"included" if requ
         self, request: ReportRequest, thinking_phase: ThinkingPhase
     ) -> List[Dict[str, Any]]:
         """Generate technical details section"""
-        if not request.include_technical_details:
+        if not request.include_technical_details or not self.technical_analysis_enabled:
             return []
 
         technical_details = []

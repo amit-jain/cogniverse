@@ -608,6 +608,111 @@ class TestSummarizerAgentCoreFunctionality:
 
 
 @pytest.mark.unit
+class TestSummarizerDepsConfiguration:
+    """Deps-level knobs (thinking_enabled, max_summary_length) change behavior."""
+
+    def _make_agent(self, deps: SummarizerDeps) -> SummarizerAgent:
+        with (
+            patch("cogniverse_agents.summarizer_agent.VLMInterface"),
+            patch.object(SummarizerAgent, "_initialize_vlm_client"),
+        ):
+            agent = SummarizerAgent(deps=deps, config_manager=Mock())
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+            return agent
+
+    @staticmethod
+    def _request() -> SummaryRequest:
+        return SummaryRequest(
+            query="AI overview",
+            search_results=[
+                {
+                    "id": "1",
+                    "title": "AI Demo",
+                    "content_type": "video",
+                    "relevance": 0.9,
+                }
+            ],
+            summary_type="comprehensive",
+            include_visual_analysis=False,
+        )
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_thinking_disabled_skips_thinking_phase(self):
+        """thinking_enabled=False bypasses _thinking_phase entirely and carries
+        a neutral (empty) ThinkingPhase through to the result."""
+        agent = self._make_agent(SummarizerDeps(thinking_enabled=False))
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(summary="Summary without thinking.")
+        )
+
+        with patch.object(
+            SummarizerAgent, "_thinking_phase", autospec=True
+        ) as mock_think:
+            result = await agent._summarize(self._request())
+
+        mock_think.assert_not_called()
+        assert result.summary == "Summary without thinking."
+        assert result.thinking_phase.key_themes == []
+        assert result.thinking_phase.content_categories == []
+        assert result.thinking_phase.relevance_scores == {}
+        assert result.thinking_phase.visual_elements == []
+        assert result.thinking_phase.reasoning == ""
+        assert result.metadata["results_analyzed"] == 1
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_thinking_enabled_invokes_thinking_phase(self):
+        """thinking_enabled=True (default) awaits _thinking_phase exactly once
+        and carries its result through verbatim."""
+        agent = self._make_agent(SummarizerDeps(thinking_enabled=True))
+        agent.call_dspy = AsyncMock(return_value=Mock(summary="Summary with thinking."))
+
+        thinking = ThinkingPhase(
+            key_themes=["video_content"],
+            content_categories=["video"],
+            relevance_scores={"1": 0.9},
+            visual_elements=[],
+            reasoning="one video result",
+        )
+        with patch.object(
+            SummarizerAgent, "_thinking_phase", autospec=True, return_value=thinking
+        ) as mock_think:
+            result = await agent._summarize(self._request())
+
+        mock_think.assert_awaited_once()
+        assert result.summary == "Summary with thinking."
+        assert result.thinking_phase is thinking
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_max_summary_length_truncates_at_word_boundary(self):
+        """An over-long DSPy summary is truncated at the last word boundary
+        within max_summary_length, with an ellipsis appended."""
+        agent = self._make_agent(SummarizerDeps(max_summary_length=50))
+        long_summary = ("word " * 40).strip()  # 199 chars
+        agent.call_dspy = AsyncMock(return_value=Mock(summary=long_summary))
+
+        result = await agent._summarize(self._request())
+
+        # text[:50] ends mid-boundary after the 10th "word"; the cut lands on
+        # the last space, keeping 10 whole words plus the ellipsis.
+        assert result.summary == "word " * 9 + "word…"
+        assert len(result.summary) == 50
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_max_summary_length_passes_short_summary_verbatim(self):
+        """A summary within max_summary_length is returned untouched."""
+        agent = self._make_agent(SummarizerDeps(max_summary_length=50))
+        agent.call_dspy = AsyncMock(return_value=Mock(summary="Fits in the limit."))
+
+        result = await agent._summarize(self._request())
+
+        assert result.summary == "Fits in the limit."
+
+
+@pytest.mark.unit
 class TestEmitProgressStreaming:
     """Test emit_progress-based streaming via AgentBase._stream_with_progress."""
 

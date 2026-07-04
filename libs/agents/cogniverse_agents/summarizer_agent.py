@@ -280,17 +280,20 @@ class SummarizerAgent(
             endpoint=self._llm_config,
         ):
             try:
-                self.emit_progress("thinking", "Analyzing content...")
-                thinking_phase = await self._thinking_phase(request)
-                self.emit_progress(
-                    "thinking",
-                    "Content analysis complete",
-                    data={
-                        "themes": thinking_phase.key_themes,
-                        "categories": thinking_phase.content_categories,
-                        "reasoning": thinking_phase.reasoning,
-                    },
-                )
+                if self.thinking_enabled:
+                    self.emit_progress("thinking", "Analyzing content...")
+                    thinking_phase = await self._thinking_phase(request)
+                    self.emit_progress(
+                        "thinking",
+                        "Content analysis complete",
+                        data={
+                            "themes": thinking_phase.key_themes,
+                            "categories": thinking_phase.content_categories,
+                            "reasoning": thinking_phase.reasoning,
+                        },
+                    )
+                else:
+                    thinking_phase = self._empty_thinking_phase()
 
                 visual_insights = []
                 if request.include_visual_analysis and self.visual_analysis_enabled:
@@ -309,6 +312,7 @@ class SummarizerAgent(
                 summary = await self._generate_summary(
                     request, thinking_phase, visual_insights
                 )
+                summary = self._enforce_max_length(summary, self.max_summary_length)
                 self.emit_progress(
                     "summarization",
                     "Summary generated",
@@ -396,6 +400,26 @@ class SummarizerAgent(
             f"Thinking phase complete. Found {len(key_themes)} themes, {len(content_categories)} categories"
         )
         return thinking_phase
+
+    def _empty_thinking_phase(self) -> ThinkingPhase:
+        """Neutral thinking phase used when the thinking pass is disabled."""
+        return ThinkingPhase(
+            key_themes=[],
+            content_categories=[],
+            relevance_scores={},
+            visual_elements=[],
+            reasoning="",
+        )
+
+    @staticmethod
+    def _enforce_max_length(text: str, max_length: int) -> str:
+        """Truncate text at the last word boundary within max_length."""
+        if len(text) <= max_length:
+            return text
+        cut = text[:max_length]
+        boundary = cut.rfind(" ")
+        cut = cut[:boundary] if boundary > 0 else cut[: max_length - 1]
+        return cut.rstrip() + "…"
 
     def _extract_themes(self, search_results: List[Dict[str, Any]]) -> List[str]:
         """Extract key themes from search results"""
