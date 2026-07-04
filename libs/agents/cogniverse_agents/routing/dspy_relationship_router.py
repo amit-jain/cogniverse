@@ -495,13 +495,24 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             # Step 2: Composable query analysis (entities + relationships + enhancement)
             analysis_result = self.analysis_module.forward(query)
 
-            # Step 3: Create comprehensive routing decision
-            routing_decision = self._create_routing_decision(
-                basic_analysis,
-                analysis_result,
-                user_preferences,
-                system_state,
+            # Step 3: Routing decision — the LM predictor decides, fed the
+            # relationship analysis through its context input; the
+            # deterministic assembly is the validated fallback for a
+            # malformed or failed LM decision.
+            routing_decision = self._llm_routing_decision(
+                query=query,
+                context=context,
+                user_preferences=user_preferences,
+                system_state=system_state,
+                analysis_result=analysis_result,
             )
+            if routing_decision is None:
+                routing_decision = self._create_routing_decision(
+                    basic_analysis,
+                    analysis_result,
+                    user_preferences,
+                    system_state,
+                )
 
             # Step 4: Create agent workflow
             agent_workflow = self._create_agent_workflow(routing_decision)
@@ -571,6 +582,97 @@ class DSPyAdvancedRoutingModule(dspy.Module):
             prediction.reasoning_chain = [f"Error in advanced routing: {e}"]
 
             return prediction
+
+    _ROUTING_DECISION_KEYS = frozenset(
+        {
+            "search_modality",
+            "generation_type",
+            "primary_agent",
+            "secondary_agents",
+            "execution_mode",
+            "confidence",
+            "reasoning",
+        }
+    )
+    _SEARCH_MODALITIES = frozenset({"multimodal", "video_only", "text_only", "both"})
+    _GENERATION_TYPES = frozenset({"summary", "detailed_report", "raw_results"})
+    _EXECUTION_MODES = frozenset({"single", "sequential", "parallel"})
+
+    def _llm_routing_decision(
+        self,
+        *,
+        query: str,
+        context: Optional[str],
+        user_preferences: Optional[Dict[str, Any]],
+        system_state: Optional[Dict[str, Any]],
+        analysis_result: dspy.Prediction,
+    ) -> Optional[Dict[str, Any]]:
+        """Routing decision from the LM predictor, or ``None`` when it fails.
+
+        The relationship analysis rides in through the signature's context
+        input so the decision is relationship-aware. The output must carry
+        the exact decision shape ``_create_routing_decision`` produces —
+        anything malformed falls back to the deterministic assembly rather
+        than letting a free-form LM dict leak into the workflow builder.
+        """
+        try:
+            enriched_context = "\n".join(
+                part
+                for part in (
+                    context or "",
+                    f"Extracted entities: {analysis_result.entities}",
+                    f"Extracted relationships: {analysis_result.relationships}",
+                    f"Enhanced query: {analysis_result.enhanced_query}",
+                )
+                if part
+            )
+            prediction = self.router(
+                query=query,
+                context=enriched_context,
+                user_preferences=user_preferences or {},
+                system_state=system_state or {},
+            )
+            decision = getattr(prediction, "routing_decision", None)
+            if not isinstance(decision, dict):
+                logger.warning(
+                    "LM routing decision is %s, not dict; using deterministic path",
+                    type(decision).__name__,
+                )
+                return None
+            missing = self._ROUTING_DECISION_KEYS - decision.keys()
+            if missing:
+                logger.warning(
+                    "LM routing decision missing keys %s; using deterministic path",
+                    sorted(missing),
+                )
+                return None
+            if (
+                decision["search_modality"] not in self._SEARCH_MODALITIES
+                or decision["generation_type"] not in self._GENERATION_TYPES
+                or decision["execution_mode"] not in self._EXECUTION_MODES
+                or not isinstance(decision["primary_agent"], str)
+                or not decision["primary_agent"]
+                or not isinstance(decision["secondary_agents"], list)
+            ):
+                logger.warning(
+                    "LM routing decision failed validation; using deterministic path"
+                )
+                return None
+            try:
+                confidence = float(decision["confidence"])
+            except (TypeError, ValueError):
+                logger.warning(
+                    "LM routing confidence %r not numeric; using deterministic path",
+                    decision["confidence"],
+                )
+                return None
+            decision["confidence"] = round(min(1.0, max(0.0, confidence)), 3)
+            return decision
+        except Exception as e:  # noqa: BLE001 — any LM failure falls back
+            logger.warning(
+                "LM routing predictor failed (%s); using deterministic path", e
+            )
+            return None
 
     def _create_routing_decision(
         self,
