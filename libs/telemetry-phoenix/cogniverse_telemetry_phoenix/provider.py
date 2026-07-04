@@ -121,7 +121,11 @@ class PhoenixTraceStore(TraceStore):
             if filters and filters.get("name"):
                 from phoenix.client.types.spans import SpanQuery
 
-                span_name = str(filters["name"]).replace("'", "\\'")
+                # Backslash first, then quote — quoting first would let a
+                # trailing backslash re-escape the closing quote.
+                span_name = (
+                    str(filters["name"]).replace("\\", "\\\\").replace("'", "\\'")
+                )
                 query = SpanQuery().where(f"name == '{span_name}'")
 
             spans_df = await client.spans.get_spans_dataframe(

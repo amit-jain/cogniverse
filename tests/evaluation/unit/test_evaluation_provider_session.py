@@ -116,6 +116,36 @@ class TestGetSpansServerSideNameFilter:
         assert "workflow_checkpoint" in str(query.to_dict())
 
     @pytest.mark.asyncio
+    async def test_name_filter_escapes_quotes_and_backslashes(self, monkeypatch):
+        import pandas as pd
+
+        from cogniverse_telemetry_phoenix import provider as provider_mod
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint="http://unused:1",
+            tenant_id="t",
+            project_template="p-{tenant_id}",
+        )
+        client = MagicMock()
+        client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
+        monkeypatch.setattr(
+            provider_mod, "_client_for_current_loop", lambda endpoint: client
+        )
+
+        raw_name = "a'b\\"
+        await store.get_spans(project="proj", filters={"name": raw_name})
+
+        query_dict = client.spans.get_spans_dataframe.await_args.kwargs[
+            "query"
+        ].to_dict()
+        condition = query_dict["filter"]["condition"]
+        # Backslash escaped first, then the quote — quoting first would let
+        # a trailing backslash re-escape the closing quote.
+        escaped = raw_name.replace("\\", "\\\\").replace("'", "\\'")
+        assert condition == f"name == '{escaped}'"
+
+    @pytest.mark.asyncio
     async def test_no_filters_sends_no_query(self, monkeypatch):
         import pandas as pd
 
