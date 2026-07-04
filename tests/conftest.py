@@ -1368,6 +1368,12 @@ def shared_vespa():
     # to concurrent sessions or other users.
     _vespa_cleanup_my_container(container_name)
 
+    # Reap labelled containers whose owning pytest died without teardown
+    # (SIGKILL skips the finally) — a dead session's Vespa JVM holds GBs.
+    from tests.utils.vllm_sidecar import reap_dead_owner_containers
+
+    reap_dead_owner_containers()
+
     machine = platform.machine().lower()
     docker_platform = (
         "linux/arm64" if machine in ("arm64", "aarch64") else "linux/amd64"
@@ -1384,6 +1390,8 @@ def shared_vespa():
             "-d",
             "--name",
             container_name,
+            "--label",
+            f"cogniverse-test-owner-pid={os.getpid()}",
             "-p",
             f"{http_port}:8080",
             "-p",
