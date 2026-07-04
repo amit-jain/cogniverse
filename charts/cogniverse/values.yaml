@@ -1758,13 +1758,16 @@ semanticRouter:
     # requests==limits (Guaranteed QoS): the router's CPU-bound classifiers sit
     # on every LLM request's critical path — a 250m request let node pressure
     # throttle classification from ~30ms to seconds and trip proxy deadlines.
+    # Memory: the router's steady working set is ~4Gi (classifier bundle +
+    # runtime); a 4Gi limit had it OOM-cycling under sustained load, 5xx-ing
+    # whatever LLM calls were in flight at each kill.
     resources:
       requests:
         cpu: "2"
-        memory: "4Gi"
+        memory: "6Gi"
       limits:
         cpu: "2"
-        memory: "4Gi"
+        memory: "6Gi"
   # cogniverse-side tenant -> tier map (sent as the x-authz-user-groups header).
   # The tier -> allowed-model-set gating and the content-based model/reasoning
   # selection live in the router's own shipped config.
