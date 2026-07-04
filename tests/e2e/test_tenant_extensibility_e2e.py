@@ -693,7 +693,17 @@ class TestSearchBehavior:
         assert scores == sorted(scores, reverse=True), (
             f"Results not in descending score order: {scores}"
         )
-        assert all(s > 0 for s in scores), "All scores should be positive"
+        nonpositive = [
+            {"id": r.get("document_id"), "score": r["score"]}
+            for r in data["results"]
+            if r["score"] <= 0
+        ]
+        assert not nonpositive, (
+            f"All scores should be positive; offending results: {nonpositive} "
+            f"(full score list: {scores}) — a zero score usually means a "
+            f"partially-fed document matched while a concurrent ingest was "
+            f"mid-flight"
+        )
 
     def test_search_results_have_temporal_metadata(self):
         """Each video segment result includes temporal info and source."""

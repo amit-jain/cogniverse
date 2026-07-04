@@ -68,14 +68,59 @@ def _redis_reachable_sync() -> bool:
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
-        not (_runtime_reachable() and _redis_reachable_sync()),
-        reason=(
-            f"requires cogniverse-runtime at {RUNTIME_BASE} AND Redis "
-            f"at {REDIS_URL} (use kubectl port-forward "
-            "svc/cogniverse-redis 26379:6379)"
-        ),
+        not _runtime_reachable(),
+        reason=f"requires cogniverse-runtime at {RUNTIME_BASE}",
     ),
 ]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _redis_port_forward():
+    """Ensure Redis is reachable at REDIS_URL, port-forwarding it ourselves.
+
+    Requiring a manually started `kubectl port-forward` made these tests
+    skip in every unattended full-suite run — the test owns its tunnel
+    now. An already-reachable Redis (external forward or real service)
+    is used as-is and left untouched.
+    """
+    if _redis_reachable_sync():
+        yield
+        return
+
+    import re
+
+    port_match = re.search(r":(\d+)/", REDIS_URL)
+    local_port = port_match.group(1) if port_match else "26379"
+    proc = subprocess.Popen(
+        [
+            "kubectl",
+            "-n",
+            "cogniverse",
+            "port-forward",
+            "svc/cogniverse-redis",
+            f"{local_port}:6379",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if _redis_reachable_sync():
+                break
+            time.sleep(0.5)
+        else:
+            pytest.fail(
+                f"Redis not reachable at {REDIS_URL} within 30s of starting "
+                "kubectl port-forward svc/cogniverse-redis"
+            )
+        yield
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
 
 @pytest.mark.asyncio
