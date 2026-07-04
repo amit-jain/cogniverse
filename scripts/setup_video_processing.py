@@ -65,7 +65,7 @@ def deploy_modal_vlm():
 
             # Extract endpoint URL from output
             output = result.stdout + result.stderr
-            url_pattern = r"https://[^\\s]+--generate-description\\.modal\\.run"
+            url_pattern = r"https://\S+--generate-description\.modal\.run"
             matches = re.findall(url_pattern, output)
 
             if matches:

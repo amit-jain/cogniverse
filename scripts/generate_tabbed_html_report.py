@@ -10,9 +10,7 @@ from pathlib import Path
 from typing import List
 
 
-def format_video_tag(
-    video_id: str, expected_videos: List[str], position: int = 0
-) -> str:
+def format_video_tag(video_id: str, expected_videos: List[str]) -> str:
     """Format a video tag with appropriate styling"""
     if video_id in expected_videos:
         return f'<span class="video-tag correct-video">✓ {video_id}</span>'
@@ -54,9 +52,6 @@ def generate_html_report(test_results_file: str = None):
 
     with open(test_results_file, "r") as f:
         data = json.load(f)
-
-    # Extract test queries
-    [(q["query"], q["expected_videos"]) for q in data["queries"]]
 
     # Define profiles with display names
     profiles = [
@@ -452,7 +447,7 @@ def generate_html_report(test_results_file: str = None):
                     results_html_parts = []
                     for i, vid in enumerate(results):
                         pos_html = format_position(i + 1)
-                        vid_html = format_video_tag(vid, expected, i + 1)
+                        vid_html = format_video_tag(vid, expected)
                         results_html_parts.append(pos_html + vid_html)
 
                     if results_html_parts:
