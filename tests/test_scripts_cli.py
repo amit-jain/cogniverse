@@ -153,17 +153,16 @@ class TestDiscoverTenants:
 class TestGenerateLangextractTrainingData:
     """Tests for generate_langextract_training_data (no argparse).
 
-    The module is loaded with a stub ``langextract`` package because the
-    installed ``langextract`` exposes no ``LangExtract`` class — the script
-    crashes at import against the real dependency (reported separately).
+    Loads the module against the REAL installed langextract package (the
+    provider class is stubbed only at the network seam).
     """
 
     @pytest.fixture()
     def loaded(self, monkeypatch):
-        stub = types.ModuleType("langextract")
-        stub.LangExtract = MagicMock(name="LangExtract")
-        monkeypatch.setitem(sys.modules, "langextract", stub)
-        return _load("generate_langextract_training_data"), stub
+        mod = _load("generate_langextract_training_data")
+        provider = MagicMock(name="GeminiLanguageModel")
+        monkeypatch.setattr(mod, "GeminiLanguageModel", provider)
+        return mod, provider
 
     def test_initialize_requires_api_key(self, loaded, monkeypatch):
         mod, _ = loaded
@@ -172,12 +171,22 @@ class TestGenerateLangextractTrainingData:
             mod.initialize_langextract()
 
     def test_initialize_builds_extractor(self, loaded, monkeypatch):
-        mod, stub = loaded
+        mod, provider = loaded
         monkeypatch.setenv("GEMINI_API_KEY", "test-key")
         mod.initialize_langextract()
-        stub.LangExtract.assert_called_once_with(
-            model="gemini-2.0-flash-exp", api_key="test-key"
+        provider.assert_called_once_with(
+            model_id="gemini-2.0-flash-exp", api_key="test-key"
         )
+
+    def test_extract_returns_first_scored_output_text(self, loaded, monkeypatch):
+        mod, provider = loaded
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        scored = MagicMock()
+        scored.output = '{"search_modality": "video"}'
+        provider.return_value.infer.return_value = iter([[scored]])
+        extractor = mod.initialize_langextract()
+        assert extractor.extract("analyze this") == '{"search_modality": "video"}'
+        provider.return_value.infer.assert_called_once_with(["analyze this"])
 
     def test_create_extraction_prompt_embeds_query_and_schema(self, loaded):
         mod, _ = loaded

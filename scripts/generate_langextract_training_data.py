@@ -11,7 +11,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List
 
-from langextract import LangExtract
+from langextract.providers.gemini import GeminiLanguageModel
 
 # Sample queries from different categories
 SAMPLE_QUERIES = [
@@ -48,13 +48,29 @@ SAMPLE_QUERIES = [
 ]
 
 
+class _GeminiJSONExtractor:
+    """Prompt-to-text adapter over langextract's Gemini provider.
+
+    langextract exposes no ``LangExtract`` class; its providers speak
+    ``infer(batch_prompts) -> Iterator[Sequence[ScoredOutput]]``. This keeps
+    the script's prompt -> JSON-string contract on the real API.
+    """
+
+    def __init__(self, model: str, api_key: str):
+        self._lm = GeminiLanguageModel(model_id=model, api_key=api_key)
+
+    def extract(self, prompt: str) -> str:
+        outputs = next(iter(self._lm.infer([prompt])))
+        return outputs[0].output
+
+
 def initialize_langextract():
-    """Initialize LangExtract with API key."""
+    """Initialize the Gemini extractor with API key."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable not set")
 
-    return LangExtract(model="gemini-2.0-flash-exp", api_key=api_key)
+    return _GeminiJSONExtractor(model="gemini-2.0-flash-exp", api_key=api_key)
 
 
 def create_extraction_prompt(query: str) -> str:
@@ -122,7 +138,7 @@ def create_extraction_prompt(query: str) -> str:
 
 
 async def generate_training_data(
-    extractor: LangExtract, queries: List[str]
+    extractor: _GeminiJSONExtractor, queries: List[str]
 ) -> List[Dict[str, Any]]:
     """Generate training data for all queries."""
     training_data = []

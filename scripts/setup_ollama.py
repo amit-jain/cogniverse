@@ -36,7 +36,7 @@ def install_ollama():
         print("🍎 Detected macOS - Installing via curl...")
         try:
             subprocess.run(
-                ["curl", "-fsSL", "https://ollama.ai/install.sh"],
+                "curl -fsSL https://ollama.ai/install.sh | sh",
                 check=True,
                 shell=True,
             )
@@ -51,7 +51,7 @@ def install_ollama():
         print("🐧 Detected Linux - Installing via curl...")
         try:
             subprocess.run(
-                ["curl", "-fsSL", "https://ollama.ai/install.sh", "|", "sh"],
+                "curl -fsSL https://ollama.ai/install.sh | sh",
                 check=True,
                 shell=True,
             )

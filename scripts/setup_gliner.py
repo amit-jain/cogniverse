@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 
-def download_gliner_models():
+def download_gliner_models(_retried: bool = False):
     """Download all GLiNER models used in the routing system"""
     try:
         import torch
@@ -48,9 +48,12 @@ def download_gliner_models():
         return True
 
     except ImportError:
+        if _retried:
+            print("❌ GLiNER still not importable after install; giving up")
+            return False
         print("❌ GLiNER not installed. Installing...")
         os.system("pip install gliner")
-        return download_gliner_models()
+        return download_gliner_models(_retried=True)
     except Exception as e:
         print(f"❌ Error setting up GLiNER: {e}")
         return False
