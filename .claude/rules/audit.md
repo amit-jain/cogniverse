@@ -201,6 +201,40 @@ grep -rnP "datetime\.utcnow\(\)" libs/ --include="*.py"
 # hit, check whether the bound schema input is dense (needs flat) or
 # multi-vector (needs the dict).
 grep -rnP '\{str\(\w+\): \w+\.tolist\(\)' libs/ --include="*.py"
+
+# Phoenix get_spans_dataframe without an explicit timeout kwarg (9th audit) —
+# the client METHOD defaults to 5s and overrides any client-level timeout;
+# loaded-project scans blow through it and the failure often reads as
+# "no spans". Every call site must pass timeout=.
+grep -rnP 'get_spans_dataframe\(' libs/ tests/ --include="*.py" | grep -v "timeout="
+
+# Backend-read failure flattened to an empty result the caller treats as a
+# VALID "no data" state (9th audit: checkpoint_storage list/latest, approval
+# get_pending_batches, annotation storages — a Phoenix outage read as "no
+# checkpoints" and silently restarted workflows). For each hit whose try
+# wraps a provider/telemetry/backend query: log {e!r} and raise instead.
+grep -rnP -A2 'except Exception' libs/ --include="*.py" | grep -B2 -E 'return (\[\]|\{\}|None|pd\.DataFrame\(\))' | grep -B2 -iE 'spans|telemetry|provider|phoenix'
+
+# Whole-project span pull filtered client-side by name where get_spans
+# supports filters={"name": ...} server-side (9th audit: ~14 storage +
+# dashboard sites; each scan re-downloads the full project window).
+grep -rnP 'df\["name"\] ==|spans_df\["name"\] ==' libs/ --include="*.py"
+# then check the paired get_spans call for a filters= kwarg
+
+# Test-spawned docker containers without the owner-pid label (9th audit) —
+# unlabeled spawns escape reap_dead_owner_containers, so a SIGKILLed pytest
+# session orphans model-weight/JVM containers in host RAM indefinitely
+# (this starved a 126 GB host into a freeze once).
+grep -rnP '"docker",\s*$' tests/ --include="*.py" -A4 | grep -B1 '"run"' | grep -v OWNER_LABEL
+# then confirm each docker-run block includes --label {OWNER_LABEL}={pid}
+
+# Deps/config attribute assigned in __init__ but never functionally read
+# (9th audit: summarizer/report max_*_length + thinking_enabled +
+# technical_analysis_enabled; strategies dropping inference_service via
+# **kwargs; dynamic_dspy_mixin rebuilding endpoints without seed/retries/
+# timeout/headers). Not greppable in one pass — for each self.<knob> = deps.<knob>
+# in an agent __init__, demand a read site that changes behavior.
+grep -rnP 'self\.(max_\w+|.*_enabled|inference_service) = ' libs/agents/ libs/runtime/ --include="*.py"
 ```
 
 This is the only detection method that scales by **adding a regex** rather than **running another audit**.
