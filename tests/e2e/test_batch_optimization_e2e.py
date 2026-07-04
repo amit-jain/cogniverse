@@ -1047,15 +1047,33 @@ class TestBatchJobsReadCorrectSpanTypes:
 
         Project naming follows TelemetryConfig.tenant_project_template:
         ``cogniverse-{tenant_id}`` (colon preserved, no service suffix).
+        Scoped to the session window with a real timeout — an unscoped scan
+        of the whole project blows the client's 5s method default once the
+        span store holds a day of traffic, and the swallowed exception then
+        reads as "no spans".
         """
+        from datetime import datetime, timedelta, timezone
+
         project_name = f"cogniverse-{TENANT_ID}"
-        try:
-            df = self.client.spans.get_spans_dataframe(project_identifier=project_name)
-            if df is not None and not df.empty and "name" in df.columns:
-                return span_name in df["name"].values
-        except Exception:
-            pass
-        return False
+        window_start = datetime.now(timezone.utc) - timedelta(hours=3)
+        last_error: Exception | None = None
+        for _ in range(3):
+            try:
+                df = self.client.spans.get_spans_dataframe(
+                    project_identifier=project_name,
+                    start_time=window_start,
+                    limit=2000,
+                    timeout=90,
+                )
+                if df is not None and not df.empty and "name" in df.columns:
+                    return span_name in df["name"].values
+                return False
+            except Exception as e:  # noqa: BLE001 — retried, then surfaced
+                last_error = e
+                time.sleep(3)
+        raise AssertionError(
+            f"Phoenix span query for {span_name!r} kept failing: {last_error!r}"
+        )
 
     def test_gateway_spans_exist(self):
         """Phoenix has cogniverse.gateway spans for gateway-thresholds job."""
