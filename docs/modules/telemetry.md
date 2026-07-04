@@ -542,8 +542,15 @@ class TelemetryProvider(ABC):
         endpoint: str,
         project_name: str,
         use_batch_export: bool = True,
+        batch_config: Optional[Any] = None,
+        resource_attributes: Optional[Dict[str, str]] = None,
     ) -> Any:
-        """Configure OTLP span export, returns TracerProvider."""
+        """Configure OTLP span export, returns TracerProvider.
+
+        ``batch_config`` carries the BatchExportConfig queue/batch/timeout
+        knobs; ``resource_attributes`` (service.version + extras) land on
+        the provider's OTel Resource.
+        """
         pass
 
     @property
@@ -675,7 +682,14 @@ class LangSmithProvider(TelemetryProvider):
         self._trace_store = LangSmithTraceStore(self.client)
         # Initialize other stores...
 
-    def configure_span_export(self, endpoint, project_name, use_batch_export=True):
+    def configure_span_export(
+        self,
+        endpoint,
+        project_name,
+        use_batch_export=True,
+        batch_config=None,
+        resource_attributes=None,
+    ):
         # LangSmith uses different export mechanism
         return LangSmithTracerProvider(project=project_name)
 ```

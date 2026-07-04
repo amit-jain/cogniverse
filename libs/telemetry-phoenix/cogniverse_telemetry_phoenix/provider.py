@@ -712,6 +712,8 @@ class PhoenixProvider(TelemetryProvider):
         endpoint: str,
         project_name: str,
         use_batch_export: bool = True,
+        batch_config: Optional[Any] = None,
+        resource_attributes: Optional[Dict[str, str]] = None,
     ):
         """
         Configure OTLP span export using Phoenix.
@@ -722,6 +724,17 @@ class PhoenixProvider(TelemetryProvider):
             endpoint: OTLP gRPC endpoint (e.g., "localhost:4317")
             project_name: Full project name for span grouping
             use_batch_export: Use batch processor (True) vs simple/sync (False)
+            batch_config: Optional ``BatchExportConfig`` carrying
+                max_queue_size / max_export_batch_size /
+                export_timeout_millis / schedule_delay_millis. Applied to
+                the batch processor only (SimpleSpanProcessor has no
+                queue). phoenix.otel's own BatchSpanProcessor wrapper
+                (arize-phoenix 14.2.1) accepts no queue knobs, so the
+                default processor register() attaches is replaced with an
+                SDK BatchSpanProcessor wrapping a Phoenix GRPCSpanExporter.
+            resource_attributes: Optional extra OTel resource attributes
+                (e.g. service.version); register() merges the Phoenix
+                project-name attribute into them.
 
         Returns:
             TracerProvider configured for Phoenix OTLP export
@@ -736,6 +749,12 @@ class PhoenixProvider(TelemetryProvider):
             if "://" not in endpoint:
                 endpoint = f"http://{endpoint}"
 
+            register_kwargs: Dict[str, Any] = {}
+            if resource_attributes:
+                from opentelemetry.sdk.resources import Resource
+
+                register_kwargs["resource"] = Resource.create(dict(resource_attributes))
+
             tracer_provider = register(
                 endpoint=endpoint,
                 project_name=project_name,
@@ -743,7 +762,25 @@ class PhoenixProvider(TelemetryProvider):
                 protocol="grpc",
                 auto_instrument=False,
                 set_global_tracer_provider=False,
+                **register_kwargs,
             )
+
+            if use_batch_export and batch_config is not None:
+                from opentelemetry.sdk.trace.export import BatchSpanProcessor
+                from phoenix.otel import GRPCSpanExporter
+
+                # Replaces register()'s default processor (phoenix.otel's
+                # TracerProvider.add_span_processor shuts down + drops the
+                # default before adding).
+                tracer_provider.add_span_processor(
+                    BatchSpanProcessor(
+                        GRPCSpanExporter(endpoint=endpoint),
+                        max_queue_size=batch_config.max_queue_size,
+                        schedule_delay_millis=batch_config.schedule_delay_millis,
+                        max_export_batch_size=batch_config.max_export_batch_size,
+                        export_timeout_millis=batch_config.export_timeout_millis,
+                    )
+                )
 
             mode = "BATCH" if use_batch_export else "SYNC"
             logger.info(

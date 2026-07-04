@@ -1,14 +1,18 @@
-"""``_evict_old_tracers`` must bound the provider cache too, not just tracers.
+"""Tracer-cache eviction: LRU count cap, orphaned-provider cleanup, and TTL.
 
-Before the fix the provider map grew without limit (tracers were LRU-capped
-but their backing ``TracerProvider`` entries were never dropped). Eviction now
-drops providers no remaining tracer references and flushes them via
-``shutdown()`` first.
+``_evict_old_tracers`` must bound the provider cache too, not just tracers
+(before the fix the provider map grew without limit). Cached entries must
+also expire after ``tenant_cache_ttl_seconds`` — the TTL was documented on
+the config but eviction was count-based only, so a tracer built once was
+served forever regardless of age.
 """
 
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from cogniverse_foundation.telemetry import manager as manager_mod
+from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
 
@@ -20,6 +24,7 @@ def _manager(max_cached_tenants: int) -> TelemetryManager:
     m._tenant_tracers = {}
     m._tenant_providers = {}
     m._tracer_provider_keys = {}
+    m._tracer_created_at = {}
     return m
 
 
@@ -81,3 +86,115 @@ def test_no_eviction_keeps_everything():
     assert "t1:proj" in m._tenant_tracers
     assert "t1:proj" in m._tenant_providers
     provider.shutdown.assert_not_called()
+
+
+def _live_manager(ttl_seconds: int, max_cached_tenants: int = 10) -> TelemetryManager:
+    """Manager with real config + lock, exercising the full
+    ``_get_tracer_for_project`` cache path against stubbed providers."""
+    m = object.__new__(TelemetryManager)
+    m.config = TelemetryConfig(
+        tenant_cache_ttl_seconds=ttl_seconds,
+        max_cached_tenants=max_cached_tenants,
+    )
+    m._tenant_providers = {}
+    m._tenant_tracers = {}
+    m._tracer_provider_keys = {}
+    m._tracer_created_at = {}
+    m._lock = threading.RLock()
+    m._project_configs = {}
+    m._cache_hits = 0
+    m._cache_misses = 0
+    m._failed_initializations = 0
+    return m
+
+
+def _stub_provider_factory(m: TelemetryManager) -> list:
+    """Each provider creation yields a distinct provider + tracer."""
+    providers = []
+
+    def _mk(tenant_id, project_name):
+        p = MagicMock(name=f"provider{len(providers)}")
+        p.get_tracer.return_value = MagicMock(name=f"tracer{len(providers)}")
+        providers.append(p)
+        return p
+
+    m._create_tenant_provider_for_project = MagicMock(side_effect=_mk)
+    return providers
+
+
+def _freeze_clock(monkeypatch, start: float = 1000.0) -> dict:
+    clock = {"now": start}
+    monkeypatch.setattr(
+        manager_mod, "time", SimpleNamespace(monotonic=lambda: clock["now"])
+    )
+    return clock
+
+
+def test_entry_older_than_ttl_is_rebuilt(monkeypatch):
+    clock = _freeze_clock(monkeypatch)
+    m = _live_manager(ttl_seconds=3600)
+    providers = _stub_provider_factory(m)
+
+    first = m._get_tracer_for_project("acme", "search")
+    assert first is providers[0].get_tracer.return_value
+    assert m._cache_misses == 1
+
+    clock["now"] += 3601
+    second = m._get_tracer_for_project("acme", "search")
+
+    assert len(providers) == 2
+    assert second is providers[1].get_tracer.return_value
+    assert second is not first
+    # Stale provider was flushed via shutdown() and replaced.
+    providers[0].shutdown.assert_called_once()
+    providers[1].shutdown.assert_not_called()
+    assert m._tenant_providers == {"acme:cogniverse-acme-search": providers[1]}
+    assert m._tracer_created_at == {"acme:cogniverse-acme-search": clock["now"]}
+    assert m._cache_hits == 0
+    assert m._cache_misses == 2
+
+
+def test_entry_younger_than_ttl_is_reused(monkeypatch):
+    clock = _freeze_clock(monkeypatch)
+    m = _live_manager(ttl_seconds=3600)
+    providers = _stub_provider_factory(m)
+
+    first = m._get_tracer_for_project("acme", "search")
+    clock["now"] += 3599
+    second = m._get_tracer_for_project("acme", "search")
+
+    assert second is first
+    assert len(providers) == 1
+    providers[0].shutdown.assert_not_called()
+    assert m._cache_hits == 1
+    assert m._cache_misses == 1
+    # Reuse does not refresh the insert timestamp.
+    assert m._tracer_created_at == {"acme:cogniverse-acme-search": 1000.0}
+
+
+def test_ttl_zero_disables_expiry(monkeypatch):
+    clock = _freeze_clock(monkeypatch)
+    m = _live_manager(ttl_seconds=0)
+    providers = _stub_provider_factory(m)
+
+    first = m._get_tracer_for_project("acme", "search")
+    clock["now"] += 10_000_000
+    second = m._get_tracer_for_project("acme", "search")
+
+    assert second is first
+    assert len(providers) == 1
+    assert m._cache_hits == 1
+
+
+def test_count_cap_still_evicts_with_ttl_active(monkeypatch):
+    _freeze_clock(monkeypatch)
+    m = _live_manager(ttl_seconds=3600, max_cached_tenants=1)
+    providers = _stub_provider_factory(m)
+
+    m._get_tracer_for_project("acme", "search")
+    m._get_tracer_for_project("acme", "routing")
+
+    assert set(m._tenant_tracers) == {"acme:cogniverse-acme-routing"}
+    assert set(m._tracer_created_at) == {"acme:cogniverse-acme-routing"}
+    assert set(m._tenant_providers) == {"acme:cogniverse-acme-routing"}
+    providers[0].shutdown.assert_called_once()

@@ -10,6 +10,7 @@ Handles:
 
 import logging
 import threading
+import time
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
 
@@ -65,6 +66,9 @@ class TelemetryManager:
         # Lets eviction drop providers no live tracer still references,
         # without parsing the (colon-bearing) tenant id out of cache_key.
         self._tracer_provider_keys: Dict[str, str] = {}
+        # cache_key -> time.monotonic() at insert; entries older than
+        # config.tenant_cache_ttl_seconds are rebuilt on access.
+        self._tracer_created_at: Dict[str, float] = {}
         self._lock = threading.RLock()
 
         # Per-project configs (single source of truth for project-specific settings)
@@ -108,9 +112,10 @@ class TelemetryManager:
 
         # Check cache first
         with self._lock:
-            if cache_key in self._tenant_tracers:
+            cached = self._cached_tracer(cache_key)
+            if cached is not None:
                 self._cache_hits += 1
-                return self._tenant_tracers[cache_key]
+                return cached
 
             self._cache_misses += 1
 
@@ -127,6 +132,7 @@ class TelemetryManager:
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
                 self._tracer_provider_keys[cache_key] = tenant_id
+                self._tracer_created_at[cache_key] = time.monotonic()
                 self._evict_old_tracers()
 
                 return tracer
@@ -356,9 +362,10 @@ class TelemetryManager:
 
         # Check cache first
         with self._lock:
-            if cache_key in self._tenant_tracers:
+            cached = self._cached_tracer(cache_key)
+            if cached is not None:
                 self._cache_hits += 1
-                return self._tenant_tracers[cache_key]
+                return cached
 
             self._cache_misses += 1
 
@@ -378,6 +385,7 @@ class TelemetryManager:
                 # Cache with LRU eviction
                 self._tenant_tracers[cache_key] = tracer
                 self._tracer_provider_keys[cache_key] = provider_key
+                self._tracer_created_at[cache_key] = time.monotonic()
                 self._evict_old_tracers()
 
                 return tracer
@@ -516,10 +524,17 @@ class TelemetryManager:
 
             # Use provider to configure span export (backend-agnostic)
             use_batch_export = not use_sync_export
+            resource_attributes = {
+                "service.name": self.config.service_name,
+                "service.version": self.config.service_version,
+                **self.config.extra_resource_attributes,
+            }
             tracer_provider = provider.configure_span_export(
                 endpoint=endpoint,
                 project_name=project_name,
                 use_batch_export=use_batch_export,
+                batch_config=self.config.batch_config,
+                resource_attributes=resource_attributes,
             )
 
             mode = "BATCH" if use_batch_export else "SYNC"
@@ -531,6 +546,28 @@ class TelemetryManager:
         except Exception as e:
             logger.error(f"Failed to create tracer provider for {project_key}: {e}")
             raise
+
+    def _cached_tracer(self, cache_key: str) -> Optional[Tracer]:
+        """Return the cached tracer, or None when absent or expired.
+
+        An entry older than ``config.tenant_cache_ttl_seconds`` is dropped
+        (together with its provider, once no other tracer references it) so
+        the caller rebuilds both. A TTL of 0 or less disables expiry.
+        Caller must hold ``self._lock``.
+        """
+        tracer = self._tenant_tracers.get(cache_key)
+        if tracer is None:
+            return None
+        ttl = self.config.tenant_cache_ttl_seconds
+        created = self._tracer_created_at.get(cache_key)
+        if ttl > 0 and created is not None and time.monotonic() - created > ttl:
+            del self._tenant_tracers[cache_key]
+            self._tracer_created_at.pop(cache_key, None)
+            self._tracer_provider_keys.pop(cache_key, None)
+            self._evict_orphaned_providers()
+            logger.debug(f"Expired tracer from cache (TTL): {cache_key}")
+            return None
+        return tracer
 
     def _evict_old_tracers(self):
         """Evict old tracers (LRU) and any providers no tracer still references.
@@ -546,8 +583,13 @@ class TelemetryManager:
             for key in oldest_keys:
                 del self._tenant_tracers[key]
                 self._tracer_provider_keys.pop(key, None)
+                self._tracer_created_at.pop(key, None)
                 logger.debug(f"Evicted tracer from cache: {key}")
 
+        self._evict_orphaned_providers()
+
+    def _evict_orphaned_providers(self):
+        """Shut down and drop providers no cached tracer references."""
         still_referenced = set(self._tracer_provider_keys.values())
         for provider_key in list(self._tenant_providers.keys()):
             if provider_key in still_referenced:
@@ -621,6 +663,7 @@ class TelemetryManager:
             self._tenant_providers.clear()
             self._tenant_tracers.clear()
             self._tracer_provider_keys.clear()
+            self._tracer_created_at.clear()
 
     @classmethod
     def reset(cls) -> None:
