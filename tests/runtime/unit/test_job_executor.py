@@ -43,6 +43,16 @@ def test_cosine_sim_zero_vector_guarded():
     assert _cosine_sim([0.0, 0.0], [1.0, 1.0]) == 0.0
 
 
+def test_cosine_sim_length_mismatch_raises():
+    """zip() used to silently truncate the longer vector, producing a
+    plausible-but-wrong similarity; mismatched dims must raise instead."""
+    with pytest.raises(
+        ValueError,
+        match=r"cosine similarity requires equal-length vectors: got 2 and 3",
+    ):
+        _cosine_sim([1.0, 0.0], [1.0, 0.0, 0.0])
+
+
 # ---- _is_pure_delivery ---------------------------------------------------
 
 

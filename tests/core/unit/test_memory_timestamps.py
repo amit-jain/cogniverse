@@ -67,6 +67,30 @@ def test_epoch_to_iso_utc_survives_absurd_magnitude():
     assert epoch_to_iso_utc(_S * 10**9) == "2023-11-14T22:13:20+00:00"
 
 
+def test_to_epoch_seconds_parses_stringified_epochs():
+    # Mem0/Vespa payloads round-trip created_at through JSON as strings; a
+    # digit-string epoch used to fall through the ISO parser and return None.
+    assert to_epoch_seconds(str(_S)) == _S
+    assert to_epoch_seconds(str(_MS)) == _S  # ms-magnitude string collapses too
+    assert to_epoch_seconds(f"  {_S}  ") == _S
+    assert to_epoch_seconds(f"{_S}.5") == _S
+    assert to_epoch_seconds("1.7e12") == 1_700_000_000  # scientific ms → seconds
+
+
+def test_to_epoch_seconds_string_non_finite_and_garbage_still_none():
+    assert to_epoch_seconds("inf") is None
+    assert to_epoch_seconds("nan") is None
+    assert to_epoch_seconds("-inf") is None
+    assert to_epoch_seconds("12abc") is None
+
+
+def test_to_epoch_seconds_iso_still_wins_over_numeric_lookalike():
+    # "20231115" is a valid ISO 8601 basic-format date; it must keep parsing
+    # as 2023-11-15, not as a ~1970 epoch of 20,231,115 seconds.
+    expected = int(datetime(2023, 11, 15, tzinfo=timezone.utc).timestamp())
+    assert to_epoch_seconds("20231115") == expected
+
+
 def test_to_epoch_seconds_returns_none_for_non_finite():
     # inf would spin the ms-collapse loop forever; nan/-inf int() raises.
     assert to_epoch_seconds(float("inf")) is None

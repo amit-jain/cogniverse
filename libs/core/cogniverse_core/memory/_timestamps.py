@@ -18,27 +18,34 @@ from typing import Any, Optional
 _MAX_S_EPOCH = 4_102_444_800
 
 
+def _numeric_epoch_seconds(ts: float) -> Optional[int]:
+    if not math.isfinite(ts):  # inf would never exit the loop below; nan int()s raise
+        return None
+    while ts > _MAX_S_EPOCH:  # collapse ms/us/ns magnitudes down to seconds
+        ts /= 1000.0
+    return int(ts)
+
+
 def to_epoch_seconds(value: Any) -> Optional[int]:
-    """Normalize a ``created_at`` (epoch s/ms or ISO string) to UTC epoch seconds.
+    """Normalize a ``created_at`` (epoch s/ms — numeric or numeric string — or
+    ISO string) to UTC epoch seconds.
 
     Returns ``None`` for missing or unparseable input.
     """
     if value is None or value == "" or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        ts = float(value)
-        if not math.isfinite(
-            ts
-        ):  # inf would never exit the loop below; nan int()s raise
-            return None
-        while ts > _MAX_S_EPOCH:  # collapse ms/us/ns magnitudes down to seconds
-            ts /= 1000.0
-        return int(ts)
+        return _numeric_epoch_seconds(float(value))
     if isinstance(value, str):
         try:
             dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except (ValueError, TypeError):
-            return None
+            # Not ISO — a stringified epoch ("1700000000", "1.7e12") is still
+            # a valid created_at; parse it through the same magnitude guard.
+            try:
+                return _numeric_epoch_seconds(float(value.strip()))
+            except ValueError:
+                return None
         if dt.tzinfo is None:  # naive → UTC, not the host's local tz
             dt = dt.replace(tzinfo=timezone.utc)
         return int(dt.timestamp())

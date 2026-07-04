@@ -60,6 +60,10 @@ def _embed_text(text: str, denseon_url: str, *, is_query: bool) -> list:
 
 
 def _cosine_sim(a: list, b: list) -> float:
+    if len(a) != len(b):
+        raise ValueError(
+            f"cosine similarity requires equal-length vectors: got {len(a)} and {len(b)}"
+        )
     dot = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a))
     nb = math.sqrt(sum(x * x for x in b))

@@ -2,6 +2,7 @@
 Mixin for dynamic DSPy module and optimizer configuration at runtime.
 """
 
+import inspect
 import logging
 from typing import Any, Dict, Optional, Type
 
@@ -187,11 +188,21 @@ class DynamicDSPyMixin:
         signature = self._signatures[signature_name]
         config = module_config or self.agent_config.module_config
 
-        # Extract module creation parameters
-        module_params = {
-            "max_retries": config.max_retries,
-            **config.custom_params,
-        }
+        # Extract module creation parameters. Predict/ChainOfThought accept
+        # **config kwargs stored on the module and forwarded per call as
+        # lm_kwargs, so temperature/max_tokens ride along; ReAct takes no
+        # **config, so only forward where the constructor accepts them.
+        module_params: Dict[str, Any] = {"max_retries": config.max_retries}
+        module_class = DSPyModuleRegistry.get_module_class(config.module_type)
+        accepts_lm_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD
+            for p in inspect.signature(module_class.__init__).parameters.values()
+        )
+        if accepts_lm_kwargs:
+            module_params["temperature"] = config.temperature
+            if config.max_tokens is not None:
+                module_params["max_tokens"] = config.max_tokens
+        module_params.update(config.custom_params)
 
         # Create module using registry
         module = DSPyModuleRegistry.create_module(
@@ -238,13 +249,21 @@ class DynamicDSPyMixin:
         if not config:
             raise ValueError("No optimizer configuration available")
 
-        # Extract optimizer parameters
+        # Extract optimizer parameters. num_trials is forwarded only when the
+        # optimizer constructor declares it by name — BootstrapFewShot does
+        # not, and MIPROv2 takes num_trials at compile() time, not __init__.
         optimizer_params = {
             "max_bootstrapped_demos": config.max_bootstrapped_demos,
             "max_labeled_demos": config.max_labeled_demos,
             **config.teacher_settings,
             **config.custom_params,
         }
+        optimizer_class = DSPyOptimizerRegistry.get_optimizer_class(
+            config.optimizer_type
+        )
+        init_params = inspect.signature(optimizer_class.__init__).parameters
+        if "num_trials" in init_params and "num_trials" not in optimizer_params:
+            optimizer_params["num_trials"] = config.num_trials
 
         # Create optimizer using registry
         optimizer = DSPyOptimizerRegistry.create_optimizer(

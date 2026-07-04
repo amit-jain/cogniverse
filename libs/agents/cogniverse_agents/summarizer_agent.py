@@ -414,6 +414,8 @@ class SummarizerAgent(
     @staticmethod
     def _enforce_max_length(text: str, max_length: int) -> str:
         """Truncate text at the last word boundary within max_length."""
+        if max_length <= 0:
+            raise ValueError(f"max_length must be positive, got {max_length}")
         if len(text) <= max_length:
             return text
         cut = text[:max_length]
