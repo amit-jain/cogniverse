@@ -242,7 +242,8 @@ class ApprovalStorageImpl(ApprovalStorage):
                 f"backend for batch {batch_id}"
             )
             project_spans = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "approval_batch"},
             )
             if (
                 not project_spans.empty
@@ -543,9 +544,12 @@ class ApprovalStorageImpl(ApprovalStorage):
         try:
             await asyncio.sleep(0.5)  # Give telemetry backend time to process spans
 
-            # Query spans using telemetry provider
+            # Query spans using telemetry provider — server-side name
+            # filter; the unfiltered form re-downloads the whole project
+            # window per call.
             spans_df = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "approval_batch"},
             )
 
             if spans_df.empty:
@@ -595,10 +599,12 @@ class ApprovalStorageImpl(ApprovalStorage):
             return pending_batches
 
         except Exception as e:
+            # Propagate: an empty approval queue must mean "nothing pending",
+            # never "the telemetry backend was unreachable".
             logger.error(
-                f"Error retrieving pending batches from telemetry backend: {e}"
+                f"Error retrieving pending batches from telemetry backend: {e!r}"
             )
-            return []
+            raise
 
     async def record_decision(self, decision: ReviewDecision, item: ReviewItem) -> None:
         """
@@ -667,7 +673,8 @@ class ApprovalStorageImpl(ApprovalStorage):
             for attempt, delay in enumerate(retry_delays):
                 # Query spans using telemetry provider
                 project_spans = await self.provider.traces.get_spans(
-                    project=self.full_project_name
+                    project=self.full_project_name,
+                    filters={"name": "approval_item"},
                 )
 
                 if not project_spans.empty:
