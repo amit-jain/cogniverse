@@ -128,3 +128,20 @@ def test_single_row_array_to_single_vector_schema_ok() -> None:
     p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_768")
     out = p.process_embeddings(np.ones((1, 8), dtype=np.float32))
     assert out["embedding"] == [1.0] * 8
+
+
+def test_nan_rejected_by_float_encoder_on_float_only_schema() -> None:
+    """On a float-only schema (needs_binary=False) the float form is the only
+    one produced — without its own guard a NaN row hex-encoded straight into
+    the index while only the unused binary path would have rejected it."""
+    p = VespaEmbeddingProcessor(schema_name="video_x_mv_frame")
+    arr = np.array([[float("nan"), 0.5, -0.5, 0.2]], dtype=np.float32)
+    with pytest.raises(ValueError, match="non-finite values"):
+        p.process_embeddings(arr, needs_float=True, needs_binary=False)
+
+
+def test_inf_rejected_by_float_encoder_single_vector() -> None:
+    p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_x")
+    arr = np.array([float("inf"), 0.5, -0.5, 0.2], dtype=np.float32)
+    with pytest.raises(ValueError, match="non-finite values"):
+        p._convert_to_float_dict(arr)

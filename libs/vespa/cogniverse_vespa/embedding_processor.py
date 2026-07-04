@@ -180,6 +180,15 @@ class VespaEmbeddingProcessor:
         if is_1d_input:
             embeddings = embeddings.reshape(1, -1)
 
+        # Same guard as the binary path — on a float-only schema this is the
+        # only format produced, and a NaN row would hex-encode straight into
+        # the index with no signal.
+        if not np.all(np.isfinite(embeddings)):
+            raise ValueError(
+                "Embeddings contain non-finite values (NaN / Inf); "
+                "refusing to encode. Check the upstream encoder output."
+            )
+
         if is_1d_input or self._resolve_single_vector():
             self._reject_multirow_for_single_vector(embeddings, is_1d_input)
             return embeddings[0].tolist()
