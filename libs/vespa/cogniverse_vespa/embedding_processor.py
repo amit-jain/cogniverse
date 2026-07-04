@@ -103,6 +103,14 @@ class VespaEmbeddingProcessor:
             if raw_embeddings.ndim == 3 and raw_embeddings.shape[0] == 1:
                 raw_embeddings = raw_embeddings.squeeze(0)
 
+            # A width-0 vector would encode to empty-string/empty-list
+            # embedding fields and land malformed in Vespa.
+            if raw_embeddings.ndim > 0 and raw_embeddings.shape[-1] == 0:
+                raise ValueError(
+                    f"zero-width embedding: shape {raw_embeddings.shape} has "
+                    f"no embedding dimension"
+                )
+
             # Only produce the formats the schema's ranking strategies read
             # (both when unspecified) — the discarded format previously cost
             # a full conversion pass per document.

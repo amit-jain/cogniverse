@@ -244,6 +244,63 @@ class TestDynamicDSPyMixin:
 
         assert isinstance(module, dspy.ChainOfThought)
 
+    def test_create_module_forwards_temperature_and_max_tokens(self, agent_config):
+        """ModuleConfig.temperature/max_tokens must land in Predict's stored
+        config — dspy forwards that dict as per-call lm_kwargs, so dropping
+        them silently ran every module at the LM's default sampling params."""
+        agent_config.module_config.temperature = 0.2
+        agent_config.module_config.max_tokens = 512
+        agent = TestAgent(agent_config)
+        agent.register_signature("test_sig", TestSignature)
+
+        module = agent.create_module("test_sig")
+
+        assert module.config == {
+            "max_retries": 3,
+            "temperature": 0.2,
+            "max_tokens": 512,
+        }
+
+    def test_create_module_omits_unset_max_tokens(self, agent_config):
+        """max_tokens=None means "use the LM's own limit" — it must not be
+        forwarded as an explicit None."""
+        agent_config.module_config.temperature = 0.9
+        agent = TestAgent(agent_config)
+        agent.register_signature("test_sig", TestSignature)
+
+        module = agent.create_module("test_sig")
+
+        assert module.config == {"max_retries": 3, "temperature": 0.9}
+
+    def test_create_module_custom_params_override_temperature(self, agent_config):
+        """custom_params stays the most specific layer — it wins over the
+        dataclass-level temperature."""
+        agent_config.module_config.temperature = 0.7
+        agent_config.module_config.custom_params = {"temperature": 0.1}
+        agent = TestAgent(agent_config)
+        agent.register_signature("test_sig", TestSignature)
+
+        module = agent.create_module("test_sig")
+
+        assert module.config == {"max_retries": 3, "temperature": 0.1}
+
+    def test_create_module_chain_of_thought_carries_lm_params(self, agent_config):
+        """ChainOfThought passes **config through to its inner Predict."""
+        agent_config.module_config.module_type = DSPyModuleType.CHAIN_OF_THOUGHT
+        agent_config.module_config.temperature = 0.3
+        agent_config.module_config.max_tokens = 256
+        agent = TestAgent(agent_config)
+        agent.register_signature("test_sig", TestSignature)
+
+        module = agent.create_module("test_sig")
+
+        assert isinstance(module, dspy.ChainOfThought)
+        assert module.predict.config == {
+            "max_retries": 3,
+            "temperature": 0.3,
+            "max_tokens": 256,
+        }
+
     def test_create_module_unregistered_signature_raises_error(self, agent_config):
         """Test creating module with unregistered signature raises error"""
         agent = TestAgent(agent_config)
@@ -303,6 +360,85 @@ class TestDynamicDSPyMixin:
 
         assert optimizer is not None
         assert isinstance(optimizer, dspy.COPRO)
+
+    def test_create_optimizer_skips_num_trials_when_ctor_rejects_it(self, agent_config):
+        """BootstrapFewShot's constructor has no num_trials parameter —
+        forwarding it unconditionally would raise, so it must be withheld."""
+        agent = TestAgent(agent_config)
+
+        optimizer = agent.create_optimizer(
+            optimizer_config=OptimizerConfig(
+                optimizer_type=OptimizerType.BOOTSTRAP_FEW_SHOT, num_trials=7
+            )
+        )
+
+        assert isinstance(optimizer, dspy.BootstrapFewShot)
+        assert not hasattr(optimizer, "num_trials")
+
+    def test_create_optimizer_forwards_num_trials_when_ctor_accepts_it(
+        self, agent_config, monkeypatch
+    ):
+        """When an optimizer constructor declares num_trials by name, the
+        configured value reaches it (was silently dropped for every type)."""
+        from cogniverse_core.common.dspy_module_registry import DSPyOptimizerRegistry
+
+        class TrialAwareOptimizer:
+            def __init__(
+                self,
+                max_bootstrapped_demos=4,
+                max_labeled_demos=16,
+                num_trials=10,
+            ):
+                self.max_bootstrapped_demos = max_bootstrapped_demos
+                self.max_labeled_demos = max_labeled_demos
+                self.num_trials = num_trials
+
+        monkeypatch.setitem(
+            DSPyOptimizerRegistry._optimizer_registry,
+            OptimizerType.MIPRO_V2,
+            TrialAwareOptimizer,
+        )
+        agent = TestAgent(agent_config)
+
+        optimizer = agent.create_optimizer(
+            optimizer_config=OptimizerConfig(
+                optimizer_type=OptimizerType.MIPRO_V2,
+                max_bootstrapped_demos=2,
+                max_labeled_demos=8,
+                num_trials=7,
+            )
+        )
+
+        assert optimizer.num_trials == 7
+        assert optimizer.max_bootstrapped_demos == 2
+        assert optimizer.max_labeled_demos == 8
+
+    def test_create_optimizer_custom_params_num_trials_wins(
+        self, agent_config, monkeypatch
+    ):
+        """An explicit custom_params num_trials overrides the dataclass field."""
+        from cogniverse_core.common.dspy_module_registry import DSPyOptimizerRegistry
+
+        class TrialAwareOptimizer:
+            def __init__(self, num_trials=10, **kwargs):
+                self.num_trials = num_trials
+
+        monkeypatch.setitem(
+            DSPyOptimizerRegistry._optimizer_registry,
+            OptimizerType.MIPRO_V2,
+            TrialAwareOptimizer,
+        )
+        agent = TestAgent(agent_config)
+
+        optimizer = agent.create_optimizer(
+            optimizer_config=OptimizerConfig(
+                optimizer_type=OptimizerType.MIPRO_V2,
+                num_trials=7,
+                custom_params={"num_trials": 3},
+            )
+        )
+
+        assert optimizer.num_trials == 3
 
     def test_update_module_config(self, agent_config):
         """Test updating module configuration"""

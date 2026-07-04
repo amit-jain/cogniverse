@@ -711,6 +711,18 @@ class TestSummarizerDepsConfiguration:
 
         assert result.summary == "Fits in the limit."
 
+    @pytest.mark.ci_fast
+    def test_enforce_max_length_zero_raises(self):
+        """max_length=0 used to return "…" (length 1 > 0) — a nonsensical
+        limit must raise, not silently emit output over the limit."""
+        with pytest.raises(ValueError, match=r"max_length must be positive, got 0"):
+            SummarizerAgent._enforce_max_length("some text", 0)
+
+    @pytest.mark.ci_fast
+    def test_enforce_max_length_negative_raises(self):
+        with pytest.raises(ValueError, match=r"max_length must be positive, got -5"):
+            SummarizerAgent._enforce_max_length("some text", -5)
+
 
 @pytest.mark.unit
 class TestEmitProgressStreaming:

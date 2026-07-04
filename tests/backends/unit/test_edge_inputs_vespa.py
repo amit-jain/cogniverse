@@ -140,6 +140,33 @@ def test_nan_rejected_by_float_encoder_on_float_only_schema() -> None:
         p.process_embeddings(arr, needs_float=True, needs_binary=False)
 
 
+def test_zero_width_multirow_embedding_rejected() -> None:
+    """(N, 0) used to emit empty-string binary / empty-list float embeddings
+    that land malformed in Vespa — reject up-front."""
+    p = VespaEmbeddingProcessor(schema_name="video_x_mv_frame")
+    with pytest.raises(ValueError, match="zero-width embedding"):
+        p.process_embeddings(np.zeros((3, 0), dtype=np.float32))
+
+
+def test_zero_width_single_row_embedding_rejected() -> None:
+    p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_768")
+    with pytest.raises(ValueError, match="zero-width embedding"):
+        p.process_embeddings(np.zeros((1, 0), dtype=np.float32))
+
+
+def test_zero_width_1d_embedding_rejected() -> None:
+    p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_768")
+    with pytest.raises(ValueError, match="zero-width embedding"):
+        p.process_embeddings(np.zeros((0,), dtype=np.float32))
+
+
+def test_zero_width_batched_embedding_rejected() -> None:
+    """(1, N, 0) squeezes to (N, 0) and must hit the same rejection."""
+    p = VespaEmbeddingProcessor(schema_name="video_x_mv_frame")
+    with pytest.raises(ValueError, match="zero-width embedding"):
+        p.process_embeddings(np.zeros((1, 3, 0), dtype=np.float32))
+
+
 def test_inf_rejected_by_float_encoder_single_vector() -> None:
     p = VespaEmbeddingProcessor(schema_name="agent_memories_sv_x")
     arr = np.array([float("inf"), 0.5, -0.5, 0.2], dtype=np.float32)
