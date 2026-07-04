@@ -43,8 +43,6 @@ class RoutingAnnotationStorage:
         Args:
             tenant_id: Tenant identifier
         """
-        self.tenant_id = tenant_id
-
         # Get telemetry manager and use its config (shared singleton config)
         telemetry_manager = get_telemetry_manager()
         self.telemetry_config = telemetry_manager.config

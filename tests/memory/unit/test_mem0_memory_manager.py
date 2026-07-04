@@ -183,10 +183,13 @@ class TestMem0MemoryManager:
         """Test getting all memories"""
         # Setup
         mock_memory = MagicMock()
-        mock_memory.get_all.return_value = [
-            {"id": "mem_1", "text": "Memory 1"},
-            {"id": "mem_2", "text": "Memory 2"},
-        ]
+        # Real mem0 get_all returns {"results": [...]}, not a bare list.
+        mock_memory.get_all.return_value = {
+            "results": [
+                {"id": "mem_1", "text": "Memory 1"},
+                {"id": "mem_2", "text": "Memory 2"},
+            ]
+        }
         manager.memory = mock_memory
 
         # Get all

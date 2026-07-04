@@ -36,7 +36,10 @@ class LLMEndpointConfig:
     api_key: Optional[str] = None
     temperature: float = 0.1
     max_tokens: int = 1000
-    adapter_path: Optional[str] = None  # LoRA/fine-tuned artifact path
+    # Records which LoRA/fine-tuned artifact this endpoint corresponds to.
+    # Bookkeeping only: LM construction never reads it — vLLM serves adapters
+    # server-side, selected via the model name.
+    adapter_path: Optional[str] = None
     extra_body: Optional[Dict[str, Any]] = None  # Provider-specific request params
     # Static HTTP headers attached to every request sent to ``api_base``.
     # Forwarded to dspy.LM/litellm as ``extra_headers``. Used to pass

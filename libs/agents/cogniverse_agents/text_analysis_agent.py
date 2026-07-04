@@ -29,6 +29,27 @@ from cogniverse_foundation.config.utils import create_default_config_manager, ge
 
 logger = logging.getLogger(__name__)
 
+# Default A2A metadata: seeds the persisted per-tenant AgentConfig on first
+# run and backs /health + /agent.json before any agent instance is warm.
+AGENT_NAME = "text_analysis_agent"
+AGENT_DESCRIPTION = "Text analysis with runtime-configurable DSPy modules"
+AGENT_VERSION = "1.0.0"
+DEFAULT_PORT = 8005
+AGENT_CAPABILITIES = [
+    "text_analysis",
+    "sentiment",
+    "summarization",
+    "entity_extraction",
+]
+AGENT_SKILLS = [
+    {
+        "name": "analyze_text",
+        "description": "Analyze text with configurable DSPy module",
+        "input_types": ["text", "analysis_type"],
+        "output_types": ["result", "confidence"],
+    }
+]
+
 
 class TextAnalysisSignature(dspy.Signature):
     """Analyze text content and extract insights"""
@@ -97,24 +118,12 @@ class TextAnalysisAgent(
             )
 
             self.config = AgentConfig(
-                agent_name="text_analysis_agent",
-                agent_version="1.0.0",
-                agent_description="Text analysis with runtime-configurable DSPy modules",
-                agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', 8005)}",
-                capabilities=[
-                    "text_analysis",
-                    "sentiment",
-                    "summarization",
-                    "entity_extraction",
-                ],
-                skills=[
-                    {
-                        "name": "analyze_text",
-                        "description": "Analyze text with configurable DSPy module",
-                        "input_types": ["text", "analysis_type"],
-                        "output_types": ["result", "confidence"],
-                    }
-                ],
+                agent_name=AGENT_NAME,
+                agent_version=AGENT_VERSION,
+                agent_description=AGENT_DESCRIPTION,
+                agent_url=f"http://localhost:{self.system_config.get('text_analysis_port', DEFAULT_PORT)}",
+                capabilities=list(AGENT_CAPABILITIES),
+                skills=[dict(skill) for skill in AGENT_SKILLS],
                 module_config=module_config,
                 llm_model=self.system_config.get("llm_model", "gpt-4"),
                 llm_base_url=self.system_config.get("llm_base_url"),
@@ -264,38 +273,42 @@ def get_agent(tenant_id: str) -> TextAnalysisAgent:
     return _agent_instances.get_or_set(tenant_id, _build)
 
 
+def _agent_card_payload() -> Dict[str, Any]:
+    """Serve the A2A card from a warm agent's configured attributes.
+
+    Instances set agent_name/agent_url/agent_capabilities/... from their
+    persisted per-tenant AgentConfig, so the most recently used instance is
+    the source of truth. Before any instance exists the card is built through
+    the same mixin from the module defaults __init__ seeds new configs with.
+    """
+    instances = _agent_instances.values()
+    if instances:
+        return instances[-1].get_agent_card_data()
+
+    card_source = A2AEndpointsMixin()
+    card_source.agent_name = AGENT_NAME
+    card_source.agent_description = AGENT_DESCRIPTION
+    card_source.agent_version = AGENT_VERSION
+    card_source.agent_url = f"http://localhost:{DEFAULT_PORT}"
+    card_source.agent_capabilities = list(AGENT_CAPABILITIES)
+    card_source.agent_skills = [dict(skill) for skill in AGENT_SKILLS]
+    return card_source.get_agent_card_data()
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy" if _config_manager is not None else "initializing",
-        "agent": "text_analysis_agent",
-        "capabilities": [
-            "text_analysis",
-            "sentiment",
-            "summarization",
-            "entity_extraction",
-        ],
+        "agent": AGENT_NAME,
+        "capabilities": _agent_card_payload()["capabilities"],
     }
 
 
 @app.get("/agent.json")
 async def get_agent_card():
-    """Agent card with capabilities."""
-    return {
-        "name": "TextAnalysisAgent",
-        "description": "Text analysis with runtime-configurable DSPy modules",
-        "url": "/analyze",
-        "version": "1.0.0",
-        "protocol": "a2a",
-        "protocol_version": "0.2.1",
-        "capabilities": [
-            "text_analysis",
-            "sentiment",
-            "summarization",
-            "entity_extraction",
-        ],
-    }
+    """Agent card served from the configured agent attributes."""
+    return _agent_card_payload()
 
 
 class AnalyzeRequest(BaseModel):

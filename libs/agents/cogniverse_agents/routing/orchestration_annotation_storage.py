@@ -83,7 +83,6 @@ class OrchestrationAnnotationStorage:
 
     def __init__(self, tenant_id: str, project_name: str = "cogniverse"):
         """Initialize annotation storage"""
-        self.tenant_id = tenant_id
         self.project_name = project_name
 
         # Get telemetry provider for annotations
