@@ -525,9 +525,13 @@ async def _build_golden_dataset_from_phoenix(
     golden_dataset = {}
 
     for _, span in search_spans.iterrows():
-        # Check if span has annotation
+        # Check if span has annotation. pandas yields NaN (not None) for a
+        # missing value when the column exists — NaN < min_rating is False,
+        # which let unannotated spans into the dataset and NaN'd the export.
         annotation_score = span.get("attributes.annotation.score")
-        if annotation_score is None or float(annotation_score) < min_rating:
+        if annotation_score is None or pd.isna(annotation_score):
+            continue
+        if float(annotation_score) < min_rating:
             continue
 
         query = span.get("attributes.query", "")

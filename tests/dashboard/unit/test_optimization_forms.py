@@ -311,3 +311,55 @@ def test_workflow_submit_builds_exact_argo_spec(tmp_path: Path) -> None:
     assert "workflow.argoproj.io/routing-opt-routing-x7k2p created" in [
         c.value for c in at.code
     ]
+
+
+def test_golden_dataset_excludes_nan_annotation_scores(monkeypatch) -> None:
+    """pandas yields NaN (not None) for a missing score when the column
+    exists — NaN < min_rating is False, which let unannotated spans into
+    the dataset with avg_relevance NaN and broke the JSON export."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import pandas as pd
+
+    from cogniverse_dashboard.tabs import optimization as opt
+
+    spans_df = pd.DataFrame(
+        [
+            {
+                "name": "search",
+                "attributes.annotation.score": 0.9,
+                "attributes.query": "annotated query",
+                "attributes.results": [
+                    {"video_id": "v1", "relevance": 1.0},
+                ],
+                "attributes.profile": "video_colpali",
+                "start_time": "2026-06-01T00:00:00+00:00",
+            },
+            {
+                "name": "search",
+                "attributes.annotation.score": float("nan"),
+                "attributes.query": "unannotated query",
+                "attributes.results": [
+                    {"video_id": "v2", "relevance": 1.0},
+                ],
+                "attributes.profile": "video_colpali",
+                "start_time": "2026-06-01T00:00:00+00:00",
+            },
+        ]
+    )
+    provider = MagicMock()
+    provider.traces.get_spans = AsyncMock(return_value=spans_df)
+    manager = MagicMock()
+    manager.get_provider.return_value = provider
+    monkeypatch.setattr(
+        "cogniverse_foundation.telemetry.manager.get_telemetry_manager",
+        lambda: manager,
+    )
+
+    dataset = asyncio.run(
+        opt._build_golden_dataset_from_phoenix("acme", min_rating=0.8, lookback_days=7)
+    )
+
+    assert list(dataset.keys()) == ["annotated query"]
+    assert dataset["annotated query"]["avg_relevance"] == 0.9
