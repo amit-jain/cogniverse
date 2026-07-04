@@ -230,3 +230,35 @@ class TestInferenceServiceInProcessorRequirements:
     def test_image_segmentation_local_by_default(self):
         strategy = ImageSegmentationStrategy()
         assert strategy.get_required_processors() == {"image": {"max_images": 10000}}
+
+
+class TestKwargsDoesNotCountAsOptIn:
+    """A bare **kwargs constructor must NOT be treated as accepting the
+    injection — that shape absorbed and silently discarded the kwarg while
+    the factory believed it was delivered."""
+
+    def test_var_keyword_only_strategy_is_not_injected(self, monkeypatch):
+        from cogniverse_runtime.ingestion import strategies as strategies_mod
+        from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+
+        class KwargsOnlyStrategy:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        monkeypatch.setattr(
+            strategies_mod, "KwargsOnlyStrategy", KwargsOnlyStrategy, raising=False
+        )
+        assert (
+            StrategyFactory._strategy_accepts_inference_service("KwargsOnlyStrategy")
+            is False
+        )
+
+    def test_explicit_parameter_still_opts_in(self):
+        from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
+
+        assert (
+            StrategyFactory._strategy_accepts_inference_service(
+                "MultiVectorEmbeddingStrategy"
+            )
+            is True
+        )
