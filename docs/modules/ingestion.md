@@ -902,11 +902,12 @@ strategies:
 ```
 
 The factory looks up `inference_services[<strategy_type>]` and, if the
-strategy's `__init__` declares an `inference_service` parameter (or
-accepts `**kwargs`), passes it as `inference_service=<name>`.
-Strategies whose constructor does NOT declare the parameter are
-**not** injected — this is an opt-in contract, the factory never
-broadcasts the kwarg blindly.
+strategy's `__init__` explicitly declares an `inference_service`
+parameter, passes it as `inference_service=<name>`. Strategies whose
+constructor does NOT declare the parameter are **not** injected — this
+is an opt-in contract, and `**kwargs` deliberately does not count as
+opting in (a `**kwargs` constructor absorbs the kwarg and silently
+drops it, so the factory would believe it was delivered).
 
 ```python
 # Strategy opts in by declaring the parameter:

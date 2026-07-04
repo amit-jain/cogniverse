@@ -104,13 +104,14 @@ class StrategyFactory:
 
     @classmethod
     def _strategy_accepts_inference_service(cls, class_name: str) -> bool:
-        """True when the strategy's ``__init__`` declares
-        ``inference_service`` (or absorbs unknown kwargs via ``**kwargs``).
+        """True when the strategy's ``__init__`` explicitly declares
+        ``inference_service``.
 
-        Narrowed introspection: only checks for the one well-known
-        injectable, never filters arbitrary user-supplied params. A
-        strategy author opts in by declaring the parameter; everything
-        else passes through unchanged.
+        ``**kwargs`` deliberately does NOT count as opt-in: strategies that
+        absorbed the kwarg that way silently discarded it, so the profile's
+        inference service never reached the processor while the factory
+        believed it was delivered. A strategy opts in by naming the
+        parameter.
         """
         strategy_class = cls._resolve_strategy_class(class_name)
         if strategy_class is None:
@@ -119,12 +120,7 @@ class StrategyFactory:
             sig = inspect.signature(strategy_class.__init__)
         except (TypeError, ValueError):
             return False
-        for param in sig.parameters.values():
-            if param.name == INFERENCE_SERVICE_PARAM:
-                return True
-            if param.kind is inspect.Parameter.VAR_KEYWORD:
-                return True
-        return False
+        return INFERENCE_SERVICE_PARAM in sig.parameters
 
     @classmethod
     def _create_strategy_instance(
