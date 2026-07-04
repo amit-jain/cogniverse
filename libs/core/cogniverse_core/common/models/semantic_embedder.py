@@ -122,7 +122,24 @@ class RemoteOpenAIEmbedder(SemanticEmbedder):
             self._model,
         )
 
-    def encode(self, texts: TextsT, is_query: bool = False, **kwargs) -> np.ndarray:
+    def encode(
+        self,
+        texts: TextsT,
+        is_query: bool = False,
+        convert_to_numpy: bool = True,
+        normalize_embeddings: bool = True,
+        **kwargs,
+    ) -> np.ndarray:
+        # convert_to_numpy / normalize_embeddings are accepted for
+        # SentenceTransformer call-site compatibility; this backend always
+        # returns a normalized np.ndarray, so they are no-ops. Anything else
+        # would be silently dropped here (the local sibling forwards its
+        # kwargs to SentenceTransformer), so reject it loudly.
+        if kwargs:
+            raise TypeError(
+                "RemoteOpenAIEmbedder.encode() got unexpected keyword "
+                f"arguments: {sorted(kwargs)}"
+            )
         items, single = _to_list(texts)
         if not items:
             return np.zeros((0, 0), dtype=np.float32)

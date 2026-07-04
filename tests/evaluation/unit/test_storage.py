@@ -224,7 +224,9 @@ class TestTelemetryStorage:
     def mock_phoenix_client(self):
         """Create mock Phoenix client (deprecated - use mock_provider)."""
         client = Mock()
-        client.get_spans_dataframe = Mock(return_value=pd.DataFrame())
+        # Real phoenix client exposes spans.get_spans_dataframe, not a
+        # top-level get_spans_dataframe.
+        client.spans.get_spans_dataframe = Mock(return_value=pd.DataFrame())
         client.upload_dataset = Mock(return_value=Mock(id="test_id"))
         client.get_dataset = Mock(return_value=Mock(id="test_id", name="test"))
         return client
@@ -235,10 +237,14 @@ class TestTelemetryStorage:
         from unittest.mock import AsyncMock
 
         provider = Mock()
-        # Create telemetry provider with traces interface
-        provider.telemetry.traces.get_spans = AsyncMock(
-            return_value=mock_phoenix_client.get_spans_dataframe()
-        )
+
+        # Route get_spans through the client mock per call so tests that
+        # reconfigure client.spans.get_spans_dataframe (e.g. side_effect
+        # sequences) actually take effect.
+        async def _get_spans(**kwargs):
+            return mock_phoenix_client.spans.get_spans_dataframe(**kwargs)
+
+        provider.telemetry.traces.get_spans = AsyncMock(side_effect=_get_spans)
         return provider
 
     @pytest.fixture
@@ -445,8 +451,8 @@ class TestTelemetryStorage:
 
     @pytest.mark.unit
     def test_get_traces_with_error(self, mock_phoenix_client, mock_provider, config):
-        """Test get_traces_for_evaluation error handling."""
-        mock_phoenix_client.get_spans_dataframe.side_effect = [
+        """A backend query failure must raise, not read as 'no traces'."""
+        mock_phoenix_client.spans.get_spans_dataframe.side_effect = [
             pd.DataFrame(),  # For init
             Exception("Query failed"),  # For actual query
         ]
@@ -458,9 +464,10 @@ class TestTelemetryStorage:
             with patch("cogniverse_evaluation.data.storage.trace"):
                 storage = TelemetryStorage(config)
 
-                result = storage.get_traces_for_evaluation()
-
-                assert result.empty
+                with pytest.raises(
+                    RuntimeError, match="Failed to fetch traces: Query failed"
+                ):
+                    storage.get_traces_for_evaluation()
 
     @pytest.mark.unit
     def test_get_metrics(self, mock_provider, config):

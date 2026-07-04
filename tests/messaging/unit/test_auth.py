@@ -1,5 +1,6 @@
 """Unit tests for invite token auth and user-tenant mapping."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -100,6 +101,23 @@ class TestInviteTokenManager:
         config_manager.set_config_value.assert_called_once()
         call_value = config_manager.set_config_value.call_args.kwargs["config_value"]
         assert call_value["used"] is True
+        assert call_value["tenant_id"] == "acme:alice"
+        assert call_value["token"] == "abc123"
+
+    def test_mark_token_used_writes_tz_aware_used_at(self, config_manager):
+        """used_at must be stored tz-aware in UTC, matching the aware
+        datetimes generate_token/validate_token use. A naive utcnow()
+        timestamp cannot be compared against those without TypeError."""
+        before = datetime.now(timezone.utc)
+        manager = InviteTokenManager(config_manager)
+        manager.mark_token_used("abc123", "acme:alice")
+        after = datetime.now(timezone.utc)
+
+        call_value = config_manager.set_config_value.call_args.kwargs["config_value"]
+        used_at = datetime.fromisoformat(call_value["used_at"])
+        assert used_at.tzinfo is not None
+        assert used_at.utcoffset() == timedelta(0)
+        assert before <= used_at <= after
 
 
 class TestUserTenantMapper:

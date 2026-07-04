@@ -164,6 +164,31 @@ def test_remote_encode_always_normalizes():
     np.testing.assert_allclose(np.linalg.norm(vec), 1.0, rtol=1e-5)
 
 
+def test_remote_encode_accepts_sentence_transformer_compat_kwargs():
+    """convert_to_numpy / normalize_embeddings stay accepted (call sites like
+    audio_embedding_generator pass them); output is normalized ndarray."""
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
+    mock_response = _openai_embed_response([[3.0, 4.0]])
+    with patch.object(embedder._session, "post", return_value=mock_response):
+        vec = embedder.encode("hello", convert_to_numpy=True, normalize_embeddings=True)
+    assert isinstance(vec, np.ndarray)
+    np.testing.assert_allclose(vec, [0.6, 0.8], rtol=1e-5)
+
+
+def test_remote_encode_rejects_unknown_kwargs():
+    """Unknown kwargs must raise TypeError naming the offending keys instead
+    of being silently dropped (the local sibling forwards its kwargs to
+    SentenceTransformer, so a dropped kwarg here would diverge silently)."""
+    embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
+    with patch.object(embedder._session, "post") as mock_post:
+        with pytest.raises(
+            TypeError,
+            match=r"unexpected keyword arguments: \['batch_size', 'device'\]",
+        ):
+            embedder.encode("hello", device="cuda", batch_size=8)
+    mock_post.assert_not_called()
+
+
 def test_remote_encode_raises_when_backend_returns_no_embeddings():
     embedder = RemoteOpenAIEmbedder("http://fake.invalid:8000", "lightonai/DenseOn")
     mock_response = MagicMock()

@@ -104,7 +104,7 @@ class InviteTokenManager:
                     "tenant_id": tenant_id,
                     "token": token,
                     "used": True,
-                    "used_at": datetime.utcnow().isoformat(),
+                    "used_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
         except Exception as e:

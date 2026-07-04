@@ -364,26 +364,95 @@ class TestTextAnalysisEndpoints:
 
     def test_health_endpoint(self):
         """GET /health reports agent status and capabilities (A2A probe)."""
+        import cogniverse_agents.text_analysis_agent as ta_module
+
         client = TestClient(app)
         resp = client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["agent"] == "text_analysis_agent"
+        assert data["agent"] == ta_module.AGENT_NAME
         assert data["status"] in {"healthy", "initializing"}
-        assert "summarization" in data["capabilities"]
+        assert data["capabilities"] == ta_module.AGENT_CAPABILITIES
 
     def test_agent_card_endpoint(self):
-        """GET /agent.json returns the A2A discovery card."""
+        """GET /agent.json with no warm agent serves the module defaults —
+        the same values __init__ seeds a fresh per-tenant AgentConfig with."""
+        import cogniverse_agents.text_analysis_agent as ta_module
+
         client = TestClient(app)
         resp = client.get("/agent.json")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["name"] == "TextAnalysisAgent"
+        assert data["name"] == ta_module.AGENT_NAME
+        assert data["description"] == ta_module.AGENT_DESCRIPTION
+        assert data["version"] == ta_module.AGENT_VERSION
+        assert data["url"] == f"http://localhost:{ta_module.DEFAULT_PORT}"
         assert data["protocol"] == "a2a"
-        assert data["url"] == "/analyze"
-        assert set(data["capabilities"]) == {
-            "text_analysis",
-            "sentiment",
-            "summarization",
-            "entity_extraction",
+        assert data["capabilities"] == ta_module.AGENT_CAPABILITIES
+        assert data["skills"] == ta_module.AGENT_SKILLS
+
+    @patch("cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.register_signature")
+    @patch(
+        "cogniverse_agents.text_analysis_agent.DynamicDSPyMixin.initialize_dynamic_dspy"
+    )
+    @patch("cogniverse_foundation.config.utils.get_config")
+    def test_agent_card_serves_instance_configured_values(
+        self,
+        mock_get_config,
+        mock_initialize_dspy,
+        mock_register_signature,
+        config_manager_memory,
+    ):
+        """/agent.json and /health must serve the warm agent's configured
+        attributes (persisted per-tenant AgentConfig), not hardcoded literals:
+        a tenant with a customized config gets that config's card."""
+        from cogniverse_foundation.config.agent_config import (
+            AgentConfig,
+            DSPyModuleType,
+            ModuleConfig,
+        )
+
+        mock_get_config.return_value = {
+            "text_analysis_port": 8005,
+            "llm_model": "gpt-4",
+            "llm_base_url": "http://localhost:11434",
         }
+        custom_config = AgentConfig(
+            agent_name="text_analysis_agent",
+            agent_version="9.9.9",
+            agent_description="Tenant-customized text analysis",
+            agent_url="http://tenant-host:9000",
+            capabilities=["text_analysis", "custom_capability"],
+            skills=[
+                {
+                    "name": "analyze_text",
+                    "description": "Tenant-customized skill",
+                    "input_types": ["text"],
+                    "output_types": ["result"],
+                }
+            ],
+            module_config=ModuleConfig(
+                module_type=DSPyModuleType.PREDICT,
+                signature="TextAnalysisSignature",
+            ),
+        )
+        config_manager_memory.set_agent_config(
+            tenant_id="card_tenant",
+            agent_name="text_analysis_agent",
+            agent_config=custom_config,
+        )
+
+        with TestClient(app) as client:
+            agent = get_agent("card_tenant")
+
+            data = client.get("/agent.json").json()
+            assert data == agent.get_agent_card_data()
+            assert data["name"] == "text_analysis_agent"
+            assert data["description"] == "Tenant-customized text analysis"
+            assert data["version"] == "9.9.9"
+            assert data["url"] == "http://tenant-host:9000"
+            assert data["capabilities"] == ["text_analysis", "custom_capability"]
+            assert data["skills"] == custom_config.skills
+
+            health = client.get("/health").json()
+            assert health["capabilities"] == ["text_analysis", "custom_capability"]

@@ -369,9 +369,10 @@ def mock_evaluator_provider(mock_phoenix_client):
         mock_datasets.get_dataset = mock_get_dataset
         mock_telemetry.datasets = mock_datasets
 
-        # Mock traces interface - async method
+        # Mock traces interface - async method; real phoenix client exposes
+        # spans.get_spans_dataframe, not a top-level get_spans_dataframe.
         async def mock_get_spans(**kwargs):
-            return mock_phoenix_client.get_spans_dataframe(**kwargs)
+            return mock_phoenix_client.spans.get_spans_dataframe(**kwargs)
 
         mock_traces = MagicMock()
         mock_traces.get_spans = mock_get_spans

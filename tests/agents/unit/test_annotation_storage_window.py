@@ -54,14 +54,12 @@ class TestBackendFailurePropagates:
 
     def _routing_storage(self):
         storage = object.__new__(RoutingAnnotationStorage)
-        storage.tenant_id = "acme"
         storage.project_name = "cogniverse-acme"
         storage.provider = self._failing_provider()
         return storage
 
     def _orchestration_storage(self):
         storage = object.__new__(OrchestrationAnnotationStorage)
-        storage.tenant_id = "acme"
         storage.project_name = "cogniverse-acme"
         storage.provider = self._failing_provider()
         return storage

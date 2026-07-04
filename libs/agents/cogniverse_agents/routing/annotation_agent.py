@@ -121,8 +121,6 @@ class AnnotationAgent:
             max_annotations_per_run: Maximum annotations to request per run
             automation_rules: Optional declarative config (overrides individual kwargs)
         """
-        self.tenant_id = tenant_id
-
         if automation_rules is not None:
             thresholds = automation_rules.annotation_thresholds
             self.confidence_threshold = thresholds.confidence_threshold
