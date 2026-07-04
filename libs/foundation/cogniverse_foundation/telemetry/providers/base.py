@@ -349,6 +349,8 @@ class TelemetryProvider(ABC):
         endpoint: str,
         project_name: str,
         use_batch_export: bool = True,
+        batch_config: Optional[Any] = None,
+        resource_attributes: Optional[Dict[str, str]] = None,
     ) -> Any:
         """
         Configure OTLP span export for a project.

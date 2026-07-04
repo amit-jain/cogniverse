@@ -194,38 +194,78 @@ def _ensure_graph_manager_factory(config_manager, schema_loader) -> None:
     _GRAPH_FACTORY_INSTALLED = True
 
 
+def _resolve_worker_llm_config(config_manager):
+    """Resolve the worker-wide default ``llm_config.primary`` endpoint.
+
+    Consults the system tenant's config (the worker default LM is
+    process-wide, not per-tenant — per-tenant LMs are resolved at
+    dispatch via ``routers.ingestion._resolve_tenant_llm_config``).
+    Returns ``None`` when the config store has no primary endpoint or
+    is unreachable, so the caller can fall back to env.
+    """
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.config.utils import get_config
+
+    try:
+        cfg = get_config(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+        endpoint = cfg.get("llm_config", {}).get("primary")
+    except Exception as exc:  # noqa: BLE001 — config store down ≠ worker down
+        logger.warning(
+            "Could not resolve llm_config.primary from the config store "
+            "(falling back to LLM_ENDPOINT/LLM_MODEL env): %s",
+            exc,
+        )
+        return None
+    if not endpoint:
+        return None
+    return LLMEndpointConfig(**endpoint)
+
+
 def _configure_dspy_lm(config_manager) -> None:
-    """Configure the DSPy default LM from env so ClaimExtractor + the
+    """Configure the DSPy default LM so ClaimExtractor + the
     sufficient-context gate run without an explicit dspy.configure.
 
     The runtime's main.py does this on startup but the worker has its
-    own process. Reads ``LLM_ENDPOINT`` + ``LLM_MODEL`` from env
-    (the same env vars the runtime pod uses) and binds them to the
-    DSPy default LM. Idempotent — DSPy.settings.lm is replaced each
-    call but the side effect is the same.
+    own process. Resolves ``llm_config.primary`` from the config store
+    first (so retries/timeout/seed/extra_headers reach the LM); falls
+    back to ``LLM_ENDPOINT`` + ``LLM_MODEL`` env (the same env vars the
+    runtime pod uses) when the store has no primary endpoint. Either
+    way the LM is built via ``create_dspy_lm`` — the mandatory
+    chokepoint for every dspy.LM construction. Idempotent —
+    dspy.settings.lm is replaced each call but the side effect is the
+    same.
     """
     import dspy
 
-    endpoint = os.environ.get("LLM_ENDPOINT")
-    model = os.environ.get("LLM_MODEL")
-    if not endpoint or not model:
-        logger.warning(
-            "LLM_ENDPOINT / LLM_MODEL env not set — DSPy will be unconfigured "
-            "and ClaimExtractor calls will raise 'No LM is loaded'."
+    from cogniverse_foundation.config.llm_factory import create_dspy_lm
+    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+    from cogniverse_foundation.dspy.model_format import ensure_provider_prefix
+
+    llm_config = _resolve_worker_llm_config(config_manager)
+    if llm_config is None:
+        endpoint = os.environ.get("LLM_ENDPOINT")
+        model = os.environ.get("LLM_MODEL")
+        if not endpoint or not model:
+            logger.warning(
+                "No llm_config.primary in the config store and "
+                "LLM_ENDPOINT / LLM_MODEL env not set — DSPy will be "
+                "unconfigured and ClaimExtractor calls will raise "
+                "'No LM is loaded'."
+            )
+            return
+        llm_config = LLMEndpointConfig(
+            model=ensure_provider_prefix(model),
+            api_base=endpoint.rstrip("/"),
+            temperature=0.0,
         )
-        return
-    base_url = endpoint.rstrip("/")
-    # vLLM's OAI-compat endpoint matches OpenAI's API contract; route
-    # through DSPy's openai provider with model_type='chat'.
-    lm = dspy.LM(
-        f"openai/{model}",
-        api_base=base_url,
-        api_key="not-needed",
-        model_type="chat",
-        temperature=0.0,
-    )
+    lm = create_dspy_lm(llm_config)
     dspy.configure(lm=lm)
-    logger.info("DSPy LM configured for worker: model=%s api_base=%s", model, base_url)
+    logger.info(
+        "DSPy LM configured for worker: model=%s api_base=%s",
+        llm_config.model,
+        llm_config.api_base,
+    )
 
 
 async def _default_processor(job: IngestJob) -> dict:
