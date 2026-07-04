@@ -679,5 +679,188 @@ class TestDetailedReportAgentCoreFunctionality:
         assert result.executive_summary == "enriched report for AI"
 
 
+@pytest.mark.unit
+class TestDetailedReportDepsConfiguration:
+    """Deps-level knobs (thinking_enabled, max_report_length,
+    technical_analysis_enabled) change behavior."""
+
+    _NEUTRAL_CONTENT_ANALYSIS = {
+        "total_results": 1,
+        "content_types": {},
+        "duration_distribution": {"short": 0, "medium": 0, "long": 0},
+        "quality_metrics": {"high": 0, "medium": 0, "low": 0},
+        "avg_relevance": 0.0,
+    }
+
+    def _make_agent(self, deps: DetailedReportDeps) -> DetailedReportAgent:
+        with (
+            patch("cogniverse_agents.detailed_report_agent.VLMInterface"),
+            patch.object(DetailedReportAgent, "_initialize_vlm_client"),
+        ):
+            agent = DetailedReportAgent(deps=deps, config_manager=Mock())
+            agent._llm_config = _GATEWAY_TEST_ENDPOINT
+            return agent
+
+    @staticmethod
+    def _request(include_technical_details: bool = True) -> ReportRequest:
+        return ReportRequest(
+            query="AI overview",
+            search_results=[
+                {
+                    "id": "1",
+                    "title": "AI Demo",
+                    "content_type": "video",
+                    "score": 0.8,
+                    "duration": 120,
+                }
+            ],
+            report_type="comprehensive",
+            include_visual_analysis=False,
+            include_technical_details=include_technical_details,
+        )
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_thinking_disabled_skips_thinking_phase(self):
+        """thinking_enabled=False bypasses _thinking_phase entirely and carries
+        a neutral ThinkingPhase (empty analyses, zeroed metrics) to the result."""
+        agent = self._make_agent(DetailedReportDeps(thinking_enabled=False))
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="Report without thinking.")
+        )
+
+        with patch.object(
+            DetailedReportAgent, "_thinking_phase", autospec=True
+        ) as mock_think:
+            result = await agent._generate_report(self._request())
+
+        mock_think.assert_not_called()
+        assert result.executive_summary == "Report without thinking."
+        assert result.thinking_phase.content_analysis == self._NEUTRAL_CONTENT_ANALYSIS
+        assert result.thinking_phase.visual_assessment == {
+            "has_visual_content": False,
+            "visual_elements": {"thumbnails": 0, "keyframes": 0, "images": 0},
+            "visual_coverage": 0,
+            "visual_analysis_feasible": False,
+        }
+        assert result.thinking_phase.technical_findings == []
+        assert result.thinking_phase.patterns_identified == []
+        assert result.thinking_phase.gaps_and_limitations == []
+        assert result.thinking_phase.reasoning == ""
+        # Downstream sections still assemble from the neutral phase.
+        assert result.recommendations == [
+            "Consider refining the search query to improve result relevance",
+            "Expand result set to identify more meaningful patterns",
+        ]
+        assert [d["category"] for d in result.technical_details] == [
+            "Content Distribution",
+            "Quality Metrics",
+        ]
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_thinking_enabled_invokes_thinking_phase(self):
+        """thinking_enabled=True (default) awaits _thinking_phase exactly once
+        and carries its result through verbatim."""
+        agent = self._make_agent(DetailedReportDeps(thinking_enabled=True))
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="Report with thinking.")
+        )
+
+        thinking = ThinkingPhase(
+            content_analysis={
+                "total_results": 1,
+                "content_types": {"video": 1},
+                "duration_distribution": {"short": 0, "medium": 1, "long": 0},
+                "quality_metrics": {"high": 0, "medium": 1, "low": 0},
+                "avg_relevance": 0.8,
+            },
+            visual_assessment={"has_visual_content": False},
+            technical_findings=[],
+            patterns_identified=[],
+            gaps_and_limitations=[],
+            reasoning="one video result",
+        )
+        with patch.object(
+            DetailedReportAgent,
+            "_thinking_phase",
+            autospec=True,
+            return_value=thinking,
+        ) as mock_think:
+            result = await agent._generate_report(self._request())
+
+        mock_think.assert_awaited_once()
+        assert result.executive_summary == "Report with thinking."
+        assert result.thinking_phase is thinking
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_max_report_length_truncates_at_word_boundary(self):
+        """An over-long executive summary is truncated at the last word
+        boundary within max_report_length, with an ellipsis appended."""
+        agent = self._make_agent(DetailedReportDeps(max_report_length=50))
+        long_summary = ("word " * 40).strip()  # 199 chars
+        agent.call_dspy = AsyncMock(return_value=Mock(executive_summary=long_summary))
+
+        result = await agent._generate_report(self._request())
+
+        # text[:50] ends mid-boundary after the 10th "word"; the cut lands on
+        # the last space, keeping 10 whole words plus the ellipsis.
+        assert result.executive_summary == "word " * 9 + "word…"
+        assert len(result.executive_summary) == 50
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_max_report_length_passes_short_summary_verbatim(self):
+        """An executive summary within max_report_length is returned untouched."""
+        agent = self._make_agent(DetailedReportDeps(max_report_length=50))
+        agent.call_dspy = AsyncMock(
+            return_value=Mock(executive_summary="Fits in the limit.")
+        )
+
+        result = await agent._generate_report(self._request())
+
+        assert result.executive_summary == "Fits in the limit."
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_technical_analysis_disabled_overrides_request_flag(self):
+        """technical_analysis_enabled=False suppresses the technical section
+        even when the request asks for it, and metadata reports it disabled."""
+        agent = self._make_agent(DetailedReportDeps(technical_analysis_enabled=False))
+        agent.call_dspy = AsyncMock(return_value=Mock(executive_summary="Report."))
+
+        result = await agent._generate_report(
+            self._request(include_technical_details=True)
+        )
+
+        assert result.technical_details == []
+        assert result.metadata["technical_analysis_enabled"] is False
+
+    @pytest.mark.ci_fast
+    @pytest.mark.asyncio
+    async def test_technical_analysis_enabled_with_request_flag_produces_section(self):
+        """technical_analysis_enabled=True + include_technical_details=True
+        produces the two technical subsections."""
+        agent = self._make_agent(DetailedReportDeps(technical_analysis_enabled=True))
+        agent.call_dspy = AsyncMock(return_value=Mock(executive_summary="Report."))
+
+        result = await agent._generate_report(
+            self._request(include_technical_details=True)
+        )
+
+        assert [d["category"] for d in result.technical_details] == [
+            "Content Distribution",
+            "Quality Metrics",
+        ]
+        assert result.technical_details[0]["metrics"] == {"video": 1}
+        assert result.technical_details[1]["metrics"] == {
+            "high": 0,
+            "medium": 1,
+            "low": 0,
+        }
+        assert result.metadata["technical_analysis_enabled"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
