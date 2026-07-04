@@ -399,7 +399,8 @@ class WorkflowCheckpointStorage:
         """
         try:
             spans_df = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "workflow_checkpoint"},
             )
 
             if spans_df.empty:
@@ -471,7 +472,8 @@ class WorkflowCheckpointStorage:
         """Get span ID for a checkpoint"""
         try:
             spans_df = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "workflow_checkpoint"},
             )
 
             if spans_df.empty:
@@ -509,7 +511,8 @@ class WorkflowCheckpointStorage:
         """
         try:
             spans_df = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "workflow_checkpoint"},
             )
 
             if spans_df.empty:
@@ -569,7 +572,8 @@ class WorkflowCheckpointStorage:
         """
         try:
             spans_df = await self.provider.traces.get_spans(
-                project=self.full_project_name
+                project=self.full_project_name,
+                filters={"name": "workflow_checkpoint"},
             )
 
             if spans_df.empty:

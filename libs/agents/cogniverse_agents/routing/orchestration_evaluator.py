@@ -100,6 +100,7 @@ class OrchestrationEvaluator:
                 project=self.project_name,
                 start_time=start_time,
                 end_time=end_time,
+                filters={"name": SPAN_NAME_ORCHESTRATION},
                 limit=10000,
             )
         except Exception as e:
