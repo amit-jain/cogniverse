@@ -3,15 +3,20 @@
 ``version_bump`` carries pure semantic-version logic exercised directly; the
 Vespa/Phoenix management CLIs are service wrappers, so they get a ``--help``
 smoke test that proves the entry point imports and its argparse is valid
-without needing a live backend.
+without needing a live backend. Scripts whose ``main()`` takes injectable
+boundaries (config manager, subprocess, requests, tracker) additionally get
+in-process tests with those boundaries stubbed.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
+import types
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -75,3 +80,393 @@ def test_cli_help_loads(script):
     )
     assert proc.returncode == 0, f"{script} --help failed: {proc.stderr}"
     assert "usage" in proc.stdout.lower()
+
+
+_ARGPARSE_CLIS = {
+    "generate_tabbed_html_report": ["[file]"],
+    "run_experiments_with_visualization": [
+        "--dataset-name",
+        "--dataset-path",
+        "--force-new",
+        "--all-strategies",
+        "--profiles",
+        "--strategies",
+        "--evaluator",
+        "--llm-model",
+        "--llm-base-url",
+        "--test-multiple-strategies",
+    ],
+    "seed_bright_corpus": ["--verify-only"],
+    "view_integrated_results": ["--open", "--test-results", "--experiments-dir"],
+}
+
+
+@pytest.mark.parametrize("script", sorted(_ARGPARSE_CLIS))
+def test_script_help_names_options(script):
+    proc = subprocess.run(
+        [sys.executable, str(_SCRIPTS / f"{script}.py"), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, f"{script} --help failed: {proc.stderr}"
+    assert "usage" in proc.stdout.lower()
+    for option in _ARGPARSE_CLIS[script]:
+        assert option in proc.stdout, f"{script} --help missing {option}"
+
+
+class TestDiscoverTenants:
+    """In-process tests for discover_tenants (no argparse; Argo JSON emitter)."""
+
+    @pytest.fixture()
+    def mod(self):
+        return _load("discover_tenants")
+
+    def _manager(self, tenant_ids):
+        manager = MagicMock()
+        manager.store.list_all_configs.return_value = [
+            types.SimpleNamespace(tenant_id=tid) for tid in tenant_ids
+        ]
+        return manager
+
+    def test_discover_dedupes_sorts_and_drops_none(self, mod, monkeypatch):
+        manager = self._manager(["beta", "alpha", None, "beta"])
+        monkeypatch.setattr(mod, "create_default_config_manager", lambda: manager)
+        assert mod.discover_tenants() == ["alpha", "beta"]
+        manager.store.list_all_configs.assert_called_once_with(
+            scope=mod.ConfigScope.ROUTING
+        )
+
+    def test_main_prints_json_array(self, mod, monkeypatch, capsys):
+        manager = self._manager(["t2", "t1"])
+        monkeypatch.setattr(mod, "create_default_config_manager", lambda: manager)
+        assert mod.main() == 0
+        assert capsys.readouterr().out.strip() == '["t1", "t2"]'
+
+    def test_main_no_tenants_returns_error(self, mod, monkeypatch, capsys):
+        manager = self._manager([])
+        monkeypatch.setattr(mod, "create_default_config_manager", lambda: manager)
+        assert mod.main() == 1
+        assert capsys.readouterr().out.strip() == ""
+
+
+class TestGenerateLangextractTrainingData:
+    """Tests for generate_langextract_training_data (no argparse).
+
+    The module is loaded with a stub ``langextract`` package because the
+    installed ``langextract`` exposes no ``LangExtract`` class — the script
+    crashes at import against the real dependency (reported separately).
+    """
+
+    @pytest.fixture()
+    def loaded(self, monkeypatch):
+        stub = types.ModuleType("langextract")
+        stub.LangExtract = MagicMock(name="LangExtract")
+        monkeypatch.setitem(sys.modules, "langextract", stub)
+        return _load("generate_langextract_training_data"), stub
+
+    def test_initialize_requires_api_key(self, loaded, monkeypatch):
+        mod, _ = loaded
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="GEMINI_API_KEY"):
+            mod.initialize_langextract()
+
+    def test_initialize_builds_extractor(self, loaded, monkeypatch):
+        mod, stub = loaded
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        mod.initialize_langextract()
+        stub.LangExtract.assert_called_once_with(
+            model="gemini-2.0-flash-exp", api_key="test-key"
+        )
+
+    def test_create_extraction_prompt_embeds_query_and_schema(self, loaded):
+        mod, _ = loaded
+        prompt = mod.create_extraction_prompt("Show me videos about budget")
+        assert 'Query: "Show me videos about budget"' in prompt
+        assert '"search_modality": "video" | "text" | "both"' in prompt
+        assert '"generation_type": "raw" | "summary" | "detailed"' in prompt
+        assert '"recommended_tier": 1 | 2 | 3 | 4' in prompt
+
+
+class TestSetupGliner:
+    """Tests for setup_gliner.download_gliner_models with stubbed gliner/torch."""
+
+    def test_downloads_all_four_models(self, monkeypatch, capsys):
+        model = MagicMock()
+        model.predict_entities.return_value = [
+            {"text": "videos", "label": "video_content"}
+        ]
+        gliner_stub = types.ModuleType("gliner")
+        gliner_stub.GLiNER = MagicMock()
+        gliner_stub.GLiNER.from_pretrained.return_value = model
+        torch_stub = types.ModuleType("torch")
+        torch_stub.cuda = types.SimpleNamespace(is_available=lambda: False)
+        monkeypatch.setitem(sys.modules, "gliner", gliner_stub)
+        monkeypatch.setitem(sys.modules, "torch", torch_stub)
+
+        mod = _load("setup_gliner")
+        assert mod.download_gliner_models() is True
+
+        loaded = [c.args[0] for c in gliner_stub.GLiNER.from_pretrained.call_args_list]
+        assert loaded == [
+            "urchade/gliner_multi-v2.1",
+            "urchade/gliner_large-v2.1",
+            "urchade/gliner_medium-v2.1",
+            "urchade/gliner_small-v2.1",
+        ]
+        model.predict_entities.assert_called_with(
+            "Show me videos about machine learning",
+            ["video_content", "text_content", "machine_learning"],
+            threshold=0.3,
+        )
+        out = capsys.readouterr().out
+        assert "Device: cpu" in out
+        assert "GLiNER setup complete!" in out
+
+
+class TestSetupOllama:
+    """Tests for setup_ollama helpers with stubbed subprocess/requests."""
+
+    @pytest.fixture()
+    def mod(self):
+        return _load("setup_ollama")
+
+    def test_check_installed_true(self, mod, monkeypatch):
+        run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ollama version 0.5.1\n", stderr=""
+            )
+        )
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        assert mod.check_ollama_installed() is True
+        assert run.call_args[0][0] == ["ollama", "--version"]
+
+    def test_check_installed_binary_missing(self, mod, monkeypatch):
+        run = MagicMock(side_effect=FileNotFoundError("ollama"))
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        assert mod.check_ollama_installed() is False
+
+    def test_check_running_http_200(self, mod, monkeypatch):
+        urls = []
+
+        def fake_get(url, timeout):
+            urls.append((url, timeout))
+            return types.SimpleNamespace(status_code=200)
+
+        monkeypatch.setattr(mod.requests, "get", fake_get)
+        assert mod.check_ollama_running() is True
+        assert urls == [("http://localhost:11434/api/tags", 5)]
+
+    def test_check_running_connection_refused(self, mod, monkeypatch):
+        def fake_get(url, timeout):
+            raise ConnectionError("refused")
+
+        monkeypatch.setattr(mod.requests, "get", fake_get)
+        assert mod.check_ollama_running() is False
+
+    def test_pull_model_already_available_skips_pull(self, mod, monkeypatch):
+        run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="deepseek-r1:1.5b  2GB\n", stderr=""
+            )
+        )
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        assert mod.pull_deepseek_model() is True
+        run.assert_called_once()
+        assert run.call_args[0][0] == ["ollama", "list"]
+
+
+class TestSetupVideoProcessing:
+    """Tests for setup_video_processing config/CLI helpers."""
+
+    @pytest.fixture()
+    def mod(self):
+        return _load("setup_video_processing")
+
+    def test_update_config_writes_endpoint(self, mod, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "config.json").write_text(
+            json.dumps({"pipeline_config": {"generate_descriptions": False}})
+        )
+        assert mod.update_config_with_endpoint("https://x.modal.run") is True
+        config = json.loads((tmp_path / "config.json").read_text())
+        assert config["vlm_endpoint_url"] == "https://x.modal.run"
+        assert config["pipeline_config"]["generate_descriptions"] is True
+
+    def test_update_config_missing_file(self, mod, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        assert mod.update_config_with_endpoint("https://x.modal.run") is False
+
+    def test_check_modal_setup_found(self, mod, monkeypatch):
+        run = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="modal client 0.64.0\n", stderr=""
+            )
+        )
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        assert mod.check_modal_setup() is True
+        assert run.call_args[0][0] == ["modal", "--version"]
+
+    def test_check_modal_setup_missing(self, mod, monkeypatch):
+        run = MagicMock(side_effect=FileNotFoundError("modal"))
+        monkeypatch.setattr(mod.subprocess, "run", run)
+        assert mod.check_modal_setup() is False
+
+
+class TestSeedBrightCorpus:
+    """Tests for seed_bright_corpus row loading (Vespa paths need a live cluster)."""
+
+    def test_load_probe_rows_assigns_query_ids(self):
+        mod = _load("seed_bright_corpus")
+        rows = mod._load_probe_rows()
+        assert len(rows) == 30
+        assert [r["query_id"] for r in rows] == [f"bright_q{i}" for i in range(1, 31)]
+        assert set(rows[0].keys()) == {
+            "query",
+            "video_id",
+            "segment_id_range",
+            "reasoning_type",
+            "query_id",
+        }
+        assert all(r["query"].strip() for r in rows)
+        assert all(r["video_id"].strip() for r in rows)
+
+
+class TestRunExperimentsWithVisualization:
+    """main()-level test with the ExperimentTracker boundary stubbed."""
+
+    def test_main_wires_tracker(self, monkeypatch, capsys):
+        mod = _load("run_experiments_with_visualization")
+
+        tracker_cls = MagicMock(name="ExperimentTracker")
+        tracker = tracker_cls.return_value
+        tracker.create_or_get_dataset.return_value = "golden_eval_v1"
+        tracker.run_all_experiments.return_value = [{"experiment": "e1"}]
+        tracker.create_visualization_tables.return_value = {"summary": "table"}
+
+        pkg = types.ModuleType("cogniverse_evaluation")
+        core = types.ModuleType("cogniverse_evaluation.core")
+        et = types.ModuleType("cogniverse_evaluation.core.experiment_tracker")
+        et.ExperimentTracker = tracker_cls
+        monkeypatch.setitem(sys.modules, "cogniverse_evaluation", pkg)
+        monkeypatch.setitem(sys.modules, "cogniverse_evaluation.core", core)
+        monkeypatch.setitem(
+            sys.modules, "cogniverse_evaluation.core.experiment_tracker", et
+        )
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "run_experiments_with_visualization.py",
+                "--dataset-name",
+                "golden_eval_v1",
+                "--profiles",
+                "frame_based_colpali",
+                "--test-multiple-strategies",
+            ],
+        )
+
+        mod.main()
+
+        tracker_cls.assert_called_once_with(
+            experiment_project_name="experiments",
+            enable_quality_evaluators=True,
+            enable_llm_evaluators=False,
+            evaluator_name="visual_judge",
+            llm_model=None,
+            llm_base_url=None,
+        )
+        tracker.get_experiment_configurations.assert_called_once_with(
+            profiles=["frame_based_colpali"],
+            strategies=None,
+            all_strategies=True,
+        )
+        tracker.create_or_get_dataset.assert_called_once_with(
+            dataset_name="golden_eval_v1", csv_path=None, force_new=False
+        )
+        tracker.run_all_experiments.assert_called_once_with("golden_eval_v1")
+        tracker.print_visualization.assert_called_once_with({"summary": "table"})
+        tracker.save_results.assert_called_once_with(
+            {"summary": "table"}, [{"experiment": "e1"}]
+        )
+        tracker.generate_html_report.assert_called_once_with()
+        assert "All experiments completed!" in capsys.readouterr().out
+
+
+class TestViewIntegratedResults:
+    """main()-level test with the report generator and browser stubbed."""
+
+    def test_main_generates_report_and_opens_browser(self, monkeypatch, tmp_path):
+        mod = _load("view_integrated_results")
+        report = tmp_path / "report.html"
+        report.write_text("<html></html>")
+
+        gen = MagicMock(return_value=report)
+        opened = []
+        monkeypatch.setattr(mod, "generate_integrated_report", gen)
+        monkeypatch.setattr(mod.webbrowser, "open", lambda url: opened.append(url))
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "view_integrated_results.py",
+                "--open",
+                "--test-results",
+                "results.json",
+                "--experiments-dir",
+                "experiments",
+            ],
+        )
+
+        mod.main()
+
+        gen.assert_called_once_with(
+            test_results_file="results.json", experiment_results_dir="experiments"
+        )
+        assert opened == [f"file://{report.absolute()}"]
+
+    def test_main_without_open_skips_browser(self, monkeypatch, tmp_path):
+        mod = _load("view_integrated_results")
+        gen = MagicMock(return_value=tmp_path / "report.html")
+        browser = MagicMock()
+        monkeypatch.setattr(mod, "generate_integrated_report", gen)
+        monkeypatch.setattr(mod.webbrowser, "open", browser)
+        monkeypatch.setattr(sys, "argv", ["view_integrated_results.py"])
+
+        mod.main()
+
+        gen.assert_called_once_with(test_results_file=None, experiment_results_dir=None)
+        browser.assert_not_called()
+
+
+class TestGenerateTabbedHtmlReport:
+    """Unit tests for the pure HTML formatting helpers."""
+
+    @pytest.fixture()
+    def mod(self):
+        return _load("generate_tabbed_html_report")
+
+    def test_format_video_tag(self, mod):
+        assert (
+            mod.format_video_tag("v1", ["v1", "v2"])
+            == '<span class="video-tag correct-video">✓ v1</span>'
+        )
+        assert (
+            mod.format_video_tag("v3", ["v1", "v2"])
+            == '<span class="video-tag incorrect-video">✗ v3</span>'
+        )
+
+    def test_format_position(self, mod):
+        assert mod.format_position(1) == '<span class="position first">1</span>'
+        assert mod.format_position(3) == '<span class="position">3</span>'
+
+    @pytest.mark.parametrize(
+        ("mrr", "expected"),
+        [
+            (0.7, '<span class="metric-badge metric-good">MRR: 0.700</span>'),
+            (0.3, '<span class="metric-badge metric-medium">MRR: 0.300</span>'),
+            (0.299, '<span class="metric-badge metric-poor">MRR: 0.299</span>'),
+        ],
+    )
+    def test_format_metric_badge_thresholds(self, mod, mrr, expected):
+        assert mod.format_metric_badge(mrr) == expected
