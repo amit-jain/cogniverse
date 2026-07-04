@@ -1771,3 +1771,81 @@ class TestQueryEnhancementArtifactLoading:
             qe_agent.telemetry_manager = mock_tm
             qe_agent._artifact_tenant_id = "test:unit"
             qe_agent._load_artifact()  # Should not raise
+
+
+class TestAdvancedRoutingLMPredictor:
+    """forward() routes decisions through the LM predictor; the deterministic
+    assembly is strictly a validated fallback."""
+
+    def _valid_decision(self):
+        return {
+            "search_modality": "video_only",
+            "generation_type": "summary",
+            "primary_agent": "video_search_agent",
+            "secondary_agents": ["summarizer_agent"],
+            "execution_mode": "sequential",
+            "confidence": "0.87",
+            "reasoning": "LM chose the video path",
+        }
+
+    def _module_with_stub_router(self, decision=None, error=None):
+        import dspy
+
+        module = DSPyAdvancedRoutingModule()
+
+        def fake_router(**kwargs):
+            if error is not None:
+                raise error
+            prediction = dspy.Prediction()
+            prediction.routing_decision = decision
+            return prediction
+
+        module.router = fake_router
+        return module
+
+    def test_valid_lm_decision_is_used(self):
+        module = self._module_with_stub_router(decision=self._valid_decision())
+        result = module.forward("show me soccer videos")
+        assert result.routing_decision == {
+            "search_modality": "video_only",
+            "generation_type": "summary",
+            "primary_agent": "video_search_agent",
+            "secondary_agents": ["summarizer_agent"],
+            "execution_mode": "sequential",
+            "confidence": 0.87,
+            "reasoning": "LM chose the video path",
+        }
+        # The workflow is built FROM the LM decision.
+        agents_in_workflow = [step["agent"] for step in result.agent_workflow]
+        assert agents_in_workflow[0] == "video_search_agent"
+        assert "summarizer_agent" in agents_in_workflow
+
+    def test_malformed_lm_decision_falls_back_to_deterministic(self):
+        bad = self._valid_decision()
+        bad["search_modality"] = "hologram"
+        module = self._module_with_stub_router(decision=bad)
+        result = module.forward("show me soccer videos")
+        assert result.routing_decision["search_modality"] in {
+            "multimodal",
+            "video_only",
+            "text_only",
+            "both",
+        }
+        assert result.routing_decision["reasoning"].startswith("Routing based on")
+
+    def test_missing_keys_falls_back(self):
+        module = self._module_with_stub_router(decision={"primary_agent": "x"})
+        result = module.forward("show me soccer videos")
+        assert result.routing_decision["reasoning"].startswith("Routing based on")
+
+    def test_router_exception_falls_back(self):
+        module = self._module_with_stub_router(error=RuntimeError("no LM configured"))
+        result = module.forward("show me soccer videos")
+        assert result.routing_decision["reasoning"].startswith("Routing based on")
+
+    def test_nonnumeric_confidence_falls_back(self):
+        bad = self._valid_decision()
+        bad["confidence"] = "very high"
+        module = self._module_with_stub_router(decision=bad)
+        result = module.forward("show me soccer videos")
+        assert result.routing_decision["reasoning"].startswith("Routing based on")
