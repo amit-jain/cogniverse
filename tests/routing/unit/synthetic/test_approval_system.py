@@ -506,3 +506,35 @@ class TestApprovalStorageEventLoop:
         assert {b.batch_id for b in batches} == {"b1", "b2"}
         # One fetch total — not 1 + N (the per-batch get_batch re-fetch).
         assert get_spans.call_count == 1
+
+
+class TestPendingBatchesBackendFailurePropagates:
+    """A telemetry-backend failure must raise, not read as an empty queue.
+
+    get_pending_batches previously flattened every exception to [] — a
+    Phoenix outage made the human approval queue silently show nothing
+    pending.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_pending_batches_raises_on_backend_failure(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
+
+        manager = MagicMock()
+        provider = MagicMock()
+        provider.traces.get_spans = AsyncMock(
+            side_effect=TimeoutError("phoenix query timed out")
+        )
+        manager.get_provider.return_value = provider
+        manager.config.get_project_name.return_value = "cogniverse-acme:prod"
+
+        storage = ApprovalStorageImpl(
+            grpc_endpoint="http://phoenix:4317",
+            http_endpoint="http://phoenix:6006",
+            tenant_id="acme:prod",
+            telemetry_manager=manager,
+        )
+        with pytest.raises(TimeoutError, match="phoenix query timed out"):
+            await storage.get_pending_batches()

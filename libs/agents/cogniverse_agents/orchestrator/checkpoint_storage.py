@@ -321,10 +321,12 @@ class WorkflowCheckpointStorage:
             return None
 
         except Exception as e:
+            # A backend failure is not "no checkpoint" — returning None here
+            # made a Phoenix outage silently restart workflows from scratch.
             logger.error(
-                f"Error getting latest checkpoint for workflow {workflow_id}: {e}"
+                f"Error getting latest checkpoint for workflow {workflow_id}: {e!r}"
             )
-            return None
+            raise
 
     async def _find_latest_active_checkpoint(
         self, checkpoint_spans
@@ -419,8 +421,8 @@ class WorkflowCheckpointStorage:
             return self._reconstruct_checkpoint_from_row(row)
 
         except Exception as e:
-            logger.error(f"Error getting checkpoint {checkpoint_id}: {e}")
-            return None
+            logger.error(f"Error getting checkpoint {checkpoint_id}: {e!r}")
+            raise
 
     async def mark_checkpoint_status(
         self, checkpoint_id: str, status: CheckpointStatus
@@ -462,8 +464,8 @@ class WorkflowCheckpointStorage:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to update checkpoint status: {e}")
-            return False
+            logger.error(f"Failed to update checkpoint status: {e!r}")
+            raise
 
     async def _get_checkpoint_span_id(self, checkpoint_id: str) -> Optional[str]:
         """Get span ID for a checkpoint"""
@@ -489,8 +491,8 @@ class WorkflowCheckpointStorage:
             return checkpoint_spans.iloc[0]["context.span_id"]
 
         except Exception as e:
-            logger.error(f"Error finding span for checkpoint {checkpoint_id}: {e}")
-            return None
+            logger.error(f"Error finding span for checkpoint {checkpoint_id}: {e!r}")
+            raise
 
     async def list_workflow_checkpoints(
         self, workflow_id: str, include_superseded: bool = False
@@ -548,8 +550,10 @@ class WorkflowCheckpointStorage:
             return checkpoints
 
         except Exception as e:
-            logger.error(f"Error listing checkpoints for workflow {workflow_id}: {e}")
-            return []
+            # Propagate: an empty list must mean "no checkpoints exist", never
+            # "the telemetry backend was unreachable".
+            logger.error(f"Error listing checkpoints for workflow {workflow_id}: {e!r}")
+            raise
 
     async def get_resumable_workflows(
         self, tenant_id: Optional[str] = None
@@ -618,5 +622,5 @@ class WorkflowCheckpointStorage:
             return resumable
 
         except Exception as e:
-            logger.error(f"Error getting resumable workflows: {e}")
-            return []
+            logger.error(f"Error getting resumable workflows: {e!r}")
+            raise

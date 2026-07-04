@@ -7,6 +7,8 @@ Tests the checkpoint types and storage functionality for durable execution.
 import json
 from datetime import datetime
 
+import pytest
+
 from cogniverse_agents.orchestrator.checkpoint_types import (
     CheckpointConfig,
     CheckpointLevel,
@@ -427,3 +429,52 @@ class TestGetLatestCheckpointNonBlocking:
         # Only checkpoint spans may cross the wire — never the whole project.
         for call in provider.traces.get_spans.await_args_list:
             assert call.kwargs["filters"] == {"name": "workflow_checkpoint"}
+
+
+class TestBackendFailurePropagates:
+    """A telemetry-backend failure must raise, not read as 'no checkpoints'.
+
+    The storage previously flattened every exception to None/[] — a Phoenix
+    outage then silently restarted workflows from scratch (get_latest_checkpoint
+    -> None) and made resumable workflows invisible.
+    """
+
+    def _storage_with_failing_provider(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        from cogniverse_agents.orchestrator.checkpoint_storage import (
+            WorkflowCheckpointStorage,
+        )
+
+        manager = MagicMock()
+        provider = MagicMock()
+        provider.traces.get_spans = AsyncMock(
+            side_effect=TimeoutError("phoenix query timed out")
+        )
+        manager.get_provider.return_value = provider
+        manager.config.get_project_name.return_value = "cogniverse-acme:prod"
+        storage = WorkflowCheckpointStorage(
+            grpc_endpoint="http://phoenix:4317",
+            http_endpoint="http://phoenix:6006",
+            tenant_id="acme:prod",
+            telemetry_manager=manager,
+        )
+        return storage
+
+    @pytest.mark.asyncio
+    async def test_get_latest_checkpoint_raises_on_backend_failure(self):
+        storage = self._storage_with_failing_provider()
+        with pytest.raises(TimeoutError, match="phoenix query timed out"):
+            await storage.get_latest_checkpoint("wf-1")
+
+    @pytest.mark.asyncio
+    async def test_list_checkpoints_raises_on_backend_failure(self):
+        storage = self._storage_with_failing_provider()
+        with pytest.raises(TimeoutError, match="phoenix query timed out"):
+            await storage.list_workflow_checkpoints("wf-1")
+
+    @pytest.mark.asyncio
+    async def test_get_resumable_workflows_raises_on_backend_failure(self):
+        storage = self._storage_with_failing_provider()
+        with pytest.raises(TimeoutError, match="phoenix query timed out"):
+            await storage.get_resumable_workflows()
