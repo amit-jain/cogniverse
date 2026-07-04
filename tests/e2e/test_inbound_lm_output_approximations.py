@@ -330,19 +330,37 @@ def test_per_session_isolation_two_parallel_lm_outputs_differ_statistically():
         sid_a = f"iso-A-{i}-{uuid.uuid4().hex[:6]}"
         sid_b = f"iso-B-{i}-{uuid.uuid4().hex[:6]}"
         results: dict = {}
+        errors: dict = {}
 
         def _run_a() -> None:
-            results["a"] = _run_process(sid_a, _BEAR_QUERY, _CONSTRAINT_TEXT)
+            try:
+                results["a"] = _run_process(sid_a, _BEAR_QUERY, _CONSTRAINT_TEXT)
+            except Exception as exc:  # noqa: BLE001 — reraised below with context
+                errors["a"] = exc
 
         def _run_b() -> None:
-            results["b"] = _run_process(sid_b, _BEAR_QUERY, None)
+            try:
+                results["b"] = _run_process(sid_b, _BEAR_QUERY, None)
+            except Exception as exc:  # noqa: BLE001 — reraised below with context
+                errors["b"] = exc
 
         ta = threading.Thread(target=_run_a, daemon=True)
         tb = threading.Thread(target=_run_b, daemon=True)
         ta.start()
         tb.start()
-        ta.join(timeout=400)
-        tb.join(timeout=400)
+        # Two parallel loops on the ~12 tok/s LM run near-serial; each is
+        # bounded by the 120s wall clock + last-call overshoot, so allow
+        # for both plus queueing before declaring a hang.
+        ta.join(timeout=600)
+        tb.join(timeout=600)
+
+        # Surface the losing thread's actual exception instead of the
+        # KeyError its missing results entry would raise below.
+        assert not errors, f"pair {i}: run(s) failed: {errors!r}"
+        assert not ta.is_alive() and not tb.is_alive(), (
+            f"pair {i}: run still in flight after 600s (a={ta.is_alive()}, "
+            f"b={tb.is_alive()})"
+        )
 
         a_il = results["a"]["final_output"]["iterative_loop"]
         b_il = results["b"]["final_output"]["iterative_loop"]

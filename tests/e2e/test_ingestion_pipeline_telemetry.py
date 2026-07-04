@@ -185,9 +185,24 @@ def _upload_fixture(tenant_id: str) -> str:
     Phoenix span query so the test can isolate this run's emissions
     from other ingest traffic.
     """
-    fixture = os.environ.get("COGNIVERSE_INGEST_FIXTURE")
-    if not fixture or not os.path.exists(fixture):
-        pytest.skip("Set COGNIVERSE_INGEST_FIXTURE=/path/to/small.mp4 to run this test")
+    # Default to the smallest bundled sample so the test runs without env
+    # setup — an unset fixture used to skip, which hid this surface from
+    # every full-suite run.
+    fixture = os.environ.get("COGNIVERSE_INGEST_FIXTURE") or os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "data",
+        "testset",
+        "evaluation",
+        "sample_videos",
+        "v_-6dz6tBH77I.mp4",
+    )
+    if not os.path.exists(fixture):
+        pytest.fail(
+            f"ingest fixture video not found at {fixture} — set "
+            "COGNIVERSE_INGEST_FIXTURE or restore the sample_videos data dir"
+        )
     upload_name = f"pipeline_test_{uuid.uuid4().hex[:8]}.mp4"
     with open(fixture, "rb") as fh:
         with httpx.Client(timeout=600.0) as c:
