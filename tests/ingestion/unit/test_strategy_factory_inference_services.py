@@ -15,7 +15,12 @@ from __future__ import annotations
 
 import pytest
 
-from cogniverse_runtime.ingestion.strategies import AudioTranscriptionStrategy
+from cogniverse_runtime.ingestion.strategies import (
+    AudioTranscriptionStrategy,
+    ImageSegmentationStrategy,
+    MultiVectorEmbeddingStrategy,
+    SingleVectorEmbeddingStrategy,
+)
 from cogniverse_runtime.ingestion.strategy_factory import StrategyFactory
 
 
@@ -62,9 +67,9 @@ class TestInferenceServicesInjection:
         assert strategy_set.transcription.inference_service == "explicit"
 
     def test_unmatched_strategy_type_gets_no_injection(self):
-        """``inference_services.embedding`` is consumed by EmbeddingGeneratorFactory,
-        not by StrategyFactory — embedding strategies must not gain a
-        spurious ``inference_service`` param at construction time.
+        """A strategy whose type is not keyed in ``inference_services``
+        gets no injection — the ``embedding`` entry only reaches an
+        ``embedding`` strategy, never the transcription one.
         """
         profile_config = {
             "inference_services": {"embedding": "vllm_colpali"},
@@ -127,6 +132,32 @@ class TestInferenceServicesInjection:
             "that its __init__ should never have set"
         )
 
+    def test_embedding_service_round_trips_through_factory(self):
+        """``inference_services.embedding`` reaches the embedding strategy's
+        processor requirements so ProcessorManager can resolve the URL."""
+        profile_config = {
+            "inference_services": {"embedding": "svc_x"},
+            "strategies": {
+                "embedding": {
+                    "class": "MultiVectorEmbeddingStrategy",
+                    "params": {"model_name": "TomoroAI/tomoro-colqwen3-embed-4b"},
+                }
+            },
+        }
+
+        strategy_set = StrategyFactory.create_from_profile_config(profile_config)
+
+        strategy = strategy_set.embedding
+        assert isinstance(strategy, MultiVectorEmbeddingStrategy)
+        assert strategy.inference_service == "svc_x"
+        assert strategy.get_required_processors() == {
+            "embedding": {
+                "type": "multi_vector",
+                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "inference_service": "svc_x",
+            }
+        }
+
     def test_unknown_param_in_profile_surfaces_as_typeerror(self):
         """A typo in profile params raises TypeError at construction so the
         misconfiguration is loud, not a silently dropped strategy."""
@@ -140,3 +171,62 @@ class TestInferenceServicesInjection:
         }
         with pytest.raises(TypeError):
             StrategyFactory.create_from_profile_config(profile_config)
+
+
+class TestInferenceServiceInProcessorRequirements:
+    """Strategies that accept ``inference_service`` must surface it in
+    ``get_required_processors()`` — that config key is what ProcessorManager
+    pops and resolves to a concrete endpoint URL. A stored-but-unemitted
+    value would leave the pipeline on the local model path.
+    """
+
+    def test_multi_vector_embedding_carries_service(self):
+        strategy = MultiVectorEmbeddingStrategy(inference_service="vllm_colpali")
+        assert strategy.get_required_processors() == {
+            "embedding": {
+                "type": "multi_vector",
+                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+                "inference_service": "vllm_colpali",
+            }
+        }
+
+    def test_multi_vector_embedding_local_by_default(self):
+        strategy = MultiVectorEmbeddingStrategy()
+        assert strategy.get_required_processors() == {
+            "embedding": {
+                "type": "multi_vector",
+                "model_name": "TomoroAI/tomoro-colqwen3-embed-4b",
+            }
+        }
+
+    def test_single_vector_embedding_carries_service(self):
+        strategy = SingleVectorEmbeddingStrategy(inference_service="vllm_colpali")
+        assert strategy.get_required_processors() == {
+            "embedding": {
+                "type": "single_vector",
+                "model_name": "google/videoprism-base",
+                "inference_service": "vllm_colpali",
+            }
+        }
+
+    def test_single_vector_embedding_local_by_default(self):
+        strategy = SingleVectorEmbeddingStrategy()
+        assert strategy.get_required_processors() == {
+            "embedding": {
+                "type": "single_vector",
+                "model_name": "google/videoprism-base",
+            }
+        }
+
+    def test_image_segmentation_carries_service(self):
+        strategy = ImageSegmentationStrategy(inference_service="vllm_colpali")
+        assert strategy.get_required_processors() == {
+            "image": {
+                "max_images": 10000,
+                "inference_service": "vllm_colpali",
+            }
+        }
+
+    def test_image_segmentation_local_by_default(self):
+        strategy = ImageSegmentationStrategy()
+        assert strategy.get_required_processors() == {"image": {"max_images": 10000}}

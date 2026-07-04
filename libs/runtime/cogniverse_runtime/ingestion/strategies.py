@@ -234,13 +234,17 @@ class ImageSegmentationStrategy(BaseStrategy):
     produces, so the downstream MultiVectorEmbeddingStrategy works unchanged.
     """
 
-    def __init__(self, max_images: int = 10000, **kwargs):
+    def __init__(self, max_images: int = 10000, inference_service: str | None = None):
         self.max_images = max_images
+        self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Image segmentation uses a special 'image' processor key so
         ProcessingStrategySet dispatches to _process_segmentation correctly."""
-        return {"image": {"max_images": self.max_images}}
+        config: dict[str, Any] = {"max_images": self.max_images}
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"image": config}
 
 
 class AudioFileSegmentationStrategy(BaseStrategy):
@@ -632,12 +636,23 @@ class DocumentVisualEmbeddingStrategy(BaseStrategy):
 class MultiVectorEmbeddingStrategy(BaseStrategy):
     """Generate multi-vector embeddings."""
 
-    def __init__(self, model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b", **kwargs):
+    def __init__(
+        self,
+        model_name: str = "TomoroAI/tomoro-colqwen3-embed-4b",
+        inference_service: str | None = None,
+    ):
         self.model_name = model_name
+        self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Multi-vector embedding uses the generic embedding generator."""
-        return {"embedding": {"type": "multi_vector", "model_name": self.model_name}}
+        config: dict[str, Any] = {
+            "type": "multi_vector",
+            "model_name": self.model_name,
+        }
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"embedding": config}
 
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
@@ -660,12 +675,23 @@ class MultiVectorEmbeddingStrategy(BaseStrategy):
 class SingleVectorEmbeddingStrategy(BaseStrategy):
     """Generate single-vector embeddings."""
 
-    def __init__(self, model_name: str = "google/videoprism-base", **kwargs):
+    def __init__(
+        self,
+        model_name: str = "google/videoprism-base",
+        inference_service: str | None = None,
+    ):
         self.model_name = model_name
+        self.inference_service = inference_service
 
     def get_required_processors(self) -> dict[str, dict[str, Any]]:
         """Single-vector embedding uses the generic embedding generator."""
-        return {"embedding": {"type": "single_vector", "model_name": self.model_name}}
+        config: dict[str, Any] = {
+            "type": "single_vector",
+            "model_name": self.model_name,
+        }
+        if self.inference_service:
+            config["inference_service"] = self.inference_service
+        return {"embedding": config}
 
     async def generate_embeddings_with_processor(
         self, results: dict[str, Any], pipeline_context: Any, processor_manager: Any
