@@ -32,7 +32,8 @@ def _evaluator(get_spans):
 async def test_window_resumes_from_last_evaluation_time():
     calls = []
 
-    async def get_spans(project, start_time, end_time, limit):
+    async def get_spans(project, start_time, end_time, filters, limit):
+        assert filters == {"name": "cogniverse.orchestration"}
         calls.append((start_time, end_time))
         return pd.DataFrame()
 
@@ -54,7 +55,7 @@ async def test_window_resumes_from_last_evaluation_time():
 async def test_failed_query_does_not_advance_resume_point():
     state = {"first": True}
 
-    async def get_spans(project, start_time, end_time, limit):
+    async def get_spans(project, start_time, end_time, filters, limit):
         if state["first"]:
             state["first"] = False
             raise RuntimeError("telemetry down")

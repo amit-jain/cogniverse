@@ -7,6 +7,7 @@ Consolidates duplicate code from:
 """
 
 import logging
+import os
 import platform
 import subprocess
 from pathlib import Path
@@ -16,6 +17,7 @@ import requests
 
 from tests.utils.async_polling import wait_for_vespa_indexing
 from tests.utils.docker_utils import cleanup_vespa_container, generate_unique_ports
+from tests.utils.vllm_sidecar import OWNER_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +91,10 @@ class VespaDockerManager:
                     "-d",
                     "--name",
                     container_name,
+                    # Owner label so a SIGKILLed session's container gets
+                    # reaped by the next run's reap_dead_owner_containers().
+                    "--label",
+                    f"{OWNER_LABEL}={os.getpid()}",
                     "-p",
                     f"{http_port}:8080",  # Map container 8080 to test port
                     "-p",

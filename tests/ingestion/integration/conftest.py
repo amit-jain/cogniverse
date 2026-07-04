@@ -21,6 +21,7 @@ from tests.utils.markers import (
     is_ffmpeg_available,
     is_vespa_running,
 )
+from tests.utils.vllm_sidecar import OWNER_LABEL
 
 
 def feed_document_via_prod_mapping(
@@ -270,6 +271,10 @@ def _start_inference_sidecar(service: str, spec: dict) -> str | None:
         "-d",
         "--name",
         spec["container_name"],
+        # Owner label so a SIGKILLed session's sidecar gets reaped by the
+        # next run's reap_dead_owner_containers().
+        "--label",
+        f"{OWNER_LABEL}={os.getpid()}",
         "-p",
         f"{port}:{spec['internal_port']}",
         "-e",

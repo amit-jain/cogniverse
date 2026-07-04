@@ -224,59 +224,58 @@ class RoutingAnnotationStorage:
                 end_time=end_time,
                 limit=10000,
             )
+        except Exception as e:
+            # A backend failure is not "no annotated spans" — swallowing it
+            # into [] hid Phoenix outages from every caller.
+            logger.error(f"❌ Error querying annotated spans: {e!r}")
+            raise
 
-            if spans_df.empty:
-                logger.info("📭 No spans found in time range")
-                return []
+        if spans_df.empty:
+            logger.info("📭 No spans found in time range")
+            return []
 
-            # Filter for spans with annotations
-            # Check if annotation.label attribute exists
-            annotated_spans = []
+        # Filter for spans with annotations
+        # Check if annotation.label attribute exists
+        annotated_spans = []
 
-            for _, span_row in spans_df.iterrows():
-                # Look for annotation.label in flattened attributes
-                annotation_label = span_row.get("attributes.annotation.label")
-                if not annotation_label:
+        for _, span_row in spans_df.iterrows():
+            # Look for annotation.label in flattened attributes
+            annotation_label = span_row.get("attributes.annotation.label")
+            if not annotation_label:
+                continue
+
+            # Filter by human_reviewed if requested
+            if only_human_reviewed:
+                human_reviewed = span_row.get(
+                    "attributes.annotation.human_reviewed", False
+                )
+                if not human_reviewed:
                     continue
 
-                # Filter by human_reviewed if requested
-                if only_human_reviewed:
-                    human_reviewed = span_row.get(
-                        "attributes.annotation.human_reviewed", False
-                    )
-                    if not human_reviewed:
-                        continue
+            # Extract all annotation data
+            annotation_data = {
+                "span_id": span_row.get("context.span_id"),
+                "query": span_row.get("attributes.routing.query"),
+                "chosen_agent": span_row.get("attributes.routing.chosen_agent"),
+                "routing_confidence": span_row.get("attributes.routing.confidence"),
+                "annotation_label": annotation_label,
+                "annotation_confidence": span_row.get(
+                    "attributes.annotation.confidence", 1.0
+                ),
+                "annotation_reasoning": span_row.get(
+                    "attributes.annotation.reasoning", ""
+                ),
+                "annotation_timestamp": span_row.get("attributes.annotation.timestamp"),
+                "suggested_agent": span_row.get(
+                    "attributes.annotation.suggested_agent"
+                ),
+                "context": span_row.get("attributes.routing.context", {}),
+            }
 
-                # Extract all annotation data
-                annotation_data = {
-                    "span_id": span_row.get("context.span_id"),
-                    "query": span_row.get("attributes.routing.query"),
-                    "chosen_agent": span_row.get("attributes.routing.chosen_agent"),
-                    "routing_confidence": span_row.get("attributes.routing.confidence"),
-                    "annotation_label": annotation_label,
-                    "annotation_confidence": span_row.get(
-                        "attributes.annotation.confidence", 1.0
-                    ),
-                    "annotation_reasoning": span_row.get(
-                        "attributes.annotation.reasoning", ""
-                    ),
-                    "annotation_timestamp": span_row.get(
-                        "attributes.annotation.timestamp"
-                    ),
-                    "suggested_agent": span_row.get(
-                        "attributes.annotation.suggested_agent"
-                    ),
-                    "context": span_row.get("attributes.routing.context", {}),
-                }
+            annotated_spans.append(annotation_data)
 
-                annotated_spans.append(annotation_data)
-
-            logger.info(f"✅ Found {len(annotated_spans)} annotated spans")
-            return annotated_spans
-
-        except Exception as e:
-            logger.error(f"❌ Error querying annotated spans: {e}")
-            return []
+        logger.info(f"✅ Found {len(annotated_spans)} annotated spans")
+        return annotated_spans
 
     async def get_annotation_statistics(self) -> Dict:
         """
@@ -285,50 +284,44 @@ class RoutingAnnotationStorage:
         Returns:
             Dictionary with annotation statistics
         """
+        # Query recent annotations (last 30 days). UTC-aware so the Phoenix
+        # window is not shifted by the host's local offset.
+        from datetime import timedelta
+
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=30)
+
         try:
-            # Query recent annotations (last 30 days). UTC-aware so the Phoenix
-            # window is not shifted by the host's local offset.
-            from datetime import timedelta
-
-            end_time = datetime.now(timezone.utc)
-            start_time = end_time - timedelta(days=30)
-
             annotated_spans = await self.query_annotated_spans(
                 start_time=start_time, end_time=end_time, only_human_reviewed=False
             )
-
-            if not annotated_spans:
-                return {
-                    "total": 0,
-                    "human_reviewed": 0,
-                    "pending_review": 0,
-                    "by_label": {},
-                }
-
-            human_reviewed = sum(
-                1
-                for span in annotated_spans
-                if span.get("annotation_label") and span.get("human_reviewed", False)
-            )
-
-            by_label = {}
-            for span in annotated_spans:
-                label = span.get("annotation_label", "unknown")
-                by_label[label] = by_label.get(label, 0) + 1
-
-            return {
-                "total": len(annotated_spans),
-                "human_reviewed": human_reviewed,
-                "pending_review": len(annotated_spans) - human_reviewed,
-                "by_label": by_label,
-            }
-
         except Exception as e:
-            logger.error(f"❌ Error getting annotation statistics: {e}")
+            # A backend failure must not read as "zero annotations".
+            logger.error(f"❌ Error getting annotation statistics: {e!r}")
+            raise
+
+        if not annotated_spans:
             return {
                 "total": 0,
                 "human_reviewed": 0,
                 "pending_review": 0,
                 "by_label": {},
-                "error": str(e),
             }
+
+        human_reviewed = sum(
+            1
+            for span in annotated_spans
+            if span.get("annotation_label") and span.get("human_reviewed", False)
+        )
+
+        by_label = {}
+        for span in annotated_spans:
+            label = span.get("annotation_label", "unknown")
+            by_label[label] = by_label.get(label, 0) + 1
+
+        return {
+            "total": len(annotated_spans),
+            "human_reviewed": human_reviewed,
+            "pending_review": len(annotated_spans) - human_reviewed,
+            "by_label": by_label,
+        }

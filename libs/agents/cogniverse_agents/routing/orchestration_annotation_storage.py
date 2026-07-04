@@ -187,48 +187,47 @@ class OrchestrationAnnotationStorage:
                 end_time=end_time,
                 project=self.project_name,
             )
-
-            # Filter for orchestration spans with evaluations
-            annotated_spans = []
-
-            for _, span_row in spans_df.iterrows():
-                # Check if span has orchestration_quality evaluation
-                evaluations = await self._get_span_evaluations(span_row)
-
-                if not evaluations:
-                    continue
-
-                # Filter by annotation source
-                if only_human_reviewed:
-                    evaluations = [
-                        e for e in evaluations if e.get("annotator_kind") == "human"
-                    ]
-
-                # Filter by quality score
-                if min_quality_score is not None:
-                    evaluations = [
-                        e
-                        for e in evaluations
-                        if e.get("result", {}).get("score", 0.0) >= min_quality_score
-                    ]
-
-                if evaluations:
-                    annotated_spans.append(
-                        {
-                            "span_id": span_row.get("context.span_id"),
-                            "span_data": span_row.to_dict(),
-                            "annotations": evaluations,
-                        }
-                    )
-
-            logger.info(
-                f"📊 Found {len(annotated_spans)} annotated orchestration spans"
-            )
-            return annotated_spans
-
         except Exception as e:
-            logger.error(f"❌ Error querying annotated spans: {e}")
-            return []
+            # A backend failure is not "no annotated spans" — swallowing it
+            # into [] hid Phoenix outages from every caller.
+            logger.error(f"❌ Error querying annotated spans: {e!r}")
+            raise
+
+        # Filter for orchestration spans with evaluations
+        annotated_spans = []
+
+        for _, span_row in spans_df.iterrows():
+            # Check if span has orchestration_quality evaluation
+            evaluations = await self._get_span_evaluations(span_row)
+
+            if not evaluations:
+                continue
+
+            # Filter by annotation source
+            if only_human_reviewed:
+                evaluations = [
+                    e for e in evaluations if e.get("annotator_kind") == "human"
+                ]
+
+            # Filter by quality score
+            if min_quality_score is not None:
+                evaluations = [
+                    e
+                    for e in evaluations
+                    if e.get("result", {}).get("score", 0.0) >= min_quality_score
+                ]
+
+            if evaluations:
+                annotated_spans.append(
+                    {
+                        "span_id": span_row.get("context.span_id"),
+                        "span_data": span_row.to_dict(),
+                        "annotations": evaluations,
+                    }
+                )
+
+        logger.info(f"📊 Found {len(annotated_spans)} annotated orchestration spans")
+        return annotated_spans
 
     async def _get_span_evaluations(self, span_row) -> List[Dict]:
         """
