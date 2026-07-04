@@ -383,3 +383,67 @@ class TestDynamicDSPyMixin:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestPrimaryKnobsCarryIntoAgentLM:
+    """The per-agent LM must inherit the deployment's determinism and
+    transport knobs from llm_config.primary, not silently rebuild with
+    library defaults (no seed, 1 retry, 120s timeout, no headers)."""
+
+    def test_seed_headers_timeout_retries_flow_from_primary(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from cogniverse_core.common.dynamic_dspy_mixin import DynamicDSPyMixin
+        from cogniverse_foundation.config.agent_config import AgentConfig
+        from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+        captured = {}
+
+        def _capture(endpoint):
+            captured["endpoint"] = endpoint
+            return MagicMock()
+
+        monkeypatch.setattr(
+            "cogniverse_core.common.dynamic_dspy_mixin.create_dspy_lm", _capture
+        )
+
+        class Host(DynamicDSPyMixin):
+            pass
+
+        host = Host()
+        host.system_config = MagicMock()
+        host.system_config.get_llm_config.return_value.primary = LLMEndpointConfig(
+            model="openai/google/gemma-4-e4b-it",
+            api_base="http://vllm:8000/v1",
+            api_key="k",
+            seed=42,
+            extra_headers={"x-gateway-auth": "tok"},
+            extra_body={"top_k": 5},
+            request_timeout=300.0,
+            num_retries=3,
+        )
+        host._route_through_semantic_router = lambda ep: ep
+
+        config = AgentConfig(
+            agent_name="text_analysis_agent",
+            agent_version="1.0.0",
+            agent_description="Test agent",
+            agent_url="http://localhost:8000",
+            capabilities=["test"],
+            skills=[],
+            module_config=ModuleConfig(
+                module_type=DSPyModuleType.PREDICT, signature="TestSignature"
+            ),
+            llm_model="stale",
+            llm_base_url="http://stale:1/v1",
+        )
+        host._configure_dspy_lm(config)
+
+        ep = captured["endpoint"]
+        assert ep.model == "openai/google/gemma-4-e4b-it"
+        assert ep.api_base == "http://vllm:8000/v1"
+        assert ep.seed == 42
+        assert ep.extra_headers == {"x-gateway-auth": "tok"}
+        assert ep.extra_body == {"top_k": 5}
+        assert ep.request_timeout == 300.0
+        assert ep.num_retries == 3

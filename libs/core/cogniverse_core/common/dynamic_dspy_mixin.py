@@ -78,6 +78,7 @@ class DynamicDSPyMixin:
         model = config.llm_model
         base_url = config.llm_base_url
         api_key = config.llm_api_key
+        primary = None
         system_config = getattr(self, "system_config", None)
         if system_config is not None and hasattr(system_config, "get_llm_config"):
             try:
@@ -86,6 +87,7 @@ class DynamicDSPyMixin:
                 base_url = primary.api_base or base_url
                 api_key = primary.api_key or api_key
             except Exception:  # noqa: BLE001 — degrade to the AgentConfig values
+                primary = None
                 logger.debug("No llm_config.primary; using AgentConfig LM fields")
 
         # The model id may be a BARE in-cluster name (e.g. "gemma3:4b"); litellm
@@ -101,6 +103,16 @@ class DynamicDSPyMixin:
             temperature=config.llm_temperature,
             max_tokens=config.llm_max_tokens or 1000,
         )
+        if primary is not None:
+            # Carry the deployment's determinism/transport knobs — rebuilding
+            # from only model/base/key silently dropped these, so per-agent
+            # LMs diverged from the global one (no seed, no retries, default
+            # timeout, missing gateway auth headers).
+            endpoint_config.seed = primary.seed
+            endpoint_config.extra_body = primary.extra_body
+            endpoint_config.extra_headers = primary.extra_headers
+            endpoint_config.request_timeout = primary.request_timeout
+            endpoint_config.num_retries = primary.num_retries
 
         endpoint_config = self._route_through_semantic_router(endpoint_config)
 
