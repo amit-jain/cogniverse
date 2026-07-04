@@ -1755,12 +1755,9 @@ semanticRouter:
       storageClass: ""
       accessMode: ReadWriteOnce
       size: "10Gi"
-    # requests==limits (Guaranteed QoS): the router's CPU-bound classifiers sit
-    # on every LLM request's critical path — a 250m request let node pressure
-    # throttle classification from ~30ms to seconds and trip proxy deadlines.
-    # Memory: the router's steady working set is ~4Gi (classifier bundle +
-    # runtime); a 4Gi limit had it OOM-cycling under sustained load, 5xx-ing
-    # whatever LLM calls were in flight at each kill.
+    # requests==limits (Guaranteed QoS); CPU is on every LLM call's critical path.
+    # vllm-sr leaks under load (4Gi OOM-cycled ~40min, 5xx-ing in-flight LLM
+    # calls) — do not lower below 6Gi until fixed upstream.
     resources:
       requests:
         cpu: "2"
