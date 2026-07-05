@@ -148,11 +148,14 @@ Selects optimal backend profiles for data generation:
 from cogniverse_synthetic.profile_selector import ProfileSelector
 
 selector = ProfileSelector(llm_client=llm)  # or None for rule-based
-# available_profiles is a Dict[str, Dict] of profile_name -> profile_config
+# available_profiles is a Dict[str, Dict] of profile_name -> profile_config;
+# BackendConfig.profiles holds BackendProfileConfig objects, so convert first.
 profiles, reasoning = await selector.select_profiles(
     optimizer_name="modality",
     optimizer_task="Per-modality routing optimization",
-    available_profiles=backend_config.profiles,  # BackendConfig.profiles: Dict[str, BackendProfileConfig]
+    available_profiles={
+        name: p.to_dict() for name, p in backend_config.profiles.items()
+    },
     max_profiles=3
 )
 # Returns: (["video_colpali_smol500_mv_frame", ...], "reasoning...")
@@ -348,6 +351,8 @@ class ValidatedEntityQueryGenerator(dspy.Module):
         self.generate = dspy.ChainOfThought(GenerateEntityQuery)
 
     def forward(self, topics: str, entities: str, entity_types: str) -> dspy.Prediction:
+        entity_list = [e.strip() for e in entities.split(",") if e.strip()]
+
         # Retry loop with validation
         for attempt in range(self.max_retries):
             result = self.generate(topics=topics, entities=entities, entity_types=entity_types)
@@ -487,7 +492,8 @@ curl -X POST http://localhost:8000/synthetic/generate \
     "optimizer": "profile",
     "count": 50,
     "vespa_sample_size": 100,
-    "max_profiles": 2
+    "max_profiles": 2,
+    "tenant_id": "your_org:production"
   }'
 ```
 
@@ -511,7 +517,7 @@ curl http://localhost:8000/synthetic/health
 
 **POST /synthetic/batch/generate**
 ```bash
-curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&count_per_batch=100&num_batches=5"
+curl -X POST "http://localhost:8000/synthetic/batch/generate?optimizer=routing&count_per_batch=100&num_batches=5&tenant_id=your_org:production"
 # Generates 500 examples across 5 batches
 ```
 
@@ -525,7 +531,9 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest
 
 # Generate training data for ProfileSelectionAgent
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="profile", count=200)
+request = SyntheticDataRequest(
+    optimizer="profile", count=200, tenant_id="your_org:production"
+)
 response = await service.generate(request)
 
 # Pass examples to run_profile_optimization (cogniverse_runtime.optimization_cli)
@@ -542,7 +550,9 @@ from cogniverse_synthetic.schemas import SyntheticDataRequest
 
 # Generate workflow execution patterns
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="workflow", count=200)
+request = SyntheticDataRequest(
+    optimizer="workflow", count=200, tenant_id="your_org:production"
+)
 response = await service.generate(request)
 
 # Convert to WorkflowExecution
@@ -628,6 +638,7 @@ uv run pytest tests/routing/unit/synthetic/test_generators_integration.py -v
 - Schema tests (`test_schemas.py`)
 - Service tests (`test_service.py`)
 - Approval system tests (`test_approval_system.py`)
+- Backend querier tests (`test_backend_querier.py`)
 
 ## Development
 
@@ -664,12 +675,11 @@ class NewOptimizerGenerator(BaseGenerator):
         return examples
 ```
 
-4. **Add to Service** in `service.py`:
+4. **Wire into `_get_generator`** in `service.py` (generators are created lazily,
+   dispatched on `optimizer_name`):
 ```python
-self.generators = {
-    # ... existing
-    "NewOptimizerGenerator": NewOptimizerGenerator(),
-}
+elif optimizer_name == "new_optimizer":
+    generator = NewOptimizerGenerator()
 ```
 
 5. **Write Tests**:
@@ -748,7 +758,7 @@ tests/
 ├── synthetic/
 │   ├── integration/                # Integration tests (test_profile_synthetic_service.py, etc.)
 │   └── unit/                       # Unit tests (test_profile_generator.py, etc.)
-└── routing/unit/synthetic/         # Routing-focused synthetic unit tests (6 test files + conftest.py)
+└── routing/unit/synthetic/         # Routing-focused synthetic unit tests (7 test files + conftest.py)
 ```
 
 ## Related Documentation

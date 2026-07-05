@@ -9,7 +9,7 @@ A hands-on companion to [Intelligent Query Routing](../architecture/intelligent-
 ### Environment Setup
 
 ```bash
-# Clone and install (UV workspace — resolves all 11 packages)
+# Clone and install (UV workspace — resolves all 13 packages)
 git clone <repo-url> && cd cogniverse
 uv sync
 
@@ -38,7 +38,7 @@ uv run python -c "import cogniverse_runtime; print('Runtime OK')"
 
 ```mermaid
 graph TB
-    subgraph "Docker Compose Stack"
+    subgraph "Kubernetes (k3d) Stack"
         VESPA["<span style='color:#000'>Vespa<br/>:8080 Query/Doc<br/>:19071 Config<br/>:19092 Metrics</span>"]
         RUNTIME["<span style='color:#000'>Runtime (FastAPI)<br/>:8000</span>"]
         DASHBOARD["<span style='color:#000'>Dashboard (Streamlit)<br/>:8501</span>"]
@@ -130,7 +130,7 @@ curl -X POST http://localhost:9000/admin/tenants \
     "video_videoprism_base_mv_chunk_30s_acme_production"
   ],
   "status": "active",
-  "created_at": "2025-01-15T10:30:00Z"
+  "created_at": 1736938200000
 }
 ```
 
@@ -173,18 +173,19 @@ uv run python scripts/deploy_json_schema.py configs/schemas/video_colpali_smol50
 
 | Profile | Model | Embedding Dims | Strategy | Chunk Size |
 |---------|-------|---------------|----------|------------|
-| `video_colpali_smol500_mv_frame` | ColPali | 128d (multi-vector, 1024 patches) | Frame-based | per-frame |
-| `video_colqwen_omni_mv_chunk_30s` | ColQwen Omni | 128d (multi-vector, 1024 patches) | Chunk-based | 30s |
-| `video_videoprism_base_mv_chunk_30s` | VideoPrism Base | 768d (single-vector) | Chunk-based | 30s |
-| `video_videoprism_large_mv_chunk_30s` | VideoPrism Large | 1024d (single-vector) | Chunk-based | 30s |
+| `video_colpali_smol500_mv_frame` | ColPali | 320d (multi-vector, 1024 patches) | Frame-based | per-frame |
+| `video_colqwen_omni_mv_chunk_30s` | ColQwen Omni | 320d (multi-vector, 1024 patches) | Chunk-based | 30s |
+| `video_videoprism_base_mv_chunk_30s` | VideoPrism Base | 768d (multi-vector, 4096 patches) | Chunk-based | 30s |
+| `video_videoprism_large_mv_chunk_30s` | VideoPrism Large | 1024d (multi-vector, 2048 patches) | Chunk-based | 30s |
 | `video_videoprism_lvt_base_sv_chunk_6s` | VideoPrism LVT Base | 768d (single-vector) | Temporal | 6s |
 | `video_videoprism_lvt_large_sv_chunk_6s` | VideoPrism LVT Large | 1024d (single-vector) | Temporal | 6s |
 
 **Key distinctions:**
 - **ColPali/ColQwen** — multi-vector patch embeddings (1024 patches per frame/chunk), matched via MaxSim
-- **VideoPrism** — single global embedding per chunk, matched via cosine similarity
+- **VideoPrism (`_mv_` profiles)** — multi-vector patch embeddings per chunk, matched via MaxSim
+- **VideoPrism LVT** — single global embedding per chunk, matched via cosine similarity
 - **LVT (Learned Video Tokenizer)** — temporal models with 6s chunks for fine-grained temporal search
-- **`_sv_` profiles** — single-video optimized; `_mv_` profiles — multi-video corpus
+- **`_sv_` profiles** — single-vector (one dense embedding per chunk); `_mv_` profiles — multi-vector (patch/token embeddings per frame or chunk)
 
 ---
 
@@ -270,7 +271,7 @@ uv run python scripts/run_ingestion.py \
 Watch the log output for:
 - **docs/sec** — ingestion throughput per profile
 - **Success rate** — percentage of videos successfully processed
-- **Embedding dimensions** — confirms the profile schema matches (128d for ColPali, 768d for VideoPrism Base, etc.)
+- **Embedding dimensions** — confirms the profile schema matches (320d for ColPali, 768d for VideoPrism Base, etc.)
 
 ```bash
 # Follow logs during ingestion
@@ -283,7 +284,7 @@ tail -f outputs/logs/*.log
 
 ### Ranking Strategies
 
-The system supports 7 ranking strategies, from simple keyword matching to hybrid reranking:
+The system supports 9 ranking strategies, from simple keyword matching to hybrid reranking:
 
 | Strategy | Technique | When to Use |
 |----------|-----------|-------------|
@@ -616,6 +617,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
   --runtime-url http://localhost:8000 \
   --phoenix-url http://localhost:6006 \
+  --llm-model google/gemma-4-e4b-it \
   --once
 
 # Continuous monitoring (production sidecar)
@@ -623,6 +625,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
   --runtime-url http://localhost:28000 \
   --phoenix-url http://localhost:6006 \
+  --llm-model google/gemma-4-e4b-it \
   --golden-interval 7200 \
   --live-interval 14400 \
   --live-sample-count 20
@@ -632,6 +635,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
   --runtime-url http://localhost:28000 \
   --phoenix-url http://localhost:6006 \
+  --llm-model google/gemma-4-e4b-it \
   --argo-url http://argo-server:2746 \
   --argo-namespace cogniverse
 ```
@@ -644,7 +648,7 @@ python -m cogniverse_runtime.quality_monitor_cli \
 | `--live-interval` | 14400 (4h) | Seconds between live traffic evaluations |
 | `--live-sample-count` | 20 | Spans to sample per agent for live eval |
 | `--golden-dataset-path` | `data/testset/evaluation/sample_videos_retrieval_queries.json` | Path to golden dataset |
-| `--llm-model` | `google/gemma-4-e4b-it` | LLM for judge evaluations |
+| `--llm-model` | *(required, no default)* | LLM model id for judge evaluations, e.g. `google/gemma-4-e4b-it` |
 | `--once` | false | Single cycle and exit (for Argo CronWorkflows) |
 
 In production, the quality monitor runs as a Kubernetes sidecar (`runtime.qualityMonitor.enabled: true` in Helm values).

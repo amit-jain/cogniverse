@@ -145,6 +145,8 @@ markers =
     requires_colpali: Tests that require ColPali models
     requires_videoprism: Tests that require VideoPrism models
     requires_colqwen: Tests that require ColQwen models
+    requires_teacher_model: Tests that scale up the vllm-llm-teacher pod (long-running, off by default)
+    requires_optimizer_data: Tests that exercise non-router optimizers (workflow / modality / xgboost) end-to-end against the live cluster (slow, off by default)
     requires_whisper: Tests that require Whisper models
     requires_cv2: Tests that require OpenCV
     requires_ffmpeg: Tests that require FFmpeg
@@ -152,6 +154,8 @@ markers =
     ci_fast: Fast, essential tests for CI (subset of most important functionality)
     timeout: Tests with custom timeout values
     e2e: End-to-end integration tests with real services
+    e2e_heavy: Heavy end-to-end tests that submit a full CronWorkflow execution and may take 5-10+ minutes; opt-in via -m e2e_heavy
+    browser: Browser-based E2E tests requiring Playwright
     system: System-level end-to-end tests with full infrastructure
     telemetry: Tests for telemetry and observability system
 ```
@@ -484,8 +488,8 @@ async def test_tenant_data_isolation(sample_video, config_manager, schema_loader
         config_manager=config_manager,
         schema_loader=schema_loader
     )
-    result_a = await pipeline_a.process_video(sample_video)
-    assert result_a["status"] == "success"
+    result_a = await pipeline_a.process_video_async(sample_video)
+    assert result_a["status"] == "completed"
 
     # Search as tenant B (should get no results from tenant A)
     backend = BackendRegistry.get_search_backend(
@@ -516,7 +520,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
         backend_host="localhost",
         backend_port=8080,
         llm_model="openai/google/gemma-4-e4b-it",
-        embedding_model="ollama/nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434",
         embedder_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -528,7 +532,7 @@ def test_tenant_memory_isolation(config_manager, schema_loader):
         backend_host="localhost",
         backend_port=8080,
         llm_model="openai/google/gemma-4-e4b-it",
-        embedding_model="ollama/nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434",
         embedder_base_url="http://localhost:11434",
         config_manager=config_manager,
@@ -666,7 +670,7 @@ def cleanup_dspy_state():
 named `cogniverse_test_config`. Its job is to keep integration tests
 off the production `configs/config.json` LLM endpoints — production
 points at vLLM-served `openai/google/gemma-4-e4b-it` on
-`http://...:8101/v1`, which doesn't exist on local dev or CI machines.
+`http://localhost:29010/v1`, which doesn't exist on local dev or CI machines.
 
 What it does:
 
@@ -902,9 +906,11 @@ The `phoenix_container` fixture is defined in `tests/conftest.py` (module-scoped
 Key details:
 
 - **Image**: `arizephoenix/phoenix:14.2.1` (pinned version, not `:latest`)
-- **Ports**: HTTP 16006 (→ 6006), gRPC 14317 (→ 4317)
+- **Ports**: HTTP 16006 + per-process offset (→ 6006), gRPC 14317 + per-process offset (→ 4317) —
+  `port_offset = (os.getpid() % 1000) * 10` so concurrent pytest sweeps don't collide
 - **Env var**: Sets `TELEMETRY_OTLP_ENDPOINT` (not `OTLP_ENDPOINT`) and `TELEMETRY_SYNC_EXPORT`
-- **Leftover cleanup**: Kills any `phoenix_test_*` containers already running before starting
+- **Leftover cleanup**: Kills only its own process's leftover `phoenix_test_pid<pid>_*`
+  containers from a prior crashed run — never touches another concurrent sweep's containers
 - **Scope**: Module-scoped — one Phoenix instance per test module
 
 Companion fixtures also defined in `tests/conftest.py`:
@@ -926,21 +932,33 @@ def generate_unique_ports(
     module_name: str, base_http_port: int = 40000
 ) -> Tuple[int, int]:
     """
-    Generate unique HTTP and config ports for a test module in the IANA
-    ephemeral range (49152-65535) so they don't collide with well-known
-    or registered services running on the host.
+    Return a free (http_port, config_port) pair for a Vespa test container.
 
-    The hash is seeded with module_name + the OS PID so concurrent pytest
-    invocations from different shells land on distinct ports while retries
-    within the same process get the same port.
+    config_port is always http_port + 10991 (the standard Vespa offset),
+    and both ports are probed as actually-bindable before being returned —
+    so a leftover container from a crashed prior run or a concurrent
+    session can't cause an "address already in use" bind failure.
+    http_port stays in [base_http_port, 54544] so config_port stays
+    under 65535.
+
+    Falls back to a deterministic module_name+PID hash if no free pair
+    is found after 200 random probes (e.g. a sandbox where bind probing
+    is unreliable).
     """
     import os
+    import random
+
+    for _ in range(200):
+        http_port = random.randint(base_http_port, 54544)
+        config_port = http_port + 10991
+        if _port_is_free(http_port) and _port_is_free(config_port):
+            return http_port, config_port
+
+    # Fallback: deterministic hash when probing fails.
     seed = f"{module_name}:{os.getpid()}"
     port_hash = int(hashlib.md5(seed.encode()).hexdigest()[:8], 16)
-    # Range: 40000-54544 so config_port (http + 10991) stays under 65535
-    http_port = 40000 + (port_hash % 14544)
-    config_port = http_port + 10991  # Standard Vespa config port offset
-    return http_port, config_port
+    http_port = base_http_port + (port_hash % 14544)
+    return http_port, http_port + 10991
 ```
 
 ### CI Disk Space Requirements
@@ -1007,11 +1025,22 @@ graph TD
     backends_unit["<span style='color:#000'>unit/</span>"]
     backends_int["<span style='color:#000'>integration/</span>"]
 
+    charts["<span style='color:#000'><b>charts/</b><br/>Helm chart tests</span>"]
+
+    cli["<span style='color:#000'><b>cli/</b><br/>cogniverse_cli tests</span>"]
+    cli_unit["<span style='color:#000'>unit/</span>"]
+
     common["<span style='color:#000'><b>common/</b><br/>cogniverse_core.common tests</span>"]
     common_unit["<span style='color:#000'>unit/</span>"]
     common_int["<span style='color:#000'>integration/</span>"]
 
+    core["<span style='color:#000'><b>core/</b><br/>cogniverse_core tests</span>"]
+    core_unit["<span style='color:#000'>unit/</span>"]
+    core_int["<span style='color:#000'>integration/</span>"]
+
     dashboard["<span style='color:#000'><b>dashboard/</b><br/>UI integration tests</span>"]
+
+    e2e["<span style='color:#000'><b>e2e/</b><br/>cross-package end-to-end tests</span>"]
 
     evaluation["<span style='color:#000'><b>evaluation/</b><br/>cogniverse_evaluation tests</span>"]
     evaluation_unit["<span style='color:#000'>unit/</span>"]
@@ -1024,6 +1053,12 @@ graph TD
     finetuning["<span style='color:#000'><b>finetuning/</b><br/>fine-tuning pipeline tests</span>"]
     finetuning_int["<span style='color:#000'>integration/</span>"]
 
+    fixtures["<span style='color:#000'><b>fixtures/</b><br/>shared LLM/sidecar fixtures</span>"]
+
+    foundation["<span style='color:#000'><b>foundation/</b><br/>cogniverse_foundation tests</span>"]
+    foundation_unit["<span style='color:#000'>unit/</span>"]
+    foundation_int["<span style='color:#000'>integration/</span>"]
+
     ingestion["<span style='color:#000'><b>ingestion/</b><br/>cogniverse_runtime.ingestion tests</span>"]
     ingestion_unit["<span style='color:#000'>unit/</span>"]
     ingestion_int["<span style='color:#000'>integration/</span>"]
@@ -1032,9 +1067,17 @@ graph TD
     memory_unit["<span style='color:#000'>unit/</span>"]
     memory_int["<span style='color:#000'>integration/</span>"]
 
+    messaging["<span style='color:#000'><b>messaging/</b><br/>cogniverse_messaging tests</span>"]
+    messaging_unit["<span style='color:#000'>unit/</span>"]
+    messaging_int["<span style='color:#000'>integration/</span>"]
+
     routing["<span style='color:#000'><b>routing/</b><br/>routing-specific tests</span>"]
     routing_unit["<span style='color:#000'>unit/</span>"]
     routing_int["<span style='color:#000'>integration/</span>"]
+
+    runtime["<span style='color:#000'><b>runtime/</b><br/>cogniverse_runtime tests</span>"]
+    runtime_unit["<span style='color:#000'>unit/</span>"]
+    runtime_int["<span style='color:#000'>integration/</span>"]
 
     synthetic["<span style='color:#000'><b>synthetic/</b><br/>synthetic data tests</span>"]
     synthetic_int["<span style='color:#000'>integration/</span>"]
@@ -1045,25 +1088,30 @@ graph TD
     telemetry_unit["<span style='color:#000'>unit/</span>"]
     telemetry_int["<span style='color:#000'>integration/</span>"]
 
-    ui["<span style='color:#000'><b>ui/</b><br/>UI tests</span>"]
-
     utils["<span style='color:#000'><b>utils/</b><br/>shared test utilities</span>"]
 
     root --> admin
     root --> agents
     root --> backends
+    root --> charts
+    root --> cli
     root --> common
+    root --> core
     root --> dashboard
+    root --> e2e
     root --> evaluation
     root --> events
     root --> finetuning
+    root --> fixtures
+    root --> foundation
     root --> ingestion
     root --> memory
+    root --> messaging
     root --> routing
+    root --> runtime
     root --> synthetic
     root --> system
     root --> telemetry
-    root --> ui
     root --> utils
 
     admin --> admin_unit
@@ -1075,8 +1123,13 @@ graph TD
     backends --> backends_unit
     backends --> backends_int
 
+    cli --> cli_unit
+
     common --> common_unit
     common --> common_int
+
+    core --> core_unit
+    core --> core_int
 
     evaluation --> evaluation_unit
     evaluation --> evaluation_int
@@ -1086,8 +1139,17 @@ graph TD
 
     finetuning --> finetuning_int
 
+    foundation --> foundation_unit
+    foundation --> foundation_int
+
     ingestion --> ingestion_unit
     ingestion --> ingestion_int
+
+    messaging --> messaging_unit
+    messaging --> messaging_int
+
+    runtime --> runtime_unit
+    runtime --> runtime_int
 
     memory --> memory_unit
     memory --> memory_int
@@ -1104,18 +1166,25 @@ graph TD
     style admin fill:#ef9a9a,stroke:#c62828,color:#000
     style agents fill:#ce93d8,stroke:#7b1fa2,color:#000
     style backends fill:#90caf9,stroke:#1565c0,color:#000
+    style charts fill:#b0bec5,stroke:#546e7a,color:#000
+    style cli fill:#b0bec5,stroke:#546e7a,color:#000
     style common fill:#a5d6a7,stroke:#388e3c,color:#000
+    style core fill:#ce93d8,stroke:#7b1fa2,color:#000
     style dashboard fill:#ef9a9a,stroke:#c62828,color:#000
+    style e2e fill:#b0bec5,stroke:#546e7a,color:#000
     style evaluation fill:#ffcc80,stroke:#ef6c00,color:#000
     style events fill:#fff59d,stroke:#f9a825,color:#000
     style finetuning fill:#fff59d,stroke:#f9a825,color:#000
+    style fixtures fill:#b0bec5,stroke:#546e7a,color:#000
+    style foundation fill:#a5d6a7,stroke:#388e3c,color:#000
     style ingestion fill:#ffcc80,stroke:#ef6c00,color:#000
     style memory fill:#90caf9,stroke:#1565c0,color:#000
+    style messaging fill:#90caf9,stroke:#1565c0,color:#000
     style routing fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style runtime fill:#90caf9,stroke:#1565c0,color:#000
     style synthetic fill:#fff59d,stroke:#f9a825,color:#000
     style system fill:#b0bec5,stroke:#546e7a,color:#000
     style telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ui fill:#ef9a9a,stroke:#c62828,color:#000
     style utils fill:#b0bec5,stroke:#546e7a,color:#000
     style admin_unit fill:#e57373,stroke:#c62828,color:#000
     style agents_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
@@ -1123,19 +1192,28 @@ graph TD
     style agents_e2e fill:#ba68c8,stroke:#7b1fa2,color:#000
     style backends_unit fill:#64b5f6,stroke:#1565c0,color:#000
     style backends_int fill:#64b5f6,stroke:#1565c0,color:#000
+    style cli_unit fill:#90a4ae,stroke:#546e7a,color:#000
     style common_unit fill:#81c784,stroke:#388e3c,color:#000
     style common_int fill:#81c784,stroke:#388e3c,color:#000
+    style core_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style core_int fill:#ba68c8,stroke:#7b1fa2,color:#000
     style evaluation_unit fill:#ffb74d,stroke:#ef6c00,color:#000
     style evaluation_int fill:#ffb74d,stroke:#ef6c00,color:#000
     style events_unit fill:#fff176,stroke:#f9a825,color:#000
     style events_int fill:#fff176,stroke:#f9a825,color:#000
     style finetuning_int fill:#fff176,stroke:#f9a825,color:#000
+    style foundation_unit fill:#81c784,stroke:#388e3c,color:#000
+    style foundation_int fill:#81c784,stroke:#388e3c,color:#000
     style ingestion_unit fill:#ffb74d,stroke:#ef6c00,color:#000
     style ingestion_int fill:#ffb74d,stroke:#ef6c00,color:#000
     style memory_unit fill:#64b5f6,stroke:#1565c0,color:#000
     style memory_int fill:#64b5f6,stroke:#1565c0,color:#000
+    style messaging_unit fill:#64b5f6,stroke:#1565c0,color:#000
+    style messaging_int fill:#64b5f6,stroke:#1565c0,color:#000
     style routing_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
     style routing_int fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style runtime_unit fill:#64b5f6,stroke:#1565c0,color:#000
+    style runtime_int fill:#64b5f6,stroke:#1565c0,color:#000
     style synthetic_int fill:#fff176,stroke:#f9a825,color:#000
     style telemetry_unit fill:#81c784,stroke:#388e3c,color:#000
     style telemetry_int fill:#81c784,stroke:#388e3c,color:#000

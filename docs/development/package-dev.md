@@ -113,9 +113,10 @@ cogniverse/
 │   │   ├── README.md
 │   │   └── cogniverse_finetuning/
 │   │       ├── __init__.py
-│   │       ├── trainers/       # LoRA/DPO trainers
-│   │       ├── datasets/       # Dataset preparation
-│   │       └── modal/          # Modal GPU infrastructure
+│   │       ├── dataset/        # Dataset preparation
+│   │       ├── evaluation/     # Fine-tuned model evaluation
+│   │       ├── registry/       # Model/adapter registry
+│   │       └── training/       # LoRA/DPO trainers
 │   │
 │   ├── APPLICATION LAYER (user-facing applications)
 │   ├── runtime/           # cogniverse_runtime
@@ -124,35 +125,52 @@ cogniverse/
 │   │   └── cogniverse_runtime/
 │   │       ├── main.py         # FastAPI application
 │   │       ├── admin/          # Admin endpoints
-│   │       ├── inference/      # Inference endpoints
 │   │       ├── ingestion/      # Data ingestion
-│   │       ├── instrumentation/ # Telemetry setup
-│   │       ├── routers/        # API routers
-│   │       └── search/         # Search endpoints
-│   └── dashboard/         # cogniverse_dashboard
+│   │       ├── ingestion_worker/ # Redis-Streams ingestion worker
+│   │       └── routers/        # API routers
+│   ├── dashboard/         # cogniverse_dashboard
+│   │   ├── pyproject.toml
+│   │   ├── README.md
+│   │   └── cogniverse_dashboard/
+│   │       ├── app.py          # Main Streamlit app
+│   │       ├── tabs/           # Dashboard tabs
+│   │       └── utils/          # Utility functions
+│   ├── cli/               # cogniverse_cli (standalone, no cogniverse deps)
+│   │   ├── pyproject.toml
+│   │   └── cogniverse_cli/
+│   │       ├── main.py         # `cogniverse` Click entry point
+│   │       ├── admin.py        # Tenant/orphan-reconciliation commands
+│   │       ├── deploy.py       # Schema/chart deployment commands
+│   │       └── cluster.py      # Cluster management commands
+│   └── messaging/         # cogniverse_messaging (standalone, no cogniverse deps)
 │       ├── pyproject.toml
-│       ├── README.md
-│       └── cogniverse_dashboard/
-│           ├── app.py          # Main Streamlit app
-│           ├── tabs/           # Dashboard tabs
-│           └── utils/          # Utility functions
+│       └── cogniverse_messaging/
+│           ├── gateway.py      # Telegram/Slack gateway
+│           ├── command_router.py
+│           └── runtime_client.py
 ├── tests/                 # Workspace-level tests
 │   ├── admin/
 │   ├── agents/
 │   ├── backends/
+│   ├── charts/
+│   ├── cli/
 │   ├── common/
+│   ├── core/
 │   ├── dashboard/
+│   ├── e2e/
 │   ├── evaluation/
 │   ├── events/
 │   ├── finetuning/
+│   ├── fixtures/
+│   ├── foundation/
 │   ├── ingestion/
 │   ├── memory/
+│   ├── messaging/
 │   ├── routing/
+│   ├── runtime/
 │   ├── synthetic/
 │   ├── system/
 │   ├── telemetry/
-│   ├── ui/
-│   ├── unit/
 │   └── utils/
 └── scripts/               # Operational scripts
 ```
@@ -182,6 +200,8 @@ flowchart TB
     subgraph Application["<span style='color:#000'>APPLICATION LAYER</span>"]
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>FastAPI server</span>"]
         Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>Streamlit UI</span>"]
+        CLI["<span style='color:#000'>cogniverse_cli<br/>Click CLI (no cogniverse deps)</span>"]
+        Messaging["<span style='color:#000'>cogniverse_messaging<br/>Telegram/Slack gateway (no cogniverse deps)</span>"]
     end
 
     FoundationPkg --> SDK
@@ -213,7 +233,9 @@ flowchart TB
     Dashboard --> SDK
     Dashboard --> CorePkg
     Dashboard --> Evaluation
-    Dashboard --> Runtime
+    Dashboard --> Agents
+    Dashboard --> Vespa
+    Dashboard --> TelemetryPhoenix
 
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
     style FoundationPkg fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -226,6 +248,8 @@ flowchart TB
     style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
     style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style CLI fill:#90caf9,stroke:#1565c0,color:#000
+    style Messaging fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 **Layered Dependency Rules:**
@@ -258,7 +282,11 @@ flowchart TB
 
 - `cogniverse_runtime`: Depends on `sdk`, `core` (optional: `agents`, `vespa`)
 
-- `cogniverse_dashboard`: Depends on `sdk`, `core`, `evaluation`, `runtime`
+- `cogniverse_dashboard`: Depends on `sdk`, `core`, `evaluation`, `agents`, `vespa`, `telemetry_phoenix`
+
+- `cogniverse_cli`: Standalone Click CLI — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
+
+- `cogniverse_messaging`: Standalone Telegram/Slack gateway — no dependencies on other Cogniverse packages (talks to the runtime over HTTP)
 
 ---
 
@@ -280,7 +308,7 @@ uv sync
 
 # Verify installation
 uv pip list | grep cogniverse
-# Expected (11 packages in dependency order):
+# Expected (13 packages in dependency order):
 # cogniverse-sdk                   0.1.0
 # cogniverse-foundation            0.1.0
 # cogniverse-evaluation            0.1.0
@@ -292,6 +320,8 @@ uv pip list | grep cogniverse
 # cogniverse-finetuning            0.1.0
 # cogniverse-runtime               0.1.0
 # cogniverse-dashboard             0.1.0
+# cogniverse-cli                   0.1.0
+# cogniverse-messaging             0.1.0
 ```
 
 **2. Activate Virtual Environment:**
@@ -565,7 +595,7 @@ uv sync
 
 **Understanding uv.lock:**
 ```bash
-# View lockfile (contains exact versions for all 11 packages + dependencies)
+# View lockfile (contains exact versions for all 13 packages + dependencies)
 cat uv.lock
 
 # Regenerate lockfile (after pyproject.toml changes)
@@ -605,7 +635,7 @@ uv add --upgrade pydantic
 
 **Build All Packages (in dependency order):**
 ```bash
-# Build all 11 SDK packages for distribution (order matters!)
+# Build all 13 SDK packages for distribution (order matters!)
 # Foundation layer first
 for dir in libs/sdk libs/foundation; do
   echo "Building $(basename $dir)..."
@@ -624,8 +654,8 @@ for dir in libs/telemetry-phoenix libs/agents libs/vespa libs/synthetic libs/fin
   (cd "$dir" && uv build)
 done
 
-# Application layer
-for dir in libs/runtime libs/dashboard; do
+# Application layer (cli and messaging have no cogniverse deps, build anytime)
+for dir in libs/runtime libs/dashboard libs/cli libs/messaging; do
   echo "Building $(basename $dir)..."
   (cd "$dir" && uv build)
 done
@@ -635,7 +665,7 @@ done
 # cogniverse_sdk-0.1.0.tar.gz
 # cogniverse_foundation-0.1.0-py3-none-any.whl
 # cogniverse_foundation-0.1.0.tar.gz
-# ... (all 11 packages)
+# ... (all 13 packages)
 ```
 
 **Build Individual Package:**
@@ -745,12 +775,16 @@ from cogniverse_agents.gateway_agent import GatewayAgent
 # Test application layer
 import cogniverse_runtime
 import cogniverse_dashboard
+import cogniverse_cli
+import cogniverse_messaging
 
-# Verify versions
-assert cogniverse_sdk.__version__ == "0.1.0"
-assert cogniverse_foundation.__version__ == "0.1.0"
-assert cogniverse_core.__version__ == "0.1.0"
-# ... verify all 11 packages
+# Verify installed versions via package metadata (most packages don't
+# define a module-level __version__ attribute — use importlib.metadata)
+from importlib.metadata import version
+assert version("cogniverse-sdk") == "0.1.0"
+assert version("cogniverse-foundation") == "0.1.0"
+assert version("cogniverse-core") == "0.1.0"
+# ... verify all 13 packages
 
 # Test basic functionality
 config = SystemConfig()
@@ -760,7 +794,7 @@ assert config.search_backend == "vespa"
 telemetry = TelemetryManager(config=TelemetryConfig())
 assert telemetry is not None
 
-print("✅ All 11 packages installed and verified")
+print("✅ All 13 packages installed and verified")
 ```
 
 ---
@@ -879,20 +913,20 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 
 def test_orchestrator_initialization(config_manager):
     """Test agent initialization (no external dependencies)"""
-    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    registry = AgentRegistry(tenant_id="test_tenant", config_manager=config_manager)
+    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
     assert agent.deps is not None
 
 async def test_orchestrator_decision(config_manager):
-    """Test orchestrator routing decision"""
-    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    """Test orchestrator plan execution"""
+    registry = AgentRegistry(tenant_id="test_tenant", config_manager=config_manager)
+    agent = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 
     result = await agent._process_impl(
         OrchestratorInput(query="test query", tenant_id="test:unit")
     )
-    assert result.recommended_agent is not None
-    assert result.confidence >= 0.0
+    assert result.workflow_id != ""
+    assert result.execution_summary != ""
 ```
 
 **3. Integration Tests Across Packages:**
@@ -913,16 +947,16 @@ async def test_video_ingestion_to_vespa(vespa_backend, sample_video, config_mana
         schema_name="video_colpali_smol500_mv_frame_test"
     )
 
-    result = await pipeline.process_video(sample_video)
+    result = await pipeline.process_video_async(sample_video)
 
-    assert result["status"] == "success"
-    assert result["documents_created"] > 0
+    assert result["status"] == "completed"
 
     # Verify in Vespa
-    docs = vespa_backend.search(
-        query="test",
-        schema_name="video_colpali_smol500_mv_frame_test"
-    )
+    docs = vespa_backend.search({
+        "query": "test",
+        "type": "video",
+        "profile": "video_colpali_smol500_mv_frame_test",
+    })
     assert len(docs) > 0
 ```
 
@@ -1037,6 +1071,8 @@ pip install libs/agents/dist/cogniverse_agents-0.2.0-py3-none-any.whl
 python -c "
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
+from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_foundation.config.utils import create_default_config_manager
 
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 deps = OrchestratorDeps(
@@ -1046,7 +1082,9 @@ deps = OrchestratorDeps(
         api_base='http://localhost:11434/v1',
     ),
 )
-agent = OrchestratorAgent(deps)
+config_manager = create_default_config_manager()
+registry = AgentRegistry(tenant_id='acme', config_manager=config_manager)
+agent = OrchestratorAgent(deps, registry, config_manager=config_manager)
 print('Release smoke test passed')
 "
 ```
@@ -1085,9 +1123,13 @@ cd ../dashboard && uv publish
 | cogniverse-synthetic | 0.2.0 | >=0.2.0    | >=0.2.0             | -             | -                   | -                 | -              | -                |
 | cogniverse-finetuning | 0.2.0 | >=0.2.0   | >=0.2.0             | >=0.2.0       | -                   | >=0.2.0           | >=0.2.0        | -                |
 | cogniverse-runtime | 0.2.0 | >=0.2.0     | -                   | >=0.2.0       | -                   | -                 | -              | -                |
-| cogniverse-dashboard | 0.2.0 | >=0.2.0   | -                   | >=0.2.0       | >=0.2.0             | -                 | -              | >=0.2.0          |
+| cogniverse-dashboard | 0.2.0 | >=0.2.0   | -                   | >=0.2.0       | >=0.2.0             | -                 | >=0.2.0        | -                |
 
-Note: This shows required dependencies only. Runtime has optional dependencies on agents and vespa.
+Note: This shows required dependencies only (columns cover the packages most
+often bumped together; cli and messaging are omitted because they carry no
+cogniverse-* dependencies at any version). Runtime has optional dependencies
+on agents and vespa. Dashboard also requires vespa and telemetry-phoenix
+(not shown as columns here) in addition to agents.
 
 ---
 
@@ -1231,24 +1273,17 @@ pip install cogniverse-agents
 
 ```python
 import asyncio
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
 async def main():
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = OrchestratorDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="openai/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434/v1",
-        ),
-    )
-    agent = OrchestratorAgent(deps)
-    result = await agent.process(OrchestratorInput(
+    # GatewayAgent classifies queries using GLiNER (no LLM config needed for defaults)
+    deps = GatewayDeps()
+    agent = GatewayAgent(deps=deps)
+    result = await agent.process(GatewayInput(
         query="Show me machine learning videos",
         tenant_id="acme"
     ))
-    print(f"Route to: {result.recommended_agent}")
+    print(f"Route to: {result.routed_to}")
 
 asyncio.run(main())
 ```
@@ -1293,10 +1328,10 @@ def process_video(
         VespaUploadError: If upload to Vespa fails
 
     Examples:
-        >>> pipeline = VideoIngestionPipeline(tenant_id="acme_corp")
-        >>> result = pipeline.process_video(Path("video.mp4"))
+        >>> pipeline = VideoIngestionPipeline(tenant_id="acme_corp", config_manager=config_manager)
+        >>> result = await pipeline.process_video_async(Path("video.mp4"))
         >>> print(result["status"])
-        'success'
+        'completed'
     """
 ```
 
@@ -1354,7 +1389,7 @@ This guide covers comprehensive UV workspace package development with layered ar
 3. **Dependency Management**: Layer-specific dependencies and workspace-level dependencies
 4. **Building**: Distribution packages with wheels and source distributions in dependency order
 5. **Testing**: Per-layer and integration testing strategies
-6. **Versioning**: Semantic versioning and release process for all 11 packages
+6. **Versioning**: Semantic versioning and release process for all 13 packages
 7. **Best Practices**: Layer organization, imports, documentation, CI/CD
 
 **Key Principles for Layered Architecture:**

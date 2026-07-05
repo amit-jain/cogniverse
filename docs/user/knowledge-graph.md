@@ -18,6 +18,14 @@ cogniverse index ./src --type code   # tree-sitter extraction → nodes + edges
 cogniverse index ./docs --type docs  # entity extraction → nodes + edges
 ```
 
+> **Note:** The `cogniverse index` CLI command currently only accepts
+> `--type code`; `--type docs` and `--type video` are rejected with a
+> "not yet implemented" message. The extraction pipeline described below
+> (per-extension profile fan-out, GLiNER entities, multimodal graph
+> extraction) is fully implemented server-side and reachable directly via
+> `POST /ingestion/upload` + `POST /graph/upsert` — it just isn't wired
+> up to the `index` CLI command yet for non-code content types.
+
 The `docs` type now fans out per file extension to the right content profile:
 
 | Extension | Content profile | Graph extraction |

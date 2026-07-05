@@ -289,13 +289,18 @@ def initialize_memory(
     self,
     agent_name: str,
     tenant_id: str,
+    embedder_base_url: str,          # Required — DenseOn /v1/embeddings endpoint
+    *,
+    llm_model: str,                  # Required — no fallback default
     backend_host: str = "localhost",
     backend_port: int = 8080,
-    llm_model: str = "google/gemma-4-e4b-it",
-    embedding_model: str = "nomic-embed-text",
+    embedding_model: str = "lightonai/DenseOn",
     llm_base_url: str = "http://localhost:11434",
+    llm_api_key: str = "not-required",
     config_manager=None,             # Required for schema deployment
     schema_loader=None,              # Required for schema templates
+    backend_config_port: Optional[int] = None,
+    auto_create_schema: bool = True,
 ) -> bool:
 ```
 
@@ -317,9 +322,10 @@ class MyAgent(AgentBase[...], MemoryAwareMixin):
         self.initialize_memory(
             agent_name="my_agent",
             tenant_id=input.tenant_id,  # Per-request, not from deps
+            embedder_base_url=memory_config.get("embedder_base_url"),
+            llm_model=memory_config.get("llm_model"),
             backend_host=system_config.get("backend_url"),
             backend_port=system_config.get("backend_port"),
-            llm_model=memory_config.get("llm_model"),
             embedding_model=memory_config.get("embedding_model"),
             llm_base_url=memory_config.get("llm_base_url"),
             config_manager=self._config_manager,
@@ -1346,7 +1352,7 @@ model, processor = loader.load_model()
 | `colpali` | `ColPaliModelLoader` | `RemoteColPaliLoader` |
 | `colqwen` | `ColQwenModelLoader` | `RemoteColPaliLoader` |
 | `videoprism` | `VideoPrismModelLoader` | `RemoteVideoPrismLoader` |
-| `colbert` | `ColBERTModelLoader` | *(not yet supported)* |
+| `colbert` | `ColBERTModelLoader` | `RemoteColBERTLoader` |
 
 Remote loaders are selected when `remote_inference_url` is set in config.
 

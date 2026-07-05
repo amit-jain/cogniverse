@@ -35,8 +35,8 @@ Performance benchmarks and targets for the Cogniverse multi-agent video search s
 ### Embedding Model Performance
 | Model | Dimensions | Inference Time | Memory |
 |-------|------------|----------------|--------|
-| **ColPali SmolVLM 500M** | Patch-based (1024 patches × 128D) | < 100ms/frame | 2GB |
-| **ColQwen2 Omni** | Patch-based (1024 patches × 128D) | < 150ms/frame | 4GB |
+| **ColPali** (frame-based) | Patch-based (1024 patches × 320D) | < 100ms/frame | 2GB |
+| **ColQwen3** (chunk-based, `TomoroAI/tomoro-colqwen3-embed-4b`) | Patch-based (1024 patches × 320D) | < 150ms/frame | 4GB |
 | **VideoPrism Base** | 768 (global) | < 200ms/chunk | 3GB |
 | **VideoPrism LVT** | 1024 (global) | < 300ms/chunk | 4GB |
 

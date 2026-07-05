@@ -276,8 +276,9 @@ def render_memory_management_tab():
         backend_host="localhost",
         backend_port=8080,
         llm_model="openai/google/gemma-4-e4b-it",
-        embedding_model="ollama/nomic-embed-text",
+        embedding_model="lightonai/DenseOn",
         llm_base_url="http://localhost:11434",
+        embedder_base_url="http://localhost:8001",
         config_manager=config_manager,
         schema_loader=schema_loader,
     )

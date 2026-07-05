@@ -45,7 +45,6 @@ libs/core/cogniverse_core/
 │   ├── health_mixin.py              # Health check mixin
 │   ├── vlm_interface.py             # Vision-language model interface
 │   ├── agent_models.py              # Agent data models
-│   ├── document.py                  # Document models
 │   ├── cache/                       # Caching infrastructure
 │   ├── media/                       # Media URI dispatch (file://, pvc://, s3://, http://)
 │   ├── models/                      # Model loaders (VideoPrism, etc.)
@@ -61,7 +60,6 @@ libs/foundation/cogniverse_foundation/config/
     ├── agent_config.py              # AgentConfig, ModuleConfig, OptimizerConfig
     ├── api_mixin.py                 # Config API mixin
     ├── utils.py                     # create_default_config_manager()
-    ├── schema.py                    # Config schemas
     └── manager.py                   # ConfigManager (central API)
 
 # Configuration storage is provided by:
@@ -285,8 +283,11 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 class RoutingConfigUnified:
     tenant_id: Optional[str] = None  # required — __post_init__ raises ValueError if None
 
-    # Routing strategy
-    routing_mode: str = "tiered"  # tiered, ensemble, hybrid
+    # Routing strategy. Only "tiered" is implemented end-to-end (fast +
+    # slow + fallback path via the enable_* flags below); other values are
+    # accepted by the schema for forward-compat but produce no dispatch
+    # behavior change.
+    routing_mode: str = "tiered"
 
     # Tier thresholds
     enable_fast_path: bool = True
@@ -333,7 +334,7 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 # Create tenant-specific routing config
 config = RoutingConfigUnified(
     tenant_id="acme",
-    routing_mode="ensemble",
+    routing_mode="tiered",
     fast_path_confidence_threshold=0.8,
     enable_auto_optimization=True,
     cache_ttl_seconds=7200
@@ -806,10 +807,9 @@ from cogniverse_core.common.tenant_utils import validate_tenant_id
 
 # Valid IDs
 validate_tenant_id("acme")                  # OK
-validate_tenant_id("acme-corp")             # OK
 validate_tenant_id("acme_corp")             # OK
 validate_tenant_id("acme:production")       # OK
-validate_tenant_id("acme-corp:prod-env")    # OK
+validate_tenant_id("acme_corp:prod_env")    # OK
 
 # Invalid IDs
 try:
@@ -819,6 +819,14 @@ except ValueError as e:
 
 try:
     validate_tenant_id("acme:prod:env")     # ValueError: multiple colons
+except ValueError as e:
+    print(f"Error: {e}")
+
+try:
+    # No hyphens: the tenant_id becomes part of the Vespa schema name
+    # ([a-zA-Z0-9_] only), so hyphens are rejected rather than silently
+    # sanitized (which would collide "acme-corp" and "acme_corp").
+    validate_tenant_id("acme-corp")         # ValueError: invalid chars
 except ValueError as e:
     print(f"Error: {e}")
 
@@ -931,14 +939,17 @@ fsspec supports `gs://` (via `gcsfs`) and `az://` (via `adlfs`) out of the
 box — adding them is a matter of installing the optional dependency and
 configuring credentials, no code change in the locator.
 
-### Required at ingest time
+### Populated at ingest time
 
-`DocumentMetadata.source_url` is **required** (not optional). Every Vespa
-document carries the canonical URI of its source video; build_document raises
-``ValueError`` when the field is missing. Visual evaluators rely on this
-field to localize bytes regardless of where the consumer runs (pod, CI,
-local dev). Pre-existing corpora can be backfilled with
-`scripts/backfill_source_url.py`.
+`source_url` is a `Document` metadata field (`doc.add_metadata("source_url", ...)`,
+set via `Document` in `cogniverse_sdk.document`), not a validated/required
+dataclass field. `VideoIngestionPipeline._extract_base_video_data` always
+populates it from `MediaLocator.to_canonical_uri` (or falls back to `""` if no
+video path is available), so every document emitted by the live ingestion
+path carries the canonical URI of its source video. Visual evaluators rely on
+this field to localize bytes regardless of where the consumer runs (pod, CI,
+local dev). Pre-existing corpora ingested before this field existed can be
+backfilled with `scripts/backfill_source_url.py`.
 
 ### Tests
 
@@ -1509,7 +1520,7 @@ print("✓ Memory isolation verified")
 
 **Key Test Files:**
 
-- `tests/common/unit/test_vespa_config_store.py` - Configuration storage tests
+- `tests/backends/unit/test_config_store_yql_escape.py` - Configuration storage YQL escaping tests
 - `tests/memory/unit/test_mem0_memory_manager.py` - Memory manager tests
 - `tests/common/unit/test_tenant_utils.py` - Tenant utilities tests
 - `tests/common/unit/test_dynamic_dspy_mixin.py` - DSPy mixin tests

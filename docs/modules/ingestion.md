@@ -381,7 +381,7 @@ sequenceDiagram
         loop For each batch
             Model->>Model: process_images(batch)
             Model->>Model: Generate embeddings
-            Note over Model: embeddings.shape = [batch_size, 128, 128]
+            Note over Model: embeddings.shape = [batch_size, num_patches, embedding_dim]<br/>e.g. [batch_size, 1024, 320] for ColPali
         end
         Model-->>Processor: frame_embeddings[]
         deactivate Model
@@ -511,8 +511,8 @@ sequenceDiagram
 
 **Embedding Processing Types:**
 
-- **Frame-Based** (`multi_vector`): ColPali multi-vector per frame (128×128 patches)
-- **Video Chunks** (`multi_vector`): ColQwen multi-vector per chunk
+- **Frame-Based** (`multi_vector`): ColPali multi-vector per frame (1024 patches × 320-dim)
+- **Video Chunks** (`multi_vector`): ColQwen multi-vector per chunk (1024 patches × 320-dim)
 - **Direct Video** (`multi_vector`): VideoPrism single global embedding
 - **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
 - **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
@@ -1044,12 +1044,15 @@ The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
 - `_process_document_segments()` - ColBERT 128-dim per-token multi-vector embeddings for text documents
 - `_process_audio_segments()` - CLAP 512-dim acoustic + ColBERT 128-dim semantic dual embeddings for audio
 
-**Required Profile Config Keys**:
+**Required Profile Config Keys** (enforced by `EmbeddingGeneratorImpl.__init__`):
 
-- `embedding_type` - Determines which attribute stores the result (required, raises `ValueError` if missing)
 - `embedding_model` - Model identifier for the loader (required, raises `ValueError` if missing)
 - `model_loader` - Selects the loader class in `ModelLoaderFactory` (required, raises `ValueError` if missing)
-- `semantic_model` - Secondary model for `multi_vector` embedding type (e.g., `lightonai/LateOn`)
+- `semantic_model` - Secondary model for the `colbert` model_loader (e.g., `lightonai/LateOn`)
+
+`embedding_type` is validated separately, at profile-registration time, by
+`ProfileValidator._validate_embedding_type` (`libs/core/cogniverse_core/validation/profile_validator.py`)
+— `EmbeddingGeneratorImpl` itself does not read or require it.
 
 ---
 
@@ -1413,7 +1416,7 @@ class VideoSegment:
    • Processing:
      - Load keyframe images (150 images)
      - Batch inference (batch_size=8)
-     - Generate embeddings per frame: [150 x 128 x 128]
+     - Generate embeddings per frame: [150 x 1024 x 320]
    • Document Building:
      - Per-frame documents: 150 documents
      - Fields: video_id, frame_number, timestamp, embeddings (hex-encoded)
@@ -1511,28 +1514,27 @@ async def ingest_video():
 asyncio.run(ingest_video())
 ```
 
-**Profile Configuration** (`configs/config.yaml`):
+**Profile Configuration** (`configs/config.json`, under `backend.profiles`):
 ```yaml
-video_processing_profiles:
-  video_colpali_smol500_mv_frame:
-    strategies:
-      segmentation:
-        class: "FrameSegmentationStrategy"
-        params:
-          fps: 1.0
-          threshold: 0.999
-          max_frames: 3000
-      transcription:
-        class: "AudioTranscriptionStrategy"
-        params:
-          model: "whisper-large-v3"
-      description:
-        class: "NoDescriptionStrategy"
-        params: {}
-      embedding:
-        class: "MultiVectorEmbeddingStrategy"
-        params:
-          model_name: "TomoroAI/tomoro-colqwen3-embed-4b"
+video_colpali_smol500_mv_frame:
+  strategies:
+    segmentation:
+      class: "FrameSegmentationStrategy"
+      params:
+        fps: 1.0
+        threshold: 0.999
+        max_frames: 3000
+    transcription:
+      class: "AudioTranscriptionStrategy"
+      params:
+        model: "whisper-large-v3"
+    description:
+      class: "NoDescriptionStrategy"
+      params: {}
+    embedding:
+      class: "MultiVectorEmbeddingStrategy"
+      params:
+        model_name: "TomoroAI/tomoro-colqwen3-embed-4b"
 ```
 
 ### Example 2: Batch Processing with Concurrency
@@ -1974,7 +1976,7 @@ for profile in profiles_gpu1:
 
 - `tests/ingestion/integration/test_backend_ingestion.py` - Vespa integration
 
-- `tests/ingestion/integration/test_pipeline_orchestration.py` - Strategy orchestration
+- `tests/ingestion/unit/test_pipeline_orchestration.py` - Strategy orchestration
 
 - `tests/ingestion/integration/test_end_to_end_processing.py` - End-to-end processing tests
 
