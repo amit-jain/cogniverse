@@ -13,12 +13,15 @@
 7. [Memory Isolation](#memory-isolation)
 8. [Telemetry Isolation](#telemetry-isolation)
 9. [Backend Configuration](#backend-configuration)
-10. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
-11. [Tenant ID Formats](#tenant-id-formats)
-12. [Operational Procedures](#operational-procedures)
-13. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
-14. [Common Patterns](#common-patterns)
-15. [Troubleshooting](#troubleshooting)
+10. [Cross-Tenant Federation Agents](#cross-tenant-federation-agents)
+11. [Security and Isolation Guarantees](#security-and-isolation-guarantees)
+12. [Tenant ID Formats](#tenant-id-formats)
+13. [Operational Procedures](#operational-procedures)
+14. [Testing Multi-Tenant Systems](#testing-multi-tenant-systems)
+15. [Common Patterns](#common-patterns)
+16. [Troubleshooting](#troubleshooting)
+17. [Best Practices](#best-practices)
+18. [Summary](#summary)
 
 ---
 
@@ -81,11 +84,17 @@ vespa_client.query(
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
-# Agent constructed WITHOUT tenant_id — serves all tenants
+# Agent constructed WITHOUT a customer tenant_id — serves all tenants.
+# AgentRegistry itself still takes a tenant_id constructor argument (it's
+# used only for the process-wide agent-endpoint bookkeeping table), so the
+# runtime builds it once at startup with the reserved SYSTEM_TENANT_ID —
+# see libs/runtime/cogniverse_runtime/main.py.
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
-    registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
+    registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+    config_manager=config_manager,
 )
 
 # tenant_id flows per-request via A2A tasks:
@@ -98,6 +107,21 @@ storage_path = get_tenant_storage_path("data/optimization", "acme")
 # Memory uses per-tenant singleton managers
 memory_mgr = Mem0MemoryManager(tenant_id="acme")
 ```
+
+**Canonicalization**: `require_tenant_id()` (called at every request boundary)
+and `get_tenant_schema_name()` both canonicalize a bare tenant_id to
+`org:tenant` form via `canonical_tenant_id()` before using it. A simple
+tenant_id like `"acme"` canonicalizes to `"acme:acme"` — so schema names,
+`BackendConfig.tenant_id` (as read back through `ConfigManager.get_backend_config`),
+and Phoenix project names for a simple-format tenant carry the **doubled**
+suffix (e.g. `video_frames_acme_acme`, `cogniverse-acme:acme`), not the bare
+single-suffix form (`video_frames_acme`). `get_tenant_storage_path()` is the one exception: it
+re-parses the id with `parse_tenant_id()` (not the canonicalized form) and
+collapses the `org == tenant` case back to one directory level, so storage
+paths for simple-format tenants stay `data/optimization/acme/` rather than
+`data/optimization/acme/acme/`. Every schema-name and project-name example
+below reflects the canonicalized form; storage-path examples reflect the
+non-canonicalized form.
 
 ### 3. Pre-Deployed Tenant Schemas
 
@@ -113,9 +137,9 @@ memory_mgr = Mem0MemoryManager(tenant_id="acme")
 ```python
 # Get tenant-specific schema name for a pre-deployed schema
 schema_name = schema_manager.get_tenant_schema_name("acme", "video_frames")
-# Returns: video_frames_acme
+# Returns: video_frames_acme_acme ("acme" canonicalizes to "acme:acme" first)
 
-# Schema naming convention: {base_schema}_{tenant_id}
+# Schema naming convention: {base_schema}_{canonical_tenant_id with ':' -> '_'}
 # Schemas must be pre-deployed via Vespa CLI: vespa deploy
 # Tenant isolation is achieved through schema naming
 # VespaSchemaManager provides utilities but does NOT auto-create schemas
@@ -258,21 +282,31 @@ Each tenant gets dedicated backend schemas (e.g., Vespa) for all data types. Sch
 
 ### Schema Naming Convention
 
-**Pattern**: `{base_schema_name}_{tenant_id}`
+**Pattern**: `{base_schema_name}_{canonical_tenant_id with ':' -> '_'}`
+
+`get_tenant_schema_name()` canonicalizes the tenant_id first (via
+`canonical_tenant_id()`), so a bare `"acme"` becomes `"acme:acme"` before the
+colon-to-underscore substitution — the tenant suffix on a simple-format
+tenant is doubled, not single.
 
 **Examples**:
 
 | Base Schema | Tenant ID | Tenant Schema |
 |------------|-----------|---------------|
-| `video_colpali_smol500_mv_frame` | `acme` | `video_colpali_smol500_mv_frame_acme` |
-| `video_videoprism_base_mv_chunk_30s` | `startup` | `video_videoprism_base_mv_chunk_30s_startup` |
+| `video_colpali_smol500_mv_frame` | `acme` | `video_colpali_smol500_mv_frame_acme_acme` |
+| `video_videoprism_base_mv_chunk_30s` | `startup` | `video_videoprism_base_mv_chunk_30s_startup_startup` |
 | `agent_memories` | `acme:production` | `agent_memories_acme_production` |
 
-**Schema Name Rules**:
+**Schema Name Rules** (`validate_tenant_id()` in `tenant_utils.py`):
 
-- Only alphanumeric characters, underscores, hyphens, and colons allowed
+- Only alphanumeric characters, underscores, and colons allowed — **no
+  hyphens**: the tenant_id becomes part of the Vespa schema name
+  (`[a-zA-Z0-9_]` only), and sanitizing `-` to `_` would collide distinct
+  tenants (`acme-corp` vs `acme_corp` would map to the same schema)
 - Colon (`:`) in tenant_id converted to underscore (`_`) for schema names
-- Maximum length: 64 characters (Vespa limitation)
+- Identifiers starting with `__` are reserved for runtime-internal
+  identities (`SYSTEM_TENANT_ID = "__system__"`) and are rejected for
+  user-registered tenants
 
 ### Schema Storage
 
@@ -282,8 +316,16 @@ Schemas are stored in `configs/schemas/` as JSON definitions:
 configs/schemas/
 ├── adapter_registry_schema.json
 ├── agent_memories_schema.json
+├── audio_content_schema.json
+├── code_lateon_mv_schema.json
 ├── config_metadata_schema.json
+├── document_text_schema.json
+├── document_visual_schema.json
+├── image_colpali_mv_schema.json
+├── knowledge_graph_schema.json
+├── lateon_mv_schema.json
 ├── organization_metadata_schema.json
+├── provenance_schema.json
 ├── ranking_strategies.json
 ├── tenant_metadata_schema.json
 ├── video_colpali_smol500_mv_frame_schema.json
@@ -291,7 +333,8 @@ configs/schemas/
 ├── video_videoprism_base_mv_chunk_30s_schema.json
 ├── video_videoprism_large_mv_chunk_30s_schema.json
 ├── video_videoprism_lvt_base_sv_chunk_6s_schema.json
-└── video_videoprism_lvt_large_sv_chunk_6s_schema.json
+├── video_videoprism_lvt_large_sv_chunk_6s_schema.json
+└── wiki_pages_schema.json
 ```
 
 ### Schema Deployment
@@ -302,7 +345,7 @@ Tenant-specific schemas must be deployed via Vespa CLI or application package:
 2. **Deploy** via Vespa CLI: `vespa deploy`
 3. **Naming Convention**: Tenant suffix is added to schema name during deployment
    - Base: `video_colpali_smol500_mv_frame`
-   - Tenant: `video_colpali_smol500_mv_frame_acme`
+   - Tenant: `video_colpali_smol500_mv_frame_acme_acme`
 4. **Verification**: Use `get_tenant_schema_name()` to generate expected schema name
 
 **Schema Naming**:
@@ -310,7 +353,7 @@ Tenant-specific schemas must be deployed via Vespa CLI or application package:
 ```python
 # VespaSchemaManager provides naming convention utility
 schema_name = schema_manager.get_tenant_schema_name("acme", "video_colpali_smol500_mv_frame")
-# Returns: "video_colpali_smol500_mv_frame_acme"
+# Returns: "video_colpali_smol500_mv_frame_acme_acme"
 
 # Schemas must be deployed separately via Vespa CLI
 # VespaSchemaManager does NOT auto-create or transform schemas
@@ -372,7 +415,7 @@ schema = parser.load_schema_from_json_file(
 
 #### Tenant Schema Naming Convention
 
-Tenant-specific schemas follow the naming pattern: `{base_schema}_{tenant_id}`
+Tenant-specific schemas follow the naming pattern: `{base_schema}_{canonical_tenant_id with ':' -> '_'}`
 
 ```python
 # Tenant schema naming via VespaSchemaManager
@@ -381,7 +424,7 @@ schema_manager = VespaSchemaManager(
     backend_port=8080
 )
 schema_name = schema_manager.get_tenant_schema_name("acme", "video_colpali_smol500_mv_frame")
-# Returns: "video_colpali_smol500_mv_frame_acme"
+# Returns: "video_colpali_smol500_mv_frame_acme_acme"
 ```
 
 #### Schema Deployment
@@ -398,7 +441,7 @@ tenant_schema_name = registry.deploy_schema(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame",
 )
-# Returns: "video_colpali_smol500_mv_frame_acme"
+# Returns: "video_colpali_smol500_mv_frame_acme_acme" (deploy_schema canonicalizes too)
 ```
 
 **Deployment Steps** (handled internally by `deploy_schema()`):
@@ -429,7 +472,7 @@ def list_available_base_schemas() -> list[str]:
 ```python
 # Generate tenant-specific schema name
 schema_name = schema_manager.get_tenant_schema_name("acme", "video_frames")
-# Returns: "video_frames_acme"
+# Returns: "video_frames_acme_acme"
 
 # Check if tenant schema exists (requires schema_registry)
 if schema_manager.tenant_schema_exists("acme", "video_frames"):
@@ -444,7 +487,7 @@ if schema_manager.tenant_schema_exists("acme", "video_frames"):
 # Raises BackendDeploymentError if a peer-tenant unreconstructable orphan
 # is present (the redeploy would silently drop the peer's schema).
 deleted = schema_manager.delete_tenant_schemas("acme")
-# Returns: ['video_frames_acme', 'agent_memories_acme']
+# Returns: ['video_frames_acme_acme', 'agent_memories_acme_acme']
 
 # Atomic multi-tenant delete (operator recovery path).
 # Single-tenant delete refuses when peer orphans exist; this variant
@@ -534,7 +577,9 @@ results = search_backend.search(
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
 
 # Get tenant schema name
@@ -544,19 +589,24 @@ schema_manager = VespaSchemaManager(
 )
 memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
 
-# Initialize agent with deps — tenant-agnostic at construction
-# OrchestratorDeps does not require telemetry_config/llm_config separately
-deps = OrchestratorDeps(  # 
+# Initialize agent with deps — tenant-agnostic at construction.
+# OrchestratorDeps has no required fields of its own (AgentDeps allows
+# extra fields), so passing telemetry_config/llm_config here is optional.
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="openai/google/gemma-4-e4b-it",
         api_base="http://localhost:11434/v1",
     ),
 )
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
+orchestrator = OrchestratorAgent(
+    deps=deps,
+    registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+    config_manager=config_manager,
+)
 # Agent automatically uses tenant-specific resources per-request:
-# - Memory: agent_memories_acme (via Mem0MemoryManager singleton)
-# - Telemetry: cogniverse-acme project
+# - Memory: agent_memories_acme_acme (via Mem0MemoryManager singleton)
+# - Telemetry: cogniverse-acme:acme project
 # - Optimization: data/optimization/acme/
 ```
 
@@ -571,19 +621,19 @@ sequenceDiagram
     participant Client
     participant API as FastAPI Server
     participant SchemaManager as VespaSchemaManager
-    participant Agent as Routing Agent
+    participant Agent as Orchestrator Agent
     participant Vespa as Vespa Backend
     participant Memory as Mem0 Memory
 
     Client->>API: POST /search/<br/>Body: {"query": "...", "tenant_id": "acme"}
     API->>API: require_tenant_id(request.tenant_id, source="SearchRequest")
     API->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
-    SchemaManager-->>API: "video_frames_acme"
+    SchemaManager-->>API: "video_frames_acme_acme"
 
     API->>Agent: _process_impl(OrchestratorInput(query, tenant_id="acme"))
     Agent->>Memory: search_memory(query, tenant_id="acme", agent_name="orchestrator_agent")
     Memory-->>Agent: Relevant memories
-    Agent->>Vespa: search(query, schema="video_frames_acme")
+    Agent->>Vespa: search(query, schema="video_frames_acme_acme")
     Vespa-->>Agent: Results (only from acme's schema)
     Agent-->>API: Response with results
     API-->>Client: JSON response
@@ -652,11 +702,15 @@ async def search(request: SearchRequest, ...):
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, require_tenant_id
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
-from cogniverse_core.common.tenant_utils import require_tenant_id
 
-# Agent is constructed once — tenant-agnostic
+# Agent is constructed once, at module/startup scope — tenant-agnostic.
+# AgentRegistry takes a tenant_id constructor argument, but that argument
+# scopes only its own endpoint-bookkeeping config lookup, not the requests
+# the orchestrator will later serve — so the one shared instance is built
+# with the reserved SYSTEM_TENANT_ID, never a customer tenant_id.
 deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
@@ -664,7 +718,11 @@ deps = OrchestratorDeps(
         api_base="http://localhost:11434/v1",
     ),
 )
-orchestrator = OrchestratorAgent(deps=deps, registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
+orchestrator = OrchestratorAgent(
+    deps=deps,
+    registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+    config_manager=config_manager,
+)
 
 @router.post("/")
 async def search(request: SearchRequest, ...):
@@ -692,19 +750,34 @@ Mem0MemoryManager uses **per-tenant singleton pattern**:
 ```python
 
 class Mem0MemoryManager:
-    """Per-tenant memory manager using Mem0 with Vespa backend"""
+    """
+    Memory manager using Mem0 with Vespa vector store backend.
 
-    _instances: Dict[str, "Mem0MemoryManager"] = {}  # tenant_id -> instance
-    _instances_lock = threading.Lock()
+    Each tenant gets dedicated Vespa schema: agent_memories_{tenant_id}
+    """
+
+    # Per-tenant LRU cache, bounded so a multi-tenant server with churn (or
+    # a test suite creating a fresh tenant per test) can't grow the working
+    # set past capacity without evicting the oldest tenant.
+    _instances: TenantLRUCache["Mem0MemoryManager"] = TenantLRUCache(
+        capacity=_tenant_cache_capacity(),
+        on_evict=_on_tenant_evicted,
+    )
 
     def __new__(cls, tenant_id: str):
-        """Per-tenant singleton - different instance per tenant"""
-        with cls._instances_lock:
-            if tenant_id not in cls._instances:
-                instance = super().__new__(cls)
-                cls._instances[tenant_id] = instance
-        return cls._instances[tenant_id]
+        """Per-tenant singleton pattern (LRU-bounded)."""
+
+        def _build() -> "Mem0MemoryManager":
+            instance = super(Mem0MemoryManager, cls).__new__(cls)
+            instance._initialized = False
+            return instance
+
+        return cls._instances.get_or_set(tenant_id, _build)
 ```
+
+`_instances` is a `TenantLRUCache` (`libs/foundation/cogniverse_foundation/caching/tenant_lru.py`),
+not a plain dict — it supports `__contains__` and `__len__`, but eviction
+goes through `.pop(key)`, not `del cache[key]`.
 
 **Key Points**:
 
@@ -733,20 +806,20 @@ memory_mgr.initialize(
     embedding_model="lightonai/DenseOn",
     llm_base_url=memory_config["llm_base_url"],
     embedder_base_url=memory_config["embedder_base_url"],  # DenseOn /v1
-    base_schema_name="agent_memories",  # Base schema (becomes agent_memories_acme)
+    base_schema_name="agent_memories",  # Base schema (becomes agent_memories_acme_acme)
     config_manager=config_manager,
     schema_loader=schema_loader,
     knowledge_registry=build_default_registry(),  # Enables provenance + trust + reconciliation
 )
 
-# Add memory (stored in agent_memories_acme schema)
+# Add memory (stored in agent_memories_acme_acme schema)
 memory_id = memory_mgr.add_memory(
     content="User prefers cooking videos",
     tenant_id="acme",
     agent_name="orchestrator_agent"
 )
 
-# Search memory (only searches agent_memories_acme)
+# Search memory (only searches agent_memories_acme_acme)
 memories = memory_mgr.search_memory(
     query="user preferences",
     tenant_id="acme",
@@ -758,8 +831,8 @@ memories = memory_mgr.search_memory(
 
 | Tenant | Base Schema | Tenant Schema | Purpose |
 |--------|-------------|---------------|---------|
-| acme | agent_memories | agent_memories_acme | Memory for acme tenant |
-| startup | agent_memories | agent_memories_startup | Memory for startup tenant |
+| acme | agent_memories | agent_memories_acme_acme | Memory for acme tenant |
+| startup | agent_memories | agent_memories_startup_startup | Memory for startup tenant |
 
 ### Memory Lifecycle
 
@@ -799,27 +872,34 @@ Phoenix telemetry uses per-tenant projects for trace isolation:
 
 ```python
 from cogniverse_foundation.telemetry import TelemetryConfig, TelemetryManager
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 # Initialize telemetry manager (requires TelemetryConfig)
 telemetry = TelemetryManager(config=TelemetryConfig())
 
-# Record spans with tenant context
-with telemetry.span("process_query", tenant_id="acme") as span:
-    span.set_attribute("tenant_id", "acme")
+# span() does NOT canonicalize tenant_id itself — it is a pure template
+# substitution (see get_project_name()). The caller must have already
+# resolved tenant_id through require_tenant_id() at the request boundary
+# so every span for the same tenant lands in the same project.
+tenant_id = require_tenant_id("acme", source="example")  # -> "acme:acme"
+with telemetry.span("process_query", tenant_id=tenant_id) as span:
+    span.set_attribute("tenant_id", tenant_id)
     span.set_attribute("query", "cooking videos")
-    # Execute routing logic
+    # Execute orchestration logic
 ```
 
 ### Phoenix Project Naming
 
-**Pattern**: `cogniverse-{tenant_id}-{service}` (with service) or `cogniverse-{tenant_id}` (without)
+**Pattern**: `cogniverse-{tenant_id}-{service}` (with service) or `cogniverse-{tenant_id}` (without),
+where `tenant_id` is whatever the caller passed — in production that is
+always the canonicalized value returned by `require_tenant_id()`.
 
-**Examples**:
+**Examples** (tenant_id already canonicalized, as it is at every real call site):
 
-| Tenant | Component | Phoenix Project |
+| Tenant (as supplied by client) | Component | Phoenix Project |
 |--------|-----------|-----------------|
-| acme | orchestrator_agent | cogniverse-acme-orchestrator_agent |
-| startup | video_search | cogniverse-startup-video_search |
+| acme | orchestrator_agent | cogniverse-acme:acme-orchestrator_agent |
+| startup | video_search | cogniverse-startup:startup-video_search |
 | acme:production | ingestion | cogniverse-acme:production-ingestion |
 
 ### Telemetry Export Flow
@@ -831,13 +911,13 @@ sequenceDiagram
     participant OTLP as OTLP Exporter
     participant Phoenix as Phoenix Server
 
-    Agent->>TelemetryMgr: trace("process_query", tenant_id="acme")
-    TelemetryMgr->>TelemetryMgr: Create span in project "cogniverse-acme-orchestrator_agent"
+    Agent->>TelemetryMgr: span("process_query", tenant_id="acme:acme")
+    TelemetryMgr->>TelemetryMgr: Create span in project "cogniverse-acme:acme-orchestrator_agent"
     TelemetryMgr->>Agent: Span context
     Agent->>Agent: Execute logic
     Agent->>TelemetryMgr: End span
     TelemetryMgr->>OTLP: Export span
-    OTLP->>Phoenix: Send to project "cogniverse-acme-orchestrator_agent"
+    OTLP->>Phoenix: Send to project "cogniverse-acme:acme-orchestrator_agent"
     Phoenix->>Phoenix: Store in isolated project
 ```
 
@@ -847,7 +927,7 @@ Each tenant's traces are isolated in Phoenix:
 
 ```bash
 # Phoenix dashboard automatically filters by project
-# Visit: http://localhost:6006/projects/cogniverse-acme-orchestrator_agent
+# Visit: http://localhost:6006/projects/cogniverse-acme:acme-orchestrator_agent
 ```
 
 **Isolation Benefits**:
@@ -896,11 +976,16 @@ class BackendProfileConfig:
     schema_config: Dict[str, Any] = field(...)       # Schema-specific configuration
     model_specific: Dict[str, Any] = field(...)      # Model-specific parameters
     process_type: Optional[str] = None               # Processing type override
+    model_loader: str = ""                           # Model loader identifier
+    extra_config: Dict[str, Any] = field(...)        # Any key not covered above
 
 # Backend configuration
 @dataclass
 class BackendConfig:
-    tenant_id: str = "default"
+    # Optional[str] = None is a dataclass-ordering placeholder only;
+    # __post_init__ calls require_tenant_id(self.tenant_id) and raises
+    # ValueError if it's omitted — tenant_id is effectively required.
+    tenant_id: Optional[str] = None
     backend_type: str = "vespa"
     url: str = "http://localhost"
     port: int = 8080
@@ -929,13 +1014,13 @@ flowchart TB
     end
 
     subgraph VespaSchemas[<span style='color:#000'>Vespa - Schema Isolation</span>]
-        SchemaA1[<span style='color:#000'>video_colpali_..._acme</span>]
-        SchemaA2[<span style='color:#000'>video_prism_..._acme</span>]
-        SchemaA3[<span style='color:#000'>memories_acme</span>]
+        SchemaA1[<span style='color:#000'>video_colpali_..._acme_acme</span>]
+        SchemaA2[<span style='color:#000'>video_prism_..._acme_acme</span>]
+        SchemaA3[<span style='color:#000'>memories_acme_acme</span>]
 
-        SchemaB1[<span style='color:#000'>video_colpali_..._startup</span>]
-        SchemaB2[<span style='color:#000'>video_prism_..._startup</span>]
-        SchemaB3[<span style='color:#000'>memories_startup</span>]
+        SchemaB1[<span style='color:#000'>video_colpali_..._startup_startup</span>]
+        SchemaB2[<span style='color:#000'>video_prism_..._startup_startup</span>]
+        SchemaB3[<span style='color:#000'>memories_startup_startup</span>]
     end
 
     SystemConfig --> BackendA
@@ -992,12 +1077,15 @@ flowchart TB
         "pipeline_config": {
           "extract_keyframes": true,
           "transcribe_audio": true,
-          "keyframe_fps": 1.0,
-          "max_frames": 100
+          "keyframe_fps": 1.0
         },
         "strategies": {
           "segmentation": {
-            "class": "FrameSegmentationStrategy"
+            "class": "FrameSegmentationStrategy",
+            "params": {
+              "fps": 1.0,
+              "max_frames": 100
+            }
           },
           "embedding": {
             "class": "MultiVectorEmbeddingStrategy",
@@ -1011,6 +1099,10 @@ flowchart TB
 }
 ```
 
+`max_frames` lives under `strategies.segmentation.params` (read by
+`FrameSegmentationStrategy`), not under `pipeline_config` — overriding a
+`pipeline_config.max_frames` key is a silent no-op.
+
 ### Tenant Configuration Overlay
 
 Tenants can override system-level backend configuration:
@@ -1022,8 +1114,13 @@ Tenants can override system-level backend configuration:
     "profiles": {
       "video_colpali_smol500_mv_frame": {
         "pipeline_config": {
-          "max_frames": 100,
           "keyframe_fps": 1.0
+        },
+        "strategies": {
+          "segmentation": {
+            "class": "FrameSegmentationStrategy",
+            "params": {"max_frames": 100}
+          }
         }
       }
     }
@@ -1031,46 +1128,38 @@ Tenants can override system-level backend configuration:
 }
 ```
 
-**Tenant Override**: Via `ConfigManager`
+**Tenant Override**: Via `ConfigManager.update_backend_profile()` — the profile-level
+deep-merge entry point. `BackendConfig.metadata` is a free-form dict with no
+special-cased "overrides" key; the merge instead happens through
+`BackendConfig.merge_profile()` (via `_deep_merge`), which `update_backend_profile`
+calls internally.
+
 ```python
 from cogniverse_foundation.config.utils import create_default_config_manager
-from cogniverse_foundation.config.unified_config import BackendConfig
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
 manager = create_default_config_manager()
 
-# Tenant "acme" wants more frames
-tenant_override = {
-    "backend": {
-        "profiles": {
-            "video_colpali_smol500_mv_frame": {
-                "pipeline_config": {
-                    "max_frames": 200  # Override: 100 → 200
-                }
-            }
-        }
-    }
-}
-
-backend_config = BackendConfig(
-    tenant_id="acme",
-    backend_type="vespa",
-    url="http://localhost",
-    port=8080,
-    metadata={"overrides": tenant_override}
-)
-manager.set_backend_config(
-    backend_config=backend_config,
-    tenant_id="acme"
+# Tenant "acme" wants more frames than the cluster-wide system profile.
+# base_tenant_id is where the base profile is read from (SYSTEM_TENANT_ID
+# for the cluster-wide default); target_tenant_id is where the merged
+# result is saved.
+merged_profile = manager.update_backend_profile(
+    profile_name="video_colpali_smol500_mv_frame",
+    overrides={"strategies": {"segmentation": {"params": {"max_frames": 200}}}},  # 100 → 200
+    base_tenant_id=SYSTEM_TENANT_ID,
+    target_tenant_id="acme",
 )
 ```
 
 **Result**: Deep merge creates tenant-specific config
 ```python
-# Tenant "acme" gets:
-{
-    "max_frames": 200,      # Overridden
-    "keyframe_fps": 1.0     # Inherited from system
-}
+print(merged_profile.strategies)
+# {'segmentation': {'class': 'FrameSegmentationStrategy', 'params': {'max_frames': 200}}}
+#   max_frames overridden (100 -> 200); 'class' inherited unchanged from system
+
+print(merged_profile.pipeline_config)
+# {'keyframe_fps': 1.0}  # inherited from system, untouched by the override
 ```
 
 #### Deep Merge Visualization
@@ -1108,9 +1197,11 @@ from cogniverse_foundation.config.utils import get_config
 manager = create_default_config_manager()
 config = get_config(tenant_id="acme", config_manager=manager)
 
-# To get a BackendConfig object, use ConfigManager directly
+# To get a BackendConfig object, use ConfigManager directly.
+# get_backend_config() canonicalizes tenant_id before returning, so a
+# simple-format input comes back doubled.
 backend_config = manager.get_backend_config(tenant_id="acme")
-assert backend_config.tenant_id == "acme"
+assert backend_config.tenant_id == "acme:acme"
 
 # Access profile configuration via ConfigManager
 profile = manager.get_backend_profile(
@@ -1129,8 +1220,8 @@ manager = create_default_config_manager()
 config_acme = manager.get_backend_config(tenant_id="acme")
 config_startup = manager.get_backend_config(tenant_id="startup")
 
-assert config_acme.tenant_id == "acme"
-assert config_startup.tenant_id == "startup"
+assert config_acme.tenant_id == "acme:acme"
+assert config_startup.tenant_id == "startup:startup"
 ```
 
 ### Benefits for Multi-Tenancy
@@ -1140,6 +1231,60 @@ assert config_startup.tenant_id == "startup"
 3. **Cost Control**: Premium tenants get higher quality processing (more frames, higher fps)
 4. **Backend Flexibility**: Tenants can potentially use different Vespa clusters
 5. **Configuration Isolation**: Tenant configs don't interfere with each other
+
+---
+
+## Cross-Tenant Federation Agents
+
+Schema-per-tenant isolation is the default, but two agents are a deliberate,
+ACL-gated exception: they read **across** multiple tenants within the same
+org. Both are disabled by default (`enabled: false` in `configs/config.json`)
+and are read-only in V1 — neither writes to memory.
+
+**Package**: cogniverse-agents
+**Location**: `libs/agents/cogniverse_agents/cross_tenant_comparison_agent.py`,
+`libs/agents/cogniverse_agents/federated_query_agent.py`
+
+| Agent | Port | Capability | What it does |
+|-------|------|------------|---------------|
+| `CrossTenantComparisonAgent` | 8023 | `cross_tenant_comparison` | Given a `subject_key` and a list of `tenant_ids`, calls `FederationService.federated_get_all` per tenant (which merges each tenant's own memories with its org-trunk memories) and builds a `TenantViewOut` per tenant, so callers can see how different tenants in the same org describe the same subject. Counts distinct content signatures across all views — `distinct_signatures_count == 1` means every tenant agrees. |
+| `FederatedQueryAgent` | 8024 | `federated_query` | Answers a single free-text query by aggregating federated reads (tenant + org-trunk) across multiple `tenant_ids`, merging hits into one result list. Differs from `CrossTenantComparisonAgent`: that agent *compares* tenant views of one subject; this agent *answers* a query. Supports an optional RLM (`RLMOptions`) to summarize the merged context when it's large. |
+
+**ACL contract** (identical for both agents, enforced before any read happens):
+
+- `actor_role` must be `tenant_admin` or `org_admin` — any other role raises `ACLRejected`.
+- Every tenant in `tenant_ids` must belong to the caller's org, checked via
+  `parse_tenant_id()` — a caller cannot request tenants outside their own org
+  even with an elevated role.
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant XT as CrossTenantComparisonAgent
+    participant FS as FederationService
+    participant MemA as Mem0MemoryManager (tenant acme:eu)
+    participant MemB as Mem0MemoryManager (tenant acme:us)
+
+    Caller->>XT: subject_key, tenant_ids=[acme:eu, acme:us], actor_role=org_admin
+    XT->>XT: Check actor_role in {tenant_admin, org_admin}
+    XT->>XT: parse_tenant_id() every tenant_id, verify same org as caller
+    alt ACL check fails
+        XT-->>Caller: ACLRejected
+    else ACL check passes
+        XT->>FS: federated_get_all(acme:eu, agent_name)
+        FS->>MemA: get_all_memories(tenant_id=acme:eu)
+        FS->>MemA: get_all_memories(tenant_id=acme:_org_trunk)
+        MemA-->>FS: tenant + org-trunk rows, deduped by subject_key
+        FS-->>XT: merged rows for acme:eu
+        XT->>FS: federated_get_all(acme:us, agent_name)
+        FS->>MemB: get_all_memories(tenant_id=acme:us)
+        FS->>MemB: get_all_memories(tenant_id=acme:_org_trunk)
+        MemB-->>FS: tenant + org-trunk rows, deduped by subject_key
+        FS-->>XT: merged rows for acme:us
+        XT->>XT: Filter to subject_key, build TenantViewOut per tenant
+        XT-->>Caller: CrossTenantComparisonOutput(tenant_views, distinct_signatures_count)
+    end
+```
 
 ---
 
@@ -1160,9 +1305,9 @@ assert config_startup.tenant_id == "startup"
 # Query only accesses tenant-specific schema
 vespa_client.query(
     query="cooking videos",
-    schema="video_frames_acme"  # Only acme's data
+    schema="video_frames_acme_acme"  # Only acme's data
 )
-# Impossible to access startup's video_frames_startup (schema-scoped)
+# Impossible to access startup's video_frames_startup_startup (schema-scoped)
 ```
 
 ### No Query Filtering Required
@@ -1196,40 +1341,65 @@ results = vespa_client.query(
 
 | Resource | Isolation Method | Example |
 |----------|------------------|---------|
-| Vespa Schemas | Schema-per-tenant | `video_frames_acme` |
+| Vespa Schemas | Schema-per-tenant | `video_frames_acme_acme` |
 | Memory | Per-tenant Mem0MemoryManager | `Mem0MemoryManager(tenant_id="acme")` |
-| Telemetry | Per-tenant Phoenix project | `cogniverse-acme-orchestrator_agent` |
+| Telemetry | Per-tenant Phoenix project | `cogniverse-acme:acme-orchestrator_agent` |
 | Optimization Models | Tenant-specific directories | `data/optimization/acme/` |
 
 ### Tenant ID Validation
 
 **Guarantee**: All tenant IDs are validated to prevent injection attacks.
 
-**Validation Rules**:
-```python
-def validate_tenant_id(tenant_id: str):
-    """
-    Validate tenant_id format.
+**Validation Rules** (real implementation, `libs/core/cogniverse_core/common/tenant_utils.py`):
 
-    Rules:
-    - Non-empty string
-    - Only alphanumeric, underscore, hyphen, colon
-    - If colon present: exactly one, org:tenant format
+```python
+def validate_tenant_id(tenant_id: str) -> None:
+    """
+    Validate tenant ID format.
+
+    Raises:
+        ValueError: If tenant_id is invalid
     """
     if not tenant_id:
         raise ValueError("tenant_id cannot be empty")
 
-    # Allow alphanumeric, underscore, hyphen, colon
-    allowed = tenant_id.replace("_", "").replace("-", "").replace(":", "")
-    if not allowed.isalnum():
-        raise ValueError("Invalid tenant_id: only alphanumeric, underscore, hyphen, colon")
+    if not isinstance(tenant_id, str):
+        raise ValueError(f"tenant_id must be string, got {type(tenant_id)}")
 
-    # Validate org:tenant format if colon present
+    # Identifiers starting with "__" are reserved for runtime-internal
+    # identities (e.g. SYSTEM_TENANT_ID). Users may not register them.
+    if tenant_id.startswith("__"):
+        raise ValueError(
+            f"Invalid tenant_id '{tenant_id}': identifiers starting with '__' "
+            f"are reserved for runtime-internal use"
+        )
+
+    # Allow alphanumeric, underscores, and colons. No hyphens: the tenant id
+    # becomes part of the Vespa schema name ([a-zA-Z0-9_] only) and sanitizing
+    # "-"→"_" would collide distinct tenants (acme-corp vs acme_corp → same
+    # schema). The ':' separates the org:tenant canonical form.
+    allowed_chars = tenant_id.replace("_", "").replace(":", "")
+    if not allowed_chars.isalnum():
+        raise ValueError(
+            f"Invalid tenant_id '{tenant_id}': only alphanumeric, underscore, and colon allowed"
+        )
+
+    # If colon present, validate org:tenant format
     if ":" in tenant_id:
         parts = tenant_id.split(":")
-        if len(parts) != 2 or not all(parts):
-            raise ValueError("Invalid org:tenant format")
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid tenant_id format '{tenant_id}': expected 'org:tenant' with single colon"
+            )
+        org_id, tenant_name = parts
+        if not org_id or not tenant_name:
+            raise ValueError(
+                f"Invalid tenant_id '{tenant_id}': both org and tenant parts must be non-empty"
+            )
 ```
+
+Note: `validate_tenant_id()` rejects hyphens outright — unlike `require_tenant_id()`,
+it does not canonicalize; it only checks format.
 
 ### Immutable Context
 
@@ -1258,11 +1428,17 @@ def validate_tenant_id(tenant_id: str):
 
 **Example**: `acme`
 
-**Schema Naming**: `video_frames_acme`
+**Schema Naming**: `video_frames_acme_acme` (canonicalized to `acme:acme` before suffixing — see [Canonicalization](#architecture-principles))
 
 **Storage Path**: `data/optimization/acme/`
 
 **Use Case**: Single-level tenant hierarchy, simple deployments
+
+**Reserved identifiers**: `SYSTEM_TENANT_ID = "__system__"` is a cluster-internal
+identity used for non-tenant-specific state (startup registries, telemetry
+probes); `validate_tenant_id()` rejects any user tenant_id starting with
+`__`. `TEST_TENANT_ID = "test:unit"` is a fixed sentinel test fixtures
+register once per session instead of literal tenant strings.
 
 ### Org:Tenant Format
 
@@ -1312,26 +1488,29 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 **Steps**:
 
-1. **Register Tenant** (metadata):
-   ```python
-   # Store tenant metadata in tenant_metadata schema
-   tenant_metadata = {
-       "tenant_full_id": "acme",
-       "org_id": "acme",
-       "tenant_name": "acme",
-       "created_at": int(time.time()),
-       "created_by": "admin@acme.com",
-       "status": "active",
-       "schemas_deployed": []
-   }
+1. **Register Tenant** — `POST /admin/tenants` (`create_tenant()` in
+   `libs/runtime/cogniverse_runtime/admin/tenant_manager.py`, mounted at
+   `/admin` by the unified runtime). This is the real onboarding entry
+   point: it auto-creates the organization if it doesn't exist, deploys the
+   requested `base_schemas` (default: `["video_colpali_smol500_mv_frame"]`)
+   via `schema_registry.deploy_schema()`, and writes the `tenant_metadata`
+   row — schema deployment happens automatically as part of this call, it is
+   not a separate manual step:
+   ```bash
+   curl -X POST http://localhost:8000/admin/tenants \
+        -H "Content-Type: application/json" \
+        -d '{"tenant_id": "acme", "created_by": "admin@acme.com", "base_schemas": ["video_colpali_smol500_mv_frame", "agent_memories"]}'
    ```
+   Returns a `Tenant` record: `tenant_full_id` (canonicalized to `"acme:acme"`
+   for a simple-format input), `org_id`, `tenant_name`, `created_at` (Unix ms),
+   `created_by`, `status="active"`, `schemas_deployed`.
 
-2. **Deploy Tenant Schemas**:
+2. **Deploy Additional Schemas Later** (optional, lower-level primitive):
 
-   - Deploy schemas using Vespa CLI: `vespa deploy`
-   - Schemas follow naming convention: `{base_schema}_{tenant_id}`
+   - `POST /admin/profiles/{profile_name}/deploy` or the Vespa CLI (`vespa deploy`)
+     for schemas not passed in `base_schemas` at creation time
+   - Schemas follow naming convention: `{base_schema}_{canonical_tenant_id with ':' -> '_'}`
    - Use `get_tenant_schema_name()` to generate the expected schema name
-   - Schema deployment is manual, NOT automatic
 
 3. **Verify Schema Deployment**:
    ```python
@@ -1343,13 +1522,13 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    video_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
    memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
    print(f"Expected schemas: {video_schema}, {memory_schema}")
-   # video_frames_acme, agent_memories_acme
+   # video_frames_acme_acme, agent_memories_acme_acme
    ```
 
 4. **Ingest Initial Data** (optional):
    ```bash
    uv run python scripts/run_ingestion.py \
-       --tenant_id acme \
+       --tenant-id acme \
        --video_dir data/acme/videos \
        --backend vespa \
        --profile video_colpali_smol500_mv_frame
@@ -1370,7 +1549,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    ```python
    # Check tenant schema name is properly formed
    tenant_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
-   # Returns: "video_frames_acme"
+   # Returns: "video_frames_acme_acme"
    ```
 
 2. **Memory Health**:
@@ -1393,7 +1572,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    ```python
    # Get tenant schema name for operations
    tenant_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
-   # Returns: "video_frames_acme"
+   # Returns: "video_frames_acme_acme"
    ```
 
 ### Tenant Data Migration
@@ -1405,7 +1584,7 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 1. **Export Tenant Data** (Vespa):
    ```bash
    # Use Vespa visit API to export all documents
-   vespa visit --schema video_frames_acme > acme_export.jsonl
+   vespa visit --schema video_frames_acme_acme > acme_export.jsonl
    ```
 
 2. **Generate Expected Schema Names and Deploy**:
@@ -1414,10 +1593,10 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
        backend_endpoint="http://prod-vespa.internal",
        backend_port=8080
    )
-   # Generate expected schema names following convention: {base_schema}_{tenant_id}
+   # Generate expected schema names following convention: {base_schema}_{canonical_tenant_id with ':' -> '_'}
    video_schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
    memory_schema = schema_manager.get_tenant_schema_name("acme", "agent_memories")
-   # Returns: "video_frames_acme", "agent_memories_acme"
+   # Returns: "video_frames_acme_acme", "agent_memories_acme_acme"
 
    # Deploy schemas manually via Vespa CLI: vespa deploy
    # VespaSchemaManager does NOT deploy schemas automatically
@@ -1426,14 +1605,14 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 3. **Import Data** (Vespa):
    ```bash
    # Feed documents to target environment
-   vespa feed acme_export.jsonl --schema video_frames_acme
+   vespa feed acme_export.jsonl --schema video_frames_acme_acme
    ```
 
 4. **Verify Migration**:
    ```python
    # Check document count matches
-   count_source = vespa_source.count("video_frames_acme")
-   count_target = vespa_target.count("video_frames_acme")
+   count_source = vespa_source.count("video_frames_acme_acme")
+   count_target = vespa_target.count("video_frames_acme_acme")
    assert count_source == count_target
    ```
 
@@ -1445,11 +1624,24 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 1. **Backup Tenant Data** (if needed):
    ```bash
-   vespa visit --schema video_frames_acme > acme_backup.jsonl
-   vespa visit --schema agent_memories_acme > acme_memories_backup.jsonl
+   vespa visit --schema video_frames_acme_acme > acme_backup.jsonl
+   vespa visit --schema agent_memories_acme_acme > acme_memories_backup.jsonl
    ```
 
-2. **Delete Tenant Schemas** (immediate Vespa redeployment):
+2. **Delete Tenant** — `DELETE /admin/tenants/{tenant_full_id}` (`delete_tenant()` /
+   `delete_tenant_internal()` in `tenant_manager.py`) is the real entry point:
+   it discovers the tenant's schemas from the registry plus any
+   canonical-suffix-matched Vespa orphans, redeploys without them (immediate
+   Vespa removal), and tombstones the `tenant_metadata` row.
+   ```bash
+   curl -X DELETE http://localhost:8000/admin/tenants/acme:acme
+   ```
+   It also calls `invalidate_tenant_exists()` so the `assert_tenant_exists()`
+   positive-result cache (30s TTL) doesn't let a search/ingestion request
+   through against schemas that are mid-teardown.
+
+   The lower-level primitive it calls internally is also usable directly for
+   scripted/manual cleanup:
    ```python
    # Note: Requires schema_registry to be configured
    schema_manager = VespaSchemaManager(
@@ -1458,16 +1650,17 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
        schema_registry=schema_registry  # Required for delete operations
    )
    deleted = schema_manager.delete_tenant_schemas("acme")
-   # Returns: ['video_frames_acme', 'agent_memories_acme']
+   # Returns: ['video_frames_acme_acme', 'agent_memories_acme_acme']
    # Schemas are removed from Vespa immediately via redeployment
    # Raises ValueError if schema_registry not configured
    ```
 
 3. **Clear Memory Instances**:
    ```python
-   # Clear per-tenant memory manager (if needed)
+   # Clear per-tenant memory manager (if needed). _instances is a
+   # TenantLRUCache, not a plain dict — eviction goes through .pop().
    if "acme" in Mem0MemoryManager._instances:
-       del Mem0MemoryManager._instances["acme"]
+       Mem0MemoryManager._instances.pop("acme")
    ```
 
 4. **Clear Telemetry Projects**:
@@ -1481,11 +1674,10 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
    rm -rf data/optimization/acme/
    ```
 
-6. **Update Tenant Metadata**:
-   ```python
-   # Mark tenant as deleted in tenant_metadata schema
-   update_tenant_status("acme", "deleted")
-   ```
+Note: unlike a soft-delete, `delete_tenant_internal()` in step 2 already
+calls `backend.delete_metadata_document(schema="tenant_metadata", doc_id=...)`
+— the `tenant_metadata` row is removed outright, there is no separate
+"mark as deleted" status-update step or function.
 
 ---
 
@@ -1499,22 +1691,26 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 import pytest
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_foundation.telemetry import TelemetryConfig
 
-def test_tenant_isolation():
+def test_tenant_isolation(config_manager):
     """Verify tenants don't interfere with each other"""
 
     # ONE agent serves all tenants (tenant-agnostic at construction)
     from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    # OrchestratorDeps does not require telemetry_config/llm_config separately
-deps = OrchestratorDeps(  # 
+    deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="openai/google/gemma-4-e4b-it",
             api_base="http://localhost:11434/v1",
         ),
     )
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
+    orchestrator = OrchestratorAgent(
+        deps=deps,
+        registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+        config_manager=config_manager,
+    )
 
     # Tenant isolation happens at request time:
     # - Each A2A task carries tenant_id in payload
@@ -1538,7 +1734,7 @@ def test_schema_name_generation():
 
     # Simple format
     schema = schema_manager.get_tenant_schema_name("acme", "video_frames")
-    assert schema == "video_frames_acme"
+    assert schema == "video_frames_acme_acme"
 
     # Org:tenant format
     schema = schema_manager.get_tenant_schema_name("acme:production", "video_frames")
@@ -1559,9 +1755,9 @@ def test_tenant_schema_naming():
         backend_port=8080
     )
 
-    # Get tenant schema name
+    # Get tenant schema name ("test_tenant" canonicalizes to "test_tenant:test_tenant")
     schema_name = schema_manager.get_tenant_schema_name("test_tenant", "video_frames")
-    assert schema_name == "video_frames_test_tenant"
+    assert schema_name == "video_frames_test_tenant_test_tenant"
 
     # Cleanup (if schema_registry configured)
     # schema_manager.delete_tenant_schemas("test_tenant")
@@ -1571,24 +1767,28 @@ def test_tenant_schema_naming():
 
 ```python
 @pytest.mark.integration
-async def test_end_to_end_tenant_flow():
+async def test_end_to_end_tenant_flow(config_manager):
     """Test complete tenant request flow"""
 
     tenant_id = "test_tenant_e2e"
 
-    # 1. Get tenant schema name
+    # 1. Get tenant schema name (canonicalizes to "test_tenant_e2e:test_tenant_e2e")
     schema_manager = VespaSchemaManager(
         backend_endpoint="http://localhost",
         backend_port=8080
     )
     video_schema = schema_manager.get_tenant_schema_name(tenant_id, "video_frames")
 
-    # 2. Initialize orchestrator — tenant-agnostic at construction
+    # 2. Initialize orchestrator — tenant-agnostic at construction.
+    # AgentRegistry uses the reserved SYSTEM_TENANT_ID; it is a shared,
+    # process-wide agent-endpoint lookup, not scoped to this test's tenant.
     from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
     from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
-        registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
+        registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+        config_manager=config_manager,
     )
 
     # 3. Execute query — tenant_id flows per-request
@@ -1597,8 +1797,9 @@ async def test_end_to_end_tenant_flow():
     )
 
     # 4. Verify result (OrchestratorOutput Pydantic model)
-    assert result.recommended_agent is not None
-    assert result.confidence > 0.0
+    assert result.query == "cooking videos"
+    assert result.workflow_id
+    assert result.execution_summary
 ```
 
 ### Test Fixtures
@@ -1640,6 +1841,7 @@ def cleanup_tenant_schemas(schema_manager):
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
 from cogniverse_foundation.telemetry import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
@@ -1649,16 +1851,31 @@ def create_orchestrator() -> OrchestratorAgent:
     tenant_id flows per-request via _process_impl(OrchestratorInput(..., tenant_id=...)).
     """
     config_manager = create_default_config_manager()
-    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
-    return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    registry = AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager)
+    return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry, config_manager=config_manager)
 ```
 
 ### Pattern 2: Tenant-Scoped API Endpoint
 
 ```python
 from fastapi import HTTPException
-from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID, require_tenant_id
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+
+# Agent is tenant-agnostic — initialized once at module/startup scope,
+# not per-request. tenant_id flows per-request via _process_impl().
+deps = OrchestratorDeps(
+    telemetry_config=TelemetryConfig(),
+    llm_config=LLMEndpointConfig(
+        model="openai/google/gemma-4-e4b-it",
+        api_base="http://localhost:11434/v1",
+    ),
+)
+orchestrator = OrchestratorAgent(
+    deps=deps,
+    registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+    config_manager=config_manager,
+)
 
 @router.post("/")
 async def search(request: SearchRequest, ...):
@@ -1667,16 +1884,6 @@ async def search(request: SearchRequest, ...):
         tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-
-    # Agent is tenant-agnostic — initialized once, tenant flows per-request
-    deps = OrchestratorDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="openai/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434/v1",
-        ),
-    )
-    orchestrator = OrchestratorAgent(deps=deps, registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
     # Execute query — tenant_id scopes resources at request time
     results = await orchestrator._process_impl(
@@ -1701,7 +1908,7 @@ def add_user_preference(
     # Get tenant-specific memory manager
     memory_mgr = Mem0MemoryManager(tenant_id=tenant_id)
 
-    # Memory schema name follows convention: agent_memories_{tenant_id}
+    # Memory schema name follows convention: agent_memories_{canonical_tenant_id with ':' -> '_'}
     # Schema should be pre-deployed
     # IMPORTANT: Must call initialize() before adding memories
     from cogniverse_foundation.config.utils import create_default_config_manager
@@ -1808,8 +2015,8 @@ schema_manager = VespaSchemaManager(
 )
 schema_a = schema_manager.get_tenant_schema_name("tenant_a", "video_frames")
 schema_b = schema_manager.get_tenant_schema_name("tenant_b", "video_frames")
-print(f"Tenant A schema: {schema_a}")  # Should be video_frames_tenant_a
-print(f"Tenant B schema: {schema_b}")  # Should be video_frames_tenant_b
+print(f"Tenant A schema: {schema_a}")  # Should be video_frames_tenant_a_tenant_a
+print(f"Tenant B schema: {schema_b}")  # Should be video_frames_tenant_b_tenant_b
 
 # Verify query uses correct schema
 # Check Vespa query logs to ensure schema={schema_a} in query
@@ -1881,17 +2088,19 @@ memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories
 ```python
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
+from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
 
 # ✅ Good: Tenant-agnostic at construction — tenant_id flows per-request
 orchestrator = OrchestratorAgent(
     deps=OrchestratorDeps(),
-    registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
+    registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+    config_manager=config_manager,
 )
 # Pass tenant_id per-request:
 # await orchestrator._process_impl(OrchestratorInput(query=query, tenant_id=tenant_id))
 
-# ❌ Bad: Missing deps
-agent = OrchestratorAgent()  # TypeError: missing required argument 'deps'
+# ❌ Bad: Missing deps and registry
+agent = OrchestratorAgent()  # TypeError: missing 2 required positional arguments: 'deps' and 'registry'
 ```
 
 ### 4. Test Tenant Isolation
@@ -1901,9 +2110,11 @@ agent = OrchestratorAgent()  # TypeError: missing required argument 'deps'
 def test_tenant_isolation(config_manager):
     from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
     from cogniverse_core.registries.agent_registry import AgentRegistry
+    from cogniverse_core.common.tenant_utils import SYSTEM_TENANT_ID
     orchestrator = OrchestratorAgent(
         deps=OrchestratorDeps(),
-        registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager),
+        registry=AgentRegistry(tenant_id=SYSTEM_TENANT_ID, config_manager=config_manager),
+        config_manager=config_manager,
     )
     # One agent serves all tenants — tenant isolation at request time
 
@@ -1934,6 +2145,7 @@ Cogniverse's multi-tenant architecture provides **schema-based isolation** via d
 - **TelemetryProvider** (cogniverse-foundation): Per-tenant trace isolation base
 - **PhoenixProvider** (cogniverse-telemetry-phoenix): Phoenix-specific implementation
 - **Tenant Utilities** (cogniverse-core): Validation and parsing
+- **CrossTenantComparisonAgent / FederatedQueryAgent** (cogniverse-agents): ACL-gated, opt-in reads across tenants in the same org
 
 **Isolation Guarantees**:
 

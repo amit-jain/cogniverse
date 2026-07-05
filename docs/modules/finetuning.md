@@ -168,6 +168,33 @@ async def finetune(
 ) -> OrchestrationResult
 ```
 
+**Dataset Readiness Check (`analyze_dataset_status`)**:
+
+Before committing to a full training run, check whether enough data exists yet — this runs the
+same `TrainingMethodSelector` analysis as `finetune()` but without generating synthetic data or
+training:
+
+```python
+from cogniverse_finetuning import analyze_dataset_status
+
+status = await analyze_dataset_status(
+    telemetry_provider=provider,
+    project="cogniverse-tenant1",
+    tenant_id="tenant1",
+    agent_type="routing",
+    min_sft_examples=50,
+    min_dpo_pairs=20,
+)
+
+print(f"Approved: {status['approved_count']}/{status['sft_target']} ({status['sft_progress']:.0f}%)")
+print(f"Preference pairs: {status['preference_pairs']}/{status['dpo_target']} ({status['dpo_progress']:.0f}%)")
+print(f"Recommended method: {status['recommended_method']} (confidence={status['confidence']:.2f})")
+```
+
+Returns a dict with `total_spans`, `approved_count`, `rejected_count`, `preference_pairs`,
+`sft_target`, `dpo_target`, `sft_progress`, `dpo_progress`, `sft_ready`, `dpo_ready`,
+`recommended_method`, `confidence`, `needs_synthetic`, and the raw `analysis` object.
+
 ---
 
 ### 2. Dataset Extraction (`dataset/`)
@@ -288,6 +315,8 @@ class TrajectoryDataset:
 **TraceToTrajectoryConverter**:
 
 ```python
+from datetime import datetime, timedelta, timezone
+
 from cogniverse_finetuning.dataset.trace_converter import TraceToTrajectoryConverter
 
 converter = TraceToTrajectoryConverter(telemetry_provider)
@@ -298,7 +327,7 @@ dataset = await converter.convert(
     agent_type="routing",
     min_turns_per_session=2,      # Minimum turns for multi-turn
     require_session_annotation=False,  # Include session annotations
-    start_time=datetime.now() - timedelta(days=7)
+    start_time=datetime.now(timezone.utc) - timedelta(days=7)
 )
 
 print(f"Extracted {len(dataset.trajectories)} trajectories")
@@ -357,6 +386,7 @@ analysis, approved_batch = await selector.analyze_and_prepare(
     provider=provider,
     project="cogniverse-tenant1",
     agent_type="routing",
+    tenant_id="tenant1",
     generate_synthetic=True
 )
 
@@ -373,10 +403,18 @@ print(f"Confidence: {analysis.confidence}")
 **Purpose**: Unified interface for local and remote training.
 
 **Architecture**:
-```text
-TrainingBackend (abstract)
-    ├── LocalTrainingBackend    # Local GPU/CPU
-    └── RemoteTrainingBackend   # Modal/SageMaker/Azure ML
+```mermaid
+flowchart TB
+    Abstract["<span style='color:#000'><b>TrainingBackend</b><br/>(abstract)</span>"]
+    Local["<span style='color:#000'>LocalTrainingBackend<br/>Local GPU/CPU</span>"]
+    Remote["<span style='color:#000'>RemoteTrainingBackend<br/>Modal/SageMaker/Azure ML</span>"]
+
+    Abstract --> Local
+    Abstract --> Remote
+
+    style Abstract fill:#b0bec5,stroke:#546e7a,color:#000
+    style Local fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Remote fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 **Interface**:
@@ -456,13 +494,50 @@ class TrainingBackend(ABC):
 
 ### 4. Formatters (`dataset/formatters.py`)
 
-**Purpose**: Convert extracted data to TRL-compatible formats.
+**Purpose**: Convert extracted data to TRL-compatible and downstream-framework formats.
 
-**Supported Formats**:
+**`InstructionFormatter` static methods**:
 
-- **Alpaca Text**: `{"text": "### Instruction:\n...\n### Response:\n..."}`
-- **DPO**: `{"prompt": "...", "chosen": "...", "rejected": "..."}`
-- **Triplets**: `{"anchor": "...", "positive": "...", "negative": "..."}`
+| Method | Output shape | Used by |
+|--------|--------------|---------|
+| `format_alpaca(examples)` | `{"instruction": ..., "input": ..., "output": ..., "metadata": ...}` | Structured Alpaca consumers |
+| `format_alpaca_text(examples)` | `{"text": "### Instruction:\n...\n### Input:\n...\n### Response:\n...", "metadata": ...}` | **SFT training** (`dataset_text_field="text"`) — the format the orchestrator actually uses |
+| `format_sharegpt(examples)` | `{"conversations": [{"from": "human", ...}, {"from": "gpt", ...}], "metadata": ...}` | Frameworks expecting ShareGPT conversation format |
+| `format_chatml(examples)` | `{"messages": [{"role": "system"|"user"|"assistant", "content": ...}], "metadata": ...}` | OpenAI-style chat models, HF chat templates |
+| `format_dpo(pairs)` | `{"prompt": ..., "chosen": ..., "rejected": ..., "metadata": ...}` | **DPO training** — the format the orchestrator actually uses |
+| `format_trajectory_chatml(trajectories, system_prompt)` | `{"text": "<\|im_start\|>system\n...<\|im_end\|>..."}` | **Multi-turn SFT training** |
+
+**Module-level convenience functions** (thin wrappers over the methods above):
+
+- `format_for_sft(examples, format="alpaca_text")` — dispatches to `alpaca`, `alpaca_text`,
+  `sharegpt`, or `chatml`; raises `ValueError` on an unknown format
+- `format_for_dpo(pairs)` — wraps `format_dpo`
+- `format_trajectories_for_sft(trajectories, system_prompt)` — wraps `format_trajectory_chatml`
+
+### Dataset Utilities (`dataset/utils.py`)
+
+**Purpose**: Shared train/val/test splitting and dataset upload helpers, usable with any dataset
+type (instruction, preference, or triplet dicts).
+
+**`DatasetUtils` static methods**:
+
+- `split_dataset(data, train_ratio=0.8, val_ratio=0.1, test_ratio=0.1, shuffle=True, seed=42)` →
+  `(train, val, test)` — raises `ValueError` if the ratios don't sum to ~1.0
+- `upload_to_hf_hub(data, repo_id, split="train", token=None)` — pushes a list of dicts to a
+  Hugging Face Hub dataset repo via `datasets.Dataset.push_to_hub`
+- `upload_to_s3(data, bucket, key, format="jsonl")` — writes JSONL or Parquet to S3 via `boto3`
+
+**Module-level convenience functions**:
+
+```python
+from cogniverse_finetuning.dataset.utils import (
+    prepare_dataset_splits,
+    upload_splits_to_hf_hub,
+)
+
+splits = prepare_dataset_splits(examples)  # {"train": [...], "validation": [...], "test": [...]}
+upload_splits_to_hf_hub(splits, "cogniverse/routing-agent-sft", token=hf_token)
+```
 
 ### 5. Adapter Registry (`registry/`)
 
@@ -541,13 +616,17 @@ from cogniverse_finetuning.registry import (
 # Get active adapter info for vLLM
 adapter_info = get_active_adapter_for_inference("acme_corp", "routing")
 if adapter_info:
+    # cache_dir is required — source it from SystemConfig.adapter_cache_dir,
+    # never hardcode a path or read the env directly at this call site.
+    cache_dir = system_config.adapter_cache_dir
+
     # Configure vLLM with the adapter
     engine = LLMEngine(
         model=adapter_info.base_model,
         enable_lora=True,
         lora_modules=[LoRARequest(
             lora_name=adapter_info.name,
-            lora_path=resolve_adapter_path(adapter_info.adapter_uri)
+            lora_path=resolve_adapter_path(adapter_info.adapter_uri, cache_dir)
         )]
     )
 ```
@@ -602,7 +681,7 @@ flowchart TB
     Selector["<span style='color:#000'>TrainingMethodSelector.analyze_data()<br/>• Count approved → SFT examples<br/>• Count preference pairs → DPO pairs<br/>Decision: DPO (≥20 pairs) / SFT (≥50) / Synthetic</span>"]
 
     Step3["<span style='color:#000'>3. Dataset Formatting</span>"]
-    Format["<span style='color:#000'>DPO: PreferencePairExtractor → format_dpo()<br/>SFT: TraceToInstructionConverter → format_alpaca()</span>"]
+    Format["<span style='color:#000'>DPO: PreferencePairExtractor → format_dpo()<br/>SFT: TraceToInstructionConverter → format_alpaca_text()</span>"]
 
     Step4["<span style='color:#000'>4. Validation</span>"]
     Validate["<span style='color:#000'>validate_dpo_dataset() / validate_sft_dataset()<br/>• Check len(dataset) > 0<br/>• Check required fields present</span>"]
@@ -1169,7 +1248,7 @@ if len(dataset) > 100:
 Output directories include timestamps to prevent conflicts:
 
 ```python
-timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 output_dir = f"{config.output_dir}/dpo_{config.agent_type}_{timestamp}"
 ```
 
@@ -1432,7 +1511,8 @@ When insufficient data available:
 # Fine-tuning triggers synthetic generation
 synthetic_svc.generate(SyntheticDataRequest(
     optimizer="routing",
-    count=50
+    count=50,
+    tenant_id="tenant1"
 ))
 
 # Sends through approval workflow (mandatory)
@@ -1600,17 +1680,19 @@ comparison = await compare_experiments(
 )
 ```
 
-### Dashboard Integration
+### Querying Without a Dashboard Tab
 
-The Phoenix dashboard includes a **Fine-Tuning** tab (Monitoring > Fine-Tuning) that provides:
+The Cogniverse Streamlit dashboard (`libs/dashboard/cogniverse_dashboard/`) does not currently
+have a dedicated Fine-Tuning tab — there is no experiment history table, summary metrics view, or
+side-by-side comparison UI for adapter training runs. Because EXPERIMENT spans are ordinary Phoenix
+spans, they are inspectable today through:
 
-- **Experiment History Table**: All training runs with hyperparameters and metrics
-- **Summary Metrics**: Total runs, SFT/DPO counts, best loss
-- **Experiment Details**: View hyperparameters, dataset info, and output paths
-- **Side-by-Side Comparison**: Compare multiple experiments with loss charts
-- **Filtering**: Filter by agent type, modality, or training method
+- The `list_experiments()` / `get_experiment_details()` / `compare_experiments()` helpers above
+- Phoenix's own UI (span explorer, filterable by `openinference.span.kind == "EXPERIMENT"`)
 
-Access the dashboard at `http://localhost:8501` (default Streamlit port).
+Building a dashboard tab for this data would follow the same `render_*_tab()` pattern used by the
+existing tabs in `libs/dashboard/cogniverse_dashboard/tabs/` (e.g. `evaluation.py`,
+`routing_evaluation.py`).
 
 ---
 
@@ -1625,7 +1707,9 @@ After training completes, adapters are automatically evaluated against the base 
 **Accuracy Metrics**:
 
 - `accuracy`: Percentage of correct predictions (0-1)
-- `top_k_accuracy`: Correct prediction in top-k results
+- `top_k_accuracy`: Currently a simplified alias for `accuracy` (`top_k_accuracy = accuracy` in
+  `_evaluate_model`) — greedy generation only produces a single candidate today, so there is no
+  independent top-k ranking computed yet
 
 **Confidence Metrics**:
 
@@ -1731,26 +1815,27 @@ Each evaluation creates an EVALUATION span with the following attributes:
 
 ### Statistical Significance
 
-Improvements are tested for statistical significance:
+Improvements are tested for statistical significance using a two-tailed two-proportion z-test on
+base vs. adapter accuracy (`_two_proportion_p_value` in `adapter_evaluator.py`):
 
-- **Threshold**: Accuracy improvement >5%
+- **Test**: Two-proportion z-test comparing `base_metrics.accuracy` vs `adapter_metrics.accuracy`,
+  weighted by each side's `sample_count`
 
-- **p-value**: Computed for significance test
+- **Result**: `improvement.significant` = true if `p_value < 0.05`
 
-- **Result**: `improvement.significant` = true if p < 0.05
+There is no separate minimum-accuracy-delta gate — significance is determined by `p_value` alone.
+A small accuracy delta on a large enough test set can still be flagged significant, and a large
+delta on a tiny test set may not be.
 
-### Dashboard Integration
+### Querying Evaluation Results Without a Dashboard Tab
 
-Evaluation results are displayed in the Fine-Tuning dashboard:
+As with experiment tracking (see [Phoenix Experiment Tracking](#phoenix-experiment-tracking)),
+there is no dedicated dashboard tab for evaluation results today. EVALUATION spans are queryable
+through the same Phoenix span explorer, filtered on `openinference.span.kind == "EVALUATION"`, or
+by reading `result.evaluation_result` directly off the `OrchestrationResult` returned by
+`finetune()` (see [Usage Example](#usage-example) below).
 
-**Experiment Details View**:
-
-- **Base Model Metrics**: Accuracy, confidence, error rate, hallucination rate, latency
-- **Adapter Model Metrics**: Same metrics for adapter
-- **Improvements**: Side-by-side comparison with delta indicators
-- **Statistical Significance**: Visual indicator (✅/ℹ️) with p-value
-
-**Example**:
+**Example** (illustrative values from an evaluation run):
 ```text
 Base Model Metrics          Adapter Model Metrics
 Accuracy: 65.0%            Accuracy: 83.0%
@@ -1909,22 +1994,23 @@ Dataset: 150 examples
 - `metrics.eval_reward_accuracy`: Percentage of times chosen > rejected
 - `metrics.eval_reward_margin`: Average reward margin (chosen - rejected)
 
-### Dashboard Display
+### Validation Metrics in the Experiment Span
 
-**Experiment Details → Validation Metrics Section**:
+There is no dashboard tab that renders these fields today (see
+[Querying Without a Dashboard Tab](#querying-without-a-dashboard-tab)). The metrics are logged as
+`metrics.*` attributes on the EXPERIMENT span (see [Experiment Span Schema](#experiment-span-schema))
+and are readable via `get_experiment_details()` or Phoenix's span explorer:
 
-- **Train Examples**: Number of training examples
-- **Val Examples**: Number of validation examples
-- **Val Loss**: Final validation loss
-- **Overfit**: Percentage difference between val loss and train loss
-  - Positive (red ↑): Model is overfitting
-  - Negative (green ↓): Model is generalizing well
-- **Early Stopping Indicator**: "✅ Validation split used with early stopping (patience=3)"
+- **`metrics.train_examples`** / **`metrics.val_examples`**: Number of training/validation examples
+- **`metrics.eval_loss`**: Final validation loss — compare against `metrics.train_loss` to gauge
+  overfitting (`eval_loss` noticeably higher than `train_loss` indicates overfitting)
+- **`metrics.used_validation_split`**: Boolean — whether the 90/10 split and early stopping
+  (patience=3) were used for this run
 
-**DPO Experiments Also Show**:
+**DPO Runs Also Log**:
 
-- **Reward Accuracy**: Percentage of preference pairs correctly ranked
-- **Reward Margin**: Average difference in rewards between chosen and rejected
+- **`metrics.eval_reward_accuracy`**: Percentage of preference pairs correctly ranked
+- **`metrics.eval_reward_margin`**: Average difference in rewards between chosen and rejected
 
 ### Example Output
 

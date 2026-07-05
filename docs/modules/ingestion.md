@@ -26,8 +26,11 @@ libs/runtime/cogniverse_runtime/ingestion/
 ├── pipeline.py                    # Main VideoIngestionPipeline orchestrator
 ├── pipeline_builder.py            # Pipeline construction utilities
 ├── strategy_factory.py            # Creates strategy sets from config
-├── strategy.py                    # Strategy base classes and interfaces
-├── strategies.py                  # Strategy implementations (Frame, Chunk, SingleVector, etc.)
+├── strategy.py                    # Strategy/StrategyConfig — unified processing/ranking/storage
+│                                   # strategy model used by cogniverse_core.registries.registry
+│                                   # (distinct from the BaseStrategy processors below)
+├── strategies.py                  # 18 BaseStrategy implementations (Frame, Chunk, SingleVector,
+│                                   # Image, AudioFile, Document, DocumentVisual, Code, etc.)
 ├── processing_strategy_set.py     # Strategy container with execution flow
 ├── processor_manager.py           # Manages processor instances
 ├── processor_base.py              # Base classes for processors and strategies
@@ -100,10 +103,12 @@ The Ingestion Module transforms raw content files into searchable, multi-modal r
 2. **Audio Transcription** - Whisper-based speech-to-text
 3. **Visual Description** - VLM-based frame descriptions
 4. **Embedding Generation** - ColPali, VideoPrism, ColQwen, ColBERT embeddings
-5. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
-6. **Document Visual Processing** - PDF pages rendered to images (pdf2image) with ColPali multi-vector page embeddings (`document_visual_colpali` profile → `document_visual` schema)
-7. **Audio Processing** - CLAP acoustic + ColBERT semantic dual embeddings for audio content
-8. **Backend Ingestion** - Feed documents to Vespa search
+5. **Image Processing** - Directory of images presented as keyframes (`ImageSegmentationStrategy`) for ColPali embedding
+6. **Document Processing** - Text extraction and ColBERT semantic embeddings for PDFs/documents
+7. **Document Visual Processing** - PDF pages rendered to images (pdf2image) with ColPali multi-vector page embeddings (`document_visual_colpali` profile → `document_visual` schema)
+8. **Audio Processing** - CLAP acoustic + ColBERT semantic dual embeddings for audio content, plus standalone audio-file discovery (`AudioFileSegmentationStrategy`)
+9. **Code Processing** - tree-sitter AST-aware chunking of source files (`CodeSegmentationStrategy`) with ColBERT multi-vector embeddings (`CodeTextEmbeddingStrategy`)
+10. **Backend Ingestion** - Feed documents to Vespa search
 
 ### Key Features
 
@@ -318,38 +323,62 @@ sequenceDiagram
     deactivate StrategySet
 ```
 
-**Strategy Types Available:**
+**Strategy Types Available** (all 18 `BaseStrategy` subclasses in `strategies.py`):
 
 ```mermaid
 flowchart LR
-    subgraph Segmentation Strategies
-        Frame["<span style='color:#000'>FrameSegmentationStrategy<br/>Keyframes extraction</span>"]
+    subgraph Segmentation["<span style='color:#000'>Segmentation Strategies</span>"]
+        Frame["<span style='color:#000'>FrameSegmentationStrategy<br/>Keyframe extraction</span>"]
         Chunk["<span style='color:#000'>ChunkSegmentationStrategy<br/>Video chunks</span>"]
         Single["<span style='color:#000'>SingleVectorSegmentationStrategy<br/>Sliding windows</span>"]
+        Image["<span style='color:#000'>ImageSegmentationStrategy<br/>Image directory as keyframes</span>"]
+        AudioFile["<span style='color:#000'>AudioFileSegmentationStrategy<br/>Discover audio files</span>"]
+        Doc["<span style='color:#000'>DocumentSegmentationStrategy<br/>Discover document files</span>"]
+        DocVis["<span style='color:#000'>DocumentVisualSegmentationStrategy<br/>PDF pages → images</span>"]
+        Code["<span style='color:#000'>CodeSegmentationStrategy<br/>tree-sitter AST chunks</span>"]
     end
 
-    subgraph Transcription Strategies
+    subgraph Transcription["<span style='color:#000'>Transcription Strategies</span>"]
         Audio["<span style='color:#000'>AudioTranscriptionStrategy<br/>Whisper transcription</span>"]
+        NoTrans["<span style='color:#000'>NoTranscriptionStrategy<br/>Skip transcription</span>"]
     end
 
-    subgraph Description Strategies
-        VLM["<span style='color:#000'>VLMDescriptionStrategy<br/>Qwen2-VL descriptions</span>"]
+    subgraph Description["<span style='color:#000'>Description Strategies</span>"]
+        VLM["<span style='color:#000'>VLMDescriptionStrategy<br/>VLM frame descriptions</span>"]
         NoDesc["<span style='color:#000'>NoDescriptionStrategy<br/>Skip descriptions</span>"]
     end
 
-    subgraph Embedding Strategies
+    subgraph Embedding["<span style='color:#000'>Embedding Strategies</span>"]
         MultiVec["<span style='color:#000'>MultiVectorEmbeddingStrategy<br/>ColPali, ColQwen</span>"]
         SingleVec["<span style='color:#000'>SingleVectorEmbeddingStrategy<br/>VideoPrism</span>"]
+        AudioEmb["<span style='color:#000'>AudioEmbeddingStrategy<br/>CLAP + ColBERT dual</span>"]
+        DocText["<span style='color:#000'>DocumentTextEmbeddingStrategy<br/>ColBERT for text</span>"]
+        DocVisEmb["<span style='color:#000'>DocumentVisualEmbeddingStrategy<br/>ColPali for PDF pages</span>"]
+        CodeText["<span style='color:#000'>CodeTextEmbeddingStrategy<br/>ColBERT for source code</span>"]
     end
 
-    style Frame fill:#90caf9,stroke:#1565c0,color:#000
-    style Chunk fill:#90caf9,stroke:#1565c0,color:#000
-    style Single fill:#90caf9,stroke:#1565c0,color:#000
-    style Audio fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VLM fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style NoDesc fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style MultiVec fill:#a5d6a7,stroke:#388e3c,color:#000
-    style SingleVec fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Segmentation fill:#90caf9,stroke:#1565c0,color:#000
+    style Frame fill:#64b5f6,stroke:#1565c0,color:#000
+    style Chunk fill:#64b5f6,stroke:#1565c0,color:#000
+    style Single fill:#64b5f6,stroke:#1565c0,color:#000
+    style Image fill:#64b5f6,stroke:#1565c0,color:#000
+    style AudioFile fill:#64b5f6,stroke:#1565c0,color:#000
+    style Doc fill:#64b5f6,stroke:#1565c0,color:#000
+    style DocVis fill:#64b5f6,stroke:#1565c0,color:#000
+    style Code fill:#64b5f6,stroke:#1565c0,color:#000
+    style Transcription fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Audio fill:#ffb74d,stroke:#ef6c00,color:#000
+    style NoTrans fill:#ffb74d,stroke:#ef6c00,color:#000
+    style Description fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style VLM fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style NoDesc fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style Embedding fill:#a5d6a7,stroke:#388e3c,color:#000
+    style MultiVec fill:#81c784,stroke:#388e3c,color:#000
+    style SingleVec fill:#81c784,stroke:#388e3c,color:#000
+    style AudioEmb fill:#81c784,stroke:#388e3c,color:#000
+    style DocText fill:#81c784,stroke:#388e3c,color:#000
+    style DocVisEmb fill:#81c784,stroke:#388e3c,color:#000
+    style CodeText fill:#81c784,stroke:#388e3c,color:#000
 ```
 
 ### 3. Embedding Generation Flow
@@ -357,167 +386,64 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant Strategy as Embedding Strategy
+    participant Pipeline as VideoIngestionPipeline
     participant Generator as EmbeddingGeneratorImpl
-    participant Processor as Generation Method
-    participant Model as Embedding Model
-    participant Builder as Document Builder
-    participant Backend as Vespa Backend
+    participant Model as Embedding Model / RemoteInferenceClient
+    participant Backend as IngestionBackend (Vespa)
 
-    Strategy->>Generator: generate_embeddings(video_data, output_dir)
+    Strategy->>Pipeline: generate_embeddings_with_processor(results, pipeline_context, processor_manager)
+    Pipeline->>Generator: generate_embeddings(video_data, output_dir)
     activate Generator
 
-    Generator->>Generator: Determine processing type
-    Note over Generator: processing_type = video_data["processing_type"]<br/>"frame_based" | "video_chunks" | "direct_video" | "single_vector"
+    Generator->>Generator: _extract_segments(video_data)
+    Note over Generator: checks document_pages/document_files/code_files/<br/>audio_files keys, then segments/keyframes/frames/<br/>chunks/video_chunks/single_vector_processing
 
-    alt Frame-Based Processing (ColPali)
-        Generator->>Processor: _generate_frame_based_embeddings()
-        activate Processor
-
-        Processor->>Processor: Load keyframe images
-        Note over Processor: images = [PIL.Image.open(kf["path"]) for kf in keyframes]
-
-        Processor->>Model: Encode images in batches
-        activate Model
-        loop For each batch
-            Model->>Model: process_images(batch)
-            Model->>Model: Generate embeddings
-            Note over Model: embeddings.shape = [batch_size, num_patches, embedding_dim]<br/>e.g. [batch_size, 1024, 320] for ColPali
-        end
-        Model-->>Processor: frame_embeddings[]
-        deactivate Model
-
-        Processor->>Builder: build_frame_documents()
-        activate Builder
-        loop For each frame
-            Builder->>Builder: Create document
-            Note over Builder: doc = {<br/>  video_id: str,<br/>  frame_number: int,<br/>  timestamp: float,<br/>  embeddings: hex_encoded<br/>}
-        end
-        Builder-->>Processor: documents[]
-        deactivate Builder
-
-        Processor-->>Generator: {documents: [], metadata: {}}
-        deactivate Processor
-
-    else Video Chunks Processing (ColQwen)
-        Generator->>Processor: _generate_video_chunks_embeddings()
-        activate Processor
-
-        Processor->>Processor: Load chunk videos
-        Note over Processor: chunks = video_data["video_chunks"]["chunks"]
-
-        Processor->>Model: Encode video chunks
-        activate Model
-        loop For each chunk
-            Model->>Model: process_video(chunk_path)
-            Model->>Model: Generate embeddings
-            Note over Model: embeddings.shape = [num_patches, embed_dim]
-        end
-        Model-->>Processor: chunk_embeddings[]
-        deactivate Model
-
-        Processor->>Builder: build_chunk_documents()
-        activate Builder
-        loop For each chunk
-            Builder->>Builder: Create document
-            Note over Builder: doc = {<br/>  video_id: str,<br/>  chunk_number: int,<br/>  start_time: float,<br/>  end_time: float,<br/>  embeddings: hex_encoded<br/>}
-        end
-        Builder-->>Processor: documents[]
-        deactivate Builder
-
-        Processor-->>Generator: {documents: [], metadata: {}}
-        deactivate Processor
-
-    else Direct Video Processing (VideoPrism)
-        Generator->>Processor: _generate_direct_video_embeddings()
-        activate Processor
-
-        Processor->>Processor: Load full video
-        Note over Processor: video_path = video_data["video_path"]
-
-        Processor->>Model: Encode full video
-        activate Model
-        Model->>Model: process_full_video(video_path)
-        Model->>Model: Generate global embedding
-        Note over Model: embedding.shape = [768] (base)<br/>or [1024] (large)
-        Model-->>Processor: video_embedding
-        deactivate Model
-
-        Processor->>Builder: build_video_document()
-        activate Builder
-        Builder->>Builder: Create single document
-        Note over Builder: doc = {<br/>  video_id: str,<br/>  duration: float,<br/>  embedding: float_array<br/>}
-        Builder-->>Processor: document
-        deactivate Builder
-
-        Processor-->>Generator: {documents: [doc], metadata: {}}
-        deactivate Processor
-
-    else Single-Vector Segments (VideoPrism LVT)
-        Generator->>Processor: _generate_single_vector_embeddings()
-        activate Processor
-
-        Processor->>Processor: Load segment data
-        Note over Processor: segments = video_data["single_vector_processing"]["segments"]
-
-        Processor->>Model: Encode segments
-        activate Model
-        loop For each segment
-            Model->>Model: Extract frames from segment
-            Model->>Model: process_segment_frames(frames)
-            Model->>Model: Generate segment embedding
-            Note over Model: embedding.shape = [768] (base) or [1024] (large)
-        end
-        Model-->>Processor: segment_embeddings[]
-        deactivate Model
-
-        Processor->>Builder: build_segment_documents()
-        activate Builder
-        loop For each segment
-            Builder->>Builder: Create document
-            Note over Builder: doc = {<br/>  video_id: str,<br/>  segment_id: int,<br/>  start_time: float,<br/>  end_time: float,<br/>  text: str,<br/>  embedding: float_array<br/>}
-        end
-        Builder-->>Processor: documents[]
-        deactivate Builder
-
-        Processor-->>Generator: {documents: [], metadata: {}}
-        deactivate Processor
+    alt "document_pages" in video_data
+        Generator->>Generator: _process_document_visual_segments()
+    else "document_files" in video_data
+        Generator->>Generator: _process_document_segments()
+    else "code_files" in video_data
+        Generator->>Generator: _process_code_segments()
+    else "audio_files" in video_data
+        Generator->>Generator: _process_audio_segments()
+    else storage_mode == "single_doc"
+        Generator->>Generator: _process_single_document()
+    else storage_mode == "multi_doc" (default)
+        Generator->>Generator: _process_multi_documents()
     end
 
-    Generator->>Backend: Feed documents to Vespa
-    activate Backend
+    Generator->>Generator: _iter_segment_embeddings(segments, video_path, video_data)
+    activate Generator
+    loop for each segment (or remote frame batch)
+        alt frame segment + RemoteInferenceClient processor
+            Generator->>Model: _generate_frame_embeddings_batch(frame_paths)
+            Note over Model: batches up to _REMOTE_FRAME_BATCH frames per<br/>request; falls back to one-at-a-time on batch failure
+        else local model / non-frame segment
+            Generator->>Model: _generate_segment_embeddings(segment, video_path, video_data)
+        end
+        Model-->>Generator: embeddings (np.ndarray) or Exception
+    end
+    deactivate Generator
 
-    alt Batch Upload
-        Backend->>Backend: feed_iterable(documents, batch_size=50)
-        loop For each batch
-            Backend->>Backend: POST batch to Vespa
-            Backend->>Backend: Track success/failure
-        end
-    else Single Document Upload
-        loop For each document
-            Backend->>Backend: POST document to Vespa
-            Backend->>Backend: Track success/failure
-        end
+    Generator->>Generator: _create_segment_document(video_id, segment, embeddings, transcript, description, source_url) -> Document
+    Generator->>Generator: batch.append(doc)
+
+    opt batch reaches _FEED_BATCH_SIZE (50) or loop ends
+        Generator->>Backend: _feed_documents(batch) -> backend_client.ingest_documents(documents, schema_name)
+        Backend-->>Generator: success_count
     end
 
-    Backend-->>Generator: Feed results
-    deactivate Backend
-
-    Generator->>Generator: Compile EmbeddingResult
-    Note over Generator: result = {<br/>  video_id: str,<br/>  total_documents: int,<br/>  documents_processed: int,<br/>  documents_fed: int,<br/>  processing_time: float,<br/>  errors: [],<br/>  metadata: {}<br/>}
-
-    Generator-->>Strategy: EmbeddingResult
+    Generator-->>Pipeline: EmbeddingResult(video_id, total_documents,<br/>documents_processed, documents_fed,<br/>processing_time, errors, metadata)
     deactivate Generator
 ```
 
-**Embedding Processing Types:**
+**Embedding Processing Types** (selected by which key `video_data` carries, checked in `generate_embeddings()`):
 
-- **Frame-Based** (`multi_vector`): ColPali multi-vector per frame (1024 patches × 320-dim)
-- **Video Chunks** (`multi_vector`): ColQwen multi-vector per chunk (1024 patches × 320-dim)
-- **Direct Video** (`multi_vector`): VideoPrism single global embedding
-- **Single-Vector Segments** (`single_vector`): VideoPrism LVT per segment
-- **Document ColBERT** (`multi_vector`): ColBERT 128-dim per-token multi-vector via PyLate for text documents
-- **Document Visual ColPali** (`multi_vector`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
-- **Audio Dual** (`multi_vector`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
+- **Frame/Chunk/Window** (`_process_multi_documents` / `_process_single_document`, default path): ColPali multi-vector per frame, ColQwen multi-vector per chunk, or VideoPrism single-vector per segment/global — dispatch is by `storage_mode` (`multi_doc` vs `single_doc`), not a `processing_type` field
+- **Document ColBERT** (`document_files` present → `_process_document_segments`): ColBERT 128-dim per-token multi-vector for text documents
+- **Document Visual ColPali** (`document_pages` present → `_process_document_visual_segments`): ColPali (Tomoro ColQwen3) 320-dim per-patch multi-vector for PDF pages rendered to images (`DocumentVisualSegmentationStrategy` → `DocumentVisualEmbeddingStrategy`)
+- **Code ColBERT** (`code_files` present → `_process_code_segments`): ColBERT 128-dim per-token multi-vector for source-code chunks (`CodeSegmentationStrategy` → `CodeTextEmbeddingStrategy`)
+- **Audio Dual** (`audio_files` present → `_process_audio_segments`): CLAP 512-dim acoustic single-vector + ColBERT 128-dim semantic multi-vector for audio content
 
 ---
 
@@ -726,7 +652,7 @@ flowchart TB
 After `VideoIngestionPipeline` finishes feeding content to Vespa, the ingestion router (`libs/runtime/cogniverse_runtime/routers/ingestion.py`) runs a per-segment KG extraction pass against every text-emitting result it produced. Two functions drive it:
 
 - `_iter_segments_for_graph(processing_results, source_doc_id) -> Iterator[SegmentRecord]` — yields one record per Whisper transcript segment, VLM keyframe description, OCR/caption block, and document file. Each `SegmentRecord` carries `text` plus a `segment_anchor: Mention` with the timestamps the upstream processor produced.
-- `_extract_graph_per_segment(processing_results, source_doc_id, tenant_id) -> dict` — calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention, prior_entities=<cumulative pool>)` per segment, accumulates `ExtractionResult` (anchored `Node.mentions: List[Mention]` + SPO `Edge` rows from `ClaimExtractor`), runs `CrossModalLinker.link()` to add `same_as` edges across modalities, `GraphManager.upsert()`s the merged result, then PATCHes per-segment back-refs (`entity_ids` / `relation_ids` / `claim_ids` arrays) onto the corresponding content documents.
+- `_extract_graph_per_segment(processing_results, source_doc_id, tenant_id, config_manager) -> dict` — calls `DocExtractor.extract_from_text(text, ..., segment_anchor=mention, prior_entities=<cumulative pool>)` per segment, accumulates `ExtractionResult` (anchored `Node.mentions: List[Mention]` + SPO `Edge` rows from `ClaimExtractor`), runs `CrossModalLinker.link()` to add `same_as` edges across modalities, `GraphManager.upsert()`s the merged result, then PATCHes per-segment back-refs (`entity_ids` / `relation_ids` / `claim_ids` arrays) onto the corresponding content documents.
 
 Key product knobs:
 
@@ -973,13 +899,18 @@ results = await strategy_set.process(
 
 **Key Methods**:
 
-#### `def initialize_from_strategies(strategy_set: ProcessingStrategySet)`
+#### `def initialize_from_strategies(strategy_set, service_urls: dict[str, str])`
 
-Scan strategy requirements and create processors.
+Scan strategy requirements and create processors. `service_urls` is the
+`{service_name: url}` map from `SystemConfig.inference_service_urls`; any
+processor requirement carrying an `inference_service` key has it resolved to a
+concrete `endpoint` URL before construction. Pass `{}` when no remote
+inference services are deployed — strategies that request one then raise at
+init instead of silently falling back to a local model.
 
 ```python
 manager = ProcessorManager(logger)
-manager.initialize_from_strategies(strategy_set)
+manager.initialize_from_strategies(strategy_set, service_urls={})
 # Internally calls strategy.get_required_processors() for each strategy
 ```
 
@@ -1039,10 +970,14 @@ The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
 # "colbert"    → ColBERTModelLoader
 ```
 
-**Additional Processing Methods**:
+**Additional Processing Methods** (dispatched from `generate_embeddings()` by
+which key is present in `video_data`, checked in this order):
 
-- `_process_document_segments()` - ColBERT 128-dim per-token multi-vector embeddings for text documents
-- `_process_audio_segments()` - CLAP 512-dim acoustic + ColBERT 128-dim semantic dual embeddings for audio
+- `_process_document_visual_segments()` - `document_pages` present: ColPali multi-vector page-image embeddings for PDF pages
+- `_process_document_segments()` - `document_files` present: ColBERT 128-dim per-token multi-vector embeddings for text documents
+- `_process_code_segments()` - `code_files` present: ColBERT 128-dim per-token multi-vector embeddings for source-code chunks
+- `_process_audio_segments()` - `audio_files` present: CLAP 512-dim acoustic + ColBERT 128-dim semantic dual embeddings for audio
+- `_process_single_document()` / `_process_multi_documents()` - fallback for frame/chunk/window segments, chosen by `storage_mode`
 
 **Required Profile Config Keys** (enforced by `EmbeddingGeneratorImpl.__init__`):
 
@@ -1053,6 +988,31 @@ The concrete implementation is `EmbeddingGeneratorImpl` (below), constructed via
 `embedding_type` is validated separately, at profile-registration time, by
 `ProfileValidator._validate_embedding_type` (`libs/core/cogniverse_core/validation/profile_validator.py`)
 — `EmbeddingGeneratorImpl` itself does not read or require it.
+
+### 7. VideoIngestionPipelineBuilder / PipelineConfigBuilder (pipeline_builder.py)
+
+**Purpose**: Fluent builder for `VideoIngestionPipeline`, avoiding a long positional/keyword constructor call at each call site.
+
+**Key Methods** (`VideoIngestionPipelineBuilder`, all return `self`):
+
+- `with_tenant_id(tenant_id)`, `with_config_manager(config_manager)`, `with_schema_loader(schema_loader)` — required dependencies
+- `with_config(config)`, `with_app_config(app_config)`, `with_schema(schema_name)`, `with_debug(debug_mode=True)`
+- `with_video_dir(video_dir)`, `with_media_root_uri(media_root_uri)`, `with_output_dir(output_dir)`, `with_backend(backend)`, `with_max_frames(max_frames)`
+- `with_concurrency(max_concurrent)` — sets the pipeline's default `max_concurrent` (this is the "configured value" `process_videos_concurrent` falls back to when its own `max_concurrent` argument is omitted)
+- `build() -> VideoIngestionPipeline` — raises `ValueError` if `tenant_id` or `config_manager` was never set
+
+```python
+pipeline = (
+    VideoIngestionPipelineBuilder()
+    .with_tenant_id("your_org:production")
+    .with_config_manager(config_manager)
+    .with_schema("video_colpali_smol500_mv_frame")
+    .with_concurrency(2)
+    .build()
+)
+```
+
+`PipelineConfigBuilder` is a companion fluent builder for `PipelineConfig` itself, in the same module.
 
 ---
 
@@ -1142,8 +1102,9 @@ result = await strategy.segment(
 
 **Parameters**:
 
-- `model`: Whisper model ("whisper-large-v3", "whisper-medium", etc.)
-- `language`: Language code or "auto" for detection
+- `model`: Whisper model (default `"base"`, ~150MB; set `"whisper-large-v3"` etc. explicitly for higher accuracy)
+- `language`: Language code or "auto" for detection (default `"auto"`)
+- `inference_service`: Optional named remote service (e.g. `"vllm_asr"`); when set, `AudioProcessor` POSTs to the vLLM Whisper pod's `/v1/audio/transcriptions` instead of loading a local model (default `None`)
 
 **Usage**:
 ```python
@@ -1175,18 +1136,22 @@ strategy = VLMDescriptionStrategy(
 
 **Parameters**:
 
-- `model_name`: Embedding model (e.g., "TomoroAI/tomoro-colqwen3-embed-4b")
+- `model_name`: Embedding model (default `"TomoroAI/tomoro-colqwen3-embed-4b"`)
+- `inference_service`: Optional named remote service for ColPali/ColQwen inference (default `None`)
 
 **Usage**:
 ```python
 strategy = MultiVectorEmbeddingStrategy(model_name="TomoroAI/tomoro-colqwen3-embed-4b")
 ```
 
-**Custom Method**:
+**Custom Method** (shared by every embedding strategy: `MultiVectorEmbeddingStrategy`,
+`SingleVectorEmbeddingStrategy`, `AudioEmbeddingStrategy`, `DocumentTextEmbeddingStrategy`,
+`DocumentVisualEmbeddingStrategy`, `CodeTextEmbeddingStrategy`):
 
 #### `async generate_embeddings_with_processor(results: dict, pipeline_context, processor_manager) -> dict`
 
-Generate embeddings using pipeline context:
+Wraps `results` with `video_id`/`video_path` and delegates to
+`pipeline_context.generate_embeddings()`, which routes through `EmbeddingGeneratorImpl`:
 ```python
 embeddings = await strategy.generate_embeddings_with_processor(
     results={"keyframes": [...]},
@@ -1201,11 +1166,172 @@ embeddings = await strategy.generate_embeddings_with_processor(
 
 **Parameters**:
 
-- `model_name`: Embedding model (e.g., "google/videoprism-base")
+- `model_name`: Embedding model (default `"google/videoprism-base"`)
+- `inference_service`: Optional named remote service for VideoPrism inference (default `None`)
 
 **Usage**:
 ```python
 strategy = SingleVectorEmbeddingStrategy(model_name="google/videoprism-lvt-base")
+```
+
+### 8. NoDescriptionStrategy / NoTranscriptionStrategy
+
+**Purpose**: No-op strategies for profiles that skip a stage entirely.
+
+- `NoDescriptionStrategy` — `get_required_processors()` returns `{}`; used when a profile has no `description` stage (e.g. non-VLM video profiles).
+- `NoTranscriptionStrategy` — `get_required_processors()` returns `{}`; used for non-video content (images, documents, code) that has no audio track.
+
+**Usage**:
+```python
+strategy_set = ProcessingStrategySet(
+    segmentation=ImageSegmentationStrategy(),
+    transcription=NoTranscriptionStrategy(),
+    description=NoDescriptionStrategy(),
+    embedding=MultiVectorEmbeddingStrategy(),
+)
+```
+
+### 9. ImageSegmentationStrategy
+
+**Purpose**: Load images from a directory and present each one as a "keyframe" in the
+same shape `FrameSegmentationStrategy` produces, so `MultiVectorEmbeddingStrategy` works unchanged.
+
+**Parameters**:
+
+- `max_images`: Maximum images to discover (default 10000)
+- `inference_service`: Optional named remote inference service (default `None`)
+
+**Usage**:
+```python
+strategy = ImageSegmentationStrategy(max_images=5000)
+requirements = strategy.get_required_processors()
+# Returns: {"image": {"max_images": 5000}}
+```
+
+Discovery for the `image` requirement key is handled inline by
+`ProcessingStrategySet._process_segmentation` — there is no `ImageProcessor` in
+`ProcessorManager`'s auto-discovered processor set.
+
+### 10. AudioFileSegmentationStrategy
+
+**Purpose**: Discover audio files in a directory for standalone audio ingestion (analogous to `ImageSegmentationStrategy`).
+
+**Parameters**:
+
+- `max_files`: Maximum audio files to discover (default 10000)
+
+**Usage**:
+```python
+strategy = AudioFileSegmentationStrategy(max_files=1000)
+# get_required_processors() -> {"audio_file": {"max_files": 1000}}
+```
+
+### 11. AudioEmbeddingStrategy
+
+**Purpose**: Generate CLAP acoustic (512-dim) + ColBERT semantic (128-dim multi-vector) dual embeddings for audio content.
+
+**Parameters**:
+
+- `clap_model`: CLAP model for acoustic embeddings (default `"laion/clap-htsat-unfused"`)
+- `colbert_model`: ColBERT model for semantic embeddings (default `"lightonai/LateOn"`)
+
+**Usage**:
+```python
+strategy = AudioEmbeddingStrategy(
+    clap_model="laion/clap-htsat-unfused",
+    colbert_model="lightonai/LateOn",
+)
+# get_required_processors() -> {"embedding": {"type": "audio", "clap_model": ..., "colbert_model": ...}}
+```
+
+### 12. DocumentSegmentationStrategy
+
+**Purpose**: Discover document files (PDF via PyPDF2, plain text, markdown) in a directory for text-based ingestion.
+
+**Parameters**:
+
+- `max_files`: Maximum document files to discover (default 10000)
+
+**Usage**:
+```python
+strategy = DocumentSegmentationStrategy(max_files=2000)
+# get_required_processors() -> {"document_file": {"max_files": 2000}}
+```
+
+### 13. DocumentVisualSegmentationStrategy
+
+**Purpose**: Render PDF pages to images (via pdf2image/poppler) for ColPali page-as-image ingestion — analogous to `ImageSegmentationStrategy` for images.
+
+**Parameters**:
+
+- `max_files`: Maximum PDF files to discover (default 10000)
+- `dpi`: Rendering resolution in DPI (default 150)
+
+**Usage**:
+```python
+strategy = DocumentVisualSegmentationStrategy(max_files=500, dpi=150)
+# get_required_processors() -> {"document_page": {"max_files": 500, "dpi": 150}}
+```
+
+### 14. CodeSegmentationStrategy
+
+**Purpose**: Parse source code files into AST-aware chunks using tree-sitter — function, method, class, and top-level block segments, each with name + signature + docstring + body (the same representation `colgrep` uses). Walks directories, respects `.gitignore`, filters by language extension.
+
+**Parameters**:
+
+- `languages`: List of languages to parse (default `["python", "typescript", "go", "javascript"]`)
+- `max_files`: Maximum source files to discover (default 50000)
+
+**Usage**:
+```python
+strategy = CodeSegmentationStrategy(languages=["python", "go"], max_files=10000)
+# get_required_processors() -> {"code_file": {"languages": [...], "max_files": 10000}}
+```
+
+**Additional Methods**: `get_supported_extensions()`, `parse_file(file_path)`, and internal AST-walking helpers (`_extract_segments`, `_extract_name`, `_extract_signature`) that back the tree-sitter parsing.
+
+### 15. DocumentTextEmbeddingStrategy
+
+**Purpose**: Generate ColBERT multi-vector embeddings (128-dim per token) for document text extracted by `DocumentSegmentationStrategy`.
+
+**Parameters**:
+
+- `colbert_model`: ColBERT model (default `"lightonai/LateOn"`)
+- `inference_service`: Optional named remote inference service (default `None`)
+
+**Usage**:
+```python
+strategy = DocumentTextEmbeddingStrategy(colbert_model="lightonai/LateOn")
+# get_required_processors() -> {"embedding": {"type": "document_text", "colbert_model": ...}}
+```
+
+### 16. DocumentVisualEmbeddingStrategy
+
+**Purpose**: Generate ColPali multi-vector embeddings (128-dim per patch) for the PDF page images `DocumentVisualSegmentationStrategy` renders.
+
+**Parameters**:
+
+- `colpali_model`: ColPali model (default `"TomoroAI/tomoro-colqwen3-embed-4b"`)
+- `inference_service`: Optional named remote inference service (default `None`)
+
+**Usage**:
+```python
+strategy = DocumentVisualEmbeddingStrategy(colpali_model="TomoroAI/tomoro-colqwen3-embed-4b")
+# get_required_processors() -> {"embedding": {"type": "document_visual", "colpali_model": ...}}
+```
+
+### 17. CodeTextEmbeddingStrategy
+
+**Purpose**: Generate ColBERT multi-vector embeddings (128-dim per token) for source-code chunks produced by `CodeSegmentationStrategy`.
+
+**Parameters**:
+
+- `colbert_model`: ColBERT model (default `"lightonai/LateOn-Code-edge"`)
+
+**Usage**:
+```python
+strategy = CodeTextEmbeddingStrategy(colbert_model="lightonai/LateOn-Code-edge")
+# get_required_processors() -> {"embedding": {"type": "code_text", "colbert_model": ...}}
 ```
 
 ---
@@ -1330,7 +1456,28 @@ result = processor.transcribe_audio(
 
 - Transcript JSON: `{output_dir}/transcripts/{video_id}_transcript.json`
 
-### 4. SingleVectorVideoProcessor (single_vector_processor.py)
+### 4. VLMProcessor
+
+**Purpose**: Generate frame descriptions via a remote Vision-Language Model, delegating the actual HTTP/Modal-service communication to `VLMDescriptor`.
+
+**Methods**:
+
+#### `def generate_descriptions(frames_data: dict[str, Any]) -> dict[str, Any]`
+
+```python
+processor = VLMProcessor(
+    logger,
+    vlm_endpoint="https://user--cogniverse-vlm-vlmmodel-generate-description.modal.run/",
+    batch_size=500,
+)
+result = processor.generate_descriptions(frames_data)
+```
+
+`process(*args, **kwargs)` (the `BaseProcessor` abstract method) forwards to
+`generate_descriptions`. `cleanup()` stops the underlying Modal service if
+`VLMDescriptor` auto-started it.
+
+### 5. SingleVectorVideoProcessor (single_vector_processor.py)
 
 **Purpose**: Process videos with sliding window segmentation for single-vector embeddings
 
@@ -1374,6 +1521,17 @@ class VideoSegment:
     transcript_text: str = ""        # Combined transcript text
     metadata: dict[str, Any] = None  # Additional metadata
 ```
+
+### Internal Helper Classes (not `BaseProcessor` subclasses)
+
+These plain classes back the processors above and are not auto-discovered by
+`ProcessorManager` themselves:
+
+- `AudioTranscriber` (`audio_transcriber.py`) — Whisper model loading and the core transcription call; used by `AudioProcessor`.
+- `AudioEmbeddingGenerator` (`audio_embedding_generator.py`) — lazy CLAP loading and acoustic embedding generation; used by `EmbeddingGeneratorImpl._process_audio_segments()`.
+- `VLMDescriptor` (`vlm_descriptor.py`) — Modal VLM service HTTP client and auto-start logic; used by `VLMProcessor`.
+- `EmbeddingGeneratorFactory` (`embedding_generator/embedding_generator_factory.py`) — exposes `create_embedding_generator(...)`, the factory function used to construct `EmbeddingGeneratorImpl`.
+- `BackendFactory` (`embedding_generator/backend_factory.py`) — `BackendFactory.create(backend_type, tenant_id, config, ...)` builds the `IngestionBackend` (Vespa) client fed to `EmbeddingGeneratorImpl`.
 
 ---
 
@@ -1956,29 +2114,65 @@ for profile in profiles_gpu1:
 
 ### Key Test Files
 
-#### Unit Tests:
+The `tests/ingestion/` suite has 49 files (28 unit, 20 integration, 1 shared
+`integration/conftest.py`).
 
-- `tests/ingestion/unit/test_keyframe_processor.py` - Keyframe extraction
+#### Unit Tests (`tests/ingestion/unit/`):
 
-- `tests/ingestion/unit/test_chunk_processor.py` - Chunk extraction
+| File | Covers |
+|---|---|
+| `test_keyframe_processor.py` | Keyframe extraction |
+| `test_keyframe_processor_real.py` | `KeyframeProcessor` against a real video file |
+| `test_chunk_processor.py` | Chunk extraction (mock logger) |
+| `test_chunk_processor_basic.py` | Basic `ChunkProcessor` behavior |
+| `test_chunk_processor_real.py` | `ChunkProcessor` against a real video file |
+| `test_audio_processor.py` | Real factory→manager wiring for the audio processor |
+| `test_audio_processor_real.py` | `AudioProcessor` against real audio |
+| `test_audio_ingestion.py` | Audio-file directory discovery (`AudioFileSegmentationStrategy`) |
+| `test_audio_acoustic_text_embedding.py` | CLAP-space 512-d acoustic embedding shape |
+| `test_audio_embedding_failure.py` | Acoustic embedding failure raises instead of returning zeros |
+| `test_document_ingestion.py` | Document-file directory discovery (`DocumentSegmentationStrategy`) |
+| `test_image_ingestion.py` | Image directory discovery (`ImageSegmentationStrategy`) |
+| `test_embedding_generator_impl.py` | `EmbeddingGeneratorImpl` |
+| `test_token_pooling.py` | Token-pooling utilities |
+| `test_single_vector_processor_basic.py` | Basic `SingleVectorVideoProcessor` behavior |
+| `test_single_vector_process_adapter.py` | `SingleVectorVideoProcessor.process` forwards `transcript_data`/metadata |
+| `test_vlm_descriptor.py` | `VLMDescriptor` |
+| `test_processor_base.py` / `test_processor_base_basic.py` | `BaseProcessor` contract |
+| `test_processor_manager.py` | `ProcessorManager` auto-discovery and initialization |
+| `test_strategy_factory_inference_services.py` | `StrategyFactory` profile-level `inference_services` injection |
+| `test_pipeline.py` | `PipelineConfig` |
+| `test_pipeline_orchestration.py` | Strategy orchestration through `ProcessingStrategySet` |
+| `test_pipeline_concurrency_wiring.py` | `with_concurrency()` reaches the pipeline's concurrency control |
+| `test_pipeline_locator_wiring.py` | `MediaLocator` integration in `VideoIngestionPipeline` |
+| `test_cache_key_collision_fix.py` | URI-hash cache-key regression in `PipelineArtifactCache` |
+| `test_source_url_in_documents.py` | `source_url` threaded from the pipeline into every emitted `Document` |
+| `test_run_ingestion.py` | `run_ingestion` CLI script |
 
-- `tests/ingestion/unit/test_audio_processor.py` - Audio transcription
+#### Integration Tests (`tests/ingestion/integration/`):
 
-- `tests/ingestion/unit/test_embedding_generator_impl.py` - Embedding generation
-
-- `tests/ingestion/unit/test_processor_base.py` - Base processor/strategy
-
-- `tests/ingestion/unit/test_processor_manager.py` - Processor manager
-
-#### Integration Tests:
-
-- `tests/ingestion/integration/test_real_ingestion_pipeline.py` - Real pipeline integration
-
-- `tests/ingestion/integration/test_backend_ingestion.py` - Vespa integration
-
-- `tests/ingestion/unit/test_pipeline_orchestration.py` - Strategy orchestration
-
-- `tests/ingestion/integration/test_end_to_end_processing.py` - End-to-end processing tests
+| File | Covers |
+|---|---|
+| `test_real_ingestion_pipeline.py` | Real integration with actual video processing |
+| `test_pipeline_real.py` | Real-video pipeline smoke test |
+| `test_end_to_end_processing.py` | End-to-end processing with real processors |
+| `test_backend_ingestion.py` | Vespa document feeding |
+| `test_multimodal_content_processing.py` | `VespaPyClient` against the test Vespa instance |
+| `test_pipeline_cache_live_path.py` | Live-path `PipelineArtifactCache` wiring |
+| `test_pipeline_minio_round_trip.py` | Pipeline reads from MinIO, writes to Vespa |
+| `test_upload_via_queue.py` | `POST /ingestion/upload` end-to-end |
+| `test_backfill_source_url.py` | `scripts/backfill_source_url.py` against real Vespa |
+| `test_source_url_round_trip.py` | `source_url` written at ingest comes back at search |
+| `test_document_visual_ingestion_real.py` | `document_visual` round-trip: PDF pages → ColPali → Vespa → search |
+| `test_clap_remote_embedding.py` | `AudioEmbeddingGenerator` remote path ↔ `clap_embed` sidecar |
+| `test_colbert_remote_roundtrip.py` | Remote ColBERT path round-trip |
+| `test_lateon_real_model.py` | LateOn real-model smoke test |
+| `test_lateon_vllm_parity.py` | vLLM-served LateOn per-token embeddings vs pylate oracle |
+| `test_denseon_vllm_real.py` | Real vLLM DenseOn vs sentence-transformers oracle |
+| `test_tomoro_serving_real.py` | Real vLLM Tomoro serving (320-dim normalization + pooling gate) |
+| `test_whisper_remote_roundtrip.py` | Remote Whisper transcription round-trip |
+| `test_vllm_asr_real_sidecar.py` | Real vLLM ASR sidecar |
+| `test_vllm_colpali_real_sidecar.py` | Real vLLM ColPali sidecar (`RemoteColPaliLoader`) |
 
 ### Example Test Scenarios
 
@@ -2094,7 +2288,7 @@ See [Events Module](./events.md) for complete EventQueue documentation.
 - **Backends Module** (`backends.md`): Vespa search integration, document feeding
 - **Common Module** (`common.md`): Model loading, configuration, output management
 - **Events Module** (`events.md`): A2A EventQueue for real-time notifications
-- **System Integration** (`test_real_system_integration.py`): End-to-end ingestion → search testing
+- **System Integration** (`tests/ingestion/integration/test_end_to_end_processing.py`, `tests/e2e/test_ingestion_upload_e2e.py`, `tests/runtime/integration/test_ingestion_worker_e2e.py`): End-to-end ingestion → search testing
 
 ---
 

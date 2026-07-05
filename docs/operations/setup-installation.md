@@ -413,7 +413,13 @@ flowchart TB
 | **Phoenix Web** | 6006 | Dashboard & experiments |
 | **Phoenix Collector** | 4317 | OTLP span collection (gRPC) |
 | **Ollama** | 11434 | LLM inference API |
-| **vLLM ASR (Whisper)** | 29005 | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
+| **vLLM ASR (Whisper)** | 29005† | OpenAI-compat ASR (`/v1/audio/transcriptions`, `/health`) |
+
+† `29005` is the k3d/Helm chart `nodePort` (`charts/cogniverse/values.yaml`
+`inference.vllm_asr.service.nodePort`). The standalone `docker run` command
+in [step 3a](#3a-optional-whisper-asr-via-vllm) above maps the container's
+port `8000` directly to host port `8000` instead — there is no local-Docker
+equivalent of the chart's NodePort.
 
 For the canonical inventory of every model, image source, and
 deployment style (CPU vs ROCm, custom sidecar vs official vLLM
@@ -527,10 +533,27 @@ Without this step, fixture-gated tests (`tests/e2e/`, ingestion integration)
 will `pytest.skip` on missing files such as
 `data/testset/evaluation/sample_videos/v_-nl4G-00PtA.mp4`.
 
-### 4. Run Test Ingestion
+### 4. Start the Runtime Server & Register a Tenant
+
+There is no default tenant — every tenant, including one named `default`,
+must be created via `POST /admin/tenants` before ingestion or search will
+accept its `tenant_id`. That endpoint is served by the runtime, so start it
+first:
 
 ```bash
-# Ingest sample videos (default tenant)
+# Start the FastAPI runtime (foreground; use --reload during development)
+JAX_PLATFORM_NAME=cpu uv run uvicorn cogniverse_runtime.main:app --port 8000 &
+
+# Register the "default" tenant used by the ingestion command below
+curl -X POST http://localhost:8000/admin/tenants \
+  -H "Content-Type: application/json" \
+  -d '{"tenant_id": "default", "created_by": "setup-guide"}'
+```
+
+### 5. Run Test Ingestion
+
+```bash
+# Ingest sample videos into the tenant registered above
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --video_dir data/testset/evaluation/sample_videos \
   --backend vespa \
@@ -538,7 +561,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
   --tenant-id default
 ```
 
-### 5. Verify End-to-End
+### 6. Verify End-to-End
 
 ```bash
 # Run comprehensive test suite
@@ -573,8 +596,8 @@ docker logs vespa
 # Check Phoenix is running
 docker ps | grep phoenix
 
-# Verify endpoint
-echo $PHOENIX_COLLECTOR_ENDPOINT
+# Verify endpoint (set in .env — see Environment Configuration above)
+echo $TELEMETRY_OTLP_ENDPOINT
 
 # Check Phoenix logs
 docker logs phoenix
@@ -606,15 +629,20 @@ uv pip install -e .
 cd libs/agents
 uv pip install -e .
 
-# Install all packages in development mode
-uv sync --all-extras
+# Install all workspace packages (dev group, including cogniverse-cli,
+# is installed by default). `--all-extras` is NOT valid here: the cpu/
+# cuda/rocm torch extras are declared mutually exclusive in
+# `[tool.uv] conflicts`, so pick one with `scripts/install_with_gpu.sh`
+# or `uv sync --extra <cpu|cuda|rocm>` (see "PyTorch backend selection").
+uv sync
 ```
 
 ### Development Installation
 
 ```bash
-# Install with development dependencies
-uv sync --all-extras --dev
+# Same as above — the `dev` dependency group is a default group, so a
+# plain `uv sync` already installs ruff/mypy/pytest-playwright/etc.
+uv sync
 
 # Install pre-commit hooks
 uv run pre-commit install
@@ -747,7 +775,6 @@ from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 # Agents - Orchestration and Search
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps
 from cogniverse_core.registries.agent_registry import AgentRegistry
 
 # Vespa - Backend and Schema Management
@@ -785,7 +812,7 @@ from cogniverse_messaging.runtime_client import RuntimeClient
 
 ---
 
-## Troubleshooting
+## Workspace & Import Troubleshooting
 
 ### Workspace Issues
 
@@ -808,9 +835,9 @@ If you see `ModuleNotFoundError: No module named 'cogniverse_core'`:
 
 ```bash
 # Ensure you're using the workspace virtual environment
-source .venv/bin/activate  # Linux/macOS
-# or
-.venv\Scripts\activate     # Windows
+# (Linux/x86_64 or macOS arm64 — Windows is not a supported target,
+# see Prerequisites > System Requirements above)
+source .venv/bin/activate
 
 # Verify packages are installed
 uv pip list | grep cogniverse

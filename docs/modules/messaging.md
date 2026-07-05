@@ -156,9 +156,11 @@ RuntimeClient(runtime_url: str, timeout: float = 300.0)
 
 | Method | Endpoint |
 |---|---|
+| `health()` | `GET /health` (returns `True`/`False`, never raises) |
 | `dispatch_agent(agent_name, query, tenant_id, context_id=None, conversation_history=None, top_k=10, context=None)` | `POST /agents/{agent_name}/process` |
 | `stream_events(task_id)` | `GET /events/workflows/{task_id}` (SSE) |
 | `create_invite_token(tenant_id, expires_in_hours=24)` | `POST /admin/messaging/invite` |
+| `save_wiki_session(tenant_id, query, response, agent_name="gateway_agent", entities=None)` | `POST /wiki/save` |
 | `search_wiki(tenant_id, query, top_k=5)` | `POST /wiki/search` |
 | `get_wiki_topic(tenant_id, slug)` | `GET /wiki/topic/{slug}` |
 | `get_wiki_index(tenant_id)` | `GET /wiki/index` |
@@ -171,8 +173,9 @@ RuntimeClient(runtime_url: str, timeout: float = 300.0)
 | `list_jobs(tenant_id)` | `GET /admin/tenant/{tenant}/jobs` |
 | `create_job(tenant_id, name, schedule, query, post_actions=None)` | `POST /admin/tenant/{tenant}/jobs` |
 | `delete_job(tenant_id, job_id)` | `DELETE /admin/tenant/{tenant}/jobs/{job_id}` |
+| `close()` | closes the underlying `httpx.AsyncClient` |
 
-Non-2xx responses are normalized to `{"status": "error", "status_code": ..., "message": ...}` by `_json_or_error`, so callers never need to branch on `httpx` exceptions.
+`save_wiki_session` is defined but not currently called by the gateway — `/wiki save` replies that sessions auto-save in the background instead of invoking it (see [Command Routing](#command-routing)). Non-2xx responses from the CRUD methods are normalized to `{"status": "error", "status_code": ..., "message": ...}` by `_json_or_error`, so callers never need to branch on `httpx` exceptions; `dispatch_agent` and `create_invite_token` normalize errors inline instead.
 
 ---
 

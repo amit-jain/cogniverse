@@ -20,28 +20,30 @@
 
 ## Overview
 
-Cogniverse consists of **11 independent packages** organized in a **layered architecture**. The publishing scripts currently support **5 main packages** (core, agents, vespa, runtime, dashboard):
+Cogniverse consists of **13 independent packages** organized in a **layered architecture**. The publishing scripts currently support **5 main packages** (core, agents, vespa, runtime, dashboard):
 
 ### Packages Supported by Publishing Scripts
 
 | Package | Description | Dependencies |
 |---------|-------------|--------------|
 | **cogniverse-core** | Business logic and system configuration | cogniverse-foundation, cogniverse-sdk, cogniverse-evaluation |
-| **cogniverse-agents** | Agent implementations | cogniverse-core, cogniverse-synthetic |
-| **cogniverse-vespa** | Vespa backend integration | cogniverse-core |
-| **cogniverse-runtime** | FastAPI server runtime | cogniverse-core, cogniverse-sdk (agents/vespa optional) |
-| **cogniverse-dashboard** | Streamlit UI dashboard | cogniverse-core, cogniverse-evaluation, cogniverse-runtime |
+| **cogniverse-agents** | Agent implementations | cogniverse-sdk, cogniverse-core, cogniverse-synthetic |
+| **cogniverse-vespa** | Vespa backend integration | cogniverse-sdk, cogniverse-core |
+| **cogniverse-runtime** | FastAPI server runtime | cogniverse-sdk, cogniverse-core, cogniverse-synthetic (agents/vespa optional) |
+| **cogniverse-dashboard** | Standalone Streamlit UI dashboard | cogniverse-sdk, cogniverse-core, cogniverse-agents, cogniverse-evaluation, cogniverse-vespa, cogniverse-telemetry-phoenix |
 
 ### Other Packages (Manual Publishing Required)
 
 | Package | Description | Layer |
 |---------|-------------|-------|
 | **cogniverse-sdk** | Base types and protocols | Foundation |
-| **cogniverse-foundation** | Core telemetry, config, utils | Foundation |
+| **cogniverse-foundation** | Telemetry, config, caching, DSPy helpers, registry | Foundation |
 | **cogniverse-evaluation** | Evaluation framework and Phoenix analytics | Core |
 | **cogniverse-telemetry-phoenix** | Phoenix telemetry implementation | Implementation |
 | **cogniverse-synthetic** | Synthetic data generation | Implementation |
 | **cogniverse-finetuning** | Model fine-tuning and optimization | Implementation |
+| **cogniverse-cli** | `cogniverse` CLI for deploying and managing the platform (Helm charts, cluster, sandbox, secrets) | Application |
+| **cogniverse-messaging** | Messaging gateway for Telegram/Slack integration with the runtime | Application |
 
 ### Publishing Workflow
 
@@ -70,7 +72,7 @@ The automated scripts (`build_packages.sh`, `version_bump.py`, `publish_packages
 2. **cogniverse-agents**, **cogniverse-vespa** - Built in parallel (depend on core)
 3. **cogniverse-runtime**, **cogniverse-dashboard** - Built last (depend on core, agents, vespa)
 
-**Note:** The other 6 packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning) must be published manually or require script updates.
+**Note:** The other 8 packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning, cli, messaging) must be published manually or require script updates.
 
 ---
 
@@ -91,10 +93,12 @@ libs/
 ├── foundation/              # cogniverse-foundation
 │   ├── cogniverse_foundation/
 │   │   ├── __init__.py
+│   │   ├── confidence.py
 │   │   ├── telemetry/
 │   │   ├── config/
-│   │   ├── cache/
-│   │   └── utils/
+│   │   ├── caching/
+│   │   ├── dspy/
+│   │   └── registry/
 │   ├── pyproject.toml
 │   └── README.md
 ├── CORE LAYER
@@ -108,7 +112,9 @@ libs/
 ├── finetuning/              # cogniverse-finetuning
 ├── APPLICATION LAYER
 ├── runtime/                 # cogniverse-runtime
-└── dashboard/               # cogniverse-dashboard
+├── dashboard/               # cogniverse-dashboard
+├── cli/                     # cogniverse-cli (standalone, no cogniverse deps)
+└── messaging/               # cogniverse-messaging (standalone, no cogniverse deps)
 ```
 
 **Key File: `pyproject.toml` (Foundation Layer Example)**
@@ -122,11 +128,12 @@ description = "Cogniverse Foundation - Cross-cutting concerns and shared infrast
 requires-python = ">=3.12"
 dependencies = [
     "cogniverse-sdk",
-    "opentelemetry-api>=1.20.0",
-    "opentelemetry-sdk>=1.20.0",
-    "pydantic>=2.0.0",
-    "sqlalchemy>=2.0.0",
-    "pandas>=2.0.0",
+    "dspy-ai==3.1.3",
+    "opentelemetry-api==1.41.0",
+    "opentelemetry-sdk==1.41.0",
+    "pydantic==2.12.5",
+    "sqlalchemy==2.0.49",
+    "pandas==2.3.3",
 ]
 
 [tool.uv.sources]
@@ -150,21 +157,29 @@ dependencies = [
     "cogniverse-sdk",
     "cogniverse-core",
     "cogniverse-synthetic",
-    # Machine Learning
-    "torch>=2.5.0",
-    "transformers>=4.50.0",
-    "colpali-engine>=0.3.12",
-    "sentence-transformers>=5.1.0",
-    # Optimization and ML
-    "xgboost>=3.0.5",
-    "scikit-learn>=1.3.0",
-    "scipy>=1.10.0",
-    # NLP
-    "spacy>=3.7.0",
-    "gliner>=0.2.21",
-    "langextract>=1.0.6",
+    # Google Agent Development Kit for composing agents
+    "google-adk==1.14.1",
+    # Optimization and ML (xgboost gate routing — small, no torch dep)
+    "xgboost==3.2.0",
+    "scikit-learn==1.8.0",
+    "scipy==1.17.1",
+    # NLP and language (spacy + langextract pure Python, no torch)
+    "spacy==3.8.14",
+    "langextract==1.2.1",
     # MLflow for experiment tracking
-    "mlflow>=3.0.0",
+    "mlflow==3.11.1",
+]
+
+[project.optional-dependencies]
+# Heavy ML stack for the in-process inference fallback paths.
+# Production routes through vLLM / pylate sidecars and never imports
+# these — install only for offline dev / local-path tests.
+torch-local = [
+    "torch==2.8.0",
+    "transformers==4.56.2",
+    "colpali-engine==0.3.13",
+    "sentence-transformers==5.1.1",
+    "gliner==0.2.26",
 ]
 
 [tool.uv.sources]
@@ -414,7 +429,7 @@ pip install dist/cogniverse_dashboard-*.whl
 
 # Verify imports
 python -c "from cogniverse_foundation.config.unified_config import SystemConfig"
-python -c "from cogniverse_agents.orchestrator_agent import OrchestratorAgent"
+python -c "from cogniverse_agents.gateway_agent import GatewayAgent"
 python -c "from cogniverse_vespa import VespaBackend"
 python -c "from cogniverse_runtime.main import app"
 python -c "print('All packages imported successfully')"
@@ -519,7 +534,7 @@ PYPI_TOKEN="your-production-token" ./scripts/publish_packages.sh
 # [SUCCESS] Published successfully: cogniverse-dashboard v0.1.0
 ```
 
-**Note:** The scripts publish all 5 packages (core, agents, vespa, runtime, dashboard). For other packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning), manual publishing or script updates are required.
+**Note:** The scripts publish all 5 packages (core, agents, vespa, runtime, dashboard). For other packages (sdk, foundation, evaluation, telemetry-phoenix, synthetic, finetuning, cli, messaging), manual publishing or script updates are required.
 
 
 ### Verify Publication
@@ -580,7 +595,6 @@ flowchart TD
     A --> B
     B --> C
     B --> D
-    C --> E
     D --> E
 
     style A fill:#90caf9,stroke:#1565c0,color:#000
@@ -589,6 +603,8 @@ flowchart TD
     style D fill:#ce93d8,stroke:#7b1fa2,color:#000
     style E fill:#b0bec5,stroke:#546e7a,color:#000
 ```
+
+Note: `GitHub Release` only depends on the `PyPI` publish job (release tags skip TestPyPI); prerelease tags publish to TestPyPI without cutting a GitHub Release.
 
 ### Tag-Based Publishing Rules
 

@@ -110,17 +110,20 @@ The constant `k` controls the influence of ranking position:
 async def _search_ensemble(
     self,
     query: str,
+    *,
+    tenant_id: str,
     profiles: List[str],
     modality: str = "video",
     top_k: int = 10,
     rrf_k: int = 60,
-    **kwargs
+    **kwargs,
 ) -> List[Dict[str, Any]]:
     """
     Execute parallel search across multiple profiles and fuse with RRF.
 
     Args:
         query: Text search query
+        tenant_id: Tenant identifier (per-request, keyword-only)
         profiles: List of profile names to query
         modality: Content modality to search
         top_k: Number of final results to return
@@ -133,13 +136,30 @@ async def _search_ensemble(
 ```
 
 #### 2. Parallel Execution
-The ensemble search implementation uses `asyncio.gather` to execute searches across all profiles concurrently:
+The ensemble search implementation uses `asyncio.gather` to execute searches across all profiles concurrently. Encoding is deduplicated by embedding model first — profiles that share a model (e.g. two ColPali variants) encode the query once and fan the embedding back out, since encoder construction can be a full model load:
 
 ```python
 # Inside _search_ensemble method:
-# Encode queries in parallel
-encoding_tasks = [encode_for_profile(p) for p in profiles]
-profile_embeddings = await asyncio.gather(*encoding_tasks)
+# Map each profile to its embedding-model "unit"; profiles sharing a
+# model share one encode call.
+unit_by_profile = {p: _encode_unit(p) for p in profiles}
+representative = {}
+for profile_name, unit in unit_by_profile.items():
+    representative.setdefault(unit, profile_name)
+
+# Encode once per distinct unit, in parallel (off the event loop)
+unit_embeddings = dict(
+    await asyncio.gather(
+        *(encode_unit(u, rep) for u, rep in representative.items())
+    )
+)
+
+# Fan the shared embeddings back out to every profile
+valid_embeddings = {
+    profile: unit_embeddings[unit]
+    for profile, unit in unit_by_profile.items()
+    if unit_embeddings.get(unit) is not None
+}
 
 # Execute searches in parallel using shared thread pool
 with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_embeddings)) as executor:
@@ -248,7 +268,7 @@ class ProfileSelectionSignature(dspy.Signature):
     complexity: str = dspy.OutputField(desc="Query complexity: simple, medium, complex")
 ```
 
-Note: ProfileSelectionAgent currently selects a single profile. For ensemble search, you can explicitly provide multiple profiles via the `profiles` parameter in SearchInput.
+Note: ProfileSelectionAgent currently selects a single profile. When the orchestrator chains `profile_selection_agent` ahead of `search_agent`, `_merge_enrichment()` wraps the winning `selected_profile` as a single-element `SearchInput.profiles` list (a single-profile override, not ensemble). For ensemble search, explicitly provide multiple profiles via the `profiles` parameter in SearchInput.
 
 ## Performance Characteristics
 
@@ -314,11 +334,11 @@ Profiles are defined in `config.json`:
       },
       "video_colqwen_omni_mv_chunk_30s": {
         "type": "video",
-        "description": "ColQwen-Omni for 30-second video chunk embeddings with multimodal understanding",
-        "embedding_model": "vidore/colqwen-omni-v0.1",
+        "description": "ColQwen2 visual document retrieval served by the cogniverse/colpali sidecar. 128-dim per-patch multi-vector embeddings.",
+        "embedding_model": "TomoroAI/tomoro-colqwen3-embed-4b",
         "embedding_type": "multi_vector",
         "schema_config": {
-          "embedding_dim": 128
+          "embedding_dim": 320
         }
       }
     }
@@ -336,6 +356,7 @@ from cogniverse_agents.search_agent import SearchInput
 # Configure ensemble search
 search_input = SearchInput(
     query="robots playing soccer",
+    tenant_id="acme_corp",
     modality="video",
     profiles=["video_colpali_smol500_mv_frame", "video_videoprism_base_mv_chunk_30s"],
     top_k=10,

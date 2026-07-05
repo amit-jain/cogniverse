@@ -150,10 +150,13 @@ QualityMonitor → Argo recompile loop has full history to reason over.
 
 ## Architectural decision — the optimizer is a batch CLI, not a daemon
 
-The optimizer (`optimization_cli`, BootstrapFewShot for query analysis / agent
-routing / summary / detailed report, and MIPROv2 for the agentic router) is
-**deliberately a stateless batch tool**. It is invoked from Argo CronWorkflows
-and from `QualityMonitor` trigger events; it is not a long-lived service.
+The optimizer (`optimization_cli`, compiling with `BootstrapFewShot` — scaled by
+trainset size — for query analysis / summary / detailed report / entity
+extraction / query enhancement) is **deliberately a stateless batch tool**. It
+is invoked from Argo CronWorkflows and from `QualityMonitor` trigger events; it
+is not a long-lived service. (`MIPROv2` is wired in `DSPyOptimizerRegistry` for
+any agent whose `OptimizerConfig.optimizer_type` selects it, but no batch CLI
+mode currently defaults to it — see "Optimizer Selection" below.)
 
 **Why this is correct (do not change without strong reason):**
 
@@ -185,6 +188,26 @@ and from `QualityMonitor` trigger events; it is not a long-lived service.
 If you find yourself wanting a daemon, the actual gap is more likely
 *observability* (Phoenix tile, dashboard view) or *trigger latency* (poll
 interval, threshold tuning) — fix those, not the execution model.
+
+### `optimization_cli` modes
+
+Every `--mode` value `python -m cogniverse_runtime.optimization_cli` accepts:
+
+| Mode | What it does |
+|---|---|
+| `cleanup` | Daily cleanup workflow: memory + logs + temp files + config vacuum |
+| `monthly-reports` | Generates the monthly usage + performance report |
+| `triggered` | Compiles DSPy modules for `--agents` from a scored `--trigger-dataset`; runs `StrategyLearner` afterward |
+| `simba` | Compiles `QueryEnhancementAgent`'s module from a scored trigger dataset (name is historical — still uses `BootstrapFewShot`) |
+| `workflow` | Compiles orchestration workflow strategies via `WorkflowIntelligence` |
+| `gateway-thresholds` | Recalibrates `fast_path_confidence_threshold` / `gliner_threshold` from routing spans |
+| `online-routing-eval` | Scores recent `cogniverse.routing` spans (routing outcome + confidence calibration) without compiling anything |
+| `profile` | Compiles the search-profile-selection module from spans |
+| `entity-extraction` | Compiles `EntityExtractionModule` from `cogniverse.entity_extraction` spans |
+| `rollback` | Restores a previously-snapshotted `--prompts-version`/`--demos-version` via `ArtifactManager.rollback_to_version` |
+| `egress-netpol` | Generates Kubernetes NetworkPolicy CRDs from agent policy YAMLs' declared egress |
+| `ab-compare` | Runs `RLMABRunner` over a Phoenix queries dataset, comparing two arms per query and emitting an `rlm.ab_compare` span per row |
+| `synthetic` | Runs synthetic data generation via `cogniverse_synthetic` |
 
 ---
 
@@ -251,9 +274,10 @@ flowchart TD
     VAL -- "Yes" --> OUT["<span style='color:#000'>Valid Query<br/>+ Metadata</span>"]
     VAL -- "No" --> RC{"<span style='color:#000'>Retries<br/>< max_retries?</span>"}
     RC -- "Yes" --> COT
-    RC -- "No" --> ERR["<span style='color:#000'>ValueError:<br/>Cannot generate<br/>valid query</span>"]
+    RC -- "No" --> FB["<span style='color:#000'>Template fallback:<br/>'find {topic} about<br/>{entity}'</span>"]
 
     OUT --> META["<span style='color:#000'>Metadata:<br/>_retry_count<br/>_max_retries</span>"]
+    FB --> META2["<span style='color:#000'>Metadata:<br/>_fallback_used=True</span>"]
 
     style IN fill:#90caf9,stroke:#1565c0,color:#000
     style COT fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -261,12 +285,13 @@ flowchart TD
     style VAL fill:#ffcc80,stroke:#ef6c00,color:#000
     style OUT fill:#a5d6a7,stroke:#388e3c,color:#000
     style RC fill:#ffcc80,stroke:#ef6c00,color:#000
-    style ERR fill:#ffcccc,stroke:#c62828,color:#000
+    style FB fill:#ffcccc,stroke:#c62828,color:#000
     style META fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style META2 fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
 **Key design decisions:**
-- **No fallback to dummy data** — if the generator can't produce a valid query after `max_retries` (default: 3), it raises a `ValueError` rather than silently returning garbage
+- **Deterministic fallback, not an exception** — `ValidatedEntityQueryGenerator.forward` retries up to `max_retries` (default: 3) attempts; if none produce a query containing an entity word, it emits a template query (`"find {topic} about {entity}"`) built directly from the input topics/entities, tags the result `_fallback_used=True`, and returns it rather than raising. Downstream confidence scoring still penalizes it via the retry-count signal (see below)
 - **Validation is case-insensitive** — at least one entity must appear in the generated query text
 - **Retry count is metadata** — stored on the prediction for downstream confidence scoring
 
@@ -346,74 +371,82 @@ Maximum 2 regeneration attempts per item. If all fail, the item is dropped (retu
 
 ## Stage 3: DSPy Optimization
 
-### Adaptive Optimizer Selection
+### Optimizer Selection
 
-The system selects the most advanced applicable optimizer based on available training data volume:
+`optimization_cli.py`'s `_create_teleprompter()` — used for the `search`/`summary`/`report`
+agents under `--mode triggered`, plus the `simba`, `profile`, and `entity-extraction` CLI
+modes — always compiles with `dspy.teleprompt.BootstrapFewShot`, scaled by training-set size:
 
 ```mermaid
 flowchart TD
-    DATA["<span style='color:#000'>Training<br/>Examples</span>"] --> CHECK{"<span style='color:#000'>How many<br/>examples?</span>"}
+    DATA["<span style='color:#000'>Training<br/>Examples</span>"] --> CHECK{"<span style='color:#000'>trainset_size<br/>>= 50?</span>"}
 
-    CHECK -- "20–49" --> BFS["<span style='color:#000'>BootstrapFewShot<br/>Few-shot learning from<br/>demonstrations</span>"]
-    CHECK -- "50–99" --> SIMBA["<span style='color:#000'>SIMBA<br/>Similarity-based<br/>memory augmentation</span>"]
-    CHECK -- "100–199" --> MIPRO["<span style='color:#000'>MIPROv2<br/>Multi-step instruction<br/>proposal optimization</span>"]
-    CHECK -- "200+" --> GEPA["<span style='color:#000'>GEPA<br/>Generalized<br/>evolutionary prompt<br/>adaptation</span>"]
+    CHECK -- "No (< 50)" --> SMALL["<span style='color:#000'>BootstrapFewShot<br/>4 bootstrapped demos<br/>8 labeled, 1 round<br/>max_errors=5</span>"]
+    CHECK -- "Yes (>= 50)" --> LARGE["<span style='color:#000'>BootstrapFewShot (scaled)<br/>8 bootstrapped demos<br/>16 labeled, 2 rounds<br/>max_errors=10</span>"]
 
-    BFS & SIMBA & MIPRO & GEPA --> COMPILE["<span style='color:#000'>Compile optimized<br/>routing policy</span>"]
-    COMPILE --> DEPLOY["<span style='color:#000'>Deploy to<br/>production routing</span>"]
+    SMALL & LARGE --> COMPILE["<span style='color:#000'>Compile optimized<br/>DSPy module</span>"]
+    COMPILE --> PROMOTE["<span style='color:#000'>ArtifactManager<br/>.promote_if_better()</span>"]
 
     style DATA fill:#90caf9,stroke:#1565c0,color:#000
     style CHECK fill:#ffcc80,stroke:#ef6c00,color:#000
-    style BFS fill:#a5d6a7,stroke:#388e3c,color:#000
-    style SIMBA fill:#a5d6a7,stroke:#388e3c,color:#000
-    style MIPRO fill:#a5d6a7,stroke:#388e3c,color:#000
-    style GEPA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style SMALL fill:#a5d6a7,stroke:#388e3c,color:#000
+    style LARGE fill:#a5d6a7,stroke:#388e3c,color:#000
     style COMPILE fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style DEPLOY fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style PROMOTE fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
 
-| Optimizer | Data Threshold | Approach | Best For |
-|---|---|---|---|
-| **BootstrapFewShot** | 20–49 examples | Generates demonstrations from a teacher model | Cold start, limited data |
-| **SIMBA** | 50–99 examples | Learns from similar successful transformations | Pattern matching from memory |
-| **MIPROv2** | 100–199 examples | Multi-step instruction proposal + optimization | Refining prompt instructions |
-| **GEPA** | 200+ examples | Evolutionary prompt adaptation | Large-scale prompt evolution |
+Separately, `DSPyOptimizerRegistry` (`cogniverse_core.common.dspy_module_registry`) lets an
+individual agent's `OptimizerConfig.optimizer_type` select a different DSPy optimizer class
+(consumed by `DynamicDSPyMixin.create_optimizer`):
+
+| `OptimizerType` | Mapped DSPy class | Status |
+|---|---|---|
+| `BOOTSTRAP_FEW_SHOT` | `dspy.BootstrapFewShot` | Wired; also the batch CLI default |
+| `LABELED_FEW_SHOT` | `dspy.LabeledFewShot` | Wired |
+| `BOOTSTRAP_FEW_SHOT_WITH_RANDOM_SEARCH` | `dspy.BootstrapFewShotWithRandomSearch` | Wired |
+| `COPRO` | `dspy.COPRO` | Wired |
+| `MIPRO_V2` | `dspy.MIPROv2` | Wired |
+| `GEPA` | — | Enum value exists, no class registered — `get_optimizer_class` raises `ValueError` |
+| `SIMBA` | — | Enum value exists, no class registered — `get_optimizer_class` raises `ValueError` |
+
+`--mode simba` in `optimization_cli.py` is a *data-source* mode name (it compiles the
+`QueryEnhancementAgent`'s module from a scored trigger dataset) — it still compiles with
+the same `BootstrapFewShot`-based `_create_teleprompter()`, not a `dspy.SIMBA` optimizer.
+`GEPA`/`SIMBA` are reserved `OptimizerType` values for future work; selecting either today
+fails fast with a `ValueError` rather than silently falling back.
 
 ### Teacher/Student Pattern
 
-A large LLM (teacher) generates high-quality routing demonstrations. These demonstrations are then used to optimize a smaller, faster LLM (student) that handles production routing. This keeps latency low while maintaining quality.
-
-### Reward Computation
-
-Every routing decision produces a reward signal used for optimization:
-
-```
-reward = 0.4 × search_quality       # Quality of returned results [0-1]
-       + 0.3 × agent_success        # Did the agent complete? (1.0 or 0.0)
-       + 0.3 × user_satisfaction    # Explicit user feedback [0-1] (when available)
-       − 0.1 × time_penalty         # Sigmoid penalty for slow processing
-```
-
-When `user_satisfaction` is unavailable, the reward normalizes across the remaining weights.
-
-**Time penalty** uses a sigmoid curve so that fast responses aren't penalized and very slow responses asymptotically approach the maximum penalty:
-
-```
-time_penalty = 0.1 × (1.0 − 1.0 / (1.0 + processing_time / 10.0))
-```
+`OptimizerConfig.teacher_settings` (default `{}`) is forwarded verbatim into the DSPy
+optimizer constructor by `DynamicDSPyMixin.create_optimizer` (`**config.teacher_settings`).
+An operator sets it per agent — e.g. `{"teacher_settings": {"lm": <teacher LM>}}` via the
+agent config-update API (`api_mixin.py`) — so `BootstrapFewShot` bootstraps demonstrations
+from a larger teacher model while the compiled module still runs on the agent's regular
+(smaller/faster) LM in production. The batch CLI's own `_create_teleprompter()` leaves
+`teacher_settings` empty, so scheduled Argo compiles bootstrap from the module's own LM
+unless a per-agent teacher has been configured separately.
 
 ### Optimization Trigger Conditions
 
-The optimizer doesn't run on every experience. It triggers when:
-1. **Minimum data threshold met** — at least 50 experiences accumulated
-2. **Periodic schedule** — every 10 new experiences
-3. **Performance decline** — recent average reward drops > 0.1 below historical average
+Trigger thresholds live in `AutomationRulesConfig` (`cogniverse_agents.routing.config`) and
+`QualityMonitor.QualityThresholds` (`cogniverse_evaluation.quality_monitor`), consumed by
+the annotation pipeline and the quality-monitor sidecar respectively — not by a live
+in-process RL loop:
 
-Each optimization step:
-1. Samples a batch (size 32) from the experience replay buffer
-2. Converts experiences to DSPy examples
-3. Compiles the routing policy with the selected optimizer
-4. Decays exploration epsilon: `ε *= 0.995` (floor: 0.05)
+| Config | Field | Default | Meaning |
+|---|---|---|---|
+| `OptimizationTriggersConfig` | `min_annotations_for_optimization` | 50 | Minimum annotations before an optimization run is worth submitting |
+| `OptimizationTriggersConfig` | `optimization_improvement_threshold` | 0.05 | Minimum score improvement required to accept a candidate |
+| `OptimizationTriggersConfig` | `min_days_between_optimizations` | 1 | Cooldown between optimization runs |
+| `FeedbackConfig` | `min_annotations_for_update` | 10 | Minimum new annotations in a polling cycle before triggering an optimizer update |
+| `QualityThresholds` | `golden_mrr_drop_pct` | 0.10 | Golden-set MRR drop that flags `OPTIMIZE` |
+| `QualityThresholds` | `live_score_floor` | 0.5 | Live-traffic LLM-judge score floor that flags `OPTIMIZE` |
+| `QualityThresholds` | `min_samples_for_verdict` | 10 | Minimum live samples before a verdict is issued for an agent |
+
+Each batch optimization run (see the diagram above): builds a `dspy.Example` trainset from
+approved synthetic data and/or scored spans, compiles with the selected teleprompter, then
+calls `ArtifactManager.promote_if_better()` — which only writes the new artefacts when the
+candidate beats the active baseline (see "Regression-reject gate" above).
 
 ---
 
@@ -437,11 +470,11 @@ When a curated golden dataset is available, standard IR metrics measure retrieva
 ```mermaid
 flowchart LR
     subgraph "Routing Spans from Telemetry"
-        SP["<span style='color:#000'>Routing Spans<br/>(chosen_agent, confidence,<br/>processing_time, outcome)</span>"]
+        SP["<span style='color:#000'>cogniverse.routing spans<br/>(chosen_agent, confidence,<br/>reasoning, complexity, modality)</span>"]
     end
 
     subgraph "Classification"
-        CL{"<span style='color:#000'>Classify<br/>Outcome</span>"}
+        CL{"<span style='color:#000'>RoutingEvaluator classifies<br/>outcome from downstream<br/>agent spans</span>"}
         S["<span style='color:#000'>SUCCESS</span>"]
         F["<span style='color:#000'>FAILURE</span>"]
         A["<span style='color:#000'>AMBIGUOUS</span>"]
@@ -478,8 +511,8 @@ flowchart LR
 | **Routing Accuracy** | Fraction of routing decisions that led to successful outcomes |
 | **Confidence Calibration** | Pearson correlation between stated confidence and actual success rate |
 | **Per-Agent Precision** | Per agent: TP / (TP + FP) — how often routing to this agent succeeds |
-| **Per-Agent Recall** | Per agent: TP / (TP + FN) — how often the right agent is chosen when it should be |
-| **Per-Agent F1** | Harmonic mean of precision and recall per agent |
+| **Per-Agent Recall** | Per agent: TP / (TP + FN) — currently degenerate: `RoutingEvaluator._calculate_per_agent_metrics` has no ground truth for "which agent should have been chosen," so `FN` is always 0 and recall is 1.0 whenever `TP > 0` |
+| **Per-Agent F1** | Harmonic mean of precision and recall per agent — inherits the recall limitation above |
 | **Avg Routing Latency** | Mean time for routing decision (ms) |
 
 ### IR Metrics Suite
@@ -499,108 +532,137 @@ Standard information retrieval metrics evaluated at multiple K values (1, 5, 10)
 
 ## Stage 5: Annotation Feedback Loop
 
-The annotation feedback loop closes the optimization cycle by converting human judgments on live traffic into training signal for the routing optimizer.
+The annotation pipeline turns low-confidence or failed routing decisions into human- and
+LLM-reviewed labels, persisted back onto the originating telemetry span. It is implemented
+as a set of cooperating classes in `cogniverse_agents.routing` — `AnnotationAgent`,
+`LLMAutoAnnotator`, `AnnotationQueue`, and `RoutingAnnotationStorage` — invoked on a
+schedule (Argo Cron / `IntervalConfig`), consistent with the "batch CLI, not a daemon"
+principle above; there is no always-on in-process polling loop or RL replay buffer.
 
 ### End-to-End Flow
 
 ```mermaid
 sequenceDiagram
     participant PHX as Phoenix Telemetry
-    participant AFL as Annotation Feedback Loop
-    participant LLM as LLM Auto-Annotator
+    participant AA as AnnotationAgent
+    participant LLM as LLMAutoAnnotator
+    participant Q as AnnotationQueue
     participant HUM as Human Reviewer
-    participant OPT as Routing Optimizer
-    participant RB as Replay Buffer (1000)
+    participant ST as RoutingAnnotationStorage
 
-    loop Every 15 minutes
-        AFL->>PHX: Query new routing spans
-        PHX-->>AFL: Annotated spans
+    AA->>PHX: get_spans(cogniverse.routing, lookback_hours)
+    PHX-->>AA: routing spans
 
-        alt LLM Pre-Annotation
-            AFL->>LLM: Annotate span
-            LLM-->>AFL: Label + confidence + reasoning
-            Note over LLM: Labels: CORRECT_ROUTING,<br/>WRONG_ROUTING, AMBIGUOUS,<br/>INSUFFICIENT_INFO
-        end
+    AA->>AA: _classify_routing_outcome + _needs_annotation<br/>(confidence_threshold=0.6, very_low_confidence=0.3,<br/>boundary 0.6-0.75)
+    Note over AA: Priority: HIGH (very low confidence /<br/>failure), MEDIUM (ambiguous),<br/>LOW (edge cases)
 
-        alt Low confidence or flagged
-            AFL->>HUM: Request human review
-            HUM-->>AFL: Verified annotation
-        end
+    AA->>Q: enqueue_batch(requests)
+    Note over Q: SLA deadline by priority:<br/>HIGH=4h, MEDIUM=24h, LOW=72h
 
-        AFL->>AFL: Convert annotation → RoutingExperience
-        Note over AFL: CORRECT → quality=0.9, success=True<br/>WRONG → quality=0.3, success=False<br/>AMBIGUOUS → quality=0.6
+    AA->>LLM: annotate(request)  [temperature=0.3]
+    LLM-->>AA: label + confidence + reasoning +<br/>suggested_correct_agent + requires_human_review
+    Note over LLM: Labels: CORRECT_ROUTING,<br/>WRONG_ROUTING, AMBIGUOUS,<br/>INSUFFICIENT_INFO
 
-        AFL->>RB: Store experience (FIFO, max 1000)
+    AA->>ST: store_llm_annotation(span_id, annotation)
 
-        alt ≥ 10 new annotations
-            AFL->>OPT: Trigger optimizer update
-            OPT->>RB: Sample training batch
-            OPT->>OPT: Select optimizer + compile
-        end
+    opt requires_human_review or low LLM confidence
+        Q->>HUM: assign(span_id, reviewer)
+        HUM-->>Q: complete(span_id)
+        Q->>ST: store_human_annotation(span_id, label, reasoning)
+        ST->>ST: approve_llm_annotation(span_id)
     end
 ```
 
 ### Phoenix Telemetry Span Polling
 
-The feedback loop polls Phoenix every **15 minutes** (configurable `poll_interval_minutes`) for newly annotated routing spans. It filters for human-reviewed annotations only — LLM auto-annotations feed into a separate pre-screening step.
+`AnnotationAgent.identify_spans_needing_annotation` queries Phoenix for `cogniverse.routing`
+spans over `failure_lookback_hours` (default 24h), caps output at `max_annotations_per_run`
+(default 50), and prioritizes by confidence and outcome. `IntervalConfig` declares the
+intended cadence for a scheduled runner (`span_eval_interval_minutes`=15,
+`annotation_interval_minutes`=30, `feedback_interval_minutes`=15) and `FeedbackConfig`
+declares `poll_interval_minutes`=15 — these are configuration knobs for whatever schedules
+the batch run (e.g. an Argo CronWorkflow), not a live `while True: sleep()` loop in the
+runtime process.
 
 ### LLM Auto-Annotation
 
-An LLM annotator pre-screens routing spans before human review:
+`LLMAutoAnnotator` pre-screens routing spans via LiteLLM before human review:
 - Examines: query content, routing decision, execution outcome
 - Produces: `label`, `confidence`, `reasoning`, `suggested_correct_agent`, `requires_human_review`
 - Uses low temperature (0.3) for consistency
 - When uncertain, flags `requires_human_review: true`
 
-### Annotation → RoutingExperience Conversion
+### Annotation Storage
 
-Each annotation maps to a `RoutingExperience` with computed reward:
+`RoutingAnnotationStorage` writes annotations back onto the span as attributes (see
+"What Gets Stored in Telemetry" below) rather than into a separate training-example object.
+`FeedbackConfig.quality_map` defines the label → quality-score mapping intended for
+downstream training signal:
 
-| Annotation Label | search_quality | agent_success | user_satisfaction |
-|---|---|---|---|
-| `CORRECT_ROUTING` | 0.9 | True (1.0) | 1.0 |
-| `WRONG_ROUTING` | 0.3 | False (0.0) | 0.0 |
-| `AMBIGUOUS` | 0.6 | False (0.0) | 0.0 |
-| `INSUFFICIENT_INFO` | 0.5 | False (0.0) | 0.0 |
+| Annotation Label | Quality score (`FeedbackConfig.quality_map`) |
+|---|---|
+| `correct_routing` | 0.9 |
+| `wrong_routing` | 0.3 |
+| `ambiguous` | 0.6 |
+| `insufficient_info` | 0.5 |
 
-### Experience Replay Buffer
+### Synthetic Reward Signal (bootstrap training data only)
 
-- FIFO buffer with capacity of **1000** recent experiences
-- New experiences push out the oldest
-- Training batches are sampled from this buffer (size 32)
-- Keeps the optimizer focused on recent patterns rather than stale data
+`RoutingGenerator` (`cogniverse_synthetic.generators.routing`) produces `RoutingExperienceSchema`
+records for **synthetic bootstrap training data**, not for live traffic: `routing_confidence`
+and `search_quality` are drawn from `random.uniform(0.65, 0.95)` / `random.uniform(0.6, 0.9)`,
+`agent_success = routing_confidence > 0.7`, and `user_satisfaction = search_quality *
+random.uniform(0.9, 1.1)` when successful. The schema also declares a `reward: Optional[float]`
+field, but no formula in the codebase currently computes it — it is populated only if a caller
+sets it explicitly.
 
 ### Automatic Retraining Trigger
 
-When ≥ **10 new annotations** are processed in a single polling cycle, the optimizer is automatically triggered. This ensures the system responds quickly to a burst of human feedback.
+`FeedbackConfig.min_annotations_for_update` (default 10) and
+`OptimizationTriggersConfig.min_annotations_for_optimization` (default 50) are the configured
+thresholds for triggering an optimizer run from accumulated annotations; consumption of these
+specific fields to auto-submit an Argo workflow is not wired in the current codebase — the
+`QualityMonitor` sidecar (see below) is the trigger path that is actually wired end-to-end
+today.
 
 ---
 
 ## What Gets Stored in Telemetry
 
-Routing spans capture the full context needed for offline analysis and annotation:
+`GatewayAgent._emit_routing_span` writes these attributes onto every `cogniverse.routing`
+span (`libs/agents/cogniverse_agents/gateway_agent.py`):
 
 | Span Attribute | Type | Purpose |
 |---|---|---|
-| `routing.query` | string | Original user query |
+| `routing.query` | string | Original user query (truncated to 200 chars) |
 | `routing.chosen_agent` | string | Which agent was selected |
 | `routing.recommended_agent` | string | DSPy-recommended agent (same as chosen_agent for GatewayAgent) |
 | `routing.confidence` | float | Routing confidence score |
-| `routing.reasoning` | string | Routing decision rationale |
+| `routing.reasoning` | string | Routing decision rationale (truncated to 200 chars) |
 | `routing.complexity` | string | Query complexity classification |
 | `routing.modality` | string | Content modality (video, text, etc.) |
 | `routing.generation_type` | string | Generation type (search, qa, synthesis, etc.) |
-| `routing.processing_time` | float | Decision latency (ms) |
-| `routing.enhanced_query` | string | Post-enhancement query |
-| `routing.entities` | list | Extracted entities |
-| `routing.relationships` | list | Extracted relationships |
-| `routing.context` | dict | Conversation context |
-| `routing.outcome` | enum | SUCCESS / FAILURE / AMBIGUOUS |
-| `annotation.label` | enum | CORRECT / WRONG / AMBIGUOUS / INSUFFICIENT |
-| `annotation.confidence` | float | Annotator's confidence |
+
+`RoutingEvaluator` and `AnnotationAgent` additionally read `routing.processing_time` and
+`routing.context` defensively (`.get(..., default)`) for forward compatibility, but no
+current writer populates them — outcome (`SUCCESS`/`FAILURE`/`AMBIGUOUS`) is *derived* by
+`RoutingEvaluator._classify_routing_outcome` from downstream agent spans, not stored as a
+`routing.*` attribute at write time.
+
+`RoutingAnnotationStorage` writes these onto the same span (`libs/agents/cogniverse_agents/routing/annotation_storage.py`):
+
+| Span Attribute | Type | Purpose |
+|---|---|---|
+| `annotation.label` | enum | `correct_routing` / `wrong_routing` / `ambiguous` / `insufficient_info` |
+| `annotation.confidence` | float | Annotator's confidence (1.0 for human annotations) |
 | `annotation.reasoning` | string | Why this label was chosen |
-| `annotation.suggested_agent` | string | If WRONG: which agent should have been used |
-| `annotation.requires_human_review` | bool | Whether human verification is needed |
+| `annotation.annotator` | string | `"llm"`, or the human annotator id |
+| `annotation.timestamp` | string (ISO) | When the annotation was written |
+| `annotation.human_reviewed` | bool | Whether a human (not just the LLM) produced this annotation |
+| `annotation.requires_review` | bool | Whether the LLM flagged this for human verification |
+| `annotation.suggested_agent` | string | If `wrong_routing`: which agent should have been used |
+| `annotation.approved_by` | string | Set by `approve_llm_annotation` when a human approves an LLM label |
+| `annotation.approval_timestamp` | string (ISO) | When the LLM label was approved |
 
 ---
 
@@ -630,10 +692,11 @@ flowchart TD
     GM -->|"Update on improvement"| BASELINE
 
     THR -- "Yes: quality dropped" --> XGB
-    THR -- "No: within threshold" --> SKIP
+    THR -- "No: within threshold" --> XGB
 
-    XGB -- "Confirms: train now" --> ARGO
-    XGB -- "Overrides: skip\n(low data / recent train)" --> SKIP
+    XGB -- "Confirms OPTIMIZE" --> ARGO
+    XGB -- "Overrides OPTIMIZE to SKIP\n(low expected improvement)" --> SKIP
+    XGB -- "Upgrades SKIP to OPTIMIZE\n(model staleness signal)" --> ARGO
 
     style GM fill:#a5d6a7,stroke:#388e3c,color:#000
     style LT fill:#90caf9,stroke:#1565c0,color:#000
@@ -645,8 +708,9 @@ flowchart TD
     style SKIP fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
-- **Golden set evaluation**: runs curated queries against the runtime API, scores with IR metrics (MRR, NDCG@K, Precision@5). When MRR improves, the baseline is updated in Phoenix. When quality drops, Argo is triggered.
-- **Live traffic evaluation**: samples recent spans from Phoenix (default: 20 per agent), uses an LLM judge to assess quality. Triggers optimization when per-agent scores fall below 0.6.
+- **Golden set evaluation**: runs curated queries against the runtime API, scores with IR metrics (MRR, NDCG@K, Precision@5). When MRR improves, the baseline is updated in Phoenix. Verdict flips to `OPTIMIZE` when MRR drops ≥ `golden_mrr_drop_pct` (10%) from the stored baseline.
+- **Live traffic evaluation**: samples recent spans from Phoenix (default: 20 per agent, `min_samples_for_verdict`=10 required before a verdict is issued), uses an LLM judge to assess quality. Verdict flips to `OPTIMIZE` when a per-agent score falls below `live_score_floor` (0.5) or degrades more than `golden_mrr_drop_pct` (10%) from that agent's baseline.
+- **XGBoost `TrainingDecisionModel`** then runs on every verdict (not only `OPTIMIZE` ones) and can move it either direction: override a naive `OPTIMIZE` down to `SKIP` when expected improvement is too low, or upgrade a naive `SKIP` up to `OPTIMIZE` when data volume/staleness signals warrant it.
 
 The monitor also **grows the golden set** by promoting high-scoring live queries (score ≥ 0.8) into the curated evaluation dataset.
 
@@ -698,22 +762,19 @@ Agents retrieve strategies at inference time via `MemoryAwareMixin.get_strategie
 
 | Technique | Category | Role in System |
 |---|---|---|
-| **DSPy ChainOfThought** | Prompt engineering | Validated synthetic data generation with retry logic |
+| **DSPy ChainOfThought** | Prompt engineering | Entity-query generation with retry + deterministic template fallback |
 | **Confidence Scoring (4 signals)** | Data quality | Retry count + entity presence + length + reasoning quality |
 | **HITL Approval** | Data curation | Confidence-based auto-approval with rejection/regeneration cycle |
-| **BootstrapFewShot** | Few-shot learning | Cold-start optimization with 20–49 examples |
-| **SIMBA** | Memory augmentation | Pattern-based optimization for 50–99 examples |
-| **MIPROv2** | Instruction optimization | Multi-step prompt refinement for 100–199 examples |
-| **GEPA** | Evolutionary optimization | Large-scale prompt evolution for 200+ examples |
-| **Reward Computation** | Reinforcement signal | Multi-factor reward: quality + success + satisfaction − time |
-| **Experience Replay** | Online learning | FIFO buffer (1000) for recent experience sampling |
+| **BootstrapFewShot** | Few-shot learning | Batch CLI's default optimizer for all agent types, scaled by trainset size (<50 vs >=50 examples) |
+| **DSPyOptimizerRegistry** | Optimizer selection | Per-agent `OptimizerConfig.optimizer_type`: BootstrapFewShot, LabeledFewShot, BootstrapFewShotWithRandomSearch, COPRO, MIPROv2 wired; GEPA/SIMBA reserved (unmapped) |
+| **Regression-Reject Gate** | Promotion safety | `ArtifactManager.promote_if_better` only writes artefacts when candidate ≥ baseline − tolerance |
+| **Canary Promotion** | Rollout safety | Stable per-request-seed routing between active/canary versions at a configurable traffic % |
 | **Reference-Free Evaluation** | Quality assessment | Relevance, diversity, temporal coverage without ground truth |
 | **IR Metrics Suite** | Retrieval evaluation | MRR, NDCG@K, Precision@K, Recall@K, MAP |
 | **Confidence Calibration** | Model quality | Pearson correlation between confidence and actual success |
 | **Phoenix Telemetry** | Observability | Span-level routing instrumentation with annotation support |
 | **LLM Auto-Annotation** | Semi-automated labeling | Pre-screen routing decisions before human review |
-| **Temporal Decay** | Online learning | Exploration ε decays 0.995× per update (floor: 0.05) |
-| **Quality Monitor** | Continuous evaluation | Dual-strategy sidecar: golden set + live LLM judge; triggers Argo on degradation |
-| **XGBoost Training Decision Model** | Optimization gating | Meta-model confirms or overrides naive threshold verdicts based on data volume, model staleness, and expected improvement |
+| **Quality Monitor** | Continuous evaluation | Dual-strategy sidecar: golden set (2h) + live LLM judge (4h); triggers Argo on degradation |
+| **XGBoost Training Decision Model** | Optimization gating | Meta-model confirms, downgrades, or upgrades naive threshold verdicts based on data volume, model staleness, and expected improvement |
 | **Strategy Distillation** | Knowledge transfer | Pattern + LLM contrastive distillation from traces into Vespa-stored strategies |
 | **Two-Level Strategy Scoping** | Personalization | Org-level shared strategies + user-level personalized strategies via Mem0 |

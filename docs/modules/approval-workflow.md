@@ -8,7 +8,12 @@ without depending on each other.
 **Implementations**: `cogniverse_agents.approval` (`libs/agents/cogniverse_agents/approval/`) —
 `HumanApprovalAgent`, `ApprovalStorageImpl`, `DecisionOrchestrator`. This package re-exports
 the core interfaces, so `from cogniverse_agents.approval import ApprovalStatus` still resolves.
-**Related Package**: `cogniverse_synthetic` (Application Layer)
+`DecisionOrchestrator` additionally depends on `cogniverse_agents.workflow.state_machine`
+(`WorkflowState`, `WorkflowStateMachine`) for state tracking.
+**Related Package**: `cogniverse_synthetic` (Application Layer). Also consumed by
+`cogniverse_finetuning.dataset.method_selector` (`libs/finetuning/cogniverse_finetuning/dataset/method_selector.py`),
+which gates synthetic finetuning data through `HumanApprovalAgent.submit_for_review()`
+as a mandatory, non-bypassable approval step.
 
 The human-in-the-loop approval workflow enables quality control for synthetically generated training data by allowing humans to review and approve/reject examples before they're used for model optimization.
 
@@ -33,9 +38,11 @@ flowchart TB
 
     subgraph "Approval Workflow"
         ApprovalAgent["<span style='color:#000'>HumanApprovalAgent</span>"]
+        Orchestrator["<span style='color:#000'>DecisionOrchestrator<br/>+ WorkflowStateMachine</span>"]
         Storage["<span style='color:#000'>ApprovalStorageImpl</span>"]
 
         Extractor --> ApprovalAgent
+        Orchestrator --> ApprovalAgent
         ApprovalAgent --> Storage
 
         subgraph "Telemetry Backend"
@@ -62,6 +69,7 @@ flowchart TB
     style SyntheticGen fill:#ffcc80,stroke:#ef6c00,color:#000
     style Extractor fill:#ffcc80,stroke:#ef6c00,color:#000
     style ApprovalAgent fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Orchestrator fill:#ba68c8,stroke:#7b1fa2,color:#000
     style Storage fill:#90caf9,stroke:#1565c0,color:#000
     style Spans fill:#a5d6a7,stroke:#388e3c,color:#000
     style Annotations fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -94,6 +102,8 @@ storage = ApprovalStorageImpl(
 **API Methods** (All async):
 
 ```python
+from datetime import datetime
+
 # Create approval batch (creates telemetry spans)
 batch = ApprovalBatch(
     batch_id="batch_001",
@@ -121,13 +131,20 @@ await storage.log_approval_decision(
     feedback="High quality example"
 )
 
+# Record a decision as its own telemetry span (used by the dashboard's
+# approve/reject buttons to persist the reviewer's action independently
+# of the item-status annotation above)
+await storage.record_decision(decision, item)
+
 # Add approved items to telemetry dataset
 await storage.append_to_training_dataset(
     dataset_name="routing_training_v2",
     items=[item1, item2]
 )
 
-# List pending batches
+# List pending batches (raises on backend failure rather than
+# returning an empty list, so a telemetry outage never reads as
+# "nothing pending")
 batches = await storage.get_pending_batches()
 ```
 
@@ -188,6 +205,16 @@ agent = HumanApprovalAgent(
     storage=storage
 )
 
+# Or build the threshold from ApprovalConfig instead of hard-coding it
+from cogniverse_foundation.config.unified_config import ApprovalConfig
+
+agent = HumanApprovalAgent.from_approval_config(
+    ApprovalConfig(confidence_threshold=0.85),
+    confidence_extractor=confidence_extractor,
+    feedback_handler=feedback_handler,
+    storage=storage,
+)
+
 # Process generated data
 batch_id = "batch_001"
 batch = await agent.process_batch(
@@ -198,6 +225,12 @@ batch = await agent.process_batch(
 
 # Get pending items for review (across all batches)
 pending = await agent.get_pending_items()
+
+# Register a caller-built batch (items already carry confidence, e.g. the
+# finetuning synthetic-data path) instead of extracting confidence from
+# raw items via process_batch
+prebuilt_batch = ApprovalBatch(batch_id="batch_002", items=[...])
+prebuilt_batch = await agent.submit_for_review(prebuilt_batch)
 
 # Apply approval decision
 decision = ReviewDecision(
@@ -237,6 +270,8 @@ await storage.append_to_training_dataset(
 - Items with `confidence >= threshold` → `ApprovalStatus.AUTO_APPROVED`
 - Items with `confidence < threshold` → `ApprovalStatus.PENDING_REVIEW`
 - Confidence threshold configurable per agent instance
+- `process_batch()` builds items from raw dicts via the injected `ConfidenceExtractor`; `submit_for_review()` classifies a caller-built `ApprovalBatch` whose items already carry a `confidence` score (e.g. the finetuning synthetic-data path) — both apply the same threshold split and persist to `storage` if configured
+- `HumanApprovalAgent.from_approval_config()` builds an agent using `confidence_threshold` from an `ApprovalConfig` instance instead of a hard-coded float
 
 ### 3. SyntheticDataConfidenceExtractor
 
@@ -283,7 +318,59 @@ confidence = extractor.extract(
 - Reasoning quality: Multiplicative 2% boost (`confidence * 1.02`) if reasoning text present (>20 chars)
 - Returns normalized 0-1 score
 
-### 4. Review Interfaces
+### 4. DecisionOrchestrator
+
+Orchestrates a multi-step workflow with approval checkpoints, combining `WorkflowStateMachine`
+(`libs/agents/cogniverse_agents/workflow/state_machine.py`) for state tracking with
+`HumanApprovalAgent` for the approval logic on each step's output.
+
+```python
+from cogniverse_agents.approval import DecisionOrchestrator, HumanApprovalAgent
+
+agent = HumanApprovalAgent(
+    confidence_extractor=SyntheticDataConfidenceExtractor(),
+    confidence_threshold=0.85,
+    storage=storage,
+)
+
+orchestrator = DecisionOrchestrator(
+    approval_agent=agent,
+    workflow_id="synthetic_generation_001",
+    initial_context={"tenant_id": "acme:production"},  # optional
+)
+
+# Register workflow steps
+orchestrator.register_step(
+    name="generate",
+    executor=lambda ctx: generate_synthetic_data(ctx),
+    requires_approval=True,
+)
+orchestrator.register_step(
+    name="optimize",
+    executor=lambda ctx: run_optimization(ctx),
+    requires_approval=False,
+)
+
+# Execute until a step needs human review or the workflow completes
+result_context = await orchestrator.execute(context_updates={"tenant_id": "acme:production"})
+
+# If the workflow paused (state == AWAITING_APPROVAL), collect decisions
+# and resume with them
+await orchestrator.apply_approvals(decisions=[decision])
+
+status = orchestrator.get_status()
+# {"workflow_id": ..., "state": "completed", "current_step": 2,
+#  "total_steps": 2, "state_duration": ..., "context": {...}, "state_machine": {...}}
+```
+
+**State Machine** (`WorkflowState`): `INITIALIZING` → `RUNNING` → (`AWAITING_APPROVAL` →
+`APPROVED` | `REJECTED` → `REGENERATING` → `RUNNING`) → `COMPLETED` | `FAILED`. A step whose
+output is a list is auto-routed through the approval agent; if every item comes back
+auto-approved or the step produces an empty/non-list result, the state machine advances
+straight from `RUNNING` to `APPROVED` instead of waiting on `AWAITING_APPROVAL` — otherwise a
+zero-pending step would never leave `RUNNING` and would re-execute indefinitely.
+
+### 5. Review Interfaces
 
 #### Python API
 
@@ -326,12 +413,17 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py --server.port 85
 
 **Features**:
 
-- View pending batches with statistics
-- Review individual items with confidence scores
-- Approve/reject with feedback
-- Bulk approval for high-confidence items
-- Export approved items to telemetry datasets
-- Real-time updates from telemetry backend
+- Four sub-tabs: Pending Review, Approved Items, Rejected Items, Statistics
+- Pending items are loaded from the agent's persisted approval store
+  (`agent.get_pending_items(context_filter)`, filtered by `current_tenant`), falling back to
+  the last synthetic-data batch held in session state when no agent is initialized yet
+- Review individual items with confidence score, retry count, and generation metadata
+- Approve/reject with optional feedback text and corrected entities; each decision is
+  persisted via `storage.record_decision()` before the local session state updates
+- Approved/rejected items and the confidence-distribution chart are tracked in the
+  Streamlit session for the duration of the session (not re-queried from storage)
+- Auto-approval threshold is resolved from `ApprovalConfig` via
+  `HumanApprovalAgent.from_approval_config()`
 
 ## Integration with Synthetic Data Generation
 
@@ -345,7 +437,7 @@ from cogniverse_agents.approval import HumanApprovalAgent, ApprovalStorageImpl, 
 # Step 1: Generate synthetic data
 # Initialize service (backend auto-discovered via registry)
 service = SyntheticDataService()
-request = SyntheticDataRequest(optimizer="routing", count=100)
+request = SyntheticDataRequest(optimizer="routing", count=100, tenant_id="your_org:production")
 response = await service.generate(request)
 
 # Step 2: Create approval batch
@@ -370,8 +462,8 @@ batch = await approval_agent.process_batch(
     context={"optimizer": "routing", "generation_timestamp": datetime.now().isoformat()}
 )
 
-# Auto-approved: 73 items (confidence >= 0.8)
-# Pending review: 27 items (confidence < 0.8)
+# Auto-approved: items with confidence >= 0.85
+# Pending review: items with confidence < 0.85
 
 # Step 3: Human reviews pending items (via dashboard or API)
 # ... reviewer approves/rejects pending items ...
@@ -455,11 +547,17 @@ wait_for_telemetry_processing(delay=2.0, description="annotation indexing")
 
 ### Unit Tests
 
-Located at `tests/routing/unit/synthetic/test_approval_system.py`:
+Located at `tests/routing/unit/synthetic/test_approval_system.py` (interfaces, confidence
+extractor, `HumanApprovalAgent`, feedback handler, `ApprovalConfig`, `ApprovalStorageImpl`),
+`tests/agents/unit/test_decision_orchestrator.py` (`DecisionOrchestrator` state-loop
+regressions against the real `WorkflowStateMachine`), and
+`tests/dashboard/unit/test_approval_queue.py` (`_load_pending_items()` behavior):
 
 ```bash
 # Run approval unit tests
 uv run pytest tests/routing/unit/synthetic/test_approval_system.py -v
+uv run pytest tests/agents/unit/test_decision_orchestrator.py -v
+uv run pytest tests/dashboard/unit/test_approval_queue.py -v
 ```
 
 ## Configuration
@@ -472,10 +570,25 @@ telemetry:
   provider_config:
     grpc_endpoint: "http://localhost:4317"  # For span export (OTLP)
     http_endpoint: "http://localhost:6006"  # For queries (HTTP API)
+```
 
-approval:
-  confidence_threshold: 0.85  # Auto-approve items >= 0.85 (default)
-  storage_backend: "phoenix"  # phoenix, database, file
+### ApprovalConfig
+
+`ApprovalConfig` (`cogniverse_foundation.config.unified_config`) is a plain dataclass —
+it is constructed directly in Python (e.g. `ApprovalConfig(confidence_threshold=0.9)`
+as shown in the dashboard's `_initialize_approval_agent()`), not loaded from `config.yaml`:
+
+```python
+from cogniverse_foundation.config.unified_config import ApprovalConfig
+
+config = ApprovalConfig(
+    enabled=False,                          # default
+    confidence_threshold=0.85,               # default; consumed by HumanApprovalAgent.from_approval_config()
+    storage_backend="phoenix",               # default; phoenix, database, file
+    phoenix_project_name="approval_system",  # default
+    max_regeneration_attempts=2,             # default
+    reviewer_email=None,                     # default
+)
 ```
 
 ### Confidence Thresholds by Optimizer
@@ -525,15 +638,28 @@ agent = HumanApprovalAgent(
 - [Synthetic Data Generation](../synthetic-data-generation.md) - Generates data for approval
 - [Telemetry Module](telemetry.md) - Telemetry provider integration details (cogniverse_foundation)
 - [Routing Module](routing.md) - Uses approved data for optimization (cogniverse_agents)
+- [Finetuning Module](finetuning.md) - Gates synthetic finetuning data through `HumanApprovalAgent` (cogniverse_finetuning)
 
 ## API Reference
 
 See source files for detailed docstrings:
 
-- `libs/agents/cogniverse_agents/approval/approval_storage.py`
+- `libs/core/cogniverse_core/approval/interfaces.py` — `ApprovalStatus`, `ReviewItem`,
+  `ReviewDecision`, `ApprovalBatch`, `ConfidenceExtractor`, `FeedbackHandler`, `ApprovalStorage`
 
-- `libs/agents/cogniverse_agents/approval/human_approval_agent.py`
+- `libs/agents/cogniverse_agents/approval/approval_storage.py` — `ApprovalStorageImpl`
 
-- `libs/synthetic/cogniverse_synthetic/approval/confidence_extractor.py`
+- `libs/agents/cogniverse_agents/approval/human_approval_agent.py` — `HumanApprovalAgent`
 
-- `libs/synthetic/cogniverse_synthetic/approval/feedback_handler.py`
+- `libs/agents/cogniverse_agents/approval/orchestrator.py` — `DecisionOrchestrator`
+
+- `libs/agents/cogniverse_agents/workflow/state_machine.py` — `WorkflowState`,
+  `WorkflowStateMachine`
+
+- `libs/synthetic/cogniverse_synthetic/approval/confidence_extractor.py` —
+  `SyntheticDataConfidenceExtractor`
+
+- `libs/synthetic/cogniverse_synthetic/approval/feedback_handler.py` —
+  `SyntheticDataFeedbackHandler`
+
+- `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py` — `render_approval_queue_tab`

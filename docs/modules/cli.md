@@ -51,7 +51,7 @@ graph TD
     Root --> Code["<span style='color:#000'>code.py<br/>Interactive coding agent REPL</span>"]
     Root --> Streaming["<span style='color:#000'>streaming.py<br/>SSE streaming for the coding REPL</span>"]
     Root --> Index["<span style='color:#000'>index.py<br/>Directory indexing into Vespa</span>"]
-    Root --> Constants["<span style='color:#000'>constants.py<br/>NAMESPACE, RELEASE_NAME</span>"]
+    Root --> Constants["<span style='color:#000'>constants.py<br/>NAMESPACE, RUNTIME_URL</span>"]
 
     style Root fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Main fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -96,7 +96,7 @@ cogniverse status
 cogniverse logs runtime --follow
 ```
 
-`up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`.
+`up` accepts `--llm {auto,builtin,external}` (default `auto`, which probes `localhost:11434` for a host LLM before falling back to the chart's builtin model) and `--image-source` to override the workspace directory used for image builds. `logs` targets one of `runtime`, `dashboard`, `vespa`, `phoenix`, `llm`, `argo`; `logs llm` checks for the `cogniverse-llm` statefulset first and prints a notice instead of erroring when the stack is running in external-LLM mode (no builtin pod).
 
 ### Coding agent
 
@@ -110,9 +110,12 @@ cogniverse code --tenant acme --language python --iterations 5 --codebase ./my-r
 ```bash
 # Index a directory of source code into Vespa for agent context search
 cogniverse index ./my-repo --type code --tenant acme
+
+# Override the Vespa profile the runtime ingests with (default: code_lateon_mv for --type code)
+cogniverse index ./my-repo --type code --tenant acme --profile code_lateon_mv
 ```
 
-Only `--type code` is currently implemented; `docs` and `video` are accepted but print a not-yet-implemented notice.
+Only `--type code` is currently implemented; `docs` and `video` are accepted but print a not-yet-implemented notice. Each file is uploaded to `/ingestion/upload` and polled to a terminal state, then a knowledge-graph extraction pass runs locally (tree-sitter for code) and POSTs the resulting nodes/edges to `/graph/upsert`.
 
 ### Knowledge graph
 
@@ -155,13 +158,18 @@ cogniverse sandbox status   # show gateway install/running/cluster-sync state
 
 `resolve_project_root()` (in `config.py`) walks up from the current directory looking for a `pyproject.toml` containing `[tool.uv.workspace]` to find the monorepo root. When the CLI is installed as a wheel (no such root), the same functions fall back to bundled package data under `cogniverse_cli/data/` for the Helm chart and workflow templates.
 
-Environment variables read by `up`:
+Environment variables read across CLI commands:
 
 | Variable | Used by | Purpose |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | `up --messaging` | Required to enable the messaging gateway |
 | `COGNIVERSE_TENANT_ID` | `graph`, `code`, `index` | Default tenant when `--tenant` is omitted |
-| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `secrets sync` | HuggingFace token pushed to the cluster |
+| `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` | `up`, `secrets sync` | HuggingFace token pushed to the cluster as `Secret/hf-token`; also checked from `~/.cache/huggingface/token` |
+| `COGNIVERSE_TORCH_BACKEND` | `up` | Overrides host torch-backend auto-detection (`cpu`/`cuda`/`rocm`) used to pick image tags and device-values overlays |
+| `COGNIVERSE_K3D_PORTS` | `up` (cluster create) | Full override of the k3d loadbalancer port list (comma-separated) |
+| `COGNIVERSE_K3D_EXTRA_PORTS` | `up` (cluster create) | Ports added on top of the default k3d loadbalancer port list |
+| `COGNIVERSE_K3D_EXCLUDE_PORTS` | `up` (cluster create) | Ports subtracted from the k3d loadbalancer port list |
+| `OPENSHELL_GATEWAY_HOST_PORT` | `up` (sandbox bootstrap) | Host port for the OpenShell gateway (default `28080`) |
 
 ---
 
@@ -171,7 +179,9 @@ Environment variables read by `up`:
 uv run pytest tests/cli/unit/ -v --tb=long
 ```
 
-Covers cluster prerequisite checks, image backend detection, Helm install/uninstall wrapping, config path resolution, the coding REPL, sandbox management, and secrets sync — each against a mocked `subprocess`/`kubectl`/`helm` boundary.
+One test module per source module: `test_main.py` (`up`/`down`/`status`/`logs`, host-LLM probing), `test_cluster.py` (prerequisite checks, k3d lifecycle), `test_config.py` (chart/workflow path resolution in dev vs. installed mode), `test_deploy.py` (Helm install/upgrade/uninstall), `test_images.py` (torch-backend detection, image build/import), `test_argo.py` (WorkflowTemplate/CronWorkflow filtering), `test_health.py` (URL polling and health snapshots), `test_secrets_sync.py` (hf-token sync), `test_sandbox_cli.py` (OpenShell gateway install/sync/status), `test_code_cli.py` (A2A request building, SSE event parsing, the REPL session, slash commands, and `index.py`'s `collect_files` filtering), and `test_admin_and_graph_cli.py` (orphan reconciliation, graph stats/search/upsert payloads) — each against a mocked `subprocess`/`kubectl`/`helm`/`httpx` boundary.
+
+`tests/e2e/test_coding_cli_e2e.py` and `tests/e2e/test_graph_cli_e2e.py` exercise the `index`, `code`, and `graph` commands against a real running runtime (upload → ingest → graph upsert round-trip).
 
 ---
 

@@ -1,15 +1,24 @@
 # Production Caching Strategy
 
-Caching architecture for the Cogniverse multi-agent video search system with pluggable backends and multi-tenant support.
+Caching architecture for the Cogniverse multi-agent video search system. Two independent caching systems exist:
+
+1. **Pipeline artifact cache** (`cogniverse_core.common.cache`) — durable, disk/S3-backed cache for video processing outputs (keyframes, transcripts, descriptions, segment frames), keyed by tenant/schema profile.
+2. **Tenant instance cache** (`cogniverse_foundation.caching.TenantLRUCache`) — bounded in-memory LRU cache for per-tenant singleton objects (agent instances, memory managers, backend clients, registry instances), used to prevent unbounded per-tenant memory growth in long-running processes.
 
 ## Overview
 
-The caching system provides a unified interface for caching across all components with:
+The pipeline artifact cache provides a unified interface for caching across ingestion components with:
 
 - **Pluggable backends**: Extensible via `CacheBackend` ABC
 - **Multi-tenant isolation**: Key prefixing with profile/schema_name
 - **Priority-based tiers**: Multiple backends with configurable priority
 - **Pipeline integration**: Specialized caching for video processing artifacts
+
+The tenant instance cache provides bounded, thread-safe, per-tenant object caching with:
+
+- **Capacity-bounded LRU eviction**: Oldest-used tenant is evicted when a configurable capacity is exceeded
+- **Atomic get-or-build**: `get_or_set` resolves or builds a per-tenant instance under a lock so concurrent callers share one instance
+- **Eviction callbacks**: An optional `on_evict` hook releases native resources (Vespa clients, gRPC channels) when a tenant is evicted
 
 ## Architecture
 
@@ -19,10 +28,20 @@ flowchart TD
     CM --> SFS["<span style='color:#000'><b>StructuredFilesystemBackend</b><br/>Local Storage (priority 0)</span>"]
     CM --> S3["<span style='color:#000'><b>S3CacheBackend</b><br/>S3/MinIO (priority 1)</span>"]
 
+    TLC["<span style='color:#000'><b>TenantLRUCache</b><br/>In-Process Instance Cache</span>"] --> AGT["<span style='color:#000'>Agent instances<br/>(text_analysis_agent)</span>"]
+    TLC --> MEM["<span style='color:#000'>Mem0MemoryManager<br/>per-tenant singletons</span>"]
+    TLC --> BR["<span style='color:#000'>BackendRegistry<br/>per-(backend,tenant) clients</span>"]
+    TLC --> EPR["<span style='color:#000'>EntryPointRegistry<br/>per-tenant provider instances</span>"]
+
     style PAC fill:#ce93d8,stroke:#7b1fa2,color:#000
     style CM fill:#ce93d8,stroke:#7b1fa2,color:#000
     style SFS fill:#a5d6a7,stroke:#388e3c,color:#000
     style S3 fill:#81d4fa,stroke:#0288d1,color:#000
+    style TLC fill:#ffcc80,stroke:#ef6c00,color:#000
+    style AGT fill:#b0bec5,stroke:#546e7a,color:#000
+    style MEM fill:#b0bec5,stroke:#546e7a,color:#000
+    style BR fill:#b0bec5,stroke:#546e7a,color:#000
+    style EPR fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 ## Cache Backend Interface
@@ -121,6 +140,13 @@ stats = await manager.get_stats()
 - Automatic tier promotion on cache hits
 - Aggregated statistics across all backends
 
+`CacheConfig.enable_compression` and `enable_stats` are accepted fields but are not
+currently read by `CacheManager` or either backend — no backend applies compression
+today. `serialization_format` on `CacheConfig` itself is likewise unused by
+`CacheManager`; each backend's own `serialization_format` (set per-backend in its
+`CONFIG_CLASS`, e.g. `StructuredFilesystemConfig.serialization_format`) is what
+actually controls pickle/json/msgpack encoding.
+
 ## Multi-Tenant Isolation
 
 Tenant isolation is achieved through **key prefixing** using the schema name:
@@ -135,18 +161,22 @@ cache = PipelineArtifactCache(
     profile="video_frames_acme"  # Tenant-specific schema name
 )
 
-# Keys are automatically prefixed:
-# "video_frames_acme:video:my_video:keyframes"
+# Keys are automatically prefixed with the profile and a SHA-256 digest
+# of the canonicalized video path (see Key Structure below):
+# "video_frames_acme:video:a3f2e9d8c7b6a5f4:keyframes:..."
 ```
 
 **Key Structure:**
+
+The video segment is **not** the human-readable video name — `_generate_video_key` canonicalizes the video path to a URI (`file://<absolute>` for bare paths) and SHA-256 hashes it, keeping the first 16 hex characters. Artifact parameters are appended sorted alphabetically by keyword (`sorted(kwargs.items())`), not in call order:
+
 ```text
-{profile}:video:{video_name}:{artifact_type}[:parameters]
+{profile}:video:{sha256_digest_16hex}:{artifact_type}[:param=value ...]
 
 Examples:
-video_frames_acme:video:intro_vid:keyframes:strategy=similarity:max_frames=3000:threshold=0.999
-video_frames_acme:video:intro_vid:transcript:model=base:lang=auto
-document_content_startup:video:demo:transcript:model=base:lang=auto
+video_frames_acme:video:a3f2e9d8c7b6a5f4:keyframes:max_frames=3000:strategy=similarity:threshold=0.999
+video_frames_acme:video:a3f2e9d8c7b6a5f4:transcript:lang=auto:model=base
+document_content_startup:video:7c1b9e4f0a2d8863:transcript:lang=auto:model=base
 ```
 
 ## Pipeline Artifact Cache
@@ -188,6 +218,37 @@ await cache.set_transcript(
     language=None
 )
 
+# Cache VLM frame descriptions
+await cache.set_descriptions(
+    video_path="/path/to/video.mp4",
+    descriptions_data=descriptions_data,
+    model_name="Qwen/Qwen2-VL-2B-Instruct",
+    batch_size=500
+)
+descriptions = await cache.get_descriptions(
+    video_path="/path/to/video.mp4",
+    model_name="Qwen/Qwen2-VL-2B-Instruct",
+    batch_size=500
+)
+
+# Cache temporal segment frames (e.g. for chunked/segment-based profiles)
+await cache.set_segment_frames(
+    video_path="/path/to/video.mp4",
+    segment_id=0,
+    start_time=0.0,
+    end_time=6.0,
+    frames=frame_list,
+    timestamps=timestamp_list,
+    sampling_fps=2.0,
+    max_frames=12
+)
+segment = await cache.get_segment_frames(
+    video_path="/path/to/video.mp4",
+    segment_id=0,
+    start_time=0.0,
+    end_time=6.0
+)
+
 # Check all cached artifacts for a video
 artifacts = await cache.get_all_artifacts(
     video_path="/path/to/video.mp4",
@@ -197,6 +258,8 @@ artifacts = await cache.get_all_artifacts(
 # Invalidate all cache entries for a video
 await cache.invalidate_video(video_path="/path/to/video.mp4")
 ```
+
+`PipelineArtifactCache` supports four artifact types end to end: keyframes, audio transcripts, frame descriptions, and temporal segment frames (`VideoArtifacts.is_complete(pipeline_config)` checks all four against a pipeline config). Full per-method parameter documentation lives in `docs/modules/cache.md`.
 
 ## Structured Filesystem Backend
 
@@ -310,10 +373,16 @@ pipeline = VideoIngestionPipeline(
 #     }
 # }
 
-# Cache is used automatically during processing
+# Cache is used automatically during processing:
 # - Keyframes cached after extraction
 # - Transcriptions cached after audio processing
-# - Embeddings cached after model inference
+# - Frame descriptions cached after VLM inference
+# - Segment frames cached for chunked/segment-based profiles
+#
+# Note: embeddings themselves are not cached by PipelineArtifactCache —
+# VideoArtifacts.embeddings exists as a field but is never populated by
+# get_all_artifacts(); embedding generation is not part of this cache's
+# supported artifact set.
 ```
 
 ## Configuration
@@ -371,7 +440,8 @@ stats = await manager.get_stats()
 2. **Set appropriate TTLs**: Match TTL to data freshness requirements
 3. **Monitor hit rates**: Low hit rates may indicate cache sizing issues
 4. **Enable TTL enforcement**: Set `enable_ttl: true` and `cleanup_on_startup: true` to prevent disk exhaustion
-5. **Use compression**: Enable for large artifacts like embeddings
+5. **Choose serialization per backend**: Set each backend's own `serialization_format` (`pickle` for speed, `json` for human-readable debugging, `msgpack` for compact binary) — `CacheConfig.enable_compression` is not currently applied by any backend
+6. **Bound tenant instance caches**: For `TenantLRUCache` usages, size `capacity` to the expected concurrent-tenant count; pass `on_evict` whenever the cached object holds a native resource (Vespa client, gRPC channel) that needs explicit cleanup
 
 ## Backend Registry
 
@@ -390,6 +460,41 @@ backend = registry.create({"backend_type": "s3", "bucket": "my-bucket"})
 
 Extra keys in the config dict are filtered to only the fields declared in `CONFIG_CLASS`, preventing `TypeError` on unexpected keys.
 
+## Tenant Instance Cache
+
+Separate from the pipeline artifact cache, `TenantLRUCache` (`cogniverse_foundation.caching`) is a generic, thread-safe, capacity-bounded LRU cache keyed by `tenant_id`. It has no TTL and no backends — it exists so long-running, multi-tenant processes don't accumulate one instance per tenant forever (Mem0 memory managers, compiled DSPy modules, Vespa backend clients all hold native resources).
+
+```python
+from cogniverse_foundation.caching import TenantLRUCache
+
+cache: TenantLRUCache[MyPerTenantObject] = TenantLRUCache(
+    capacity=16,
+    on_evict=lambda tenant_id, instance: instance.close(),  # optional cleanup
+)
+
+# Atomic get-or-build: concurrent callers share one instance per tenant
+instance = cache.get_or_set("tenant_acme", lambda: MyPerTenantObject(tenant_id="tenant_acme"))
+
+# Direct access
+cache.set("tenant_acme", instance)
+cached = cache.get("tenant_acme")          # None if absent, moves entry to MRU
+cache.pop("tenant_acme")                    # remove without triggering on_evict
+list(cache.keys())                          # tenant ids, LRU order
+list(cache.values())                        # snapshot of cached instances
+cache.clear()                               # evicts everything, invoking on_evict per entry
+```
+
+`capacity` must be `>= 1` (raises `ValueError` otherwise). When `set`/`get_or_set` pushes the cache over capacity, the least-recently-used entry is evicted and `on_evict(key, value)` is invoked (exceptions from `on_evict` are logged and swallowed, not propagated).
+
+**Live usages** (all class-level `TenantLRUCache` instances, one per tenant-scoped singleton):
+
+| Class | Location | Caches |
+|---|---|---|
+| `TextAnalysisAgent._agent_instances` | `libs/agents/cogniverse_agents/text_analysis_agent.py` | Per-tenant agent instance (compiled DSPy module + LM config) |
+| `Mem0MemoryManager._instances` | `libs/core/cogniverse_core/memory/manager.py` | Per-tenant memory manager singleton |
+| `BackendRegistry._backend_instances` | `libs/core/cogniverse_core/registries/backend_registry.py` | Per-(backend_name, tenant) search/ingestion backend client |
+| `EntryPointRegistry._instances` | `libs/foundation/cogniverse_foundation/registry/entry_point_registry.py` | Per-tenant instance for each entry-point-registry subclass (e.g. telemetry providers) |
+
 ## Key Locations
 
 - `libs/core/cogniverse_core/common/cache/base.py` - `CacheBackend` ABC, `CacheManager`, `BackendConfig`
@@ -398,3 +503,4 @@ Extra keys in the config dict are filtered to only the fields declared in `CONFI
 - `libs/core/cogniverse_core/common/cache/backends/structured_filesystem.py` - `StructuredFilesystemBackend`
 - `libs/core/cogniverse_core/common/cache/backends/s3.py` - `S3CacheBackend`
 - `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` - Pipeline integration
+- `libs/foundation/cogniverse_foundation/caching/tenant_lru.py` - `TenantLRUCache`

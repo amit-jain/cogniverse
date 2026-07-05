@@ -41,7 +41,16 @@ except ImportError:
 [pytest]
 asyncio_mode = auto
 asyncio_default_fixture_loop_scope = function
+asyncio_default_test_loop_scope = function
 ```
+
+`asyncio_default_test_loop_scope` pins the *test* loop to function scope
+too — without it, pytest-asyncio 1.3+ defaults the test loop to
+module/session scope, so an async test that leaves the loop "running"
+(e.g. a backgrounded coroutine that never fully awaited) makes every
+subsequent async test in the same scope fail with `Runner.run() cannot
+be called from a running event loop`. Function-scoped loops get torn
+down per-test, isolating leaks.
 
 ### Background Thread Cleanup
 
@@ -145,16 +154,16 @@ markers =
     requires_colpali: Tests that require ColPali models
     requires_videoprism: Tests that require VideoPrism models
     requires_colqwen: Tests that require ColQwen models
+    requires_whisper: Tests that require Whisper models
     requires_teacher_model: Tests that scale up the vllm-llm-teacher pod (long-running, off by default)
     requires_optimizer_data: Tests that exercise non-router optimizers (workflow / modality / xgboost) end-to-end against the live cluster (slow, off by default)
-    requires_whisper: Tests that require Whisper models
     requires_cv2: Tests that require OpenCV
     requires_ffmpeg: Tests that require FFmpeg
     ci_safe: Tests that are safe to run in CI environment
     ci_fast: Fast, essential tests for CI (subset of most important functionality)
     timeout: Tests with custom timeout values
     e2e: End-to-end integration tests with real services
-    e2e_heavy: Heavy end-to-end tests that submit a full CronWorkflow execution and may take 5-10+ minutes; opt-in via -m e2e_heavy
+    e2e_heavy: Heavy end-to-end tests that submit a full CronWorkflow execution and may take 5-10+ minutes (DSPy optimization, synthetic data generation, distillation); opt-in via -m e2e_heavy
     browser: Browser-based E2E tests requiring Playwright
     system: System-level end-to-end tests with full infrastructure
     telemetry: Tests for telemetry and observability system
@@ -165,12 +174,20 @@ markers =
 The `ci_fast` marker identifies tests run in the CI Fast subset steps across workflows:
 
 ```python
+# tests/backends/integration/test_tenant_schema_lifecycle.py
 @pytest.mark.integration
 @pytest.mark.ci_fast
-async def test_tenant_schema_creation(shared_vespa):
-    """Essential test for CI - verifies tenant schema lifecycle."""
-    # This runs in the CI Fast subset steps across workflows
-    ...
+class TestSchemaRegistryDeployment:
+    """Test schema deployment via SchemaRegistry"""
+
+    def test_deploy_single_schema(self, get_backend):
+        """Test deploying a single schema for a tenant"""
+        backend = get_backend("acme")
+        backend.schema_registry.deploy_schema("acme", "video_colpali_smol500_mv_frame")
+
+        schemas = backend.schema_registry.get_tenant_schemas("acme")
+        assert len(schemas) == 1
+        assert schemas[0].base_schema_name == "video_colpali_smol500_mv_frame"
 ```
 
 **Guidelines for `ci_fast` tests:**
@@ -185,16 +202,26 @@ async def test_tenant_schema_creation(shared_vespa):
 
 ### Async Test Timeout
 
-Async tests use custom timeouts defined in test files:
+Some async tests carry a `@pytest.mark.timeout(N)` marker (registered
+in `pytest.ini` as `timeout: Tests with custom timeout values`) with a
+literal per-test second count:
 
 ```python
-@pytest.mark.timeout(TEST_CONFIG["test_timeout"])
-async def test_real_query_analysis_with_local_llm(self):
-    # Test code here
-    pass
+# tests/routing/integration/test_deep_research_integration.py
+@pytest.mark.asyncio
+@pytest.mark.timeout(120)
+async def test_full_research_cycle(self, real_search_fn, seeded_outdoor_corpus):
+    """Decompose -> search Vespa -> evaluate -> synthesize against the configured LM."""
+    ...
 ```
 
-Default timeouts from `CLAUDE.md`:
+Note the `pytest-timeout` plugin that enforces this marker is not a
+project dependency — install it (`uv pip install pytest-timeout`) for
+the marker to actually abort a hung test; without it, the marker is
+inert and only the shell-level `timeout` wrapper below bounds runtime.
+
+Conventional shell-level timeouts used across the project's own test
+commands and CI workflows:
 
 - Individual test files: 30 minutes (`timeout 1800`)
 
@@ -229,13 +256,29 @@ Fetching 5 files: 100%
 [Segfault or hang]
 ```
 
-**Cause:** Large models (e.g., `vidore/colpali-v1.2`) can cause threading issues.
+**Cause:** Locally downloading and loading a large embedding/VLM model
+inside the pytest process can trigger the same background-thread
+conflicts described above.
 
-**Solution:** Use smaller models in tests:
+**Solution:** The primary embedding model
+(`TomoroAI/tomoro-colqwen3-embed-4b`, configured as `colpali_model` /
+per-profile `embedding_model` in `configs/config.json`) has no
+in-process loader — `ColPaliModelLoader` and `ColQwenModelLoader`
+(`libs/core/cogniverse_core/common/models/model_loaders.py`) raise
+immediately for any ColQwen3/Tomoro model name, directing callers to
+`RemoteColPaliLoader` instead:
 
-- ✅ Use: `vidore/colpali-v1.3-hf` (stable, 500M parameters)
+```text
+ColQwen3/Tomoro models are remote-only — serve via vLLM and set
+inference_service_url (profile inference_services.embedding). Local
+in-process loading is unsupported (requires transformers>=4.57, blocked
+by the pylate cap).
+```
 
-- ❌ Avoid: `vidore/colpali-v1.2` (1.2B parameters, less stable in tests)
+Tests marked `requires_colpali` / `requires_colqwen` therefore exercise
+the model through the `vllm_colpali` inference service over HTTP rather
+than downloading weights into the test process — avoid adding a local
+`from_pretrained(...)` call for these models in new tests.
 
 ### Import Timing Issues
 
@@ -720,33 +763,35 @@ the autouse fixture's overrides flow through.
 Optimize test performance:
 
 ```bash
-# Parallel execution (be careful with async tests)
+# Parallel execution (be careful with async tests) — requires pytest-xdist,
+# not a project dependency by default: `uv pip install pytest-xdist` first
 uv run pytest -n auto
 
-# Run fastest tests first
+# Show the 10 slowest test/setup durations after the run (built into pytest core)
 uv run pytest --durations=10
-
-# Profile slow tests
-uv run pytest --profile
 ```
 
 ### Model Caching
 
-Models are cached to speed up tests:
+Local model loaders cache loaded weights across calls to speed up tests.
+`get_or_load_model` in
+`libs/core/cogniverse_core/common/models/model_loaders.py` keys the
+module-level `_model_cache` dict by `model_name` (or
+`model_name@remote_inference_url` when remote inference is configured),
+holds a per-key `threading.Lock` so concurrent `from_pretrained` calls
+can't corrupt PyTorch/accelerate's meta-tensor dispatch state, and
+evicts a cached entry whose parameters have degraded to a meta device
+before re-loading:
 
 ```python
-# Models cached in _model_cache
-_model_cache = {}
-
-def get_or_load_model(model_name, config, logger):
-    cache_key = model_name
-    if cache_key in _model_cache:
-        return _model_cache[cache_key]
-
-    # Load and cache
-    model, processor = loader.load_model()
-    _model_cache[cache_key] = (model, processor)
-    return model, processor
+def get_or_load_model(
+    model_name: str,
+    config: Dict[str, Any],
+    logger: Optional[logging.Logger] = None,
+    force_reload: bool = False,
+) -> Tuple[Any, Any]:
+    """Get model from cache or load it. Thread-safe via a per-key lock."""
+    ...
 ```
 
 ---
@@ -841,7 +886,7 @@ shim under the fixture name that tests in that package already reference:
 # e.g. tests/backends/integration/conftest.py
 from tests.conftest import shared_vespa  # noqa: F401
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def vespa_instance(shared_vespa):
     """Shim: exposes shared_vespa under the name backends tests expect."""
     yield {
@@ -915,7 +960,8 @@ Key details:
 
 Companion fixtures also defined in `tests/conftest.py`:
 
-- `phoenix_client` — `phoenix.client.Client` pointed at `http://localhost:16006`
+- `phoenix_client` — `phoenix.client.Client` pointed at the container's
+  `http_endpoint` (`http://localhost:16006` plus the per-process port offset)
 - `telemetry_config_with_phoenix` — `TelemetryConfig` pre-configured for the container
 - `telemetry_manager_with_phoenix` — session-installed `TelemetryManager` singleton
 - `telemetry_manager_without_phoenix` — function-scoped manager with mock endpoints
@@ -977,7 +1023,7 @@ Vespa requires disk usage below 75%. In GitHub Actions:
     df -h  # Verify disk usage
 
 - name: Pre-pull Vespa Docker image
-  run: docker pull vespaengine/vespa:latest
+  run: docker pull vespaengine/vespa:8.668.5
 ```
 
 ---
@@ -1039,8 +1085,10 @@ graph TD
     core_int["<span style='color:#000'>integration/</span>"]
 
     dashboard["<span style='color:#000'><b>dashboard/</b><br/>UI integration tests</span>"]
+    dashboard_unit["<span style='color:#000'>unit/</span>"]
 
     e2e["<span style='color:#000'><b>e2e/</b><br/>cross-package end-to-end tests</span>"]
+    e2e_deployment["<span style='color:#000'>deployment/</span>"]
 
     evaluation["<span style='color:#000'><b>evaluation/</b><br/>cogniverse_evaluation tests</span>"]
     evaluation_unit["<span style='color:#000'>unit/</span>"]
@@ -1116,6 +1164,10 @@ graph TD
 
     admin --> admin_unit
 
+    dashboard --> dashboard_unit
+
+    e2e --> e2e_deployment
+
     agents --> agents_unit
     agents --> agents_int
     agents --> agents_e2e
@@ -1163,18 +1215,18 @@ graph TD
     telemetry --> telemetry_int
 
     style root fill:#b0bec5,stroke:#546e7a,color:#000
-    style admin fill:#ef9a9a,stroke:#c62828,color:#000
+    style admin fill:#b0bec5,stroke:#546e7a,color:#000
     style agents fill:#ce93d8,stroke:#7b1fa2,color:#000
     style backends fill:#90caf9,stroke:#1565c0,color:#000
     style charts fill:#b0bec5,stroke:#546e7a,color:#000
     style cli fill:#b0bec5,stroke:#546e7a,color:#000
     style common fill:#a5d6a7,stroke:#388e3c,color:#000
     style core fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style dashboard fill:#ef9a9a,stroke:#c62828,color:#000
+    style dashboard fill:#b0bec5,stroke:#546e7a,color:#000
     style e2e fill:#b0bec5,stroke:#546e7a,color:#000
     style evaluation fill:#ffcc80,stroke:#ef6c00,color:#000
-    style events fill:#fff59d,stroke:#f9a825,color:#000
-    style finetuning fill:#fff59d,stroke:#f9a825,color:#000
+    style events fill:#ffcc80,stroke:#ef6c00,color:#000
+    style finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
     style fixtures fill:#b0bec5,stroke:#546e7a,color:#000
     style foundation fill:#a5d6a7,stroke:#388e3c,color:#000
     style ingestion fill:#ffcc80,stroke:#ef6c00,color:#000
@@ -1182,26 +1234,28 @@ graph TD
     style messaging fill:#90caf9,stroke:#1565c0,color:#000
     style routing fill:#ce93d8,stroke:#7b1fa2,color:#000
     style runtime fill:#90caf9,stroke:#1565c0,color:#000
-    style synthetic fill:#fff59d,stroke:#f9a825,color:#000
+    style synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
     style system fill:#b0bec5,stroke:#546e7a,color:#000
     style telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
     style utils fill:#b0bec5,stroke:#546e7a,color:#000
-    style admin_unit fill:#e57373,stroke:#c62828,color:#000
+    style admin_unit fill:#b0bec5,stroke:#546e7a,color:#000
+    style dashboard_unit fill:#b0bec5,stroke:#546e7a,color:#000
+    style e2e_deployment fill:#b0bec5,stroke:#546e7a,color:#000
     style agents_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
     style agents_int fill:#ba68c8,stroke:#7b1fa2,color:#000
     style agents_e2e fill:#ba68c8,stroke:#7b1fa2,color:#000
     style backends_unit fill:#64b5f6,stroke:#1565c0,color:#000
     style backends_int fill:#64b5f6,stroke:#1565c0,color:#000
-    style cli_unit fill:#90a4ae,stroke:#546e7a,color:#000
+    style cli_unit fill:#b0bec5,stroke:#546e7a,color:#000
     style common_unit fill:#81c784,stroke:#388e3c,color:#000
     style common_int fill:#81c784,stroke:#388e3c,color:#000
     style core_unit fill:#ba68c8,stroke:#7b1fa2,color:#000
     style core_int fill:#ba68c8,stroke:#7b1fa2,color:#000
     style evaluation_unit fill:#ffb74d,stroke:#ef6c00,color:#000
     style evaluation_int fill:#ffb74d,stroke:#ef6c00,color:#000
-    style events_unit fill:#fff176,stroke:#f9a825,color:#000
-    style events_int fill:#fff176,stroke:#f9a825,color:#000
-    style finetuning_int fill:#fff176,stroke:#f9a825,color:#000
+    style events_unit fill:#ffb74d,stroke:#ef6c00,color:#000
+    style events_int fill:#ffb74d,stroke:#ef6c00,color:#000
+    style finetuning_int fill:#ffb74d,stroke:#ef6c00,color:#000
     style foundation_unit fill:#81c784,stroke:#388e3c,color:#000
     style foundation_int fill:#81c784,stroke:#388e3c,color:#000
     style ingestion_unit fill:#ffb74d,stroke:#ef6c00,color:#000
@@ -1214,7 +1268,7 @@ graph TD
     style routing_int fill:#ba68c8,stroke:#7b1fa2,color:#000
     style runtime_unit fill:#64b5f6,stroke:#1565c0,color:#000
     style runtime_int fill:#64b5f6,stroke:#1565c0,color:#000
-    style synthetic_int fill:#fff176,stroke:#f9a825,color:#000
+    style synthetic_int fill:#ffb74d,stroke:#ef6c00,color:#000
     style telemetry_unit fill:#81c784,stroke:#388e3c,color:#000
     style telemetry_int fill:#81c784,stroke:#388e3c,color:#000
 ```

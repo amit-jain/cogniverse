@@ -137,13 +137,13 @@ flowchart TB
 | **core** | Core | Base classes, registries, memory | agents/, common/, registries/ |
 | **evaluation** | Core | Experiments, metrics, datasets, quality monitor | core/, metrics/, evaluators/, quality_monitor.py |
 | **synthetic** | Core | Synthetic data generation | service.py, generators/ |
-| **agents** | Implementation | Routing, search, orchestration, strategy learner, wiki knowledge base | routing/, search/, tools/, optimizer/, wiki/ |
+| **agents** | Implementation | Routing, search, orchestration, strategy learner, wiki knowledge base | routing/, search/, orchestrator/, tools/, optimizer/, wiki/ |
 | **vespa** | Implementation | Vespa backend, schema management | config/, registry/ |
 | **finetuning** | Implementation | LLM fine-tuning (SFT, DPO) | training/, dataset/, registry/ |
 | **telemetry-phoenix** | Implementation | Phoenix telemetry provider (plugin) | provider.py, evaluation/ |
 | **runtime** | Application | FastAPI server, ingestion, optimization CLI, quality monitor CLI | routers/, ingestion/, admin/, optimization_cli.py, quality_monitor_cli.py |
 | **messaging** | Application | Telegram messaging gateway | gateway.py, auth.py, command_router.py |
-| **cli** | Application | cogniverse CLI (up, down, status, code, index, graph, logs) | main.py, cluster.py, deploy.py, code.py, graph.py |
+| **cli** | Application | cogniverse CLI (up, down, status, code, index, graph, logs, secrets, admin, sandbox) | main.py, cluster.py, deploy.py, code.py, graph.py |
 | **dashboard** | Application | Streamlit UI, analytics | tabs/, utils/ |
 
 ---
@@ -157,13 +157,27 @@ The quality monitor is a continuous evaluation sidecar deployed alongside the ru
 
 When either strategy finds quality below threshold, the monitor submits an Argo workflow to trigger the optimization CLI (`--mode triggered`) with the degraded agents and a scored trigger dataset.
 
-```
-cogniverse_evaluation.quality_monitor.QualityMonitor
-  ├── evaluate_golden_set() → GoldenEvalResult (MRR, NDCG, Precision@5)
-  ├── evaluate_live_traffic() → LiveEvalResult (per-agent scores)
-  ├── update_baseline() → stores new baseline in Phoenix dataset
-  ├── grow_golden_set() → adds high-scoring live queries to golden set
-  └── run() → async loop: golden every goldenIntervalSeconds, live every liveIntervalSeconds
+```mermaid
+flowchart TB
+    QM["<span style='color:#000'><b>QualityMonitor</b><br/>cogniverse_evaluation.quality_monitor</span>"]
+    evalGolden["<span style='color:#000'><b>evaluate_golden_set()</b><br/>→ GoldenEvalResult (MRR, NDCG, Precision@5)</span>"]
+    evalLive["<span style='color:#000'><b>evaluate_live_traffic()</b><br/>→ LiveEvalResult (per-agent scores)</span>"]
+    updateBaseline["<span style='color:#000'><b>update_baseline()</b><br/>Stores new baseline in Phoenix dataset</span>"]
+    growGolden["<span style='color:#000'><b>grow_golden_set()</b><br/>Adds high-scoring live queries to golden set</span>"]
+    runLoop["<span style='color:#000'><b>run()</b><br/>Async loop: golden every goldenIntervalSeconds,<br/>live every liveIntervalSeconds</span>"]
+
+    QM --> evalGolden
+    QM --> evalLive
+    QM --> updateBaseline
+    QM --> growGolden
+    QM --> runLoop
+
+    style QM fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style evalGolden fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style evalLive fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style updateBaseline fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style growGolden fill:#ba68c8,stroke:#7b1fa2,color:#000
+    style runLoop fill:#ba68c8,stroke:#7b1fa2,color:#000
 ```
 
 CLI entry point: `python -m cogniverse_runtime.quality_monitor_cli`
@@ -371,6 +385,7 @@ flowchart TB
             test_messaging["<span style='color:#000'>messaging/</span>"]
             test_runtime["<span style='color:#000'>runtime/</span>"]
             test_utils["<span style='color:#000'>utils/</span>"]
+            test_charts["<span style='color:#000'>charts/</span>"]
         end
 
         subgraph SCRIPTS["<span style='color:#000'><b>scripts/</b><br/>Operational scripts</span>"]
@@ -386,6 +401,7 @@ flowchart TB
             config_schemas["<span style='color:#000'>schemas/</span>"]
             config_profiles["<span style='color:#000'>profiles/</span>"]
             config_examples["<span style='color:#000'>examples/</span>"]
+            config_policies["<span style='color:#000'>agent_policies/</span>"]
             config_services["<span style='color:#000'>services.xml</span>"]
         end
 
@@ -621,6 +637,7 @@ uv sync
 ```bash
 # Ingestion
 uv run python scripts/run_ingestion.py \
+  --tenant-id acme:acme \
   --video_dir data/videos \
   --backend vespa \
   --profile video_colpali_smol500_mv_frame
@@ -659,7 +676,17 @@ python -m cogniverse_runtime.optimization_cli --mode simba --tenant-id default -
 python -m cogniverse_runtime.optimization_cli --mode workflow --tenant-id default --lookback-hours 24
 python -m cogniverse_runtime.optimization_cli --mode gateway-thresholds --tenant-id default --lookback-hours 24
 python -m cogniverse_runtime.optimization_cli --mode profile --tenant-id default --lookback-hours 24
+
+# Optimization CLI — remaining modes
+python -m cogniverse_runtime.optimization_cli --mode online-routing-eval --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode synthetic --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode rollback --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode ab-compare --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode egress-netpol --tenant-id default
+python -m cogniverse_runtime.optimization_cli --mode monthly-reports --tenant-id default
 ```
+
+Full `--mode` set: `cleanup`, `triggered`, `simba`, `workflow`, `gateway-thresholds`, `online-routing-eval`, `profile`, `entity-extraction`, `synthetic`, `rollback`, `ab-compare`, `egress-netpol`, `monthly-reports`.
 
 ---
 
@@ -702,6 +729,7 @@ flowchart TB
             test_e2e["<span style='color:#000'><b>e2e/</b><br/>End-to-end tests</span>"]
             test_system["<span style='color:#000'><b>system/</b><br/>System-level tests</span>"]
             test_utils["<span style='color:#000'><b>utils/</b><br/>Test utilities & helpers</span>"]
+            test_charts["<span style='color:#000'><b>charts/</b><br/>Helm chart validation tests</span>"]
         end
     end
 
@@ -752,7 +780,9 @@ from cogniverse_core.registries.agent_registry import AgentRegistry
 @pytest.fixture
 def orchestrator(config_manager):
     registry = AgentRegistry(tenant_id="test:unit", config_manager=config_manager)
-    return OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    return OrchestratorAgent(
+        deps=OrchestratorDeps(), registry=registry, config_manager=config_manager
+    )
 
 @pytest.mark.unit
 class TestOrchestratorAgent:
@@ -776,7 +806,9 @@ from cogniverse_vespa.search_backend import VespaSearchBackend
 async def test_full_orchestration_pipeline(config_manager):
     """Test orchestrator with real Vespa backend"""
     registry = AgentRegistry(tenant_id="test:integration", config_manager=config_manager)
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=registry)
+    orchestrator = OrchestratorAgent(
+        deps=OrchestratorDeps(), registry=registry, config_manager=config_manager
+    )
 
     result = await orchestrator._process_impl(
         OrchestratorInput(
@@ -1059,8 +1091,10 @@ cogniverse up  # Restart services via k3d
 
 **Issue**: Out of memory
 ```bash
-# Reduce batch size
-export EMBEDDING_BATCH_SIZE=8
+# Reduce ingestion concurrency
+uv run python scripts/run_ingestion.py --tenant-id acme:acme --video_dir data/videos --max-concurrent 1
+
+# Force JAX (VideoPrism) onto CPU instead of GPU
 export JAX_PLATFORM_NAME=cpu
 ```
 
@@ -1068,8 +1102,9 @@ export JAX_PLATFORM_NAME=cpu
 
 Enable debug logging:
 ```bash
-export COGNIVERSE_LOG_LEVEL=DEBUG
-export PHOENIX_ENABLED=true
+export LOG_LEVEL=DEBUG
+export PHOENIX_HTTP_ENDPOINT=http://localhost:6006
+export PHOENIX_GRPC_ENDPOINT=localhost:4317
 
 uv run pytest tests/agents/ -v -s  # -s shows print statements
 ```
@@ -1095,4 +1130,4 @@ uv run pytest tests/agents/ -v -s  # -s shows print statements
 
 ---
 
-**Last Updated**: 2026-02-04
+**Last Updated**: 2026-07-05

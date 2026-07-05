@@ -157,11 +157,19 @@ queue = await manager.create_queue(
 
 # Create orchestrator with event queue (config_manager and registry are REQUIRED)
 config_manager = create_default_config_manager()
-registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
+registry = AgentRegistry(tenant_id="tenant1", config_manager=config_manager)
 deps = OrchestratorDeps()
-orchestrator = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
+orchestrator = OrchestratorAgent(
+    deps=deps,
+    registry=registry,
+    config_manager=config_manager,
+    event_queue=queue,  # forwarded to checkpoint saves + the sufficiency-gate RLM
+)
 
-# Process query via A2A task protocol - events emitted during execution
+# Process query via A2A task protocol. If checkpoint_storage is configured,
+# checkpoint saves after each task-group batch emit Status/ProgressEvent;
+# the sufficiency-gate InstrumentedRLM emits events once evidence crosses
+# the RLM promotion threshold. See "How It Works" below for the full picture.
 input_data = OrchestratorInput(query="Find videos about cats", tenant_id="tenant1")
 result = await orchestrator._process_impl(input_data)
 ```
@@ -193,6 +201,40 @@ pipeline = VideoIngestionPipeline(
 result = await pipeline.process_videos_concurrent(video_files)
 # Subscribe to events using the job_id from queue or pipeline.job_id
 ```
+
+### With RLM Inference
+
+Agents that mix in `RLMAwareMixin` (Recursive Language Model processing for
+oversized contexts) can forward an `EventQueue` into `get_rlm()`. When an
+`event_queue` is provided, `RLMInference` swaps in `InstrumentedRLM`, which
+emits `StatusEvent`/`ProgressEvent` per REPL iteration and checks the
+queue's `CancellationToken` between iterations:
+
+```python
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
+from cogniverse_core.events import get_queue_manager
+
+manager = get_queue_manager()
+task_id = "search_agent_task_1"
+queue = await manager.create_queue(task_id=task_id, tenant_id="tenant1")
+llm_config = LLMEndpointConfig(model="openai/gpt-4o")
+
+# Inside an agent mixing in RLMAwareMixin
+rlm = self.get_rlm(
+    llm_config=llm_config,
+    max_iterations=10,
+    event_queue=queue,
+    task_id=task_id,
+    tenant_id="tenant1",
+)
+result = rlm.process(query="Summarize the main findings", context=large_context_string)
+```
+
+`event_queue`/`task_id`/`tenant_id` are optional on `get_rlm()` /
+`RLMInference` / `InstrumentedRLM` — when omitted, RLM behaves like plain
+`dspy.RLM` with no event emission. When `event_queue` is provided, `tenant_id`
+becomes required (both raise `ValueError` otherwise, since RLM events must be
+tenant-scoped).
 
 ### SSE Streaming (HTTP Clients)
 
@@ -251,6 +293,12 @@ manager = InMemoryQueueManager(
 await manager.start_cleanup_loop(interval_seconds=60)
 ```
 
+`cogniverse_runtime.main` starts this cleanup loop automatically on app
+startup via `get_queue_manager()` + `start_cleanup_loop(interval_seconds=60)`.
+Every search/ingestion/mem0 operation creates a queue holding up to
+`max_buffer_size` events; without the loop, closed/expired queues are never
+evicted and the runtime accumulates buffers until it OOMs.
+
 ### Queue Options
 
 ```python
@@ -288,6 +336,17 @@ if queue.cancellation_token.is_cancelled:
 - No long-term persistence needed
 - Fast real-time notification
 
+### Related but Separate: Queue-Driven Ingestion Events
+
+When `REDIS_URL` is set, `/ingestion/{ingest_id}/events` (mounted from
+`cogniverse_runtime.ingestion_worker.status_api`) streams SSE events for the
+Redis-queue-backed ingestion path from a Redis stream directly — it does
+**not** use `cogniverse_core.events`/`EventQueue`/`InMemoryQueueManager` at
+all. It is a distinct mechanism with its own replay semantics
+(`last-event-id` query param, not `from_offset`). Don't confuse it with the
+`/events/ingestion/{job_id}` endpoint documented above, which streams from an
+in-memory `EventQueue` for the in-process (non-Redis) ingestion pipeline.
+
 ## Checkpoint-Event Integration
 
 Checkpoint saves automatically emit A2A events when an EventQueue is provided. This unifies state persistence with real-time notifications:
@@ -314,9 +373,10 @@ checkpoint_storage = WorkflowCheckpointStorage(
 
 ### How It Works
 
-1. **Checkpoint saves** emit A2A-compatible status/progress events
-2. **Orchestrator** emits events at non-checkpoint boundaries (planning, task artifacts, final results)
-3. **No duplicate code paths** - state changes trigger notifications automatically
+1. **Checkpoint saves** emit A2A-compatible status/progress events automatically (`WorkflowCheckpointStorage._emit_checkpoint_event`) — this is the primary source of workflow-level `StatusEvent`/`ProgressEvent` notifications today.
+2. **Orchestrator** forwards its `event_queue` into the sufficient-context-gate `InstrumentedRLM` (used once accumulated evidence crosses the RLM promotion threshold in the iterative retrieval loop), which emits `StatusEvent`/`ProgressEvent` per REPL iteration. The orchestrator also signals `event_queue.cancel()` when an inbound `"stop"` message is drained, so any `InstrumentedRLM` running inside a sub-agent's chain observes cancellation at its next iteration.
+3. **`OrchestratorAgent._emit_event()`** is a generic hook (`enqueue` if `event_queue` is configured, no-op otherwise) available for emitting ad-hoc events, but it is not currently called from the planning/execution/completion boundaries of `_process_impl` — checkpoint saves and the sufficiency-gate RLM are the actual emitters.
+4. **No duplicate code paths** - state changes trigger notifications automatically
 
 ### Event Flow
 
@@ -324,11 +384,9 @@ checkpoint_storage = WorkflowCheckpointStorage(
 flowchart TD
     Start["<span style='color:#000'>Workflow Execution</span>"]
 
-    Planning["<span style='color:#000'>Planning Phase</span>"]
-    PlanningEvent["<span style='color:#000'>Orchestrator emits<br/>StatusEvent('planning')</span>"]
-
-    Execution["<span style='color:#000'>Execution Phase</span>"]
-    ExecutionEvent["<span style='color:#000'>Orchestrator emits<br/>StatusEvent('executing')</span>"]
+    Iteration["<span style='color:#000'>Iterative retrieval loop<br/>(sufficiency gate)</span>"]
+    RLMPromotion{"<span style='color:#000'>Evidence exceeds<br/>RLM promotion threshold?</span>"}
+    RLMEvent["<span style='color:#000'>InstrumentedRLM emits<br/>StatusEvent + ProgressEvent<br/>per REPL iteration</span>"]
 
     TaskGroup1["<span style='color:#000'>First task group completes</span>"]
     TaskGroup1Event["<span style='color:#000'>Checkpoint saves<br/>StatusEvent + ProgressEvent</span>"]
@@ -338,32 +396,28 @@ flowchart TD
 
     Completion["<span style='color:#000'>Completion</span>"]
     CompletionEvent1["<span style='color:#000'>Checkpoint saves<br/>StatusEvent(COMPLETED)</span>"]
-    CompletionEvent2["<span style='color:#000'>Orchestrator emits<br/>CompleteEvent(result)</span>"]
 
-    Start --> Planning
-    Planning --> PlanningEvent
-    PlanningEvent --> Execution
-    Execution --> ExecutionEvent
-    ExecutionEvent --> TaskGroup1
+    Start --> Iteration
+    Iteration --> RLMPromotion
+    RLMPromotion -- "yes" --> RLMEvent
+    RLMEvent --> TaskGroup1
+    RLMPromotion -- "no" --> TaskGroup1
     TaskGroup1 --> TaskGroup1Event
     TaskGroup1Event --> TaskGroup2
     TaskGroup2 --> TaskGroup2Event
     TaskGroup2Event --> Completion
     Completion --> CompletionEvent1
-    Completion --> CompletionEvent2
 
     style Start fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Planning fill:#a5d6a7,stroke:#388e3c,color:#000
-    style PlanningEvent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Execution fill:#a5d6a7,stroke:#388e3c,color:#000
-    style ExecutionEvent fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Iteration fill:#a5d6a7,stroke:#388e3c,color:#000
+    style RLMPromotion fill:#a5d6a7,stroke:#388e3c,color:#000
+    style RLMEvent fill:#ffcc80,stroke:#ef6c00,color:#000
     style TaskGroup1 fill:#81d4fa,stroke:#0288d1,color:#000
     style TaskGroup1Event fill:#ffcc80,stroke:#ef6c00,color:#000
     style TaskGroup2 fill:#81d4fa,stroke:#0288d1,color:#000
     style TaskGroup2Event fill:#ffcc80,stroke:#ef6c00,color:#000
     style Completion fill:#a5d6a7,stroke:#388e3c,color:#000
     style CompletionEvent1 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style CompletionEvent2 fill:#ffcc80,stroke:#ef6c00,color:#000
 ```
 
 ## Relationship with Checkpoints
@@ -398,4 +452,12 @@ uv run pytest tests/events/integration/ -v
 | `libs/core/cogniverse_core/events/queue.py` | EventQueue/QueueManager protocols |
 | `libs/core/cogniverse_core/events/backends/memory.py` | In-memory backend |
 | `libs/runtime/cogniverse_runtime/routers/events.py` | SSE streaming endpoints |
+| `libs/runtime/cogniverse_runtime/ingestion/pipeline.py` | `VideoIngestionPipeline` — emits events during video ingestion |
+| `libs/agents/cogniverse_agents/orchestrator_agent.py` | `OrchestratorAgent` — accepts `event_queue`, emits workflow events |
 | `libs/agents/cogniverse_agents/orchestrator/checkpoint_storage.py` | Checkpoint storage with event emission |
+| `libs/agents/cogniverse_agents/mixins/rlm_aware_mixin.py` | `RLMAwareMixin.get_rlm()` — wires `event_queue` into RLM inference |
+| `libs/agents/cogniverse_agents/inference/rlm_inference.py` | `RLMInference` — forwards `event_queue` to `InstrumentedRLM` |
+| `libs/agents/cogniverse_agents/inference/instrumented_rlm.py` | `InstrumentedRLM` — emits Status/Progress events per REPL iteration |
+| `tests/events/unit/test_event_queue.py` | Unit tests for event types, `InMemoryEventQueue`, `InMemoryQueueManager`, tenant isolation |
+| `tests/events/unit/test_event_queue_integration.py` | Unit-level integration tests for queue wiring |
+| `tests/events/integration/test_event_queue_real.py` | Real-boundary integration tests |

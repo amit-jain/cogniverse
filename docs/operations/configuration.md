@@ -29,6 +29,36 @@ The configuration system provides centralized management for all system configur
 - **AgentConfig** (foundation): Per-agent DSPy module and optimizer configuration
 - **VespaConfigStore** (vespa): Vespa-based ConfigStore implementation
 
+### Package Structure
+
+```text
+libs/foundation/cogniverse_foundation/config/
+├── unified_config.py    # SystemConfig, LLMEndpointConfig, LLMConfig,
+│                         # SemanticRouterConfig, RoutingConfigUnified,
+│                         # AgentConfigUnified, BackendConfig, BackendProfileConfig
+├── agent_config.py      # AgentConfig, ModuleConfig, OptimizerConfig,
+│                         # DSPyModuleType, OptimizerType
+├── manager.py            # ConfigManager (central read/write API + caching)
+├── utils.py              # ConfigUtils, get_config(), create_default_config_manager(),
+│                         # get_config_manager_singleton()
+├── bootstrap.py          # BootstrapConfig.from_environment() — resolves backend
+│                         # connection info (BACKEND_URL/BACKEND_PORT + config.json
+│                         # backend.type) before the ConfigStore itself can connect
+├── llm_factory.py        # create_dspy_lm(LLMEndpointConfig) — the single
+│                         # chokepoint every dspy.LM() construction goes through
+├── api_mixin.py          # ConfigAPIMixin — REST endpoints (GET/PUT /config) for
+│                         # runtime agent config with ConfigManager persistence
+└── semantic_router.py     # resolve_semantic_router_headers(), apply_semantic_routing(),
+                            # create_routed_lm(), routed_lm_context_for() — opt-in
+                            # LLM traffic routing through a semantic router
+
+libs/sdk/cogniverse_sdk/interfaces/
+└── config_store.py       # ConfigStore ABC, ConfigScope, ConfigEntry
+
+libs/vespa/cogniverse_vespa/config/
+└── config_store.py       # VespaConfigStore(ConfigStore) — Vespa-backed implementation
+```
+
 ---
 
 ## Architecture Diagram
@@ -61,8 +91,10 @@ Global infrastructure settings per tenant:
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
 
+# SystemConfig is global infrastructure state (one per deployment) — it
+# has no tenant_id field. Per-tenant settings live in RoutingConfigUnified,
+# AgentConfig, and TelemetryConfig instead (see below).
 system_config = SystemConfig(
-    tenant_id="acme",
     llm_model="gpt-4",
     base_url="https://api.openai.com/v1",
     backend_url="http://localhost",
@@ -123,30 +155,84 @@ llm_config = LLMConfig(primary=primary, teacher=teacher)
 | `num_retries` | `1` | Total call attempts (1 = no retries). DSPy default is higher; this constrains it for fast-fail behavior. |
 | `seed` | `None` | vLLM sampling seed for deterministic output in tests. |
 
+Every `dspy.LM` instance in the codebase is built by `create_dspy_lm()` from `cogniverse_foundation.config.llm_factory` — the single chokepoint for LLM instantiation:
+
+```python
+from cogniverse_foundation.config.llm_factory import create_dspy_lm
+
+lm = create_dspy_lm(primary)  # wires api_base/api_key/temperature/seed/extra_headers onto dspy.LM
+```
+
+When `SystemConfig.semantic_router` (`SemanticRouterConfig`) is enabled, `cogniverse_foundation.config.semantic_router.routed_lm_context_for()` rewrites the endpoint to target the router instead of the model backend and attaches per-tenant authz headers before calling `create_dspy_lm()`:
+
+```python
+from cogniverse_foundation.config.semantic_router import routed_lm_context_for
+
+with routed_lm_context_for(config_manager, tenant_id="acme_corp", agent_name="search_agent"):
+    ...  # DSPy calls inside this block use the resolved (routed or direct) LM
+```
+
+Routing is opt-in and disabled by default (`SemanticRouterConfig.enabled = False`); when disabled, the endpoint's own `api_base` is used unchanged.
+
 ### 1b. Agent Registry Configuration
 
-The `agents` section in `config.json` defines agent URLs for A2A discovery via `AgentRegistry`:
+The `agents` section in `config.json` defines agent URLs for A2A discovery via `AgentRegistry`. There are 23 agents in `ConfigLoader.AGENT_CLASSES`, matching the 23 entries in `config.json`'s `agents` section. Schema shape (2 representative entries):
 
 ```json
 {
   "agents": {
-    "orchestrator_agent": {"url": "http://localhost:8001", "enabled": true},
-    "search_agent": {"url": "http://localhost:8002", "enabled": true},
-    "text_analysis_agent": {"url": "http://localhost:8003", "enabled": true},
-    "summarizer_agent": {"url": "http://localhost:8004", "enabled": true},
-    "detailed_report_agent": {"url": "http://localhost:8005", "enabled": true},
-    "image_search_agent": {"url": "http://localhost:8006", "enabled": true},
-    "audio_analysis_agent": {"url": "http://localhost:8007", "enabled": true},
-    "document_agent": {"url": "http://localhost:8008", "enabled": true}
+    "search_agent": {
+      "url": "http://localhost:8002",
+      "enabled": true,
+      "capabilities": ["search", "video_search", "retrieval"],
+      "modalities": ["VIDEO"]
+    },
+    "gateway_agent": {
+      "url": "http://localhost:8000",
+      "enabled": true,
+      "capabilities": ["gateway", "classification"],
+      "timeout": 10
+    }
   }
 }
 ```
 
+**Full roster (all 23 agents, grouped by function):**
+
+| Group | Agent key | Port | Enabled | Capabilities |
+|---|---|---|---|---|
+| Search & Analysis | `search_agent` | 8002 | true | search, video_search, retrieval |
+| Search & Analysis | `text_analysis_agent` | 8003 | true | text_analysis, sentiment, classification |
+| Search & Analysis | `image_search_agent` | 8006 | true | image_search, visual_analysis |
+| Search & Analysis | `audio_analysis_agent` | 8007 | true | audio_analysis, transcription |
+| Search & Analysis | `document_agent` | 8008 | true | document_analysis, pdf_processing |
+| Generation + Routing | `gateway_agent` | 8000 | true | gateway, classification |
+| Generation + Routing | `entity_extraction_agent` | 8000 | true | entity_extraction, ner |
+| Generation + Routing | `query_enhancement_agent` | 8000 | true | query_enhancement, expansion |
+| Generation + Routing | `profile_selection_agent` | 8000 | true | profile_selection |
+| Generation + Routing | `orchestrator_agent` | 8013 | true | orchestration, planning, multi_agent_coordination |
+| Generation + Routing | `summarizer_agent` | 8004 | true | summarization, text_generation |
+| Generation + Routing | `detailed_report_agent` | 8005 | true | detailed_report, analysis, text_generation |
+| Research + Coding | `deep_research_agent` | 8009 | true | deep_research, analysis |
+| Research + Coding | `coding_agent` | 8010 | true | coding, code_generation, code_search |
+| Knowledge-Graph & Reasoning | `citation_tracing_agent` | 8019 | false | citation_tracing, audit, provenance_consumer |
+| Knowledge-Graph & Reasoning | `contradiction_reconciliation_agent` | 8020 | false | contradiction_reconciliation, audit |
+| Knowledge-Graph & Reasoning | `multi_document_synthesis_agent` | 8021 | false | multi_document_synthesis, citation_preservation |
+| Knowledge-Graph & Reasoning | `kg_traversal_agent` | 8022 | false | knowledge_graph_traversal, audit |
+| Knowledge-Graph & Reasoning | `temporal_reasoning_agent` | 8025 | false | temporal_reasoning, audit |
+| Knowledge-Graph & Reasoning | `knowledge_summarization_agent` | 8026 | false | knowledge_summarization, audit, federation_promoter |
+| Knowledge-Graph & Reasoning | `audit_explanation_agent` | 8027 | true | audit_explanation, audit, provenance_consumer |
+| Multi-tenant + Federation | `cross_tenant_comparison_agent` | 8023 | false | cross_tenant_comparison, audit, federation_consumer |
+| Multi-tenant + Federation | `federated_query_agent` | 8024 | false | federated_query, audit, federation_consumer |
+
+Knowledge-graph, reasoning, and federation agents ship `"enabled": false` by default — operators opt in per deployment. `audit_explanation_agent` is the one exception in that group, enabled by default.
+
 **Key Points:**
-- Agent keys must match `AGENT_CLASSES` in `config_loader.py` (e.g., `orchestrator_agent`, `search_agent`)
+- Agent keys must match `AGENT_CLASSES` in `config_loader.py` (e.g., `orchestrator_agent`, `search_agent`) — all 23 keys above have a matching entry
 - `ConfigLoader.load_agents()` validates each agent class is importable and registers metadata (capabilities, URL) in the `AgentRegistry`
 - Set `"enabled": false` to disable an agent without removing its config
 - In unified runtime mode, all agents share the same runtime URL; per-request `tenant_id`, `profile`, and `session_id` arrive in the task payload
+- `gateway_agent`, `entity_extraction_agent`, `query_enhancement_agent`, and `profile_selection_agent` all default to port 8000 because they run in-process inside the unified gateway rather than as standalone services
 
 ### 2. Agent Configuration
 Per-agent DSPy module and optimizer settings (per tenant):
@@ -179,55 +265,58 @@ agent_config = AgentConfig(
 ```
 
 ### 3. Routing Configuration
-Per-tenant routing optimizer and strategy settings:
+Per-tenant routing settings (`RoutingConfigUnified`), reflecting the two real routing
+decisions in the codebase — `GatewayAgent`'s simple/complex classification, and
+`OrchestratorAgent`'s GLiNER-gated query analysis path. There is no pluggable
+strategy hierarchy or GRPO reinforcement-learning loop; see `docs/modules/routing.md`
+for the full routing architecture.
 
 ```mermaid
 flowchart LR
-    Query["<span style='color:#000'>Query</span>"] --> Tier1["<span style='color:#000'>Tier 1: GLiNER<br/>Fast NER-based</span>"]
+    Query["<span style='color:#000'>Query</span>"] --> Gateway["<span style='color:#000'>GatewayAgent._is_complex<br/>GLiNER + rule-based heuristics</span>"]
 
-    Tier1 -->|confidence > 0.7| Route1["<span style='color:#000'>Route Decision</span>"]
-    Tier1 -->|confidence < 0.7| Tier2["<span style='color:#000'>Tier 2: LLM<br/>Ollama local</span>"]
+    Gateway -->|simple| SimpleRoute["<span style='color:#000'>SIMPLE_ROUTE_MAP<br/>static (modality, generation_type) → agent</span>"]
+    Gateway -->|complex| Orchestrator["<span style='color:#000'>OrchestratorAgent</span>"]
 
-    Tier2 -->|confidence > 0.6| Route2["<span style='color:#000'>Route Decision</span>"]
-    Tier2 -->|confidence < 0.6| Tier3["<span style='color:#000'>Tier 3: LangExtract<br/>Structured</span>"]
-
-    Tier3 --> Route3["<span style='color:#000'>Route Decision</span>"]
+    Orchestrator --> Composable["<span style='color:#000'>ComposableQueryAnalysisModule</span>"]
+    Composable -->|GLiNER confidence ≥ threshold| PathA["<span style='color:#000'>Path A<br/>GLiNER entities + LLM reformulation</span>"]
+    Composable -->|GLiNER confidence < threshold| PathB["<span style='color:#000'>Path B<br/>Single unified LLM call</span>"]
 
     style Query fill:#90caf9,stroke:#1565c0,color:#000
-    style Tier1 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Tier2 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Tier3 fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Route1 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Route2 fill:#a5d6a7,stroke:#388e3c,color:#000
-    style Route3 fill:#a5d6a7,stroke:#388e3c,color:#000
+    style Gateway fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Orchestrator fill:#ffcc80,stroke:#ef6c00,color:#000
+    style Composable fill:#ffcc80,stroke:#ef6c00,color:#000
+    style SimpleRoute fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PathA fill:#a5d6a7,stroke:#388e3c,color:#000
+    style PathB fill:#a5d6a7,stroke:#388e3c,color:#000
 ```
 
-**Configuration:**
+**Configuration (`RoutingConfigUnified` fields):**
 
-- Routing tiers (FAST, BALANCED, COMPREHENSIVE)
+- Tier enable flags: `enable_fast_path`, `enable_slow_path`, `enable_fallback` (all default `True`)
 
-- Strategy weights and thresholds per tenant
+- Confidence thresholds: `fast_path_confidence_threshold` (0.7), `slow_path_confidence_threshold` (0.6)
 
-- Per-tenant experience buffer configuration
+- GLiNER settings: `gliner_model`, `gliner_threshold`, `gliner_device`, `gliner_labels`
 
-- GRPO/GEPA optimizer parameters per tenant
+- DSPy optimizer knobs: `dspy_enabled`, `dspy_max_bootstrapped_demos`, `dspy_max_labeled_demos` — `BootstrapFewShot` is the only DSPy teleprompter actually instantiated at runtime today; `SIMBA`/`GEPA`/`MIPROv2` are valid `OptimizerType` values but are not wired into an active optimization loop
 
-- Tenant-isolated routing rules and history
+- Caching: `enable_caching`, `cache_ttl_seconds`, `max_cache_size`
+
+- Tenant-isolated routing config and version history (via `ConfigStore`)
 
 ### 4. Telemetry Configuration
-Phoenix observability with strict tenant isolation:
+`TelemetryConfig` (`cogniverse_foundation.telemetry.config`) is backend-agnostic — it has zero knowledge of Phoenix/LangSmith specifics; provider-specific settings go in `provider_config`:
 
-- **Per-tenant Phoenix projects** (automatic project creation)
+- **Per-tenant project naming**: `tenant_project_template` (default `"cogniverse-{tenant_id}"`) and `tenant_service_template` resolve the project/service name `TelemetryManager.get_provider(tenant_id=...)` creates or looks up
 
-- Span export configuration (sync for tests, async for production)
+- **LRU-cached per-tenant providers**: `max_cached_tenants` (default 100), `tenant_cache_ttl_seconds` (default 3600)
 
-- Per-tenant experiment tracking
+- **Span export**: `BatchExportConfig.use_sync_export` (default `False`) — synchronous export in tests for deterministic assertions, async batching in production
 
-- Per-tenant metric collection and aggregation
+- **Instrumentation level**: `TelemetryConfig.level` (`DISABLED`/`BASIC`/`DETAILED`/`VERBOSE`) gates which components emit spans via `should_instrument_component()`
 
-- Tenant-specific dashboard customization
-
-- Cross-tenant analytics disabled for security
+- **Provider selection**: `provider` (`"phoenix"` / `"langsmith"` / `None` for auto-detect)
 
 ---
 
@@ -298,7 +387,7 @@ curl http://localhost:8080/ApplicationStatus | jq '.schemas'
 
 ### Custom Backend Implementation
 
-Create custom storage backends by implementing the ConfigStore interface from the sdk layer:
+Create custom storage backends by implementing the ConfigStore interface from the sdk layer. `ConfigStore` is an ABC with 11 abstract methods (`initialize`, `set_config`, `get_config`, `get_config_history`, `list_configs`, `list_all_configs`, `delete_config`, `export_configs`, `import_configs`, `get_stats`, `health_check`) — the sketch below shows the pattern for two of them; a real implementation must provide all of them before it can be instantiated:
 
 ```python
 from cogniverse_sdk.interfaces.config_store import ConfigStore, ConfigScope, ConfigEntry
@@ -362,14 +451,14 @@ sequenceDiagram
     participant Manager as ConfigManager
     participant Store as ConfigStore
 
-    App->>Manager: get_config("tenant_a", config_manager)
-    Manager->>Store: get_config(tenant="tenant_a", scope=ROUTING)
-    Store-->>Manager: Config for tenant_a
+    App->>Manager: get_config(tenant_id="tenant_a", config_manager)
+    Manager->>Store: get_config(tenant_id="tenant_a", scope=ConfigScope.ROUTING, ...)
+    Store-->>Manager: ConfigEntry for tenant_a
     Manager-->>App: ConfigUtils(tenant_a)
 
-    App->>Manager: get_config("tenant_b", config_manager)
-    Manager->>Store: get_config(tenant="tenant_b", scope=ROUTING)
-    Store-->>Manager: Config for tenant_b
+    App->>Manager: get_config(tenant_id="tenant_b", config_manager)
+    Manager->>Store: get_config(tenant_id="tenant_b", scope=ConfigScope.ROUTING, ...)
+    Store-->>Manager: ConfigEntry for tenant_b
     Manager-->>App: ConfigUtils(tenant_b)
 
     Note over App,Store: Per-tenant configurations are completely isolated
@@ -384,25 +473,30 @@ from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 manager = create_default_config_manager()
 
 # Configure per-tenant routing for Tenant A (enterprise customer)
+# routing_mode is "tiered" for both tenants below — it's the only mode
+# implemented end-to-end today; other values are accepted by the schema
+# for forward compatibility but produce no behavior change at dispatch time.
 tenant_a_routing = RoutingConfigUnified(
     tenant_id="acme_corp",
     routing_mode="tiered",
     fast_path_confidence_threshold=0.7,
+    cache_ttl_seconds=300,
 )
 manager.set_routing_config(tenant_a_routing, tenant_id="acme_corp")
 
 # Configure per-tenant routing for Tenant B (different customer)
 tenant_b_routing = RoutingConfigUnified(
     tenant_id="globex_inc",
-    routing_mode="ensemble",
+    routing_mode="tiered",
     fast_path_confidence_threshold=0.8,
+    cache_ttl_seconds=600,
 )
 manager.set_routing_config(tenant_b_routing, tenant_id="globex_inc")
 
 # Per-tenant configurations are completely isolated
 config_a = get_config(tenant_id="acme_corp", config_manager=manager)
 config_b = get_config(tenant_id="globex_inc", config_manager=manager)
-assert config_a["routing_mode"] != config_b["routing_mode"]
+assert config_a["cache_ttl_seconds"] != config_b["cache_ttl_seconds"]
 
 # Each tenant gets isolated Vespa schemas
 # acme_corp → video_colpali_mv_frame_acme_corp
@@ -637,8 +731,11 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 with open(f"config_backup_{timestamp}.json", "w") as f:
     json.dump(backup, f, indent=2, default=str)
 
-# Make changes (metadata tracked in ConfigEntry automatically)
-manager.set_system_config(new_config)
+# Make changes (a new version is created automatically on write)
+from cogniverse_foundation.config.unified_config import SystemConfig
+current = manager.get_system_config()
+updated = SystemConfig.from_dict({**current.to_dict(), "llm_model": "gpt-4-turbo"})
+manager.set_system_config(updated)
 ```
 
 ### 3. Use Type-Safe Configurations
@@ -730,6 +827,8 @@ current_entry = manager.store.get_config(
     service="system",
     config_key="system_config"
 )
+if current_entry is None:
+    raise RuntimeError("system_config not initialized — call set_system_config first")
 
 # Make your changes
 updated_config = SystemConfig.from_dict(current_entry.config_value)
@@ -751,10 +850,12 @@ assert new_entry.version == current_entry.version + 1
 ### Storage Backend Issues
 
 ```python
-# Fallback to local storage
+# create_default_config_manager() reads BACKEND_URL/BACKEND_PORT (env) and
+# backend.type (configs/config.json) via BootstrapConfig — it raises
+# ValueError if BACKEND_URL is unset or backend.type is anything other
+# than "vespa" (the only supported backend). There is no silent fallback.
 from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Initialize with default configuration
 manager = create_default_config_manager()
 ```
 
@@ -769,8 +870,9 @@ manager = create_default_config_manager()
 JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_agent_config.py -v
 JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_config_api_mixin.py -v
 
-# Test Vespa backend
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_vespa_config_store.py -v
+# Test Vespa backend (real Vespa instance)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/integration/test_config_store.py -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/unit/test_config_store_yql_escape.py -v
 ```
 
 ### Integration Tests

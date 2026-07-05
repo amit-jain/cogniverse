@@ -11,27 +11,41 @@
 3. [Core Components](#core-components)
 4. [Usage Examples](#usage-examples)
 5. [Production Considerations](#production-considerations)
+6. [Summary](#summary)
 
 ---
 
 ## Module Overview
 
 ### Purpose
-The UI/Dashboard module provides interactive web-based interfaces for:
+The UI/Dashboard module provides interactive web-based interfaces, organized as 16
+top-level Streamlit tabs plus a persistent sidebar, for:
 
 - **Analytics**: Phoenix telemetry visualization and performance monitoring
 
-- **Optimization Framework**: Comprehensive optimization dashboard with annotation, golden dataset building, and model training
+- **Evaluation**: Phoenix experiment dataset browsing and comparison
 
-- **Configuration Management**: Full CRUD for multi-tenant system configuration
+- **Embedding Atlas**: UMAP + embedding-atlas visualization of exported embeddings
+
+- **Routing Evaluation**: Routing decision analysis from live telemetry spans
+
+- **Orchestration Annotation**: Multi-agent workflow annotation for DSPy optimization
+
+- **Profile Routing Metrics**: Per-modality runtime observability
+
+- **Optimization Framework**: Comprehensive optimization dashboard with annotation, golden dataset building, synthetic data generation, and module training
+
+- **Approval Queue**: Human-in-the-loop review for AI-generated/synthetic outputs
+
+- **Ingestion Testing / Interactive Search / Chat**: Interactive pipeline and agent-layer testing
+
+- **Configuration Management**: Full CRUD for multi-tenant system configuration, including backend profiles
+
+- **Tenant Management**: Organization/tenant CRUD via the Runtime API
 
 - **Memory Management**: Mem0 conversation memory inspection and management
 
-- **Routing Evaluation**: Routing decision analysis with golden datasets
-
-- **Orchestration Annotation**: Multi-agent workflow visualization
-
-- **Quick Setup**: Fast tenant creation and video ingestion from sidebar
+- **RLM A/B Compare**: RLM-on/RLM-off comparison spans
 
 ### Technology Stack
 - **Framework**: Streamlit (dashboard package - application layer)
@@ -48,20 +62,23 @@ The UI/Dashboard module provides interactive web-based interfaces for:
 
 ```text
 libs/dashboard/cogniverse_dashboard/
-├── app.py                        # Main dashboard entry point
-└── tabs/
-    ├── approval_queue.py         # Approval queue management
-    ├── backend_profile.py        # Backend profile configuration
-    ├── config_management.py      # Configuration CRUD UI
-    ├── embedding_atlas.py        # Embedding atlas visualization
-    ├── evaluation.py             # Experiment evaluation
-    ├── memory_management.py      # Memory inspection UI
-    ├── optimization.py           # Optimization framework
-    ├── orchestration_annotation.py  # Multi-agent workflow UI
-    ├── profile_metrics.py        # Backend profile metrics
-    ├── rlm_ab_compare.py         # RLM A/B comparison
-    ├── routing_evaluation.py     # Routing analysis UI
-    └── tenant_management.py      # Tenant management UI
+├── app.py                        # Main dashboard entry point (16 top-level tabs, sidebar)
+├── search_summary.py             # Streaming "Summarize Results" control for Interactive Search
+├── tabs/
+│   ├── approval_queue.py         # Human-in-the-loop approval queue
+│   ├── backend_profile.py        # Backend profile CRUD + schema deploy (sub-tab of Configuration)
+│   ├── config_management.py      # Configuration CRUD UI
+│   ├── embedding_atlas.py        # UMAP + embedding-atlas visualization
+│   ├── evaluation.py             # Phoenix experiment/dataset evaluation
+│   ├── memory_management.py      # Memory inspection UI
+│   ├── optimization.py           # Optimization framework (8 sub-tabs)
+│   ├── orchestration_annotation.py  # Orchestration workflow annotation UI
+│   ├── profile_metrics.py        # Per-modality runtime metrics from ProfileSelectionAgent spans
+│   ├── rlm_ab_compare.py         # RLM A/B comparison spans
+│   ├── routing_evaluation.py     # Routing decision metrics from RoutingEvaluator
+│   └── tenant_management.py      # Organization/tenant CRUD UI
+└── utils/
+    └── async_utils.py            # run_async_in_streamlit — drives async provider calls from Streamlit
 ```
 
 ---
@@ -76,7 +93,7 @@ flowchart TB
 
     Sidebar["<span style='color:#000'>Sidebar Controls<br/>• Time Range Selection 1h 24h 7d 30d<br/>• Auto-refresh Toggle 30s interval<br/>• Tenant/Project Selector<br/>• Data Export Options</span>"]
 
-    Tabs["<span style='color:#000'>Tab Navigation<br/>Analytics | Evaluation | Config | Memory | Atlas | Routing</span>"]
+    Tabs["<span style='color:#000'>16 Top-Level Tabs<br/>Analytics · Evaluation · Embedding Atlas · Routing Evaluation<br/>Orchestration Annotation · Profile Routing Metrics · Optimization<br/>Synthetic Data & Optimization · Approval Queue · Ingestion Testing<br/>Interactive Search · Chat · Configuration · Tenant Management<br/>Memory · RLM A/B Compare</span>"]
 
     Content["<span style='color:#000'>Active Tab Content<br/>• Metrics & Charts Plotly<br/>• Data Tables Pandas<br/>• Interactive Controls Streamlit widgets<br/>• Real-time Updates cache + refresh</span>"]
 
@@ -170,62 +187,77 @@ flowchart TB
 
 **Location**: `libs/dashboard/cogniverse_dashboard/tabs/config_management.py`
 
-**Features**:
+**Features**: seven sub-tabs, each backed by its own `render_*_ui` function:
 
-- System config (agent URLs, search backend, Vespa settings)
-- Agent configs (DSPy modules, optimizers, prompts)
-- Routing config (strategies, thresholds, cache settings)
-- Telemetry config (Phoenix projects, span export settings)
-- Config history (versioning, rollback)
-- Import/Export (JSON format)
+- System Config — agent URLs, search backend, LLM config, Phoenix/telemetry URLs, environment
+- Agent Configs (`render_agent_configs_ui`) — DSPy module types, optimizers, prompts
+- Routing Config (`render_routing_config_ui`) — `RoutingConfigUnified` strategies/thresholds/cache
+- Telemetry Config (`render_telemetry_config_ui`) — `TelemetryConfig` Phoenix projects, span export
+- Backend Profiles — delegates to `render_backend_profile_tab()` from `tabs/backend_profile.py`
+- History (`render_config_history_ui`) — versioning, rollback
+- Import/Export (`render_import_export_ui`) — JSON format
 
 **Key Functions**:
 ```python
+from cogniverse_dashboard.tabs.backend_profile import render_backend_profile_tab
+
+
 def render_config_management_tab():
     """Main entry point"""
-    # Initialize ConfigManager
-    from cogniverse_foundation.config.utils import create_default_config_manager
-    manager = create_default_config_manager()
+    if "config_manager" not in st.session_state:
+        from cogniverse_foundation.config.utils import create_default_config_manager
+        st.session_state.config_manager = create_default_config_manager()
+    manager = st.session_state.config_manager
 
-    # Tenant selector
-    tenant_id = st.text_input("Tenant ID", value="default")
+    tenant_id = st.text_input("Tenant ID", value=st.session_state["current_tenant"])
 
-    # Sub-tabs
-    tabs = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🖥️ System Config",
         "🤖 Agent Configs",
         "🔀 Routing Config",
         "📊 Telemetry Config",
         "🔧 Backend Profiles",
         "📜 History",
-        "💾 Import/Export"
+        "💾 Import/Export",
     ])
 
-    with tabs[0]:
+    with tab1:
         render_system_config_ui(manager, tenant_id)
+    with tab5:
+        render_backend_profile_tab()
     # ... other tabs
 
-def render_system_config_ui(manager, tenant_id):
+def save_system_config_edits(manager, current: SystemConfig, **edits) -> SystemConfig:
+    """Apply form edits onto the loaded config via dataclasses.replace, so
+    fields the form doesn't expose (inference_service_urls, redis_url,
+    minio_endpoint, agents, video_processing_profiles, ...) are preserved
+    instead of being reset to dataclass defaults."""
+    updated = dataclasses.replace(current, **edits)
+    manager.set_system_config(updated)
+    return updated
+
+def render_system_config_ui(manager, tenant_id: str):
     """System configuration form"""
     system_config = manager.get_system_config()
 
     with st.form("system_config_form"):
-        # Agent service URLs
         video_agent_url = st.text_input(
-            "Video Agent URL",
-            value=system_config.video_agent_url
+            "Video Agent URL", value=system_config.video_agent_url
         )
-        # ... other fields
+        backend_url = st.text_input("Backend URL", value=system_config.backend_url)
+        backend_port = st.number_input("Backend Port", value=system_config.backend_port)
+        # ... summarizer_agent_url, search_backend, llm_model, base_url,
+        #     llm_api_key, telemetry_url, telemetry_collector_endpoint, environment
 
-        submitted = st.form_submit_button("💾 Save")
-        if submitted:
-            # Update config
-            updated_config = SystemConfig(
+        if st.form_submit_button("💾 Save System Configuration"):
+            save_system_config_edits(
+                manager, system_config,
                 video_agent_url=video_agent_url,
+                backend_url=backend_url,
+                backend_port=backend_port,
                 # ... other fields
             )
-            manager.set_system_config(updated_config)
-            st.success("✅ Configuration saved!")
+            st.success("✅ System configuration saved successfully!")
 ```
 
 **UI Elements**:
@@ -257,38 +289,42 @@ def render_system_config_ui(manager, tenant_id):
 ```python
 def render_memory_management_tab():
     """Main entry point"""
-    # Tenant and agent selection
-    tenant_id = st.text_input("Tenant ID", value="default")
-    agent_name = st.text_input("Agent Name", value="orchestrator_agent")
+    # Tenant is fixed to the gate-validated current_tenant; the sidebar Active
+    # Tenant selector is the only place tenant can change — no per-tab text input.
+    tenant_id = st.session_state["current_tenant"]
+    agent_name = st.text_input("Agent Name", value="gateway_agent")
 
-    # Initialize Mem0MemoryManager with tenant_id
     from cogniverse_core.memory.manager import Mem0MemoryManager
     from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
     from cogniverse_foundation.config.utils import create_default_config_manager
     from pathlib import Path
 
-    manager = Mem0MemoryManager(tenant_id=tenant_id)
-
-    # Initialize with dependencies
     config_manager = create_default_config_manager()
-    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    manager.initialize(
-        backend_host="localhost",
-        backend_port=8080,
-        llm_model="openai/google/gemma-4-e4b-it",
-        embedding_model="lightonai/DenseOn",
-        llm_base_url="http://localhost:11434",
-        embedder_base_url="http://localhost:8001",
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
+    system_config = config_manager.get_system_config()
 
-    # Memory stats
-    if st.button("📈 Refresh Stats"):
-        stats = manager.get_memory_stats(
-            tenant_id=tenant_id,
-            agent_name=agent_name
+    # Gate on Vespa reachability before touching Mem0 at all
+    if not vespa_available(f"{system_config.backend_url}:{system_config.backend_port}/ApplicationStatus"):
+        st.warning("⚠️ Vespa backend is not running")
+        return
+
+    manager = Mem0MemoryManager(tenant_id=tenant_id)
+    if manager.memory is None:
+        # Params are read from SystemConfig + configs/config.json, not hardcoded
+        schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
+        denseon_url = system_config.inference_service_urls["denseon"]
+        manager.initialize(
+            backend_host=system_config.backend_url,
+            backend_port=system_config.backend_port,
+            llm_model=bare_model_name(llm_primary["model"]),
+            embedding_model="lightonai/DenseOn",
+            llm_base_url=llm_primary.get("api_base") or system_config.base_url,
+            embedder_base_url=denseon_url,
+            config_manager=config_manager,
+            schema_loader=schema_loader,
         )
+
+    if st.button("📈 Refresh Stats"):
+        stats = manager.get_memory_stats(tenant_id=tenant_id, agent_name=agent_name)
         st.metric("Total Memories", stats.get("total_memories", 0))
 
     # Operation tabs
@@ -302,12 +338,13 @@ def render_memory_management_tab():
 
     with tabs[0]:  # Search
         search_query = st.text_area("Search Query")
+        limit = st.slider("Number of Results", 1, 20, 5)
         if st.button("🔍 Search"):
             results = manager.search_memory(
                 query=search_query,
                 tenant_id=tenant_id,
                 agent_name=agent_name,
-                top_k=5
+                top_k=limit,
             )
             for i, result in enumerate(results, 1):
                 with st.expander(f"Memory {i} - Score: {result.get('score', 0):.3f}"):
@@ -327,93 +364,69 @@ def render_memory_management_tab():
 
 ### 3. Routing Evaluation Tab
 
-**Purpose**: Analyze routing decisions and compare against golden datasets
+**Purpose**: Surface routing-decision quality metrics computed by `RoutingEvaluator` from live `cogniverse.routing` telemetry spans — not a CSV-driven offline evaluator.
 
 **Location**: `libs/dashboard/cogniverse_dashboard/tabs/routing_evaluation.py`
 
 **Features**:
 
-- Load golden datasets
-- Compare routing decisions
-- Confusion matrix visualization
-- Per-query analysis
-- Accuracy metrics by modality
-- Strategy comparison
+- Summary metrics: routing accuracy, confidence calibration, average routing latency, total/ambiguous decisions
+- Per-agent precision/recall/F1 table + bar chart
+- Confidence distribution analysis
+- Temporal analysis of routing decisions over the lookback window
+- Human annotation section (delegates to `AnnotationAgent` / `LLMAutoAnnotator` / `RoutingAnnotationStorage`)
 
 **Key Functions**:
 ```python
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_foundation.telemetry.config import SERVICE_NAME_ORCHESTRATION
+from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+
+
 def render_routing_evaluation_tab():
     """Main entry point"""
-    st.header("🔀 Routing Evaluation")
+    st.subheader("🎯 Routing Evaluation Dashboard")
 
-    # Load golden dataset
-    dataset_path = st.text_input(
-        "Golden Dataset Path",
-        value="data/testset/evaluation/video_search_queries.csv"
-    )
+    tenant_id = st.session_state["current_tenant"]
+    lookback_hours = st.number_input("Lookback Period (hours)", 1, 168, 24)
+    project_name = f"cogniverse-{tenant_id}-{SERVICE_NAME_ORCHESTRATION}"
 
-    if os.path.exists(dataset_path):
-        df = pd.read_csv(dataset_path)
-        st.success(f"✅ Loaded {len(df)} queries")
+    telemetry_manager = get_telemetry_manager()
+    provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+    evaluator = RoutingEvaluator(provider=provider, project_name=project_name)
 
-        # Run evaluation
-        if st.button("▶️ Run Evaluation"):
-            # Note: This example assumes an orchestrator agent is available
-            # In practice, you would call the orchestrator agent like:
-            # from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorInput
-            # orchestrator = OrchestratorAgent(deps)
+    # cached — Streamlit re-executes the tab on every widget interaction
+    @st.cache_data(ttl=30, show_spinner="Fetching routing spans from telemetry...")
+    def _fetch_routing_spans(_ev, project, start_iso, end_iso):
+        return run_async_in_streamlit(
+            _ev.query_routing_spans(
+                start_time=datetime.fromisoformat(start_iso),
+                end_time=datetime.fromisoformat(end_iso),
+                limit=1000,
+            )
+        )
 
-            results = []
-            for _, row in df.iterrows():
-                # Route query (placeholder - replace with actual routing call)
-                # Example: routing_result = await orchestrator.process(OrchestratorInput(query=row["query"], tenant_id=tenant_id))
-                routing_result = {"modality": "video"}  # Placeholder
+    routing_spans = _fetch_routing_spans(evaluator, project_name, start_iso, end_iso)
+    metrics = evaluator.calculate_metrics(routing_spans)  # RoutingMetrics dataclass
 
-                # Compare with ground truth
-                results.append({
-                    "query": row["query"],
-                    "predicted": routing_result["modality"],
-                    "actual": row["expected_modality"],
-                    "correct": routing_result["modality"] == row["expected_modality"]
-                })
-
-            # Display results
-            results_df = pd.DataFrame(results)
-            accuracy = results_df["correct"].mean()
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Queries", len(results_df))
-            with col2:
-                st.metric("Accuracy", f"{accuracy:.1%}")
-            with col3:
-                st.metric("Errors", sum(~results_df["correct"]))
-
-            # Confusion matrix (requires sklearn to be installed)
-            # Note: Add sklearn to dependencies if using this feature
-            try:
-                from sklearn.metrics import confusion_matrix
-                cm = confusion_matrix(
-                    results_df["actual"],
-                    results_df["predicted"]
-                )
-                fig = px.imshow(
-                    cm,
-                    labels=dict(x="Predicted", y="Actual"),
-                    title="Routing Confusion Matrix"
-                )
-                st.plotly_chart(fig)
-            except ImportError:
-                st.warning("sklearn not installed. Confusion matrix not available.")
+    st.metric("Routing Accuracy", f"{metrics.routing_accuracy:.1%}")
+    st.metric("Confidence Calibration", f"{metrics.confidence_calibration:.3f}")
+    st.metric("Avg Routing Latency", f"{metrics.avg_routing_latency:.0f}ms")
+    st.metric("Total Decisions", metrics.total_decisions,
+               delta=f"{metrics.ambiguous_count} ambiguous")
+    # per_agent_precision / per_agent_recall / per_agent_f1 dicts render as a
+    # table + grouped bar chart in _render_per_agent_metrics()
 ```
+
+`RoutingMetrics` (`libs/evaluation/cogniverse_evaluation/evaluators/routing_evaluator.py`) fields: `routing_accuracy`, `confidence_calibration`, `avg_routing_latency`, `per_agent_precision`, `per_agent_recall`, `per_agent_f1`, `total_decisions`, `ambiguous_count`.
 
 **UI Elements**:
 
-- File pickers for dataset selection
-- Run buttons for evaluation
-- Metric displays (accuracy, error rate)
-- Confusion matrix heatmaps
-- Per-query result tables with filters
+- Lookback-hours number input, tenant text (from sidebar session state)
+- Metric cards for the four summary metrics
+- Per-agent precision/recall/F1 table with a Plotly grouped bar chart
+- Confidence and temporal analysis charts
+- Annotation section for marking ambiguous/incorrect routing decisions
 
 ---
 
@@ -424,25 +437,19 @@ def render_routing_evaluation_tab():
 **Location**: `libs/dashboard/cogniverse_dashboard/tabs/optimization.py`
 
 **Features**:
-The Optimization tab provides 8 sub-tabs covering the complete optimization lifecycle:
+`render_enhanced_optimization_tab()` provides 8 sub-tabs covering the complete optimization lifecycle:
 
-#### 5.1 Overview Tab
+#### 4.1 Overview Tab (`_render_overview_tab`)
 
 Quick dashboard showing:
 
-- **Total Annotations**: Count of user feedback collected
+- **Total Annotations**, **Golden Dataset Size**, **Optimization Runs**, **Last Optimization** — all read from `st.session_state` counters (`annotation_count`, `golden_dataset_size`, `optimization_requests`), so they reset per browser session rather than being queried live from a persistent store
 
-- **Golden Dataset Size**: Number of queries with ground truth
+- **Workflow Diagram**: markdown description of the Collect → Build → Train → Monitor → Iterate cycle
 
-- **Optimization Runs**: Historical optimization job count
+- **Recent History**: table of the last 10 entries in `st.session_state["optimization_requests"]`
 
-- **Last Optimization**: Time since last training run
-
-- **Workflow Diagram**: Visual representation of optimization process
-
-- **Recent History**: Table of last 10 optimization jobs
-
-#### 5.2 Search Annotations Tab
+#### 4.2 Search Annotations Tab (`_render_search_annotation_tab`)
 
 Collect user feedback on search results:
 
@@ -453,35 +460,48 @@ Collect user feedback on search results:
 
 **Workflow**:
 ```python
-# 1. Fetch search results from Phoenix
-tenant_id = "acme:production"
+# 1. Fetch search spans via the telemetry provider abstraction
+tenant_id = st.session_state["current_tenant"]
 lookback_hours = 24
 
-# Queries Phoenix for search spans
-search_spans = phoenix_client.get_spans_dataframe(
-    project_name=f"cogniverse-{tenant_id}-search",
-    start_time=datetime.now() - timedelta(hours=24)
-)
+telemetry_manager = get_telemetry_manager()
+provider = telemetry_manager.get_provider(tenant_id=tenant_id)
 
-# 2. Display results with annotation interface
-for span in search_spans:
-    # Show query + results
-    st.write(f"Query: {span.query}")
-    st.write(f"Results: {span.results}")
+end_time = datetime.now(timezone.utc)
+start_time = end_time - timedelta(hours=lookback_hours)
 
-    # Annotation form
+async def fetch_spans():
+    return await provider.traces.get_spans(
+        project=f"cogniverse-{tenant_id}",
+        start_time=start_time,
+        end_time=end_time,
+    )
+
+spans_df = run_async_in_streamlit(fetch_spans())
+search_spans = _filter_search_spans(spans_df)  # keeps only search-operation spans
+
+# 2. Display results with annotation interface (paginated, 10 per page)
+for idx in range(start_idx, end_idx):
+    span = spans.iloc[idx]
+    st.text(span.get("attributes.query", "N/A"))
     if annotation_type == "Thumbs Up/Down":
-        thumbs_up = st.button("👍")
-        thumbs_down = st.button("👎")
+        thumbs_up = st.form_submit_button("👍 Good")
+        thumbs_down = st.form_submit_button("👎 Bad")
 
-    # 3. Save annotation to Phoenix
-    if thumbs_up:
-        save_annotation(span_id, rating=1.0, type="thumbs")
+# 3. Save annotation via the telemetry provider
+await provider.annotations.add_annotation(
+    span_id=span_id,
+    name="search_quality_annotation",
+    label=label,          # positive/negative/neutral, derived from rating
+    score=float(rating),
+    metadata=annotation_data,
+    project=f"cogniverse-{tenant_id}",
+)
 ```
 
-**Storage**: Annotations stored in Phoenix as `SpanEvaluations` with:
+**Storage**: Annotations are written through `provider.annotations.add_annotation` with metadata:
 
-- `label`: positive/negative/neutral
+- `label`: positive/negative/neutral (rating ≥0.6 / ≤0.4 / between)
 
 - `score`: 0-1 rating
 
@@ -493,7 +513,7 @@ for span in search_spans:
 
 - `timestamp`: When annotated
 
-#### 5.3 Golden Dataset Builder Tab
+#### 4.3 Golden Dataset Builder Tab (`_render_golden_dataset_tab`)
 
 Build ground truth datasets from high-quality annotations:
 
@@ -503,40 +523,45 @@ Build ground truth datasets from high-quality annotations:
 - **Lookback Days**: How far back to query annotations (default 30)
 - **Tenant ID**: Which tenant's data to use
 
-**Process**:
+**Process** (`_build_golden_dataset_from_phoenix`, async):
 ```python
-def build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_days):
-    # 1. Query annotated search spans
-    spans = phoenix_client.get_spans_dataframe(
-        project_name=f"cogniverse-{tenant_id}-search",
-        start_time=datetime.now() - timedelta(days=lookback_days)
+async def _build_golden_dataset_from_phoenix(tenant_id, min_rating, lookback_days):
+    telemetry_manager = get_telemetry_manager()
+    provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(days=lookback_days)
+    spans_df = await provider.traces.get_spans(
+        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
     )
+    search_spans = _filter_search_spans(spans_df)
 
-    # 2. Filter for high-quality annotations
-    high_quality = spans[
-        (spans["attributes.annotation.score"] >= min_rating) &
-        (spans["attributes.annotation.human_reviewed"] == True)
-    ]
-
-    # 3. Extract query + expected results
     golden_dataset = {}
-    for _, span in high_quality.iterrows():
-        query = span["attributes.query"]
-        results = span["attributes.results"][:5]  # Top 5
+    for _, span in search_spans.iterrows():
+        annotation_score = span.get("attributes.annotation.score")
+        if annotation_score is None or pd.isna(annotation_score):
+            continue  # unannotated spans are skipped, not NaN'd into the dataset
+        if float(annotation_score) < min_rating:
+            continue
 
+        query = span.get("attributes.query", "")
+        results = span.get("attributes.results", [])
+        if not query or not results:
+            continue
+
+        expected_videos = [r.get("id", r.get("video_id")) for r in results[:5]]
         golden_dataset[query] = {
-            "expected_videos": [r["id"] for r in results],
-            "relevance_scores": {r["id"]: 1.0 / (i + 1) for i, r in enumerate(results)},
-            "avg_relevance": span["attributes.annotation.score"],
-            "profile": span["attributes.profile"]
+            "expected_videos": expected_videos,
+            "relevance_scores": {v: 1.0 / (i + 1) for i, v in enumerate(expected_videos)},
+            "avg_relevance": float(annotation_score),
+            "profile": span.get("attributes.profile", "unknown"),
         }
-
     return golden_dataset
 ```
 
-**Export**: JSON format compatible with `GoldenDatasetEvaluator`
+**Export**: JSON format compatible with `GoldenDatasetEvaluator` (`libs/evaluation/cogniverse_evaluation/evaluators/golden_dataset.py`)
 
-#### 5.4 Synthetic Data Generation Tab (NEW)
+#### 4.4 Synthetic Data Generation Tab (`_render_synthetic_data_tab`)
 
 Generate training data for all optimizers by sampling from Vespa backend:
 
@@ -557,8 +582,9 @@ Generate training data for all optimizers by sampling from Vespa backend:
 
 **Generation Process**:
 ```python
-# 1. Call synthetic data API
-api_base = "http://localhost:8000"
+# 1. Call synthetic data API — api_base comes from session state
+# (st.session_state["runtime_url"], set by the app shell), not hardcoded
+api_base = st.session_state.get("runtime_url", st.session_state.get("api_base_url", ""))
 request_payload = {
     "optimizer": "profile",
     "count": 100,
@@ -613,24 +639,20 @@ json.dump(result, open("synthetic_data.json", "w"))
 
 **Export**: JSON format compatible with all optimizer training interfaces
 
-#### 5.5 Module Optimization Tab
+#### 4.5 Module Optimization Tab (`_render_routing_optimization_tab`)
 
-Optimize routing/workflow modules with automatic DSPy optimizer selection:
+Submits Argo Workflows to optimize routing/workflow modules:
 
-**What Gets Optimized (Modules)**:
+**What Gets Optimized (Modules)** — `st.selectbox("Module to Optimize", ["routing", "workflow", "unified"])`:
 
-- `profile` - ProfileSelectionAgent (per-query backend profile selection)
 - `routing` - Entity-based advanced routing
 - `workflow` - Multi-agent workflow orchestration
 - `unified` - Combined routing + workflow planning
 
-**How They Get Optimized (Auto DSPy Optimizer Selection)**:
+**How Optimization Actually Runs**:
 
-- System automatically chooses GEPA/Bootstrap/SIMBA/MIPRO based on training data size
-- < 20 examples → Bootstrap
-- 20-50 examples → SIMBA
-- 50-100 examples → MIPRO
-- \> 200 examples → GEPA
+- The batch CLI (`libs/runtime/cogniverse_runtime/optimization_cli.py::_create_teleprompter`) selects DSPy's `BootstrapFewShot` and scales its parameters by training-set size: `< 50` examples uses 4 bootstrapped/8 labeled demos over 1 round; `>= 50` examples uses 8 bootstrapped/16 labeled demos over 2 rounds. There is no runtime GEPA/SIMBA/MIPRO auto-switch based on example count.
+- `OptimizerType` (`libs/foundation/cogniverse_foundation/config/agent_config.py`) enumerates the optimizer choices available for a module's `ModuleConfig` — `bootstrap_few_shot`, `labeled_few_shot`, `bootstrap_few_shot_with_random_search`, `copro`, `mipro_v2`, `gepa`, `simba` — but which one a module uses is a configured `AgentConfig` setting, not something the dashboard chooses automatically per run.
 
 **Features**:
 
@@ -642,7 +664,7 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 **Configuration**:
 
 - **Tenant ID**: Target tenant for optimization
-- **Module to Optimize**: Which module to optimize (modality/cross_modal/routing/workflow/unified)
+- **Module to Optimize**: `routing` / `workflow` / `unified`
 - **Max Iterations**: Maximum DSPy training iterations (10-500)
 - **Use Synthetic Data**: Generate training data from backend storage when insufficient Phoenix traces
 - **Advanced**: Synthetic examples count, backend sample size, max profiles
@@ -653,7 +675,7 @@ Optimize routing/workflow modules with automatic DSPy optimizer selection:
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: routing-opt-modality-
+  generateName: routing-opt-routing-
   namespace: cogniverse
 spec:
   workflowTemplateRef:
@@ -665,7 +687,7 @@ spec:
     - name: optimizer-category
       value: "routing"
     - name: optimizer-type
-      value: "modality"
+      value: "routing"
     - name: max-iterations
       value: "100"
     - name: use-synthetic-data
@@ -682,167 +704,289 @@ argo logs <workflow-name> -n cogniverse --follow
 **Execution Flow**:
 1. Module optimizer collects Phoenix traces
 2. Generates synthetic data if traces insufficient
-3. Auto-selects DSPy optimizer (Bootstrap/SIMBA/MIPRO/GEPA) based on data size
+3. Compiles the module with `BootstrapFewShot`, scaled by training-set size
 4. Trains module's internal DSPy model
 5. Evaluates performance and saves optimized module
 6. Returns metrics (baseline score, optimized score, improvement %)
 
-#### 5.6 Reranking Optimization Tab
+#### 4.6 Reranking Optimization Tab (`_render_reranking_optimization_tab`)
 
-Learn optimal ranking from user feedback:
+**Status**: not yet implemented. The tab documents the intended pipeline and shows a
+"Min Annotations Required" / "Current Annotations" gate, but clicking **Train Reranker**
+surfaces an explicit warning instead of training anything:
 
-**Training Data**: Annotation feedback from Search Annotations tab
-
-**Optimization**:
 ```python
-# 1. Query annotated spans for training data
-training_data = []
-for span in annotated_spans:
-    training_data.append({
-        "query": span.query,
-        "results": span.results,
-        "ratings": span.annotations  # User ratings
-    })
+def _render_reranking_optimization_tab():
+    st.markdown("""
+    ### How It Works:
+    1. **Collect Feedback**: User annotations (thumbs up/down) on search results
+    2. **Learn Preferences**: Train reranker to prioritize positively-rated results
+    3. **Optimize Weights**: Adjust BM25 vs semantic weights based on feedback
+    4. **A/B Test**: Compare optimized reranker against baseline
+    """)
+    min_annotations = st.number_input("Min Annotations Required", 10, 1000, 50)
+    can_train = current_annotations >= min_annotations
 
-# 2. Train LambdaMART/RankNet reranker
-reranker = train_reranker(
-    training_data=training_data,
-    algorithm="lambdamart"
-)
-
-# 3. Optimize BM25 vs semantic weights
-optimal_weights = optimize_fusion_weights(
-    reranker=reranker,
-    validation_set=val_data
-)
-
-# 4. A/B test new reranker
-st.metric("NDCG@10", "0.72 → 0.84", delta="+0.12")
-st.metric("MRR", "0.65 → 0.78", delta="+0.13")
+    if st.button("🔧 Train Reranker", disabled=not can_train):
+        # Reranker training from annotation feedback is not implemented yet —
+        # the UI surfaces that honestly rather than reporting a fabricated
+        # success with invented NDCG/MRR deltas.
+        st.warning(
+            "Reranker training from feedback is not implemented yet. "
+            f"{current_annotations} annotations are available; the "
+            "training pipeline will be wired in a future release."
+        )
 ```
 
-**Metrics**: NDCG@10, MRR, P@K, Recall@K
+The intended (not-yet-built) pipeline: query annotated spans → extract `(query, results,
+ratings)` → train a LambdaMART/RankNet reranker → optimize BM25-vs-semantic fusion
+weights → A/B test against the baseline, tracked via NDCG@10/MRR/P@K/Recall@K.
 
-#### 5.7 Profile Selection Optimization Tab
+#### 4.7 Profile Selection Optimization Tab (`_render_profile_selection_tab`)
 
-Learn which processing profile works best for query types:
+Aggregates real profile-usage statistics from Phoenix search spans for the selected
+tenant — it does **not** train a classifier. Current implementation:
 
-**Performance Matrix**:
-Heatmap showing profile performance by query type:
-
-- Rows: 6 video processing profiles (ColPali, ColQwen, VideoPrism variants)
-
-- Columns: Query types (Temporal, Object, Activity, Scene, Abstract)
-
-- Values: NDCG@10 scores
-
-**Training**:
 ```python
-# 1. Extract (query_features, profile, ndcg) tuples
-training_data = extract_profile_performance_data(
-    search_spans=all_search_spans
-)
+async def fetch_spans():
+    return await provider.traces.get_spans(start_time=start_time, end_time=end_time)
 
-# 2. Train Random Forest / XGBoost classifier
-profile_selector = train_classifier(
-    features=["query_type", "video_length", "complexity"],
-    target="optimal_profile",
-    data=training_data
-)
+spans_df = run_async_in_streamlit(fetch_spans())
+search_spans = spans_df[spans_df["name"].str.contains("search", case=False, na=False)]
 
-# 3. Use for inference
-for new_query in queries:
-    features = extract_query_features(new_query)
-    recommended_profile = profile_selector.predict(features)
+# Profile info is read directly from any column containing "profile"
+profile_cols = [c for c in search_spans.columns if "profile" in c.lower()]
+# ... usage counts per profile are displayed as metrics/tables
 ```
 
-**Query Features**:
+A query-type/profile NDCG@10 performance matrix and an automatic profile-recommendation
+classifier (Random Forest / XGBoost) are aspirational — not present in
+`libs/dashboard/cogniverse_dashboard/tabs/optimization.py` today.
 
-- Temporal words (when, duration, timestamp)
-- Object words (person, car, building)
-- Activity words (running, cooking, talking)
-- Scene descriptors (outdoor, kitchen, office)
-- Abstract concepts (emotion, atmosphere, style)
+#### 4.8 Metrics Dashboard Tab (`_render_metrics_dashboard_tab`)
 
-#### 5.8 Metrics Dashboard Tab
+Queries the same telemetry provider abstraction used elsewhere in this framework and
+runs `RoutingEvaluator.calculate_metrics()` over the selected lookback window (7/30/90
+days) to render routing accuracy and related metrics — the numbers shown are live,
+not hardcoded. Example illustrative output for a healthy tenant:
 
-Unified view of optimization improvements:
-
-**Overall Metrics**:
-
-- Routing Accuracy: 77% → 89% (+12%)
-- Search NDCG@10: 0.69 → 0.84 (+0.15)
-- Avg Latency: 323ms → 245ms (-78ms)
-- User Satisfaction: 3.6/5 → 4.2/5 (+0.6)
-
-**Per-Optimization-Type Breakdown**:
-| Type | Runs | Avg Improvement | Last Run |
-|------|------|----------------|----------|
-| Routing | 12 | +12% | 2h ago |
-| Reranking | 8 | +15% | 1d ago |
-| DSPy Modules | 5 | +17% | 3d ago |
-| Profile Selection | 3 | +10% | 5d ago |
-
-**Time Series Charts**:
-
-- Routing accuracy over time
-- Search NDCG@10 over time
-- Latency trends
-- Annotation velocity
+- Routing Accuracy, Search quality, latency and annotation-velocity metrics rendered
+  as `st.metric` cards plus time-series Plotly charts over the selected window
+- A "🔄 Refresh Metrics" button clears `st.cache_data` and reruns the query
 
 ---
 
-### 5. Quick Setup Sidebar Widget
+### 5. Evaluation Tab
 
-**Purpose**: Streamlined tenant creation and video ingestion
+**Purpose**: Browse Phoenix experiment datasets and compare experiment runs against them.
 
-**Location**: `cogniverse_dashboard/app.py` sidebar
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/evaluation.py` (`render_evaluation_tab`)
 
-**Features**:
+**Key Functions**: `get_phoenix_datasets()` and `get_experiment_runs()` query Phoenix's
+GraphQL API directly (`query_phoenix_graphql`, POST to `{phoenix_url}/graphql`), not
+through the telemetry-provider abstraction used elsewhere in the dashboard. Renders a
+dataset selector, per-dataset metrics (`calculate_metrics`), and deep links to Phoenix's
+own dataset/comparison views (`{phoenix_url}/datasets/{id}` and `.../compare`).
 
-#### Tenant Creation
+### 6. Embedding Atlas Tab
+
+**Purpose**: UMAP projection + Apple's `embedding-atlas` component for visualizing exported embeddings.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/embedding_atlas.py` (`render_embedding_atlas_tab`)
+
+**Behavior**:
+- Lazy-imports `umap` and `embedding_atlas.streamlit`; shows an install hint (`uv pip install umap-learn embedding-atlas`) if missing rather than failing the whole dashboard image.
+- Reads parquet files from `outputs/embeddings/` (written by `scripts/export_backend_embeddings.py`); falls back to a file selector, or a session-stashed path from another tab (e.g. `embedding_atlas_file`).
+- Computes UMAP `x`/`y` columns on the fly if the parquet lacks them (cached on `(path, mtime)`).
+- If the data has an `is_query` column, marks query rows distinctly and renders a "Top-3 similar documents per query" panel below the atlas.
+
+### 7. Orchestration Annotation Tab
+
+**Purpose**: Human annotation of multi-agent orchestration workflow quality — the human-in-the-loop side of the optimization feedback path.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/orchestration_annotation.py` (`render_orchestration_annotation_tab`)
+
+**Key Functions**:
 ```python
-# Create org:tenant format
-tenant_input = "acme:production"
+from cogniverse_agents.routing.orchestration_annotation_storage import (
+    OrchestrationAnnotation,
+    OrchestrationAnnotationStorage,
+)
 
-# Calls tenant manager API
-POST /admin/organizations {"org_id": "acme", ...}
-POST /admin/tenants {"tenant_id": "acme:production", ...}
+storage = OrchestrationAnnotationStorage(tenant_id=tenant_id)
 
-# Displays current tenant
-st.info("📌 Current tenant: acme:production")
+telemetry_manager = get_telemetry_manager()
+provider = telemetry_manager.get_provider(tenant_id=tenant_id)
+
+async def fetch_spans():
+    return await provider.traces.get_spans(
+        project=f"cogniverse-{tenant_id}", start_time=start_time, end_time=end_time
+    )
+
+spans_df = run_async_in_streamlit(fetch_spans())
+```
+Configurable lookback (1-24h) and max workflows shown (5-50); annotations become
+DSPy optimization ground truth via `OrchestrationAnnotationStorage`.
+
+### 8. Profile Routing Metrics Tab
+
+**Purpose**: Per-modality runtime observability sourced from `cogniverse.profile_selection` spans — replaces a deleted Multi-Modal Performance tab whose backing tracker was never populated.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/profile_metrics.py` (`render_profile_metrics_tab`)
+
+**Key Functions**:
+```python
+from cogniverse_foundation.telemetry.config import SPAN_NAME_PROFILE_SELECTION
+
+spans_df = provider.traces.get_spans(
+    project=project_name, start_time=start, end_time=end,
+    filters={"name": SPAN_NAME_PROFILE_SELECTION},
+)
+# groups by attributes.profile_selection.modality; computes count, p50/p95/p99
+# latency, and success_rate per modality
+```
+Renders per-modality metric cards, a detailed stats table, a query-distribution pie
+chart, and a P95-latency-by-modality bar chart.
+
+### 9. Approval Queue Tab
+
+**Purpose**: Human-in-the-loop review for synthetic data generation and other AI outputs before they're used in optimization.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/approval_queue.py` (`render_approval_queue_tab`)
+
+**Key Functions**: initializes a `HumanApprovalAgent` (`cogniverse_agents.approval`)
+backed by `ApprovalStorageImpl`, scoped by the tenant's `SystemConfig.telemetry_url` /
+`telemetry_collector_endpoint`. Renders four sub-tabs: "📋 Pending Review",
+"✅ Approved Items", "❌ Rejected Items", "📊 Statistics". `SyntheticDataConfidenceExtractor`
+and `SyntheticDataFeedbackHandler` (`cogniverse_synthetic.approval`) score generated
+synthetic examples so low-confidence ones route here for manual review.
+
+### 10. Ingestion Testing Tab
+
+**Purpose**: Interactively upload a test video and run it through the ingestion pipeline with one or more processing profiles.
+
+**Location**: inline in `cogniverse_dashboard/app.py` (`main_tabs[9]`, not a separate `tabs/` module)
+
+**Key Functions**:
+```python
+uploaded_video = st.file_uploader("Upload test video for ingestion", type=["mp4", "mov", "avi"])
+selected_profiles = st.multiselect("Select profiles to test", [
+    "video_colpali_smol500_mv_frame",
+    "video_colqwen_omni_mv_chunk_30s",
+    "video_videoprism_base_mv_chunk_30s",
+    "video_videoprism_large_mv_chunk_30s",
+    "video_videoprism_lvt_base_sv_chunk_6s",
+    "video_videoprism_lvt_large_sv_chunk_6s",
+], default=["video_colpali_smol500_mv_frame"])
+
+# Per profile: builds a processing_task dict (action, video_path, profile, config)
+# and calls the video-processing agent via call_agent_async(...)
+result = run_async_in_streamlit(call_agent_async(agent_url, processing_task))
 ```
 
-#### Fast Ingestion
-```python
-# Video directory input
-video_dir = "/path/to/videos"
-
-# Profile selection
-profile = "video_colpali_smol500_mv_frame"
-
-# Start ingestion
-POST /ingestion/start {
-    "video_dir": video_dir,
-    "profile": profile,
-    "tenant_id": current_tenant
-}
-
-# Track job status
-job_id = response["job_id"]
-st.session_state["last_ingestion_job"] = job_id
-
-# Check status button
-GET /ingestion/status/{job_id}
-```
-
-**Available Profiles**:
+**Available Profiles** (verified against `configs/schemas/*.json` embedding dims):
 1. `video_colpali_smol500_mv_frame` (320-dim, frame-based)
 2. `video_colqwen_omni_mv_chunk_30s` (320-dim, 30s chunks)
 3. `video_videoprism_base_mv_chunk_30s` (768-dim, 30s chunks)
 4. `video_videoprism_large_mv_chunk_30s` (1024-dim, 30s chunks)
 5. `video_videoprism_lvt_base_sv_chunk_6s` (768-dim, 6s chunks)
 6. `video_videoprism_lvt_large_sv_chunk_6s` (1024-dim, 6s chunks)
+
+### 11. Interactive Search Tab
+
+**Purpose**: Live multi-turn search testing across processing profiles and ranking strategies.
+
+**Location**: inline in `cogniverse_dashboard/app.py` (`main_tabs[10]`)
+
+**Key Functions**: streams results through the A2A protocol via
+`display_streaming_result(agent_name="search_agent", query=..., tenant_id=..., metadata={"top_k": ..., "modality": "video"})`.
+The profile selectbox here only offers 4 of the 6 ingestion profiles
+(`video_colpali_smol500_mv_frame`, `video_colqwen_omni_mv_chunk_30s`,
+`video_videoprism_base_mv_chunk_30s`, `video_videoprism_lvt_base_sv_chunk_6s` — the
+two `large` variants are omitted). Ranking-strategy multiselect offers
+`binary_binary` / `float_float` / `binary_float` / `float_binary`. Maintains a
+`session_id` and `conversation_history` in `st.session_state` for multi-turn context;
+a "🔄 New Session" button resets both.
+
+### 12. Chat Tab
+
+**Purpose**: Conversational interface routed through the agent layer.
+
+**Location**: inline in `cogniverse_dashboard/app.py` (`main_tabs[11]`)
+
+**Key Functions**: maintains `st.session_state.chat_messages` (list of
+`{"role", "content"}`), rendered via `st.chat_message`. Sending a message appends the
+user turn and calls the routing layer; "Clear History" resets `chat_messages`.
+
+### 13. Tenant Management Tab
+
+**Purpose**: CRUD for organizations and tenants via the Runtime API.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/tenant_management.py` (`render_tenant_management_tab`)
+
+**Key Functions**: four sub-tabs — "Organizations", "Create Organization", "Tenants",
+"Create Tenant" — all going through `_api_call(method, path, json=...)` against the
+Runtime API:
+```python
+# Create Organization
+result = _api_call("post", "/admin/organizations", json={
+    "org_id": org_id, "org_name": org_name, "created_by": created_by,
+})
+
+# Delete Organization (with a confirmation checkbox gate)
+result = _api_call("delete", f"/admin/organizations/{org_id}")
+```
+Organization/tenant listing is fetched via `_fetch_organizations()` /
+`_fetch_tenants(org_id)`, both calling the Runtime's `/admin/organizations` and
+`/admin/tenants` endpoints.
+
+### 14. RLM A/B Compare Tab
+
+**Purpose**: Renders `rlm.ab_compare` spans emitted by `cogniverse-optim --mode ab-compare`, pairing RLM-on/RLM-off arms by a shared `ab_id`.
+
+**Location**: `libs/dashboard/cogniverse_dashboard/tabs/rlm_ab_compare.py` (`render_rlm_ab_compare_tab`)
+
+**Key Functions**: `load_ab_compare_data(phoenix_http_endpoint, tenant_id, lookback_hours)`
+is a pure async function (independently integration-testable against a real Phoenix
+instance) that queries and aggregates into an `ABCompareAggregate` dataclass
+(`rows`, `avg_latency_delta_ms`, `avg_tokens_delta`, `avg_judge_delta`,
+`fallback_rate`, `per_row`, `per_dataset`). The tenant defaults to the sidebar's
+`current_tenant`; Phoenix URL and lookback hours are separate inputs.
+
+### 15. Sidebar Controls
+
+**Purpose**: Tenant scoping, time-range/filter controls for the Analytics tab, refresh settings, and live agent connectivity status — shared across every tab.
+
+**Location**: `cogniverse_dashboard/app.py`, `with st.sidebar:` block plus `show_agent_status()`
+
+**Key Functions**:
+```python
+# Active tenant gate — no "default" fallback; tabs are gated until a
+# registered tenant is entered (must already exist via POST /admin/tenants)
+active_tenant = st.text_input("Active Tenant", placeholder="org:tenant")
+st.session_state["current_tenant"] = active_tenant
+
+# Time range: preset buckets or a custom UTC-aware date/time range
+time_range = st.selectbox("Select time range", [
+    "Last 15 minutes", "Last hour", "Last 6 hours",
+    "Last 24 hours", "Last 7 days", "Custom range",
+])
+
+# Filters (Analytics tab): operation-name regex, profile multiselect, strategy multiselect
+operation_filter = st.text_input("Operation name (regex)")
+profile_filter = st.multiselect("Profiles", ["direct_video", "frame_based", "hierarchical", "all"])
+strategy_filter = st.multiselect("Ranking strategies", ["rrf", "weighted", "max_score", "all"])
+
+# Refresh + Advanced Options: auto-refresh toggle/interval, raw-data toggle,
+# Root Cause Analysis toggle, export format selector
+
+# Agent connectivity, checked via the unified runtime's per-agent health route
+def check_agent_connectivity():
+    resp = httpx.get(f"{runtime_url}/agents/{agent_name}/health", timeout=5.0)
+```
+Organization/tenant **creation** happens in the Tenant Management tab (§13), and video
+ingestion happens in the Ingestion Testing tab (§10) — the sidebar itself only scopes
+and filters, it does not create tenants or start ingestion jobs.
 
 ---
 
@@ -875,11 +1019,11 @@ Backend: VespaConfigStore
 Status: ✓ Healthy
 
 # 2. Navigate to System Config tab
-# 3. Update agent URLs:
-Routing Agent URL: [http://localhost:8001]
+# 3. Update agent URLs and backend settings:
 Video Agent URL: [http://localhost:8002]
-Vespa URL: [http://localhost]
-Vespa Port: [8080]
+Summarizer Agent URL: [http://localhost:8004]
+Backend URL: [http://localhost]
+Backend Port: [8080]
 
 # 4. Click "💾 Save"
 # Output: ✅ Configuration saved successfully!
@@ -897,10 +1041,10 @@ Changes:
 ### Example 3: Searching Memories
 
 ```python
-# In Memory Management Tab:
+# In Memory Management Tab (tenant comes from the sidebar Active Tenant field):
 
-Tenant ID: [default]
-Agent Name: [orchestrator_agent]
+Tenant: production
+Agent Name: [gateway_agent]
 
 # Navigate to "🔍 Search Memories" tab
 Search Query: [user prefers video results for cooking queries]
@@ -935,39 +1079,27 @@ Memory 2 - Score: 0.856
 ### Example 4: Evaluating Routing
 
 ```python
-# In Routing Evaluation Tab:
+# In Routing Evaluation Tab (reads live cogniverse.routing spans, no CSV upload):
 
-Golden Dataset Path: [data/testset/evaluation/video_search_queries.csv]
-# Status: ✅ Loaded 50 queries
+Tenant: production
+Lookback Period (hours): [24]
+# 📊 Querying spans from project: cogniverse-production-orchestration
 
-[▶️ Run Evaluation]
+# Summary Metrics:
+Routing Accuracy: 86.0%
+Confidence Calibration: 0.742
+Avg Routing Latency: 118ms
+Total Decisions: 50   (3 ambiguous)
 
-# Processing...
-# [====================] 50/50 queries evaluated
+# Per-Agent Performance (table + grouped bar chart):
+Agent            Precision  Recall  F1 Score
+search_agent         94.1%   96.0%     95.0%
+summarizer_agent     88.2%   83.3%     85.7%
+detailed_report_agent 80.0%  75.0%     77.4%
 
-# Results:
-Total Queries: 50
-Accuracy: 86.0%
-Errors: 7
-
-# Confusion Matrix (heatmap displays)
-              video  text  audio
-video           38     2      0
-text             3    12      1
-audio            2     1      4
-
-# Per-Query Analysis (expandable):
-❌ Query: "Create a report on climate change"
-   Predicted: video | Actual: text
-   Confidence: 0.72
-   [View Details] [Add to Training]
-
-❌ Query: "Summarize the podcast"
-   Predicted: text | Actual: audio
-   Confidence: 0.65
-   [View Details] [Add to Training]
-
-[📊 Export Results] [🔧 Retrain Model]
+# Confidence and temporal analysis charts render below the per-agent table.
+# The annotation section (st.divider() onward) lets a reviewer mark
+# ambiguous or incorrect routing decisions for later DSPy optimization.
 ```
 
 ---
@@ -1178,12 +1310,13 @@ with st.sidebar:
 
 ### 5. Best Practices
 
-**Session State Management**:
+**Session State Management** (generic pattern — this dashboard specifically gates on
+an explicit, already-registered tenant rather than defaulting to `"default"`; see
+§15 Sidebar Controls):
 ```python
 # Initialize session state at start
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
-    st.session_state.current_tenant = "default"
     st.session_state.last_refresh = datetime.now()
     st.session_state.cached_data = {}
 ```
@@ -1238,19 +1371,24 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
   - Vespa backend access from `cogniverse-vespa`
 - **Application Layer**: UI components from `cogniverse-dashboard`
 
-**Dashboard Capabilities:**
+**Dashboard Capabilities** (16 top-level tabs — see Core Components §1-§15 for the
+sub-tabs that live inside Configuration and Optimization):
 
 1. **Analytics**: Phoenix telemetry visualization with performance metrics (evaluation + telemetry-phoenix)
-
-2. **Configuration**: Full CRUD for multi-tenant system configuration (core)
-
-3. **Memory**: Mem0 agent memory inspection and management (core)
-
-4. **Routing**: Routing decision analysis and evaluation (agents + evaluation)
-
-5. **Orchestration**: Multi-agent workflow visualization (agents)
-
-6. **Optimization**: Comprehensive optimization framework (agents + evaluation + synthetic)
+2. **Evaluation**: Phoenix experiment/dataset browsing via GraphQL (telemetry-phoenix)
+3. **Embedding Atlas**: UMAP + embedding-atlas visualization of exported embeddings
+4. **Routing Evaluation**: `RoutingEvaluator` metrics from live routing spans (evaluation)
+5. **Orchestration Annotation**: Multi-agent workflow annotation UI (agents)
+6. **Profile Routing Metrics**: Per-modality runtime metrics from ProfileSelectionAgent spans
+7. **Optimization** + **Synthetic Data & Optimization**: Comprehensive optimization framework, 8 sub-tabs (agents + evaluation + synthetic)
+8. **Approval Queue**: Human-in-the-loop review for synthetic/AI outputs (agents + synthetic)
+9. **Ingestion Testing**: Interactive video upload + multi-profile ingestion testing
+10. **Interactive Search**: Live multi-turn search across profiles/ranking strategies
+11. **Chat**: Conversational interface routed through the agent layer
+12. **Configuration**: Full CRUD for multi-tenant system configuration, including Backend Profiles (core)
+13. **Tenant Management**: Organization/tenant CRUD via the Runtime API
+14. **Memory**: Mem0 agent memory inspection and management (core)
+15. **RLM A/B Compare**: `rlm.ab_compare` span comparison for RLM-on/RLM-off arms
 
 **Key Features**:
 
@@ -1274,23 +1412,35 @@ The UI/Dashboard module provides comprehensive web-based interfaces leveraging t
 ```python
 # Foundation layer
 from cogniverse_foundation.telemetry.manager import get_telemetry_manager
+from cogniverse_foundation.telemetry.config import (
+    SPAN_NAME_PROFILE_SELECTION, SERVICE_NAME_ORCHESTRATION, TelemetryConfig,
+)
 from cogniverse_foundation.config.utils import create_default_config_manager, get_config
-
-from cogniverse_foundation.config.unified_config import SystemConfig
+from cogniverse_foundation.config.unified_config import SystemConfig, RoutingConfigUnified
 
 # Core layer
 from cogniverse_core.memory.manager import Mem0MemoryManager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 
+# Evaluation layer
+from cogniverse_evaluation.evaluators.routing_evaluator import RoutingEvaluator
+from cogniverse_evaluation.evaluators.golden_dataset import GoldenDatasetEvaluator
+
 # Implementation layer
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 from cogniverse_telemetry_phoenix.evaluation.analytics import PhoenixAnalytics
 from cogniverse_agents.gateway_agent import GatewayAgent
+from cogniverse_agents.approval import HumanApprovalAgent, ApprovalStorageImpl
+from cogniverse_agents.routing.orchestration_annotation_storage import OrchestrationAnnotationStorage
+from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor
 from cogniverse_vespa.search_backend import VespaSearchBackend
 
 # Application layer
 from cogniverse_dashboard.tabs.config_management import render_config_management_tab
 from cogniverse_dashboard.tabs.optimization import render_enhanced_optimization_tab
+from cogniverse_dashboard.tabs.tenant_management import render_tenant_management_tab
+from cogniverse_dashboard.tabs.rlm_ab_compare import render_rlm_ab_compare_tab
+from cogniverse_dashboard.utils.async_utils import run_async_in_streamlit
 ```
 
 This module serves as the primary user interface for system monitoring, configuration management, and data exploration in the Cogniverse platform, demonstrating clean separation of concerns across the layered architecture.
