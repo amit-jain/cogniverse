@@ -1630,6 +1630,12 @@ spec:
         {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
+        # Cap glibc's per-thread malloc arenas. Without this the EngineCore
+        # host RSS ratchets (freed blocks retained as arena high-water,
+        # never returned to the OS) — a driver of the observed 9->15Gi
+        # growth on top of the vLLM host caches bounded via extraArgs.
+        - name: MALLOC_ARENA_MAX
+          value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
         # Persist vLLM's torch.compile cache alongside HF weights.
@@ -1678,6 +1684,12 @@ spec:
         {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
+        # Cap glibc's per-thread malloc arenas. Without this the EngineCore
+        # host RSS ratchets (freed blocks retained as arena high-water,
+        # never returned to the OS) — a driver of the observed 9->15Gi
+        # growth on top of the vLLM host caches bounded via extraArgs.
+        - name: MALLOC_ARENA_MAX
+          value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
         # Persist vLLM's torch.compile cache alongside HF weights.
@@ -1750,6 +1762,12 @@ spec:
         {{- include "cogniverse.tunableOpEnv" (dict "device" $device "name" $name "root" $) | nindent 8 }}
         - name: VLLM_ALLOW_LONG_MAX_MODEL_LEN
           value: "1"
+        # Cap glibc's per-thread malloc arenas. Without this the EngineCore
+        # host RSS ratchets (freed blocks retained as arena high-water,
+        # never returned to the OS) — a driver of the observed 9->15Gi
+        # growth on top of the vLLM host caches bounded via extraArgs.
+        - name: MALLOC_ARENA_MAX
+          value: "2"
         - name: HF_HOME
           value: /root/.cache/huggingface
         # Persist vLLM's torch.compile cache alongside HF weights.
