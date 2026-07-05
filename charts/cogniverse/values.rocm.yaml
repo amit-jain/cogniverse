@@ -59,12 +59,23 @@ inference:
     device: rocm
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
+    # Helm REPLACES list values, so this overlay must repeat every base
+    # extraArg. --max-num-seqs 1 and --limit-mm-per-prompt were silently
+    # dropped when only the ROCm-specific args were listed here, leaving the
+    # student on max-num-seqs=256 + an unbounded multimodal host cache
+    # (gemma-4 is a vision-language model) — the source of the 9->15Gi host
+    # RSS ratchet. The runtime serializes generation and only does text
+    # chat, so both caps are free.
     extraArgs:
       - "--max-model-len"
       - "16384"
       - "--enforce-eager"
       - "--gpu-memory-utilization"
       - "0.30"
+      - "--max-num-seqs"
+      - "1"
+      - "--limit-mm-per-prompt"
+      - '{"video":0,"image":0}'
     resources:
       limits:
         cpu: "4"
