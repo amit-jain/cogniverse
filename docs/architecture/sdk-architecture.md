@@ -205,14 +205,16 @@ cogniverse_foundation/
 ```text
 cogniverse_core/
 ├── __init__.py
-├── agents/      # AgentBase, A2AAgent, mixins (memory_aware_mixin, health_mixin, tenant_aware_mixin, a2a_mixin, dynamic_dspy_mixin, rlm_options)
+├── agents/      # AgentBase, A2AAgent, mixins (a2a_mixin, tenant_aware_mixin, rlm_options)
+├── approval/    # Human-in-the-loop approval interfaces
 ├── backends/    # Backend implementations
-├── common/      # Utilities, cache/, models/, utils/
+├── common/      # Utilities, cache/, models/, media/, health_mixin, dynamic_dspy_mixin
 ├── config/      # Configuration utilities
 ├── events/      # Event queue system with backends
 ├── factories/   # Backend factory patterns
 ├── interfaces/  # Interface definitions
 ├── memory/      # Mem0MemoryManager, vector store
+├── query/       # Query encoders (ColBERT, ColPali/ColQwen, VideoPrism)
 ├── registries/  # Agent, backend, DSPy, schema, adapter_store, workflow_store registries
 ├── schemas/     # Filesystem schema loader
 ├── telemetry/   # Telemetry utilities
@@ -227,7 +229,7 @@ cogniverse_core/
 
 #### Key Responsibilities
 
-- **Base Classes**: Abstract agent interfaces (AgentBase, AgentInput, AgentOutput, AgentDeps, A2AAgent) and mixins (MemoryAwareMixin, HealthCheckMixin, A2AEndpointsMixin, TenantAwareAgentMixin, DynamicDSPyMixin)
+- **Base Classes**: Abstract agent interfaces (AgentBase, AgentInput, AgentOutput, AgentDeps, A2AAgent) and mixins (HealthCheckMixin, A2AEndpointsMixin, TenantAwareAgentMixin, DynamicDSPyMixin) — MemoryAwareMixin lives in `cogniverse-agents`, not core
 - **Registries**: Component registration and discovery for agents, backends, DSPy modules, schemas, adapters, workflows
 - **Memory**: Mem0MemoryManager with multi-tenant support and vector store backend
 - **Caching**: Pipeline and embedding caches with structured filesystem backend
@@ -365,18 +367,18 @@ cogniverse_synthetic/
 ```text
 cogniverse_agents/
 ├── __init__.py
-├── *_agent*.py    # Agent implementations (routing, video, audio, document, image, text, etc.)
-├── approval/      # Human-in-the-loop approval workflow
-├── inference/     # RLM inference with instrumentation
-├── mixins/        # Agent mixins (RLM-aware)
-├── optimizer/     # DSPy optimization with local/Modal providers
-├── orchestrator/  # Multi-agent orchestration, A2A gateway, checkpoints
-├── query/         # Query analysis and encoding
-├── results/       # Result aggregation and enhancement
-├── routing/       # Advanced routing subsystem (39 modules)
-├── search/        # Rerankers (hybrid, learned, multi-modal)
-├── tools/         # A2A utils, video tools, temporal extraction
-└── workflow/      # Workflow intelligence, state machine
+├── *_agent*.py         # 23 agent implementations at package root (see Agent Catalog below)
+├── memory_aware_mixin.py, graph_bindable.py, adapter_loader.py, workflow_types.py, deep_synthesis_workflow.py
+├── approval/           # Human-in-the-loop approval workflow (human_approval_agent, orchestrator)
+├── graph/              # Knowledge-graph extraction (claim/entity/face/code extractors, GraphManager)
+├── inference/          # RLM inference with instrumentation
+├── mixins/             # Agent mixins (RLM-aware)
+├── optimizer/          # DSPy optimization with local/Modal providers
+├── orchestrator/       # Checkpoint storage/types, sufficient-context signature
+├── routing/            # Routing subsystem (annotation queue/storage, xgboost meta-models, evaluators)
+├── search/             # Rerankers (hybrid, learned, multi-modal) and RRF fusion
+├── wiki/               # Wiki knowledge store (WikiManager, wiki schema)
+└── workflow/           # Workflow intelligence, state machine
 ```
 
 > See `libs/agents/cogniverse_agents/` for complete structure
@@ -385,13 +387,46 @@ cogniverse_agents/
 
 > See `libs/agents/pyproject.toml` - Depends on: cogniverse-sdk, cogniverse-core, cogniverse-synthetic
 
+#### Agent Catalog (23 agents)
+
+All agents subclass `A2AAgent` (or its mixins) from `cogniverse_core.agents.base`. Ports below are the effective `agents.<name>.url` values in `configs/config.json`; several code-level `__init__` defaults differ from the deployed port and are overridden by config at startup.
+
+| Group | Agent | Port | Enabled | Description |
+|---|---|---|---|---|
+| Search & Analysis | `search_agent` | 8002 | yes | Multi-modal Vespa retrieval (video/image/text/audio/document) with DSPy query rewriting and RRF ensemble fusion |
+| Search & Analysis | `text_analysis_agent` | 8003 | yes | Runtime-configurable DSPy sentiment/summary/entity analysis with per-tenant persisted config |
+| Search & Analysis | `image_search_agent` | 8006 | yes | ColPali multi-vector image similarity search, semantic/hybrid modes, image-to-image lookup |
+| Search & Analysis | `audio_analysis_agent` | 8007 | yes | Whisper transcription + Vespa audio search (transcript/acoustic/hybrid modes) |
+| Search & Analysis | `document_agent` | 8008 | yes | Dual-strategy document search: ColPali visual, ColBERT/BM25 text, or hybrid |
+| Generation & Routing | `gateway_agent` | 8000 | yes | LLM-free A2A entry point; GLiNER-based query classification and direct/orchestrator routing |
+| Generation & Routing | `entity_extraction_agent` | 8000 | yes | Tiered NER: fast GLiNER + SpaCy path with a DSPy fallback |
+| Generation & Routing | `query_enhancement_agent` | 8000 | yes | DSPy query expansion, synonyms, and RRF query variants |
+| Generation & Routing | `profile_selection_agent` | 8000 | yes | DSPy-driven backend search profile selection with heuristic fallback |
+| Generation & Routing | `summarizer_agent` | 8004 | yes | DSPy summarization with a thinking phase and VLM visual analysis |
+| Generation & Routing | `detailed_report_agent` | 8005 | yes | DSPy detailed report generation with optional RLM synthesis |
+| Generation & Routing | `orchestrator_agent` | 8013 | yes | DSPy-planned multi-agent workflow execution over A2A HTTP |
+| Research & Coding | `deep_research_agent` | 8009 | yes | Decompose/search/evaluate/synthesize loop producing a cited report |
+| Research & Coding | `coding_agent` | 8010 | yes | Iterative code search/plan/generate/execute loop in an OpenShell sandbox |
+| Knowledge-Graph & Reasoning | `citation_tracing_agent` (`CitationTracingAgent`) | 8019 | no | Walks a memory's provenance chain to its primary sources |
+| Knowledge-Graph & Reasoning | `contradiction_reconciliation_agent` | 8020 | no | Resolves conflict sets via a knowledge schema's contradiction policy |
+| Knowledge-Graph & Reasoning | `multi_document_synthesis_agent` | 8021 | no | Synthesizes an answer across N documents while preserving citations |
+| Knowledge-Graph & Reasoning | `kg_traversal_agent` (`KnowledgeGraphTraversalAgent`) | 8022 | no | BFS-walks kg_node/kg_edge memories from a seed entity |
+| Knowledge-Graph & Reasoning | `temporal_reasoning_agent` | 8025 | no | Compares a subject's knowledge across explicit time windows |
+| Knowledge-Graph & Reasoning | `knowledge_summarization_agent` | 8026 | no | Distills a knowledge subgraph with optional admin-gated promotion to org trunk |
+| Knowledge-Graph & Reasoning | `audit_explanation_agent` | 8027 | yes | Explains an answer's derivation chain, source trust, and active contradictions |
+| Multi-Tenant & Federation | `cross_tenant_comparison_agent` | 8023 | no | Compares per-tenant views of one subject across an org via federation |
+| Multi-Tenant & Federation | `federated_query_agent` | 8024 | no | Aggregates federated reads across tenants for a free-text query |
+
+> Knowledge-Graph, Research & Coding, and Multi-Tenant agents are reached via `/admin/tenants/{tenant_id}/knowledge/*` REST routes (`libs/runtime/cogniverse_runtime/routers/knowledge.py`), not the `/agents` REST route. See `docs/modules/agents.md` for full per-agent behavior.
+
 #### Key Responsibilities
 
-- **Agent Implementations**: OrchestratorAgent (A2A entry point), routing, video search, document, audio, image, text analysis agents
+- **Agent Implementations**: 23 A2A agents across Search & Analysis, Generation & Routing, Research & Coding, Knowledge-Graph & Reasoning, and Multi-Tenant & Federation groups (see Agent Catalog above)
 - **Query Processing**: Modality detection, entity extraction with GLiNER, query enhancement
 - **Search Enhancement**: Multi-modal, hybrid, and learned reranking with relevance scoring
 - **Optimization**: DSPy agent optimization with local and Modal GPU providers
 - **A2A Protocol**: Agent-to-agent communication gateway and routing
+- **Knowledge Graph**: Claim/entity/face/code extraction and graph traversal (`graph/`)
 - **Result Processing**: Aggregation and enhancement of search results
 
 ---
@@ -605,7 +640,21 @@ cogniverse_messaging/
 ```text
 cogniverse_cli/
 ├── __init__.py
-└── main.py    # cogniverse CLI entry point (up, status, code, index, graph, etc.)
+├── main.py       # cogniverse CLI entry point (up, down, status, code, index, logs, etc.)
+├── admin.py      # admin group (reconcile-orphans)
+├── argo.py       # Argo workflow template deployment
+├── cluster.py    # Cluster lifecycle helpers
+├── code.py       # `code` command (sandboxed coding agent)
+├── config.py     # CLI configuration helpers
+├── constants.py  # RUNTIME_URL, NAMESPACE
+├── deploy.py     # helm install/uninstall
+├── graph.py      # graph group (stats, search, neighbors, path)
+├── health.py     # Service health checks
+├── images.py     # Container image helpers
+├── index.py      # `index` command (data ingestion)
+├── sandbox.py    # sandbox group (sync, status)
+├── secrets.py    # secrets group (sync)
+└── streaming.py  # Streaming log/progress helpers
 ```
 
 > See `libs/cli/cogniverse_cli/` for complete structure
@@ -613,9 +662,9 @@ cogniverse_cli/
 
 #### Key Responsibilities
 
-- **Deployment Management**: `up`, `status` commands for cluster lifecycle
-- **Content Operations**: `index`, `graph` commands for data management
-- **Developer Tooling**: `code` and other developer-facing commands
+- **Deployment Management**: `up`, `down`, `status` commands for cluster lifecycle
+- **Content Operations**: `index`, `graph` (stats/search/neighbors/path) commands for data management
+- **Developer Tooling**: `code` (sandboxed coding agent), `logs`, `secrets sync`, `admin reconcile-orphans`, `sandbox sync/status`
 
 ---
 
@@ -645,6 +694,8 @@ flowchart TD
     runtime["<span style='color:#000'><b>cogniverse-runtime</b><br/>FastAPI server</span>"]
     dashboard["<span style='color:#000'><b>cogniverse-dashboard</b><br/>Streamlit UI</span>"]
     finetuning["<span style='color:#000'><b>cogniverse-finetuning</b><br/>LLM/embedding training</span>"]
+    messaging["<span style='color:#000'><b>cogniverse-messaging</b><br/>Telegram gateway</span>"]
+    cli["<span style='color:#000'><b>cogniverse-cli</b><br/>Deployment CLI</span>"]
 
     %% Foundation Layer dependencies (foundation depends on sdk)
     foundation --> sdk
@@ -659,6 +710,7 @@ flowchart TD
     phoenix --> evaluation
     synthetic --> sdk
     synthetic --> foundation
+    synthetic --> core
 
     %% Implementation Layer dependencies
     agents --> sdk
@@ -670,12 +722,15 @@ flowchart TD
     %% Application Layer dependencies
     runtime --> sdk
     runtime --> core
+    runtime --> synthetic
     runtime -.-> vespa
     runtime -.-> agents
     dashboard --> sdk
     dashboard --> core
+    dashboard --> agents
     dashboard --> evaluation
-    dashboard --> runtime
+    dashboard --> vespa
+    dashboard --> phoenix
     finetuning --> sdk
     finetuning --> core
     finetuning --> foundation
@@ -691,7 +746,7 @@ flowchart TD
     class sdk,foundation foundationStyle
     class evaluation,core,phoenix,synthetic coreStyle
     class agents,vespa implStyle
-    class runtime,dashboard,finetuning appStyle
+    class runtime,dashboard,finetuning,messaging,cli appStyle
 ```
 
 **Key Principles**:
@@ -701,9 +756,10 @@ flowchart TD
 - **Evaluation depends on Foundation + SDK**: Provider-agnostic evaluation framework
 - **Core depends on SDK + Foundation + Evaluation**: Central package with base classes
 - **Telemetry-Phoenix is a Plugin**: Depends on Core + Evaluation, auto-discovered via entry points
-- **Synthetic is Core, not Implementation**: Depends only on SDK + Foundation; consumed by agents and finetuning in the Implementation and Application layers
+- **Synthetic depends on SDK + Foundation + Core**: consumed by agents (Implementation) and finetuning (Application) layers
 - **Implementation Layer depends on Core**: Agents and Vespa build on Core
-- **Application Layer depends on lower layers**: Runtime, Dashboard, Finetuning use Implementation packages
+- **Application Layer depends on lower layers**: Runtime depends on SDK + Core + Synthetic (with optional Vespa/Agents); Dashboard depends on SDK + Core + Agents + Evaluation + Vespa + Telemetry-Phoenix; Finetuning depends on SDK + Core + Foundation + Agents + Synthetic
+- **Messaging and CLI have no internal workspace dependencies**: `cogniverse-messaging` and `cogniverse-cli` declare zero `cogniverse-*` packages in `pyproject.toml` — they talk to `cogniverse-runtime` only over HTTP, not via direct import
 - **No Circular Dependencies**: Clean layered hierarchy with dependencies flowing upward
 - **Optional Dependencies**: Runtime can work without agents/vespa (runtime -.-> vespa/agents shows optional)
 - **Workspace References**: Packages reference each other via `{ workspace = true }`
@@ -962,41 +1018,20 @@ def telemetry_manager_without_phoenix():
 Integration tests validate cross-package interactions:
 
 ```python
-# tests/routing/integration/test_orchestrator_with_vespa.py
-from pathlib import Path
+# tests/agents/integration/test_orchestrator_with_vespa.py
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_vespa.search_backend import VespaSearchBackend
-from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
-from cogniverse_foundation.telemetry.config import TelemetryConfig
-from cogniverse_foundation.config.manager import ConfigManager
+from cogniverse_core.registries.agent_registry import AgentRegistry
 
 @pytest.mark.integration
 async def test_orchestrator_agent_with_vespa_backend(config_manager, tenant_id):
     """Test orchestrator agent with real Vespa backend"""
 
-    # Initialize Vespa backend (config_manager + schema_loader required)
-    schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-    search_backend = VespaSearchBackend(
-        config={
-            "url": "http://localhost",
-            "port": 8080,
-            "profiles": {},
-            "default_profiles": {},
-        },
-        config_manager=config_manager,
-        schema_loader=schema_loader,
-    )
-
-    # Initialize orchestrator agent
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    deps = OrchestratorDeps(
-        telemetry_config=TelemetryConfig(),
-        llm_config=LLMEndpointConfig(
-            model="openai/google/gemma-4-e4b-it",
-            api_base="http://localhost:11434/v1",
-        ),
-    )
-    agent = OrchestratorAgent(deps=deps)
+    # AgentRegistry resolves execution agents (search_agent, etc.) from
+    # configs/config.json; the Vespa backend is loaded dynamically per
+    # profile through the backend registry, not constructed directly here.
+    registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
+    deps = OrchestratorDeps(tenant_id=tenant_id)
+    agent = OrchestratorAgent(deps=deps, registry=registry, config_manager=config_manager)
 
     # Execute query through full stack
     result = await agent.process(OrchestratorInput(
@@ -1004,8 +1039,8 @@ async def test_orchestrator_agent_with_vespa_backend(config_manager, tenant_id):
         tenant_id=tenant_id,
     ))
 
-    assert result.recommended_agent
-    assert result.confidence >= 0.0
+    assert result.workflow_id
+    assert result.final_output
 ```
 
 ---
@@ -1088,7 +1123,7 @@ from cogniverse_core.agents.base import (
     AgentBase,      # Generic base: AgentBase[InputT, OutputT, DepsT]
     AgentInput,     # Base class for agent inputs (Pydantic model)
     AgentOutput,    # Base class for agent outputs (Pydantic model)
-    AgentDeps,      # Base class for agent dependencies (requires tenant_id)
+    AgentDeps,      # Base class for agent dependencies (tenant-agnostic at startup; extra="allow" for subclass fields)
 )
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
@@ -1173,19 +1208,22 @@ from cogniverse_runtime.ingestion.pipeline_builder import VideoIngestionPipeline
 ```python
 # In cogniverse_agents/orchestrator_agent.py (located at package root)
 
-from cogniverse_core.agents.base import AgentBase
+from cogniverse_core.agents.base import A2AAgent
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 from cogniverse_foundation.telemetry.manager import TelemetryManager
 
-class OrchestratorAgent(AgentBase, MemoryAwareMixin):
+class OrchestratorAgent(
+    MemoryAwareMixin, A2AAgent[OrchestratorInput, OrchestratorOutput, OrchestratorDeps]
+):
     """
     Orchestrator agent using core base classes and telemetry.
 
-    Vespa backend injected at runtime (not imported directly).
+    Vespa backend injected at runtime via AgentRegistry, not imported directly.
     """
 
-    def __init__(self, tenant_id: str):
-        super().__init__(tenant_id=tenant_id)
+    def __init__(self, deps: OrchestratorDeps, registry: "AgentRegistry", config_manager=None, port: int = 8013):
+        super().__init__(deps=deps)
+        self.registry = registry
         self.telemetry = TelemetryManager()  # Singleton
 ```
 
@@ -1343,57 +1381,61 @@ bump2version minor  # 0.1.0 -> 0.2.0
 
 **Steps**:
 
-1. **Create agent class** in `libs/agents/cogniverse_agents/my_agent/`:
+1. **Create agent class** at the package root (agents live directly under `cogniverse_agents/`, not in per-agent subdirectories):
 
 ```python
-# libs/agents/cogniverse_agents/my_agent/my_new_agent.py
-from cogniverse_core.agents.base import AgentBase
+# libs/agents/cogniverse_agents/my_new_agent.py
+from cogniverse_core.agents.base import AgentBase, AgentInput, AgentOutput, AgentDeps
 from cogniverse_agents.memory_aware_mixin import MemoryAwareMixin
 
-class MyNewAgent(AgentBase, MemoryAwareMixin):
+class MyNewInput(AgentInput):
+    query: str
+
+class MyNewOutput(AgentOutput):
+    status: str
+
+class MyNewDeps(AgentDeps):
+    """Extra fields allowed via AgentDeps' extra="allow"."""
+
+class MyNewAgent(MemoryAwareMixin, AgentBase[MyNewInput, MyNewOutput, MyNewDeps]):
     """New agent implementation"""
 
-    def __init__(self, tenant_id: str):
-        super().__init__(tenant_id=tenant_id)
+    def __init__(self, deps: MyNewDeps, port: int = 8028):
+        super().__init__(deps=deps)
+        self.port = port
 
-    async def execute(self, query: str) -> dict:
-        """Execute agent logic"""
-        pass
+    async def _process_impl(self, input: MyNewInput) -> MyNewOutput:
+        """Required by AgentBase; process() calls this internally."""
+        return MyNewOutput(status="success")
 ```
 
-2. **Add tests** in `tests/agents/test_my_new_agent.py`:
+2. **Add tests** in `tests/agents/unit/test_my_new_agent.py`:
 
 ```python
 import pytest
-from cogniverse_agents.my_agent.my_new_agent import MyNewAgent
+from cogniverse_agents.my_new_agent import MyNewAgent, MyNewDeps, MyNewInput
 
 class TestMyNewAgent:
     async def test_execute(self):
-        agent = MyNewAgent(tenant_id="test")
-        result = await agent.execute("test query")
-        assert result["status"] == "success"
+        agent = MyNewAgent(deps=MyNewDeps(tenant_id="test"))
+        result = await agent.process(MyNewInput(query="test query"))
+        assert result.status == "success"
 ```
 
 3. **Run tests**:
 
 ```bash
-uv run pytest tests/agents/test_my_new_agent.py -v
+uv run pytest tests/agents/unit/test_my_new_agent.py -v
 ```
 
-4. **Update exports** in `libs/agents/cogniverse_agents/__init__.py`:
-
-```python
-from .my_agent.my_new_agent import MyNewAgent
-
-__all__ = ["MyNewAgent", ...]
-```
+4. **No package `__init__.py` export needed**: individual agents are not re-exported from `libs/agents/cogniverse_agents/__init__.py` (it only exports shared mixins/RLM inference); callers import agents directly, e.g. `from cogniverse_agents.my_new_agent import MyNewAgent`.
 
 ### Scenario 2: Adding Multi-Tenant Feature to Core
 
 **Steps**:
 
 1. **Add utility** in `libs/core/cogniverse_core/common/tenant_utils.py`
-2. **Add tests** in `tests/common/test_tenant_utils.py`
+2. **Add tests** in `tests/common/unit/test_tenant_utils.py`
 3. **Verify dependent packages** (agents, vespa, runtime) still work:
 
 ```bash
@@ -1404,29 +1446,19 @@ uv run pytest tests/agents/ tests/routing/ tests/memory/ -v
 
 ### Scenario 3: Adding New Vespa Schema
 
+Schemas are JSON files (not raw `.sd`) loaded at runtime by `FilesystemSchemaLoader` (`cogniverse_core.schemas.filesystem_loader`), which expects `{schema_name}_schema.json` files under a base directory (`configs/schemas/` in this repo) plus a shared `ranking_strategies.json`. `SchemaRegistry` (`cogniverse_core.registries.schema_registry`) resolves schema names to loaded definitions; `VespaSchemaManager` (`libs/vespa/cogniverse_vespa/vespa_schema_manager.py`) deploys them and manages per-tenant schema lifecycle.
+
 **Steps**:
 
-1. **Create schema file** in `libs/vespa/cogniverse_vespa/schemas/my_schema.sd`
-2. **Add schema manager support** in `vespa_schema_manager.py`:
-
-```python
-def get_schema_path(self, schema_name: str) -> Path:
-    """Get path to schema file"""
-    schema_files = {
-        "video_frames": "video_frames.sd",
-        "agent_memories": "agent_memories.sd",
-        "my_schema": "my_schema.sd",  # New schema
-    }
-    return self.schema_dir / schema_files[schema_name]
-```
-
+1. **Create schema file** at `configs/schemas/my_schema_schema.json` (see `configs/schemas/video_colpali_smol500_mv_frame_schema.json` for the expected shape)
+2. **Register the profile** in `configs/config.json` so `SchemaRegistry` and the ingestion pipeline can resolve it by profile name
 3. **Test schema deployment**:
 
 ```bash
-uv run pytest tests/backends/test_schema_deployment.py -v
+uv run pytest tests/backends/unit/test_schema_registry.py tests/backends/integration/test_tenant_schema_lifecycle.py -v
 ```
 
-4. **Update ingestion** to support new schema in `runtime/ingestion/pipeline.py`
+4. **Update ingestion** to support the new profile in `libs/runtime/cogniverse_runtime/ingestion/pipeline.py`
 
 ---
 
@@ -1512,7 +1544,7 @@ Cogniverse SDK uses a **UV workspace** with a layered architecture for multi-mod
 
 **Application Layer:**
 
-9. **cogniverse-runtime**: FastAPI server (multi-modal ingestion, tenant management, JWT authentication)
+9. **cogniverse-runtime**: FastAPI server (multi-modal ingestion, tenant management, per-request tenant validation)
 10. **cogniverse-dashboard**: Streamlit UI (analytics, Phoenix experiments, UMAP visualization)
 11. **cogniverse-finetuning**: LLM/embedding fine-tuning infrastructure (LoRA/PEFT, DPO, contrastive learning, Modal GPU integration)
 12. **cogniverse-messaging**: Telegram messaging gateway (invite auth, command routing, Mem0 conversation history)

@@ -113,7 +113,7 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
 ## 📁 UV Workspace Structure
 
-```
+```text
 cogniverse/
 ├── libs/                         # SDK Packages (UV workspace - 13 packages)
 │   ├── sdk/                      # cogniverse_sdk (Foundation Layer)
@@ -189,7 +189,7 @@ cogniverse/
 ```
 
 **Package Dependencies (Layered Architecture):**
-```
+```text
 Foundation Layer:
   cogniverse_sdk (zero internal dependencies)
     ↓
@@ -216,28 +216,135 @@ Application Layer:
 ## 🏗️ Architecture
 
 ### Multi-Agent Orchestration
+
+```mermaid
+flowchart TD
+    User(("<span style='color:#000'>User Query</span>"))
+    Gateway["<span style='color:#000'><b>Gateway Agent</b><br/>:8000 · GLiNER classification<br/>A2A entry point</span>"]
+    Orchestrator["<span style='color:#000'><b>Orchestrator Agent</b><br/>:8013 · DSPy-based planner</span>"]
+
+    User --> Gateway
+    Gateway -->|"simple query"| SA
+    Gateway -.->|"complex query"| Orchestrator
+    Orchestrator -->|"A2A HTTP"| SA
+    Orchestrator -->|"A2A HTTP"| GR
+    Orchestrator -->|"A2A HTTP"| RC
+    Orchestrator -.->|"/admin/tenants/.../knowledge"| KG
+    Orchestrator -.->|"federation reads"| MT
+
+    subgraph SA["<span style='color:#000'>Search &amp; Analysis Agents</span>"]
+        direction LR
+        sa1["<span style='color:#000'>search_agent<br/>:8002</span>"]
+        sa2["<span style='color:#000'>image_search_agent<br/>:8006</span>"]
+        sa3["<span style='color:#000'>document_agent<br/>:8008</span>"]
+        sa4["<span style='color:#000'>text_analysis_agent<br/>:8003</span>"]
+        sa5["<span style='color:#000'>audio_analysis_agent<br/>:8007</span>"]
+    end
+
+    subgraph GR["<span style='color:#000'>Generation &amp; Routing Agents</span>"]
+        direction LR
+        gr1["<span style='color:#000'>summarizer_agent<br/>:8004</span>"]
+        gr2["<span style='color:#000'>detailed_report_agent<br/>:8005</span>"]
+        gr3["<span style='color:#000'>profile_selection_agent</span>"]
+        gr4["<span style='color:#000'>query_enhancement_agent</span>"]
+        gr5["<span style='color:#000'>entity_extraction_agent</span>"]
+    end
+
+    subgraph RC["<span style='color:#000'>Research &amp; Coding Agents</span>"]
+        direction LR
+        rc1["<span style='color:#000'>deep_research_agent<br/>:8009</span>"]
+        rc2["<span style='color:#000'>coding_agent<br/>:8010</span>"]
+    end
+
+    subgraph KG["<span style='color:#000'>Knowledge-Graph &amp; Reasoning Agents</span>"]
+        direction LR
+        kg1["<span style='color:#000'>audit_explanation_agent<br/>:8027</span>"]
+        kg2["<span style='color:#000'>citation_tracing_agent<br/>:8019</span>"]
+        kg3["<span style='color:#000'>contradiction_reconciliation_agent<br/>:8020</span>"]
+        kg4["<span style='color:#000'>multi_document_synthesis_agent<br/>:8021</span>"]
+        kg5["<span style='color:#000'>kg_traversal_agent<br/>:8022</span>"]
+        kg6["<span style='color:#000'>temporal_reasoning_agent<br/>:8025</span>"]
+        kg7["<span style='color:#000'>knowledge_summarization_agent<br/>:8026</span>"]
+    end
+
+    subgraph MT["<span style='color:#000'>Multi-Tenant &amp; Federation Agents</span>"]
+        direction LR
+        mt1["<span style='color:#000'>cross_tenant_comparison_agent<br/>:8023</span>"]
+        mt2["<span style='color:#000'>federated_query_agent<br/>:8024</span>"]
+    end
+
+    classDef gatewayStyle fill:#a5d6a7,stroke:#388e3c,color:#000
+    classDef orchStyle fill:#ce93d8,stroke:#7b1fa2,color:#000
+    classDef saStyle fill:#90caf9,stroke:#1565c0,color:#000
+    classDef grStyle fill:#ba68c8,stroke:#7b1fa2,color:#000
+    classDef rcStyle fill:#ffcc80,stroke:#ef6c00,color:#000
+    classDef kgStyle fill:#81d4fa,stroke:#0288d1,color:#000
+    classDef mtStyle fill:#b0bec5,stroke:#546e7a,color:#000
+
+    class Gateway gatewayStyle
+    class Orchestrator orchStyle
+    class sa1,sa2,sa3,sa4,sa5 saStyle
+    class gr1,gr2,gr3,gr4,gr5 grStyle
+    class rc1,rc2 rcStyle
+    class kg1,kg2,kg3,kg4,kg5,kg6,kg7 kgStyle
+    class mt1,mt2 mtStyle
 ```
-┌────────────────────────────────────────────┐
-│               Gateway Agent                 │
-│ (GLiNER classification — A2A entry point)   │
-└────────────────────────────────────────────┘
-                    │ complex query
-                    ▼
-              ┌────────────────────────┐
-              │   Orchestrator Agent   │
-              │  (DSPy-based router)   │
-              └────────────────────────┘
-                     │ A2A Protocol
-                     ├──────────────┬──────────────────┬──────────────────┐
-                     ▼              ▼                  ▼                  ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│  Search Agent   │  │  Image Search   │  │   Summarizer    │  │ Detailed Report │
-│                 │  │      Agent      │  │      Agent      │  │      Agent      │
-└─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────┘
-   ... plus 17 more specialized agents (document, entity_extraction,
-       query_enhancement, temporal_reasoning, kg_traversal, etc.)
-```
-The Gateway Agent classifies each query with GLiNER zero-shot NER and either routes it directly to the appropriate specialized agent (fast path) or hands it to the Orchestrator Agent for complex, multi-step handling. Memory is provided via `MemoryAwareMixin` composed into individual agents, not a standalone memory agent.
+
+The Gateway Agent classifies each query with GLiNER zero-shot NER and either routes it directly to the appropriate specialized agent (fast path) or hands it to the Orchestrator Agent for complex, multi-step handling. Memory is provided via `MemoryAwareMixin` composed into individual agents, not a standalone memory agent. Dashed arrows above mark paths that are conditional (complex-query handoff) or reached through a REST layer rather than a direct A2A call.
+
+### The 23 Agents
+
+Ports and `enabled` status come from `configs/config.json` (`agents.*`); dashed groups above (Knowledge-Graph & Reasoning, Multi-Tenant & Federation) are mostly `enabled: false` by default and are reached via `/admin/tenants/{tenant_id}/knowledge/*` REST routes rather than the main orchestration path.
+
+**Search & Analysis Agents**
+
+| Agent | Port | Status | What it does |
+|---|---|---|---|
+| `search_agent` | 8002 | enabled | Multi-modal retrieval across video/image/text/audio/document via Vespa, with DSPy query rewriting and RRF ensemble fusion across profiles. |
+| `image_search_agent` | 8006 | enabled | ColPali multi-vector image similarity search (semantic or BM25+ColPali hybrid) plus image-to-image lookup. |
+| `document_agent` | 8008 | enabled | Dual-strategy document search: ColPali visual (page-as-image), ColBERT/BM25 text, or hybrid, with keyword-based auto strategy selection. |
+| `text_analysis_agent` | 8003 | enabled | Runtime-configurable DSPy text analysis (sentiment/summary/entities) with per-tenant persisted config and a `/analyze` endpoint. |
+| `audio_analysis_agent` | 8007 | enabled | Whisper transcription + Vespa audio search supporting transcript (BM25), acoustic (CLAP nearest-neighbor), and hybrid modes. |
+
+**Generation & Routing Agents**
+
+| Agent | Port | Status | What it does |
+|---|---|---|---|
+| `gateway_agent` | 8000 | enabled | LLM-free A2A entry point; classifies queries via GLiNER and routes simple ones directly, complex ones to the orchestrator. |
+| `orchestrator_agent` | 8013 | enabled | Plans a multi-agent workflow with DSPy, then executes it by calling sub-agents over A2A HTTP, with checkpoint/resume and cross-modal fusion. |
+| `summarizer_agent` | 8004 | enabled | Turns search results into structured summaries with a thinking phase and VLM visual analysis. |
+| `detailed_report_agent` | 8005 | enabled | Generates comprehensive reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis. |
+| `profile_selection_agent` | 8000\* | enabled | Uses DSPy reasoning to pick the optimal backend search profile for a query, with a heuristic fallback. |
+| `query_enhancement_agent` | 8000\* | enabled | Expands and rewrites queries with synonyms, context, and RRF variants using DSPy. |
+| `entity_extraction_agent` | 8000\* | enabled | Tiered NER: fast GLiNER + SpaCy path (no LLM) with a DSPy fallback. |
+
+\* `gateway_agent`, `profile_selection_agent`, `query_enhancement_agent`, and `entity_extraction_agent` share the config port `8000` — they run as in-process helpers invoked by the `AgentDispatcher` rather than standalone A2A servers.
+
+**Research & Coding Agents**
+
+| Agent | Port | Status | What it does |
+|---|---|---|---|
+| `deep_research_agent` | 8009 | enabled | Decomposes a query, iteratively gathers evidence via parallel searches, and synthesizes a cited report. |
+| `coding_agent` | 8010 | enabled | Iterative coding agent: searches code semantically, plans and generates code with DSPy, and runs it in an OpenShell sandbox, looping on failures. |
+
+**Knowledge-Graph & Reasoning Agents**
+
+| Agent | Port | Status | What it does |
+|---|---|---|---|
+| `audit_explanation_agent` | 8027 | enabled | Explains why an answer memory was produced — its derivation chain, per-source trust, and active contradictions. |
+| `citation_tracing_agent` | 8019 | disabled | Walks a memory's provenance chain back to its primary sources. |
+| `contradiction_reconciliation_agent` | 8020 | disabled | Resolves conflict sets by applying a knowledge schema's contradiction policy over member memories. |
+| `multi_document_synthesis_agent` | 8021 | disabled | Synthesizes a coherent answer across N source documents while preserving the citation graph. |
+| `kg_traversal_agent` | 8022 | disabled | Structurally walks `kg_node`/`entity_fact` and `kg_edge` memories from a seed entity into a node+edge graph view. |
+| `temporal_reasoning_agent` | 8025 | disabled | Compares a subject's knowledge across explicit time windows using provenance timestamps. |
+| `knowledge_summarization_agent` | 8026 | disabled | Distills a knowledge subgraph into a structured, citation-aware summary with optional admin-gated promotion to the org trunk. |
+
+**Multi-Tenant & Federation Agents**
+
+| Agent | Port | Status | What it does |
+|---|---|---|---|
+| `cross_tenant_comparison_agent` | 8023 | disabled | Compares per-tenant views of one subject across all tenants in an org via the federation read path. |
+| `federated_query_agent` | 8024 | disabled | Answers a free-text query by aggregating federated reads across multiple tenants in the same org, with an optional RLM summariser. |
 
 ### Embedding Models
 
