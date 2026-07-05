@@ -58,11 +58,22 @@ def _runtime_reachable() -> bool:
 
 
 def _redis_reachable_sync() -> bool:
-    """Sync wrapper for skipif evaluation (runs at collection time)."""
+    """Loop-free reachability probe.
+
+    Uses the sync redis client — running the async probe here explodes
+    under pytest-asyncio's already-running suite loop ("asyncio.run()
+    cannot be called from a running event loop").
+    """
+    import redis as sync_redis
+
     try:
-        return asyncio.get_event_loop().run_until_complete(_redis_reachable())
-    except RuntimeError:
-        return asyncio.run(_redis_reachable())
+        r = sync_redis.Redis.from_url(REDIS_URL, socket_connect_timeout=3)
+        try:
+            return bool(r.ping())
+        finally:
+            r.close()
+    except Exception:
+        return False
 
 
 pytestmark = [
