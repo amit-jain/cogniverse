@@ -3,20 +3,20 @@
 **Experience-Guided Multi-Agent System for Multi-Modal Understanding**
 
 
-Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 11-package UV workspace with multi-tenant isolation.
+Multi-agent AI platform for video, audio, image, and document understanding. Processes all content types using ColPali, VideoPrism, ColQwen, and LateOn embeddings with Vespa-backed retrieval. Agents coordinate via A2A protocol with DSPy-powered reasoning, streaming responses, and Phoenix observability. 13-package UV workspace with multi-tenant isolation.
 
 ## 🎯 What Makes Cogniverse Different
 
-- **🧠 Self-Optimizing**: Learns from every interaction using GEPA (Experience-Guided Policy Adaptation) - routing strategies improve continuously from real usage
+- **🧠 Self-Optimizing**: Learns from every interaction using GEPA (Genetic-Pareto reflective prompt evolution) - routing strategies improve continuously from real usage
 - **🎭 Multi-Modal Intelligence**: Process any content type (video, audio, images, documents, text, dataframes) with unified understanding
-- **🤖 Multi-Agent Orchestration**: DSPy 3.0 A2A protocol-based coordination of specialized agents working together
+- **🤖 Multi-Agent Orchestration**: DSPy 3.1 A2A protocol-based coordination of specialized agents working together
 - **🔀 Cross-Modal Fusion**: Intelligent combination of insights across different modalities for richer understanding
-- **⚡ Production Performance**: <500ms P95 latency at 500+ concurrent users with 9 Vespa ranking strategies
+- **⚡ Production Performance**: <500ms P95 latency at 500+ concurrent users with 7 Vespa ranking strategies
 - **🎯 Multiple SOTA Models**: ColPali (frame-level), VideoPrism (global+temporal), ColQwen (multi-modal fusion)
 - **🏢 Multi-Tenant Ready**: Complete schema-per-tenant isolation with independent Phoenix projects and memory
 - **📊 Full Observability**: Comprehensive Phoenix telemetry with traces, experiments, and real-time dashboards
 - **🧪 Evaluation Framework**: Provider-agnostic metrics with reference-free, visual LLM, and classical evaluators
-- **🏗️ Professional Architecture**: 10-package layered structure (Foundation → Core → Implementation → Application)
+- **🏗️ Professional Architecture**: 13-package layered structure (Foundation → Core → Implementation → Application)
 
 ## 🎬 Use Cases
 
@@ -62,7 +62,7 @@ cogniverse up  # Starts Vespa, Phoenix, Ollama via k3d
 
 # Verify services
 curl -s http://localhost:8080/ApplicationStatus  # Vespa
-curl -s http://localhost:6006/health            # Phoenix
+curl -s http://localhost:26006/health           # Phoenix
 ```
 
 ### Basic Operations
@@ -71,17 +71,17 @@ curl -s http://localhost:6006/health            # Phoenix
 ```bash
 # Ingest videos with ColPali embeddings
 uv run python scripts/run_ingestion.py \
-    --video_dir data/videos \
-    --profile video_colpali_smol500_mv_frame \
-    --tenant default
+    --tenant-id default \
+    --video_dir data/testset/evaluation/sample_videos \
+    --profile video_colpali_smol500_mv_frame
 
 # Multi-modal multi-profile ingestion (video, audio, images, documents)
 uv run python scripts/run_ingestion.py \
-    --content_dir data/content \
-    --profiles video_colpali_smol500_mv_frame \
+    --tenant-id default \
+    --content-dir data/testset/evaluation/sample_videos \
+    --profile video_colpali_smol500_mv_frame \
                video_videoprism_base_mv_chunk_30s \
-               video_colqwen_omni_mv_chunk_30s \
-    --tenant default
+               video_colqwen_omni_mv_chunk_30s
 ```
 
 #### 2. Multi-Modal Search
@@ -91,11 +91,10 @@ uv run python tests/comprehensive_video_query_test_v2.py \
     --profiles video_colpali_smol500_mv_frame \
     --test-multiple-strategies
 
-# Direct API query (text, image, or multi-modal)
-curl -X POST http://localhost:8000/api/v1/search \
+# Direct API query
+curl -X POST http://localhost:28000/search/ \
   -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: default" \
-  -d '{"query": "machine learning tutorial", "modalities": ["video", "document", "image"]}'
+  -d '{"query": "machine learning tutorial", "tenant_id": "default", "profile": "video_colpali_smol500_mv_frame", "top_k": 10}'
 ```
 
 #### 3. Evaluation & Optimization
@@ -116,7 +115,7 @@ uv run streamlit run libs/dashboard/cogniverse_dashboard/app.py
 
 ```
 cogniverse/
-├── libs/                         # SDK Packages (UV workspace - 10 packages)
+├── libs/                         # SDK Packages (UV workspace - 13 packages)
 │   ├── sdk/                      # cogniverse_sdk (Foundation Layer)
 │   │   └── cogniverse_sdk/
 │   │       ├── interfaces/       # Backend interfaces
@@ -132,9 +131,9 @@ cogniverse/
 │   │       └── common/           # Shared utilities
 │   ├── evaluation/               # cogniverse_evaluation (Core Layer)
 │   │   └── cogniverse_evaluation/
-│   │       ├── experiments/      # Experiment management
+│   │       ├── core/             # Experiment tracking
 │   │       ├── metrics/          # Provider-agnostic metrics
-│   │       └── datasets/         # Dataset handling
+│   │       └── data/             # Dataset & trace storage
 │   ├── telemetry-phoenix/        # cogniverse_telemetry_phoenix (Core Layer - Plugin)
 │   │   └── cogniverse_telemetry_phoenix/
 │   │       ├── provider.py       # Phoenix telemetry provider
@@ -143,23 +142,38 @@ cogniverse/
 │   │   └── cogniverse_agents/
 │   │       ├── routing/          # DSPy routing & optimization
 │   │       ├── search/           # Multi-modal search & reranking
-│   │       └── tools/            # A2A tools
+│   │       └── mixins/           # RLM/memory-aware mixins
 │   ├── vespa/                    # cogniverse_vespa (Implementation Layer)
 │   │   └── cogniverse_vespa/
-│   │       ├── backends/         # Vespa backend (tenant schemas)
-│   │       └── schema/           # Schema management
+│   │       ├── config/           # Backend config
+│   │       ├── registry/         # Schema/backend registry
+│   │       └── backend.py        # Vespa backend (flat module)
 │   ├── synthetic/                # cogniverse_synthetic (Implementation Layer)
 │   │   └── cogniverse_synthetic/
 │   │       ├── generators/       # Synthetic data generators
 │   │       └── service.py        # Synthetic data service
+│   ├── finetuning/               # cogniverse_finetuning (Implementation Layer)
+│   │   └── cogniverse_finetuning/
+│   │       ├── training/         # LoRA/PEFT and DPO training
+│   │       ├── dataset/          # Fine-tuning dataset prep
+│   │       └── evaluation/       # Fine-tuned model evaluation
 │   ├── runtime/                  # cogniverse_runtime (Application Layer)
 │   │   └── cogniverse_runtime/
-│   │       ├── server/           # FastAPI server
-│   │       └── ingestion/        # Video processing pipeline
-│   └── dashboard/                # cogniverse_dashboard (Application Layer)
-│       └── cogniverse_dashboard/
-│           ├── phoenix/          # Phoenix dashboards
-│           └── streamlit/        # Streamlit UI
+│   │       ├── main.py           # FastAPI app + entrypoint
+│   │       ├── routers/          # API route modules
+│   │       ├── ingestion/        # Video processing pipeline
+│   │       └── ingestion_worker/ # Async ingestion worker
+│   ├── dashboard/                # cogniverse_dashboard (Application Layer)
+│   │   └── cogniverse_dashboard/
+│   │       ├── tabs/             # Per-tab Streamlit views
+│   │       └── app.py            # Streamlit entrypoint
+│   ├── cli/                      # cogniverse_cli (Application Layer)
+│   │   └── cogniverse_cli/
+│   │       └── main.py           # `cogniverse` CLI entrypoint
+│   └── messaging/                # cogniverse_messaging (Application Layer)
+│       └── cogniverse_messaging/
+│           ├── telegram_handler.py  # Telegram bot integration
+│           └── gateway.py           # Messaging gateway
 ├── docs/                         # Comprehensive documentation
 │   ├── architecture/             # System architecture
 │   ├── modules/                  # Module documentation
@@ -187,105 +201,110 @@ Core Layer:
   cogniverse_telemetry_phoenix (plugin - depends on core, evaluation)
 
 Implementation Layer:
-  cogniverse_agents (depends on core)
-  cogniverse_vespa (depends on core)
-  cogniverse_synthetic (depends on core)
+  cogniverse_agents (depends on sdk, core, synthetic)
+  cogniverse_vespa (depends on sdk, core)
+  cogniverse_synthetic (depends on sdk, foundation)
+  cogniverse_finetuning (depends on sdk, core, agents, synthetic, foundation)
 
 Application Layer:
-  cogniverse_runtime (depends on core, agents, vespa, synthetic)
-  cogniverse_dashboard (depends on core, evaluation)
+  cogniverse_runtime (depends on sdk, core; agents and vespa are optional extras)
+  cogniverse_dashboard (depends on sdk, core, agents, evaluation, vespa, telemetry_phoenix)
+  cogniverse_cli (no internal package dependencies)
+  cogniverse_messaging (no internal package dependencies)
 ```
 
 ## 🏗️ Architecture
 
 ### Multi-Agent Orchestration
 ```
-┌──────────────────┐
-│  Composing Agent │ ← ADK-based orchestrator
-└────────┬─────────┘
-         │ A2A Protocol
-         ├──────────────┬─────────────┬──────────────┐
-         ▼              ▼             ▼              ▼
-┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-│Video Search │ │   Memory    │ │   Routing   │ │ Evaluation  │
-│   Agent     │ │   Agent     │ │  Optimizer  │ │   Agent     │
-└─────────────┘ └─────────────┘ └─────────────┘ └─────────────┘
+┌────────────────────────────────────────────┐
+│               Gateway Agent                 │
+│ (GLiNER classification — A2A entry point)   │
+└────────────────────────────────────────────┘
+                    │ complex query
+                    ▼
+              ┌────────────────────────┐
+              │   Orchestrator Agent   │
+              │  (DSPy-based router)   │
+              └────────────────────────┘
+                     │ A2A Protocol
+                     ├──────────────┬──────────────────┬──────────────────┐
+                     ▼              ▼                  ▼                  ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  Search Agent   │  │  Image Search   │  │   Summarizer    │  │ Detailed Report │
+│                 │  │      Agent      │  │      Agent      │  │      Agent      │
+└─────────────────┘  └─────────────────┘  └─────────────────┘  └─────────────────┘
+   ... plus 17 more specialized agents (document, entity_extraction,
+       query_enhancement, temporal_reasoning, kg_traversal, etc.)
 ```
+The Gateway Agent classifies each query with GLiNER zero-shot NER and either routes it directly to the appropriate specialized agent (fast path) or hands it to the Orchestrator Agent for complex, multi-step handling. Memory is provided via `MemoryAwareMixin` composed into individual agents, not a standalone memory agent.
 
 ### Embedding Models
 
 | Model | Type | Dimensions | Use Case |
 |-------|------|------------|----------|
-| **ColPali SmolVLM** | Frame-level | 768 | Visual document search |
+| **ColPali** | Frame-level | 320 (patch vector) | Visual document search |
 | **VideoPrism Base** | Global video | 768 | Semantic video understanding |
 | **VideoPrism LVT** | Temporal | 768/1024 | Action/motion search |
-| **ColQwen2 Omni** | Multi-modal | 768 | Text+visual fusion |
+| **ColQwen3 Omni** (TomoroAI/tomoro-colqwen3-embed-4b) | Multi-modal | 320 (patch vector) | Text+visual fusion |
 
 ### Vespa Ranking Strategies
 
 1. **bm25_only** - Text-only BM25
 2. **float_float** - Dense embeddings only
 3. **binary_binary** - Binary embeddings only
-4. **hybrid_float_bm25** - BM25 + dense (recommended)
-5. **phased** - Two-phase ranking
-6. **float_binary** - Dense with binary fallback
-7. **binary_bm25** - Binary + BM25
-8. **bm25_float_rerank** - BM25 then dense rerank
-9. **bm25_binary_rerank** - BM25 then binary rerank
+4. **float_binary** - Float query with binary document embeddings
+5. **phased** - Two-phase ranking: binary first, float reranking
+6. **hybrid_float_bm25** - BM25 + dense float embeddings (recommended)
+7. **hybrid_binary_bm25** - BM25 + binary embeddings
 
 ## 🔧 Configuration
 
 ### Multi-Tenant Setup
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
-from cogniverse_agents.video_agent_refactored import VideoSearchAgent
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
+from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps, SearchInput
 from pathlib import Path
 
-# Configure tenant with complete isolation
+# System-level infrastructure config — global, not per-tenant
 config = SystemConfig(
-    tenant_id="acme_corp",
-    llm_model="gpt-4",
     backend_url="http://localhost",
     backend_port=8080,
     telemetry_url="http://localhost:6006",
 )
 
-# Create agent — profile-agnostic, tenant-agnostic at construction
+# Create agent — tenant-agnostic at construction; tenant_id arrives per-request
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
-agent = VideoSearchAgent(
-    config_manager=config_manager,
-    schema_loader=schema_loader,
-)
+deps = SearchAgentDeps(backend_url=config.backend_url, backend_port=config.backend_port)
+agent = SearchAgent(deps=deps, schema_loader=schema_loader, config_manager=config_manager)
 
-# Search with per-request profile and tenant_id
+# Search with per-request tenant_id and profile
 # Agent automatically targets schema: video_colpali_smol500_mv_frame_acme_corp
-results = agent.search(
-    query="machine learning tutorial",
-    profile="video_colpali_smol500_mv_frame",
-    tenant_id="acme_corp",
-    top_k=10,
+result = await agent.process(
+    SearchInput(
+        query="machine learning tutorial",
+        tenant_id="acme_corp",
+        profiles=["video_colpali_smol500_mv_frame"],
+        top_k=10,
+    )
 )
 ```
 
 ### DSPy Optimization
 ```python
-from cogniverse_agents.routing.config import RoutingConfig
-from cogniverse_agents.routing.optimization_orchestrator import OptimizationOrchestrator
+from cogniverse_foundation.config.unified_config import RoutingConfigUnified
 
-# Configure GEPA optimizer for tenant
-routing_config = RoutingConfig(
+# Configure per-tenant routing and DSPy auto-optimization behavior
+routing_config = RoutingConfigUnified(
     tenant_id="acme_corp",
-    optimizer_type="GEPA",
-    experience_buffer_size=10000,
-    learning_rate=0.001,
-    update_interval=300  # 5 minutes
+    dspy_enabled=True,
+    enable_auto_optimization=True,
+    optimization_interval_seconds=3600,
+    min_samples_for_optimization=100,
 )
-
-orchestrator = OptimizationOrchestrator(config=routing_config)
-results = orchestrator.run_optimization()
 ```
 
 ## 📊 Monitoring & Evaluation
@@ -300,7 +319,7 @@ Access comprehensive telemetry at http://localhost:8501:
 
 ### Evaluation Metrics
 - **Reference-Free**: Quality, Diversity, Distribution scores
-- **Visual LLM**: LLaVA/GPT-4V visual relevance
+- **Visual LLM**: Pluggable OpenAI-compatible vision judge (ConfigurableVisualJudge)
 - **Classical**: MRR, NDCG, Precision@k, Recall@k
 - **Phoenix Experiments**: Automatic tracking and comparison
 
@@ -310,11 +329,11 @@ Access comprehensive telemetry at http://localhost:8501:
 # Run full test suite (30 min timeout for integration tests)
 JAX_PLATFORM_NAME=cpu uv run pytest --timeout=1800
 
-# Unit tests only
-JAX_PLATFORM_NAME=cpu uv run pytest tests/unit/
+# Unit tests only (per package: tests/<package>/unit/)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/unit/
 
-# Integration tests
-JAX_PLATFORM_NAME=cpu uv run pytest tests/integration/
+# Integration tests (per package: tests/<package>/integration/)
+JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/integration/
 
 # Specific component
 JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
@@ -324,7 +343,7 @@ JAX_PLATFORM_NAME=cpu uv run pytest tests/agents/ -v
 
 ### Architecture
 - [Architecture Overview](docs/architecture/overview.md) - System design and multi-tenant architecture
-- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 10-package layered architecture
+- [SDK Architecture](docs/architecture/sdk-architecture.md) - UV workspace and 13-package layered architecture
 - [Multi-Tenant Architecture](docs/architecture/multi-tenant.md) - Complete tenant isolation patterns
 - [System Flows](docs/architecture/system-flows.md) - 20+ architectural diagrams
 
@@ -364,23 +383,18 @@ cogniverse up
 cogniverse status
 ```
 
-### Modal (Serverless)
+### Modal (VLM Sidecar)
 ```bash
-# Deploy to Modal
-modal deploy src/modal/app.py
-
-# Test endpoint
-curl https://your-app.modal.run/search \
-  -H "X-Tenant-ID: default" \
-  -d '{"query": "tutorial"}'
+# Deploy the serverless VLM sidecar used by the video processing pipeline
+modal deploy scripts/modal_vlm_service.py
 ```
+See [docs/modal/deploy_modal_vlm.md](docs/modal/deploy_modal_vlm.md) for the full setup — Modal serves an image-description VLM sidecar for ingestion, not the whole application.
 
 ## 🔐 Security
 
-- **Multi-tenant isolation**: Schema-per-tenant with JWT validation
-- **Rate limiting**: Per-tenant QPS limits
-- **Authentication**: JWT/API key support
-- **Audit logging**: All operations tracked in Phoenix
+- **Multi-tenant isolation**: Schema-per-tenant data separation
+- **Rate limiting**: Per-workflow limits (e.g., deep-research synthesis)
+- **Observability**: Operations traced via Phoenix telemetry
 
 ## 🎯 Performance Targets
 

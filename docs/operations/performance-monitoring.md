@@ -99,12 +99,12 @@ flowchart TB
 
 | Model | Dimensions | Inference Time | Memory |
 |-------|------------|----------------|--------|
-| **ColPali SmolVLM 500M** | 128×1024 (patch-based) | Variable | 2GB |
-| **ColQwen2 Omni** | 128×1024 (patch-based) | Variable | 4GB |
+| **ColPali SmolVLM 500M** | 1024×320 (patch-based) | Variable | 2GB |
+| **ColQwen3 Omni** | 1024×320 (patch-based) | Variable | 4GB |
 | **VideoPrism Base** | 768 or 1024 | Variable | 3GB |
 | **VideoPrism LVT** | 768 or 1024 | Variable | 4GB |
 
-> **Note**: Inference times are hardware-dependent and vary based on input size. ColPali and ColQwen use patch-based embeddings (1024 patches of 128 dimensions each). VideoPrism supports both 768 and 1024-dimensional outputs depending on configuration.
+> **Note**: Inference times are hardware-dependent and vary based on input size. ColPali and ColQwen use patch-based embeddings (1024 patches of 320 dimensions each). VideoPrism supports both 768 and 1024-dimensional outputs depending on configuration.
 
 ---
 
@@ -203,7 +203,7 @@ flowchart LR
 
 ### Mem0 Operations
 
-> **Note**: Mem0 memory system is implemented and uses Vespa backend. Performance depends on Vespa cluster configuration and embedding model (nomic-embed-text, 768 dimensions).
+> **Note**: Mem0 memory system is implemented and uses Vespa backend. Performance depends on Vespa cluster configuration and embedding model (DenseOn, `lightonai/DenseOn`, 768 dimensions).
 
 | Operation | Target | Description |
 |-----------|--------|-------------|
@@ -217,7 +217,7 @@ flowchart LR
 | Metric | Configuration | Description |
 |--------|--------------|-------------|
 | **Schema per Tenant** | Yes | Each tenant gets dedicated `agent_memories_{tenant_id}` schema |
-| **Embedding Model** | nomic-embed-text | 768-dimensional embeddings |
+| **Embedding Model** | DenseOn (`lightonai/DenseOn`) | 768-dimensional embeddings |
 | **Backend** | Vespa | Persistent storage with vector search |
 | **Isolation** | Per-tenant | Complete memory isolation between tenants |
 
@@ -410,7 +410,11 @@ flowchart LR
 
 ### Load Testing
 
-Load testing suite: `tests/routing/integration/test_production_load.py` — covers 100 QPS throughput, concurrent request handling, sustained load, and latency percentile validation.
+There is no dedicated load-testing suite in the repository today. Use
+the integration tests under `tests/agents/integration/` and
+`tests/ingestion/integration/` with `--durations=0` (below) to measure
+per-request latency, or drive concurrent load externally (e.g. `hey`,
+`k6`) against the runtime's `/search` and `/ingestion` endpoints.
 
 ### Performance Benchmarks
 
@@ -439,13 +443,14 @@ Access the Phoenix dashboard for telemetry and experiment tracking:
 
 ```bash
 # Port-forward if running in Kubernetes
-kubectl port-forward -n cogniverse svc/phoenix 6006:6006
+kubectl port-forward -n cogniverse svc/cogniverse-phoenix 6006:6006
 
 # Open dashboard
 open http://localhost:6006
 
 # View tenant-specific traces
-# Navigate to: cogniverse-{tenant_id}-video-search
+# Project naming: cogniverse-{tenant_id} (default), or
+# cogniverse-{tenant_id}-{service} for a specific service/component
 ```
 
 **Available Views:**

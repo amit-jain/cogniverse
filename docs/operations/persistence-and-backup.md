@@ -63,7 +63,7 @@ Each stateful component has its own `<name>.persistence` block in
 | MinIO | `minio.persistence` | 100 Gi | Default backup destination on dev. See [MinIO durability](#minio-durability) below. |
 | HF model cache (per pod) | `hfCache.persistence` | 50 Gi each | One PVC per inference svc + runtime + ingestor. Pre-warmed via init container. |
 | Redis | `redis.persistence` | 10 Gi | Job queue state. Lose it = re-ingest in-flight jobs. |
-| LLM (builtin) | `llm.builtin.persistence` | 100 Gi | Model files for the in-cluster LLM. |
+| LLM (builtin) | `llm.ollama.persistence` | 100 Gi | Model files for the in-cluster LLM. |
 
 ## MinIO durability (load-bearing for dev)
 
@@ -104,7 +104,9 @@ The vespa backup CronWorkflow (and any other backup CronWorkflow added
 later) uploads to an S3-compatible endpoint. **One config block switches
 between dev and cloud — same template, same code path, same workflow.**
 
-### Local dev (default)
+### Enabling backup for local dev
+
+`hostStorage.backup.enabled` defaults to `false` — opt in explicitly:
 
 ```yaml
 hostStorage:
@@ -122,6 +124,11 @@ hostStorage:
 No `s3` block needed. Backup goes to in-cluster `cogniverse-minio`. Pair
 this with `minio.persistence.hostPath` (above) so the bucket data
 actually survives cluster destruction.
+
+If `services` is omitted, the chart's built-in default already backs up
+both `vespa` (via `kubectl exec` + tar) and `phoenix` (via a volume
+mount, since the distroless Phoenix image has no `tar`/shell) nightly —
+only override `services` to change which pods are covered or add more.
 
 ### Cloud — Cloudflare R2
 
@@ -269,14 +276,11 @@ volumes, not the K8s metadata.
 The dance to recover a stateful component from a MinIO/S3 backup:
 
 1. **Take a final pre-restore backup** (in case the restore overwrites
-   live state you didn't intend):
+   live state you didn't intend). The backup schedule is a `CronWorkflow`
+   (`cogniverse-backup-vespa`) with an inline `workflowSpec`, not a
+   standalone `WorkflowTemplate`, so trigger an ad hoc run of it with:
    ```bash
-   kubectl -n cogniverse create -f - <<'EOF'
-   apiVersion: argoproj.io/v1alpha1
-   kind: Workflow
-   metadata: {generateName: pre-restore-vespa-, namespace: cogniverse}
-   spec: {workflowTemplateRef: {name: cogniverse-backup-vespa}}
-   EOF
+   argo submit --from cronworkflow/cogniverse-backup-vespa -n cogniverse
    ```
 
 2. **Stop the StatefulSet:**

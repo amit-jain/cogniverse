@@ -87,9 +87,9 @@ libs/vespa/cogniverse_vespa/
 
 - `vespa_schema_manager.py`: 1093 lines - Core tenant management
 - `json_schema_parser.py`: 189 lines - Schema parsing
-- `ingestion_client.py`: 595 lines - PyVespa wrapper for ingestion
-- `search_backend.py`: 1511 lines - Search backend with connection pooling
-- `backend.py`: 1577 lines - Unified backend abstraction
+- `ingestion_client.py`: 597 lines - PyVespa wrapper for ingestion
+- `search_backend.py`: 1550 lines - Search backend with connection pooling
+- `backend.py`: 1589 lines - Unified backend abstraction
 
 **Note**: Schema templates are JSON files located in `configs/schemas/` at project root
 
@@ -1220,8 +1220,8 @@ See [Multi-Tenant Architecture](../architecture/multi-tenant.md) for comprehensi
 
 ```mermaid
 flowchart TB
-    API["<span style='color:#000'>API Request<br/>tenant_id: acme</span>"] --> Middleware["<span style='color:#000'>Tenant Middleware</span>"]
-    Middleware --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
+    API["<span style='color:#000'>API Request<br/>body.tenant_id: acme</span>"] --> Router["<span style='color:#000'>FastAPI Router<br/>require_tenant_id()</span>"]
+    Router --> SchemaManager["<span style='color:#000'>VespaSchemaManager</span>"]
 
     SchemaManager --> CheckCache{"<span style='color:#000'>Schema in cache?</span>"}
     CheckCache -->|Yes| UseSchema["<span style='color:#000'>Use schema: video_frames_acme</span>"]
@@ -1236,7 +1236,7 @@ flowchart TB
     VespaClient --> Search["<span style='color:#000'>Search tenant data</span>"]
 
     style API fill:#90caf9,stroke:#1565c0,color:#000
-    style Middleware fill:#90caf9,stroke:#1565c0,color:#000
+    style Router fill:#90caf9,stroke:#1565c0,color:#000
     style SchemaManager fill:#ffcc80,stroke:#ef6c00,color:#000
     style CheckCache fill:#ffcc80,stroke:#ef6c00,color:#000
     style UseSchema fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -1291,12 +1291,14 @@ schema_manager.upload_content_type_schemas(
 )
 # Schema definitions live in configs/schemas/ as JSON (single source of truth).
 
-# Get tenant-specific schema name (colon in tenant_id converted to underscore)
+# Get tenant-specific schema name. tenant_id is canonicalized to "org:tenant"
+# first (a bare "acme" becomes "acme:acme"), then the colon is converted to
+# an underscore, so deploy and search paths always agree on the schema name.
 schema_name = schema_manager.get_tenant_schema_name(
     tenant_id="acme",
     base_schema_name="video_colpali_smol500_mv_frame"
 )
-# Returns: "video_colpali_smol500_mv_frame_acme"
+# Returns: "video_colpali_smol500_mv_frame_acme_acme"
 # Example: "acme:production" -> "video_colpali_smol500_mv_frame_acme_production"
 
 # Check if tenant schema exists
@@ -1317,14 +1319,14 @@ deleted = schema_manager.delete_tenant_schemas(tenant_id="old_tenant")
 
 #### Schema Naming Convention
 
-**Pattern**: `{base_schema}_{tenant_id}`
+**Pattern**: `{base_schema}_{canonical_tenant_id with ":" replaced by "_"}` — a bare tenant id (no org prefix) is canonicalized to `{tenant_id}:{tenant_id}` before the suffix is built.
 
 **Examples**:
 
 | Base Schema | Tenant ID | Tenant Schema |
 |------------|-----------|---------------|
-| video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme |
-| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup |
+| video_colpali_smol500_mv_frame | acme | video_colpali_smol500_mv_frame_acme_acme |
+| video_videoprism_base_mv_chunk_30s | startup | video_videoprism_base_mv_chunk_30s_startup_startup |
 | agent_memories | acme:production | agent_memories_acme_production |
 
 #### Schema Lifecycle
@@ -1532,7 +1534,7 @@ documents = [
         id="video123_segment_0",
         content="Cooking demonstration",
         metadata={"start_time": 0.0, "end_time": 1.0},
-        embeddings={"embedding": np.random.randn(1024, 128)}
+        embeddings={"embedding": np.random.randn(1024, 320)}
     )
 ]
 
@@ -1578,7 +1580,7 @@ doc = Document(
         "description": "Cooking tutorial scene"
     },
     embeddings={
-        "embedding": np.random.randn(1024, 128)  # ColPali embeddings
+        "embedding": np.random.randn(1024, 320)  # ColPali embeddings
     }
 )
 
@@ -2002,7 +2004,7 @@ frames_acme = [
         "fields": {
             "video_id": "video1",
             "frame_id": i,
-            "embedding": np.random.randn(1024, 128),
+            "embedding": np.random.randn(1024, 320),
             "video_title": "Cooking Tutorial"
         }
     }
