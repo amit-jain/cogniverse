@@ -108,14 +108,25 @@ def _query_pipeline_spans(ingest_id: str, timeout_s: float = 60.0) -> list[dict]
     ``pipeline.kg.extract_per_segment`` span whose
     ``kg.source_doc_id`` matches the trace's video_id.
     """
+    from datetime import datetime, timedelta, timezone
+
     from phoenix.client import Client
 
     project = f"cogniverse-{_TENANT}"
     px = Client(base_url=PHOENIX_BASE)
+    # Window + explicit timeout: the unscoped scan with the client's 5s
+    # method default times out on a loaded span store, and the swallowed
+    # exception reads as "no spans yet" until the poll budget dies.
+    window_start = datetime.now(timezone.utc) - timedelta(hours=1)
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
-            spans = px.spans.get_spans_dataframe(project_identifier=project, limit=2000)
+            spans = px.spans.get_spans_dataframe(
+                project_identifier=project,
+                start_time=window_start,
+                limit=2000,
+                timeout=90,
+            )
         except Exception:
             time.sleep(1.0)
             continue
