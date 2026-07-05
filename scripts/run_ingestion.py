@@ -156,6 +156,7 @@ async def main_async():
             pipeline = (
                 create_pipeline()
                 .with_tenant_id(args.tenant_id)
+                .with_config_manager(config_manager)
                 .with_config(config)
                 .with_schema(profile)
                 .with_debug(args.debug)
@@ -188,6 +189,7 @@ async def main_async():
             pipeline = (
                 create_pipeline()
                 .with_tenant_id(args.tenant_id)
+                .with_config_manager(config_manager)
                 .with_config(config)
                 .with_schema(profile)
                 .with_debug(args.debug)

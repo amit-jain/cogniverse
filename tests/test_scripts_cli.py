@@ -85,6 +85,7 @@ def test_cli_help_loads(script):
 _ARGPARSE_CLIS = {
     "generate_tabbed_html_report": ["[file]"],
     "run_experiments_with_visualization": [
+        "--tenant-id",
         "--dataset-name",
         "--dataset-path",
         "--force-new",
@@ -345,13 +346,29 @@ class TestRunExperimentsWithVisualization:
     """main()-level test with the ExperimentTracker boundary stubbed."""
 
     def test_main_wires_tracker(self, monkeypatch, capsys):
+        import inspect
+
+        from cogniverse_evaluation.core.experiment_tracker import (
+            ExperimentTracker as RealExperimentTracker,
+        )
+
+        real_signature = inspect.signature(RealExperimentTracker)
+
         mod = _load("run_experiments_with_visualization")
 
-        tracker_cls = MagicMock(name="ExperimentTracker")
-        tracker = tracker_cls.return_value
+        tracker = MagicMock(name="tracker_instance")
         tracker.create_or_get_dataset.return_value = "golden_eval_v1"
         tracker.run_all_experiments.return_value = [{"experiment": "e1"}]
         tracker.create_visualization_tables.return_value = {"summary": "table"}
+
+        # Validate every construction against the REAL __init__ signature so an
+        # omitted required arg (tenant_id) raises here instead of silently
+        # passing — the mock must not hide the constructor's contract.
+        def _construct(*args, **kwargs):
+            real_signature.bind(*args, **kwargs)
+            return tracker
+
+        tracker_cls = MagicMock(name="ExperimentTracker", side_effect=_construct)
 
         pkg = types.ModuleType("cogniverse_evaluation")
         core = types.ModuleType("cogniverse_evaluation.core")
@@ -367,6 +384,8 @@ class TestRunExperimentsWithVisualization:
             "argv",
             [
                 "run_experiments_with_visualization.py",
+                "--tenant-id",
+                "test:unit",
                 "--dataset-name",
                 "golden_eval_v1",
                 "--profiles",
@@ -378,6 +397,7 @@ class TestRunExperimentsWithVisualization:
         mod.main()
 
         tracker_cls.assert_called_once_with(
+            tenant_id="test:unit",
             experiment_project_name="experiments",
             enable_quality_evaluators=True,
             enable_llm_evaluators=False,
@@ -400,6 +420,81 @@ class TestRunExperimentsWithVisualization:
         )
         tracker.generate_html_report.assert_called_once_with()
         assert "All experiments completed!" in capsys.readouterr().out
+
+
+class TestRunIngestion:
+    """The inline pipeline-builder branches must wire config_manager, or
+    VideoIngestionPipelineBuilder.build() raises ValueError at runtime (the
+    helper-built test/simple paths already wire it; the media-root and advanced
+    branches did not)."""
+
+    def _self_returning(self, name, methods):
+        builder = MagicMock(name=name)
+        for m in methods:
+            getattr(builder, m).return_value = builder
+        return builder
+
+    def test_media_root_branch_wires_config_manager(self, monkeypatch):
+        import asyncio
+
+        from cogniverse_foundation.config import utils as config_utils
+
+        mod = _load("run_ingestion")
+
+        config_manager = object()
+        monkeypatch.setattr(
+            config_utils, "create_default_config_manager", lambda: config_manager
+        )
+        monkeypatch.setattr(config_utils, "get_config", lambda **kwargs: MagicMock())
+
+        config_builder = self._self_returning(
+            "config_builder",
+            (
+                "backend",
+                "media_root_uri",
+                "video_dir",
+                "output_dir",
+                "max_frames_per_video",
+            ),
+        )
+        config_builder.build.return_value = MagicMock(name="config")
+        monkeypatch.setattr(mod, "create_config", lambda: config_builder)
+
+        builder = self._self_returning(
+            "pipeline_builder",
+            (
+                "with_tenant_id",
+                "with_config_manager",
+                "with_config",
+                "with_schema",
+                "with_debug",
+                "with_concurrency",
+            ),
+        )
+        pipeline = MagicMock(name="pipeline")
+        pipeline.get_video_files.return_value = []
+        builder.build.return_value = pipeline
+        monkeypatch.setattr(mod, "create_pipeline", lambda: builder)
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "run_ingestion.py",
+                "--tenant-id",
+                "acme:acme",
+                "--media-root-uri",
+                "s3://corpus/",
+                "--profile",
+                "p1",
+                "--backend",
+                "vespa",
+            ],
+        )
+
+        asyncio.run(mod.main_async())
+
+        builder.with_config_manager.assert_called_once_with(config_manager)
 
 
 class TestViewIntegratedResults:
