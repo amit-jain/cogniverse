@@ -20,6 +20,12 @@ def main():
         description="Run Phoenix experiments with visualization"
     )
     parser.add_argument(
+        "--tenant-id",
+        dest="tenant_id",
+        required=True,
+        help="Tenant identifier the experiments run under (e.g. acme:acme)",
+    )
+    parser.add_argument(
         "--dataset-name",
         dest="dataset_name",
         help="Name of dataset to use (if exists) or create (if new)",
@@ -106,6 +112,7 @@ def main():
     from cogniverse_evaluation.core.experiment_tracker import ExperimentTracker
 
     tracker = ExperimentTracker(
+        tenant_id=args.tenant_id,
         experiment_project_name="experiments",
         enable_quality_evaluators=args.quality_evaluators,
         enable_llm_evaluators=args.llm_evaluators,
