@@ -1,7 +1,13 @@
 # Human-in-the-Loop Approval Workflow
 
-**Package**: `cogniverse_agents` (Implementation Layer)
-**Location**: `libs/agents/cogniverse_agents/approval/`
+**Interfaces**: `cogniverse_core.approval` (`libs/core/cogniverse_core/approval/`) — the
+abstract interfaces and data models (`ApprovalStatus`, `ReviewItem`, `ReviewDecision`,
+`ApprovalBatch`, `ConfidenceExtractor`, `FeedbackHandler`, `ApprovalStorage`) live in the
+core layer so both `cogniverse_agents` and `cogniverse_synthetic` can implement them
+without depending on each other.
+**Implementations**: `cogniverse_agents.approval` (`libs/agents/cogniverse_agents/approval/`) —
+`HumanApprovalAgent`, `ApprovalStorageImpl`, `DecisionOrchestrator`. This package re-exports
+the core interfaces, so `from cogniverse_agents.approval import ApprovalStatus` still resolves.
 **Related Package**: `cogniverse_synthetic` (Application Layer)
 
 The human-in-the-loop approval workflow enables quality control for synthetically generated training data by allowing humans to review and approve/reject examples before they're used for model optimization.

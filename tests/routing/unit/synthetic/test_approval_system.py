@@ -407,7 +407,7 @@ class TestApprovalStorageContract:
         import inspect
 
         from cogniverse_agents.approval.approval_storage import ApprovalStorageImpl
-        from cogniverse_agents.approval.interfaces import ApprovalStorage
+        from cogniverse_core.approval.interfaces import ApprovalStorage
 
         abc_params = inspect.signature(ApprovalStorage.update_item).parameters
         impl_params = inspect.signature(ApprovalStorageImpl.update_item).parameters

@@ -8,7 +8,7 @@ Uses retry count and entity validation as confidence signals.
 import logging
 from typing import Any, Dict
 
-from cogniverse_agents.approval.interfaces import ConfidenceExtractor
+from cogniverse_core.approval.interfaces import ConfidenceExtractor
 
 logger = logging.getLogger(__name__)
 
