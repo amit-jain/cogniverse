@@ -23,6 +23,9 @@
    - [AudioAnalysisAgent](#11-audioanalysisagent)
    - [TextAnalysisAgent](#12-textanalysisagent)
    - [SearchAgent (Refactored)](#13-videosearchagent-refactored)
+   - [QueryEnhancementAgent](#14-queryenhancementagent)
+   - [CodingAgent](#15-codingagent)
+   - [DeepResearchAgent](#16-deepresearchagent)
 4. [Knowledge Agents](#knowledge-agents)
    - [AuditExplanationAgent](#auditexplanationagent)
    - [KnowledgeSummarizationAgent](#knowledgesummarizationagent)
@@ -71,18 +74,21 @@ The Agents package (`cogniverse-agents`) provides concrete agent implementations
 11. **AudioAnalysisAgent** - Audio search with Whisper transcription
 12. **TextAnalysisAgent** - Runtime-configurable text analysis with DSPy
 13. **SearchAgent (Refactored)** - Simplified video search with unified service
+14. **QueryEnhancementAgent** - Enhances queries with synonyms, context, and related terms to improve search recall
+15. **CodingAgent** - Iterative code generation with semantic code search (LateOn-Code-edge) and sandboxed execution
+16. **DeepResearchAgent** - Multi-step research: decomposes queries, dispatches parallel searches, synthesizes a cited report
 
 **Knowledge Management Agents:**
 
-14. **MultiDocumentSynthesisAgent** - Synthesize and reconcile claims across multiple source documents with citations
-15. **KnowledgeGraphTraversalAgent** - Walk the knowledge graph to find entity chains and relationship sub-graphs
-16. **CrossTenantComparisonAgent** - Compare knowledge views across multiple tenants (org-admin scoped)
-17. **ContradictionReconciliationAgent** - Surface and resolve `ConflictSet` entries in the contradiction store
-18. **CitationTracingAgent** - Walk provenance chains back to primary sources for a given answer
-19. **TemporalReasoningAgent** - Answer questions about how knowledge changed over time
-20. **FederatedQueryAgent** - Retrieve knowledge from both tenant overlay and org trunk in one call
-21. **KnowledgeSummarizationAgent** - Summarize a knowledge slice (by subject / kind / time window) with citations
-22. **AuditExplanationAgent** - Explain why an answer was produced by tracing provenance, trust, and contradictions
+17. **MultiDocumentSynthesisAgent** - Synthesize and reconcile claims across multiple source documents with citations
+18. **KnowledgeGraphTraversalAgent** - Walk the knowledge graph to find entity chains and relationship sub-graphs
+19. **CrossTenantComparisonAgent** - Compare knowledge views across multiple tenants (org-admin scoped)
+20. **ContradictionReconciliationAgent** - Surface and resolve `ConflictSet` entries in the contradiction store
+21. **CitationTracingAgent** - Walk provenance chains back to primary sources for a given answer
+22. **TemporalReasoningAgent** - Answer questions about how knowledge changed over time
+23. **FederatedQueryAgent** - Retrieve knowledge from both tenant overlay and org trunk in one call
+24. **KnowledgeSummarizationAgent** - Summarize a knowledge slice (by subject / kind / time window) with citations
+25. **AuditExplanationAgent** - Explain why an answer was produced by tracing provenance, trust, and contradictions
 
 ### Design Principles
 
@@ -142,7 +148,7 @@ graph TD
     RoutingDir --> DspySigs["<span style='color:#000'>dspy_routing_signatures.py</span>"]
     RoutingDir --> MoreRouting["<span style='color:#000'>... (utility files)</span>"]
 
-    Root --> SearchDir["<span style='color:#000'><b>search/</b><br/>7 files</span>"]
+    Root --> SearchDir["<span style='color:#000'><b>search/</b><br/>9 files</span>"]
     SearchDir --> SearchInit["<span style='color:#000'>__init__.py</span>"]
     SearchDir --> MMRerank["<span style='color:#000'>multi_modal_reranker.py</span>"]
     SearchDir --> HybridRerank["<span style='color:#000'>hybrid_reranker.py</span>"]
@@ -160,26 +166,44 @@ graph TD
     OptDir --> SigVariants["<span style='color:#000'>signature_variants.py</span>"]
     OptDir --> StrategyLearner["<span style='color:#000'>strategy_learner.py</span>"]
 
-    Root --> QueryDir["<span style='color:#000'><b>query/</b></span>"]
-    Root --> ResultsDir["<span style='color:#000'><b>results/</b></span>"]
+    Root --> InferenceDir["<span style='color:#000'><b>inference/</b><br/>6 files</span>"]
+    InferenceDir --> RlmInf["<span style='color:#000'>rlm_inference.py</span>"]
+    InferenceDir --> InstrumentedRlm["<span style='color:#000'>instrumented_rlm.py</span>"]
+
+    Root --> ApprovalDir["<span style='color:#000'><b>approval/</b><br/>5 files</span>"]
+    ApprovalDir --> ApprovalStorage["<span style='color:#000'>approval_storage.py</span>"]
+    ApprovalDir --> HumanApproval["<span style='color:#000'>human_approval_agent.py</span>"]
+
+    Root --> GraphDir["<span style='color:#000'><b>graph/</b><br/>12 files</span>"]
+    GraphDir --> GraphMgr["<span style='color:#000'>graph_manager.py</span>"]
+    GraphDir --> ClaimExtract["<span style='color:#000'>claim_extractor.py</span>"]
+
+    Root --> WikiDir["<span style='color:#000'><b>wiki/</b><br/>3 files</span>"]
+    WikiDir --> WikiMgr["<span style='color:#000'>wiki_manager.py</span>"]
+
+    Root --> MixinsDir["<span style='color:#000'><b>mixins/</b><br/>2 files</span>"]
+    MixinsDir --> RlmMixin["<span style='color:#000'>rlm_aware_mixin.py</span>"]
+
     Root --> ToolsDir["<span style='color:#000'><b>tools/</b></span>"]
     Root --> WorkflowDir["<span style='color:#000'><b>workflow/</b></span>"]
 
     style Root fill:#ce93d8,stroke:#7b1fa2,color:#000
     style GatewayAgent fill:#ffcc80,stroke:#ef6c00,color:#000
-    style VideoAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style OrchestratorAgent fill:#ffcc80,stroke:#ef6c00,color:#000
     style RoutingDir fill:#81d4fa,stroke:#0288d1,color:#000
     style SearchDir fill:#81d4fa,stroke:#0288d1,color:#000
     style OrchDir fill:#81d4fa,stroke:#0288d1,color:#000
     style OptDir fill:#81d4fa,stroke:#0288d1,color:#000
-    style QueryDir fill:#81d4fa,stroke:#0288d1,color:#000
-    style ResultsDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style InferenceDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style ApprovalDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style GraphDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style WikiDir fill:#81d4fa,stroke:#0288d1,color:#000
+    style MixinsDir fill:#81d4fa,stroke:#0288d1,color:#000
     style ToolsDir fill:#81d4fa,stroke:#0288d1,color:#000
     style WorkflowDir fill:#81d4fa,stroke:#0288d1,color:#000
 ```
 
-**Total Files**: 118 Python files (32 at top level + 86 utilities in subdirectories)
+**Total Files**: 96 Python files (33 at top level + 63 in subdirectories)
 
 **Key Agent Files** (all at top level):
 
@@ -388,7 +412,7 @@ results_startup = agent.search_by_text("cooking videos", tenant_id="startup")
 **Location**: `libs/agents/cogniverse_agents/gateway_agent.py`
 **Purpose**: Query entry point — classifies queries as simple or complex using GLiNER entity detection, then routes without an LLM call
 **Base**: `A2AAgent[GatewayInput, GatewayOutput, GatewayDeps]`
-**Port**: 8014
+**Port**: 8014 (standalone A2A server default; `cogniverse_runtime` runs GatewayAgent in-process on the runtime's own port, 8000, rather than as a separate service)
 **Target latency**: <100ms (no LLM, model inference only)
 
 #### What It Does
@@ -573,7 +597,7 @@ result = await orchestrator._process_impl(
 **Location**: `libs/agents/cogniverse_agents/profile_selection_agent.py`
 **Purpose**: LLM-based intelligent backend profile selection and ensemble composition
 **Base Classes**: `A2AAgent[ProfileSelectionInput, ProfileSelectionOutput, ProfileSelectionDeps]`
-**Port**: 8011
+**Port**: 8011 (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
 #### Overview
 
@@ -908,7 +932,7 @@ deps = ProfileSelectionDeps(
 **Location**: `libs/agents/cogniverse_agents/entity_extraction_agent.py`
 **Purpose**: Fast entity and relationship extraction for query enhancement
 **Base Classes**: `A2AAgent[EntityExtractionInput, EntityExtractionOutput, EntityExtractionDeps]`
-**Port**: 8010
+**Port**: 8010 (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
 
 #### Overview
 
@@ -2362,6 +2386,92 @@ for result in results:
 
 ---
 
+### 14. QueryEnhancementAgent
+
+**Location:** `libs/agents/cogniverse_agents/query_enhancement_agent.py`
+
+Enhances user queries by adding synonyms, context, and related terms to improve search recall. Runs a DSPy `QueryEnhancementModule` and returns the enhanced query alongside the expansion terms it generated.
+
+**Constructor:** `QueryEnhancementAgent(deps: QueryEnhancementDeps, port: int = 8012)` (standalone A2A server default; runs in-process on port 8000 in `cogniverse_runtime`)
+
+**Usage:**
+```python
+from cogniverse_agents.query_enhancement_agent import (
+    QueryEnhancementAgent,
+    QueryEnhancementDeps,
+    QueryEnhancementInput,
+)
+
+agent = QueryEnhancementAgent(deps=QueryEnhancementDeps())
+output = await agent.process(QueryEnhancementInput(query="find cooking videos", tenant_id="acme"))
+print(output.enhanced_query, output.expansion_terms)
+```
+
+---
+
+### 15. CodingAgent
+
+**Location:** `libs/agents/cogniverse_agents/coding_agent.py`
+
+Iterative code generation agent: searches code semantically via the `code_lateon_mv` Vespa profile (LateOn-Code-edge multi-vector embeddings with tree-sitter AST chunking), plans an implementation with DSPy, generates code, executes it in a sandbox, evaluates the result, and iterates up to `max_iterations` times.
+
+**Constructor:**
+```python
+CodingAgent(
+    deps: CodingDeps,
+    config: A2AAgentConfig | None = None,
+    search_fn: Any = None,
+    sandbox_manager: Any = None,
+    config_manager=None,
+)
+```
+
+**Usage:**
+```python
+from cogniverse_agents.coding_agent import CodingAgent, CodingDeps, CodingInput
+
+agent = CodingAgent(deps=CodingDeps(tenant_id="acme"))
+output = await agent.process(
+    CodingInput(task="add input validation to the login form", tenant_id="acme")
+)
+print(output.plan, output.summary)
+```
+
+---
+
+### 16. DeepResearchAgent
+
+**Location:** `libs/agents/cogniverse_agents/deep_research_agent.py`
+
+Multi-step research agent: decomposes a complex query into sub-questions, dispatches parallel searches for each, evaluates evidence sufficiency, refines and re-searches if gaps remain, then synthesizes a cited report.
+
+**Constructor:**
+```python
+DeepResearchAgent(
+    deps: DeepResearchDeps,
+    config: A2AAgentConfig | None = None,
+    search_fn: Any = None,
+    config_manager=None,
+)
+```
+
+**Usage:**
+```python
+from cogniverse_agents.deep_research_agent import (
+    DeepResearchAgent,
+    DeepResearchDeps,
+    DeepResearchInput,
+)
+
+agent = DeepResearchAgent(deps=DeepResearchDeps(tenant_id="acme"))
+output = await agent.process(
+    DeepResearchInput(query="how did the outage affect checkout latency?", tenant_id="acme")
+)
+print(output.summary, output.citations)
+```
+
+---
+
 ## Agent Architecture
 
 ### Type-Safe A2AAgent Base Class with Generics
@@ -2871,18 +2981,15 @@ When `GatewayAgent` classifies the query as `complex`:
 
 ```mermaid
 sequenceDiagram
-    participant API as FastAPI Server
-    participant Middleware as Tenant Middleware
+    participant API as FastAPI Router
     participant Agent as OrchestratorAgent
     participant SchemaManager as VespaSchemaManager
     participant Memory as Mem0MemoryManager
     participant Vespa as Vespa Backend
 
-    API->>Middleware: Request (X-Tenant-ID: acme)
-    Middleware->>Middleware: Extract tenant_id
-    Middleware->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
-    SchemaManager-->>Middleware: "video_frames_acme"
-    Middleware->>API: request.state.tenant_id = "acme"
+    API->>API: require_tenant_id(body.tenant_id) — no header, no middleware
+    API->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
+    SchemaManager-->>API: "video_frames_acme"
 
     API->>Agent: A2A task with tenant_id="acme" in payload
     Agent->>Memory: initialize_memory("orchestrator_agent", "acme", ...config)

@@ -42,8 +42,8 @@ vespa_app = Vespa(url="http://localhost:8080")  # Example initialization
 
 app_package = ApplicationPackage(name=schema_name)
 app_package.schema.add_fields(
-    Field("embedding", "tensor<float>(patch{}, v[768])"),
-    Field("binary_embedding", "tensor<int8>(patch{}, v[96])"),
+    Field("embedding", "tensor<bfloat16>(patch{}, v[320])"),
+    Field("binary_embedding", "tensor<int8>(patch{}, v[40])"),
     Field("text", "string", indexing=["index", "summary"])
 )
 
@@ -115,9 +115,9 @@ from pathlib import Path
 config_manager = create_default_config_manager()
 schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
 
-# 2. Extract tenant from header
-# request is the incoming HTTP request object (e.g., FastAPI Request)
-tenant_id = request.headers.get("X-Tenant-ID", "default")
+# 2. Extract tenant from request body
+# request is the parsed SearchRequest body (tenant_id is a required field)
+tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
 
 # 3. Initialize orchestrator (tenant-agnostic at construction)
 registry = AgentRegistry(tenant_id=tenant_id, config_manager=config_manager)
@@ -154,10 +154,10 @@ When a user sends a follow-up message like "show me longer ones" after searching
 
 ```bash
 # Turn 2: follow-up with conversation history
-curl -X POST http://localhost:8000/agents/orchestrator_agent/process \
+curl -X POST http://localhost:8000/agents/gateway_agent/process \
   -H "Content-Type: application/json" \
   -d '{
-    "agent_name": "orchestrator_agent",
+    "agent_name": "gateway_agent",
     "query": "show me longer ones",
     "context": {"tenant_id": "flywheel_org:production"},
     "top_k": 5,
@@ -173,7 +173,7 @@ curl -X POST http://localhost:8000/agents/orchestrator_agent/process \
 # 1. REST endpoint receives request with conversation_history
 # libs/runtime/cogniverse_runtime/routers/agents.py
 task = AgentTask(
-    agent_name="orchestrator_agent",
+    agent_name="gateway_agent",
     query="show me longer ones",
     conversation_history=[
         {"role": "user", "content": "search for cat videos"},
@@ -182,24 +182,24 @@ task = AgentTask(
 )
 # conversation_history is merged into dispatch context
 
-# 2. AgentDispatcher._execute_routing_task routes the query
+# 2. AgentDispatcher._execute_gateway_task triages the query
 # libs/runtime/cogniverse_runtime/agent_dispatcher.py
-routing_result = await orchestrator._process_impl(
-    OrchestratorInput(query="show me longer ones", tenant_id=tenant_id)
+gateway_result = await gateway_agent._process_impl(
+    GatewayInput(query="show me longer ones", tenant_id=tenant_id)
 )
-# routing_result.recommended_agent = "search_agent"
+# gateway_result.complexity = "simple", gateway_result.routed_to = "search_agent"
 
-# 3. Non-orchestration path: execute downstream agent
+# 3. Simple path: execute the routed-to agent directly
 # _execute_downstream_agent dispatches based on capabilities
 downstream_result = await self._execute_downstream_agent(
-    agent_name="search_agent",
-    query=routing_result.enhanced_query,
+    agent_name=gateway_result.routed_to,
+    query="show me longer ones",
     tenant_id=tenant_id,
     conversation_history=conversation_history,
 )
 
 # 4. Inside _execute_search_task, query rewrite happens
-# ConversationalQueryRewriteModule resolves anaphoric references
+# _rewrite_query_with_history resolves anaphoric references
 rewritten = await self._rewrite_query_with_history(
     query="show me longer ones",
     conversation_history=[...],
@@ -207,14 +207,22 @@ rewritten = await self._rewrite_query_with_history(
 # rewritten = "show me longer cat videos"
 
 # 5. Search executes with rewritten query
-results = search_service.search(query="show me longer cat videos", ...)
+results = search_agent._process_impl(SearchInput(query="show me longer cat videos", ...))
 
-# 6. Response includes both routing and search results
+# 6. Response includes both gateway routing and search results
 # {
 #   "status": "success",
-#   "agent": "orchestrator_agent",
-#   "recommended_agent": "search_agent",
+#   "agent": "gateway_agent",
+#   "message": "Routed 'show me longer ones' to search_agent (simple)",
+#   "gateway": {
+#     "complexity": "simple",
+#     "modality": "video",
+#     "generation_type": "raw_results",
+#     "routed_to": "search_agent",
+#     "confidence": 0.83
+#   },
 #   "downstream_result": {
+#     "status": "success",
 #     "agent": "search_agent",
 #     "original_query": "show me longer ones",
 #     "rewritten_query": "show me longer cat videos",
@@ -229,23 +237,22 @@ sequenceDiagram
     participant U as User / Chat Tab
     participant REST as POST /agents/{name}/process
     participant D as AgentDispatcher
-    participant R as OrchestratorAgent
+    participant G as GatewayAgent
     participant DDA as _execute_downstream_agent
-    participant S as SearchService
-    participant QR as ConversationalQueryRewriteModule
+    participant S as SearchAgent
 
     U->>REST: query="show me longer ones"<br/>conversation_history=[{cat videos}...]
-    REST->>D: dispatch(orchestrator_agent, query, context)
-    D->>R: _process_impl(query="show me longer ones")
-    R-->>D: recommended_agent=search_agent
+    REST->>D: dispatch(gateway_agent, query, context)
+    D->>G: _process_impl(query="show me longer ones")
+    G-->>D: complexity=simple, routed_to=search_agent
 
     D->>DDA: execute(search_agent, query, history)
-    DDA->>QR: rewrite("show me longer ones", history)
-    QR-->>DDA: "show me longer cat videos"
-    DDA->>S: search("show me longer cat videos")
+    DDA->>DDA: _rewrite_query_with_history("show me longer ones", history)
+    Note over DDA: "show me longer cat videos"
+    DDA->>S: _process_impl(SearchInput(query="show me longer cat videos"))
     S-->>DDA: 5 results
     DDA-->>D: downstream_result
-    D-->>REST: routing metadata + downstream_result
+    D-->>REST: gateway metadata + downstream_result
     REST-->>U: JSON response
 ```
 
@@ -426,6 +433,7 @@ logger = logging.getLogger(__name__)
 try:
     results = search_agent.search_by_text(
         query="tutorial",
+        tenant_id=tenant_id,
         top_k=10
     )
 except Exception as e:
@@ -470,7 +478,7 @@ from cogniverse_foundation.telemetry.registry import TelemetryRegistry
 # Get telemetry provider for this tenant
 # tenant_id is defined in calling context
 registry = TelemetryRegistry()
-telemetry = registry.get_telemetry_provider(
+telemetry = registry.get(
     name="phoenix",
     tenant_id=tenant_id,
     config={
@@ -483,7 +491,7 @@ telemetry = registry.get_telemetry_provider(
 tracer = trace.get_tracer(__name__)
 
 # Create trace with nested spans
-# router, agent, query, rerank are defined in calling context
+# orchestrator, agent, query, rerank are defined in calling context
 with tracer.start_as_current_span("search_request") as trace_span:
     trace_span.set_attribute("tenant_id", tenant_id)
 

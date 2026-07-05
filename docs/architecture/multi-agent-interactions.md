@@ -108,75 +108,79 @@ This diagram shows the full end-to-end flow from user query to final results, in
 ```mermaid
 sequenceDiagram
     participant User
+    participant Gateway as GatewayAgent
     participant Orch as OrchestratorAgent
-    participant Registry as AgentRegistry
     participant Prof as ProfileSelectionAgent
     participant Entity as EntityExtractionAgent
     participant Search as SearchAgent
     participant Backend as Search Backend
 
-    User->>Orch: POST /tasks/send<br/>{query: "show me robots playing soccer"}
+    User->>Gateway: POST /tasks/send<br/>{query: "show me robots playing soccer"}
 
-    Note over Orch: PLANNING PHASE (Parallel Execution)
+    Note over Gateway: GLiNER-based entity check +<br/>DSPy classification (simple vs. complex)
 
-    par Profile Selection
-        Orch->>Registry: GET /by-capability/profile_selection
-        Registry-->>Orch: [ProfileSelectionAgent @ http://localhost:8011]
-
-        Orch->>Prof: POST /tasks/send<br/>{query, available_profiles}
-        Note over Prof: LLM Reasoning<br/>(DSPy ChainOfThought)
-        Prof->>Prof: Analyze query complexity
-        Prof->>Prof: Match to profile strengths
-        Prof-->>Orch: {selected_profile: "colpali",<br/>confidence: 0.85, alternatives: [...], modality: "video"}
-    and Entity Extraction
-        Orch->>Registry: GET /by-capability/entity_extraction
-        Registry-->>Orch: [EntityExtractionAgent @ http://localhost:8010]
-
-        Orch->>Entity: POST /tasks/send<br/>{query}
-        Entity->>Entity: Extract entities (DSPy ChainOfThought)
-        Entity->>Entity: Classify entity types
-        Entity-->>Orch: {entities: ["robots", "soccer"],<br/>entity_count: 2, dominant_types: ["CONCEPT"]}
-    end
-
-    Note over Orch: Planning Complete (< 500ms total)
-
-    Note over Orch: ACTION PHASE
-
-    Orch->>Registry: GET /by-capability/search
-    Registry-->>Orch: [SearchAgent @ http://localhost:8002]
-
-    alt Ensemble Mode (profiles specified)
-        Orch->>Search: POST /tasks/send<br/>{query, profiles: ["colpali", "videoprism"], modality: "video"}
-
-        Note over Search: Parallel Profile Execution
-        par Profile 1: ColPali
-            Search->>Backend: POST /search/<br/>{profile: "colpali", query_embedding}
-            Backend-->>Search: Results 1 (ranked by ColPali similarity)
-        and Profile 2: VideoPrism
-            Search->>Backend: POST /search/<br/>{profile: "videoprism", query_embedding}
-            Backend-->>Search: Results 2 (ranked by VideoPrism similarity)
-        end
-
-        Search->>Search: RRF Fusion<br/>score(doc) = Σ 1/(k+rank)
-        Search-->>Orch: {results: [...fused_results...],<br/>metadata: {profiles_used, rrf_scores}}
-    else Single Profile Mode (single profile)
-        Orch->>Search: POST /tasks/send<br/>{query, modality: "video"}
+    alt Simple query
+        Gateway->>Search: POST /tasks/send<br/>{query, modality: "video"} (direct dispatch)
         Search->>Backend: POST /search/
         Backend-->>Search: Results
-        Search-->>Orch: {results: [...]}
-    end
+        Search-->>Gateway: {results: [...]}
+        Gateway-->>User: {results: [...], gateway: {complexity: "simple", routed_to: "search_agent"}}
+    else Complex query
+        Gateway->>Orch: Dispatch with gateway_context<br/>{modality, generation_type, confidence}
 
-    Orch->>Orch: Aggregate results + metadata
-    Orch-->>User: {results: [...],<br/>metadata: {planning_time, search_time, profiles_used}}
+        Note over Orch: DSPy OrchestrationSignature plans a<br/>per-query agent_sequence + parallel_steps<br/>from available_agents (never fixed)
+
+        opt Plan includes preprocessing agents
+            par Profile Selection (if planned)
+                Orch->>Prof: POST /tasks/send<br/>{query, available_profiles}
+                Note over Prof: LLM Reasoning<br/>(DSPy ChainOfThought)
+                Prof-->>Orch: {selected_profile: "colpali",<br/>confidence: 0.85, alternatives: [...], modality: "video"}
+            and Entity Extraction (if planned)
+                Orch->>Entity: POST /tasks/send<br/>{query}
+                Entity->>Entity: Extract entities (GLiNER + DSPy)
+                Entity-->>Orch: {entities: ["robots", "soccer"],<br/>entity_count: 2, dominant_types: ["CONCEPT"]}
+            end
+        end
+
+        Note over Orch: Execute planned execution agent<br/>(search_agent, summarizer_agent, etc.)
+
+        alt Ensemble Mode (profiles specified)
+            Orch->>Search: POST /tasks/send<br/>{query, profiles: ["colpali", "videoprism"], modality: "video"}
+
+            Note over Search: Parallel Profile Execution
+            par Profile 1: ColPali
+                Search->>Backend: POST /search/<br/>{profile: "colpali", query_embedding}
+                Backend-->>Search: Results 1 (ranked by ColPali similarity)
+            and Profile 2: VideoPrism
+                Search->>Backend: POST /search/<br/>{profile: "videoprism", query_embedding}
+                Backend-->>Search: Results 2 (ranked by VideoPrism similarity)
+            end
+
+            Search->>Search: RRF Fusion<br/>score(doc) = Σ 1/(k+rank)
+            Search-->>Orch: {results: [...fused_results...],<br/>metadata: {profiles_used, rrf_scores}}
+        else Single Profile Mode (single profile)
+            Orch->>Search: POST /tasks/send<br/>{query, modality: "video"}
+            Search->>Backend: POST /search/
+            Backend-->>Search: Results
+            Search-->>Orch: {results: [...]}
+        end
+
+        Orch->>Orch: Aggregate results + metadata
+        Orch-->>Gateway: {results: [...],<br/>metadata: {planning_time, search_time, profiles_used}}
+        Gateway-->>User: {results: [...],<br/>metadata: {...}}
+    end
 ```
 
 ### Timeline Analysis
 
-**Planning Phase (Parallel)**:
+**Gateway Classification**: ~20-50ms (in-process GLiNER + DSPy classification)
 
-- Profile Selection: ~100-150ms (DSPy LLM inference)
-- Entity Extraction: ~50-100ms (DSPy LLM inference)
-- **Total**: ~150-200ms (limited by slowest agent)
+**Planning Phase (when the query is routed to the orchestrator)**:
+
+- The DSPy `OrchestrationSignature` plans the agent sequence per query; preprocessing agents it selects (profile selection, entity extraction, query enhancement) run in the parallel groups it specifies
+- Profile Selection: ~100-150ms (DSPy LLM inference), when planned
+- Entity Extraction: ~50-100ms (DSPy LLM inference), when planned
+- **Total**: ~150-200ms when both preprocessing agents are planned in parallel; 0ms when the plan skips preprocessing entirely
 
 **Action Phase (Sequential or Parallel)**:
 
@@ -185,7 +189,7 @@ sequenceDiagram
 - RRF Fusion: ~5-10ms
 - **Total**: ~500-700ms
 
-**End-to-End Latency**: ~650-900ms
+**End-to-End Latency**: ~450-900ms depending on gateway classification and whether the orchestrator plans preprocessing agents
 
 ---
 

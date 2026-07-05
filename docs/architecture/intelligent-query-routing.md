@@ -26,7 +26,6 @@ graph LR
     subgraph "Query Analysis Pipeline"
         CQA["<span style='color:#000'>Composable Query<br/>Analysis Module<br/>(entities + rels + enhancement)</span>"]
         DSPy["<span style='color:#000'>DSPy Routing<br/>Decision</span>"]
-        GRPO["<span style='color:#000'>GRPO<br/>Optimization</span>"]
     end
 
     subgraph "Execution"
@@ -44,8 +43,7 @@ graph LR
 
     Q --> CQA
     CTX --> DSPy
-    CQA --> DSPy --> GRPO
-    GRPO --> OD
+    CQA --> DSPy --> OD
     OD -- "No" --> DDA --> VS
     OD -- "Yes (≥3 signals)" --> MAO
     MAO --> VS & TS & SUM & RPT
@@ -54,7 +52,6 @@ graph LR
     style CTX fill:#90caf9,stroke:#1565c0,color:#000
     style CQA fill:#a5d6a7,stroke:#388e3c,color:#000
     style DSPy fill:#a5d6a7,stroke:#388e3c,color:#000
-    style GRPO fill:#a5d6a7,stroke:#388e3c,color:#000
     style OD fill:#ffcc80,stroke:#ef6c00,color:#000
     style DDA fill:#ce93d8,stroke:#7b1fa2,color:#000
     style MAO fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -76,7 +73,7 @@ Zero-shot Named Entity Recognition using [GLiNER](https://github.com/urchade/GLi
 
 ```mermaid
 flowchart TD
-    Q["<span style='color:#000'>Query Text</span>"] --> GLiNER["<span style='color:#000'>GLiNER<br/>urchade/gliner_medium-v2.1</span>"]
+    Q["<span style='color:#000'>Query Text</span>"] --> GLiNER["<span style='color:#000'>GLiNER<br/>urchade/gliner_large-v2.1</span>"]
     GLiNER --> |"predict_entities(text, labels)"| E["<span style='color:#000'>Extracted Entities</span>"]
 
     subgraph "15 Entity Types"
@@ -181,29 +178,9 @@ The routing decision includes:
 - **Execution mode**: sequential, parallel, or hybrid
 - **Confidence**: calibrated via learned thresholds (see AdaptiveThresholdSignature)
 
-### GRPO Optimization
+### Routing Optimization (Offline)
 
-Group Relative Policy Optimization continuously improves routing decisions from outcome signals. The optimizer tracks routing experiences and periodically retrains.
-
-**Reward computation:**
-
-```python
-# Base reward from weighted components
-reward = (search_quality × 0.4) + (agent_success × 0.3)
-
-# Add user satisfaction if available (otherwise normalize base)
-if user_satisfaction is not None:
-    reward += user_satisfaction × 0.3
-else:
-    reward = reward / (0.4 + 0.3)  # Normalize when satisfaction unavailable
-
-# Apply processing time penalty (sigmoid curve)
-time_penalty = 0.1 × (1.0 − 1.0 / (1.0 + processing_time / 10.0))
-reward = max(0.0, reward − time_penalty)
-
-# Final reward clamped to [0, 1]
-reward = min(1.0, max(0.0, reward))
-```
+Routing and orchestration quality is improved offline, not inline with the per-query flow above. `ComposableQueryAnalysisModule` and the other DSPy signatures in this pipeline are compiled with DSPy prompt optimizers — SIMBA, MIPROv2, BootstrapFewShot, and GEPA (`libs/agents/cogniverse_agents/routing/dspy_relationship_router.py`) — run as Argo batch jobs against traces collected from live traffic. `OrchestrationEvaluator` extracts workflow execution outcomes from telemetry spans and feeds them to `WorkflowIntelligence` for continuous learning about which agent sequences work well for which query shapes. GRPO (Group Relative Policy Optimization) is referenced in the dashboard's optimization tab as a candidate future technique alongside GEPA, but is not currently an implemented optimizer.
 
 The optimizer adaptively selects its strategy based on available training data volume (see [Evaluation & Optimization Loop](./evaluation-optimization-loop.md) for details).
 
@@ -271,7 +248,7 @@ GatewayAgent classifies queries as complex when any of these conditions hold:
 | # | Signal | Detection Logic |
 |---|---|---|
 | 1 | No entities detected | GLiNER returns zero entities for the query |
-| 2 | Low confidence | Classification confidence below `fast_path_confidence_threshold` (default: 0.7) |
+| 2 | Low confidence | Classification confidence below `fast_path_confidence_threshold` (default: 0.4) |
 | 3 | Multiple modalities | Entities span more than one modality (e.g., video + audio) |
 
 ### Workflow Planning & Execution
@@ -317,7 +294,7 @@ sequenceDiagram
 
 1. **Topological sort** — Tasks are sorted by dependency graph. Tasks with no dependencies execute in parallel; dependent tasks wait for their prerequisites.
 
-2. **Phase-by-phase execution** — The topological sort produces execution phases. Within each phase, tasks run concurrently up to `max_parallel_tasks` (default: 3).
+2. **Phase-by-phase execution** — The topological sort produces execution phases. Within each phase, tasks run concurrently up to the orchestration semaphore limit (`_ORCH_CONCURRENCY`, default: 4).
 
 3. **Durable execution via checkpointing** — Each completed phase checkpoints its results. If a workflow fails mid-execution, it can resume from the last successful phase rather than restarting from scratch. Checkpoints store task status, results, and timestamps.
 
@@ -402,27 +379,19 @@ If predicted benefit ≥ 0.5, fusion is recommended. The model trains on recorde
 
 ## Context-Aware Routing
 
-The `ContextualAnalyzer` maintains session state across queries to provide routing hints.
+Follow-up queries carry anaphoric references ("that", "those", "longer ones") that only resolve against the prior turn. `AgentDispatcher` passes the caller-supplied `conversation_history` through to `_rewrite_query_with_history`, which uses `ConversationalQueryRewriteModule` (a `dspy.Module` in `cogniverse_agents/search_agent.py`) to rewrite the query into a self-contained form before it reaches search or the gateway's entity classification.
 
-### Conversation History Tracking
-- Maintains a sliding window of the last 50 queries (configurable `max_history_size`)
-- Each entry records: query text, detected modalities, timestamp, result count, user feedback
-- Context window of 30 minutes determines "recent" context
+- The rewriter receives the raw query plus the full `conversation_history` list supplied on the request (no separate session store or sliding window is maintained server-side)
+- When the rewritten query differs from the input, both `original_query` and `rewritten_query` are included in the response so callers can see what changed
+- If no `conversation_history` is supplied, the query is passed through unchanged
 
-### Modality Preference Learning
-- Tracks modality frequency across the session
-- Requires minimum 3 occurrences before establishing a preference
-- Produces per-modality confidence: `count / total_queries`
+---
 
-### Topic Tracking with Temporal Decay
-- Extracts topic keywords from each query (words > 3 characters)
-- Maintains a 7-day sliding window per topic
-- Older mentions are pruned, so topic relevance naturally decays over time
-- Related topics surface as routing hints for the current query
+## LLM-Level Semantic Routing
 
-### Temporal Pattern Recognition
-- Tracks hourly query distribution across the session
-- Identifies usage patterns that can inform result freshness preferences
+Everything above routes a *query* to an *agent*. A separate, lower layer routes each *LLM call* an agent makes to a *model*: an opt-in [semantic router](https://github.com/vllm-project/semantic-router) sits in front of the configured LLM backend (`libs/foundation/cogniverse_foundation/config/semantic_router.py`, deployed via `charts/cogniverse/templates/semantic-router.yaml`).
+
+When `SemanticRouterConfig.enabled` is set, `apply_semantic_routing` rewrites an agent's `LLMEndpointConfig` to target the router instead of the model backend directly, attaching two headers per request: the tenant id and a per-tenant tier (`tenant_tiers[tenant_id]`, falling back to `default_tier`). The router uses the tier to gate which models the tenant may use, then classifies the request content itself (domain/complexity) to pick the concrete model and reasoning mode — cogniverse only tells it *who* is asking, not *what kind* of request it is. This is wired into `agent_dispatcher.py` and the DynamicDSPyMixin used by agents; when routing is disabled, the direct-to-backend path is unchanged.
 
 ---
 
@@ -433,7 +402,7 @@ The `ContextualAnalyzer` maintains session state across queries to provide routi
 | **GLiNER** | Zero-shot NER | Entity extraction across 15 custom types without training data |
 | **DSPy 3.0 Signatures** | Prompt optimization | 7 typed signatures that are automatically optimizable |
 | **ChainOfThought** | Reasoning | Step-by-step reasoning for routing decisions |
-| **GRPO** | Reinforcement learning | Continuous routing improvement from outcome signals |
+| **DSPy Optimizers (SIMBA/GEPA/MIPROv2)** | Offline prompt optimization | Compile routing/enhancement signatures from traced outcomes via Argo batch jobs |
 | **Topological Sort** | Graph algorithms | Dependency-aware task scheduling for multi-agent workflows |
 | **A2A Protocol** | Agent communication | Structured inter-agent messaging |
 | **Durable Execution** | Reliability | Phase-level checkpointing for workflow resumability |
@@ -441,4 +410,4 @@ The `ContextualAnalyzer` maintains session state across queries to provide routi
 | **FusionBenefitModel** | Learned optimization | Predicts when fusion improves results |
 | **Exponential Moving Average** | Online learning | Tracks fusion success rates with smooth updates |
 | **Adaptive Thresholds** | Self-tuning | Confidence thresholds that learn from performance data |
-| **Context-Aware Routing** | Session intelligence | Modality preference learning + topic tracking with temporal decay |
+| **Conversational Query Rewrite** | Session intelligence | DSPy-based anaphora resolution using per-request conversation history |

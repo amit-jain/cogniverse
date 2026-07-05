@@ -11,15 +11,17 @@ Cogniverse provides production-ready Helm charts for Kubernetes deployment with:
 - **StatefulSets**: Vespa, Phoenix (with persistent storage)
 
 - **Deployments**: Runtime, Dashboard, vLLM inference sidecars
-  (`vllm_llm_student`, `vllm_llm_teacher`, `vllm_colpali`,
-  `vllm_asr`, `vllm_colqwen`), `colbert_pylate`,
-  `denseon`, `videoprism` (remote sidecar)
+  (`vllm_llm_student`, `vllm_llm_teacher`, `vllm_colpali` — serves the
+  ColQwen3 token-embed model, `vllm_asr`), `colbert_pylate`,
+  `code_colbert_pylate`, `denseon`, `videoprism_jax` (remote sidecar)
 
-- **LLM serving**: vLLM is the chart default (`llm.engine: vllm`).
-  Ollama remains as an opt-in alternative for local development —
-  set `llm.engine: ollama` and the chart deploys `Ollama` as a
-  StatefulSet. Configure once via `llm.builtin.enabled` and
-  `llm.engine` in your values file.
+- **LLM serving**: `llm.engine: ollama` is the chart default (deploys
+  `Ollama` as a StatefulSet). Set `llm.engine: vllm` to deploy a
+  built-in vLLM Deployment instead (the ROCm GPU overlay,
+  `values.rocm.yaml`, switches to `vllm` by default) — or
+  `llm.engine: external` to point at an existing endpoint with no pod.
+  Configure once via `llm.builtin.enabled` and `llm.engine` in your
+  values file.
 
 > See [`models-and-inference.md`](./models-and-inference.md) for the
 > canonical list of every model, image source, and deployment style
@@ -194,16 +196,13 @@ ingress:
       hosts:
         - cogniverse.your-domain.com
 
-# GPU configuration for LLM
+# GPU configuration for LLM (nodeSelector, tolerations, and the
+# nvidia.com/gpu or amd.com/gpu resource request are all wired
+# automatically off llm.device — no manual resource block needed)
 llm:
-  builtin:
-    gpu:
-      enabled: true
-    nodeSelector:
-      nvidia.com/gpu: "true"
-    resources:
-      limits:
-        nvidia.com/gpu: "1"
+  engine: vllm
+  device: cuda
+  gpuCount: 1
 ```
 
 ### Deploy to Production
@@ -216,7 +215,6 @@ helm install cogniverse ./charts/cogniverse \
   --values values.prod.yaml
 
 # Verify deployment
-helm test cogniverse -n cogniverse
 kubectl get all -n cogniverse
 ```
 
@@ -372,8 +370,11 @@ phoenix:
       memory: "2Gi"
 
 llm:
-  builtin:
-    replicaCount: 1
+  engine: ollama
+  device: cpu
+  nodeSelector: {}
+  tolerations: []
+  ollama:
     persistence:
       enabled: true
       storageClass: "local-path"
@@ -386,9 +387,7 @@ llm:
         cpu: "2"
         memory: "8Gi"
     models:
-      - "google/gemma-4-e4b-it"
-    nodeSelector: {}
-    tolerations: []
+      - "gemma3:4b"
 
 # Ingress with Traefik (K3s default)
 ingress:
@@ -413,7 +412,7 @@ config:
     - id: "default"
       name: "Default Tenant"
   llmModels:
-    - "google/gemma-4-e4b-it"
+    - "gemma3:4b"
 
 # Enable init jobs
 initJobs:
@@ -670,23 +669,18 @@ multiTenant:
 
 ### GPU Configuration
 
-For LLM builtin (Ollama) with GPU support:
+For a GPU-backed LLM pod, set `llm.device` — the chart wires the
+matching `nodeSelector`, `tolerations`, and `nvidia.com/gpu` /
+`amd.com/gpu` resource request automatically:
 
 ```yaml
 llm:
-  builtin:
-    enabled: true
-    gpu:
-      enabled: true
-    nodeSelector:
-      nvidia.com/gpu: "true"
-    tolerations:
-      - key: nvidia.com/gpu
-        operator: Exists
-        effect: NoSchedule
+  engine: ollama          # or vllm
+  device: cuda            # cpu | cuda | rocm | mps (vllm only)
+  gpuCount: 1
+  ollama:
     resources:
       limits:
-        nvidia.com/gpu: "1"
         memory: "16Gi"
       requests:
         cpu: "4"

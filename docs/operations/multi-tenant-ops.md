@@ -503,8 +503,9 @@ memory_acme.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8000",  # Required: DenseOn /v1 endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -514,8 +515,9 @@ memory_globex.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8000",  # Required: DenseOn /v1 endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -761,9 +763,9 @@ calls, or only goes through hookable libraries.
     and consumed by the dispatcher when constructing the agent.
   * **CNI NetworkPolicy**: kernel-level packet drop by Cilium / Calico
     based on pod labels. Generated from the agent policy YAMLs by
-    `cogniverse admin egress-netpol` and applied to the Helm release.
-    The actual production deny mechanism — works regardless of what
-    library the agent uses (httpx, pyvespa, DSPy, raw socket).
+    `cogniverse-optim --mode egress-netpol` and applied to the Helm
+    release. The actual production deny mechanism — works regardless
+    of what library the agent uses (httpx, pyvespa, DSPy, raw socket).
   * **Dispatch-time validation**: at boot, the dispatcher cross-checks
     every agent's *configured* backend URLs against the policy YAML's
     egress allowlist. Catches operator config drift (someone moved the
@@ -955,7 +957,9 @@ def trigger_tenant_optimization(tenant_id: str, mode: str = "gateway-thresholds"
     print(f"Track progress: {result['status_url']}")
     return result
 
-# Available modes: gateway-thresholds, simba, workflow, profile, entity-extraction, synthetic
+# Available modes: gateway-thresholds, simba, workflow, profile, entity-extraction
+# (synthetic-data generation runs on its own scheduled CronWorkflow, not
+# through this on-demand endpoint)
 trigger_tenant_optimization("acme_corp", mode="gateway-thresholds")
 ```
 

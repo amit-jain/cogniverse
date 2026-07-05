@@ -169,6 +169,7 @@ from cogniverse_synthetic.approval import SyntheticDataConfidenceExtractor, Synt
 storage = ApprovalStorageImpl(
     grpc_endpoint="http://localhost:4317",
     http_endpoint="http://localhost:6006",
+    tenant_id="your_org:production",
 )
 confidence_extractor = SyntheticDataConfidenceExtractor()
 feedback_handler = SyntheticDataFeedbackHandler()
@@ -467,8 +468,8 @@ telemetry:
     http_endpoint: "http://localhost:6006"  # For queries (HTTP API)
 
 approval:
-  confidence_threshold: 0.8  # Auto-approve items >= 0.8
-  batch_size: 50  # Items per batch
+  confidence_threshold: 0.85  # Auto-approve items >= 0.85 (default)
+  storage_backend: "phoenix"  # phoenix, database, file
 ```
 
 ### Confidence Thresholds by Optimizer

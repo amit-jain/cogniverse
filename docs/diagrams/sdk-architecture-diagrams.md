@@ -30,34 +30,36 @@ flowchart TB
         Core["<span style='color:#000'>cogniverse_core<br/>v0.1.0<br/><br/>• Multi-Agent System<br/>• Memory<br/>• Cache</span>"]
         Evaluation["<span style='color:#000'>cogniverse_evaluation<br/>v0.1.0<br/><br/>• Experiment Tracking<br/>• Evaluators<br/>• Datasets</span>"]
         Phoenix["<span style='color:#000'>cogniverse_telemetry_phoenix<br/>v0.1.0<br/><br/>• Phoenix Provider<br/>• Spans/Traces<br/>• Annotations</span>"]
+        Synthetic["<span style='color:#000'>cogniverse_synthetic<br/>v0.1.0<br/><br/>• DSPy Generators<br/>• Training Data<br/>• Backend Queries</span>"]
     end
 
     subgraph "Implementation Layer"
         Agents["<span style='color:#000'>cogniverse_agents<br/>v0.1.0<br/><br/>• Routing Agent<br/>• Search Agent<br/>• Orchestrator</span>"]
         Vespa["<span style='color:#000'>cogniverse_vespa<br/>v0.1.0<br/><br/>• Vespa Backend<br/>• Schema Mgmt<br/>• Multi-Tenant</span>"]
-        Synthetic["<span style='color:#000'>cogniverse_synthetic<br/>v0.1.0<br/><br/>• DSPy Generators<br/>• Training Data<br/>• Backend Queries</span>"]
-        Finetuning["<span style='color:#000'>cogniverse_finetuning<br/>v0.1.0<br/><br/>• Model Training<br/>• Adapter Management<br/>• LoRA/QLoRA</span>"]
     end
 
     subgraph "Application Layer"
         Runtime["<span style='color:#000'>cogniverse_runtime<br/>v0.1.0<br/><br/>• FastAPI Server<br/>• Ingestion Pipeline<br/>• Search API</span>"]
         Dashboard["<span style='color:#000'>cogniverse_dashboard<br/>v0.1.0<br/><br/>• Streamlit UI<br/>• Phoenix Analytics<br/>• Experiment Mgmt</span>"]
+        Messaging["<span style='color:#000'>cogniverse_messaging<br/>v0.1.0<br/><br/>• Telegram Gateway<br/>• Invite Auth<br/>• Conversation History</span>"]
+        Finetuning["<span style='color:#000'>cogniverse_finetuning<br/>v0.1.0<br/><br/>• Model Training<br/>• Adapter Management<br/>• LoRA/QLoRA</span>"]
+        Cli["<span style='color:#000'>cogniverse_cli<br/>v0.1.0<br/><br/>• Cluster Deploy<br/>• up / status / index / graph</span>"]
     end
 
     %% Foundation Layer dependencies
-    SDK --> Foundation
+    Foundation --> SDK
 
     %% Core Layer dependencies
     Core --> Foundation
     Evaluation --> Foundation
     Phoenix --> Foundation
     Phoenix --> Evaluation
+    Synthetic --> Foundation
 
     %% Implementation Layer dependencies
     Agents --> Core
+    Agents --> Synthetic
     Vespa --> Core
-    Synthetic --> Core
-    Finetuning --> Core
 
     %% Application Layer dependencies
     Runtime --> Core
@@ -67,6 +69,11 @@ flowchart TB
     Dashboard --> Core
     Dashboard --> Evaluation
     Dashboard --> Runtime
+    Messaging --> Core
+    Finetuning --> Core
+    Finetuning --> Agents
+    Finetuning --> Synthetic
+    Cli -.->|HTTP| Runtime
 
     %% Styling - Foundation Layer (green)
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -76,16 +83,18 @@ flowchart TB
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Synthetic fill:#ce93d8,stroke:#7b1fa2,color:#000
 
     %% Styling - Implementation Layer (orange)
     style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
 
     %% Styling - Application Layer (blue)
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
     style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Messaging fill:#90caf9,stroke:#1565c0,color:#000
+    style Finetuning fill:#90caf9,stroke:#1565c0,color:#000
+    style Cli fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ### Detailed Dependency Chain (Layered Architecture)
@@ -101,34 +110,36 @@ flowchart TB
         Core["<span style='color:#000'>cogniverse_core</span>"]
         Evaluation["<span style='color:#000'>cogniverse_evaluation</span>"]
         Phoenix["<span style='color:#000'>cogniverse_telemetry_phoenix</span>"]
+        Synthetic["<span style='color:#000'>cogniverse_synthetic</span>"]
     end
 
     subgraph ImplLayer["<span style='color:#000'>Implementation Layer</span>"]
         Agents["<span style='color:#000'>cogniverse_agents</span>"]
         Vespa["<span style='color:#000'>cogniverse_vespa</span>"]
-        Synthetic["<span style='color:#000'>cogniverse_synthetic</span>"]
-        Finetuning["<span style='color:#000'>cogniverse_finetuning</span>"]
     end
 
     subgraph AppLayer["<span style='color:#000'>Application Layer</span>"]
         Runtime["<span style='color:#000'>cogniverse_runtime</span>"]
         Dashboard["<span style='color:#000'>cogniverse_dashboard</span>"]
+        Messaging["<span style='color:#000'>cogniverse_messaging</span>"]
+        Finetuning["<span style='color:#000'>cogniverse_finetuning</span>"]
+        Cli["<span style='color:#000'>cogniverse_cli</span>"]
     end
 
     %% Foundation dependencies
-    SDK --> FoundationPkg
+    FoundationPkg --> SDK
 
     %% Core to Foundation
     Core --> FoundationPkg
     Evaluation --> FoundationPkg
     Phoenix --> FoundationPkg
     Phoenix --> Evaluation
+    Synthetic --> FoundationPkg
 
     %% Implementation to Core
     Agents --> Core
+    Agents --> Synthetic
     Vespa --> Core
-    Synthetic --> Core
-    Finetuning --> Core
 
     %% Application to Implementation/Core
     Runtime --> Core
@@ -138,6 +149,11 @@ flowchart TB
     Dashboard --> Core
     Dashboard --> Evaluation
     Dashboard --> Runtime
+    Messaging --> Core
+    Finetuning --> Core
+    Finetuning --> Agents
+    Finetuning --> Synthetic
+    Cli -.->|HTTP| Runtime
 
     %% Foundation Layer (green)
     style SDK fill:#a5d6a7,stroke:#388e3c,color:#000
@@ -147,16 +163,18 @@ flowchart TB
     style Core fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Evaluation fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Phoenix fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Synthetic fill:#ce93d8,stroke:#7b1fa2,color:#000
 
     %% Implementation Layer (orange)
     style Agents fill:#ffcc80,stroke:#ef6c00,color:#000
     style Vespa fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Synthetic fill:#ffcc80,stroke:#ef6c00,color:#000
-    style Finetuning fill:#ffcc80,stroke:#ef6c00,color:#000
 
     %% Application Layer (blue)
     style Runtime fill:#90caf9,stroke:#1565c0,color:#000
     style Dashboard fill:#90caf9,stroke:#1565c0,color:#000
+    style Messaging fill:#90caf9,stroke:#1565c0,color:#000
+    style Finetuning fill:#90caf9,stroke:#1565c0,color:#000
+    style Cli fill:#90caf9,stroke:#1565c0,color:#000
 ```
 
 ---
@@ -235,9 +253,9 @@ flowchart TB
     end
 
     subgraph CacheSys["<span style='color:#000'>Cache System</span>"]
-        CacheManager["<span style='color:#000'>Cache Manager</span>"]
-        RedisBackend["<span style='color:#000'>Redis Backend</span>"]
-        InMemoryCache["<span style='color:#000'>In-Memory Cache</span>"]
+        CacheManager["<span style='color:#000'>CacheManager</span>"]
+        S3Backend["<span style='color:#000'>S3CacheBackend</span>"]
+        FilesystemBackend["<span style='color:#000'>StructuredFilesystemBackend</span>"]
     end
 
     subgraph Common["<span style='color:#000'>Common</span>"]
@@ -259,8 +277,8 @@ flowchart TB
     CorePkg --> LifecycleScheduler
     CorePkg --> BackendVectorStore
     CorePkg --> CacheManager
-    CorePkg --> RedisBackend
-    CorePkg --> InMemoryCache
+    CorePkg --> S3Backend
+    CorePkg --> FilesystemBackend
     CorePkg --> Utils
     CorePkg --> Types
 
@@ -289,8 +307,8 @@ flowchart TB
     style LifecycleScheduler fill:#ba68c8,stroke:#7b1fa2,color:#000
     style BackendVectorStore fill:#ba68c8,stroke:#7b1fa2,color:#000
     style CacheManager fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style RedisBackend fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style InMemoryCache fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style S3Backend fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style FilesystemBackend fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Utils fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Types fill:#ce93d8,stroke:#7b1fa2,color:#000
 ```
@@ -536,7 +554,7 @@ sequenceDiagram
     participant Core as cogniverse_core
     participant Agents as cogniverse_agents
 
-    User->>Runtime: POST /route {"query": "ML videos", "tenant_id": "acme_corp"}
+    User->>Runtime: POST /agents/gateway_agent/process {"query": "ML videos", "tenant_id": "acme_corp"}
 
     Runtime->>Foundation: Import config utilities
     Foundation-->>Runtime: Config manager functions
@@ -544,35 +562,43 @@ sequenceDiagram
     Runtime->>Foundation: config_manager = create_default_config_manager()
     Foundation-->>Runtime: config manager with tenant isolation
 
-    Runtime->>Agents: Import OrchestratorAgent
-    Agents-->>Runtime: OrchestratorAgent class
+    Runtime->>Agents: Import GatewayAgent
+    Agents-->>Runtime: GatewayAgent class
 
-    Runtime->>Agents: agent = OrchestratorAgent(deps)
+    Runtime->>Agents: gateway = GatewayAgent(deps)
     Agents->>Core: Initialize agent context
     Core->>Foundation: Get telemetry for tenant
     Foundation-->>Core: TelemetryManager(tenant="acme_corp")
     Core-->>Agents: Context ready
 
-    Runtime->>Agents: result = agent.process(OrchestratorInput(query, tenant_id))
-    Agents->>Agents: GLiNER entity extraction
-    Agents->>Agents: LLM-based routing decision
+    Runtime->>Agents: result = gateway._process_impl(GatewayInput(query, tenant_id))
+    Agents->>Agents: GLiNER entity/modality classification
+    Agents->>Agents: DSPy simple-vs-complex classification
 
     Agents->>Core: Access TelemetryManager
     Core->>Foundation: Record routing span
     Foundation->>Foundation: Attach tenant_id attribute
     Foundation->>Foundation: Send to Phoenix: acme_corp_project
 
-    Agents-->>Runtime: {recommended_agent: "search_agent", needs_orchestration: false}
+    Agents-->>Runtime: {routed_to: "search_agent", complexity: "simple"}
 
-    Note over Runtime: _execute_downstream_agent dispatches by capability
-    Runtime->>Agents: _execute_search_task(query, conversation_history)
+    Note over Runtime: _execute_gateway_task dispatches by complexity
 
-    alt conversation_history present
-        Agents->>Agents: ConversationalQueryRewriteModule
-        Note over Agents: "show me more" → "show me more cat videos"
+    alt complexity == "simple"
+        Runtime->>Agents: _execute_downstream_agent(routed_to, query, conversation_history)
+
+        alt conversation_history present
+            Agents->>Agents: ConversationalQueryRewriteModule
+            Note over Agents: "show me more" → "show me more cat videos"
+        end
+
+        Agents-->>Runtime: downstream_result with search results
+    else complexity == "complex"
+        Runtime->>Agents: _execute_orchestration_task(query, gateway_context)
+        Note over Agents: OrchestratorAgent plans a dynamic<br/>agent_sequence via DSPy OrchestrationSignature
+        Agents-->>Runtime: orchestration result
     end
 
-    Agents-->>Runtime: downstream_result with search results
     Runtime-->>User: routing metadata + downstream_result
 ```
 
@@ -587,7 +613,7 @@ sequenceDiagram
     participant Agents as cogniverse_agents
     participant Vespa as cogniverse_vespa
 
-    User->>Runtime: POST /search {"query": "ML tutorial", "tenant_id": "acme_corp"}
+    User->>Runtime: POST /search/ {"query": "ML tutorial", "tenant_id": "acme_corp"}
 
     Runtime->>Foundation: config_manager = create_default_config_manager()
     Foundation-->>Runtime: Tenant config manager
@@ -644,7 +670,7 @@ sequenceDiagram
     participant Core as cogniverse_core (Knowledge Subsystem)
     participant Vespa as cogniverse_vespa
 
-    User->>Runtime: POST /agents {"query": "synthesize docs across tenants"}
+    User->>Runtime: POST /agents/gateway_agent/process {"query": "synthesize docs across tenants"}
 
     Runtime->>Gateway: Route request
     Gateway->>Orchestrator: Dispatch to OrchestratorAgent
@@ -1046,15 +1072,18 @@ sequenceDiagram
     UV->>Packages: Install libs/core in editable mode
     UV->>Packages: Install libs/evaluation in editable mode
     UV->>Packages: Install libs/telemetry-phoenix in editable mode
+    UV->>Packages: Install libs/synthetic in editable mode
 
     Note over UV,Packages: Implementation Layer
     UV->>Packages: Install libs/agents in editable mode
     UV->>Packages: Install libs/vespa in editable mode
-    UV->>Packages: Install libs/synthetic in editable mode
 
     Note over UV,Packages: Application Layer
     UV->>Packages: Install libs/runtime in editable mode
     UV->>Packages: Install libs/dashboard in editable mode
+    UV->>Packages: Install libs/messaging in editable mode
+    UV->>Packages: Install libs/cli in editable mode
+    UV->>Packages: Install libs/finetuning in editable mode
 
     UV->>VEnv: Install 3rd-party dependencies
     VEnv-->>UV: Dependencies installed
@@ -1085,8 +1114,8 @@ flowchart TB
 
     subgraph Publish["<span style='color:#000'>Publish (Layer Order)</span>"]
         PublishFoundation["<span style='color:#000'>1. Foundation Layer<br/>sdk, foundation</span>"]
-        PublishCore["<span style='color:#000'>2. Core Layer<br/>core, evaluation, telemetry-phoenix</span>"]
-        PublishImpl["<span style='color:#000'>3. Implementation Layer<br/>agents, vespa, synthetic</span>"]
+        PublishCore["<span style='color:#000'>2. Core Layer<br/>core, evaluation, telemetry-phoenix, synthetic</span>"]
+        PublishImpl["<span style='color:#000'>3. Implementation Layer<br/>agents, vespa</span>"]
         PublishApp["<span style='color:#000'>4. Application Layer<br/>runtime, dashboard</span>"]
     end
 
@@ -1141,7 +1170,7 @@ flowchart TB
 
     subgraph PkgInstall["<span style='color:#000'>Package Installation</span>"]
         ProdInstall["<span style='color:#000'>pip install<br/>cogniverse-runtime</span>"]
-        AllDeps["<span style='color:#000'>Auto-installs all dependencies:<br/>Foundation: sdk, foundation<br/>Core: core, evaluation<br/>Implementation: agents, vespa, synthetic</span>"]
+        AllDeps["<span style='color:#000'>Auto-installs all dependencies:<br/>Foundation: sdk, foundation<br/>Core: core, evaluation, synthetic<br/>Implementation: agents, vespa</span>"]
     end
 
     DevWorkspace --> DevTests
@@ -1193,9 +1222,9 @@ This diagram collection provides comprehensive visual documentation of the **lay
 | Layer | Packages | Purpose | Color |
 |-------|----------|---------|-------|
 | **Foundation** | sdk, foundation | Base configuration, telemetry interfaces, common utilities | Green (#a5d6a7) |
-| **Core** | core, evaluation, telemetry-phoenix | Multi-agent system, experiment tracking, Phoenix provider | Purple (#ce93d8) |
-| **Implementation** | agents, vespa, synthetic, finetuning | Concrete agents, backends, data generation, model training | Orange (#ffcc80) |
-| **Application** | runtime, dashboard | FastAPI server, Ingestion pipeline, Streamlit UI | Blue (#90caf9) |
+| **Core** | core, evaluation, telemetry-phoenix, synthetic | Multi-agent system, experiment tracking, Phoenix provider, synthetic data generation | Purple (#ce93d8) |
+| **Implementation** | agents, vespa | Concrete agents, backends | Orange (#ffcc80) |
+| **Application** | runtime, dashboard, messaging, finetuning, cli | FastAPI server, ingestion pipeline, Streamlit UI, Telegram gateway, model training, CLI | Blue (#90caf9) |
 
 **Key Principles:**
 

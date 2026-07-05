@@ -30,10 +30,11 @@ cogniverse/
 │   ├── foundation/               # cogniverse-foundation
 │   │   ├── pyproject.toml
 │   │   └── cogniverse_foundation/
-│   │       ├── cache/            # Cache utilities
+│   │       ├── caching/          # Cache utilities
 │   │       ├── config/           # Configuration base classes
-│   │       ├── telemetry/        # Telemetry interfaces
-│   │       └── utils/            # Utility functions
+│   │       ├── dspy/             # DSPy integration helpers
+│   │       ├── registry/         # Provider registries
+│   │       └── telemetry/        # Telemetry interfaces
 │   │
 │   # CORE LAYER
 │   ├── core/                     # cogniverse-core
@@ -118,7 +119,6 @@ cogniverse/
 │   │       ├── main.py                # FastAPI app
 │   │       ├── routers/               # API endpoints
 │   │       ├── ingestion/             # Video processing
-│   │       ├── search/                # Search service
 │   │       ├── admin/                 # Admin functionality
 │   │       ├── sandbox_manager.py     # SandboxManager + SandboxPolicy (OpenShell)
 │   │       ├── openshell_health.py    # GatewayHealthProbe (background 30 s probe)
@@ -174,7 +174,7 @@ flowchart TB
     subgraph Application["<span style='color:#000'><b>Application Layer</b></span>"]
         direction LR
         dashboard["<span style='color:#000'><b>dashboard</b><br/>Streamlit UI · Phoenix Analytics</span>"]
-        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · Tenant Middleware · Quality Monitor</span>"]
+        runtime["<span style='color:#000'><b>runtime</b><br/>FastAPI · CORS · Quality Monitor</span>"]
         messaging["<span style='color:#000'><b>messaging</b><br/>Telegram Gateway · Invite Auth</span>"]
         cli["<span style='color:#000'><b>cli</b><br/>cogniverse CLI · deploy · manage</span>"]
     end
@@ -200,10 +200,10 @@ flowchart TB
         sdk["<span style='color:#000'><b>sdk</b><br/>Backend Interfaces · Document Model</span>"]
     end
 
-    dashboard --> runtime
+    dashboard --> agents
     dashboard --> evaluation
     runtime --> core
-    messaging --> foundation
+    messaging --> core
 
     agents --> core
     agents --> synthetic
@@ -254,9 +254,10 @@ flowchart TB
 | **Implementation** | **cogniverse_vespa** | Backend integration and tenant management | • `config/` — Configuration store and profile mapping<br>• `registry/` — Backend registry for Vespa<br>• Core modules: `vespa_schema_manager.py`, `search_backend.py`, `ingestion_client.py` | sdk, core |
 | **Core** | **cogniverse_synthetic** | Synthetic data generation for optimizer training | • `service.py` — Main SyntheticDataService<br>• `generators/` — Optimizer-specific generators (GEPA, MIPRO, etc.)<br>• `profile_selector.py` — LLM-based profile selection<br>• `backend_querier.py` — Backend content sampling | sdk |
 | **Implementation** | **cogniverse_finetuning** | LLM fine-tuning infrastructure | • `training/` — SFT, DPO training loops<br>• `dataset/` — Trace-to-trajectory conversion<br>• `registry/` — Adapter storage and versioning<br>• `orchestrator.py` — End-to-end finetuning orchestrator | sdk, core, foundation, agents, synthetic |
-| **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Administrative endpoints including `POST /messaging/invite`<br>• `search/` — Search service layer<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |
-| **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, `/wiki` (save/search/topic/index), plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | foundation, sdk |
-| **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `tabs/` — Dashboard tab modules | sdk, core, evaluation, runtime |
+| **Application** | **cogniverse_runtime** | Production runtime, APIs, and operational CLIs | • `routers/` — FastAPI route handlers (search, ingestion, admin, wiki, including `POST /admin/messaging/invite`)<br>• `ingestion/` — Video processing pipeline and processors<br>• `admin/` — Organization/tenant models and `TenantManager`<br>• `optimization_cli.py` — Argo-triggered optimization (`--mode triggered`)<br>• `quality_monitor_cli.py` — Continuous evaluation sidecar | sdk, core (optional: vespa, agents) |
+| **Application** | **cogniverse_messaging** | Telegram messaging gateway | • `gateway.py` — `MessagingGateway` (polling/webhook)<br>• `auth.py` — `InviteTokenManager`, `UserTenantMapper`<br>• `command_router.py` — Parses `/search`, `/summarize`, `/report`, `/research`, `/code`, `/wiki` (save/search/topic/index), plain text, media<br>• `conversation.py` — Conversation history via Mem0<br>• `runtime_client.py` — Async client for runtime API dispatch | core, sdk (HTTP-only to runtime; no declared workspace dependency) |
+| **Application** | **cogniverse_dashboard** | User interfaces and analytics | • `app.py` — Main Streamlit dashboard application<br>• `tabs/` — Dashboard tab modules | sdk, core, agents, evaluation, vespa, telemetry-phoenix |
+| **Application** | **cogniverse_cli** | Cluster deploy and operational CLI | • `main.py` — `cogniverse` entry point (`up`, `down`, `status`, `code`, `index`, `graph`, `admin`, `sandbox`, `secrets`, `logs`)<br>• `deploy.py`, `cluster.py`, `argo.py`, `images.py` — Helm/k3d/Argo deployment helpers<br>• `health.py`, `streaming.py` — Runtime health polling and log streaming | None (HTTP-only client to `cogniverse_runtime`, no workspace dependency) |
 
 ---
 
@@ -514,11 +515,13 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    User["<span style='color:#000'><b>USER REQUEST</b></span>"] --> Runtime["<span style='color:#000'><b>cogniverse_runtime</b><br/>FastAPI + Tenant Middleware</span>"]
+    User["<span style='color:#000'><b>USER REQUEST</b></span>"] --> Runtime["<span style='color:#000'><b>cogniverse_runtime</b><br/>FastAPI + CORS · tenant_id from request body</span>"]
 
-    Runtime --> Orchestrator["<span style='color:#000'><b>OrchestratorAgent</b><br/>cogniverse_agents (port 8013)</span>"]
+    Runtime --> Gateway["<span style='color:#000'><b>GatewayAgent</b><br/>in-process triage (port 8000)<br/>GLiNER entities + DSPy simple/complex</span>"]
 
-    Orchestrator --> Agents["<span style='color:#000'><b>Specialized Agents (A2A)</b><br/>• QueryEnhancementAgent (8012)<br/>• EntityExtractionAgent (8010)<br/>• ProfileSelectionAgent (8011)<br/>• SearchAgent (8002)<br/>• SummarizerAgent (8003)<br/>• DetailedReportAgent (8004)</span>"]
+    Gateway --> Orchestrator["<span style='color:#000'><b>OrchestratorAgent</b><br/>cogniverse_agents (port 8013)</span>"]
+
+    Orchestrator --> Agents["<span style='color:#000'><b>Specialized Agents (A2A)</b><br/>• SearchAgent (8002)<br/>• SummarizerAgent (8004)<br/>• DetailedReportAgent (8005)<br/>• ImageSearchAgent (8006)<br/>• DocumentAgent (8008)<br/>QueryEnhancement · EntityExtraction · ProfileSelection run in-process on 8000</span>"]
 
     Agents --> Backend["<span style='color:#000'><b>Search Backend</b><br/>• Tenant Schema Manager<br/>• Search Clients<br/>• Embedding Processing</span>"]
 
@@ -530,6 +533,7 @@ flowchart TB
 
     style User fill:#90caf9,stroke:#1565c0,color:#000
     style Runtime fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style Gateway fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Agents fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Backend fill:#90caf9,stroke:#1565c0,color:#000
@@ -538,8 +542,8 @@ flowchart TB
     style Evaluation fill:#a5d6a7,stroke:#388e3c,color:#000
 
     linkStyle 0 stroke:#1565c0,stroke-width:2px
-    linkStyle 1,2,3,4 stroke:#7b1fa2,stroke-width:2px
-    linkStyle 5 stroke:#388e3c,stroke-width:2px
+    linkStyle 1,2,3,4,5 stroke:#7b1fa2,stroke-width:2px
+    linkStyle 6,7 stroke:#388e3c,stroke-width:2px
 ```
 
 ### Agent Communication (A2A Protocol)
