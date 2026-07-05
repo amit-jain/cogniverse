@@ -35,9 +35,42 @@ Example WRONG behavior:
 
 ---
 
+## COMPLETENESS MANDATE (not just drift)
+
+Drift verification confirms that what IS written is correct. It does NOT catch
+what is MISSING. A doc that lists 3 of 23 agents — all spelled correctly — passes
+every drift check while being badly incomplete. You MUST also verify COVERAGE.
+
+For every doc that ENUMERATES a category, cross-check the enumeration against the
+code and FILL every missing entry (do not merely flag it):
+
+- **Agents** — if the doc lists agents, it must list EVERY agent under
+  `libs/agents/cogniverse_agents/` / `configs/config.json` `agents.*` (there are
+  ~23), grouped and described from their real code. Grep the roster; add the
+  missing ones.
+- **API routes** — every mounted router/route in `libs/runtime/.../main.py` and
+  `routers/`.
+- **Packages / subpackages** — every `libs/*` package and every subpackage.
+- **Models, ranking strategies, config keys, CLI commands, dashboard tabs** — the
+  FULL real set, not a sample.
+
+If the doc's scope implies a complete list and the code has more, the doc is
+INCOMPLETE — add the missing items (accurately, from the code) before declaring
+verified. "The listed ones are correct" is NOT sufficient.
+
+## DIAGRAMS: MERMAID ONLY (hard rule)
+
+This repo uses **Mermaid diagrams exclusively**. NO ASCII / box-drawing diagrams
+(`┌ ┐ └ ┘ │ ─ ├ ┤` or `+---+` art) may remain in any doc. When you find one,
+CONVERT it to an equivalent Mermaid diagram (`flowchart` / `sequenceDiagram` /
+`graph`) — do not merely preserve it, and never replace a Mermaid diagram with
+ASCII. A "preserve structure" instruction NEVER overrides this: structure is
+preserved by keeping the same nodes and edges in Mermaid form. (Directory trees in
+```text``` fences are not diagrams and stay as text.)
+
 ## MANDATORY VERIFICATION CHECKLIST
 
-**YOU MUST EXECUTE AND REPORT ON ALL 18 ITEMS FOR EVERY FILE.**
+**YOU MUST EXECUTE AND REPORT ON ALL 18 ITEMS FOR EVERY FILE, PLUS THE COMPLETENESS MANDATE ABOVE.**
 
 Each item must have one of these statuses:
 - `✓ PASSED (N items)` - Checked, all items correct
