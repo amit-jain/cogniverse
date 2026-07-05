@@ -30,7 +30,8 @@ members = ["libs/*"]
 [project]
 name = "cogniverse"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-agent RAG system for video content analysis and search"
+license = { file = "LICENSE" }
 requires-python = ">=3.12,<3.14"
 dependencies = [
     # --- Pinned versions (supply chain safety) ---
