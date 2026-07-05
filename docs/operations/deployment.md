@@ -165,9 +165,6 @@ run the agent as its own server.
 Create a `.env` file in the workspace root:
 
 ```bash
-# Environment (read by evaluation storage)
-ENVIRONMENT=development
-
 # Backend (read by BootstrapConfig — REQUIRED)
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080

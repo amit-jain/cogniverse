@@ -331,10 +331,11 @@ sequenceDiagram
 
     Note over Agent: tenant_id passed per-request<br/>Agents are tenant-agnostic at startup
 
-    Agent->>SchemaManager: get_tenant_schema_name(tenant_id, "video")
-    SchemaManager-->>Agent: "video_frames_acme"
+    Agent->>SchemaManager: get_tenant_schema_name(tenant_id, "video_frames")
+    Note over SchemaManager: tenant_id is canonicalized to "org:tenant"<br/>first (bare "acme" -> "acme:acme")
+    SchemaManager-->>Agent: "video_frames_acme_acme"
 
-    Agent->>Backend: Search in video_frames_acme
+    Agent->>Backend: Search in video_frames_acme_acme
     Backend-->>Agent: Results (tenant-scoped)
     Agent-->>FastAPI: Response
     FastAPI-->>User: Results

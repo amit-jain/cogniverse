@@ -551,6 +551,8 @@ kubectl exec -it $(kubectl get pod -l app.kubernetes.io/component=runtime -o jso
 
 Use Istio for **zero-code multi-cluster routing** based on tenant headers.
 
+This is a pattern operators configure themselves on top of the base deployment — it is not part of the `charts/cogniverse/` Helm chart, which has no Istio `VirtualService`/`Gateway`/`DestinationRule`/`EnvoyFilter` resources. The `X-Tenant-ID` decision happens at the external load balancer (NGINX/HAProxy/Cloud LB), before traffic reaches Istio; the Istio `VirtualService` below then routes within a cluster by URI path, not by `X-Tenant-ID`. Cogniverse's own in-cluster Envoy proxy (`charts/cogniverse/files/semantic-router/envoy.yaml`) is unrelated to this pattern — it forwards every request to a single LLM upstream and uses `ext_proc` keyed on the `x-authz-user-id` header for per-user request classification, not tenant-based routing.
+
 ### Architecture
 
 ```mermaid
