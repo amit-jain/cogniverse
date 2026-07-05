@@ -158,8 +158,8 @@ flowchart TB
     style audit_explanation_agent fill:#ffb74d,stroke:#ef6c00,color:#000
 
     style FedGroup fill:#b0bec5,stroke:#546e7a,color:#000
-    style cross_tenant_comparison_agent fill:#90a4ae,stroke:#546e7a,color:#000
-    style federated_query_agent fill:#90a4ae,stroke:#546e7a,color:#000
+    style cross_tenant_comparison_agent fill:#b0bec5,stroke:#546e7a,color:#000
+    style federated_query_agent fill:#b0bec5,stroke:#546e7a,color:#000
 ```
 
 `*` gateway/entity_extraction/query_enhancement/profile_selection all resolve to `:8000` in `configs/config.json` — they run as in-process helpers dispatched by `AgentDispatcher` rather than standalone HTTP services (their code-level `__init__` defaults differ: 8014/8010/8012/8011 respectively, but the live config value is what `AgentDispatcher` actually uses).
