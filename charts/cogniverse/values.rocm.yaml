@@ -60,12 +60,20 @@ inference:
     gpuCount: 1
     imagesByDevice: *vllmRocmImage
     # Helm REPLACES list values, so this overlay must repeat every base
-    # extraArg. --max-num-seqs 1 and --limit-mm-per-prompt were silently
+    # extraArg. --max-num-seqs and --limit-mm-per-prompt were silently
     # dropped when only the ROCm-specific args were listed here, leaving the
     # student on max-num-seqs=256 + an unbounded multimodal host cache
     # (gemma-4 is a vision-language model) — the source of the 9->15Gi host
-    # RSS ratchet. The runtime serializes generation and only does text
-    # chat, so both caps are free.
+    # RSS ratchet.
+    #
+    # --max-num-seqs 8: the KV pool reserved by gpu-memory-utilization 0.30
+    # (~12.6 GiB / 353k tokens) profiles at 21.5x concurrency for full
+    # 16k-token requests and far more for typical shorter agent prompts, so
+    # it sits idle at max-num-seqs=1. 8 draws on that already-reserved pool
+    # (zero extra GPU memory) to batch the concurrent multi-tenant agent
+    # load; host-side per-seq state stays bounded (MALLOC_ARENA_MAX caps the
+    # arena ratchet). Do NOT restore the 256 default.
+    # --limit-mm-per-prompt: text-only chat hot path never uses multimodal.
     extraArgs:
       - "--max-model-len"
       - "16384"
@@ -73,7 +81,7 @@ inference:
       - "--gpu-memory-utilization"
       - "0.30"
       - "--max-num-seqs"
-      - "1"
+      - "8"
       - "--limit-mm-per-prompt"
       - '{"video":0,"image":0}'
     resources:
