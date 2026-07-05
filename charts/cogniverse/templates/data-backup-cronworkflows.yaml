@@ -186,15 +186,31 @@ spec:
         - |
           set -eu
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          SNAP=/stage/snap
+          rm -rf "$SNAP" && mkdir -p "$SNAP"
           echo "Snapshotting /source → /stage/{{ $svc }}-$STAMP.tar"
-          tar -cf /stage/{{ $svc }}-$STAMP.tar -C /source .
+          cd /source
+          # Tarring a live SQLite database straight off the volume fails
+          # ("file changed as we read it") or worse, archives a torn copy.
+          # Stage a consistent snapshot instead: .db files go through
+          # SQLite's online-backup API, everything else is copied as-is
+          # (-wal/-shm are folded into the backup, so they are skipped).
+          find . -type d -exec mkdir -p "$SNAP/{}" \;
+          find . -type f ! -name '*.db' ! -name '*.db-wal' ! -name '*.db-shm' \
+            -exec cp -a {} "$SNAP/{}" \;
+          find . -type f -name '*.db' | while read -r db; do
+            python3 -c 'import sqlite3, sys; src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True); dst = sqlite3.connect(sys.argv[2]); src.backup(dst); dst.close(); src.close()' "$db" "$SNAP/$db"
+          done
+          tar -cf /stage/{{ $svc }}-$STAMP.tar -C "$SNAP" .
+          rm -rf "$SNAP"
           ls -la /stage
         volumeMounts:
         - name: stage
           mountPath: /stage
         - name: source
           mountPath: /source
-          readOnly: true
+          # Not readOnly: SQLite readers of a WAL-mode database need write
+          # access to the -shm file even though the backup only reads.
       {{- else }}
       {{- fail (printf "service %s has unknown mode=%s; expected kubectl-exec or volume-mount" $svc $mode) }}
       {{- end }}
