@@ -781,7 +781,7 @@ flowchart TD
 
 #### Implementation Details
 
-**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 562)
+**Location:** `libs/vespa/cogniverse_vespa/search_backend.py` - `search()` method (starting line 592)
 
 **Profile Resolution Logic** (inline in search() method):
 ```python
@@ -953,7 +953,7 @@ flowchart TB
 
 ### Connection Pool Implementation
 
-**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 89-256)
+**Location**: `libs/vespa/cogniverse_vespa/search_backend.py` (lines 89-340)
 
 #### ConnectionPoolConfig Class
 
@@ -976,6 +976,12 @@ class VespaConnection:
     """
     Managed Vespa connection with health checking.
 
+    Queries run over a persistent VespaSync HTTP client (self._sync) so
+    TCP connections are reused across searches — plain Vespa.query()
+    builds and tears down a fresh client per call. health_check() stays
+    on the per-call self.vespa.query() path since it may run from the
+    pool's background thread while the connection is checked out.
+
     Attributes:
         url: Vespa endpoint URL
         connection_id: Unique connection identifier
@@ -989,16 +995,22 @@ class VespaConnection:
         self.url = url
         self.connection_id = connection_id
         self.vespa = make_vespa_app(url=url)  # Created internally via make_vespa_app, not passed in
+        self._sync = self.vespa.syncio(connections=4)
+        self._sync._open_http_client()
         self.created_at = time.time()
         self.last_used = time.time()
         self.is_healthy = True
         self._lock = threading.Lock()
 
     def query(self, *args, **kwargs):
-        """Execute query and update last used time."""
+        """Execute query over the persistent client and update last used time."""
         with self._lock:
             self.last_used = time.time()
-        return self.vespa.query(*args, **kwargs)
+        return self._sync.query(*args, **kwargs)
+
+    def close(self) -> None:
+        """Release the persistent HTTP client."""
+        self._sync._close_http_client()
 
     def health_check(self) -> bool:
         """
@@ -1043,6 +1055,9 @@ class ConnectionPool:
         self._connections: List[VespaConnection] = []
         self._available: List[VespaConnection] = []
         self._lock = threading.Lock()
+        # Signalled whenever a connection returns to the pool, so waiters
+        # wake immediately instead of polling on a sleep loop.
+        self._returned = threading.Condition(self._lock)
         self._stop_health_check = threading.Event()
 
         # Initialize minimum connections
@@ -1070,47 +1085,52 @@ class ConnectionPool:
             TimeoutError: If no connection available within timeout
         """
         conn = None
-        start_time = time.time()
+        deadline = time.monotonic() + self.config.connection_timeout
 
         try:
-            # Try to get available connection or create new one
-            with self._lock:
-                if self._available:
-                    conn = self._available.pop()
-                elif len(self._connections) < self.config.max_connections:
-                    conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
-                    self._connections.append(conn)
-
-            # Wait for connection if none available
-            while conn is None and (time.time() - start_time) < self.config.connection_timeout:
-                time.sleep(0.1)
-                with self._lock:
+            with self._returned:
+                while conn is None:
                     if self._available:
                         conn = self._available.pop()
-
-            if conn is None:
-                raise TimeoutError("No connections available")
+                    elif len(self._connections) < self.config.max_connections:
+                        conn = VespaConnection(self.url, f"conn-{uuid.uuid4().hex[:8]}")
+                        self._connections.append(conn)
+                    else:
+                        # Block until a connection returns, instead of
+                        # sleep-polling
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0 or not self._returned.wait(remaining):
+                            if not self._available:
+                                raise TimeoutError("No connections available")
 
             yield conn
 
         finally:
             # Return connection to pool
             if conn is not None:
-                with self._lock:
+                with self._returned:
                     self._available.append(conn)
+                    self._returned.notify()
 
     def close(self):
-        """Close all connections and stop health checks."""
+        """Close all connections (releasing their persistent HTTP
+        clients) and stop health checks."""
         self._stop_health_check.set()
         if self._health_check_thread.is_alive():
             self._health_check_thread.join(timeout=5)
 
         with self._lock:
+            for conn in self._connections:
+                conn.close()
             self._connections.clear()
             self._available.clear()
 ```
 
 ### Usage in VespaSearchBackend
+
+Simplified illustration (the real profile/strategy resolution is inline in
+`search()` itself — see [Profile Resolution Logic](#implementation-details)
+above, not delegated to separate helper methods):
 
 ```python
 class VespaSearchBackend:
@@ -1133,14 +1153,14 @@ class VespaSearchBackend:
         """
         # tenant_id is REQUIRED in query_dict; raises ValueError if missing
         tenant_id = query_dict.get("tenant_id")
-        # Resolve profile and strategy from query_dict
-        profile = self._resolve_profile_for_query(query_dict)
-        strategy = self._resolve_strategy_for_profile(profile, query_dict)
+        # Profile and strategy resolution happens inline (see above)
+        profile_name = ...
+        strategy = ...
 
         # Get connection from pool (context manager pattern)
         with self.pool.get_connection() as conn:
             results = conn.query(
-                yql=self._build_yql(query_dict, strategy),
+                yql=self._build_query(query_dict, strategy),
                 ranking=strategy,
                 hits=query_dict.get("top_k", 10)
             )
@@ -2307,7 +2327,7 @@ store = VespaConfigStore(
 # Store configuration (versioned)
 entry = store.set_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings",
     config_value={"model": "gemini-pro", "temperature": 0.7}
@@ -2317,7 +2337,7 @@ entry = store.set_config(
 # Retrieve latest version
 entry = store.get_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings"
 )
@@ -2328,7 +2348,7 @@ entries = store.list_configs(tenant_id="acme")
 # Delete config
 store.delete_config(
     tenant_id="acme",
-    scope=ConfigScope.TENANT,
+    scope=ConfigScope.ROUTING,
     service="routing",
     config_key="model_settings"
 )
@@ -2391,8 +2411,9 @@ binarized = np.packbits(np.where(embeddings > 0, 1, 0), axis=1).astype(np.int8)
 Implements Mem0's `VectorStoreBase` interface for agent memory persistence,
 routing every operation through the SDK's `Backend` interface
 (`cogniverse_sdk.interfaces.backend.Backend`) instead of talking to Vespa
-directly. Registered in `Mem0MemoryManager._register_backend_provider()` as
-the `"backend"` provider, so any Mem0 config with `vector_store.provider:
+directly. Registered by the module-level `_register_backend_provider()` (in
+`cogniverse_core.memory.manager`, invoked automatically on import) as the
+`"backend"` provider, so any Mem0 config with `vector_store.provider:
 "backend"` lands here.
 
 ### Why through the Backend interface
@@ -2416,7 +2437,7 @@ on every call — all for free.
 from cogniverse_core.memory.backend_vector_store import BackendVectorStore
 
 # In production this is constructed by Mem0's VectorStoreFactory after
-# Mem0MemoryManager._register_backend_provider() registers "backend".
+# the module-level _register_backend_provider() registers "backend".
 # Direct construction is only used in tests.
 store = BackendVectorStore(
     collection_name="agent_memories_acme",
@@ -2432,7 +2453,7 @@ store.insert(
 )
 
 # Search (routes to backend.query_metadata_documents)
-hits = store.search(query="...", vectors=[[0.1, ...]], limit=5)
+hits = store.search(query="...", vectors=[0.1, 0.2, ...], limit=5)
 
 # Delete (routes to backend.delete_document)
 store.delete(vector_id="mem_001")

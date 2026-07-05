@@ -128,7 +128,7 @@ The schema stores the following fields:
 | `update_count` | int | Number of times a topic page has been updated |
 | `created_at` | string | ISO-8601 UTC timestamp of first creation |
 | `updated_at` | string | ISO-8601 UTC timestamp of last update |
-| `embedding` | tensor | 768-dim float tensor (nomic-embed-text via Ollama) |
+| `embedding` | tensor | 768-dim float tensor (shared `SemanticEmbedder` — `lightonai/DenseOn` when remote, `sentence-transformers/all-mpnet-base-v2` local fallback) |
 
 **WikiManager constructor** (initialized by the runtime on startup):
 
@@ -159,6 +159,7 @@ CLI equivalent:
 ```bash
 python -m cogniverse_runtime.quality_monitor_cli \
   --tenant-id default \
+  --llm-model qwen3:4b \
   --golden-interval 7200 \
   --live-interval 14400 \
   --live-sample-count 20 \
@@ -751,7 +752,7 @@ print(f"Configs by scope: {stats['configs_per_scope']}")
 JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_config_*.py -v
 
 # Test specific backend
-JAX_PLATFORM_NAME=cpu uv run pytest tests/common/unit/test_vespa_config_store.py -v
+JAX_PLATFORM_NAME=cpu uv run pytest tests/backends/unit/test_config_store_yql_escape.py -v
 ```
 
 ### Integration Tests

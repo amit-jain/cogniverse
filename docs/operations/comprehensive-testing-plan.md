@@ -300,8 +300,9 @@ manager.initialize(
     backend_host="localhost",
     backend_port=8080,
     llm_model="openai/google/gemma-4-e4b-it",
-    embedding_model="ollama/nomic-embed-text",
+    embedding_model="lightonai/DenseOn",
     llm_base_url="http://localhost:11434",
+    embedder_base_url="http://localhost:8002",  # DenseOn sidecar endpoint
     config_manager=config_manager,
     schema_loader=schema_loader,
 )
@@ -406,9 +407,9 @@ if memory_id:
 ```python
 from cogniverse_foundation.config.unified_config import SystemConfig
 
-# Get system config for tenant
+# SystemConfig is GLOBAL — one per deployment, not per-tenant.
+# It has no tenant_id field.
 system_config = SystemConfig(
-    tenant_id="your_org:production",
     llm_model="gpt-4",
     backend_url="http://localhost",
     backend_port=8080
@@ -420,25 +421,29 @@ print(f"Backend URL: {system_config.backend_url}")
 print(f"Backend Port: {system_config.backend_port}")
 ```
 
-**Test config override:**
+**Test tenant-specific override (via BackendConfig):**
 ```python
-# Create tenant-specific override
-tenant_config = SystemConfig(
-    tenant_id="test_tenant",
-    llm_model="gpt-3.5-turbo",
-    backend_url="http://localhost",
-    backend_port=8080
-)
+from cogniverse_foundation.config.unified_config import BackendConfig
+from cogniverse_foundation.config.utils import create_default_config_manager
 
-# Config would be saved via ConfigManager
-print(f"Tenant config LLM: {tenant_config.llm_model}")
+# Tenant-specific overrides use BackendConfig (not SystemConfig, which
+# is global) and are persisted via ConfigManager
+config_manager = create_default_config_manager()
+tenant_backend_config = BackendConfig(
+    tenant_id="test_tenant",
+    url="http://localhost",
+    port=8080,
+)
+config_manager.set_backend_config(tenant_backend_config)
+
+print(f"Tenant backend URL: {tenant_backend_config.url}")
 ```
 
 **Learning Points:**
 
-- SystemConfig defined in foundation layer
+- SystemConfig defined in foundation layer; it is GLOBAL (one per deployment), not per-tenant
 
-- Tenant-specific configurations supported
+- Tenant-specific configurations (backend URL, profiles) use BackendConfig via ConfigManager
 
 - Default configs in libs/foundation/
 
@@ -449,15 +454,19 @@ print(f"Tenant config LLM: {tenant_config.llm_model}")
 from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_telemetry_phoenix.provider import PhoenixProvider
 
-# Initialize Phoenix provider (from telemetry-phoenix package)
+# TelemetryConfig is generic (provider-agnostic)
 config = TelemetryConfig()
-telemetry = PhoenixProvider(
-    config=config,
-    tenant_id="your_org:production"
-)
+
+# PhoenixProvider takes no constructor args — it's configured via initialize()
+telemetry = PhoenixProvider()
+telemetry.initialize({
+    "tenant_id": "your_org:production",
+    "http_endpoint": "http://localhost:6006",
+    "grpc_endpoint": "localhost:4317",
+})
 
 # Check Phoenix connection
-print(f"Phoenix endpoint: {config.provider_config.get('http_endpoint', 'default')}")
+print(f"Phoenix endpoint: http://localhost:6006")
 print(f"Telemetry enabled: {config.enabled}")
 ```
 
@@ -545,15 +554,15 @@ from cogniverse_foundation.config.utils import get_config
 config = get_config(tenant_id="your_org:production", config_manager=config_manager)
 
 # List available profiles from config
-profiles = config.backend_profile_configs
+profiles = config.get("backend")["profiles"]
 print(f"Available profiles: {list(profiles.keys())}")
 
 # Get profile config
 if "video_colpali_smol500_mv_frame" in profiles:
     profile_config = profiles["video_colpali_smol500_mv_frame"]
     print(f"\nProfile config:")
-    print(f"  Encoder type: {profile_config.get('encoder_type')}")
-    print(f"  Embedding dim: {profile_config.get('embedding_dimension')}")
+    print(f"  Model loader: {profile_config.get('model_loader')}")
+    print(f"  Embedding dim: {profile_config.get('schema_config', {}).get('embedding_dim')}")
 ```
 
 **Learning Points:**
@@ -686,9 +695,9 @@ print(f"Synthetic data generators available")
 ```python
 from cogniverse_synthetic.schemas import SyntheticDataRequest
 
-# Create request
+# Create request ("routing" is a registered optimizer name — see 6.4)
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="routing",
     count=10,
     vespa_sample_size=50,
     strategies=["diverse"],
@@ -716,13 +725,13 @@ print(f"Reasoning: {response.profile_selection_reasoning}")
 
 **Inspect generated data:**
 ```python
-# Check first example
+# Check first example (RoutingExperienceSchema fields)
 if response.data:
     example = response.data[0]
     print(f"\nSample example:")
     print(f"  Query: {example.get('query')}")
-    print(f"  Modality: {example.get('modality')}")
-    print(f"  Agent: {example.get('recommended_agent')}")
+    print(f"  Chosen agent: {example.get('chosen_agent')}")
+    print(f"  Routing confidence: {example.get('routing_confidence')}")
 ```
 
 **Test different optimizers:**
@@ -731,7 +740,8 @@ if response.data:
 request_profile = SyntheticDataRequest(
     optimizer="profile",
     count=5,
-    vespa_sample_size=20
+    vespa_sample_size=20,
+    tenant_id="your_org:production"
 )
 
 response_profile = await service.generate(request_profile)
@@ -767,7 +777,7 @@ for name in OPTIMIZER_REGISTRY.keys():
 
 - Registry maps optimizer → generator + schema
 
-- Supports: profile, routing, workflow, unified
+- Supports: profile, routing, workflow, unified, cross_modal
 
 - Extensible for new optimizers
 
@@ -811,24 +821,15 @@ print(f"  Videos found: {len(result)}")
 print(f"  Profile used: video_colpali_smol500_mv_frame")
 ```
 
-**Test orchestrator agents:**
+**Test the gateway router:**
 ```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# OrchestratorAgent requires OrchestratorDeps (typed dependencies)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED parameter
+# GatewayAgent classifies and routes with GLiNER — deps has no required fields
+router = GatewayAgent(deps=GatewayDeps())
 
 # process is async method
-decision = await router.process(OrchestratorInput(query="Find videos about Python", tenant_id="your_org:production"))
+decision = await router.process(GatewayInput(query="Find videos about Python", tenant_id="your_org:production"))
 
 print(f"Routing decision: {decision}")
 ```
@@ -841,31 +842,22 @@ print(f"Routing decision: {decision}")
 
 - Tenant-aware by default
 
-### 7.2 Orchestrator Agent
+### 7.2 Gateway Agent (Fast-Path Routing)
 
-**Test OrchestratorAgent:**
+**Test GatewayAgent:**
 ```python
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# Initialize orchestrator agent with typed dependencies (OrchestratorDeps is REQUIRED)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps parameter is REQUIRED
+# GatewayAgent classifies and routes with GLiNER — no LLM call, no registry required
+router = GatewayAgent(deps=GatewayDeps())
 
 # Test routing decision (async method)
 routing_result = await router.process(
-    OrchestratorInput(query="Show me videos about Python programming", tenant_id="your_org:production")
+    GatewayInput(query="Show me videos about Python programming", tenant_id="your_org:production")
 )
 
 print(f"Routing decision:")
-print(f"  Recommended agent: {routing_result.recommended_agent}")
+print(f"  Routed to: {routing_result.routed_to}")
 print(f"  Confidence: {routing_result.confidence}")
 print(f"  Reasoning: {routing_result.reasoning}")
 ```
@@ -873,26 +865,26 @@ print(f"  Reasoning: {routing_result.reasoning}")
 **Test routing with different query types:**
 ```python
 # Video search query
-video_routing = await router.process(OrchestratorInput(query="Find cooking videos", tenant_id="your_org:production"))
+video_routing = await router.process(GatewayInput(query="Find cooking videos", tenant_id="your_org:production"))
 
 # Report query
-report_routing = await router.process(OrchestratorInput(query="Create a detailed analysis of climate change", tenant_id="your_org:production"))
+report_routing = await router.process(GatewayInput(query="Create a detailed analysis of climate change", tenant_id="your_org:production"))
 
 # Comparison queries
-compare_routing = await router.process(OrchestratorInput(query="Compare Python and Java for web development", tenant_id="your_org:production"))
+compare_routing = await router.process(GatewayInput(query="Compare Python and Java for web development", tenant_id="your_org:production"))
 
-print(f"Video query → {video_routing.recommended_agent}")
-print(f"Report query → {report_routing.recommended_agent}")
-print(f"Compare query → {compare_routing.recommended_agent}")
+print(f"Video query → {video_routing.routed_to}")
+print(f"Report query → {report_routing.routed_to}")
+print(f"Compare query → {compare_routing.routed_to}")
 ```
 
 **Learning Points:**
 
-- OrchestratorAgent decides which agent to use
+- GatewayAgent decides which agent handles a query, using GLiNER entity detection (no LLM call)
 
-- Uses tiered routing: GatewayAgent (GLiNER) → OrchestratorAgent (DSPy/LLM)
+- Uses tiered routing: GatewayAgent (GLiNER, fast path) → OrchestratorAgent (DSPy planning, for complex multi-agent workflows)
 
-- Returns OrchestratorOutput with recommended_agent + confidence + reasoning
+- Returns GatewayOutput with routed_to + confidence + reasoning
 
 ### 7.3 Gateway Threshold Optimization (On-Demand)
 
@@ -909,8 +901,8 @@ result = response.json()
 print(f"Workflow: {result['workflow_name']}")
 print(f"Status URL: {result['status_url']}")
 
-# Poll for completion
-status = requests.get(result["status_url"]).json()
+# status_url is a relative path — resolve against the runtime base URL
+status = requests.get(f"http://localhost:8000{result['status_url']}").json()
 print(f"Phase: {status['phase']}")
 ```
 
@@ -922,12 +914,19 @@ from cogniverse_runtime.optimization_cli import (
 )
 import pandas as pd
 
+# Phoenix stores gateway span attributes as a dict in the
+# "attributes.gateway" column (complexity + confidence per span)
 spans_df = pd.DataFrame({
-    "confidence": [0.9, 0.3, 0.8, 0.2, 0.7],
-    "routing_correct": [True, False, True, False, True],
+    "attributes.gateway": [
+        {"complexity": "simple", "confidence": 0.9},
+        {"complexity": "complex", "confidence": 0.3},
+        {"complexity": "simple", "confidence": 0.8},
+        {"complexity": "complex", "confidence": 0.2},
+        {"complexity": "simple", "confidence": 0.7},
+    ],
 })
-thresholds = _compute_gateway_thresholds(spans_df)
-print(f"Computed threshold: {thresholds['fast_path_confidence_threshold']:.3f}")
+result = _compute_gateway_thresholds(spans_df)
+print(f"Computed threshold: {result['thresholds']['fast_path_confidence_threshold']:.3f}")
 print(f"Default threshold: {GATEWAY_DEFAULT_THRESHOLD}")
 ```
 
@@ -1020,37 +1019,28 @@ curl -X POST http://localhost:8000/search/ \
 
 **Test routing via agent:**
 ```python
-# Routing is handled by OrchestratorAgent via POST /agents/orchestrator_agent/process
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
-from cogniverse_foundation.telemetry.config import TelemetryConfig
+# Fast-path routing is handled by GatewayAgent via POST /agents/gateway_agent/process
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 
-# Initialize orchestrator agent with typed dependencies
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
+# GatewayAgent classifies and routes with GLiNER — deps has no required fields
+router = GatewayAgent(deps=GatewayDeps())
 
 # Route query (async method)
-decision = await router.process(OrchestratorInput(query="Show me cooking videos", tenant_id="your_org:production"))
+decision = await router.process(GatewayInput(query="Show me cooking videos", tenant_id="your_org:production"))
 
 print(f"Routing decision:")
-print(f"  Recommended agent: {decision.recommended_agent}")
+print(f"  Routed to: {decision.routed_to}")
 print(f"  Confidence: {decision.confidence}")
 print(f"  Reasoning: {decision.reasoning}")
 ```
 
 **Learning Points:**
 
-- Routing is handled by OrchestratorAgent via the A2A endpoint
+- Fast-path routing is handled by GatewayAgent via the A2A endpoint
 
-- Returns OrchestratorOutput with recommended agent, confidence, and reasoning
+- Returns GatewayOutput with routed_to, confidence, and reasoning
 
-- Includes enhanced query and extracted entities/relationships
+- Complex queries are routed to OrchestratorAgent for multi-step planning
 
 ### 8.4 Synthetic Data Endpoints
 
@@ -1071,9 +1061,9 @@ service = SyntheticDataService(
     generator_config=generator_config
 )
 
-# Create request
+# Create request ("routing" is a registered optimizer name)
 request = SyntheticDataRequest(
-    optimizer="modality",
+    optimizer="routing",
     count=10,
     vespa_sample_size=50,
     strategies=["diverse"],
@@ -1112,7 +1102,7 @@ curl -X POST http://localhost:9000/admin/organizations \
   -d '{
     "org_id": "acme",
     "org_name": "Acme Corporation",
-    "contact_email": "admin@acme.com"
+    "created_by": "admin"
   }'
 ```
 
@@ -1122,8 +1112,7 @@ curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "acme:production",
-    "tenant_name": "Acme Production",
-    "org_id": "acme"
+    "created_by": "admin"
   }'
 ```
 
@@ -1155,7 +1144,7 @@ open http://localhost:8501
 
 **Learning Points:**
 
-- Dashboard in application layer (one of 11 packages)
+- Dashboard in application layer (one of 13 packages)
 
 - Integrates with evaluation, telemetry-phoenix, and core packages
 
@@ -1337,7 +1326,7 @@ open http://localhost:8501
 
 ## Layer 10: End-to-End Integration Tests
 
-**All 11 Packages Working Together**
+**All 13 Packages Working Together**
 
 **Purpose**: Validate complete workflows across all layers
 
@@ -1387,29 +1376,20 @@ print(f"Avg latency: {spans_df['latency_ms'].mean():.2f}ms")
 **Test routing to search:**
 ```python
 # Complete routing + search workflow
-from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
+from cogniverse_agents.gateway_agent import GatewayAgent, GatewayDeps, GatewayInput
 from cogniverse_agents.search_agent import SearchAgent, SearchAgentDeps
-from cogniverse_foundation.telemetry.config import TelemetryConfig
 from cogniverse_foundation.config.utils import create_default_config_manager
 from cogniverse_core.schemas.filesystem_loader import FilesystemSchemaLoader
 from pathlib import Path
 
-# 1. Route the query (async method)
-from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-deps = OrchestratorDeps(
-    telemetry_config=TelemetryConfig(),
-    llm_config=LLMEndpointConfig(
-        model="openai/google/gemma-4-e4b-it",
-        api_base="http://localhost:11434/v1",
-    ),
-)
-router = OrchestratorAgent(deps=deps)  # deps is REQUIRED
-decision = await router.process(OrchestratorInput(query="Find videos about machine learning", tenant_id="your_org:production"))
+# 1. Route the query (async method) — GatewayAgent classifies with GLiNER
+router = GatewayAgent(deps=GatewayDeps())
+decision = await router.process(GatewayInput(query="Find videos about machine learning", tenant_id="your_org:production"))
 
-print(f"Routing: {decision.recommended_agent}")
+print(f"Routing: {decision.routed_to}")
 
-# 2. If video_search_agent, execute search
-if decision.recommended_agent == "video_search_agent":
+# 2. If search_agent, execute search
+if decision.routed_to == "search_agent":
     config_manager = create_default_config_manager()
     schema_loader = FilesystemSchemaLoader(Path("configs/schemas"))
     agent = SearchAgent(
@@ -1436,19 +1416,15 @@ if decision.recommended_agent == "video_search_agent":
 # 1. Generate synthetic data (if needed)
 # This is typically done programmatically, see Layer 6 examples above
 
-# 2. Run module optimization
-JAX_PLATFORM_NAME=cpu uv run python scripts/run_module_optimization.py \
-  --module modality \
-  --tenant-id default \
-  --use-synthetic-data \
-  --force-training \
-  --output /tmp/optimization_results.json
+# 2. Run profile optimization
+JAX_PLATFORM_NAME=cpu uv run python -m cogniverse_runtime.optimization_cli \
+  --mode profile --tenant-id default
 
-# 3. Check results
-cat /tmp/optimization_results.json | jq '.results'
+# 3. Check results in Phoenix — the optimization run creates a new
+# experiment with the optimized module's scores vs baseline
 
-# 4. Verify model was saved
-ls -la outputs/models/modality/
+# 4. Verify the compiled artifact was saved to the telemetry provider's
+# dataset store (loaded by agents automatically on next restart)
 ```
 
 **Learning Points:**
@@ -1463,15 +1439,15 @@ ls -la outputs/models/modality/
 
 **Test tenant isolation:**
 ```bash
-# 1. Create organization
-curl -X POST http://localhost:8000/admin/organizations \
+# 1. Create organization (standalone tenant manager on port 9000)
+curl -X POST http://localhost:9000/admin/organizations \
   -H "Content-Type: application/json" \
-  -d '{"org_id": "test_org", "org_name": "Test Org"}'
+  -d '{"org_id": "test_org", "org_name": "Test Org", "created_by": "admin"}'
 
-# 2. Create tenant
-curl -X POST http://localhost:8000/admin/tenants \
+# 2. Create tenant (standalone tenant manager on port 9000)
+curl -X POST http://localhost:9000/admin/tenants \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "test_org:dev", "org_id": "test_org"}'
+  -d '{"tenant_id": "test_org:dev", "org_id": "test_org", "created_by": "admin"}'
 
 # 3. Ingest video for tenant
 JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \

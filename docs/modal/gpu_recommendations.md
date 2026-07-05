@@ -29,19 +29,19 @@ This guide covers GPU requirements for embedding models used in ingestion and se
 ### Production Setup (Recommended)
 - **ColPali (Frame-Based)**: A100-40GB (~$3.00/hour for ingestion, minimal for search)
 - **VideoPrism (Chunk-Based)**: L4 (~$1.00/hour for ingestion)
-- **ColQwen2 (Image/Document)**: L4 or T4 (~$1.00/hour for ingestion)
+- **ColQwen3 (Image/Document)**: L4 or T4 (~$1.00/hour for ingestion)
 - **Total**: ~$50-100 one-time ingestion per 1000 videos + minimal search costs
 
 ### Budget Setup
 - **ColPali**: L4 GPU (~$1.00/hour, tight fit)
 - **VideoPrism**: T4 (~$0.60/hour, base model only)
-- **ColQwen2**: T4 (~$0.60/hour)
+- **ColQwen3**: T4 (~$0.60/hour)
 - **Total**: ~$30-60 per 1000 videos ingestion
 
 ### Performance Setup
 - **ColPali**: A100-80GB (~$3.20/hour, optimal throughput)
 - **VideoPrism**: A100-40GB (~$3.00/hour, large batches)
-- **ColQwen2**: A10G (~$1.10/hour)
+- **ColQwen3**: A10G (~$1.10/hour)
 - **Total**: ~$100-150 per 1000 videos ingestion
 
 ---
@@ -50,17 +50,20 @@ This guide covers GPU requirements for embedding models used in ingestion and se
 
 ### 1. ColPali (Frame-Based Video Embeddings)
 
-**Model:** `vidore/colpali-v1.2` or `vidore/colpali-v1.3-hf`
+**Model:** `TomoroAI/tomoro-colqwen3-embed-4b` (production default, served remotely
+via a vLLM `ColPaliForRetrieval` sidecar). `vidore/colpali-v1.2` /
+`vidore/colpali-v1.3-hf` remain supported for local, in-process loading
+(`ColPaliModelLoader`) when no remote inference URL is configured.
 **Content Types:** VIDEO (frames), IMAGE, DOCUMENT
 
 #### Memory Requirements
 
-**ColPali v1.2 (Full Model)**
-- Model weights: ~3GB (base model)
+**TomoroAI/tomoro-colqwen3-embed-4b (Full Model, 4B params)**
+- Model weights: ~8GB (4B params × 2 bytes, bfloat16)
 - Image preprocessing: ~2GB per batch
-- Patch embeddings: ~4GB (128 patches × 128 dims × batch size)
+- Patch embeddings: ~4GB (1024 patches × 320 dims × batch size)
 - CUDA overhead: ~2GB
-- **Total: ~11GB minimum, 16GB recommended**
+- **Total: ~16GB minimum, 24GB recommended**
 
 **ColSmol 500M (Smaller)**
 - Model weights: ~2GB
@@ -246,27 +249,31 @@ def encode_video_chunks_performance():
 
 ---
 
-### 3. ColQwen2 (Multi-Modal Image/Document Embeddings)
+### 3. ColQwen3 (Multi-Modal Image/Document Embeddings)
 
-**Model:** `vidore/colqwen-omni-v0.1` or `vidore/colpali-v1.3-hf`
+**Model:** `TomoroAI/tomoro-colqwen3-embed-4b` (production default — the same
+model backing the ColPali profile above, served remotely via vLLM; the
+chunk-based ingestion profile keeps the legacy `ColQwen2` schema/model label).
+`vidore/colqwen-omni-v0.1` / `vidore/colpali-v1.3-hf` remain supported for
+local loading.
 **Content Types:** IMAGE, DOCUMENT, TEXT
 
 #### Memory Requirements
 
-**ColQwen2 7B**
-- Model weights: 7B params × 2 bytes (FP16) = 14GB
+**TomoroAI/tomoro-colqwen3-embed-4b (4B params)**
+- Model weights: 4B params × 2 bytes (FP16) = 8GB
 - Image preprocessing: ~4GB
 - KV cache: ~4GB (for context length 4K)
 - CUDA overhead: ~2GB
-- **Total: ~24GB minimum, 32GB recommended**
+- **Total: ~18GB minimum, 24GB recommended**
 
-**ColQwen2 with 4-bit Quantization:**
+**With 4-bit Quantization:**
 
-- Model weights: ~7GB (quantized)
+- Model weights: ~2GB (quantized)
 
 - Preprocessing: ~4GB
 
-- **Total: ~12GB minimum, 16GB recommended**
+- **Total: ~8GB minimum, 12GB recommended**
 
 #### GPU Options
 
@@ -391,14 +398,14 @@ def encode_images_budget(images: list):
 ### IMAGE Content
 
 - Single images or extracted frames
-- Processed with ColQwen2 or ColPali
+- Processed with ColQwen3 or ColPali
 - GPU: L4 or A10G
 - Time: ~100-200ms per image
 
 ### DOCUMENT Content
 
 - PDF, DOCX, text extraction
-- Convert to images for vision models (ColQwen2)
+- Convert to images for vision models (ColQwen3)
 - Or use text embeddings (faster, CPU-based)
 - GPU: L4 for vision-based, CPU for text-based
 
@@ -439,7 +446,7 @@ def encode_images_budget(images: list):
 **Per 10,000 Images:**
 | Model | GPU | Hours | Cost/Hour | Total Cost |
 |-------|-----|-------|-----------|------------|
-| ColQwen2 | L4 | 3 | $1.00 | $3 |
+| ColQwen3 | L4 | 3 | $1.00 | $3 |
 
 ### Search Costs (Ongoing)
 
@@ -670,13 +677,13 @@ nvidia-smi dmon -s u -d 1
 
 1. **ColPali (Frame-Based Video)**: A100-40GB recommended, L4 budget option
 2. **VideoPrism (Chunk-Based Video)**: L4 recommended (114M params base), T4 budget option
-3. **ColQwen2 (Image/Document)**: L4 recommended, T4 budget option
+3. **ColQwen3 (Image/Document)**: L4 recommended, T4 budget option
 4. **Multi-Modal Support**: All six content types supported (VIDEO, AUDIO, IMAGE, DOCUMENT, TEXT, DATAFRAME)
 5. **Cost Efficiency**: ~$200-250 per 1000 videos one-time ingestion, ~$50-100/month search
 
 **Recommended Production Setup:**
 
-- **Ingestion**: A100-40GB (ColPali) + L4 (VideoPrism) + L4 (ColQwen2)
+- **Ingestion**: A100-40GB (ColPali) + L4 (VideoPrism) + L4 (ColQwen3)
 
 - **Search**: T4 or L4 (or CPU for text-based)
 

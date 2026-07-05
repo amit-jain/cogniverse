@@ -1,7 +1,7 @@
 # Cogniverse Study Guide: Scripts & Operations Module
 
 **Module Path:** `scripts/`
-**SDK Packages:** Uses all 11 packages (foundation → core → implementation → application)
+**SDK Packages:** Uses all 13 packages (foundation → core → implementation → application)
 
 ---
 
@@ -245,17 +245,20 @@ flowchart TB
 
 **Purpose:** Main entry point for video ingestion pipeline with builder pattern configuration
 
-**Location:** `scripts/run_ingestion.py` (213 lines)
+**Location:** `scripts/run_ingestion.py` (284 lines)
 
 **Command Line Arguments:**
 ```python
---video_dir PATH         # Directory containing videos
+--tenant-id TENANT       # Tenant ID for schema isolation (required — no default)
+--video_dir PATH         # Directory containing content files
+--content-dir PATH       # Directory containing content files (alias for --video_dir)
+--media-root-uri URI     # Non-filesystem source (e.g. s3://, pvc://); overrides --video_dir
 --output_dir PATH        # Output directory for processed data
 --backend {byaldi,vespa} # Search backend (default: vespa)
 --profile PROFILES       # Processing profiles (space-separated)
---tenant-id TENANT       # Tenant ID for schema isolation (required — no default)
---max-concurrent INT     # Max concurrent videos (default: 3)
---max-frames INT         # Maximum frames per video
+--content-type {video,image,audio,document}  # Content type (default: video)
+--max-concurrent INT     # Max concurrent items to process (default: 3)
+--max-frames INT         # Maximum frames per video / images per batch
 --test-mode             # Use test mode with limited frames
 --debug                 # Enable debug mode
 ```
@@ -264,8 +267,9 @@ flowchart TB
 
 **Test Mode** (for quick validation):
 ```python
-# Use test pipeline builder
+# Use test pipeline builder (tenant_id is required — no default)
 pipeline = build_test_pipeline(
+    tenant_id="acme_corp",
     video_dir=Path("data/testset/evaluation/sample_videos"),
     schema="video_colpali_smol500_mv_frame",
     max_frames=10
@@ -274,8 +278,9 @@ pipeline = build_test_pipeline(
 
 **Simple Mode** (for standard usage):
 ```python
-# Use simple pipeline builder
+# Use simple pipeline builder (tenant_id is required — no default)
 pipeline = build_simple_pipeline(
+    tenant_id="acme_corp",
     video_dir=Path("data/testset/evaluation/sample_videos"),
     schema="video_colpali_smol500_mv_frame",
     backend="vespa",
@@ -293,7 +298,14 @@ config = (create_config()
     .max_frames_per_video(100)
     .build())
 
+from cogniverse_foundation.config.utils import create_default_config_manager
+config_manager = create_default_config_manager()
+
+# with_tenant_id() and with_config_manager() are both required before
+# build() — the builder raises ValueError if either is missing.
 pipeline = (create_pipeline()
+    .with_tenant_id("acme_corp")
+    .with_config_manager(config_manager)
     .with_config(config)
     .with_schema("video_colpali_smol500_mv_frame")
     .with_debug(True)
@@ -337,7 +349,7 @@ for profile in ["video_colpali_smol500_mv_frame",
 
 **Purpose:** Deploy individual JSON schema files to Vespa
 
-**Location:** `scripts/deploy_json_schema.py` (197 lines)
+**Location:** `scripts/deploy_json_schema.py` (196 lines)
 
 **Command Line Arguments:**
 ```python
@@ -581,10 +593,12 @@ uv run python -m cogniverse_runtime.optimization_cli \
 
 **Command Line Options:**
 ```bash
---mode CHOICE                # simba|gateway-thresholds|entity-extraction|workflow|profile|cleanup (required)
---tenant-id ID               # Tenant identifier (required for every mode except cleanup;
-                             # if omitted under --mode cleanup the sweep runs globally
-                             # across every tenant in every org — the path the
+--mode CHOICE                # simba|gateway-thresholds|entity-extraction|workflow|profile|cleanup
+                             # (required; also accepts triggered|online-routing-eval|synthetic|
+                             # rollback|ab-compare|egress-netpol|monthly-reports)
+--tenant-id ID               # Tenant identifier (required for every mode except cleanup and
+                             # monthly-reports; if omitted under --mode cleanup the sweep runs
+                             # globally across every tenant in every org — the path the
                              # daily-cleanup CronWorkflow takes)
 --log-retention-days DAYS    # Days to retain logs (cleanup mode, default: 7)
 ```
@@ -700,7 +714,7 @@ python scripts/run_experiments_with_visualization.py \
 
 **Purpose:** CLI tool for managing evaluation datasets
 
-**Location:** `scripts/manage_datasets.py` (60 lines)
+**Location:** `scripts/manage_datasets.py` (59 lines)
 
 **Operations:**
 
