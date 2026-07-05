@@ -6,6 +6,12 @@ on:
     paths:
       - 'libs/synthetic/**'
       - 'libs/core/**'
+      # The integration suite imports the approval storage and the Phoenix
+      # telemetry provider; a change to either can break these tests, so
+      # they must trigger the suite (a regression to approval_storage
+      # slipped through once because it did not).
+      - 'libs/agents/cogniverse_agents/approval/**'
+      - 'libs/telemetry-phoenix/**'
       - 'tests/synthetic/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
@@ -18,12 +24,15 @@ on:
     paths:
       - 'libs/synthetic/**'
       - 'libs/core/**'
+      - 'libs/agents/cogniverse_agents/approval/**'
+      - 'libs/telemetry-phoenix/**'
       - 'tests/synthetic/**'
       - 'tests/conftest.py'
       - 'tests/fixtures/**'
       - 'tests/utils/**'
       - 'pytest.ini'
       - 'pyproject.toml'
+      - '.github/workflows/synthetic-tests.yml'
 
 env:
   CARGO_NET_RETRY: "10"
