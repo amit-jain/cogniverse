@@ -95,7 +95,12 @@ class PhoenixTraceStore(TraceStore):
             filters: Optional server-side filters. ``{"name": <span name>}``
                 becomes a SpanQuery predicate so only matching spans cross
                 the wire — pulling the whole project window and filtering
-                client-side costs the full frame per call.
+                client-side costs the full frame per call. ``name`` may be a
+                single string (``name == '...'``) or a list/tuple/set of
+                names (``name in ['a', 'b']``) — the list form is required
+                when the caller reconstructs an object from more than one
+                span type in the returned frame (e.g. approval batch + its
+                item children).
             limit: Maximum number of spans to return
 
         Returns:
@@ -121,12 +126,18 @@ class PhoenixTraceStore(TraceStore):
             if filters and filters.get("name"):
                 from phoenix.client.types.spans import SpanQuery
 
-                # Backslash first, then quote — quoting first would let a
-                # trailing backslash re-escape the closing quote.
-                span_name = (
-                    str(filters["name"]).replace("\\", "\\\\").replace("'", "\\'")
-                )
-                query = SpanQuery().where(f"name == '{span_name}'")
+                def _esc(n: object) -> str:
+                    # Backslash first, then quote — quoting first would let a
+                    # trailing backslash re-escape the closing quote.
+                    return str(n).replace("\\", "\\\\").replace("'", "\\'")
+
+                name_filter = filters["name"]
+                if isinstance(name_filter, (list, tuple, set)):
+                    joined = ", ".join(f"'{_esc(n)}'" for n in name_filter)
+                    predicate = f"name in [{joined}]"
+                else:
+                    predicate = f"name == '{_esc(name_filter)}'"
+                query = SpanQuery().where(predicate)
 
             spans_df = await client.spans.get_spans_dataframe(
                 query=query,
