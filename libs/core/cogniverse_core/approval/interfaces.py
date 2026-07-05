@@ -4,6 +4,10 @@ Generic Approval Interfaces
 Provides abstract interfaces for human-in-the-loop approval system.
 Uses dependency injection pattern to support any domain (synthetic data,
 optimization results, etc.)
+
+These live in the core layer so both ``cogniverse_agents`` (which implements
+them) and ``cogniverse_synthetic`` (which also implements them) can depend on
+them without depending on each other.
 """
 
 from abc import ABC, abstractmethod
