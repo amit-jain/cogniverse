@@ -146,6 +146,63 @@ class TestGetSpansServerSideNameFilter:
         assert condition == f"name == '{escaped}'"
 
     @pytest.mark.asyncio
+    async def test_name_list_filter_builds_in_predicate(self, monkeypatch):
+        # A list of names must build ``name in ['a', 'b']`` so a caller that
+        # reconstructs an object from more than one span type (approval batch
+        # + item children) still receives every span type.
+        import pandas as pd
+
+        from cogniverse_telemetry_phoenix import provider as provider_mod
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint="http://unused:1",
+            tenant_id="t",
+            project_template="p-{tenant_id}",
+        )
+        client = MagicMock()
+        client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
+        monkeypatch.setattr(
+            provider_mod, "_client_for_current_loop", lambda endpoint: client
+        )
+
+        await store.get_spans(
+            project="proj",
+            filters={"name": ["approval_batch", "approval_item"]},
+        )
+
+        condition = client.spans.get_spans_dataframe.await_args.kwargs[
+            "query"
+        ].to_dict()["filter"]["condition"]
+        assert condition == "name in ['approval_batch', 'approval_item']"
+
+    @pytest.mark.asyncio
+    async def test_name_list_filter_escapes_each_element(self, monkeypatch):
+        import pandas as pd
+
+        from cogniverse_telemetry_phoenix import provider as provider_mod
+        from cogniverse_telemetry_phoenix.provider import PhoenixTraceStore
+
+        store = PhoenixTraceStore(
+            http_endpoint="http://unused:1",
+            tenant_id="t",
+            project_template="p-{tenant_id}",
+        )
+        client = MagicMock()
+        client.spans.get_spans_dataframe = AsyncMock(return_value=pd.DataFrame())
+        monkeypatch.setattr(
+            provider_mod, "_client_for_current_loop", lambda endpoint: client
+        )
+
+        await store.get_spans(project="proj", filters={"name": ["a'b", "c\\"]})
+
+        condition = client.spans.get_spans_dataframe.await_args.kwargs[
+            "query"
+        ].to_dict()["filter"]["condition"]
+        # Each element escaped independently, backslash-then-quote.
+        assert condition == "name in ['a\\'b', 'c\\\\']"
+
+    @pytest.mark.asyncio
     async def test_no_filters_sends_no_query(self, monkeypatch):
         import pandas as pd
 

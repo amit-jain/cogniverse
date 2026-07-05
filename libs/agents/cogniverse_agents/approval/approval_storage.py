@@ -241,9 +241,12 @@ class ApprovalStorageImpl(ApprovalStorage):
                 f"Attempt {attempt + 1}/{len(retry_delays)}: Querying telemetry "
                 f"backend for batch {batch_id}"
             )
+            # Both span types: get_batch reconstructs the batch from the
+            # approval_batch root AND its approval_item children in this same
+            # frame — filtering to approval_batch alone empties every batch.
             project_spans = await self.provider.traces.get_spans(
                 project=self.full_project_name,
-                filters={"name": "approval_batch"},
+                filters={"name": ["approval_batch", "approval_item"]},
             )
             if (
                 not project_spans.empty
@@ -544,12 +547,13 @@ class ApprovalStorageImpl(ApprovalStorage):
         try:
             await asyncio.sleep(0.5)  # Give telemetry backend time to process spans
 
-            # Query spans using telemetry provider — server-side name
-            # filter; the unfiltered form re-downloads the whole project
-            # window per call.
+            # Both span types: each pending batch is reconstructed via
+            # get_batch(spans_df=...) below, which reads the approval_item
+            # children out of this same frame — approval_batch alone would
+            # give every batch empty items.
             spans_df = await self.provider.traces.get_spans(
                 project=self.full_project_name,
-                filters={"name": "approval_batch"},
+                filters={"name": ["approval_batch", "approval_item"]},
             )
 
             if spans_df.empty:
