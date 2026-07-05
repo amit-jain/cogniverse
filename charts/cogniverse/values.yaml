@@ -1745,6 +1745,11 @@ semanticRouter:
     image:
       repository: ghcr.io/vllm-project/semantic-router/vllm-sr
       tag: "latest"
+      # Pinned by digest: the tag `latest` moves, and an older cached `latest`
+      # left the embedding runtime unready so semantic_cache was silently
+      # bypassed. This amd64 digest marks the cache-only embedding runtime ready.
+      # Clear `digest` to fall back to `tag`.
+      digest: "sha256:80f0363345669042482eae2325cccbc6c1e9de5f70a2c26c614721d88fe7dfb5"
       pullPolicy: IfNotPresent
     grpcPort: 50051
     metricsPort: 9190
