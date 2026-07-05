@@ -428,20 +428,16 @@ Create `.env` file in the workspace root:
 
 ```bash
 cat > .env <<EOF
-# Environment
-ENVIRONMENT=development
 LOG_LEVEL=DEBUG
 
 # Tenant ID is per-request (in A2A task payload), not an env var
 
-# Backend (Vespa)
+# Backend (Vespa) — read by BootstrapConfig, REQUIRED
 BACKEND_URL=http://localhost
 BACKEND_PORT=8080
-BACKEND_CONFIG_PORT=19071
 
-# Phoenix
-PHOENIX_ENABLED=true
-PHOENIX_COLLECTOR_ENDPOINT=localhost:4317
+# Phoenix OTLP endpoint (gRPC)
+TELEMETRY_OTLP_ENDPOINT=localhost:4317
 
 # Test LM endpoint (any OpenAI-compatible server)
 TEST_LLM_API_BASE=http://localhost:11434

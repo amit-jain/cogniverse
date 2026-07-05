@@ -2989,15 +2989,16 @@ sequenceDiagram
 
     API->>API: require_tenant_id(body.tenant_id) — no header, no middleware
     API->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
-    SchemaManager-->>API: "video_frames_acme"
+    Note over SchemaManager: bare "acme" canonicalizes to "acme:acme"
+    SchemaManager-->>API: "video_frames_acme_acme"
 
     API->>Agent: A2A task with tenant_id="acme" in payload
     Agent->>Memory: initialize_memory("orchestrator_agent", "acme", ...config)
-    Memory-->>Agent: Memory ready (agent_memories_acme)
+    Memory-->>Agent: Memory ready (agent_memories_acme_acme)
 
     API->>Agent: _process_impl(OrchestratorInput("cooking videos"))
     Agent->>Memory: get_relevant_context("cooking videos")
-    Memory->>Vespa: search(schema="agent_memories_acme")
+    Memory->>Vespa: search(schema="agent_memories_acme_acme")
     Vespa-->>Memory: Relevant memories
     Memory-->>Agent: Context
     Agent->>Agent: Process query

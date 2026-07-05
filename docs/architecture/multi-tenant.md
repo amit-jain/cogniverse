@@ -129,16 +129,18 @@ schema_name = schema_manager.get_tenant_schema_name("acme", "video_frames")
 
 - **No Context Switching**: Same tenant throughout request lifecycle
 - **Thread Safety**: Each request has isolated tenant context
-- **Simplified Debugging**: Tenant always known from request.state
+- **Simplified Debugging**: Tenant always known from the validated local variable
 
 **Implementation**:
 ```python
-# Middleware sets tenant_id once per request
-request.state.tenant_id = "acme"
+# Each route validates tenant_id once, at the top of the handler, and
+# threads it explicitly through every downstream call — there is no
+# shared/mutable request state.
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
-# All subsequent code reads from request.state
-def handler(request: Request):
-    tenant_id = request.state.tenant_id  # Always available
+@router.post("/")
+async def search(request: SearchRequest, ...):
+    tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
 ```
 
 ---
@@ -568,19 +570,15 @@ orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry
 sequenceDiagram
     participant Client
     participant API as FastAPI Server
-    participant Middleware as Tenant Middleware
     participant SchemaManager as VespaSchemaManager
     participant Agent as Routing Agent
     participant Vespa as Vespa Backend
     participant Memory as Mem0 Memory
 
-    Client->>API: POST /search<br/>Header: X-Tenant-ID: acme
-    API->>Middleware: Tenant middleware processes request
-    Middleware->>Middleware: Parse JWT or header
-    Middleware->>Middleware: Validate tenant_id
-    Middleware->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
-    SchemaManager-->>Middleware: "video_frames_acme"
-    Middleware->>API: request.state.tenant_id = "acme"
+    Client->>API: POST /search/<br/>Body: {"query": "...", "tenant_id": "acme"}
+    API->>API: require_tenant_id(request.tenant_id, source="SearchRequest")
+    API->>SchemaManager: get_tenant_schema_name("acme", "video_frames")
+    SchemaManager-->>API: "video_frames_acme"
 
     API->>Agent: _process_impl(OrchestratorInput(query, tenant_id="acme"))
     Agent->>Memory: search_memory(query, tenant_id="acme", agent_name="orchestrator_agent")
@@ -593,113 +591,88 @@ sequenceDiagram
 
 ### Tenant ID Extraction
 
-Tenant ID is extracted from HTTP requests using one of these methods:
+There is no tenant-detecting middleware. The client supplies `tenant_id` explicitly on every request, and the router validates it with `require_tenant_id()`:
 
-1. **Header-Based** (Development/Internal):
+1. **Request Body** (most endpoints):
    ```http
-   GET /search?query=cooking
-   X-Tenant-ID: acme
+   POST /search/
+   Content-Type: application/json
+
+   {"query": "cooking videos", "tenant_id": "acme"}
    ```
 
-2. **JWT-Based** (Production):
+2. **Query Parameter** (read-only listing endpoints):
    ```http
-   GET /search?query=cooking
-   Authorization: Bearer eyJhbGciOi...
-   # JWT contains: { "tenant_id": "acme", ... }
+   GET /search/profiles?tenant_id=acme
    ```
 
-3. **Subdomain-Based** (Multi-domain):
+3. **Form Field** (multipart upload):
    ```http
-   GET https://acme.cogniverse.app/search?query=cooking
-   # Extract "acme" from subdomain
+   POST /ingestion/upload
+   Content-Type: multipart/form-data
+
+   tenant_id=acme
+   ```
+
+4. **A2A Task Metadata** (agent-to-agent):
+   ```json
+   {"tenant_id": "acme", "query": "..."}
    ```
 
 ### Tenant Context Extraction
 
-**Package**: cogniverse-runtime (Application Layer)
-**Location**: `libs/runtime/cogniverse_runtime/admin/tenant_manager.py`
+**Package**: cogniverse-core (Core Layer)
+**Location**: `libs/core/cogniverse_core/common/tenant_utils.py`
 
-The tenant management API provides CRUD operations for organizations and tenants. Tenant context is typically extracted from HTTP headers or JWT tokens at the API router level via middleware.
+Each router calls `require_tenant_id()` directly at the top of the handler to validate the value the client supplied in the request. A missing, empty, or non-string `tenant_id` raises `ValueError`, which the route catches and re-raises as `HTTPException(400)`. There is no separate extraction middleware and no header/JWT parsing.
 
-**Example Tenant Context Extraction Middleware**:
+Tenant *management* (CRUD for organizations and tenants) is a separate concern handled by `libs/runtime/cogniverse_runtime/admin/tenant_manager.py`, not part of per-request tenant resolution.
+
+**Example** (from `libs/runtime/cogniverse_runtime/routers/search.py`):
 
 ```python
-from fastapi import Request
-from fastapi.responses import JSONResponse
-from cogniverse_vespa.vespa_schema_manager import VespaSchemaManager
-from cogniverse_core.common.tenant_utils import validate_tenant_id
+from fastapi import HTTPException
+from cogniverse_core.common.tenant_utils import assert_tenant_exists, require_tenant_id
 
-async def inject_tenant_context(request: Request, call_next):
-    """
-    Middleware to extract and validate tenant_id, ensure schemas exist.
+@router.post("/", response_model=None)
+async def search(request: SearchRequest, ...):
+    try:
+        tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    Note: This is an example pattern. Actual implementation may vary.
-    """
-
-    # Extract tenant_id from header or JWT
-    tenant_id = request.headers.get("X-Tenant-ID")
-    if not tenant_id:
-        # Parse JWT
-        jwt_token = request.headers.get("Authorization", "").replace("Bearer ", "")
-        # payload = decode_jwt(jwt_token)  # JWT decoding implementation-specific
-        # tenant_id = payload.get("tenant_id")
-        pass
-
-    if not tenant_id:
-        return JSONResponse(
-            status_code=400,
-            content={"error": "tenant_id required"}
-        )
-
-    # Validate tenant_id format
-    validate_tenant_id(tenant_id)
-
-    # Get tenant-specific schema names
-    schema_manager = VespaSchemaManager(
-        backend_endpoint="http://localhost",
-        backend_port=8080
-    )
-    video_schema = schema_manager.get_tenant_schema_name(tenant_id, "video_frames")
-    memory_schema = schema_manager.get_tenant_schema_name(tenant_id, "agent_memories")
-
-    # Inject into request state
-    request.state.tenant_id = tenant_id
-
-    # Continue request processing
-    response = await call_next(request)
-    return response
+    await assert_tenant_exists(tenant_id)
+    ...
 ```
 
 ### Accessing Tenant Context
 
-Throughout the request lifecycle, tenant_id is available from `request.state`:
+`tenant_id` is produced by `require_tenant_id()` at the top of the handler and threaded explicitly through every downstream call — there is no shared request state to read it back from:
 
 ```python
-from fastapi import Request
 from cogniverse_agents.orchestrator_agent import OrchestratorAgent, OrchestratorDeps, OrchestratorInput
 from cogniverse_core.registries.agent_registry import AgentRegistry
 from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 from cogniverse_foundation.telemetry import TelemetryConfig
+from cogniverse_core.common.tenant_utils import require_tenant_id
 
 # Agent is constructed once — tenant-agnostic
-# OrchestratorDeps does not require telemetry_config/llm_config separately
-deps = OrchestratorDeps(  # 
+deps = OrchestratorDeps(
     telemetry_config=TelemetryConfig(),
     llm_config=LLMEndpointConfig(
         model="openai/google/gemma-4-e4b-it",
         api_base="http://localhost:11434/v1",
     ),
 )
-orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
+orchestrator = OrchestratorAgent(deps=deps, registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
-@app.post("/search")
-async def search(request: Request, query: str):
-    # Access tenant_id from request state
-    tenant_id = request.state.tenant_id
+@router.post("/")
+async def search(request: SearchRequest, ...):
+    tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
 
     # tenant_id flows per-request into OrchestratorAgent
     results = await orchestrator._process_impl(
-        OrchestratorInput(query=query, tenant_id=tenant_id)
+        OrchestratorInput(query=request.query, tenant_id=tenant_id)
     )
 
     return results
@@ -1264,14 +1237,14 @@ def validate_tenant_id(tenant_id: str):
 
 **Implementation**:
 
-- Middleware extracts tenant_id once per request
-- Stored in `request.state.tenant_id` (immutable FastAPI state)
-- All downstream code reads from request state
+- Each router validates `tenant_id` once, at the top of the handler, via `require_tenant_id()`
+- The validated value is a local variable, threaded explicitly through every downstream call
+- No shared/mutable request state to read from
 - No tenant switching mid-request
 
 **Thread Safety**:
 
-- Each request has isolated state
+- Each request has isolated local state
 - Concurrent requests don't interfere
 - Per-tenant singletons are thread-safe
 
@@ -1384,8 +1357,9 @@ path = get_tenant_storage_path("data/optimization", "acme:production")
 
 5. **Verify Tenant Access**:
    ```bash
-   curl -H "X-Tenant-ID: acme" \
-        http://localhost:8000/search?query=test
+   curl -X POST http://localhost:8000/search/ \
+        -H "Content-Type: application/json" \
+        -d '{"query": "test", "tenant_id": "acme"}'
    ```
 
 ### Monitoring Tenant Health
@@ -1682,39 +1656,31 @@ def create_orchestrator() -> OrchestratorAgent:
 ### Pattern 2: Tenant-Scoped API Endpoint
 
 ```python
-from fastapi import Request, Depends
+from fastapi import HTTPException
+from cogniverse_core.common.tenant_utils import require_tenant_id
+from cogniverse_foundation.config.unified_config import LLMEndpointConfig
 
-def get_tenant_id(request: Request) -> str:
-    """Extract tenant_id from request"""
-    if not hasattr(request.state, "tenant_id"):
-        raise HTTPException(
-            status_code=400,
-            detail="tenant_id not found in request context"
-        )
-    return request.state.tenant_id
-
-@app.post("/search")
-async def search(
-    query: str,
-    tenant_id: str = Depends(get_tenant_id)
-):
-    """Search endpoint with automatic tenant scoping"""
+@router.post("/")
+async def search(request: SearchRequest, ...):
+    """Search endpoint with explicit tenant scoping"""
+    try:
+        tenant_id = require_tenant_id(request.tenant_id, source="SearchRequest")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     # Agent is tenant-agnostic — initialized once, tenant flows per-request
-    from cogniverse_foundation.config.unified_config import LLMEndpointConfig
-    # OrchestratorDeps does not require telemetry_config/llm_config separately
-deps = OrchestratorDeps(  # 
+    deps = OrchestratorDeps(
         telemetry_config=TelemetryConfig(),
         llm_config=LLMEndpointConfig(
             model="openai/google/gemma-4-e4b-it",
             api_base="http://localhost:11434/v1",
         ),
     )
-    orchestrator = OrchestratorAgent(deps=OrchestratorDeps(), registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
+    orchestrator = OrchestratorAgent(deps=deps, registry=AgentRegistry(tenant_id=tenant_id, config_manager=config_manager))
 
     # Execute query — tenant_id scopes resources at request time
     results = await orchestrator._process_impl(
-        OrchestratorInput(query=query, tenant_id=tenant_id)
+        OrchestratorInput(query=request.query, tenant_id=tenant_id)
     )
 
     return results

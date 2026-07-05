@@ -31,7 +31,7 @@ modal deploy scripts/modal_vlm_service.py
 
 This will:
 
-- Download and cache the Qwen2-VL-7B-Instruct model
+- Download and cache the Qwen3-VL-8B-Instruct model
 - Create a serverless GPU-accelerated inference service
 - Return a web endpoint URL for API access
 
@@ -79,7 +79,7 @@ JAX_PLATFORM_NAME=cpu uv run python scripts/run_ingestion.py \
 - **Better Reliability**: No local Ollama service dependencies
 - **GPU Acceleration**: Fast inference on Modal's H100/A100 GPUs (default: H100)
 - **Scalability**: Handles multiple videos concurrently
-- **Quality**: Qwen2-VL-7B produces high-quality descriptions
+- **Quality**: Qwen3-VL-8B produces high-quality descriptions
 
 ## Troubleshooting
 

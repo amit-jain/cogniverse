@@ -51,7 +51,7 @@ await pipeline.save_optimized_prompts(
 
 ### 2. VLM for Video Processing
 
-The VLM service uses Qwen2-VL-7B for video frame descriptions:
+The VLM service uses Qwen3-VL-8B for video frame descriptions:
 
 ```python
 # Actual location: scripts/modal_vlm_service.py
@@ -135,7 +135,7 @@ with dspy.context(lm=lm):
 
 # Actual location: scripts/modal_vlm_service.py
 # App name: cogniverse-vlm
-# Uses: SGLang + Qwen2-VL-7B-Instruct
+# Uses: SGLang + Qwen3-VL-8B-Instruct
 # GPU: H100 by default (configurable via GPU_TYPE env var)
 
 # The VLMModel class provides:
@@ -259,7 +259,7 @@ Student (Modal SmolLM3-3B):
 
 ### Video Processing
 ```text
-VLM (Qwen2-VL-7B):
+VLM (Qwen3-VL-8B):
 - GPU: H100 by default (configurable via GPU_TYPE env var)
 - Speed: 2-4 seconds per frame
 - Cost: ~$0.01-0.05 per frame
@@ -328,7 +328,7 @@ uv run python scripts/run_ingestion.py \
 ### Current Recommended Setup
 ```yaml
 # What works today:
-VLM: Modal (Qwen2-VL-7B via scripts/modal_vlm_service.py)
+VLM: Modal (Qwen3-VL-8B via scripts/modal_vlm_service.py)
 LLM Inference: Modal (vLLM on a separate Modal inference service)
 Embeddings: Local (ColPali, VideoPrism computed locally)
 DSPy Student: Modal (SmolLM3-3B on general-inference-service)
@@ -449,7 +449,7 @@ telemetry = TelemetryManager(telemetry_config)
 # Note: span() requires tenant_id parameter
 with telemetry.span("modal.vlm.describe", tenant_id="your_org:production") as span:
     span.set_attribute("provider", "modal")
-    span.set_attribute("model", "qwen2-vl-7b")
+    span.set_attribute("model", "qwen3-vl-8b")
     result = await modal_vlm.describe(frame)
 ```
 

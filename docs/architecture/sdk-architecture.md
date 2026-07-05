@@ -432,7 +432,7 @@ cogniverse_vespa/
 
 #### Package 9: cogniverse-runtime
 
-**Purpose**: FastAPI server with ingestion pipeline and tenant middleware.
+**Purpose**: FastAPI server with ingestion pipeline and per-request tenant validation.
 
 **Package Name**: `cogniverse-runtime` (installable)
 **Import Name**: `cogniverse_runtime` (Python import)
