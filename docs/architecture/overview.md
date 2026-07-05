@@ -127,7 +127,6 @@ cogniverse/
 │   │
 │   ├── messaging/                # cogniverse-messaging (Telegram gateway)
 │   │   ├── pyproject.toml
-│   │   ├── Dockerfile
 │   │   └── cogniverse_messaging/
 │   │       ├── gateway.py        # MessagingGateway (polling or webhook)
 │   │       ├── auth.py           # InviteTokenManager, UserTenantMapper
@@ -146,6 +145,7 @@ cogniverse/
 │       ├── Dockerfile
 │       └── cogniverse_dashboard/
 │           ├── app.py            # Streamlit app
+│           ├── tabs/             # Dashboard tab modules
 │           └── utils/            # Utilities
 │
 └── tests/                        # Test suite
@@ -518,17 +518,26 @@ flowchart TB
 flowchart TB
     User["<span style='color:#000'><b>USER REQUEST</b></span>"] --> Runtime["<span style='color:#000'><b>cogniverse_runtime</b><br/>FastAPI + CORS · tenant_id from request body</span>"]
 
-    Runtime --> Gateway["<span style='color:#000'><b>GatewayAgent</b><br/>in-process triage (port 8000)<br/>GLiNER entities + DSPy simple/complex</span>"]
+    Runtime --> Gateway["<span style='color:#000'><b>GatewayAgent</b><br/>in-process triage (port 8000)<br/>GLiNER entities + deterministic modality keywords, no LLM</span>"]
 
     Gateway --> Orchestrator["<span style='color:#000'><b>OrchestratorAgent</b><br/>cogniverse_agents (port 8013)</span>"]
 
-    Orchestrator --> Agents["<span style='color:#000'><b>Specialized Agents (A2A)</b><br/>• SearchAgent (8002)<br/>• SummarizerAgent (8004)<br/>• DetailedReportAgent (8005)<br/>• ImageSearchAgent (8006)<br/>• DocumentAgent (8008)<br/>QueryEnhancement · EntityExtraction · ProfileSelection run in-process on 8000</span>"]
+    Gateway -.->|"simple query,<br/>SIMPLE_ROUTE_MAP"| SearchAnalysis
+    Gateway -.->|"simple query,<br/>SIMPLE_ROUTE_MAP"| GenRouting
 
-    Agents --> Backend["<span style='color:#000'><b>Search Backend</b><br/>• Tenant Schema Manager<br/>• Search Clients<br/>• Embedding Processing</span>"]
+    Orchestrator --> SearchAnalysis["<span style='color:#000'><b>Search &amp; Analysis Agents</b><br/>search · image_search · document ·<br/>text_analysis · audio_analysis (5)</span>"]
+    Orchestrator --> GenRouting["<span style='color:#000'><b>Generation &amp; Routing Helpers</b><br/>summarizer · detailed_report ·<br/>profile_selection · query_enhancement ·<br/>entity_extraction (5, in-process on 8000)</span>"]
+    Orchestrator --> ResearchCoding["<span style='color:#000'><b>Research &amp; Coding Agents</b><br/>deep_research · coding (2)</span>"]
+
+    Runtime -.->|"/admin/tenants/{id}/knowledge/*"| KnowledgeTier["<span style='color:#000'><b>Knowledge-Graph &amp; Reasoning<br/>+ Multi-Tenant &amp; Federation Agents</b><br/>citation_tracing · contradiction_reconciliation ·<br/>multi_document_synthesis · kg_traversal ·<br/>temporal_reasoning · knowledge_summarization ·<br/>audit_explanation · cross_tenant_comparison ·<br/>federated_query (9, mostly disabled)</span>"]
+
+    SearchAnalysis --> Backend["<span style='color:#000'><b>Search Backend</b><br/>• Tenant Schema Manager<br/>• Search Clients<br/>• Embedding Processing</span>"]
 
     Orchestrator --> Memory["<span style='color:#000'><b>Memory Manager</b><br/>cogniverse_core<br/>• Mem0 Integration<br/>• Tenant Scoped</span>"]
 
-    Agents --> Telemetry["<span style='color:#000'><b>Telemetry</b><br/>cogniverse_core<br/>• OpenTelemetry<br/>• Span Collection<br/>• Metrics Tracking</span>"]
+    KnowledgeTier --> Memory
+
+    SearchAnalysis --> Telemetry["<span style='color:#000'><b>Telemetry</b><br/>cogniverse_core<br/>• OpenTelemetry<br/>• Span Collection<br/>• Metrics Tracking</span>"]
 
     Telemetry --> Evaluation["<span style='color:#000'><b>Evaluation Module</b><br/>cogniverse_core<br/>• Experiment Tracking<br/>• Quality Metrics<br/>• Optimization</span>"]
 
@@ -536,16 +545,76 @@ flowchart TB
     style Runtime fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Gateway fill:#ce93d8,stroke:#7b1fa2,color:#000
     style Orchestrator fill:#ce93d8,stroke:#7b1fa2,color:#000
-    style Agents fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style SearchAnalysis fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style GenRouting fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style ResearchCoding fill:#ce93d8,stroke:#7b1fa2,color:#000
+    style KnowledgeTier fill:#ba68c8,stroke:#7b1fa2,color:#000
     style Backend fill:#90caf9,stroke:#1565c0,color:#000
     style Memory fill:#90caf9,stroke:#1565c0,color:#000
     style Telemetry fill:#a5d6a7,stroke:#388e3c,color:#000
     style Evaluation fill:#a5d6a7,stroke:#388e3c,color:#000
-
-    linkStyle 0 stroke:#1565c0,stroke-width:2px
-    linkStyle 1,2,3,4,5 stroke:#7b1fa2,stroke-width:2px
-    linkStyle 6,7 stroke:#388e3c,stroke-width:2px
 ```
+
+### Agent Catalog
+
+Cogniverse ships **23 agents** across five groups. Ports are the operational
+values from `configs/config.json` `agents.*.url`; several in-process helpers
+share port 8000 with the gateway. "Enabled" reflects `agents.*.enabled` in
+that same config.
+
+#### Search & Analysis Agents (5)
+
+| Agent | Port | Enabled | Description |
+|-------|------|---------|-------------|
+| `search_agent` | 8002 | Yes | Multi-modal retrieval across video/image/text/audio/document via Vespa, with DSPy query rewriting, multi-query and multi-profile RRF ensemble fusion, and optional RLM synthesis over large result sets |
+| `image_search_agent` | 8006 | Yes | ColPali multi-vector image similarity search (semantic or hybrid BM25+ColPali), plus image-to-image lookup |
+| `document_agent` | 8008 | Yes | Dual-strategy document search — ColPali visual (page-as-image), ColBERT/BM25 text, or hybrid — with keyword-based auto strategy selection |
+| `text_analysis_agent` | 8003 | Yes | Runtime-configurable DSPy text analysis (sentiment/summary/entities) with per-tenant persisted config |
+| `audio_analysis_agent` | 8007 | Yes | Whisper transcription + Vespa audio search (transcript BM25, acoustic CLAP nearest-neighbor, or hybrid) |
+
+#### Generation & Routing Agents (7)
+
+| Agent | Port | Enabled | Description |
+|-------|------|---------|-------------|
+| `gateway_agent` | 8000 | Yes | LLM-free entry point; GLiNER classification + deterministic modality keywords route simple queries directly and hand complex ones to the orchestrator |
+| `orchestrator_agent` | 8013 | Yes | DSPy-planned multi-agent workflow coordinator; executes the plan by calling sub-agents over A2A HTTP, with checkpoint/resume and cross-modal fusion |
+| `summarizer_agent` | 8004 | Yes | Turns search results into structured summaries with a thinking phase and VLM visual analysis |
+| `detailed_report_agent` | 8005 | Yes | Generates comprehensive reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis |
+| `profile_selection_agent` | 8000 | Yes | DSPy-based selection of the optimal backend search profile, with a keyword/word-count heuristic fallback |
+| `query_enhancement_agent` | 8000 | Yes | Expands and rewrites queries with synonyms, context, and RRF variants using DSPy |
+| `entity_extraction_agent` | 8000 | Yes | Tiered NER: fast GLiNER + SpaCy path (no LLM) with a DSPy fallback |
+
+#### Research & Coding Agents (2)
+
+| Agent | Port | Enabled | Description |
+|-------|------|---------|-------------|
+| `deep_research_agent` | 8009 | Yes | Multi-step decompose → parallel-search → evaluate → synthesize loop producing a cited report |
+| `coding_agent` | 8010 | Yes | Iterative search → plan → generate → execute → evaluate loop; executes DSPy-generated code inside an OpenShell sandbox |
+
+#### Knowledge-Graph & Reasoning Agents (7)
+
+| Agent | Port | Enabled | Description |
+|-------|------|---------|-------------|
+| `citation_tracing_agent` | 8019 | No | Walks a memory's provenance chain back to its primary sources |
+| `contradiction_reconciliation_agent` | 8020 | No | Resolves conflict sets by applying a knowledge schema's contradiction policy over member memories |
+| `multi_document_synthesis_agent` | 8021 | No | Synthesizes a coherent answer across N source documents while preserving the citation graph |
+| `kg_traversal_agent` | 8022 | No | Structurally walks `kg_node`/`kg_edge` memories from a seed entity into a node+edge graph view |
+| `temporal_reasoning_agent` | 8025 | No | Compares a subject's knowledge across explicit time windows |
+| `knowledge_summarization_agent` | 8026 | No | Distills a knowledge subgraph into a citation-aware summary, with admin-gated promotion to the org trunk |
+| `audit_explanation_agent` | 8027 | Yes | Explains why an answer memory was produced — its derivation chain, per-source trust, and active contradictions |
+
+#### Multi-Tenant & Federation Agents (2)
+
+| Agent | Port | Enabled | Description |
+|-------|------|---------|-------------|
+| `cross_tenant_comparison_agent` | 8023 | No | Compares per-tenant views of one subject across all tenants in an org via the federation read path |
+| `federated_query_agent` | 8024 | No | Answers a free-text query by aggregating federated reads across multiple tenants in an org, with an optional RLM summarizer |
+
+The knowledge-tier agents (Knowledge-Graph & Reasoning, Multi-Tenant &
+Federation) are reached via `/admin/tenants/{tenant_id}/knowledge/*` REST
+routes (`routers/knowledge.py`), not through the orchestrator's A2A plan
+execution. All but `audit_explanation_agent` are `enabled: false` in
+`configs/config.json` today.
 
 ### Agent Communication (A2A Protocol)
 
@@ -574,4 +643,5 @@ For detailed guides, see:
 - **[SDK Architecture](./sdk-architecture.md)** - Deep dive into UV workspace and package structure
 - **[Multi-Tenant Architecture](./multi-tenant.md)** - Complete tenant isolation guide
 - **[System Flows](./system-flows.md)** - Detailed sequence diagrams
+- **[Agents Module](../modules/agents.md)** - Per-agent implementation details
 - **[Module Documentation](../modules/sdk.md)** - Per-package technical details

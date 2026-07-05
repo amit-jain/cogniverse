@@ -16,6 +16,8 @@ The core challenges:
 
 ## Architecture Overview
 
+The initial simple/complex decision is made by `GatewayAgent` using GLiNER entity classification plus deterministic keyword rules — **not** a DSPy `ChainOfThought` call. The `ComposableQueryAnalysisModule` (entity + relationship extraction + LLM reformulation) is a separate library component consumed later, inside `OrchestratorAgent`'s iterative retrieval loop, when a query has already been routed to orchestration.
+
 ```mermaid
 graph LR
     subgraph Input
@@ -23,35 +25,39 @@ graph LR
         CTX["<span style='color:#000'>Conversation Context</span>"]
     end
 
-    subgraph "Query Analysis Pipeline"
-        CQA["<span style='color:#000'>Composable Query<br/>Analysis Module<br/>(entities + rels + enhancement)</span>"]
-        DSPy["<span style='color:#000'>DSPy Routing<br/>Decision</span>"]
+    subgraph "Gateway Triage (GLiNER + rules, no LLM, target &lt;100ms)"
+        GW["<span style='color:#000'>GatewayAgent<br/>modality + generation_type<br/>classification</span>"]
     end
 
     subgraph "Execution"
-        OD{"<span style='color:#000'>Orchestration<br/>Needed?</span>"}
+        OD{"<span style='color:#000'>Complex?</span>"}
         DDA["<span style='color:#000'>Downstream<br/>Agent Dispatch</span>"]
         MAO["<span style='color:#000'>OrchestratorAgent<br/>(A2A HTTP)</span>"]
     end
 
+    subgraph "Orchestrator-Internal Reformulation"
+        CQA["<span style='color:#000'>Composable Query<br/>Analysis Module<br/>(entities + rels + enhancement)</span>"]
+    end
+
     subgraph "Agents"
         VS["<span style='color:#000'>Video Search</span>"]
-        TS["<span style='color:#000'>Text Search</span>"]
+        TS["<span style='color:#000'>Text/Doc Search</span>"]
         SUM["<span style='color:#000'>Summarizer</span>"]
         RPT["<span style='color:#000'>Report Generator</span>"]
     end
 
-    Q --> CQA
-    CTX --> DSPy
-    CQA --> DSPy --> OD
-    OD -- "No" --> DDA --> VS
-    OD -- "Yes (≥3 signals)" --> MAO
+    Q --> GW
+    CTX --> GW
+    GW --> OD
+    OD -- "No" --> DDA --> VS & TS & SUM & RPT
+    OD -- "Yes (any of 6 signals)" --> MAO
+    MAO -.->|"iterative retrieval loop"| CQA
     MAO --> VS & TS & SUM & RPT
 
     style Q fill:#90caf9,stroke:#1565c0,color:#000
     style CTX fill:#90caf9,stroke:#1565c0,color:#000
+    style GW fill:#a5d6a7,stroke:#388e3c,color:#000
     style CQA fill:#a5d6a7,stroke:#388e3c,color:#000
-    style DSPy fill:#a5d6a7,stroke:#388e3c,color:#000
     style OD fill:#ffcc80,stroke:#ef6c00,color:#000
     style DDA fill:#ce93d8,stroke:#7b1fa2,color:#000
     style MAO fill:#ce93d8,stroke:#7b1fa2,color:#000
@@ -65,11 +71,11 @@ graph LR
 
 ## Query Analysis Pipeline
 
-The routing pipeline processes each query through four phases, progressively enriching the query representation before making a routing decision.
+GLiNER is used twice in this system, for two different purposes with two different label sets — this section covers the general-purpose 15-type extractor; see [Complexity Classification](#complexity-classification) for `GatewayAgent`'s separate, purpose-tuned 7-label triage classifier.
 
 ### Entity Extraction via GLiNER
 
-Zero-shot Named Entity Recognition using [GLiNER](https://github.com/urchade/GLiNER) — a generalist model that extracts entities without task-specific fine-tuning.
+Zero-shot Named Entity Recognition using [GLiNER](https://github.com/urchade/GLiNER) — a generalist model that extracts entities without task-specific fine-tuning. This is `GLiNERRelationshipExtractor` (`libs/agents/cogniverse_agents/routing/relationship_extraction_tools.py`), the extractor Path A of `ComposableQueryAnalysisModule` uses.
 
 ```mermaid
 flowchart TD
@@ -129,11 +135,13 @@ The `ComposableQueryAnalysisModule` (a `dspy.Module`) combines entity extraction
 
 Both paths produce identical output: `entities`, `relationships`, `enhanced_query`, `query_variants` (list of `{name, query}` dicts for multi-query fusion), `confidence`, `path_used`, and `domain_classification`.
 
-The `QueryEnhancementAgent` (A2A agent at `cogniverse_agents/query_enhancement_agent.py`) wraps the composable module and handles query enhancement as part of the orchestration pipeline. For batch optimization, SIMBA (Similarity-Based Memory Augmentation) runs as an Argo batch job — it is not an inline fast-path shortcut. The composable module is always used for real-time enhancement.
+`OrchestratorAgent` lazily builds and caches one `ComposableQueryAnalysisModule` instance per agent (`_get_query_analysis_module`) and calls it from `_reformulate_query`, which runs inside the iterative retrieval loop for queries that have already been routed to orchestration — it is not part of the initial gateway routing decision. The `QueryEnhancementAgent` (A2A agent at `cogniverse_agents/query_enhancement_agent.py`) is a separate preprocessing agent with its own `QueryEnhancementModule` (a `dspy.ChainOfThought`); it does not wrap `ComposableQueryAnalysisModule`. `OrchestratorAgent`'s DSPy planner can include `query_enhancement_agent` (and `entity_extraction_agent`, `profile_selection_agent`) as preprocessing steps ahead of an execution agent in a workflow (see [Agent Registry](#agent-registry)).
+
+A separate Argo batch job (`run_simba_optimization`, named after SIMBA — Stochastic Introspective Mini-Batch Ascent — but actually compiling via `BootstrapFewShot`) periodically re-optimizes `QueryEnhancementAgent`'s own `QueryEnhancementModule` from recorded `cogniverse.query_enhancement` spans; it does not touch `ComposableQueryAnalysisModule`. See [Routing Optimization (Offline)](#routing-optimization-offline) for the full set of offline jobs.
 
 ### DSPy Routing Decision
 
-The enhanced query, entities, and relationships feed into a DSPy `ChainOfThought` module that produces a structured routing decision with confidence calibration.
+`DSPyAdvancedRoutingModule` (`libs/agents/cogniverse_agents/routing/dspy_relationship_router.py`) wraps a `ComposableQueryAnalysisModule` plus a `dspy.ChainOfThought(AdvancedRoutingSignature)` to turn an enhanced query, entities, and relationships into a structured routing decision with confidence calibration. This module — along with `MetaRoutingSignature` and `AdaptiveThresholdSignature` — is part of the routing library and is exercised by its unit tests and by the offline DSPy-optimizer compilation flow described below; it is **not** currently called from `GatewayAgent`, `AgentDispatcher`, or `OrchestratorAgent`'s live request path, which instead use the GLiNER + deterministic-rule gateway described above. It is documented here as the routing library's most capable signature and the target of future/optimizer-driven routing work.
 
 ```mermaid
 flowchart LR
@@ -180,15 +188,25 @@ The routing decision includes:
 
 ### Routing Optimization (Offline)
 
-Routing and orchestration quality is improved offline, not inline with the per-query flow above. `ComposableQueryAnalysisModule` and the other DSPy signatures in this pipeline are compiled with DSPy prompt optimizers — SIMBA, MIPROv2, BootstrapFewShot, and GEPA (`libs/agents/cogniverse_agents/routing/dspy_relationship_router.py`) — run as Argo batch jobs against traces collected from live traffic. `OrchestrationEvaluator` extracts workflow execution outcomes from telemetry spans and feeds them to `WorkflowIntelligence` for continuous learning about which agent sequences work well for which query shapes. GRPO (Group Relative Policy Optimization) is referenced in the dashboard's optimization tab as a candidate future technique alongside GEPA, but is not currently an implemented optimizer.
+Routing and orchestration quality is improved offline, not inline with the per-query flow above. The batch jobs in `libs/runtime/cogniverse_runtime/optimization_cli.py` each read one span type and compile or recompute one target:
 
-The optimizer adaptively selects its strategy based on available training data volume (see [Evaluation & Optimization Loop](./evaluation-optimization-loop.md) for details).
+| Job | Reads Spans | Compiles / Computes |
+|---|---|---|
+| `run_simba_optimization` | `cogniverse.query_enhancement` | `QueryEnhancementAgent`'s own `QueryEnhancementModule` via `dspy.teleprompt.BootstrapFewShot` (despite the function's name, it does not call `dspy.SIMBA`) |
+| `run_profile_optimization` | `cogniverse.profile_selection` | `ProfileSelectionAgent`'s DSPy module via `BootstrapFewShot` |
+| `run_entity_extraction_optimization` | `cogniverse.entity_extraction` | `EntityExtractionAgent`'s DSPy module via `BootstrapFewShot` |
+| `run_gateway_thresholds_optimization` | `cogniverse.gateway` | `GatewayAgent.fast_path_confidence_threshold`, recalibrated deterministically from classification accuracy (`_compute_gateway_thresholds`) — not a DSPy signature compile |
+| `run_workflow_optimization` | `cogniverse.orchestration` | Workflow templates + agent performance profiles, via `OrchestrationEvaluator` extracting `WorkflowExecution` records and feeding `WorkflowIntelligence` — deterministic template mining, not DSPy prompt compilation |
+
+None of these jobs compile `ComposableQueryAnalysisModule`, `dspy_relationship_router.py`'s modules, or `AdaptiveThresholdSignature`. `BootstrapFewShot` is the only DSPy teleprompter actually instantiated anywhere in the codebase — `dspy.SIMBA`, `dspy.GEPA`, and `dspy.MIPROv2` appear only in docstrings and dashboard UI copy (e.g. the optimization tab's "Auto DSPy Optimizer Selection: GEPA/Bootstrap/SIMBA/MIPRO" description), not as instantiated optimizers. GRPO (Group Relative Policy Optimization) is likewise referenced in the dashboard's optimization tab as a candidate future technique, not an implemented optimizer.
+
+See [Evaluation & Optimization Loop](./evaluation-optimization-loop.md) for the golden-set-driven prompt optimization pipeline that separately re-optimizes search/summarizer/report-generation agents via quality-monitor triggers.
 
 ---
 
 ## DSPy Signatures & Modules
 
-The routing system is built on 7 DSPy 3.0 signatures, each defining a typed contract between inputs and outputs. DSPy signatures are automatically optimizable — the framework learns prompts/demonstrations that maximize a metric.
+The routing library (`libs/agents/cogniverse_agents/routing/dspy_routing_signatures.py`) defines 7 DSPy 3.0 signatures, each a typed contract between inputs and outputs. DSPy signatures are automatically optimizable — the framework learns prompts/demonstrations that maximize a metric. `QueryReformulation` and `UnifiedExtractionReformulation` back the two paths of the live `ComposableQueryAnalysisModule` used by `OrchestratorAgent`'s reformulation loop; `BasicQueryAnalysis`, `AdvancedRouting`, `MetaRouting`, `AdaptiveThreshold`, and `MultiAgentOrchestration` back `DSPyBasicRoutingModule` / `DSPyAdvancedRoutingModule`, which are exercised by the routing library's own unit tests but are not currently invoked from the live gateway/dispatch/orchestration request path (see [DSPy Routing Decision](#dspy-routing-decision)).
 
 | Signature | Purpose | Key Outputs |
 |---|---|---|
@@ -211,11 +229,11 @@ A factory function selects the appropriate signature tier:
 
 ## Multi-Agent Orchestration
 
-Query complexity is determined at the entry point by `GatewayAgent`, which classifies queries as "simple" or "complex" using GLiNER entity classification (no LLM call, <100ms).
+Query complexity is determined at the entry point by `GatewayAgent`, which classifies queries as "simple" or "complex" using GLiNER entity classification (no LLM call, <100ms). `GatewayAgent` runs its own GLiNER call against a small, experimentally tuned 7-label set — `video_content`, `text_information`, `audio_content`, `image_content`, `document_content`, `summary_request`, `detailed_report_request` (`MODALITY_LABELS` + `GENERATION_LABELS` in `gateway_agent.py`) — chosen because it produces measurably higher GLiNER confidence scores than the general-purpose 15-type label set used elsewhere in the routing pipeline (average top score 0.56 vs. 0.41). A deterministic keyword fallback (`MODALITY_KEYWORDS`) covers queries GLiNER misses.
 
 ### Dispatch Execution Paths
 
-`AgentDispatcher.dispatch()` routes queries through `_execute_gateway_task` for any agent with `gateway` or `routing` capabilities:
+`AgentDispatcher.dispatch()` routes queries through `_execute_gateway_task` for any agent with `gateway`, `routing`, or `intelligent_routing` capabilities:
 
 #### Simple Path (Single Agent)
 
@@ -230,26 +248,30 @@ When `GatewayAgent` classifies a query as `complexity="simple"`:
    - `detailed_report` → `_execute_detailed_report_task`
    - `summarization`/`text_generation` → `_execute_summarization_task`
    - `text_analysis`/`sentiment`/`classification` → `_execute_text_analysis_task`
+   - `coding` → `_execute_coding_task` (not reachable via `SIMPLE_ROUTE_MAP` today since GatewayAgent has no "code" modality, but handled if a target agent is registered with this capability)
 3. The response includes gateway metadata (`complexity`, `modality`, `routed_to`, `confidence`) and the `downstream_result` from the executed agent
 
 #### Complex Path (Multi-Agent Orchestration)
 
 When `GatewayAgent` classifies a query as `complexity="complex"`:
 
-1. `GatewayAgent._process_impl()` returns `complexity="complex"` (triggered by: no entities detected, low confidence, or multiple modalities)
+1. `GatewayAgent._process_impl()` returns `complexity="complex"` (triggered by any one of the six signals below, via `_is_complex`)
 2. `_execute_orchestration_task` instantiates `OrchestratorAgent` with the `AgentRegistry` and `ConfigManager`
 3. `OrchestratorAgent._process_impl()` plans a workflow using DSPy, executes agents via A2A HTTP, and aggregates results
 4. A `cogniverse.orchestration` telemetry span is emitted with attributes consumed by the dashboard's Orchestration tab
 
 ### Complexity Classification
 
-GatewayAgent classifies queries as complex when any of these conditions hold:
+`GatewayAgent._is_complex()` classifies a query as complex when **any** (not a count threshold — a single match is enough) of these conditions hold:
 
 | # | Signal | Detection Logic |
 |---|---|---|
-| 1 | No entities detected | GLiNER returns zero entities for the query |
-| 2 | Low confidence | Classification confidence below `fast_path_confidence_threshold` (default: 0.4) |
-| 3 | Multiple modalities | Entities span more than one modality (e.g., video + audio) |
+| 1 | No modality signal | Classification confidence below `fast_path_confidence_threshold` (default: 0.4) — neither GLiNER nor the keyword fallback could classify the query |
+| 2 | Multiple modalities | GatewayAgent classified the query as modality `"both"` |
+| 3 | Detailed report requested | `generation_type == "detailed_report"` (always needs search → analyze → write) |
+| 4 | Analysis/synthesis verb | Query contains a word from `_COMPLEXITY_KEYWORDS` (e.g. `analyze`, `compare`, `summarize`, `evaluate`, `correlate`, `combine`, `merge`) |
+| 5 | Multi-step marker | Query contains a phrase from `_MULTI_STEP_MARKERS` (e.g. `then`, `after that`, `followed by`, `first`, `finally`, `next`) |
+| 6 | Compound query | Query has 3+ commas or 2+ occurrences of `" and "` |
 
 ### Workflow Planning & Execution
 
@@ -264,7 +286,7 @@ sequenceDiagram
     participant A3 as Agent 3 (Report Gen)
     participant AGG as Result Aggregator
 
-    U->>O: Complex query (≥3 orchestration signals)
+    U->>O: Complex query (any of 6 orchestration signals)
 
     Note over O: Planning Phase
     O->>WP: Plan workflow (query + available agents)
@@ -302,6 +324,64 @@ sequenceDiagram
 
 ---
 
+## Agent Registry
+
+`libs/agents/cogniverse_agents/` implements 23 agents, declared in `configs/config.json` under `agents.*` (url, capabilities, modalities, `enabled`). Ports below are the `configs/config.json` URLs actually used at runtime; several in-process helper agents share port 8000 because they run in-runtime rather than as independently deployed services.
+
+### Search & Analysis Agents
+
+| Agent | Port | Enabled | Role |
+|---|---|---|---|
+| `search_agent` | 8002 | yes | Multi-modal retrieval across video/image/text/audio/document via Vespa; DSPy query-rewrite on the plain-text path, RRF ensemble fusion across profiles or query variants |
+| `image_search_agent` | 8006 | yes | ColPali multi-vector image similarity search (semantic and hybrid BM25+ColPali modes) plus image-to-image lookup |
+| `text_analysis_agent` | 8003 | yes | Runtime-configurable DSPy text analysis (sentiment/summary/entities) with per-tenant persisted config and a `/analyze` endpoint |
+| `audio_analysis_agent` | 8007 | yes | Whisper transcription + Vespa audio search: transcript (BM25), acoustic (CLAP nearest-neighbor), or hybrid |
+| `document_agent` | 8008 | yes | Dual-strategy document search — ColPali visual (page-as-image), ColBERT/BM25 text, or hybrid — with keyword-based auto strategy selection |
+
+### Generation & Routing Agents
+
+| Agent | Port | Enabled | Role |
+|---|---|---|---|
+| `gateway_agent` | 8000 | yes | LLM-free entry point; GLiNER + deterministic rules classify simple vs. complex and route directly or hand off to the orchestrator (see [Multi-Agent Orchestration](#multi-agent-orchestration)) |
+| `orchestrator_agent` | 8013 | yes | DSPy-planned multi-agent workflow execution over A2A HTTP, with checkpoint/resume, a sufficiency gate, iterative retrieval, and cross-modal fusion |
+| `summarizer_agent` | 8004 | yes | Turns search results into structured summaries (brief/comprehensive/bullet_points) with a thinking phase and VLM visual analysis |
+| `detailed_report_agent` | 8005 | yes | Generates comprehensive reports (executive summary, findings, technical + visual analysis, recommendations) with optional RLM synthesis |
+| `profile_selection_agent` | 8000 | yes | DSPy-driven selection of the optimal backend search profile from the available candidates, with a heuristic fallback |
+| `query_enhancement_agent` | 8000 | yes | Expands/rewrites queries with synonyms, context, and RRF variants via its own `QueryEnhancementModule` (`dspy.ChainOfThought`); folds in upstream entity/relationship context |
+| `entity_extraction_agent` | 8000 | yes | Tiered NER: fast GLiNER+SpaCy path (no LLM), DSPy `ChainOfThought` fallback |
+
+`orchestrator_agent`'s DSPy planner can include `entity_extraction_agent`, `query_enhancement_agent`, and `profile_selection_agent` as preprocessing steps ahead of an execution agent within a complex-path workflow.
+
+### Research & Coding Agents
+
+| Agent | Port | Enabled | Role |
+|---|---|---|---|
+| `deep_research_agent` | 8009 | yes | Multi-step decompose → parallel search → evaluate → (iterate) → synthesize loop producing a cited report; falls back to empty evidence for a failed sub-question rather than aborting |
+| `coding_agent` | 8010 | yes | Iterative search → plan → generate → execute → evaluate loop; runs generated code in an OpenShell sandbox and hard-fails rather than run unsandboxed |
+
+### Knowledge-Graph & Reasoning Agents
+
+| Agent | Port | Enabled | Role |
+|---|---|---|---|
+| `citation_tracing_agent` | 8019 | no | Walks a memory's provenance chain to its primary sources (read-only, no LLM) |
+| `contradiction_reconciliation_agent` | 8020 | no | Resolves conflict sets via a knowledge schema's contradiction policy (`latest_wins` / `trust_ranked` / `preserve_both`) |
+| `multi_document_synthesis_agent` | 8021 | no | Synthesizes an answer across N documents while preserving the citation graph; DSPy `ChainOfThought` or RLM depending on context size |
+| `kg_traversal_agent` | 8022 | no | BFS-walks `kg_node`/`kg_edge` memories from a seed entity into a node+edge graph view |
+| `temporal_reasoning_agent` | 8025 | no | Compares a subject's knowledge across explicit time windows using provenance timestamps |
+| `knowledge_summarization_agent` | 8026 | no | Distills a knowledge subgraph into a citation-aware summary, with admin-gated promotion to the org trunk |
+| `audit_explanation_agent` | 8027 | **yes** | Explains why an answer memory was produced: derivation chain, per-source trust, active contradictions |
+
+### Multi-Tenant & Federation Agents
+
+| Agent | Port | Enabled | Role |
+|---|---|---|---|
+| `cross_tenant_comparison_agent` | 8023 | no | Compares per-tenant views of one subject across all tenants in an org via the federation read path (role- and org-scoped ACL checks) |
+| `federated_query_agent` | 8024 | no | Answers a free-text query by aggregating federated reads across tenants in the same org, with an optional RLM summarizer |
+
+The 14 agents in Search & Analysis, Generation & Routing, and Research & Coding are reachable through the request-routing system described above — via `GatewayAgent`'s `SIMPLE_ROUTE_MAP`, direct `AgentDispatcher.dispatch()` calls, or as steps in an `OrchestratorAgent`-planned workflow. The remaining 9 (Knowledge-Graph & Reasoning, Multi-Tenant & Federation) sit outside that dispatch path entirely: they're invoked directly via dedicated REST routes under `/admin/tenants/{tenant_id}/knowledge/*` (`libs/runtime/cogniverse_runtime/routers/knowledge.py`), and all but `audit_explanation_agent` are `enabled: false` in `configs/config.json`.
+
+---
+
 ## Cross-Modal Fusion
 
 When multiple agents return results across different modalities (video, text, audio), a fusion step combines them into a coherent response.
@@ -324,10 +404,10 @@ flowchart TD
         S5["<span style='color:#000'>Simple<br/>Concatenation</span>"]
     end
 
-    subgraph "Quality Metrics"
-        M1["<span style='color:#000'>Coverage</span>"]
-        M2["<span style='color:#000'>Consistency</span>"]
-        M3["<span style='color:#000'>Coherence</span>"]
+    subgraph "Fusion Quality (fusion_quality dict)"
+        M1["<span style='color:#000'>strategy</span>"]
+        M2["<span style='color:#000'>modality_count<br/>+ modalities</span>"]
+        M3["<span style='color:#000'>confidence</span>"]
     end
 
     VR & TR & AR --> SS
@@ -354,26 +434,19 @@ flowchart TD
 
 ### Fusion Strategies
 
-| Strategy | When Used | How It Works |
-|---|---|---|
-| **Score-Based** | Default for mixed-modality queries | Weights each result by its confidence score; higher-confidence results dominate |
-| **Temporal** | Time-sensitive queries ("last week", "recent") | Aligns results along a timeline; temporal proximity to query timeframe increases weight |
-| **Semantic** | Conceptual queries ("explain how X works") | Groups results by semantic similarity; de-duplicates overlapping content |
-| **Hierarchical** | Structured queries ("compare A vs B") | Builds a structured response with sections per modality |
-| **Simple** | Fallback / single-modality | Basic concatenation of results |
+`_select_fusion_strategy(query, agent_modalities)` (`orchestrator_agent.py`) picks a `FusionStrategy` by keyword match, but the fusion dispatch only special-cases two of them today — everything else, including `TEMPORAL`, falls through to simple concatenation:
 
-Strategy selection is automatic based on query characteristics detected during the analysis pipeline.
+| Strategy | When Selected | How It's Actually Fused |
+|---|---|---|
+| **Score-Based** | 2+ modalities present, no comparison/temporal keywords matched | `_fuse_by_score` — weights each result by `confidence / total_confidence`; higher-confidence results are listed first and dominate the aggregated confidence |
+| **Hierarchical** | Query contains a comparison keyword (`compare`, `contrast`, `difference`, `versus`, `vs`) | `_fuse_hierarchically` — builds a structured, per-modality sectioned response |
+| **Temporal** | Query contains a timeline keyword (`timeline`, `sequence`, `chronological`, `when`, `duration`) AND 2+ modalities | Selected by `_select_fusion_strategy`, but the fusion dispatch has no `TEMPORAL` branch — it falls through to `_fuse_simple` (plain concatenation), not a time-aligned merge |
+| **Semantic** | Never returned by `_select_fusion_strategy` today | Dead enum value (`FusionStrategy.SEMANTIC`); no selection path or dedicated fusion method exists |
+| **Simple** | Single modality, or any strategy without a dedicated branch above | `_fuse_simple` — concatenates results |
 
 ### Cross-Modal Optimization
 
-A learned `FusionBenefitModel` predicts whether multi-modal fusion will improve results for a given query. The model considers:
-
-- **Primary/secondary modality confidences** — how certain the system is about each modality
-- **Modality agreement** — whether modalities suggest the same thing
-- **Query ambiguity score** — ambiguous queries benefit more from fusion
-- **Historical fusion success rate** — per-modality-pair success rates tracked with exponential moving average (α = 0.1)
-
-If predicted benefit ≥ 0.5, fusion is recommended. The model trains on recorded fusion outcomes and can discover patterns from Phoenix telemetry spans.
+`FusionBenefitModel` (`libs/agents/cogniverse_agents/routing/xgboost_meta_models.py`) is an XGBoost regressor that can be trained to predict the benefit of multi-modal fusion from five features: primary/secondary modality confidence, modality agreement, query ambiguity score, and historical fusion success rate (each has a static fallback default when missing — no exponential-moving-average tracking code exists for the success-rate feature). It persists via `ArtifactManager.save_blob`/`load_blob` and has a `_fallback_benefit` heuristic for use before training. As of this writing it is not called from `_select_fusion_strategy` or anywhere else in the live orchestration path — it is exercised only by its own unit and storage-migration-roundtrip tests, and there is no `>= 0.5` (or any other) threshold gate wired into request-time fusion. It is documented here as an available-but-not-yet-integrated building block for learned fusion-strategy selection.
 
 ---
 
@@ -402,12 +475,11 @@ When `SemanticRouterConfig.enabled` is set, `apply_semantic_routing` rewrites an
 | **GLiNER** | Zero-shot NER | Entity extraction across 15 custom types without training data |
 | **DSPy 3.0 Signatures** | Prompt optimization | 7 typed signatures that are automatically optimizable |
 | **ChainOfThought** | Reasoning | Step-by-step reasoning for routing decisions |
-| **DSPy Optimizers (SIMBA/GEPA/MIPROv2)** | Offline prompt optimization | Compile routing/enhancement signatures from traced outcomes via Argo batch jobs |
+| **DSPy Optimizer (BootstrapFewShot)** | Offline prompt optimization | Recompiles per-agent DSPy modules (query enhancement, profile selection, entity extraction) from traced span outcomes via Argo batch jobs; the only teleprompter actually instantiated in the codebase today |
 | **Topological Sort** | Graph algorithms | Dependency-aware task scheduling for multi-agent workflows |
 | **A2A Protocol** | Agent communication | Structured inter-agent messaging |
 | **Durable Execution** | Reliability | Phase-level checkpointing for workflow resumability |
-| **Cross-Modal Fusion** | Information fusion | 5 strategies for combining multi-modal search results |
-| **FusionBenefitModel** | Learned optimization | Predicts when fusion improves results |
-| **Exponential Moving Average** | Online learning | Tracks fusion success rates with smooth updates |
-| **Adaptive Thresholds** | Self-tuning | Confidence thresholds that learn from performance data |
+| **Cross-Modal Fusion** | Information fusion | 5 selectable strategies; 2 (Score-Based, Hierarchical) have dedicated fusion logic today, the rest fall back to concatenation |
+| **FusionBenefitModel** | Learned optimization | Trainable XGBoost regressor for predicting fusion benefit; not yet wired into live fusion-strategy selection |
+| **Adaptive Thresholds** | Self-tuning | `GatewayAgent.fast_path_confidence_threshold` is recalibrated offline from real classification accuracy (`run_gateway_thresholds_optimization`); the DSPy `AdaptiveThresholdSignature` is a separate, not-yet-wired library signature |
 | **Conversational Query Rewrite** | Session intelligence | DSPy-based anaphora resolution using per-request conversation history |
